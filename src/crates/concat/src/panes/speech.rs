@@ -1020,6 +1020,7 @@ impl SpeechPane {
                     std::path::Path::new(&sample.path),
                     start,
                     picture.as_deref(),
+                    None,
                 )
             },
             |studio, _, _, result| {

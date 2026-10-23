@@ -6,45 +6,30 @@
 //! One question, asked once: the frame cache is a share of it (see
 //! `concat_media::ReaderPool::frame_budget`). `None` where the platform
 //! will not say, and the caches fall back to the sizes they always had.
+//!
+//! The reading itself lives one crate down, in `concat_media::memory`,
+//! so the export and the command line - which hold pools of their own -
+//! size them for the same machine the window does; this is the host's
+//! thin handle on it, for the caches this crate holds: the title
+//! paintings and the audio mappings.
 
 /// The machine's physical memory, in bytes.
 pub fn total() -> Option<u64> {
-    static TOTAL: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
-    *TOTAL.get_or_init(read)
+    concat_media::memory::total()
 }
 
-/// Linux, Android, macOS and the other Unixes: the count of physical pages
-/// times their size, which every one of them answers through `sysconf`.
-#[cfg(unix)]
-fn read() -> Option<u64> {
-    // SAFETY: `sysconf` reads a system constant and has no preconditions;
-    // a negative answer means "not known" and is handled below.
-    let (pages, size) = unsafe {
-        (
-            libc::sysconf(libc::_SC_PHYS_PAGES),
-            libc::sysconf(libc::_SC_PAGESIZE),
-        )
-    };
-    (pages > 0 && size > 0).then(|| pages as u64 * size as u64)
+/// Whether a machine with `total_memory` bytes of RAM counts as a small
+/// one - six gigabytes or less, the class of a budget laptop. The pure
+/// half of [`small_machine`], for a cache that sizes itself for a
+/// machine it was told about rather than the one it is on.
+pub fn small_machine_for(total_memory: Option<u64>) -> bool {
+    concat_media::memory::small(total_memory)
 }
 
-/// Windows: `GlobalMemoryStatusEx`, the total physical memory it reports.
-#[cfg(windows)]
-fn read() -> Option<u64> {
-    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
-    // SAFETY: the struct is plain data, zeroed and then given its own
-    // length as the call requires; the call only writes into it.
-    unsafe {
-        let mut status: MEMORYSTATUSEX = std::mem::zeroed();
-        status.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
-        (GlobalMemoryStatusEx(&mut status) != 0 && status.ullTotalPhys > 0)
-            .then_some(status.ullTotalPhys)
-    }
-}
-
-#[cfg(not(any(unix, windows)))]
-fn read() -> Option<u64> {
-    None
+/// Whether this machine is a small one; see [`small_machine_for`]. The
+/// caches here step down on one.
+pub fn small_machine() -> bool {
+    concat_media::memory::small_machine()
 }
 
 #[cfg(test)]

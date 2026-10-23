@@ -53,10 +53,27 @@ use serde::Deserialize;
 /// Every clip is decoded to this rate; the callback resamples to the device.
 const PCM_RATE: u32 = 48_000;
 
-/// Decoded spans kept mapped beyond the current clip set. Enough that
-/// undo/redo across a few edits never re-decodes; small enough that a long
-/// session cannot accumulate hundreds of mappings.
+/// Decoded spans kept mapped beyond the current clip set, at most:
+/// enough that undo/redo across a few edits never re-decodes; small
+/// enough that a long session cannot accumulate hundreds of mappings.
 const MEMORY_CACHE_CAP: usize = 64;
+
+/// The mappings a machine keeps: the cap above, or a quarter of it on a
+/// small machine (see [`crate::memory::small_machine`]), where the pages
+/// under a long session's mappings are page cache the desktop is
+/// competing for. The mappings are file-backed and the kernel can evict
+/// them under pressure either way; holding fewer simply keeps the
+/// working set tidy. Read once; see [`memory_cache_cap`].
+fn memory_cache_cap() -> usize {
+    static CAP: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *CAP.get_or_init(|| {
+        if crate::memory::small_machine() {
+            MEMORY_CACHE_CAP / 4
+        } else {
+            MEMORY_CACHE_CAP
+        }
+    })
+}
 
 /// Byte budget for `cache/audio` on disk. Stereo 16-bit 48k is ~11 MB a
 /// minute, so this keeps hours of decoded material before anything is
@@ -626,7 +643,7 @@ impl Playback {
     fn evict_memory(&self) {
         let live: HashSet<String> = locked(&self.specs).iter().map(decode_key).collect();
         let mut cache = locked(&self.cache);
-        while cache.len() > MEMORY_CACHE_CAP {
+        while cache.len() > memory_cache_cap() {
             let doomed = cache
                 .iter()
                 .filter(|(key, _)| !live.contains(*key))

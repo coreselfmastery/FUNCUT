@@ -521,8 +521,11 @@ pub struct ReaderPool {
     /// are being pulled about, handed in as pixels under a name no file
     /// has, and served from these at whatever size and through whatever
     /// chain a plan asks - see [`ReaderPool::hold_still`]. The newest
-    /// [`STILLS_HELD`] stay.
+    /// [`stills_for`] the budget allows stay.
     memory: Mutex<HeldStills>,
+    /// The stills [`memory`](ReaderPool::memory) may hold; see
+    /// [`stills_for`].
+    stills_held: usize,
     /// The stand-in for each file that has one; see
     /// [`ReaderPool::adopt_proxy`].
     proxies: Mutex<HashMap<PathBuf, PathBuf>>,
@@ -535,10 +538,21 @@ type HeldStills = (
     std::collections::VecDeque<PathBuf>,
 );
 
-/// How many in-memory stills the pool keeps. Each is a frame, mostly
-/// transparent, at the monitor's size; a drag makes a few dozen a second
-/// and shows one.
-const STILLS_HELD: usize = 24;
+/// The most in-memory stills the pool keeps, whatever the machine. Each is
+/// a frame, mostly transparent, at the monitor's size; a drag makes a few
+/// dozen a second and shows one.
+const MOST_STILLS_HELD: usize = 24;
+
+/// How many in-memory stills a pool with `cache_bytes` of frame cache
+/// keeps: a thirty-second of it per still, between eight and
+/// [`MOST_STILLS_HELD`]. The count rides the budget the machine's memory
+/// chose (see [`ReaderPool::frame_budget`]): a drag on a small laptop
+/// holds a handful of monitor-sized pictures and not a quarter gigabyte
+/// of them, and a workstation keeps the depth it always had.
+fn stills_for(cache_bytes: usize) -> usize {
+    const PER_STILL: usize = 32 * 1024 * 1024;
+    (cache_bytes / PER_STILL).clamp(8, MOST_STILLS_HELD)
+}
 
 impl ReaderPool {
     /// A pool with `cache_bytes` of frame cache and up to `max_readers` warm
@@ -559,6 +573,7 @@ impl ReaderPool {
             }),
             facts: Mutex::new(HashMap::new()),
             memory: Mutex::new((HashMap::new(), std::collections::VecDeque::new())),
+            stills_held: stills_for(cache_bytes),
             proxies: Mutex::new(HashMap::new()),
             counters: Counters::default(),
         }
@@ -584,10 +599,29 @@ impl ReaderPool {
     }
 
     /// A pool sized for a machine with `total_memory` bytes of RAM; see
-    /// [`ReaderPool::frame_budget`]. Eight warm readers at most, and those
-    /// not asked for in a while are closed by [`ReaderPool::close_idle`].
+    /// [`ReaderPool::frame_budget`] and [`ReaderPool::readers_for`].
     pub fn sized_for(total_memory: Option<u64>) -> Self {
-        Self::new(Self::frame_budget(total_memory), 8)
+        Self::new(
+            Self::frame_budget(total_memory),
+            Self::readers_for(total_memory),
+        )
+    }
+
+    /// How many readers a machine with `total_memory` bytes of RAM keeps
+    /// warm: eight, or four on a small machine (see
+    /// [`memory::small_machine`]). A reader is an open decoder holding
+    /// buffers of its own - easily tens of megabytes each at HD - and on
+    /// a laptop that shares its memory with everything else, four warm
+    /// decoders and the frame cache are what the timeline's recent files
+    /// cost; a fifth reopens at the price of one seek, and
+    /// [`ReaderPool::close_idle`] still closes any of them the playhead
+    /// has left behind.
+    pub fn readers_for(total_memory: Option<u64>) -> usize {
+        if crate::memory::small(total_memory) {
+            4
+        } else {
+            8
+        }
     }
 
     /// Closes the warm readers nobody has asked for in `idle`, and that no
@@ -622,7 +656,7 @@ impl ReaderPool {
     }
 
     /// Makes `frame` the still at `path`, a name no file has, until
-    /// [`STILLS_HELD`] newer ones have come. Frames already cut from an
+    /// `stills_for` newer ones have come. Frames already cut from an
     /// earlier still of that name are let go, so the name never shows
     /// stale pixels.
     pub fn hold_still(&self, path: &Path, frame: Arc<Frame>) {
@@ -631,7 +665,7 @@ impl ReaderPool {
             if stills.insert(path.to_path_buf(), frame).is_none() {
                 order.push_back(path.to_path_buf());
             }
-            while order.len() > STILLS_HELD {
+            while order.len() > self.stills_held {
                 if let Some(oldest) = order.pop_front() {
                     stills.remove(&oldest);
                 }
@@ -1426,6 +1460,29 @@ pub(crate) mod tests {
         assert_eq!(mb(ReaderPool::frame_budget(Some(16 * GB))), 1024);
         assert_eq!(mb(ReaderPool::frame_budget(Some(128 * GB))), 1024);
         assert_eq!(mb(ReaderPool::frame_budget(None)), 512);
+    }
+
+    /// A small machine holds half the warm readers, and an unknown or
+    /// roomy one the eight the pool always kept.
+    #[test]
+    fn a_small_machine_keeps_half_the_warm_readers() {
+        const GB: u64 = 1024 * 1024 * 1024;
+        assert_eq!(ReaderPool::readers_for(Some(4 * GB)), 4);
+        assert_eq!(ReaderPool::readers_for(Some(6 * GB)), 4);
+        assert_eq!(ReaderPool::readers_for(Some(8 * GB)), 8);
+        assert_eq!(ReaderPool::readers_for(None), 8);
+    }
+
+    /// The stills a pool holds ride its frame budget: a floor of eight,
+    /// the old twenty-four from a gigabyte up.
+    #[test]
+    fn the_stills_held_ride_the_budget() {
+        const MB: usize = 1024 * 1024;
+        assert_eq!(stills_for(64 * MB), 8);
+        assert_eq!(stills_for(256 * MB), 8);
+        assert_eq!(stills_for(512 * MB), 16);
+        assert_eq!(stills_for(1024 * MB), 24);
+        assert_eq!(stills_for(4096 * MB), 24);
     }
 
     /// A reader nobody has asked for in a while is closed; one asked for

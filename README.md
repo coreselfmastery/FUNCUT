@@ -5,6 +5,13 @@
 <h1 align="center">Concat</h1>
 <h3 align="center">The free, open-source, cross-platform CapCut replacement.</h3>
 
+> [!NOTE]
+> **FUNCUT** - this repository is that editor tuned for small, low-memory
+> Linux laptops (4-6 GB of RAM): every cache sizes itself to the machine it
+> is on, and `./install-linux.sh` puts it on one in a single command. The
+> notes for a small machine - install, builds in 4 GB, editing long videos -
+> live in [docs/FUNCUT.md](docs/FUNCUT.md).
+
 <div align="center">
 
 <img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/editor.png" alt="Concat editor" width="100%" />

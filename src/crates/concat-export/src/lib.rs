@@ -1693,8 +1693,11 @@ fn render_picture(
     let mut decoders: HashMap<ClipId, Decoder> = HashMap::new();
     // A clip whose speed changes, or runs backwards, cannot be followed by a
     // paced decoder: each of its frames is sought by its own source time,
-    // through a pool that keeps the reader rolling where it can.
-    let sought = concat_media::ReaderPool::with_defaults();
+    // through a pool that keeps the reader rolling where it can. Sized to
+    // the machine like the window's own pool, so an export on a small
+    // laptop holds a share of its memory and not a fixed half gigabyte
+    // beside the encoder and the compositor.
+    let sought = concat_media::ReaderPool::sized_for(concat_media::memory::total());
 
     for index in 0..total_frames {
         reporter.cancelled()?;

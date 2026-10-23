@@ -98,6 +98,21 @@ const LIVE_BYTES: usize = 128 * 1024 * 1024;
 /// each time; see [`LivePaintings::keep`].
 const LIVE_CEILING: usize = 512 * 1024 * 1024;
 
+/// The live-painting budget and ceiling a machine with `total_memory`
+/// bytes of RAM paints under: the sizes above, or a third of them on a
+/// small machine (see [`crate::memory::small_machine`]), where a
+/// quarter gigabyte of ceiling could be a fifteenth of everything the
+/// machine has. A third of the budget still holds five HD paintings of
+/// drag history, and the ceiling still holds every one of sixteen HD
+/// titles a timeline is showing.
+fn live_budgets(total_memory: Option<u64>) -> (usize, usize) {
+    if crate::memory::small_machine_for(total_memory) {
+        (LIVE_BYTES / 3, LIVE_CEILING / 3)
+    } else {
+        (LIVE_BYTES, LIVE_CEILING)
+    }
+}
+
 /// One live painting, and the pass that last asked for it.
 struct LivePainting {
     art: Art,
@@ -191,16 +206,18 @@ impl LivePaintings {
 }
 
 impl Titles {
-    /// A painter that caches under the app's data directory.
+    /// A painter that caches under the app's data directory, with its
+    /// live-painting budget sized to the machine (see [`live_budgets`]).
     pub fn new(dirs: &AppDirs) -> Titles {
         let dir = dirs.data.join("titles");
         sweep(&dir, TITLES_KEPT);
+        let (live_bytes, live_ceiling) = live_budgets(crate::memory::total());
         Titles {
             dir,
             fonts: Mutex::new(None),
             loaded_files: Mutex::new(HashSet::new()),
             memo: Mutex::new(HashMap::new()),
-            live: Mutex::new(LivePaintings::new(LIVE_BYTES, LIVE_CEILING)),
+            live: Mutex::new(LivePaintings::new(live_bytes, live_ceiling)),
         }
     }
 
@@ -818,8 +835,9 @@ mod tests {
     fn a_timeline_of_titles_past_the_budget_is_painted_once() {
         let dirs = scratch("live_many");
         let mut editor = Editor::new();
-        // Four megabytes a painting at 1024 square: 40 is more than the
-        // 128 MB budget holds.
+        // Four megabytes a painting at 1024 square: more than the byte
+        // budget holds, whether the machine was given the whole of it or
+        // the small-machine share (see `live_budgets`).
         let count = LIVE_BYTES / (1024 * 1024 * 4) + 8;
         for index in 0..count {
             editor
@@ -851,6 +869,19 @@ mod tests {
             })
             .count();
         assert_eq!(repainted, 0, "of {count}");
+    }
+
+    /// The live-painting budget and ceiling step down to a third on a
+    /// small machine, and stay whole on a roomy one and an unknown one.
+    #[test]
+    fn live_budgets_step_down_on_a_small_machine() {
+        const GB: u64 = 1024 * 1024 * 1024;
+        assert_eq!(
+            live_budgets(Some(4 * GB)),
+            (LIVE_BYTES / 3, LIVE_CEILING / 3)
+        );
+        assert_eq!(live_budgets(Some(16 * GB)), (LIVE_BYTES, LIVE_CEILING));
+        assert_eq!(live_budgets(None), (LIVE_BYTES, LIVE_CEILING));
     }
 
     /// A painting asked for again is the most recently used, and outlives

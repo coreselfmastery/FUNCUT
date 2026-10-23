@@ -427,7 +427,10 @@ fn render(input: &PathBuf, output: &PathBuf, frames: u64, fade: u64) -> Result<(
 
     let timeline = single_clip_timeline(input, width, height, rate, frames);
 
-    let pool = ReaderPool::with_defaults();
+    // Sized to the machine, as the window's own pool is, so a headless
+    // render on a small laptop holds a share of its memory and not a
+    // fixed half gigabyte beside the encoder and the compositor.
+    let pool = ReaderPool::sized_for(concat_media::memory::total());
     let mut encoder = Encoder::create(output, width, height, rate, &EncodeOptions::default())?;
     // The GPU, or the software adapter where the machine has none.
     let mut compositor =

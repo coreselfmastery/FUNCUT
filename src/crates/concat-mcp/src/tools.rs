@@ -1018,6 +1018,18 @@ mod tests {
                 "media_import",
                 json!({ "path": "/tmp/Cut", "file": "/tmp/a.mp4" }),
             ),
+            ("openvid_status", json!({})),
+            ("openvid_prepare", json!({})),
+            (
+                "openvid_search",
+                json!({ "query": "sunset ocean", "minAesthetic": 5.2, "limit": 10 }),
+            ),
+            ("openvid_get", json!({ "ids": [820338756299] })),
+            ("openvid_fetch", json!({ "id": 820338756299 })),
+            (
+                "openvid_import",
+                json!({ "path": "/tmp/Cut", "ids": [820338756299], "start": 0.0 }),
+            ),
             (
                 "edit_apply",
                 json!({ "path": "/tmp/Cut", "command": { "op": "addTrack" } }),

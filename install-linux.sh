@@ -6,7 +6,8 @@
 #   ./install-linux.sh --rpm           the .rpm, through dnf (asks for sudo)
 #   ./install-linux.sh --list          show what the releases hold, install nothing
 #   ./install-linux.sh --repo o/r      a fork to prefer over this one
-#   ./install-linux.sh --use-upstream  take Concat's own releases when the fork has none
+#   ./install-linux.sh --use-upstream  take Concat's own releases when the fork
+#                                       has none; OWNER/NAME after it, for a fork of a fork
 #
 # It looks for a published release on this repository first, and falls
 # back to the upstream Concat releases when the fork has none - the two
@@ -49,9 +50,13 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --use-upstream)
-            [ $# -ge 2 ] || die "--use-upstream needs OWNER/NAME after it"
-            FALLBACK="$2"
-            shift
+            # The documented form takes no value and names the upstream
+            # this fork stands on; an OWNER/NAME after it overrides that
+            # for a fork-of-a-fork.
+            FALLBACK="$UPSTREAM_REPO"
+            case "${2:-}" in
+                [a-zA-Z0-9_-]*/[a-zA-Z0-9_.-]*) FALLBACK="$2"; shift ;;
+            esac
             ;;
         -h|--help)
             sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
@@ -98,8 +103,9 @@ esac
 # line of just the tag. Drafts are invisible to anyone but their
 # authors, so nothing here has to skip them. Python reads the JSON
 # where there is Python, and grep carves out the download URLs where
-# there is not - the URLs are plain and unique, which is all the
-# fallback needs.
+# there is not - each URL names the release it belongs to, so the
+# separators are cut out of them and the two paths print the same
+# shape.
 release_assets() {
     local repo="$1" page json
     for page in 1 2 3; do
@@ -122,11 +128,20 @@ for release in releases:
 ' && return 0
         else
             json=$(fetch "https://api.github.com/repos/$repo/releases?per_page=20&page=$page" -) || return 1
+            # Every asset URL carries its release's tag between
+            # "download/" and the file name: a change of tag is a change
+            # of release, and the separator the python path prints from
+            # the JSON is printed here from that.
             printf '%s' "$json" | grep -oE '"browser_download_url": *"[^"]+"' |
                 sed -E 's/"browser_download_url": *"([^"]+)"/\1/' |
-                while IFS= read -r url; do
-                    printf '%s\t%s\n' "${url##*/}" "$url"
-                done && return 0
+                awk -F/ -v OFS='\t' '{
+                    tag = $(NF - 1)
+                    if (tag != last) {
+                        print "RELEASE", tag
+                        last = tag
+                    }
+                    print $NF, $0
+                }' && return 0
         fi
     done
     return 1

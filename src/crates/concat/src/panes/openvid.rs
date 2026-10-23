@@ -415,7 +415,7 @@ impl OpenvidPane {
                     quality: format!("{:.2}", clip.aesthetic).into(),
                     ready: self
                         .library()
-                        .map_or(false, |library| library.fetched(clip.id).is_some()),
+                        .is_some_and(|library| library.fetched(clip.id).is_some()),
                     busy: self.fetching.contains_key(&clip.id.to_string()),
                 }
             })

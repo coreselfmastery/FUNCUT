@@ -153,7 +153,7 @@ pub fn activity(msg: &Msg) -> Option<Activity> {
                 Info,
                 format!(
                     "openvid: clip {id} fetched, {:?}",
-                    if then == openvid::Then::Preview {
+                    if *then == openvid::Then::Preview {
                         "to preview"
                     } else {
                         "to the timeline"

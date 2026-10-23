@@ -299,6 +299,12 @@ pub fn catalogue() -> Vec<Tool> {
             "splitClips",
         ),
         command(
+            "clip_cut_spans",
+            "Cut spans out of a clip",
+            "Cuts spans out of the middle of a clip: `spans` is a list of [from, to] pairs in seconds from the clip's start, in any order; overlapping ones merge. What is left is re-cut into source-continuous pieces that each keep the clip's looks, the first keeping the clip's id (`createdId`); a piece too short to keep folds into the span beside it, and spans that cover the whole clip remove it. `ripple: true` closes the lane behind every cut, as a delete does. This is what the voiceover panel's pause removal does.",
+            "removeSpans",
+        ),
+        command(
             "clips_move",
             "Move clips",
             "Moves clips in one undoable step: each to a new `start` (seconds, at least 0) and `trackId`. Unknown ids are skipped.",
@@ -1043,6 +1049,10 @@ mod tests {
             (
                 "clip_frame",
                 json!({ "path": "/tmp/Cut", "clipId": "c1", "framing": "fill" }),
+            ),
+            (
+                "clip_cut_spans",
+                json!({ "path": "/tmp/Cut", "clipId": "c1", "spans": [[1.0, 2.0], [4.0, 5.5]], "ripple": true }),
             ),
             (
                 "timeline_background",

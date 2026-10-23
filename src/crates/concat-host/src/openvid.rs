@@ -1167,8 +1167,8 @@ mod tests {
     fn tkhd(w: u32, h: u32) -> Vec<u8> {
         let mut body = vec![0u8; 84];
         body[0] = 0;
-        let mut fixed_w = (w << 16).to_be_bytes().to_vec();
-        let mut fixed_h = (h << 16).to_be_bytes().to_vec();
+        let fixed_w = (w << 16).to_be_bytes().to_vec();
+        let fixed_h = (h << 16).to_be_bytes().to_vec();
         body[76..80].copy_from_slice(&fixed_w);
         body[80..84].copy_from_slice(&fixed_h);
         let mut box_bytes = b"tkhd".to_vec();
@@ -1232,6 +1232,56 @@ mod tests {
         assert_eq!(fts_words("  City(night)!  "), "\"city\"* \"night\"*");
         assert_eq!(fts_words("---"), "");
         assert_eq!(fts_words(""), "");
+    }
+
+    /// The whole library against the real index and the real Hub: the
+    /// search's words through FTS5 and the dictionary-compressed captions
+    /// back out, a clip's trailer for its frame size, and the clip itself
+    /// down as one ranged read. Ignored by default - it wants the network
+    /// and a 435 MB index - and run by hand when either changes:
+    /// `cargo test -p concat-host --lib openvid -- --ignored` with
+    /// OPENVID_INDEX pointing at an index file.
+    #[test]
+    #[ignore]
+    fn the_library_end_to_end() {
+        let index = std::path::PathBuf::from(
+            std::env::var("OPENVID_INDEX").expect("OPENVID_INDEX names the index file"),
+        );
+        let data = std::path::PathBuf::from("/tmp/openvid-live");
+        let _ = std::fs::remove_dir_all(&data);
+        std::fs::create_dir_all(data.join("openvid")).expect("the scratch folder");
+        std::fs::copy(&index, data.join("openvid/openvid-index.sqlite")).expect("the index copied");
+        let dirs = AppDirs { config: data.clone(), data };
+        let library = shared(&dirs);
+        assert_eq!(library.status(), Status::Ready, "the index opens");
+        assert_eq!(library.rows(), Some(937_957), "every clip is in it");
+
+        let found = library
+            .search(&Query {
+                text: Some("sunset ocean".to_owned()),
+                min_aesthetic: Some(5.0),
+                sort: Sort::Relevance,
+                limit: 5,
+                ..Query::default()
+            })
+            .expect("the search runs");
+        assert!(!found.clips.is_empty(), "the words find clips");
+        assert!(found.clips[0].aesthetic >= 5.0);
+        assert!(
+            found.clips.iter().any(|clip| clip.caption.contains("ocean") || clip.caption.contains("sunset")),
+            "the captions came back as words, not compressed bytes: {:?}",
+            found.clips[0].caption
+        );
+
+        let id = found.clips[0].id;
+        let dims = library.dims(id).expect("the trailer is read");
+        assert_eq!(dims, Some((512, 512)), "the dataset's own shape");
+
+        let cancel = AtomicBool::new(false);
+        let path = library.fetch(id, &cancel).expect("the clip is fetched");
+        let size = std::fs::metadata(&path).expect("the clip is on disk").len();
+        assert_eq!(size, found.clips[0].bytes, "exactly the clip's own bytes");
+        assert!(library.fetched(id).is_some(), "and it is remembered");
     }
 
     #[test]

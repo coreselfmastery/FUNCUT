@@ -308,10 +308,7 @@ impl OpenvidPane {
                         Then::Place => studio.place_openvid(&name, &id, &path),
                     },
                     Err(error) if error == "cancelled" => {}
-                    Err(error) => studio.notify(
-                        &tf("openvid.fetchFailed", &[name.as_str(), error.as_str()]),
-                        true,
-                    ),
+                    Err(error) => studio.notify(&tf("openvid.fetchFailed", &[&name, &error]), true),
                 }
             }
         }
@@ -518,7 +515,7 @@ impl Studio {
         if !target.exists() {
             std::fs::create_dir_all(&folder)
                 .and_then(|()| std::fs::copy(path, &target).map(drop))
-                .map_err(|error| tf("openvid.couldNotCopy", &[name, error.as_str()]))?;
+                .map_err(|error| tf("openvid.couldNotCopy", &[name, &error]))?;
         }
         let summary = concat_host::media::probe(&target_text)?;
         let created = self.apply(concat_project::Command::AddMedia {

@@ -11419,7 +11419,9 @@ impl Studio {
                 }
             };
             page.set_state(state);
-            page.set_percent(percent);
+            // Slint's `int` is an i32; the download's per-cent is a u32
+            // that never passes a hundred.
+            page.set_percent(percent as i32);
             page.set_error(error);
             page.set_rows(
                 self.openvid

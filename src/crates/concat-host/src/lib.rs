@@ -35,6 +35,7 @@ pub mod media;
 pub mod memory;
 pub mod models;
 pub mod net;
+pub mod openvid;
 pub mod playback;
 pub mod preview;
 pub mod projects;

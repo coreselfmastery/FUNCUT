@@ -254,6 +254,53 @@ pub fn catalogue() -> Vec<Tool> {
         )
         .idempotent(),
         method(
+            "openvid_status",
+            "OpenVid library status",
+            "Where the OpenVid stock library stands: `state` is \"missing\" (its local index is not on this machine yet - call `openvid_prepare` once, ~435 MB, then poll this until `ready`), \"downloading\" (with `percent`), \"ready\" or \"failed\" (with `error`). When ready, `rows` is how many clips it holds (937,957: stock footage with captions and quality scores) and `measured` how many have had their frame size read so far.",
+            "openvid.status",
+            Raw,
+        )
+        .reading(),
+        method(
+            "openvid_prepare",
+            "Download the OpenVid index",
+            "Starts the one-time download of the OpenVid library's local index and returns at once; poll `openvid_status` until `state` is \"ready\". Nothing else downloads anything: every other `openvid` tool refuses until this has finished.",
+            "openvid.prepare",
+            Raw,
+        )
+        .idempotent(),
+        method(
+            "openvid_search",
+            "Search stock clips",
+            "Searches 937,957 stock clips (Pixabay, Pexels and CelebV footage, cut for the OpenVid-1M dataset) by what their captions say and by their quality numbers, without watching anything: each match carries the caption, `aesthetic` (0-6), `motion`, `temporal` consistency (0-1), `camera` motion, `fps`, `seconds`, `bytes` (the fetch cost), its shelf and its measured `dims`. Every filter is optional: `query` words are ANDed and prefix-matched (\"ocean sunset\"), `minAesthetic`/`minMotion`/`maxMotion`/`minTemporal` set the quality floor, `minSeconds`/`maxSeconds`/`minFps` the shape, `camera` takes a motion exactly as the library names it, `source` is pixabay/pexels/celebv/other, `orientation` is vertical/horizontal/square (only among clips whose MP4 header has been measured - the library is uniformly 512x512, so vertical and horizontal honestly return nothing), and `sort` is relevance/aesthetic/motion/temporal/shortest/longest/surprise. Returns up to `limit` (default 20, at most 100) from `offset`, with `total` saying how many match in all.",
+            "openvid.search",
+            Raw,
+        )
+        .reading(),
+        method(
+            "openvid_get",
+            "Read clips in full",
+            "Everything about up to 20 clips by id, as `openvid_search` gave the ids: the full caption, every score, and `dims` - the frame size read from the clip's own MP4 header, measured on this first ask (one small network read a clip, remembered after). Use it to check a candidate before committing to the fetch.",
+            "openvid.get",
+            Raw,
+        )
+        .reading(),
+        method(
+            "openvid_fetch",
+            "Fetch a clip",
+            "Fetches one clip's MP4 from the Hub into the app's own cache - `clip.bytes` of bandwidth, nothing else - and returns the clip with `localPath`, its absolute path on this machine. Adds nothing to any project; `openvid_import` or `media_import` is what puts it in an edit.",
+            "openvid.fetch",
+            Raw,
+        )
+        .idempotent(),
+        method(
+            "openvid_import",
+            "Import stock clips",
+            "Fetches clips and adds them to an open project's media bin, each copied into the project's own `openvid` folder first so the project owns its files. With `start` (seconds) they are also laid on one lane in the order given, as one undoable step - `track` names the lane, or the first with room when absent. Returns `mediaIds` and the project summary; without `start`, place them with `clips_add_sequence` or `clip_add`. At most 20 clips a call.",
+            "openvid.import",
+            Raw,
+        ),
+        method(
             "edit_apply",
             "Apply an edit",
             "Applies any one edit command to an open project, as one undoable step. `command` is an object tagged by `op` - every edit the window can make is one, with the same limits and refusals; the typed tools below are the common ones. `{\"op\": \"batch\", \"commands\": [...]}` applies several commands as one atomic, undoable step: all land or none does, and `createdId` is the last id minted inside. A refusal comes back as the sentence the window would show, with nothing changed. Returns the project summary; a command that creates something puts its id in `createdId`.",

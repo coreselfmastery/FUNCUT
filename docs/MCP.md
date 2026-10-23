@@ -2,6 +2,19 @@
 
 Concat ships an [MCP](https://modelcontextprotocol.io) server inside the app. An agent - Claude Code, Claude Desktop, or any other MCP client - starts it as `concat --mcp` and can then create projects, import media, cut, add titles and captions, keyframe, apply effects, look at frames and export, with the same edit commands the window uses. Nothing extra to install.
 
+### Stock clips (OpenVid)
+
+The `openvid` tools search 937,957 stock clips (the OpenVid-1M dataset on
+Hugging Face) by caption and quality numbers and fetch only what is used.
+The first call on a machine is `openvid_prepare`, which downloads a 435 MB
+local index once (poll `openvid_status` until `ready`); after that every
+search is local and instant. A typical run: `openvid_search` with words
+and quality floors ("sunset ocean", `minAesthetic: 5.2`) → `openvid_get`
+to read the best candidates in full → `openvid_import` with `start: 0` to
+lay them on a lane in one undoable step. Frame sizes are read from each
+clip's own MP4 header on first ask; the library is uniformly 512x512, so
+vertical and horizontal searches honestly return nothing.
+
 ## Set it up
 
 Point your client at the Concat binary with the one argument `--mcp`.
@@ -57,6 +70,7 @@ Tools are named for what they do, and their argument schemas are generated from 
 | Projects | `project_list`, `project_create`, `project_open`, `project_save`, `project_close`, `project_set_video` |
 | Reading | `timeline_read` (compact: lanes, clips in time order, media, ids), `project_get` (everything), `concat_version` |
 | Media | `media_probe`, `media_import` |
+| Stock clips | `openvid_status`, `openvid_prepare`, `openvid_search`, `openvid_get`, `openvid_fetch`, `openvid_import` |
 | Editing | `clip_add`, `clips_add_sequence`, `clip_trim`, `clips_split`, `clips_move`, `clips_remove`, `clip_update`, `clip_transform`, `clip_speed`, `clip_frame`, `track_add` |
 | Picture | `clip_mask`, `clip_stabilize`, `timeline_background` |
 | Titles and captions | `title_add`, `captions_add` |

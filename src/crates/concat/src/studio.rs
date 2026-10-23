@@ -685,6 +685,8 @@ pub struct Models {
     pub speech_sample_details: Rc<VecModel<SharedString>>,
     /// The Audio page's shelves.
     pub sounds_mine: Rc<VecModel<crate::ui::SoundCardData>>,
+    pub openvid_results: Rc<VecModel<crate::ui::OpenvidCardData>>,
+    pub openvid_cameras: Rc<VecModel<SharedString>>,
     pub voices_saved: Rc<VecModel<crate::ui::VoiceCardData>>,
     pub sounds_concat: Rc<VecModel<crate::ui::SoundCardData>>,
     pub voices_builtin: Rc<VecModel<crate::ui::VoiceCardData>>,
@@ -764,6 +766,8 @@ impl Models {
             speech_sample_waves: Rc::new(VecModel::default()),
             speech_sample_details: Rc::new(VecModel::default()),
             sounds_mine: Rc::new(VecModel::default()),
+            openvid_results: Rc::new(VecModel::default()),
+            openvid_cameras: Rc::new(VecModel::default()),
             voices_saved: Rc::new(VecModel::default()),
             sounds_concat: Rc::new(VecModel::default()),
             voices_builtin: Rc::new(VecModel::default()),
@@ -804,6 +808,20 @@ pub fn sync<T: Clone + PartialEq + 'static>(model: &VecModel<T>, next: Vec<T>) {
 }
 
 /// The window's state. See the module docs for what is whose.
+/// A count with its thousands separated: the way a stock library's size
+/// is said - "937,957 clips" - rather than the way a machine says it.
+fn thousands(count: u64) -> String {
+    let digits = count.to_string();
+    let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
+    for (at, digit) in digits.chars().enumerate() {
+        if at > 0 && (digits.len() - at) % 3 == 0 {
+            grouped.push(',');
+        }
+        grouped.push(digit);
+    }
+    grouped
+}
+
 pub struct Studio {
     pub host: Host,
     pub prefs: Preferences,
@@ -1010,6 +1028,7 @@ pub struct Studio {
     pub speech: crate::panes::speech::SpeechPane,
     /// The library's Audio page: the user's own sounds.
     pub sounds: crate::panes::sounds::SoundsPane,
+    pub openvid: crate::panes::openvid::OpenvidPane,
     /// A file from the library lent the monitor and the speakers; see
     /// `crate::source`.
     pub source: Option<crate::source::Source>,
@@ -2379,6 +2398,7 @@ impl Studio {
             captions: crate::panes::captions::CaptionsPane::default(),
             speech: crate::panes::speech::SpeechPane::with_saved(&host.dirs),
             sounds: crate::panes::sounds::SoundsPane::open(&host.dirs),
+            openvid: crate::panes::openvid::OpenvidPane::open(&host.dirs),
             source: None,
             meters: crate::meters::MeterFeed::default(),
             voiceover: crate::panes::voiceover::VoiceoverPane::default(),
@@ -8766,6 +8786,11 @@ impl Studio {
                 pane.update(msg, self);
                 self.sounds = pane;
             }
+            crate::panes::Msg::Openvid(msg) => {
+                let mut pane = std::mem::take(&mut self.openvid);
+                pane.update(msg, self);
+                self.openvid = pane;
+            }
             crate::panes::Msg::Relink(msg) => {
                 let mut pane = std::mem::take(&mut self.relink);
                 pane.update(msg, self);
@@ -11379,6 +11404,46 @@ impl Studio {
         }
         app.global::<crate::ui::Sounds>()
             .set_importing(self.sounds.importing);
+        // The OpenVid page.
+        sync(&models.openvid_results, self.openvid.rows());
+        {
+            let page = app.global::<crate::ui::OpenVid>();
+            let (state, percent, error) = match &self.openvid.state {
+                concat_host::openvid::Status::Missing => (0, 0, SharedString::default()),
+                concat_host::openvid::Status::Downloading(percent) => {
+                    (1, *percent, SharedString::default())
+                }
+                concat_host::openvid::Status::Ready => (2, 100, SharedString::default()),
+                concat_host::openvid::Status::Failed(error) => {
+                    (3, 0, SharedString::from(error.as_str()))
+                }
+            };
+            page.set_state(state);
+            page.set_percent(percent);
+            page.set_error(error);
+            page.set_rows(self.openvid.library_rows().map_or_else(
+                SharedString::default,
+                |rows| SharedString::from(thousands(rows).as_str()),
+            ));
+            page.set_measured(SharedString::from(
+                thousands(self.openvid.state_measured()).as_str(),
+            ));
+            page.set_searching(self.openvid.searching);
+            page.set_total(SharedString::from(thousands(self.openvid.total).as_str()));
+            page.set_more(
+                (self.openvid.results.len() as u64) < self.openvid.total,
+            );
+            // "Any camera" leads the list, so 0 is that and the rest are
+            // the library's own motions, in the index's own order.
+            let mut cameras = vec![SharedString::from(crate::i18n::t("openvid.anyCamera"))];
+            cameras.extend(
+                self.openvid
+                    .cameras
+                    .iter()
+                    .map(|camera| SharedString::from(camera.as_str())),
+            );
+            sync(&models.openvid_cameras, cameras);
+        }
         let (saved, builtin, styles, ready) = self.voice_cards();
         sync(&models.voices_saved, saved);
         sync(&models.voices_builtin, builtin);

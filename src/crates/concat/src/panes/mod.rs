@@ -19,6 +19,7 @@ pub mod export;
 pub mod glide;
 pub mod media_bin;
 pub mod monitor;
+pub mod openvid;
 pub mod pace;
 pub mod project;
 pub mod relink;
@@ -56,6 +57,8 @@ pub enum Msg {
     Voiceover(voiceover::VoiceoverMsg),
     /// To the library's Audio page.
     Sounds(sounds::SoundsMsg),
+    /// To the library's OpenVid page.
+    Openvid(openvid::OpenvidMsg),
 }
 
 /// What a message says in the log: the activity trail of what the person
@@ -71,6 +74,7 @@ pub fn activity(msg: &Msg) -> Option<Activity> {
     use log::Level::{Debug, Info};
     use media_bin::MediaMsg;
     use monitor::MonitorMsg;
+    use openvid::OpenvidMsg;
     use relink::RelinkMsg;
     use settings::SettingsMsg;
     use speech::SpeechMsg;
@@ -87,6 +91,7 @@ pub fn activity(msg: &Msg) -> Option<Activity> {
         | Msg::Export(ExportMsg::Progress { .. })
         | Msg::Captions(CaptionsMsg::Progress(_))
         | Msg::Speech(SpeechMsg::Progress(_))
+        | Msg::Openvid(openvid::OpenvidMsg::Tick)
         | Msg::Settings(SettingsMsg::ModelProgress { .. } | SettingsMsg::InstallProgress { .. }) => {
             return None;
         }
@@ -126,6 +131,24 @@ pub fn activity(msg: &Msg) -> Option<Activity> {
                     Ok(summary) => format!("speech: finished, {}", summary.path),
                     Err(error) => format!("speech: failed, {error}"),
                 },
+            ));
+        }
+        Msg::Openvid(OpenvidMsg::Download) => {
+            return Some(Activity::once(Info, "openvid: the index download began".to_owned()));
+        }
+        Msg::Openvid(OpenvidMsg::Searched(result, _)) => {
+            return Some(Activity::once(
+                Info,
+                match result {
+                    Ok(found) => format!("openvid: {} of {} clips", found.clips.len(), found.total),
+                    Err(error) => format!("openvid: the search failed, {error}"),
+                },
+            ));
+        }
+        Msg::Openvid(OpenvidMsg::Fetched(id, Ok(_), then)) => {
+            return Some(Activity::once(
+                Info,
+                format!("openvid: clip {id} fetched, {:?}", if then == openvid::Then::Preview { "to preview" } else { "to the timeline" }),
             ));
         }
         Msg::Media(MediaMsg::Import(paths)) => {

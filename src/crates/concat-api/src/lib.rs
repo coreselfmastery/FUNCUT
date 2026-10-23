@@ -47,6 +47,7 @@ use concat_host::export::{self, Exporter};
 use concat_host::preview::{FrameSpec, Monitor};
 use concat_host::session::EditorView;
 use concat_host::stabilize::{StabilizeRequest, Stabilizers};
+use concat_host::openvid::{self, Orientation, Query, Sort, Source};
 use concat_host::templates::{self, SlotFill};
 use concat_host::{ProjectInfo, Session, Titles, lock, media, projects};
 use concat_project::Command;
@@ -54,7 +55,8 @@ use concat_project::model::VideoSettings;
 
 pub use message::{
     API_VERSION, ApiError, Dirs, Done, ErrorCode, Event, ExportSpec, Fill, JobState, JobStatus,
-    PackageInfo, ParamInfo, Picture, Reply, Request, Response, Started, VersionInfo, Written,
+    OpenvidClip, OpenvidFound, OpenvidImport, OpenvidState, PackageInfo, ParamInfo, Picture,
+    Reply, Request, Response, Started, VersionInfo, Written,
 };
 
 /// The export sheet's middle quality, and what an export gets when the
@@ -461,6 +463,52 @@ impl Api {
             Request::MediaProbe { path } => {
                 Ok(Reply::Media(media::probe(&path).map_err(ApiError::failed)?))
             }
+            Request::OpenvidStatus => Ok(Reply::Openvid(self.openvid_state())),
+            Request::OpenvidPrepare => {
+                self.openvid_prepare();
+                Ok(Reply::Openvid(self.openvid_state()))
+            }
+            Request::OpenvidSearch {
+                query,
+                min_aesthetic,
+                min_motion,
+                max_motion,
+                min_temporal,
+                min_seconds,
+                max_seconds,
+                min_fps,
+                camera,
+                source,
+                orientation,
+                sort,
+                limit,
+                offset,
+            } => Ok(Reply::OpenvidFound(self.openvid_search(
+                query,
+                min_aesthetic,
+                min_motion,
+                max_motion,
+                min_temporal,
+                min_seconds,
+                max_seconds,
+                min_fps,
+                camera,
+                source,
+                orientation,
+                sort,
+                limit,
+                offset,
+            )?)),
+            Request::OpenvidGet { ids } => Ok(Reply::OpenvidClips(self.openvid_get(&ids)?)),
+            Request::OpenvidFetch { id } => Ok(Reply::OpenvidClips(self.openvid_fetch(id)?)),
+            Request::OpenvidImport {
+                path,
+                ids,
+                start,
+                track,
+            } => Ok(Reply::OpenvidImported(self.openvid_import(
+                &path, &ids, start, track,
+            )?)),
             Request::MediaImport { path, file } => view(self.import(&path, &file)?),
             Request::CatalogueList { kind } => Ok(Reply::Packages(catalogue(kind.as_deref())?)),
             Request::TemplateList => Ok(Reply::Templates(templates::list(&self.dirs.config))),
@@ -610,6 +658,298 @@ impl Api {
     pub fn import(&mut self, path: &str, file: &str) -> Result<EditorView, ApiError> {
         let item = media::probe(file).map_err(ApiError::failed)?.to_new_media();
         self.apply(path, Command::AddMedia { item })
+    }
+
+    // ── the OpenVid stock library ─────────────────────────────────────────
+
+    /// The library this API reads, from the app's own directories. One
+    /// per process, so the window's pane and this server share a download
+    /// and an index connection rather than racing each other.
+    fn library(&self) -> &'static openvid::Library {
+        openvid::shared(&self.dirs)
+    }
+
+    /// [`Request::OpenvidStatus`].
+    pub fn openvid_state(&self) -> OpenvidState {
+        let library = self.library();
+        let (state, percent, error) = match library.status() {
+            openvid::Status::Missing => ("missing", 0, None),
+            openvid::Status::Downloading(percent) => ("downloading", percent, None),
+            openvid::Status::Ready => ("ready", 100, None),
+            openvid::Status::Failed(error) => ("failed", 0, Some(error)),
+        };
+        OpenvidState {
+            state: state.to_owned(),
+            percent,
+            rows: library.rows(),
+            measured: library.measured(),
+            error,
+        }
+    }
+
+    /// [`Request::OpenvidPrepare`]: the one-time index download, started
+    /// on its own thread because it is 435 MB and a caller should not
+    /// wait for it. Its progress is what `openvid.status` reports; a
+    /// second call while one runs is a no-op, and the window's own page
+    /// starting one is the same download.
+    pub fn openvid_prepare(&self) {
+        let library = self.library();
+        if matches!(
+            library.status(),
+            openvid::Status::Ready | openvid::Status::Downloading(_)
+        ) {
+            return;
+        }
+        std::thread::spawn(move || {
+            // This flag is never set: the download runs to its end. A
+            // cancel is the process going away, which takes the thread
+            // with it; the partial file is resumed by the next start.
+            let cancel = std::sync::atomic::AtomicBool::new(false);
+            // The outcome lands in the status the next caller reads:
+            // `Failed`, with these words, rather than a log line this
+            // crate has no facade for.
+            let _ = library.prepare(&cancel);
+        });
+    }
+
+    /// [`Request::OpenvidSearch`]: the filters as the request carries
+    /// them, parsed once, with the words a caller chose kept as words.
+    #[allow(clippy::too_many_arguments)]
+    pub fn openvid_search(
+        &self,
+        query: Option<String>,
+        min_aesthetic: Option<f64>,
+        min_motion: Option<f64>,
+        max_motion: Option<f64>,
+        min_temporal: Option<f64>,
+        min_seconds: Option<f64>,
+        max_seconds: Option<f64>,
+        min_fps: Option<f64>,
+        camera: Option<String>,
+        source: Option<String>,
+        orientation: Option<String>,
+        sort: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<OpenvidFound, ApiError> {
+        self.openvid_ready()?;
+        let source = source
+            .map(|name| match name.to_ascii_lowercase().as_str() {
+                "pixabay" => Ok(Source::Pixabay),
+                "pexels" => Ok(Source::Pexels),
+                "celebv" => Ok(Source::CelebV),
+                "other" => Ok(Source::Other),
+                other => Err(ApiError::failed(format!(
+                    "the source must be pixabay, pexels, celebv or other, not {other:?}"
+                ))),
+            })
+            .transpose()?;
+        let orientation = orientation
+            .map(|name| match name.to_ascii_lowercase().as_str() {
+                "vertical" => Ok(Orientation::Vertical),
+                "horizontal" => Ok(Orientation::Horizontal),
+                "square" => Ok(Orientation::Square),
+                other => Err(ApiError::failed(format!(
+                    "the orientation must be vertical, horizontal or square, not {other:?}"
+                ))),
+            })
+            .transpose()?;
+        let sort = match sort.as_deref().map(str::to_ascii_lowercase).as_deref() {
+            None | Some("relevance") => Sort::Relevance,
+            Some("aesthetic") => Sort::Aesthetic,
+            Some("motion") => Sort::Motion,
+            Some("temporal") => Sort::Temporal,
+            Some("shortest") => Sort::Shortest,
+            Some("longest") => Sort::Longest,
+            Some("surprise") => Sort::Surprise,
+            Some(other) => {
+                return Err(ApiError::failed(format!(
+                    "the sort must be relevance, aesthetic, motion, temporal, shortest, \
+                     longest or surprise, not {other:?}"
+                )))
+            }
+        };
+        let search = Query {
+            text: query,
+            min_aesthetic,
+            min_motion,
+            max_motion,
+            min_temporal,
+            min_seconds,
+            max_seconds,
+            min_fps,
+            camera,
+            source,
+            orientation,
+            sort,
+            limit: limit.unwrap_or(20).clamp(1, 100),
+            offset: offset.unwrap_or(0),
+        };
+        let found = self
+            .library()
+            .search(&search)
+            .map_err(ApiError::failed)?;
+        Ok(OpenvidFound {
+            clips: found
+                .clips
+                .iter()
+                .map(|clip| OpenvidClip::of(clip, clip.dims, None))
+                .collect(),
+            total: found.total,
+        })
+    }
+
+    /// [`Request::OpenvidGet`].
+    pub fn openvid_get(&self, ids: &[i64]) -> Result<Vec<OpenvidClip>, ApiError> {
+        if ids.len() > 20 {
+            return Err(ApiError::failed(
+                "at most 20 clips a call; page through them".to_owned(),
+            ));
+        }
+        self.openvid_ready()?;
+        let library = self.library();
+        let mut clips = Vec::new();
+        for id in ids {
+            let Some(clip) = library
+                .clip(*id)
+                .map_err(ApiError::failed)?
+            else {
+                return Err(ApiError::failed(format!("there is no clip {id}")));
+            };
+            // The frame size is measured here, on first ask: one small
+            // network read a clip, remembered after.
+            let dims = library.dims(*id).map_err(ApiError::failed)?;
+            clips.push(OpenvidClip::of(&clip, dims, None));
+        }
+        Ok(clips)
+    }
+
+    /// [`Request::OpenvidFetch`].
+    pub fn openvid_fetch(&self, id: i64) -> Result<Vec<OpenvidClip>, ApiError> {
+        self.openvid_ready()?;
+        let library = self.library();
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let path = library.fetch(id, &cancel).map_err(ApiError::failed)?;
+        let Some(clip) = library.clip(id).map_err(ApiError::failed)? else {
+            return Err(ApiError::failed(format!("there is no clip {id}")));
+        };
+        Ok(vec![OpenvidClip::of(&clip, clip.dims, Some(&path))])
+    }
+
+    /// [`Request::OpenvidImport`]: fetch, copy into the project's own
+    /// folder, and add to the bin - one undoable step, or two when the
+    /// clips are also laid on a lane.
+    pub fn openvid_import(
+        &mut self,
+        path: &str,
+        ids: &[i64],
+        start: Option<f64>,
+        track: Option<String>,
+    ) -> Result<OpenvidImport, ApiError> {
+        if ids.is_empty() {
+            return Err(ApiError::failed("no clip ids given".to_owned()));
+        }
+        if ids.len() > 20 {
+            return Err(ApiError::failed(
+                "at most 20 clips a call; page through them".to_owned(),
+            ));
+        }
+        self.openvid_ready()?;
+        self.writable(path)?;
+        let folder = {
+            let session = self.session(path)?;
+            let folder = std::path::PathBuf::from(session.path()).join("openvid");
+            std::fs::create_dir_all(&folder).map_err(|error| {
+                ApiError::failed(format!(
+                    "could not create {}: {error}",
+                    folder.display()
+                ))
+            })?;
+            folder
+        };
+        let library = self.library();
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        // Everything is fetched and copied before anything is added, so a
+        // clip that will not arrive refuses the whole request rather than
+        // leaving half a set behind.
+        let mut copies = Vec::new();
+        for id in ids {
+            let cached = library.fetch(*id, &cancel).map_err(ApiError::failed)?;
+            let Some(clip) = library.clip(*id).map_err(ApiError::failed)? else {
+                return Err(ApiError::failed(format!("there is no clip {id}")));
+            };
+            // The dataset's own name plus the id: unique for ever, and
+            // the same clip imported twice is the same file, copied over
+            // itself.
+            let name = format!("{}-{id}.mp4", clip.name);
+            let into = folder.join(&name);
+            std::fs::copy(&cached, &into).map_err(|error| {
+                ApiError::failed(format!("could not copy into the project: {error}"))
+            })?;
+            copies.push(into);
+        }
+        let mut commands = Vec::new();
+        for file in &copies {
+            let item = media::probe(&file.to_string_lossy())
+                .map_err(ApiError::failed)?
+                .to_new_media();
+            commands.push(Command::AddMedia { item });
+        }
+        let mut view = self.apply(path, Command::Batch { commands })?;
+        // The ids the copies were given, by the paths they landed at: a
+        // batch reports only its last minted id, and the caller needs
+        // every one.
+        let media_ids: Vec<String> = copies
+            .iter()
+            .filter_map(|file| {
+                view.project
+                    .media
+                    .iter()
+                    .find(|item| item.path == file.to_string_lossy())
+                    .map(|item| item.id.clone())
+            })
+            .collect();
+        if media_ids.len() != copies.len() {
+            return Err(ApiError::failed(
+                "the clips were imported but not all of them were found again".to_owned(),
+            ));
+        }
+        if let Some(start) = start {
+            view = self.apply(
+                path,
+                Command::AddClipsInSequence {
+                    media_ids: media_ids.clone(),
+                    track_id: track,
+                    start,
+                    ripple: false,
+                },
+            )?;
+        }
+        Ok(OpenvidImport {
+            media_ids,
+            view: Box::new(view),
+        })
+    }
+
+    /// The one refusal every OpenVid method that needs the index makes:
+    /// not on this machine yet, with the words that say what to do about
+    /// it.
+    fn openvid_ready(&self) -> Result<(), ApiError> {
+        match self.library().status() {
+            openvid::Status::Ready => Ok(()),
+            openvid::Status::Downloading(percent) => Err(ApiError::failed(format!(
+                "the OpenVid index is still downloading ({percent}%); ask openvid.status \
+                 until it is ready"
+            ))),
+            openvid::Status::Missing => Err(ApiError::failed(
+                "the OpenVid index is not on this machine yet; call openvid.prepare once, \
+                 then ask openvid.status until it is ready"
+                    .to_owned(),
+            )),
+            openvid::Status::Failed(error) => {
+                Err(ApiError::failed(format!("the OpenVid index is unusable: {error}")))
+            }
+        }
     }
 
     /// [`Request::TemplateInstantiate`].

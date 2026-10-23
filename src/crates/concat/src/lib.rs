@@ -101,6 +101,7 @@ use panes::monitor::MonitorMsg;
 use panes::project::ProjectMsg;
 use panes::relink::RelinkMsg;
 use panes::settings::SettingsMsg;
+use panes::openvid::OpenvidMsg;
 use panes::sounds::SoundsMsg;
 use panes::speech::SpeechMsg;
 use panes::start::StartMsg;
@@ -446,6 +447,10 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
             .set_voices_saved(ModelRc::from(models.voices_saved.clone()));
         app.global::<Sounds>()
             .set_concat(ModelRc::from(models.sounds_concat.clone()));
+        app.global::<crate::ui::OpenVid>()
+            .set_results(ModelRc::from(models.openvid_results.clone()));
+        app.global::<crate::ui::OpenVid>()
+            .set_cameras(ModelRc::from(models.openvid_cameras.clone()));
         app.global::<Sounds>()
             .set_voices_builtin(ModelRc::from(models.voices_builtin.clone()));
         app.global::<Sounds>()
@@ -1463,6 +1468,35 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         sounds.on_voice_open(on_window!(|state, id: SharedString| {
             state.open_voice(id.as_str());
         }));
+        // ── the library's OpenVid page ──
+        let openvid = app.global::<crate::ui::OpenVid>();
+        openvid.on_search(on_window!(
+            |state, query: SharedString, source: i32, shape: i32, duration: i32,
+             quality: i32, camera: i32, order: i32| {
+                state.handle(Msg::Openvid(OpenvidMsg::Search {
+                    query: query.to_string(),
+                    source,
+                    shape,
+                    duration,
+                    quality,
+                    camera,
+                    order,
+                }));
+            }
+        ));
+        openvid.on_more_loaded(on_window!(|state| {
+            state.handle(Msg::Openvid(OpenvidMsg::More));
+        }));
+        openvid.on_preview(on_window!(|state, id: SharedString| {
+            state.handle(Msg::Openvid(OpenvidMsg::Preview(id.to_string())));
+        }));
+        openvid.on_add(on_window!(|state, id: SharedString| {
+            state.handle(Msg::Openvid(OpenvidMsg::Add(id.to_string())));
+        }));
+        openvid.on_download(on_window!(|state| {
+            state.handle(Msg::Openvid(OpenvidMsg::Download));
+        }));
+
         sounds.on_voice_remove(on_window!(|state, id: SharedString| {
             state.forget_voice(id.as_str());
         }));

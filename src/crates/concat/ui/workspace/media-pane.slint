@@ -14,6 +14,7 @@ import { Wave } from "../primitives/wave.slint";
 import { ContextMenu, MenuItemData } from "../primitives/context-menu.slint";
 import { SourcePreview } from "source-preview.slint";
 import { Sounds, SoundList, VoiceList } from "audio-page.slint";
+import { OpenVid, OpenVidList, OpenVidStatus } from "openvid-page.slint";
 
 export { SourcePreview }
 
@@ -1897,6 +1898,18 @@ export component MediaPane inherits Rectangle {
     /// The Audio page is up, or not: a drop of sound files on the window
     /// goes into the library while it is.
     changed tab => { Sounds.shown(root.tab == 8); }
+    property <bool> openvid-shelves-open: true;
+    property <bool> openvid-shapes-open: true;
+    // The OpenVid search's debounce: a restart a keystroke, and one
+    // search when the typing pauses, rather than one a keystroke.
+    openvid-debounce := Timer {
+        interval: 350ms;
+        running: false;
+        triggered => {
+            OpenVid.search(OpenVid.query, OpenVid.source, OpenVid.shape,
+                OpenVid.duration, OpenVid.quality, OpenVid.camera, OpenVid.order);
+        }
+    }
     /// The Audio page's shelf: 0 = Mine, 10 = Voices, 11 = Styles. 1 was
     /// Concat's own sounds, off the page until their list is published (#60).
     property <int> audio-category;
@@ -2033,6 +2046,15 @@ export component MediaPane inherits Rectangle {
                             label: I18n.t("common.audio");
                             current: root.tab == 8;
                             clicked => { root.tab = 8; }
+                        }
+                        // Beside Audio: the stock library, where CapCut
+                        // keeps its own. The page number is the last one
+                        // handed out, not the place.
+                        LibraryTab {
+                            glyph: Glyph.circle-play;
+                            label: I18n.t("openvid.openvid");
+                            current: root.tab == 9;
+                            clicked => { root.tab = 9; }
                         }
                         LibraryTab {
                             glyph: Glyph.text-mark;
@@ -2277,6 +2299,76 @@ export component MediaPane inherits Rectangle {
                             label: I18n.t("voices.styles");
                             current: root.audio-category == 11;
                             clicked => { root.audio-category = 11; }
+                        }
+                    }
+
+                    // OpenVid: the shelves the dataset was cut from, and
+                    // the frame shapes. The shape filter is honest - a
+                    // clip's shape is known once that clip's own header
+                    // has been read, and the page says how many that is -
+                    // because a filter that quietly guessed would be worse
+                    // than one that says what it knows.
+                    if root.tab == 9: VerticalLayout {
+                        spacing: 1px;
+                        CategoryHeading {
+                            height: 26px;
+                            title: I18n.t("openvid.shelves");
+                            open: root.openvid-shelves-open;
+                            toggled => { root.openvid-shelves-open = !root.openvid-shelves-open; }
+                        }
+                        if root.openvid-shelves-open: CategoryRow {
+                            height: 24px;
+                            label: I18n.t("openvid.allShelves");
+                            current: OpenVid.source == 0;
+                            clicked => { OpenVid.source = 0; OpenVid.search(OpenVid.query, OpenVid.source, OpenVid.shape, OpenVid.duration, OpenVid.quality, OpenVid.camera, OpenVid.order); }
+                        }
+                        if root.openvid-shelves-open: CategoryRow {
+                            height: 24px;
+                            label: "Pixabay";
+                            current: OpenVid.source == 1;
+                            clicked => { OpenVid.source = 1; OpenVid.search(OpenVid.query, OpenVid.source, OpenVid.shape, OpenVid.duration, OpenVid.quality, OpenVid.camera, OpenVid.order); }
+                        }
+                        if root.openvid-shelves-open: CategoryRow {
+                            height: 24px;
+                            label: "Pexels";
+                            current: OpenVid.source == 2;
+                            clicked => { OpenVid.source = 2; OpenVid.search(OpenVid.query, OpenVid.source, OpenVid.shape, OpenVid.duration, OpenVid.quality, OpenVid.camera, OpenVid.order); }
+                        }
+                        if root.openvid-shelves-open: CategoryRow {
+                            height: 24px;
+                            label: "CelebV";
+                            current: OpenVid.source == 3;
+                            clicked => { OpenVid.source = 3; OpenVid.search(OpenVid.query, OpenVid.source, OpenVid.shape, OpenVid.duration, OpenVid.quality, OpenVid.camera, OpenVid.order); }
+                        }
+                        CategoryHeading {
+                            height: 26px;
+                            title: I18n.t("openvid.shape");
+                            open: root.openvid-shapes-open;
+                            toggled => { root.openvid-shapes-open = !root.openvid-shapes-open; }
+                        }
+                        if root.openvid-shapes-open: CategoryRow {
+                            height: 24px;
+                            label: I18n.t("openvid.anyShape");
+                            current: OpenVid.shape == 0;
+                            clicked => { OpenVid.shape = 0; OpenVid.search(OpenVid.query, OpenVid.source, OpenVid.shape, OpenVid.duration, OpenVid.quality, OpenVid.camera, OpenVid.order); }
+                        }
+                        if root.openvid-shapes-open: CategoryRow {
+                            height: 24px;
+                            label: I18n.t("openvid.squareShape");
+                            current: OpenVid.shape == 1;
+                            clicked => { OpenVid.shape = 1; OpenVid.search(OpenVid.query, OpenVid.source, OpenVid.shape, OpenVid.duration, OpenVid.quality, OpenVid.camera, OpenVid.order); }
+                        }
+                        if root.openvid-shapes-open: CategoryRow {
+                            height: 24px;
+                            label: I18n.t("openvid.verticalShape");
+                            current: OpenVid.shape == 2;
+                            clicked => { OpenVid.shape = 2; OpenVid.search(OpenVid.query, OpenVid.source, OpenVid.shape, OpenVid.duration, OpenVid.quality, OpenVid.camera, OpenVid.order); }
+                        }
+                        if root.openvid-shapes-open: CategoryRow {
+                            height: 24px;
+                            label: I18n.t("openvid.horizontalShape");
+                            current: OpenVid.shape == 3;
+                            clicked => { OpenVid.shape = 3; OpenVid.search(OpenVid.query, OpenVid.source, OpenVid.shape, OpenVid.duration, OpenVid.quality, OpenVid.camera, OpenVid.order); }
                         }
                     }
 
@@ -2636,6 +2728,131 @@ export component MediaPane inherits Rectangle {
                 if root.tab == 8 && root.audio-category == 0 && Sounds.mine.length == 0: Empty {
                     glyph: Glyph.music;
                     text: I18n.t("sounds.noSoundsYet");
+                }
+
+                // OpenVid: the stock library. Everything above the list is
+                // the asking; the list is the answer.
+                if root.tab == 9: VerticalLayout {
+                    padding: 8px;
+                    spacing: 8px;
+
+                    // The words, debounced: a search is quick but the
+                    // page does not need one a keystroke.
+                    SearchField {
+                        placeholder: I18n.t("openvid.searchPlaceholder");
+                        text: OpenVid.query;
+                        edited(text) => {
+                            OpenVid.query = text;
+                            openvid-debounce.restart();
+                        }
+                        // accepted lands here too, through the debounce:
+                        // Enter is just a pause in the typing.
+                    }
+
+                    // The narrowing that is not words. Marked rather than
+                    // worded where a word costs more room than it earns;
+                    // the camera filter is worded because its words are
+                    // the library's own and cannot be a mark.
+                    HorizontalLayout {
+                        spacing: 4px;
+                        Select {
+                            horizontal-stretch: 0;
+                            width: self.natural-width;
+                            options: [I18n.t("openvid.anyLength"),
+                                I18n.t("openvid.underFive"), I18n.t("openvid.fiveToFifteen"),
+                                I18n.t("openvid.fifteenToThirty"), I18n.t("openvid.overThirty")];
+                            current: OpenVid.duration;
+                            changed(index) => { OpenVid.duration = index; OpenVid.search(OpenVid.query, OpenVid.source, OpenVid.shape, OpenVid.duration, OpenVid.quality, OpenVid.camera, OpenVid.order); }
+                        }
+                        Select {
+                            horizontal-stretch: 0;
+                            width: self.natural-width;
+                            options: [I18n.t("openvid.anyQuality"), "4.0+", "4.5+", "5.0+", "5.2+", "5.4+"];
+                            current: OpenVid.quality;
+                            changed(index) => { OpenVid.quality = index; OpenVid.search(OpenVid.query, OpenVid.source, OpenVid.shape, OpenVid.duration, OpenVid.quality, OpenVid.camera, OpenVid.order); }
+                        }
+                        Select {
+                            horizontal-stretch: 0;
+                            width: self.natural-width;
+                            options: OpenVid.cameras;
+                            current: OpenVid.camera;
+                            changed(index) => { OpenVid.camera = index; OpenVid.search(OpenVid.query, OpenVid.source, OpenVid.shape, OpenVid.duration, OpenVid.quality, OpenVid.camera, OpenVid.order); }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        Select {
+                            horizontal-stretch: 0;
+                            width: self.natural-width;
+                            options: [I18n.t("openvid.sortRelevance"), I18n.t("openvid.sortAesthetic"),
+                                I18n.t("openvid.sortMotion"), I18n.t("openvid.sortShortest"),
+                                I18n.t("openvid.sortLongest"), I18n.t("openvid.sortSurprise")];
+                            icons: [Glyph.search, Glyph.sun, Glyph.waveform, Glyph.clock,
+                                Glyph.clock, Glyph.sparkle];
+                            current: OpenVid.order;
+                            changed(index) => { OpenVid.order = index; OpenVid.search(OpenVid.query, OpenVid.source, OpenVid.shape, OpenVid.duration, OpenVid.quality, OpenVid.camera, OpenVid.order); }
+                        }
+                    }
+
+                    // What stands between the person and the library,
+                    // when something does.
+                    if OpenVid.state != 2: OpenVidStatus { }
+
+                    if OpenVid.state == 2: VerticalLayout {
+                        spacing: 8px;
+
+                        // The honest word about the shape filter, shown
+                        // only when a shape is asked for: this library's
+                        // clips are all 512x512, and pretending otherwise
+                        // would be worse than saying so.
+                        if OpenVid.shape == 2 || OpenVid.shape == 3: Text {
+                            text: I18n.t("openvid.shapeNote");
+                            color: Theme.fg-muted;
+                            font-size: Theme.fs-sm;
+                            wrap: word-wrap;
+                        }
+
+                        if OpenVid.results.length == 0 && !OpenVid.searching: Empty {
+                            glyph: Glyph.circle-play;
+                            text: OpenVid.query == ""
+                                ? I18n.t("openvid.searchHint")
+                                : I18n.t("openvid.nothingFound");
+                        }
+
+                        OpenVidList {
+                            items: OpenVid.results;
+                        }
+
+                        // The count, and the next page when there is one.
+                        if OpenVid.results.length > 0: HorizontalLayout {
+                            spacing: 8px;
+                            Text {
+                                text: I18n.t1("openvid.clipCount", OpenVid.total);
+                                color: Theme.fg-muted;
+                                font-size: Theme.fs-xs;
+                                vertical-alignment: center;
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                            if OpenVid.more: Rectangle {
+                                height: Theme.h;
+                                border-radius: Theme.r-sm;
+                                background: more.has-hover ? Theme.field-hover : Theme.field;
+                                HorizontalLayout {
+                                    alignment: center;
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    Text {
+                                        vertical-alignment: center;
+                                        text: I18n.t("openvid.more");
+                                        color: Theme.fg-muted;
+                                        font-size: Theme.fs-sm;
+                                    }
+                                }
+                                more := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { OpenVid.more-loaded(); }
+                                }
+                            }
+                        }
+                    }
                 }
 
                 if root.tab == 1 && root.text-category == 0: HorizontalLayout {

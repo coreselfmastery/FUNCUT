@@ -6,9 +6,9 @@ is built from). Every number here is either read straight out of the code or
 marked as an estimate; nothing is a benchmark this fork ran on your machine,
 because the point of the changes is that the *machine decides* now.
 
-Two kinds of change live here: **memory sizing** (the caches that had one
-fixed size now scale to the machine) and **one new feature** (pause removal
-for voiceovers). Everything else in the program is upstream's own, including
+Three kinds of change live here: **memory sizing** (the caches that had one
+fixed size now scale to the machine) and **two new features** (the OpenVid
+stock library, and pause removal for voiceovers). Everything else in the program is upstream's own, including
 its existing small-machine machinery: proxies for large files, preview quality
 tiers, hardware decode where it wins, and the swap-friendly design of the
 playback cache.
@@ -55,7 +55,46 @@ command-line renderer - which hold pools of their own - can size them for
 the same machine). The line itself is `total <= 6 GiB`, tested from both
 sides.
 
-## 2. The feature: pause removal for voiceovers
+## 2. The feature: the OpenVid stock library
+
+The library pane grew a fourth stock page beside Media and Audio:
+**OpenVid** - 937,957 stock clips from the OpenVid-1M dataset on Hugging
+Face (Pixabay, Pexels and CelebV footage, cut to 512x512 with a caption
+and quality scores beside every clip), searched in a local index, fetched
+one clip at a time. The same library is scriptable: six `openvid.*` tools
+on the MCP server and JSON-RPC API, so an agent can search by caption and
+quality numbers, fetch and place clips without a window.
+
+**How it stays small.** The dataset is 7.5 TB; what this machine holds is
+one SQLite index of 435 MB (six hundredths of one percent), downloaded
+once from this repository's releases and checked against a digest. Every
+search - captions, quality floors, camera motion, duration, shelf, frame
+shape - runs against that index in milliseconds and costs no network.
+The index knows each clip's byte range inside the dataset's data files,
+and Hugging Face's CDN honours a Range header, so fetching a clip is one
+ranged GET of the clip's own size. A clip lands in `<data>/openvid/clips`
+and is copied into the project's own `openvid` folder when it is laid on
+a timeline, so a project owns its files the way a sound's copy does.
+
+**What it costs on a small machine.** The index connection keeps
+SQLite's default two-megabyte page cache; nothing about the library is
+resident beyond that and the page of results on screen. The captions in
+the index are zstd-compressed against a dictionary the index carries, and
+a page of forty decompresses in well under a millisecond. The one-time
+download is the only large moment, and it resumes if it is interrupted.
+
+**The honest parts.** The dataset's metadata carries no frame sizes, and
+the clips are in fact uniformly 512x512 (OpenVid-1M was cut for
+text-to-video training). The page does not take that on trust: a clip's
+frame size is read from its own MP4 header the first time the clip is
+fetched, and kept in a side table. The orientation filter narrows to the
+clips measured so far and says so in words, and the page's note tells
+someone filtering for vertical footage why nothing matches and how a
+square clip still sits on a vertical timeline. Search words are matched
+over the first 300 characters of each caption - the scene descriptions -
+and everything past that is one `openvid_get` away.
+
+## 3. The feature: pause removal for voiceovers
 
 Upstream records voiceovers well - count-in, teleprompter, retake, landing
 the take on a lane under the picture - but cutting the pauses out of a take

@@ -158,6 +158,126 @@ pub enum Request {
         file: String,
     },
 
+    /// The OpenVid stock library's state: whether its local index is on
+    /// this machine yet, how far along it is while it comes down, and how
+    /// many clips it holds when it is ready. The one `openvid` method that
+    /// works before the index is down; every other one refuses until it
+    /// is, with words that say so.
+    #[serde(rename = "openvid.status")]
+    OpenvidStatus,
+
+    /// Starts the OpenVid index's one-time download in the background and
+    /// returns at once; `openvid.status` reports how far it has got. The
+    /// index is ~435 MB, checked against a digest on arrival. Nothing is
+    /// downloaded by any other method: they refuse until this has finished.
+    #[serde(rename = "openvid.prepare")]
+    OpenvidPrepare,
+
+    /// Searches the OpenVid stock library - 937,957 stock clips with
+    /// captions and quality scores - and returns the best matches with
+    /// everything an agent needs to pick one without seeing it: the
+    /// caption, the scores, the camera motion, the duration, the fetch
+    /// cost in bytes. Every filter is optional; a search with none of them
+    /// set is the library as it comes, which is also what `sort` is for.
+    #[serde(rename = "openvid.search")]
+    OpenvidSearch {
+        /// Words to find in captions. ANDed and prefix-matched:
+        /// "ocean sunset" finds captions holding both a word starting
+        /// "ocean" and one starting "sunset", best matches first.
+        #[serde(default)]
+        query: Option<String>,
+        /// Aesthetic score (0-6, higher is better-looking) at least this.
+        #[serde(default)]
+        min_aesthetic: Option<f64>,
+        /// Motion score at least this (0-131 in this library).
+        #[serde(default)]
+        min_motion: Option<f64>,
+        /// Motion score at most this.
+        #[serde(default)]
+        max_motion: Option<f64>,
+        /// Temporal consistency (0-1, higher is steadier) at least this.
+        #[serde(default)]
+        min_temporal: Option<f64>,
+        /// Seconds at least this.
+        #[serde(default)]
+        min_seconds: Option<f64>,
+        /// Seconds at most this.
+        #[serde(default)]
+        max_seconds: Option<f64>,
+        /// Frames a second at least this.
+        #[serde(default)]
+        min_fps: Option<f64>,
+        /// Only this camera motion, exactly as the library names it:
+        /// "static", "zoom_in", "pan_left", "tilt_up",
+        /// "pan_left+tilt_up", "Undetermined", ...
+        #[serde(default)]
+        camera: Option<String>,
+        /// Only this shelf: "pixabay", "pexels", "celebv" or "other".
+        #[serde(default)]
+        source: Option<String>,
+        /// Only clips whose measured frame size is this shape:
+        /// "vertical", "horizontal" or "square". A frame size is measured
+        /// by reading the clip's own MP4 header the first time it is
+        /// asked for, so this filter narrows to the clips measured so far;
+        /// `openvid.status` says how many that is. The library is in fact
+        /// uniformly 512x512 (it was cut for text-to-video training), so
+        /// an honest "vertical" search here returns nothing rather than
+        /// everything.
+        #[serde(default)]
+        orientation: Option<String>,
+        /// How to order: "relevance" (the default with `query`),
+        /// "aesthetic", "motion", "temporal", "shortest", "longest" or
+        /// "surprise" (a different order every call).
+        #[serde(default)]
+        sort: Option<String>,
+        /// At most this many clips, 1-100; 20 when absent.
+        #[serde(default)]
+        limit: Option<u32>,
+        /// Skip this many from the front, for the next page.
+        #[serde(default)]
+        offset: Option<u32>,
+    },
+
+    /// Everything about one or more clips by id, including the frame size
+    /// each clip's own MP4 header names - measured on first ask, one small
+    /// network read a clip, and remembered after. At most 20 ids a call.
+    #[serde(rename = "openvid.get")]
+    OpenvidGet {
+        /// The clip ids, as `openvid.search` gave them.
+        ids: Vec<i64>,
+    },
+
+    /// Fetches one clip from the Hub into the app's own cache - a single
+    /// ranged read of the clip's own bytes, `clip.bytes` of them - and
+    /// says where it landed. Nothing is added to any project; import the
+    /// file with `openvid.import` (or `media.import` on the path) when it
+    /// is wanted on a timeline.
+    #[serde(rename = "openvid.fetch")]
+    OpenvidFetch {
+        /// The clip's id.
+        id: i64,
+    },
+
+    /// Fetches clips from the Hub and adds them to an open project's bin,
+    /// each copied into the project's own `openvid` folder first so the
+    /// project owns its files. With `start` they are also laid on one
+    /// lane in the order given, as one undoable step; without it they
+    /// wait in the bin for `clips_add_sequence` or `clip_add`. Returns
+    /// the media ids they were given.
+    #[serde(rename = "openvid.import")]
+    OpenvidImport {
+        /// The project folder.
+        path: String,
+        /// The clip ids, in the order they should play.
+        ids: Vec<i64>,
+        /// Lay them on the timeline from this moment, in sequence.
+        #[serde(default)]
+        start: Option<f64>,
+        /// The lane to lay them on; the first lane with room when absent.
+        #[serde(default)]
+        track: Option<String>,
+    },
+
     /// Every effect package the build knows, with its parameters, so a
     /// caller can build a valid chain without reading a manifest.
     #[serde(rename = "catalogue.list")]
@@ -319,6 +439,14 @@ pub enum Reply {
     Document(Value),
     /// [`Request::MediaProbe`].
     Media(MediaSummary),
+    /// [`Request::OpenvidStatus`] and [`Request::OpenvidPrepare`].
+    Openvid(OpenvidState),
+    /// [`Request::OpenvidSearch`].
+    OpenvidFound(OpenvidFound),
+    /// [`Request::OpenvidGet`] and [`Request::OpenvidFetch`].
+    OpenvidClips(Vec<OpenvidClip>),
+    /// [`Request::OpenvidImport`].
+    OpenvidImported(OpenvidImport),
     /// [`Request::CatalogueList`].
     Packages(Vec<PackageInfo>),
     /// [`Request::TemplateList`].
@@ -335,6 +463,114 @@ pub enum Reply {
     Picture(Picture),
     /// Methods with nothing to say beyond having worked.
     Done(Done),
+}
+
+/// The OpenVid library's state, as `openvid.status` reports it and
+/// `openvid.prepare` starts it towards.
+#[derive(Clone, PartialEq, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenvidState {
+    /// "missing" (the index is not on this machine yet; `openvid.prepare`
+    /// brings it), "downloading", "ready", or "failed" (with `error`).
+    pub state: String,
+    /// How far the download has got, 0-100.
+    pub percent: u32,
+    /// How many clips the library holds, when it is ready.
+    pub rows: Option<u64>,
+    /// How many clips' frame sizes have been measured so far - the honest
+    /// number behind the orientation filter.
+    pub measured: u64,
+    /// Why the library is not usable, when it is not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// What `openvid.search` found.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenvidFound {
+    /// The clips, `limit` of them from `offset` in the order asked for.
+    pub clips: Vec<OpenvidClip>,
+    /// How many match in all, this page aside.
+    pub total: u64,
+}
+
+/// One clip of the OpenVid library, as every `openvid` method hands it
+/// back. Everything but `localPath` comes from the library's index;
+/// `localPath` says where the clip's MP4 was fetched to, when it has been.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenvidClip {
+    /// The clip's id in the library, and the id every verb takes back.
+    pub id: i64,
+    /// The clip's file name, without its extension.
+    pub name: String,
+    /// What the clip shows, in the dataset's own words.
+    pub caption: String,
+    /// Visual quality, 0-6, higher better.
+    pub aesthetic: f64,
+    /// How much moves, higher more.
+    pub motion: f64,
+    /// Frame-to-frame stability, 0-1, higher steadier.
+    pub temporal: f64,
+    /// "static", "zoom_in", "pan_left+tilt_up", ... .
+    pub camera: String,
+    /// Frames a second.
+    pub fps: f64,
+    /// Seconds.
+    pub seconds: f64,
+    /// The MP4's size in bytes: what fetching the clip costs.
+    pub bytes: u64,
+    /// The shelf the clip came from: "pixabay", "pexels", "celebv" or
+    /// "other".
+    pub source: String,
+    /// Width and height once read from the clip's own MP4 header, and not
+    /// before: `[512, 512]`, or absent when not yet measured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dims: Option<(u32, u32)>,
+    /// Where the clip's MP4 is on this machine, once fetched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_path: Option<String>,
+}
+
+impl OpenvidClip {
+    /// The library's own clip, as the API hands it back: the same
+    /// numbers, the shelf and the frame size as words, and - when the
+    /// clip's bytes are on this machine - where they are.
+    pub fn of(clip: &concat_host::openvid::Clip, dims: Option<(u32, u32)>, local: Option<&std::path::Path>) -> OpenvidClip {
+        OpenvidClip {
+            id: clip.id,
+            name: clip.name.clone(),
+            caption: clip.caption.clone(),
+            aesthetic: clip.aesthetic,
+            motion: clip.motion,
+            temporal: clip.temporal,
+            camera: clip.camera.clone(),
+            fps: clip.fps,
+            seconds: clip.seconds,
+            bytes: clip.bytes,
+            source: match clip.source {
+                concat_host::openvid::Source::Pixabay => "pixabay",
+                concat_host::openvid::Source::Pexels => "pexels",
+                concat_host::openvid::Source::CelebV => "celebv",
+                concat_host::openvid::Source::Other => "other",
+            }
+            .to_owned(),
+            dims,
+            local_path: local.map(|path| path.to_string_lossy().into_owned()),
+        }
+    }
+}
+
+/// What `openvid.import` did.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenvidImport {
+    /// The media ids the clips were given in the project's bin, in the
+    /// order the ids were given in.
+    pub media_ids: Vec<String>,
+    /// The project as it now stands.
+    pub view: Box<EditorView>,
 }
 
 /// The build and the contract it speaks.

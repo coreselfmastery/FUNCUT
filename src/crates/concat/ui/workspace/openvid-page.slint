@@ -1,0 +1,334 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
+
+import { I18n } from "../i18n.slint";
+import { Theme, Fmt, Glyph, Icon, Tip } from "../primitives/primitives.slint";
+import { SearchField } from "../inspector/controls.slint";
+import { Select } from "../primitives/select.slint";
+import { PaneScroll } from "pane.slint";
+
+// The library's OpenVid page: 938,000 stock clips from the OpenVid-1M
+// dataset on Hugging Face, searched in a local index, fetched one clip at
+// a time.
+//
+// A clip's video never arrives until it is asked for - a click previews
+// one, a plus lays one at the playhead - and every search runs against a
+// single SQLite file on this machine, so the page answers in milliseconds
+// rather than in network round trips. What the page needs once is the
+// index itself (~435 MB), which the status card offers to download and
+// then keeps out of the way.
+//
+// One global for the page's data and verbs, read by the desk's library
+// pane, so nothing has to thread it through a seat.
+
+/// One clip, as a row shows it. Everything is display-ready: the numbers
+/// arrive as words, because a card is a picture of a clip rather than a
+/// record of one.
+export struct OpenvidCardData {
+    /// The clip's id in the dataset, as the verbs take it back.
+    id: string,
+    /// The clip's file name, without its extension.
+    name: string,
+    /// What the clip shows, in the dataset's own words. Two lines of it;
+    /// the row clips the rest.
+    caption: string,
+    /// "2.7s · 4.9 MB · 512×512 · static" - the shape of the clip, one
+    /// line, technical.
+    meta: string,
+    /// The aesthetic score, 0-6, as the badge's two decimals.
+    quality: string,
+    /// The clip's MP4 is already on this machine.
+    ready: bool,
+    /// Its bytes are coming down now. Clips are small, so a mark rather
+    /// than a bar: the fetch is over before a bar has said anything.
+    busy: bool,
+}
+
+export global OpenVid {
+    /// The search field's words, held here so the page's controls and the
+    /// Rust side read one thing.
+    in-out property <string> query;
+    /// The shelves: 0 All, 1 Pixabay, 2 Pexels, 3 CelebV.
+    in-out property <int> source;
+    /// The frame shape: 0 Any, 1 Square, 2 Vertical, 3 Horizontal.
+    in-out property <int> shape;
+    /// 0 Any length, 1 under 5s, 2 5-15s, 3 15-30s, 4 over 30s.
+    in-out property <int> duration;
+    /// 0 Any quality, then 4.0, 4.5, 5.0, 5.2, 5.4 and up.
+    in-out property <int> quality;
+    /// 0 Relevance, 1 Aesthetic, 2 Motion, 3 Shortest, 4 Longest,
+    /// 5 Surprise me.
+    in-out property <int> order;
+    /// 0 the index is not on this machine yet, 1 downloading, 2 ready,
+    /// 3 on disk but unusable, with `error` saying why.
+    in property <int> state;
+    /// How far the download has got, 0-100.
+    in property <int> percent;
+    /// The words that go with a state that is not ready.
+    in property <string> error;
+    /// How many clips the library holds, once ready, with its thousands
+    /// separated: "937,957".
+    in property <string> rows;
+    /// How many clips' frame sizes have been measured so far.
+    in property <string> measured;
+    /// A search is running.
+    in property <bool> searching;
+    /// The clips on the page, in the order the sort put them.
+    in property <[OpenvidCardData]> results;
+    /// How many clips match in all, formatted, this page aside.
+    in property <string> total;
+    /// Whether another page of results waits behind the More button.
+    in property <bool> more;
+
+    /// "Download the index": the one-time fetch of the library's index.
+    callback download();
+    /// The search field's words changed, or a filter moved: run it again,
+    /// with every filter the page holds as it stands.
+    callback search(query: string, source: int, shape: int, duration: int,
+        quality: int, camera: int, order: int);
+    /// The next page of what the last search found.
+    callback more-loaded();
+    /// A card clicked: preview the clip, fetching it first if need be.
+    callback preview(id: string);
+    /// A card's plus: lay the clip at the playhead, fetching it first.
+    callback add(id: string);
+    /// The library's own camera motions, as the camera filter lists them
+    /// after "Any"; published once the index is open.
+    in property <[string]> cameras;
+    /// The camera filter's pick: 0 Any, then `cameras`' order.
+    in-out property <int> camera;
+}
+
+// A small square button on a row: the plus.
+component RowButton inherits Rectangle {
+    in property <Glyph> glyph;
+    callback clicked();
+
+    width: 22px;
+    height: 22px;
+    border-radius: Theme.r-xs;
+    background: touch.has-hover ? Theme.accent : Theme.field;
+
+    Icon {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        glyph: root.glyph;
+        size: 11px;
+        tint: touch.has-hover ? Theme.on-accent : Theme.fg-muted;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// One clip: a mark in a well, the name over two lines of the caption over
+// the technical line, the aesthetic score beside it, and the plus. A click
+// previews; the plus lays it at the playhead.
+export component OpenVidRow inherits Rectangle {
+    in property <OpenvidCardData> item;
+    callback preview();
+    callback add();
+
+    height: 64px;
+    border-radius: Theme.r-sm;
+    background: touch.has-hover ? Theme.field-hover : Colors.transparent;
+
+    animate background { duration: 100ms; easing: cubic-bezier(0.4, 0, 0.2, 1); }
+
+    HorizontalLayout {
+        padding-left: 6px;
+        padding-right: 6px;
+        spacing: 8px;
+
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 32px;
+                height: 32px;
+                border-radius: Theme.r-sm;
+                background: Theme.kind-video-well;
+
+                Icon {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    glyph: root.item.busy ? Glyph.import
+                        : root.item.ready ? Glyph.play : Glyph.circle-play;
+                    size: parent.width * 0.46;
+                    tint: Theme.kind-video;
+                }
+            }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            spacing: 2px;
+
+            Text {
+                text: root.item.name;
+                color: Theme.fg;
+                font-size: Theme.fs-sm;
+                overflow: elide;
+            }
+            // The caption, clipped at two lines: enough to judge a clip
+            // by, with the whole of it one `openvid_get` away for an
+            // agent and the preview a click away for a person.
+            Rectangle {
+                height: 2.5 * Theme.fs-xs;
+                clip: true;
+
+                Text {
+                    y: 0;
+                    text: root.item.caption;
+                    color: Theme.fg-dim;
+                    font-size: Theme.fs-xs;
+                    wrap: word-wrap;
+                }
+            }
+            Text {
+                text: root.item.meta;
+                color: Theme.fg-muted;
+                font-family: Theme.font-technical;
+                font-size: Theme.fs-xs;
+                overflow: elide;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            // The aesthetic score as a badge: the number a stock library
+            // is judged by, alone, where the eye lands on its way to the
+            // plus.
+            Text {
+                text: root.item.quality;
+                color: Theme.fg-muted;
+                font-family: Theme.font-technical;
+                font-size: Theme.fs-sm;
+                horizontal-alignment: right;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            RowButton {
+                glyph: Glyph.plus;
+                clicked => { root.add(); }
+            }
+        }
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.preview(); }
+    }
+}
+
+// The rows, one after another, reached by the page's own scroll.
+export component OpenVidList inherits Rectangle {
+    in property <[OpenvidCardData]> items;
+
+    VerticalLayout {
+        padding: 0;
+        spacing: 1px;
+
+        for item in root.items: OpenVidRow {
+            item: item;
+            preview => { OpenVid.preview(item.id); }
+            add => { OpenVid.add(item.id); }
+        }
+    }
+}
+
+// The status card: what stands between the person and the library, said
+// in words, with the one button that moves it along.
+export component OpenVidStatus inherits Rectangle {
+    border-radius: Theme.r;
+    background: Theme.field;
+    height: 200px;
+
+    VerticalLayout {
+        alignment: center;
+        padding: 16px;
+        spacing: 10px;
+
+        if OpenVid.state == 0 || OpenVid.state == 3: VerticalLayout {
+            alignment: center;
+            spacing: 10px;
+
+            Text {
+                text: I18n.t("openvid.welcome");
+                color: Theme.fg;
+                font-size: Theme.fs;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: I18n.t("openvid.welcomeHint");
+                color: Theme.fg-muted;
+                font-size: Theme.fs-sm;
+                wrap: word-wrap;
+                horizontal-alignment: center;
+            }
+            if OpenVid.state == 3: Text {
+                text: OpenVid.error;
+                color: Theme.danger;
+                font-size: Theme.fs-sm;
+                wrap: word-wrap;
+                horizontal-alignment: center;
+            }
+            Rectangle {
+                border-radius: Theme.r-sm;
+                height: Theme.h;
+                background: start.has-hover ? Theme.accent-hover : Theme.accent;
+                HorizontalLayout {
+                    alignment: center;
+                    Text {
+                        vertical-alignment: center;
+                        text: I18n.t("openvid.download");
+                        color: Theme.on-accent;
+                        font-size: Theme.fs-sm;
+                    }
+                }
+                start := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { OpenVid.download(); }
+                }
+            }
+        }
+
+        if OpenVid.state == 1: VerticalLayout {
+            alignment: center;
+            spacing: 10px;
+
+            Text {
+                text: I18n.t("openvid.downloading");
+                color: Theme.fg;
+                font-size: Theme.fs;
+                horizontal-alignment: center;
+            }
+            Rectangle {
+                height: 6px;
+                border-radius: 3px;
+                background: Theme.line;
+                clip: true;
+
+                Rectangle {
+                    x: 0;
+                    y: 0;
+                    height: parent.height;
+                    width: parent.width * Math.min(100, Math.max(0, OpenVid.percent)) / 100;
+                    border-radius: 3px;
+                    background: Theme.accent;
+                }
+            }
+            Text {
+                text: "\{OpenVid.percent}%";
+                color: Theme.fg-muted;
+                font-family: Theme.font-technical;
+                font-size: Theme.fs-sm;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}

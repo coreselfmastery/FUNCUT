@@ -37,6 +37,14 @@ rustls-native-certs = "0.8"
 # A finished download is checked against the digest its table carries
 # before anything is allowed to call it installed; see models.rs.
 sha2 = "0.10"
+# The OpenVid stock library's local index: every clip's caption, scores
+# and byte range in one SQLite file, searched in milliseconds. Bundled, so
+# no system SQLite is asked for and every platform gets the same one, FTS5
+# included.
+rusqlite = { version = "0.40", features = ["bundled"] }
+# The index's captions are zstd-compressed against a dictionary the index
+# itself carries; decompressed a page at a time, never whole.
+zstd = "0.14"
 # The log facade. The engine writes `log::warn!` and logs.rs is what puts
 # the line in a file; a phone puts it in logcat as well.
 log = { version = "0.4", features = ["std"] }

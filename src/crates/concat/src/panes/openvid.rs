@@ -515,7 +515,7 @@ impl Studio {
         if !target.exists() {
             std::fs::create_dir_all(&folder)
                 .and_then(|()| std::fs::copy(path, &target).map(drop))
-                .map_err(|error| tf("openvid.couldNotCopy", &[name, &error]))?;
+                .map_err(|error| tf("openvid.couldNotCopy", &[&name, &error]))?;
         }
         let summary = concat_host::media::probe(&target_text)?;
         let created = self.apply(concat_project::Command::AddMedia {
@@ -529,6 +529,6 @@ impl Studio {
                     .find(|item| item.path == target_text)
                     .map(|item| item.id.clone())
             })
-            .ok_or_else(|| tf("openvid.couldNotCopy", &[name, &"?"]))
+            .ok_or_else(|| tf("openvid.couldNotCopy", &[&name, &"?"]))
     }
 }

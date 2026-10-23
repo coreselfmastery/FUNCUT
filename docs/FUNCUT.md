@@ -6,7 +6,21 @@ Linux laptop - 4 GB of RAM, a modest CPU, integrated graphics - while cutting
 real videos: 20-minute YouTube pieces, not 20-second clips. The program is
 the same one Concat ships (the binary is still called `concat`, and project
 files move between the two); what this fork changes is how it sizes itself to
-the machine, and how easy it is to get onto one.
+the machine, and how easy it is to get onto one. The full ledger of what
+changed against upstream, number by number, is in
+[FUNCUT-CHANGES.md](FUNCUT-CHANGES.md).
+
+## The voiceover's pause removal
+
+Record a voiceover and the panel offers to cut the pauses out of the take:
+one button, under the transport. The take is streamed through the engine and
+measured (pauses are runs of quiet at least 0.35 s long, padded 60 ms a side
+so words are not clipped), and the cut lands as one undoable edit - the lane
+closes up behind it, the pieces keep every look the take had, and undo puts
+the whole take back. A take with nothing loud in it, or one that is almost
+all silence, is reported as having no pauses to cut: that one is a retake,
+not an edit. The same cut is scriptable as the `removeSpans` command over
+the JSON-RPC API.
 
 ## Install
 
@@ -83,6 +97,8 @@ own regardless of the machine; they now take the same machine-sized share
 the window's editor does. The detection lives in one place
 (`concat-media`'s `memory` module), so every part of the program - the
 editor, an export, a headless render - sizes itself for the same machine.
+The full comparison, including what the Celeron's integrated graphics does
+and does not help with, is in [FUNCUT-CHANGES.md](FUNCUT-CHANGES.md).
 
 Nothing is lost on a small machine, only held closer: a decoder closed is
 reopened at the price of one seek, a still not held is painted again, a

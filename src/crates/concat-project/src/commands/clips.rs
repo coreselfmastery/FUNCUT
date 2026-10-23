@@ -412,6 +412,103 @@ pub(super) fn apply(
             })
         }
 
+        Command::RemoveSpans {
+            clip_id,
+            spans,
+            ripple,
+        } => {
+            let timeline = project.active_mut();
+            let Some(index) = timeline.clips.iter().position(|clip| clip.id == clip_id) else {
+                return Ok(Outcome::default());
+            };
+            let whole: Clip = timeline.clips[index].as_ref().clone();
+            let Some(spans) = spans_over(&whole, &spans) else {
+                return Ok(Outcome::default());
+            };
+            // The pieces the spans leave, as `[from, to)` from the clip's
+            // start: the first is the clip's own entry, rewritten; the
+            // rest are minted after it in order.
+            let pieces: Vec<(f64, f64)> = complement(&spans, whole.duration);
+
+            // Nothing left to keep: the clip goes, and the lane closes
+            // behind the whole of it when asked.
+            if pieces.is_empty() {
+                let end = whole.start + whole.duration;
+                let gone = (whole.track_id.clone(), whole.start, end);
+                timeline.clips.remove(index);
+                if ripple {
+                    close_gaps(timeline, &[gone]);
+                }
+                return Ok(Outcome {
+                    created_id: None,
+                    applied: true,
+                });
+            }
+
+            debug_assert!(pieces.iter().all(|&(from, to)| to - from > 0.0));
+
+            // Rewrite the first piece over the clip's own entry.
+            let first = timeline.clip_at_mut(index);
+            let (from, to) = pieces[0];
+            first.duration = to - from;
+            first.start = whole.start + from;
+            let mut first_source = split_source(whole.source_start, whole.speed, from).1;
+            if let Some(consumed) = crate::speed::rewindow_clip(first, whole.duration, from, to) {
+                first_source = whole.source_start + consumed;
+            }
+            first.source_start = first_source;
+            first.rewindow_keys(whole.duration, from, to);
+            first.fade_out = 0.0;
+            let first_id = first.id.clone();
+
+            // Mint the rest after it, each carrying the whole clip's looks.
+            let mut minted = Vec::new();
+            for &(from, to) in &pieces[1..] {
+                let mut piece = whole.clone();
+                piece.id = mint.next("c");
+                piece.start = whole.start + from;
+                piece.duration = to - from;
+                let mut source = split_source(whole.source_start, whole.speed, from).1;
+                if let Some(consumed) =
+                    crate::speed::rewindow_clip(&mut piece, whole.duration, from, to)
+                {
+                    source = whole.source_start + consumed;
+                }
+                piece.source_start = source;
+                piece.rewindow_keys(whole.duration, from, to);
+                piece.transition_in = None;
+                piece.fade_in = 0.0;
+                piece.fade_out = 0.0;
+                minted.push(Arc::new(piece));
+            }
+            // The way out belongs to the last piece, whichever it is.
+            if let Some(last) = minted.last_mut() {
+                Arc::make_mut(last).fade_out = whole.fade_out;
+            } else {
+                timeline.clip_at_mut(index).fade_out = whole.fade_out;
+            }
+            for (offset, piece) in minted.into_iter().enumerate() {
+                timeline.clips.insert(index + 1 + offset, piece);
+            }
+
+            // The ripple of the cuts: the spans, in timeline time, close
+            // exactly as a delete's would, moving the minted pieces and
+            // whatever follows the clip on its lane.
+            if ripple {
+                let gone: Vec<(String, f64, f64)> = spans
+                    .iter()
+                    .map(|&(from, to)| {
+                        (whole.track_id.clone(), whole.start + from, whole.start + to)
+                    })
+                    .collect();
+                close_gaps(timeline, &gone);
+            }
+            Ok(Outcome {
+                created_id: Some(first_id),
+                applied: true,
+            })
+        }
+
         Command::ReplaceClipMedia {
             clip_id,
             item,
@@ -964,6 +1061,85 @@ pub fn delete_to_playhead(
 /// the two pieces together show exactly what the whole did.
 fn split_source(source_start: f64, speed: f64, offset: f64) -> (f64, f64) {
     (source_start, source_start + offset * speed)
+}
+
+/// How close two boundaries must be to count as the same place. The
+/// fractions a document round-trips through JSON are not exact, and a
+/// hair of float noise must not open a sliver of a piece.
+const BOUNDARY: f64 = 1e-6;
+
+/// The spans to cut out of `clip`, normalised from `asked`: clamped into
+/// the clip, empty ones dropped, overlapping ones merged, and a kept
+/// piece too short to stand alone folded into the span beside it. The
+/// spans may end up covering the whole clip, which the caller takes as
+/// its cue to remove it. `None` when nothing is left to cut.
+fn spans_over(clip: &Clip, asked: &[(f64, f64)]) -> Option<Vec<(f64, f64)>> {
+    let mut spans = merge(
+        asked
+            .iter()
+            .filter_map(|&(from, to)| {
+                let from = from.clamp(0.0, clip.duration);
+                let to = to.clamp(from, clip.duration);
+                (to - from > BOUNDARY).then_some((from, to))
+            })
+            .collect(),
+    );
+    if spans.is_empty() {
+        return None;
+    }
+    // A piece too short to be a clip of its own - a word clipped to a
+    // sliver between two pauses - goes with the pause: into the span
+    // that follows it, or the one before it at the clip's end.
+    loop {
+        let kept = complement(&spans, clip.duration);
+        let Some(&(from, to)) = kept
+            .iter()
+            .find(|&&(from, to)| to - from < MIN_CLIP_DURATION)
+        else {
+            break;
+        };
+        match spans.iter_mut().find(|span| span.0 >= to - BOUNDARY) {
+            Some(next) => next.0 = next.0.min(from),
+            None => {
+                if let Some(last) = spans.last_mut() {
+                    last.1 = last.1.max(to);
+                }
+            }
+        }
+        spans = merge(spans);
+    }
+    Some(spans)
+}
+
+/// Sorted spans with overlapping and touching ones folded together.
+fn merge(spans: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
+    let mut spans = spans;
+    spans.sort_by(|left, right| left.0.total_cmp(&right.0));
+    let mut merged: Vec<(f64, f64)> = Vec::new();
+    for (from, to) in spans {
+        match merged.last_mut() {
+            Some((_, end)) if from <= *end + BOUNDARY => *end = (*end).max(to),
+            _ => merged.push((from, to)),
+        }
+    }
+    merged
+}
+
+/// What `spans` leave of `[0, duration]`: the kept pieces, in order.
+/// `spans` must be sorted and merged, as [`spans_over`] returns them.
+fn complement(spans: &[(f64, f64)], duration: f64) -> Vec<(f64, f64)> {
+    let mut kept: Vec<(f64, f64)> = Vec::new();
+    let mut at = 0.0;
+    for &(from, to) in spans {
+        if from - at > BOUNDARY {
+            kept.push((at, from));
+        }
+        at = at.max(to);
+    }
+    if duration - at > BOUNDARY {
+        kept.push((at, duration));
+    }
+    kept
 }
 
 /// Why these clips cannot be merged, or None if they can. A sentence, because

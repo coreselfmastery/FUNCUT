@@ -2060,6 +2060,7 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
             "resume" => VoiceoverMsg::Resume,
             "stop" => VoiceoverMsg::Stop,
             "retake" => VoiceoverMsg::Retake,
+            "remove-silence" => VoiceoverMsg::RemoveSilence,
             "retry" => VoiceoverMsg::Retry,
             other => {
                 log::warn!("voiceover: no such action {other:?}");

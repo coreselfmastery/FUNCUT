@@ -50,6 +50,8 @@ export struct VoiceoverData {
     /// There is a take to throw away and go again from: the one running,
     /// or the one that landed last.
     can-retake: bool,
+    /// The take that landed last can have its pauses cut out of it.
+    can-cut-silence: bool,
     /// The teleprompter's script.
     prompt: string,
     /// How fast it scrolls: 0 slow, 1 steady, 2 fast.
@@ -473,6 +475,26 @@ export component VoiceoverPanel inherits Rectangle {
                         enabled: root.busy;
                         clicked => { root.action("stop"); }
                     }
+                }
+            }
+
+            // ── the take that landed, and its pauses ──────────────
+            //
+            // One cut for the whole take, done the moment it lands or any
+            // time after: the pauses measured off the window's thread, then
+            // taken out as one edit the lane closes up behind. Hidden while
+            // a take runs, when there is nothing yet to cut.
+            if !root.busy: HorizontalLayout {
+                padding-left: Theme.pad;
+                padding-right: Theme.pad;
+
+                Button {
+                    glyph: Glyph.razor;
+                    label: I18n.t("voiceover.removeSilence");
+                    ghost: true;
+                    block: true;
+                    enabled: root.data.can-cut-silence;
+                    clicked => { root.action("remove-silence"); }
                 }
             }
 

@@ -26,6 +26,7 @@ pub mod pool;
 pub mod prefetch;
 pub mod probe;
 pub mod samples;
+pub mod silence;
 pub mod svg;
 pub mod treat;
 

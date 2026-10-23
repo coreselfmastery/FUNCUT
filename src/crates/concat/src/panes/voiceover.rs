@@ -55,6 +55,11 @@ pub enum VoiceoverMsg {
     Stop,
     /// Throw the last take away and go again from where it began.
     Retake,
+    /// Cut the pauses out of the take that landed last: analysed off the
+    /// window's thread, applied as one edit. See `remove_silence`.
+    RemoveSilence,
+    /// The take's pauses, measured: onto the timeline with them.
+    SilencesMeasured(Box<Result<Vec<(f64, f64)>, String>>),
     /// Open the microphone again, after it would not open.
     Retry,
     /// The device failed after it opened: unplugged, taken by another app.
@@ -98,6 +103,11 @@ impl std::fmt::Debug for VoiceoverMsg {
             Self::Resume => write!(f, "Resume"),
             Self::Stop => write!(f, "Stop"),
             Self::Retake => write!(f, "Retake"),
+            Self::RemoveSilence => write!(f, "RemoveSilence"),
+            Self::SilencesMeasured(found) => match found.as_ref() {
+                Ok(spans) => write!(f, "SilencesMeasured({} spans)", spans.len()),
+                Err(error) => write!(f, "SilencesMeasured(error {error:?})"),
+            },
             Self::Retry => write!(f, "Retry"),
             Self::Lost(error) => write!(f, "Lost({error:?})"),
             Self::Device(index) => write!(f, "Device({index})"),
@@ -199,9 +209,11 @@ struct Running {
     held: f32,
 }
 
-/// The take that landed last, for Retake.
+/// The take that landed last, for Retake and pause removal.
 struct Last {
     media_id: String,
+    /// The clip the take became, on the timeline.
+    clip_id: String,
     start: f64,
 }
 
@@ -302,6 +314,8 @@ impl VoiceoverPane {
                 _ => self.stop(studio),
             },
             VoiceoverMsg::Retake => self.retake(studio),
+            VoiceoverMsg::RemoveSilence => self.remove_silence(studio),
+            VoiceoverMsg::SilencesMeasured(found) => self.silences_measured(*found, studio),
             VoiceoverMsg::Retry => self.reopen(studio),
             VoiceoverMsg::Lost(error) => {
                 log::warn!("voiceover: the microphone was lost: {error}");
@@ -372,6 +386,7 @@ impl VoiceoverPane {
             gain: prefs.gain_db,
             error: self.error.clone().unwrap_or_default().into(),
             can_retake: self.can_retake(studio),
+            can_cut_silence: self.can_remove_silence(studio),
             prompt: self.prompt.clone().into(),
             prompt_speed: i32::from(prefs.prompt_speed),
         }
@@ -394,6 +409,19 @@ impl VoiceoverPane {
                     .any(|item| item.id == last.media_id)
             }),
         }
+    }
+
+    /// Whether the take that landed last can have its pauses cut out:
+    /// its clip is on the timeline, at a constant speed - a clip whose
+    /// speed changes under it is not one a pause's place can be mapped
+    /// onto - and nothing is being recorded.
+    fn can_remove_silence(&self, studio: &Studio) -> bool {
+        self.phase == Phase::Ready
+            && self
+                .last
+                .as_ref()
+                .and_then(|last| studio.project().active().clip(&last.clip_id))
+                .is_some_and(|clip| clip.speed_curve.is_none())
     }
 
     fn open(&mut self, studio: &mut Studio) {
@@ -678,6 +706,93 @@ impl VoiceoverPane {
         self.record(studio);
     }
 
+    /// Sends the take that landed last to be measured for pauses, off the
+    /// window's thread. The measurement is the file's; the reply carries
+    /// the spans of the clip it becomes, so nothing but the edit itself
+    /// is left to do when it lands.
+    fn remove_silence(&mut self, studio: &mut Studio) {
+        let Some(clip) = self
+            .last
+            .as_ref()
+            .and_then(|last| studio.project().active().clip(&last.clip_id).cloned())
+        else {
+            return;
+        };
+        let Some(media) = studio
+            .project()
+            .media
+            .iter()
+            .find(|item| item.id == clip.media_id)
+            .cloned()
+        else {
+            return;
+        };
+        let stream = clip.audio_stream;
+        let source_start = clip.source_start;
+        let source_end = source_start + clip.duration * clip.speed;
+        let speed = clip.speed;
+        log::info!("voiceover: measuring {} for pauses", media.path);
+        let path = media.path.clone();
+        spawn_in_project(
+            move || {
+                media::silences(&path, stream).map(|found| {
+                    // The file's spans, mapped onto the clip: only those
+                    // the clip's own window of the source touches, and in
+                    // the clip's own seconds.
+                    found
+                        .into_iter()
+                        .filter_map(|(from, to)| {
+                            let from = from.max(source_start);
+                            let to = to.min(source_end);
+                            (to > from).then_some((
+                                (from - source_start) / speed,
+                                (to - source_start) / speed,
+                            ))
+                        })
+                        .collect::<Vec<(f64, f64)>>()
+                })
+            },
+            move |studio, _, _, found| {
+                studio.handle(Msg::Voiceover(VoiceoverMsg::SilencesMeasured(
+                    Box::new(found),
+                )));
+            },
+        );
+    }
+
+    /// The measurement comes back: the spans become one RemoveSpans on
+    /// the take's clip, or a word that says there was nothing to cut.
+    fn silences_measured(&mut self, found: Result<Vec<(f64, f64)>, String>, studio: &mut Studio) {
+        let Some(last) = self.last.as_ref() else {
+            return;
+        };
+        let spans = match found {
+            Ok(spans) => spans,
+            Err(error) => {
+                log::warn!("voiceover: no pause measurement: {error}");
+                studio.notify(&tf("voiceover.failed", &[&error]), true);
+                return;
+            }
+        };
+        if spans.is_empty() {
+            studio.notify(&t("voiceover.noSilence"), false);
+            return;
+        }
+        let cut: f64 = spans.iter().map(|(from, to)| to - from).sum();
+        let applied = studio
+            .apply(Command::RemoveSpans {
+                clip_id: last.clip_id.clone(),
+                spans,
+                ripple: true,
+            })
+            .is_some();
+        if applied {
+            studio.notify(&tf("voiceover.silenceRemoved", &[&crate::format::span(cut)]), false);
+        } else {
+            studio.notify(&t("voiceover.noSilence"), false);
+        }
+    }
+
     /// Puts a probed take into the bin and on the timeline.
     fn land(&mut self, landed: Landed, studio: &mut Studio) {
         let summary = match landed.result {
@@ -730,6 +845,7 @@ impl VoiceoverPane {
                 .map(|placed| placed.track_id.clone());
             self.last = Some(Last {
                 media_id,
+                clip_id: clip,
                 start: landed.start,
             });
             studio.notify(&t("voiceover.added"), false);

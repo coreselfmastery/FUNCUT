@@ -302,6 +302,18 @@ pub fn peaks(
     Ok(peaks)
 }
 
+/// The pauses in a recording, as spans of the file's seconds, for the
+/// voiceover panel's pause removal: `stream` is which of the file's audio
+/// streams, by index, or `None` for the first - the same choice a clip
+/// makes. The engine streams the decode at the rate silence is measured
+/// at and never holds the samples; what counts as a pause, and the
+/// guards that keep a failed take from being edited instead of retaken,
+/// are `concat_media::silence`'s to say.
+pub fn silences(path: &str, stream: Option<u32>) -> Result<Vec<(f64, f64)>, String> {
+    concat_media::silence::silences(Path::new(path), stream.map(|index| index as usize))
+        .map_err(describe)
+}
+
 /// The cache filename for one file's peaks.
 ///
 /// FNV-1a 64 over the path, like the audio cache's `decode_key` and for the

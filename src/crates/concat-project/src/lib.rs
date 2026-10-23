@@ -41,13 +41,15 @@ pub use model::Project;
 mod tests {
     use serde_json::json;
 
+    use std::sync::Arc;
+
     use crate::commands::{
         ClipMove, ClipPatch, Command, NewMedia, PlayheadSide, TrackFlag, TrimEdge,
     };
     use crate::doc::DocumentSettings;
     use crate::editor::Editor;
     use crate::model::{
-        AudioTrack, ClipKind, MediaItem, MediaKind, MediaOrigin, Project, TextStyle,
+        AudioTrack, Clip, ClipKind, MediaItem, MediaKind, MediaOrigin, Project, TextStyle,
     };
 
     fn media(path: &str, duration: f64, has_audio: bool) -> Command {
@@ -1036,6 +1038,277 @@ mod tests {
             Command::RemoveClips { ripple, .. } => assert!(!ripple),
             _ => panic!("not a remove"),
         }
+    }
+
+    // ── removing spans: pause removal as one edit ──
+
+    fn remove_spans(clip_id: &str, spans: &[(f64, f64)], ripple: bool) -> Command {
+        Command::RemoveSpans {
+            clip_id: clip_id.to_owned(),
+            spans: spans.to_vec(),
+            ripple,
+        }
+    }
+
+    /// The clips on `lane_id` that are neither `first` nor `except`: the
+    /// pieces a RemoveSpans minted, in timeline order.
+    fn minted<'a>(
+        editor: &'a Editor,
+        lane_id: &str,
+        first: &str,
+        except: &[&str],
+    ) -> Vec<&'a Clip> {
+        let mut found: Vec<&Clip> = editor
+            .project()
+            .active()
+            .clips
+            .iter()
+            .map(Arc::as_ref)
+            .filter(|clip| {
+                clip.track_id == lane_id && clip.id != first && !except.contains(&clip.id.as_str())
+            })
+            .collect();
+        found.sort_by(|left, right| left.start.total_cmp(&right.start));
+        found
+    }
+
+    /// One clip of ten seconds with a two-second pause in its middle
+    /// becomes two pieces that touch, the first keeping the clip's id,
+    /// and the lane closes up behind the cut. One undo step puts the
+    /// whole clip back.
+    #[test]
+    fn remove_spans_cuts_the_middle_and_ripples_the_lane() {
+        let (mut editor, media_id, first) = fixture();
+        let video = editor.project().active().tracks[0].id.clone();
+        let rest = lane(&mut editor, &media_id, &video, &[10.0]);
+        editor
+            .apply(remove_spans(&first, &[(3.0, 5.0)], true))
+            .expect("cuts");
+        let survivor = editor
+            .project()
+            .active()
+            .clip(&first)
+            .expect("the id survives");
+        assert_eq!((survivor.start, survivor.duration), (0.0, 3.0));
+        assert_eq!(survivor.source_start, 0.0);
+        let pieces = minted(&editor, &video, &first, &[rest[0].as_str()]);
+        assert_eq!(pieces.len(), 1);
+        assert_eq!((pieces[0].start, pieces[0].duration), (3.0, 5.0));
+        assert_eq!(pieces[0].source_start, 5.0, "source-continuous");
+        assert_eq!(start_of(&editor, &rest[0]), 8.0, "the lane closes up");
+        // One undo step puts the whole clip back.
+        assert!(editor.undo());
+        let timeline = editor.project().active();
+        assert_eq!(timeline.clips.len(), 2, "the take and the clip behind it");
+        let whole = timeline.clip(&first).expect("the id is back");
+        assert_eq!((whole.start, whole.duration), (0.0, 10.0));
+        assert_eq!(start_of(&editor, &rest[0]), 10.0);
+    }
+
+    /// Without the ripple the pieces keep their places and the cut is a
+    /// gap: what a layered edit over the pause survives.
+    #[test]
+    fn remove_spans_without_ripple_leave_gaps() {
+        let (mut editor, media_id, first) = fixture();
+        let video = editor.project().active().tracks[0].id.clone();
+        let rest = lane(&mut editor, &media_id, &video, &[10.0]);
+        editor
+            .apply(remove_spans(&first, &[(3.0, 5.0)], false))
+            .expect("cuts");
+        let pieces = minted(&editor, &video, &first, &[rest[0].as_str()]);
+        assert_eq!(pieces.len(), 1);
+        assert_eq!((pieces[0].start, pieces[0].duration), (5.0, 5.0));
+        assert_eq!(
+            start_of(&editor, &rest[0]),
+            10.0,
+            "the lane keeps its shape"
+        );
+    }
+
+    /// A pause at each end leaves one piece, holding the clip's id and
+    /// landing where the clip began, with the in-point the pause left.
+    #[test]
+    fn remove_spans_of_the_head_and_tail_leave_one_piece() {
+        let (mut editor, _media_id, first) = fixture();
+        editor
+            .apply(remove_spans(&first, &[(0.0, 1.0), (8.0, 10.0)], true))
+            .expect("cuts");
+        let survivor = editor
+            .project()
+            .active()
+            .clip(&first)
+            .expect("the id survives");
+        assert_eq!((survivor.start, survivor.duration), (0.0, 7.0));
+        assert_eq!(survivor.source_start, 1.0);
+        assert_eq!(
+            editor.project().active().clips.len(),
+            1,
+            "no pieces were minted"
+        );
+    }
+
+    /// The source a piece starts at follows the clip's speed, as a
+    /// split's tail does.
+    #[test]
+    fn remove_spans_map_the_source_through_speed() {
+        let (mut editor, _media_id, first) = fixture();
+        editor
+            .apply(Command::SetClipSpeed {
+                clip_id: first.clone(),
+                speed: 2.0,
+                ripple: false,
+            })
+            .expect("speeds");
+        // Ten seconds of source at twice the rate: the clip runs five.
+        editor
+            .apply(remove_spans(&first, &[(2.0, 4.0)], false))
+            .expect("cuts");
+        let pieces = minted(
+            &editor,
+            &editor.project().active().tracks[0].id,
+            &first,
+            &[],
+        );
+        assert_eq!(pieces.len(), 1);
+        // Timeline [4, 5) is source [8, 10) at twice the rate.
+        assert_eq!((pieces[0].start, pieces[0].duration), (4.0, 1.0));
+        assert_eq!(pieces[0].source_start, 8.0);
+    }
+
+    /// The way in belongs to the first piece and the way out to the
+    /// last, as a split shares them; a minted piece has no way in.
+    #[test]
+    fn remove_spans_share_the_fades_as_a_split_does() {
+        let (mut editor, _media_id, first) = fixture();
+        editor
+            .apply(Command::UpdateClip {
+                clip_id: first.clone(),
+                patch: ClipPatch {
+                    fade_in: Some(0.5),
+                    fade_out: Some(0.7),
+                    ..Default::default()
+                },
+            })
+            .expect("fades");
+        editor
+            .apply(remove_spans(&first, &[(3.0, 5.0)], false))
+            .expect("cuts");
+        let timeline = editor.project().active();
+        let survivor = timeline.clip(&first).expect("the id survives");
+        let pieces = minted(&editor, &survivor.track_id, &first, &[]);
+        assert_eq!((survivor.fade_in, survivor.fade_out), (0.5, 0.0));
+        assert_eq!(pieces.len(), 1);
+        assert_eq!((pieces[0].fade_in, pieces[0].fade_out), (0.0, 0.7));
+        assert_eq!(pieces[0].transition_in, None, "a mint has no way in");
+    }
+
+    /// Spans that cover the clip remove it, and the lane closes up
+    /// behind the whole of it.
+    #[test]
+    fn spans_that_cover_the_clip_remove_it() {
+        let (mut editor, media_id, first) = fixture();
+        let video = editor.project().active().tracks[0].id.clone();
+        let rest = lane(&mut editor, &media_id, &video, &[10.0]);
+        let outcome = editor
+            .apply(remove_spans(&first, &[(0.0, 4.0), (4.0, 10.0)], true))
+            .expect("removes");
+        assert!(outcome.applied);
+        assert_eq!(outcome.created_id, None);
+        assert!(editor.project().active().clip(&first).is_none());
+        assert_eq!(start_of(&editor, &rest[0]), 0.0);
+    }
+
+    /// Spans that miss the clip, and a clip that is not there, change
+    /// nothing and record no undo step.
+    #[test]
+    fn spans_that_miss_are_a_no_op() {
+        let (mut editor, _media_id, first) = fixture();
+        let before = editor.can_undo();
+        let outcome = editor
+            .apply(remove_spans(&first, &[(20.0, 30.0), (-8.0, -4.0)], true))
+            .expect("tolerated");
+        assert!(!outcome.applied);
+        assert_eq!(editor.can_undo(), before);
+        let outcome = editor
+            .apply(remove_spans("c999", &[(1.0, 2.0)], true))
+            .expect("tolerated");
+        assert!(!outcome.applied);
+        assert_eq!(editor.can_undo(), before);
+    }
+
+    /// A kept piece too short to stand alone folds into the pause beside
+    /// it rather than becoming a sliver of a clip.
+    #[test]
+    fn short_kept_pieces_fold_into_the_pause_beside_them() {
+        let (mut editor, _media_id, first) = fixture();
+        editor
+            .apply(remove_spans(&first, &[(1.0, 4.0), (4.01, 8.0)], false))
+            .expect("cuts");
+        let pieces = minted(
+            &editor,
+            &editor.project().active().tracks[0].id,
+            &first,
+            &[],
+        );
+        // The sliver between the pauses went with them: one mint, from
+        // the second pause's end to the clip's.
+        assert_eq!(pieces.len(), 1);
+        assert_eq!((pieces[0].start, pieces[0].duration), (8.0, 2.0));
+        assert_eq!(pieces[0].source_start, 8.0);
+    }
+
+    /// Spans in any order, overlapping and nested, are the same as their
+    /// union in order.
+    #[test]
+    fn unsorted_overlapping_spans_are_merged() {
+        let (mut editor, _media_id, first) = fixture();
+        editor
+            .apply(remove_spans(
+                &first,
+                &[(6.0, 8.0), (2.0, 4.0), (3.0, 5.0)],
+                false,
+            ))
+            .expect("cuts");
+        let survivor = editor
+            .project()
+            .active()
+            .clip(&first)
+            .expect("the id survives");
+        assert_eq!((survivor.start, survivor.duration), (0.0, 2.0));
+        let pieces = minted(&editor, &survivor.track_id, &first, &[]);
+        assert_eq!(pieces.len(), 2);
+        assert_eq!((pieces[0].start, pieces[0].duration), (5.0, 1.0));
+        assert_eq!((pieces[1].start, pieces[1].duration), (8.0, 2.0));
+    }
+
+    /// A document from before the command's ripple field existed still
+    /// parses, as one that does not ripple.
+    #[test]
+    fn a_remove_spans_document_without_the_ripple_field_still_parses() {
+        let command: Command = serde_json::from_value(json!({
+            "op": "removeSpans",
+            "clipId": "c1",
+            "spans": [[1.0, 2.0], [3.0, 4.0]]
+        }))
+        .expect("the field is new; old callers do not send it");
+        match command {
+            Command::RemoveSpans { spans, ripple, .. } => {
+                assert!(!ripple);
+                assert_eq!(spans, vec![(1.0, 2.0), (3.0, 4.0)]);
+            }
+            _ => panic!("not a removeSpans"),
+        }
+    }
+
+    /// A span that is not a number is refused, as every number a command
+    /// carries is.
+    #[test]
+    fn spans_that_are_not_numbers_are_refused() {
+        let (mut editor, _media_id, first) = fixture();
+        let error = editor
+            .apply(remove_spans(&first, &[(f64::NAN, 2.0)], true))
+            .expect_err("refused");
+        assert!(matches!(error, crate::commands::CommandError::NotANumber));
     }
 
     // ── magnetic trim: https://github.com/jub0t/Concat/issues/106 ──

@@ -58,8 +58,11 @@ pub enum VoiceoverMsg {
     /// Cut the pauses out of the take that landed last: analysed off the
     /// window's thread, applied as one edit. See `remove_silence`.
     RemoveSilence,
-    /// The take's pauses, measured: onto the timeline with them.
-    SilencesMeasured(Box<Result<Vec<(f64, f64)>, String>>),
+    /// The take's pauses, measured: onto the timeline with them. The
+    /// reply carries everything about the clip it measured, and is only
+    /// applied while that clip is still on the timeline, unchanged - see
+    /// [`Measured::still_the_take`].
+    SilencesMeasured(Box<Measured>),
     /// Open the microphone again, after it would not open.
     Retry,
     /// The device failed after it opened: unplugged, taken by another app.
@@ -88,6 +91,59 @@ pub struct Landed {
     start: f64,
 }
 
+/// A take's pauses as measured off the window's thread: the spans, in the
+/// clip's own seconds, beside everything the reply must know about the
+/// clip it measured them for. The measurement takes as long as the take
+/// does to stream through the engine, and the window does not wait for
+/// it: in between a retake can land a new take under the same button, a
+/// second click can make the cut a first reply is about to make, or any
+/// other edit can move the clip - so the spans are only applied while
+/// the clip is still the one they were measured of, unchanged; see
+/// [`Measured::still_the_take`].
+struct Measured {
+    /// The clip the take became.
+    clip_id: String,
+    /// The take's file in the bin.
+    media_id: String,
+    /// Where the clip's window of the source began, in the source's
+    /// seconds.
+    source_start: f64,
+    /// Where the clip's window of the source ended, in the source's
+    /// seconds.
+    source_end: f64,
+    /// The clip's constant rate of playback.
+    speed: f64,
+    /// The pauses, or why they could not be measured.
+    found: Result<Vec<(f64, f64)>, String>,
+}
+
+impl Measured {
+    /// Whether the clip this measured is still on the timeline with the
+    /// window of the source the spans are in the coordinates of: same
+    /// clip, same file, same in-point, same extent, same rate, and still
+    /// no curve - a clip a curve was put under is not one the spans can
+    /// be mapped onto. Anything else - a retake, an undo, a trim, a
+    /// second click that already made the cut - makes the reply a
+    /// no-op rather than an edit of the wrong take.
+    fn still_the_take(&self, studio: &Studio) -> bool {
+        let near = |left: f64, right: f64| (left - right).abs() < 1e-9;
+        studio
+            .project()
+            .active()
+            .clip(&self.clip_id)
+            .is_some_and(|clip| {
+                clip.media_id == self.media_id
+                    && clip.speed_curve.is_none()
+                    && near(clip.source_start, self.source_start)
+                    && near(
+                        clip.source_start + clip.duration * clip.speed,
+                        self.source_end,
+                    )
+                    && near(clip.speed, self.speed)
+            })
+    }
+}
+
 impl std::fmt::Debug for VoiceoverMsg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -104,8 +160,15 @@ impl std::fmt::Debug for VoiceoverMsg {
             Self::Stop => write!(f, "Stop"),
             Self::Retake => write!(f, "Retake"),
             Self::RemoveSilence => write!(f, "RemoveSilence"),
-            Self::SilencesMeasured(found) => match found.as_ref() {
-                Ok(spans) => write!(f, "SilencesMeasured({} spans)", spans.len()),
+            Self::SilencesMeasured(measured) => match measured.found.as_ref() {
+                Ok(spans) => {
+                    write!(
+                        f,
+                        "SilencesMeasured({}, {} spans)",
+                        measured.clip_id,
+                        spans.len()
+                    )
+                }
                 Err(error) => write!(f, "SilencesMeasured(error {error:?})"),
             },
             Self::Retry => write!(f, "Retry"),
@@ -315,7 +378,7 @@ impl VoiceoverPane {
             },
             VoiceoverMsg::Retake => self.retake(studio),
             VoiceoverMsg::RemoveSilence => self.remove_silence(studio),
-            VoiceoverMsg::SilencesMeasured(found) => self.silences_measured(*found, studio),
+            VoiceoverMsg::SilencesMeasured(measured) => self.silences_measured(*measured, studio),
             VoiceoverMsg::Retry => self.reopen(studio),
             VoiceoverMsg::Lost(error) => {
                 log::warn!("voiceover: the microphone was lost: {error}");
@@ -731,6 +794,8 @@ impl VoiceoverPane {
         let source_start = clip.source_start;
         let source_end = source_start + clip.duration * clip.speed;
         let speed = clip.speed;
+        let clip_id = clip.id.clone();
+        let media_id = media.id.clone();
         log::info!("voiceover: measuring {} for pauses", media.path);
         let path = media.path.clone();
         spawn_in_project(
@@ -754,7 +819,14 @@ impl VoiceoverPane {
             },
             move |studio, _, _, found| {
                 studio.handle(Msg::Voiceover(VoiceoverMsg::SilencesMeasured(Box::new(
-                    found,
+                    Measured {
+                        clip_id,
+                        media_id,
+                        source_start,
+                        source_end,
+                        speed,
+                        found,
+                    },
                 ))));
             },
         );
@@ -762,11 +834,20 @@ impl VoiceoverPane {
 
     /// The measurement comes back: the spans become one RemoveSpans on
     /// the take's clip, or a word that says there was nothing to cut.
-    fn silences_measured(&mut self, found: Result<Vec<(f64, f64)>, String>, studio: &mut Studio) {
-        let Some(last) = self.last.as_ref() else {
+    /// Only while the clip is still the take it was measured of,
+    /// unchanged - see [`Measured::still_the_take`]: the measurement runs
+    /// while the window keeps working, and a retake, a second click of
+    /// the button or any edit in between has made these spans someone
+    /// else's.
+    fn silences_measured(&mut self, measured: Measured, studio: &mut Studio) {
+        if !measured.still_the_take(studio) {
+            log::debug!(
+                "voiceover: the take {} changed while it was measured",
+                measured.clip_id
+            );
             return;
-        };
-        let spans = match found {
+        }
+        let spans = match measured.found {
             Ok(spans) => spans,
             Err(error) => {
                 log::warn!("voiceover: no pause measurement: {error}");
@@ -781,7 +862,7 @@ impl VoiceoverPane {
         let cut: f64 = spans.iter().map(|(from, to)| to - from).sum();
         let applied = studio
             .apply(Command::RemoveSpans {
-                clip_id: last.clip_id.clone(),
+                clip_id: measured.clip_id,
                 spans,
                 ripple: true,
             })

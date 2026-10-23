@@ -64,13 +64,11 @@ struct Index {
 /// download needs no account and no token. The digest beside it is baked
 /// into this build; a new index is a new release tag and a new constant,
 /// and a file whose version disagrees is re-downloaded.
-pub const INDEX_URL: &str =
-    "https://github.com/coreselfmastery/FUNCUT/releases/download/openvid-index-v1/openvid-index.sqlite";
+pub const INDEX_URL: &str = "https://github.com/coreselfmastery/FUNCUT/releases/download/openvid-index-v1/openvid-index.sqlite";
 
 /// The index file's SHA-256, lowercase hex. A download that does not match
 /// is deleted, not installed.
-pub const INDEX_SHA256: &str =
-    "9d3e83f190bcab9906910fa98b901d74ec9944674a891797d50a731d28682c09";
+pub const INDEX_SHA256: &str = "9d3e83f190bcab9906910fa98b901d74ec9944674a891797d50a731d28682c09";
 
 /// The index layout this build reads. The index's own `meta` table carries
 /// the same number; a disagreement is a re-download, not a guess.
@@ -380,7 +378,7 @@ impl Library {
         }
         if self.running.swap(true, Ordering::SeqCst) {
             return Ok(()); // One is already running; its progress is the
-                           // one to watch.
+            // one to watch.
         }
         let outcome = self.download_index(cancel);
         self.running.store(false, Ordering::SeqCst);
@@ -400,11 +398,10 @@ impl Library {
         // headless agent fetching at the same moment write two files and
         // the first to finish renames over the second, rather than both
         // appending to one corrupt thing.
-        let name = target
-            .file_name()
-            .map_or_else(|| "openvid-index.sqlite".to_owned(), |name| {
-                name.to_string_lossy().into_owned()
-            });
+        let name = target.file_name().map_or_else(
+            || "openvid-index.sqlite".to_owned(),
+            |name| name.to_string_lossy().into_owned(),
+        );
         let partial = folder.join(format!("{name}.partial-{}", std::process::id()));
         let progress = &self.progress;
         let mut report = move |done: u64, total: u64| {
@@ -445,18 +442,16 @@ impl Library {
             return Ok(());
         }
         let open = |what: &str| format!("the OpenVid index would not open: {what}");
-        let connection = Connection::open(index_path(&self.dirs))
-            .map_err(|error| open(&error.to_string()))?;
+        let connection =
+            Connection::open(index_path(&self.dirs)).map_err(|error| open(&error.to_string()))?;
         connection
             .pragma_update(None, "journal_mode", "WAL")
             .map_err(|error| open(&error.to_string()))?;
         let meta = |key: &str| -> Result<Vec<u8>, String> {
             connection
-                .query_row(
-                    "SELECT value FROM meta WHERE key = ?",
-                    [key],
-                    |row| row.get::<_, Vec<u8>>(0),
-                )
+                .query_row("SELECT value FROM meta WHERE key = ?", [key], |row| {
+                    row.get::<_, Vec<u8>>(0)
+                })
                 .map_err(|error| open(&error.to_string()))
         };
         let version = String::from_utf8_lossy(&meta("version")?).to_string();
@@ -478,7 +473,10 @@ impl Library {
                 [],
             )
             .map_err(|error| open(&error.to_string()))?;
-        let _ = self.db.set(Mutex::new(Index { db: connection, dict }));
+        let _ = self.db.set(Mutex::new(Index {
+            db: connection,
+            dict,
+        }));
         Ok(())
     }
 
@@ -596,7 +594,8 @@ impl Library {
                 rusqlite::params_from_iter(binds.iter().map(Bind::value)),
                 |row| row.get::<_, i64>(0),
             )
-            .map_err(|error| format!("the OpenVid index would not search: {error}"))? as u64;
+            .map_err(|error| format!("the OpenVid index would not search: {error}"))?
+            as u64;
 
         let order = match (query.sort, words.is_some()) {
             (Sort::Relevance, true) => " ORDER BY clips_fts.rank",
@@ -719,11 +718,16 @@ impl Library {
     /// again: the column holds a handful of distinct values, and the
     /// answer is a few dozen rows however many clips there are.
     pub fn cameras(&self) -> Vec<String> {
-        let Some(index) = self.db.get() else { return Vec::new() };
-        let Ok(index) = index.lock() else { return Vec::new() };
-        let Ok(mut statement) = index.db.prepare(
-            "SELECT camera, count(*) AS n FROM clips GROUP BY camera ORDER BY n DESC",
-        ) else {
+        let Some(index) = self.db.get() else {
+            return Vec::new();
+        };
+        let Ok(index) = index.lock() else {
+            return Vec::new();
+        };
+        let Ok(mut statement) = index
+            .db
+            .prepare("SELECT camera, count(*) AS n FROM clips GROUP BY camera ORDER BY n DESC")
+        else {
             return Vec::new();
         };
         statement
@@ -827,7 +831,10 @@ impl Library {
         // The clips are small - the largest is tens of megabytes - so one
         // ranged GET is the whole fetch; the models downloader's resume
         // machinery is for the index, not for these.
-        let agent = crate::net::agent(std::time::Duration::from_secs(20), std::time::Duration::from_secs(60));
+        let agent = crate::net::agent(
+            std::time::Duration::from_secs(20),
+            std::time::Duration::from_secs(60),
+        );
         let response = agent
             .get(&url)
             .set("Range", &format!("bytes={pos}-{}", pos + size - 1))
@@ -879,7 +886,7 @@ impl Library {
         let mut clips: Vec<PathBuf> = listing
             .filter_map(|entry| entry.ok())
             .map(|entry| entry.path())
-            .filter(|path| path.extension().map_or(false, |e| e == "mp4"))
+            .filter(|path| path.extension().is_some_and(|extension| extension == "mp4"))
             .collect();
         clips.sort();
         clips
@@ -927,7 +934,9 @@ fn caption_of(compressed: &[u8], dict: &[u8]) -> String {
     if read.is_ok() {
         text
     } else {
-        let error = read.err().map_or("no bytes".to_owned(), |error| error.to_string());
+        let error = read
+            .err()
+            .map_or("no bytes".to_owned(), |error| error.to_string());
         log::warn!("openvid: a caption did not decompress: {error}");
         String::new()
     }
@@ -986,7 +995,10 @@ pub fn shared(dirs: &AppDirs) -> &'static Library {
 /// ignored and the whole 16 GB file was about to arrive, which is stopped
 /// here rather than read.
 fn ranged(file: &str, start: u64, length: u64) -> Result<Vec<u8>, String> {
-    let agent = crate::net::agent(std::time::Duration::from_secs(20), std::time::Duration::from_secs(60));
+    let agent = crate::net::agent(
+        std::time::Duration::from_secs(20),
+        std::time::Duration::from_secs(60),
+    );
     let url = format!("{DATASET_URL}/{file}");
     let response = agent
         .get(&url)
@@ -1052,10 +1064,11 @@ fn frame_size_of(trailer: &[u8]) -> Option<(u32, u32)> {
             trailer[start + 2],
             trailer[start + 3],
         ]) as usize;
-        if size >= 8 && start + size <= trailer.len() {
-            if let Some(dims) = dims_of_moov(&trailer[start..start + size]) {
-                return Some(dims);
-            }
+        if size >= 8
+            && start + size <= trailer.len()
+            && let Some(dims) = dims_of_moov(&trailer[start..start + size])
+        {
+            return Some(dims);
         }
         at = start;
     }
@@ -1074,10 +1087,10 @@ fn dims_of_moov(moov: &[u8]) -> Option<(u32, u32)> {
             return None;
         }
         let kind = &moov[at + 4..at + 8];
-        if kind == b"trak" {
-            if let Some(dims) = dims_of_trak(&moov[at + 8..at + size]) {
-                return Some(dims);
-            }
+        if kind == b"trak"
+            && let Some(dims) = dims_of_trak(&moov[at + 8..at + size])
+        {
+            return Some(dims);
         }
         at += size;
     }
@@ -1251,7 +1264,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&data);
         std::fs::create_dir_all(data.join("openvid")).expect("the scratch folder");
         std::fs::copy(&index, data.join("openvid/openvid-index.sqlite")).expect("the index copied");
-        let dirs = AppDirs { config: data.clone(), data };
+        let dirs = AppDirs {
+            config: data.clone(),
+            data,
+        };
         let library = shared(&dirs);
         assert_eq!(library.status(), Status::Ready, "the index opens");
         assert_eq!(library.rows(), Some(937_957), "every clip is in it");
@@ -1268,7 +1284,10 @@ mod tests {
         assert!(!found.clips.is_empty(), "the words find clips");
         assert!(found.clips[0].aesthetic >= 5.0);
         assert!(
-            found.clips.iter().any(|clip| clip.caption.contains("ocean") || clip.caption.contains("sunset")),
+            found
+                .clips
+                .iter()
+                .any(|clip| clip.caption.contains("ocean") || clip.caption.contains("sunset")),
             "the captions came back as words, not compressed bytes: {:?}",
             found.clips[0].caption
         );
@@ -1286,8 +1305,14 @@ mod tests {
 
     #[test]
     fn a_shelf_is_read_out_of_the_name() {
-        assert_eq!(Source::of("pixabay_auroras_videos_90877_000.mp4"), Source::Pixabay);
-        assert_eq!(Source::of("pexels_landscape_5669996_005.mp4"), Source::Pexels);
+        assert_eq!(
+            Source::of("pixabay_auroras_videos_90877_000.mp4"),
+            Source::Pixabay
+        );
+        assert_eq!(
+            Source::of("pexels_landscape_5669996_005.mp4"),
+            Source::Pexels
+        );
         assert_eq!(Source::of("celebv_IMU00UwepuQ_5.mp4"), Source::CelebV);
         assert_eq!(Source::of("o2LQGDTAF0A_34_0to118.mp4"), Source::Other);
     }

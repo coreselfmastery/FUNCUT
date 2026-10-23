@@ -11421,18 +11421,19 @@ impl Studio {
             page.set_state(state);
             page.set_percent(percent);
             page.set_error(error);
-            page.set_rows(self.openvid.library_rows().map_or_else(
-                SharedString::default,
-                |rows| SharedString::from(thousands(rows).as_str()),
-            ));
+            page.set_rows(
+                self.openvid
+                    .library_rows()
+                    .map_or_else(SharedString::default, |rows| {
+                        SharedString::from(thousands(rows).as_str())
+                    }),
+            );
             page.set_measured(SharedString::from(
                 thousands(self.openvid.state_measured()).as_str(),
             ));
             page.set_searching(self.openvid.searching);
             page.set_total(SharedString::from(thousands(self.openvid.total).as_str()));
-            page.set_more(
-                (self.openvid.results.len() as u64) < self.openvid.total,
-            );
+            page.set_more((self.openvid.results.len() as u64) < self.openvid.total);
             // "Any camera" leads the list, so 0 is that and the rest are
             // the library's own motions, in the index's own order.
             let mut cameras = vec![SharedString::from(crate::i18n::t("openvid.anyCamera"))];

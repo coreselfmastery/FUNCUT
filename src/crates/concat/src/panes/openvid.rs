@@ -305,9 +305,7 @@ impl OpenvidPane {
                         Then::Place => studio.place_openvid(&name, &id, &path),
                     },
                     Err(error) if error == "cancelled" => {}
-                    Err(error) => {
-                        studio.notify(&tf("openvid.fetchFailed", &[&name, &error]), true)
-                    }
+                    Err(error) => studio.notify(&tf("openvid.fetchFailed", &[&name, &error]), true),
                 }
             }
         }
@@ -399,10 +397,9 @@ impl OpenvidPane {
         self.results
             .iter()
             .map(|clip| {
-                let shape = clip.dims.map_or_else(
-                    || "…".to_owned(),
-                    |(w, h)| format!("{w}×{h}"),
-                );
+                let shape = clip
+                    .dims
+                    .map_or_else(|| "…".to_owned(), |(w, h)| format!("{w}×{h}"));
                 OpenvidCardData {
                     id: clip.id.to_string().into(),
                     name: clip.name.as_str().into(),
@@ -443,7 +440,6 @@ impl Default for OpenvidPane {
         }
     }
 }
-
 
 impl Studio {
     /// Lays an OpenVid clip on the timeline: copied into the project's

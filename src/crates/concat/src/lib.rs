@@ -98,10 +98,10 @@ use panes::captions::CaptionsMsg;
 use panes::export::ExportMsg;
 use panes::media_bin::MediaMsg;
 use panes::monitor::MonitorMsg;
+use panes::openvid::OpenvidMsg;
 use panes::project::ProjectMsg;
 use panes::relink::RelinkMsg;
 use panes::settings::SettingsMsg;
-use panes::openvid::OpenvidMsg;
 use panes::sounds::SoundsMsg;
 use panes::speech::SpeechMsg;
 use panes::start::StartMsg;
@@ -1471,8 +1471,14 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         // ── the library's OpenVid page ──
         let openvid = app.global::<crate::ui::OpenVid>();
         openvid.on_search(on_window!(
-            |state, query: SharedString, source: i32, shape: i32, duration: i32,
-             quality: i32, camera: i32, order: i32| {
+            |state,
+             query: SharedString,
+             source: i32,
+             shape: i32,
+             duration: i32,
+             quality: i32,
+             camera: i32,
+             order: i32| {
                 state.handle(Msg::Openvid(OpenvidMsg::Search {
                     query: query.to_string(),
                     source,

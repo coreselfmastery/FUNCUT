@@ -44,10 +44,10 @@ use concat_export::{ExportClip, ExportRequest};
 pub use concat_host::AppDirs;
 use concat_host::cutout::{self, AnalyseRequest, Cutouts};
 use concat_host::export::{self, Exporter};
+use concat_host::openvid::{self, Orientation, Query, Sort, Source};
 use concat_host::preview::{FrameSpec, Monitor};
 use concat_host::session::EditorView;
 use concat_host::stabilize::{StabilizeRequest, Stabilizers};
-use concat_host::openvid::{self, Orientation, Query, Sort, Source};
 use concat_host::templates::{self, SlotFill};
 use concat_host::{ProjectInfo, Session, Titles, lock, media, projects};
 use concat_project::Command;
@@ -55,8 +55,8 @@ use concat_project::model::VideoSettings;
 
 pub use message::{
     API_VERSION, ApiError, Dirs, Done, ErrorCode, Event, ExportSpec, Fill, JobState, JobStatus,
-    OpenvidClip, OpenvidFound, OpenvidImport, OpenvidState, PackageInfo, ParamInfo, Picture,
-    Reply, Request, Response, Started, VersionInfo, Written,
+    OpenvidClip, OpenvidFound, OpenvidImport, OpenvidState, PackageInfo, ParamInfo, Picture, Reply,
+    Request, Response, Started, VersionInfo, Written,
 };
 
 /// The export sheet's middle quality, and what an export gets when the
@@ -506,9 +506,9 @@ impl Api {
                 ids,
                 start,
                 track,
-            } => Ok(Reply::OpenvidImported(self.openvid_import(
-                &path, &ids, start, track,
-            )?)),
+            } => Ok(Reply::OpenvidImported(
+                self.openvid_import(&path, &ids, start, track)?,
+            )),
             Request::MediaImport { path, file } => view(self.import(&path, &file)?),
             Request::CatalogueList { kind } => Ok(Reply::Packages(catalogue(kind.as_deref())?)),
             Request::TemplateList => Ok(Reply::Templates(templates::list(&self.dirs.config))),
@@ -766,7 +766,7 @@ impl Api {
                 return Err(ApiError::failed(format!(
                     "the sort must be relevance, aesthetic, motion, temporal, shortest, \
                      longest or surprise, not {other:?}"
-                )))
+                )));
             }
         };
         let search = Query {
@@ -785,10 +785,7 @@ impl Api {
             limit: limit.unwrap_or(20).clamp(1, 100),
             offset: offset.unwrap_or(0),
         };
-        let found = self
-            .library()
-            .search(&search)
-            .map_err(ApiError::failed)?;
+        let found = self.library().search(&search).map_err(ApiError::failed)?;
         Ok(OpenvidFound {
             clips: found
                 .clips
@@ -810,10 +807,7 @@ impl Api {
         let library = self.library();
         let mut clips = Vec::new();
         for id in ids {
-            let Some(clip) = library
-                .clip(*id)
-                .map_err(ApiError::failed)?
-            else {
+            let Some(clip) = library.clip(*id).map_err(ApiError::failed)? else {
                 return Err(ApiError::failed(format!("there is no clip {id}")));
             };
             // The frame size is measured here, on first ask: one small
@@ -860,10 +854,7 @@ impl Api {
             let session = self.session(path)?;
             let folder = std::path::PathBuf::from(session.path()).join("openvid");
             std::fs::create_dir_all(&folder).map_err(|error| {
-                ApiError::failed(format!(
-                    "could not create {}: {error}",
-                    folder.display()
-                ))
+                ApiError::failed(format!("could not create {}: {error}", folder.display()))
             })?;
             folder
         };
@@ -946,9 +937,9 @@ impl Api {
                  then ask openvid.status until it is ready"
                     .to_owned(),
             )),
-            openvid::Status::Failed(error) => {
-                Err(ApiError::failed(format!("the OpenVid index is unusable: {error}")))
-            }
+            openvid::Status::Failed(error) => Err(ApiError::failed(format!(
+                "the OpenVid index is unusable: {error}"
+            ))),
         }
     }
 

@@ -134,7 +134,10 @@ pub fn activity(msg: &Msg) -> Option<Activity> {
             ));
         }
         Msg::Openvid(OpenvidMsg::Download) => {
-            return Some(Activity::once(Info, "openvid: the index download began".to_owned()));
+            return Some(Activity::once(
+                Info,
+                "openvid: the index download began".to_owned(),
+            ));
         }
         Msg::Openvid(OpenvidMsg::Searched(result, _)) => {
             return Some(Activity::once(
@@ -148,7 +151,14 @@ pub fn activity(msg: &Msg) -> Option<Activity> {
         Msg::Openvid(OpenvidMsg::Fetched(id, Ok(_), then)) => {
             return Some(Activity::once(
                 Info,
-                format!("openvid: clip {id} fetched, {:?}", if then == openvid::Then::Preview { "to preview" } else { "to the timeline" }),
+                format!(
+                    "openvid: clip {id} fetched, {:?}",
+                    if then == openvid::Then::Preview {
+                        "to preview"
+                    } else {
+                        "to the timeline"
+                    }
+                ),
             ));
         }
         Msg::Media(MediaMsg::Import(paths)) => {

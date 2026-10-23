@@ -537,7 +537,11 @@ impl OpenvidClip {
     /// The library's own clip, as the API hands it back: the same
     /// numbers, the shelf and the frame size as words, and - when the
     /// clip's bytes are on this machine - where they are.
-    pub fn of(clip: &concat_host::openvid::Clip, dims: Option<(u32, u32)>, local: Option<&std::path::Path>) -> OpenvidClip {
+    pub fn of(
+        clip: &concat_host::openvid::Clip,
+        dims: Option<(u32, u32)>,
+        local: Option<&std::path::Path>,
+    ) -> OpenvidClip {
         OpenvidClip {
             id: clip.id,
             name: clip.name.clone(),

@@ -753,9 +753,9 @@ impl VoiceoverPane {
                 })
             },
             move |studio, _, _, found| {
-                studio.handle(Msg::Voiceover(VoiceoverMsg::SilencesMeasured(
-                    Box::new(found),
-                )));
+                studio.handle(Msg::Voiceover(VoiceoverMsg::SilencesMeasured(Box::new(
+                    found,
+                ))));
             },
         );
     }
@@ -787,7 +787,10 @@ impl VoiceoverPane {
             })
             .is_some();
         if applied {
-            studio.notify(&tf("voiceover.silenceRemoved", &[&crate::format::span(cut)]), false);
+            studio.notify(
+                &tf("voiceover.silenceRemoved", &[&crate::format::span(cut)]),
+                false,
+            );
         } else {
             studio.notify(&t("voiceover.noSilence"), false);
         }

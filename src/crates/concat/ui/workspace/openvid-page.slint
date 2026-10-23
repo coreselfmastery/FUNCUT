@@ -82,6 +82,9 @@ export global OpenVid {
 
     /// "Download the index": the one-time fetch of the library's index.
     callback download();
+    /// A library pane turned to the page or away from it, so a status
+    /// read - is the index here yet? - happens as the page comes up.
+    callback shown(on: bool);
     /// The search field's words changed, or a filter moved: run it again,
     /// with every filter the page holds as it stands.
     callback search(query: string, source: int, shape: int, duration: int,

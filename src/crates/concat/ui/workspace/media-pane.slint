@@ -1897,7 +1897,10 @@ export component MediaPane inherits Rectangle {
     property <int> tab;
     /// The Audio page is up, or not: a drop of sound files on the window
     /// goes into the library while it is.
-    changed tab => { Sounds.shown(root.tab == 8); }
+    changed tab => {
+        Sounds.shown(root.tab == 8);
+        OpenVid.shown(root.tab == 9);
+    }
     property <bool> openvid-shelves-open: true;
     property <bool> openvid-shapes-open: true;
     // The OpenVid search's debounce: a restart a keystroke, and one

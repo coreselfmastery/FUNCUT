@@ -99,8 +99,10 @@ pub struct Landed {
 /// second click can make the cut a first reply is about to make, or any
 /// other edit can move the clip - so the spans are only applied while
 /// the clip is still the one they were measured of, unchanged; see
-/// [`Measured::still_the_take`].
-struct Measured {
+/// [`Measured::still_the_take`]. Public because the message that carries
+/// it is: a private type behind a public variant is a lint the engine's
+/// `-D warnings` build refuses.
+pub struct Measured {
     /// The clip the take became.
     clip_id: String,
     /// The take's file in the bin.

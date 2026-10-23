@@ -1502,6 +1502,9 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         openvid.on_download(on_window!(|state| {
             state.handle(Msg::Openvid(OpenvidMsg::Download));
         }));
+        openvid.on_shown(on_window!(|state, on: bool| {
+            state.handle(Msg::Openvid(OpenvidMsg::Shown(on)));
+        }));
 
         sounds.on_voice_remove(on_window!(|state, id: SharedString| {
             state.forget_voice(id.as_str());

@@ -106,7 +106,7 @@ pub struct OpenvidPane {
 impl OpenvidPane {
     /// The pane, with the library's state as it stands on this machine.
     pub fn open(dirs: &AppDirs) -> OpenvidPane {
-        let pane = OpenvidPane {
+        OpenvidPane {
             shown: false,
             state: library::shared(dirs).status(),
             results: Vec::new(),
@@ -118,8 +118,7 @@ impl OpenvidPane {
             cancel: Arc::new(AtomicBool::new(false)),
             dirs: Some(dirs.clone()),
             timer: slint::Timer::default(),
-        };
-        pane
+        }
     }
 
     /// The library this pane reads, when it has folders to read from.

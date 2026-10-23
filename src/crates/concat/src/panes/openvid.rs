@@ -259,11 +259,14 @@ impl OpenvidPane {
                 crate::host::spawn(
                     move || library::shared(&dirs).prepare(&cancel),
                     |studio, _, _, result| {
+                        // The verdict before the words: the words consume
+                        // the result, and a half-moved value cannot be
+                        // asked what it was.
+                        let failed = result.is_err();
                         let words = match result {
                             Ok(()) => t("openvid.indexReady"),
                             Err(error) => format!("{}: {error}", t("openvid.downloadFailed")),
                         };
-                        let failed = result.is_err();
                         studio.notify(&words, failed);
                     },
                 );
@@ -305,7 +308,10 @@ impl OpenvidPane {
                         Then::Place => studio.place_openvid(&name, &id, &path),
                     },
                     Err(error) if error == "cancelled" => {}
-                    Err(error) => studio.notify(&tf("openvid.fetchFailed", &[&name, &error]), true),
+                    Err(error) => studio.notify(
+                        &tf("openvid.fetchFailed", &[name.as_str(), error.as_str()]),
+                        true,
+                    ),
                 }
             }
         }
@@ -512,7 +518,7 @@ impl Studio {
         if !target.exists() {
             std::fs::create_dir_all(&folder)
                 .and_then(|()| std::fs::copy(path, &target).map(drop))
-                .map_err(|error| tf("openvid.couldNotCopy", &[name, &error]))?;
+                .map_err(|error| tf("openvid.couldNotCopy", &[name, error.as_str()]))?;
         }
         let summary = concat_host::media::probe(&target_text)?;
         let created = self.apply(concat_project::Command::AddMedia {

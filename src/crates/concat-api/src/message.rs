@@ -219,10 +219,11 @@ pub enum Request {
         /// "vertical", "horizontal" or "square". A frame size is measured
         /// by reading the clip's own MP4 header the first time it is
         /// asked for, so this filter narrows to the clips measured so far;
-        /// `openvid.status` says how many that is. The library is in fact
-        /// uniformly 512x512 (it was cut for text-to-video training), so
-        /// an honest "vertical" search here returns nothing rather than
-        /// everything.
+        /// `openvid.status` says how many that is. What the measurements
+        /// say: the pixabay, pexels and celebv shelves are 512x512
+        /// squares, the other (WebVid) shelf is 720p and 1080p landscape,
+        /// so "horizontal" finds that one and "vertical" nothing yet -
+        /// each answer honest rather than everything returned quietly.
         #[serde(default)]
         orientation: Option<String>,
         /// How to order: "relevance" (the default with `query`),

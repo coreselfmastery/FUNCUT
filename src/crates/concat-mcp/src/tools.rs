@@ -272,7 +272,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "openvid_search",
             "Search stock clips",
-            "Searches 937,957 stock clips (Pixabay, Pexels and CelebV footage, cut for the OpenVid-1M dataset) by what their captions say and by their quality numbers, without watching anything: each match carries the caption, `aesthetic` (0-6), `motion`, `temporal` consistency (0-1), `camera` motion, `fps`, `seconds`, `bytes` (the fetch cost), its shelf and its measured `dims`. Every filter is optional: `query` words are ANDed and prefix-matched (\"ocean sunset\"), `minAesthetic`/`minMotion`/`maxMotion`/`minTemporal` set the quality floor, `minSeconds`/`maxSeconds`/`minFps` the shape, `camera` takes a motion exactly as the library names it, `source` is pixabay/pexels/celebv/other, `orientation` is vertical/horizontal/square (only among clips whose MP4 header has been measured - the library is uniformly 512x512, so vertical and horizontal honestly return nothing), and `sort` is relevance/aesthetic/motion/temporal/shortest/longest/surprise. Returns up to `limit` (default 20, at most 100) from `offset`, with `total` saying how many match in all.",
+            "Searches 937,957 stock clips (the Pixabay, Pexels and CelebV shelves cut to 512x512, and the WebVid shelf of 720p and 1080p landscape footage) by what their captions say and by their quality numbers, without watching anything: each match carries the caption, `aesthetic` (0-6), `motion`, `temporal` consistency (0-1), `camera` motion, `fps`, `seconds`, `bytes` (the fetch cost), its shelf and its measured `dims`. Every filter is optional: `query` words are ANDed and prefix-matched (\"ocean sunset\"), `minAesthetic`/`minMotion`/`maxMotion`/`minTemporal` set the quality floor, `minSeconds`/`maxSeconds`/`minFps` the shape, `camera` takes a motion exactly as the library names it, `source` is pixabay/pexels/celebv/other, `orientation` is vertical/horizontal/square (measured from each clip's own MP4 header: the first shape search takes a one-time census of every shelf, a few seconds, after which square finds the three 512x512 shelves and horizontal the WebVid shelf's landscape footage, and nothing vertical has been measured in it), and `sort` is relevance/aesthetic/motion/temporal/shortest/longest/surprise. Returns up to `limit` (default 20, at most 100) from `offset`, with `total` saying how many match in all.",
             "openvid.search",
             Raw,
         )
@@ -280,7 +280,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "openvid_get",
             "Read clips in full",
-            "Everything about up to 20 clips by id, as `openvid_search` gave the ids: the full caption, every score, and `dims` - the frame size read from the clip's own MP4 header, measured on this first ask (one small network read a clip, remembered after). Use it to check a candidate before committing to the fetch.",
+            "Everything about up to 20 clips by id, as `openvid_search` gave the ids: the full caption, every score, and `dims` - the frame size read from the clip's own MP4 header, measured on this first ask (one or two small network reads a clip, remembered after). Use it to check a candidate before committing to the fetch.",
             "openvid.get",
             Raw,
         )
@@ -1024,11 +1024,11 @@ mod tests {
                 "openvid_search",
                 json!({ "query": "sunset ocean", "minAesthetic": 5.2, "limit": 10 }),
             ),
-            ("openvid_get", json!({ "ids": [820338756299] })),
-            ("openvid_fetch", json!({ "id": 820338756299 })),
+            ("openvid_get", json!({ "ids": [820338756299i64] })),
+            ("openvid_fetch", json!({ "id": 820338756299i64 })),
             (
                 "openvid_import",
-                json!({ "path": "/tmp/Cut", "ids": [820338756299], "start": 0.0 }),
+                json!({ "path": "/tmp/Cut", "ids": [820338756299i64], "start": 0.0 }),
             ),
             (
                 "edit_apply",

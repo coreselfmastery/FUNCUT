@@ -11,9 +11,13 @@ local index once (poll `openvid_status` until `ready`); after that every
 search is local and instant. A typical run: `openvid_search` with words
 and quality floors ("sunset ocean", `minAesthetic: 5.2`) → `openvid_get`
 to read the best candidates in full → `openvid_import` with `start: 0` to
-lay them on a lane in one undoable step. Frame sizes are read from each
-clip's own MP4 header on first ask; the library is uniformly 512x512, so
-vertical and horizontal searches honestly return nothing.
+lay them on a lane in one undoable step. Frame sizes are measured from
+each clip's own MP4 header; the first search with an `orientation` filter
+also takes a one-time census of every shelf (a few seconds), after which
+`square` finds the three 512x512 shelves and `horizontal` the WebVid
+shelf's 720p/1080p landscape footage - nothing vertical has been measured
+in it, and an honest vertical search returns nothing rather than
+everything.
 
 ## Set it up
 

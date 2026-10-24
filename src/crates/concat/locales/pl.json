@@ -933,7 +933,7 @@
   "openvid.squareShape": "Kwadrat",
   "openvid.verticalShape": "Pionowy",
   "openvid.horizontalShape": "Poziomy",
-  "openvid.shapeNote": "Klipy z tej biblioteki są kwadratowe 512×512 (OpenVid-1M cięto do uczenia tekst-na-wideo), więc filtr pionowy lub poziomy znajdzie tylko klipy, których własny nagłówek po zmierzeniu powiedział co innego. Kwadratowy klip wejdzie też na pionową lub poziomą oś czasu: upuść i przeskaluj, by wypełnić.",
+  "openvid.shapeNote": "Półki tej biblioteki mają dwa kształty: trzy to kwadraty 512×512 (cięte do uczenia tekst-na-wideo), a jedna to obraz 720p i 1080p w poziomie. Pierwsze użycie filtra kształtu pobiera jednorazową próbkę z każdej półki (kilka sekund); potem filtr kwadratowy znajduje trzy kwadratowe półki, a poziomy tę poziomą. Nie zmierzono w niej jeszcze żadnego pionowego klipu. Kwadratowy klip wejdzie też na pionową lub poziomą oś czasu: upuść i przeskaluj, by wypełnić.",
   "openvid.anyLength": "Dowolna długość",
   "openvid.underFive": "Poniżej 5 s",
   "openvid.fiveToFifteen": "5–15 s",

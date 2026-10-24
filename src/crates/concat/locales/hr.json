@@ -933,7 +933,7 @@
   "openvid.squareShape": "Kvadrat",
   "openvid.verticalShape": "Okomito",
   "openvid.horizontalShape": "Vodoravno",
-  "openvid.shapeNote": "Isječci ove zalihe su 512×512 kvadratni (OpenVid-1M je rezan za treniranje teksta-u-video), pa okomiti ili vodoravni filtar nalazi samo isječke kojih je vlastito zaglavlje izmjereno reklo drugačije. Kvadratni isječak stoji i na okomitoj ili vodoravnoj vremenskoj traci: ispustite ga i skalirajte da ispuni.",
+  "openvid.shapeNote": "Police ove zalihe imaju dva oblika: tri su 512×512 kvadratne (rezane za treniranje teksta-u-video), a jedna je 720p i 1080p položena. Prva upotreba filtra oblika uzima jednokratni uzorak svake police (nekoliko sekundi); nakon toga kvadratni filtar nalazi tri kvadratne police, a vodoravni položenu. Okomit isječak u njoj još nije izmjeren. Kvadratni isječak stoji i na okomitoj ili vodoravnoj vremenskoj traci: ispustite ga i skalirajte da ispuni.",
   "openvid.anyLength": "Bilo koja duljina",
   "openvid.underFive": "Manje od 5 s",
   "openvid.fiveToFifteen": "5–15 s",

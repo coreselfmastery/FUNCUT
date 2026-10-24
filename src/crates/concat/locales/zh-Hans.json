@@ -933,7 +933,7 @@
   "openvid.squareShape": "方形",
   "openvid.verticalShape": "竖屏",
   "openvid.horizontalShape": "横屏",
-  "openvid.shapeNote": "此库的片段均为 512×512 方形（OpenVid-1M 为文生视频训练裁剪而来），因此竖屏或横屏筛选只会找到那些实际测量其文件头后确认不同的片段。方形片段同样可以放到竖屏或横屏时间线上：拖入并缩放至填满即可。",
+  "openvid.shapeNote": "此库的货架有两种形状：三个为 512×512 方形（为文生视频训练裁剪），一个为 720p 和 1080p 横向画面。首次使用形状筛选时会对每个货架做一次取样（几秒钟），之后方形筛选即可找到三个方形货架，横向筛选找到横向货架；目前尚未在此库中测得竖向片段。方形片段同样可以放到竖屏或横屏时间线上：拖入并缩放至填满即可。",
   "openvid.anyLength": "任意时长",
   "openvid.underFive": "5 秒以内",
   "openvid.fiveToFifteen": "5–15 秒",

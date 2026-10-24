@@ -933,7 +933,7 @@
   "openvid.squareShape": "Persegi",
   "openvid.verticalShape": "Tegak",
   "openvid.horizontalShape": "Mendatar",
-  "openvid.shapeNote": "Klip di pustaka ini 512×512 persegi (OpenVid-1M dipotong untuk pelatihan teks-ke-video), jadi filter tegak atau mendatar hanya menemukan klip yang headernya sendiri, saat diukur, mengatakan lain. Klip persegi tetap bisa di garis waktu tegak atau mendatar: jatuhkan dan skala hingga memenuhi.",
+  "openvid.shapeNote": "Rak pustaka ini datang dalam dua bentuk: tiga persegi 512×512 (dipotong untuk pelatihan teks-ke-video) dan satu landscape 720p dan 1080p. Pemakaian pertama filter bentuk mengambil sampel sekali dari tiap rak (beberapa detik); setelah itu filter persegi menemukan tiga rak persegi dan filter mendatar rak yang landscape. Belum ada klip tegak yang terukur di dalamnya. Klip persegi tetap bisa di garis waktu tegak atau mendatar: jatuhkan dan skala hingga memenuhi.",
   "openvid.anyLength": "Durasi apa pun",
   "openvid.underFive": "Kurang dari 5 dtk",
   "openvid.fiveToFifteen": "5–15 dtk",

@@ -933,7 +933,7 @@
   "openvid.squareShape": "Kare",
   "openvid.verticalShape": "Dikey",
   "openvid.horizontalShape": "Yatay",
-  "openvid.shapeNote": "Bu kütüphanenin klipleri 512×512 karedir (OpenVid-1M, metinden-videoya eğitim için kesilmiştir), bu yüzden dikey ya da yatay filtre yalnızca kendi üstbilgisi ölçülüp başka bir şey söylediği klipleri bulur. Kare bir klip dikey ya da yatay zaman çizgisine de oturur: bırakın ve doldurmak için ölçekleyin.",
+  "openvid.shapeNote": "Bu kütüphanenin rafları iki biçimdedir: üçü 512×512 kare (metinden-videoya eğitim için kesilmiş), biri 720p ve 1080p yatay. Şekil filtresi ilk kullanıldığında her raftan bir kerelik örnek alınır (birkaç saniye); ardından kare filtre üç kare rafı, yatay filtre ise yatay rafı bulur. Bu ana kadar içinde dikey bir klip ölçülmedi. Kare bir klip dikey ya da yatay zaman çizgisine de oturur: bırakın ve doldurmak için ölçekleyin.",
   "openvid.anyLength": "Her uzunluk",
   "openvid.underFive": "5 sn altı",
   "openvid.fiveToFifteen": "5–15 sn",

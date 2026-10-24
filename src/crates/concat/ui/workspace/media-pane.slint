@@ -2803,9 +2803,11 @@ export component MediaPane inherits Rectangle {
                         spacing: 8px;
 
                         // The honest word about the shape filter, shown
-                        // only when a shape is asked for: this library's
-                        // clips are all 512x512, and pretending otherwise
-                        // would be worse than saying so.
+                        // only when a shape is asked for: the square
+                        // shelves are 512x512 and the WebVid shelf is
+                        // 720p/1080p landscape, each said so by its own
+                        // sampled headers, and a shape nobody has measured
+                        // is a shape nobody can filter by.
                         if OpenVid.shape == 2 || OpenVid.shape == 3: Text {
                             text: I18n.t("openvid.shapeNote");
                             color: Theme.fg-muted;

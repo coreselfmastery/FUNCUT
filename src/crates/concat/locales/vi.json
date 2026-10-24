@@ -933,7 +933,7 @@
   "openvid.squareShape": "Vuông",
   "openvid.verticalShape": "Dọc",
   "openvid.horizontalShape": "Ngang",
-  "openvid.shapeNote": "Các clip trong thư viện này đều là hình vuông 512×512 (OpenVid-1M được cắt để huấn luyện văn-bản-thành-video), nên bộ lọc dọc hay ngang chỉ tìm được clip mà chính phần đầu của nó, sau khi đo, nói khác đi. Clip vuông vẫn đặt được lên timeline dọc hoặc ngang: thả vào và phóng to cho khớp.",
+  "openvid.shapeNote": "Các kệ của thư viện này có hai hình dạng: ba kệ là hình vuông 512×512 (được cắt để huấn luyện văn-bản-thành-video), một kệ là khung ngang 720p và 1080p. Lần đầu dùng bộ lọc hình dạng, chương trình lấy mẫu mỗi kệ đúng một lần (vài giây); sau đó bộ lọc hình vuông tìm ra ba kệ hình vuông, còn bộ lọc ngang tìm ra kệ nằm ngang. Chưa đo được clip dọc nào trong đó. Clip vuông vẫn đặt được lên timeline dọc hoặc ngang: thả vào và phóng to cho khớp.",
   "openvid.anyLength": "Bất kỳ độ dài",
   "openvid.underFive": "Dưới 5 giây",
   "openvid.fiveToFifteen": "5–15 giây",

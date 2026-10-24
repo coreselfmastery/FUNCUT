@@ -933,7 +933,7 @@
   "openvid.squareShape": "Quadrado",
   "openvid.verticalShape": "Vertical",
   "openvid.horizontalShape": "Horizontal",
-  "openvid.shapeNote": "Os clipes desta biblioteca são 512×512 quadrados (o OpenVid-1M foi cortado para treinamento de texto-para-vídeo), então um filtro vertical ou horizontal só acha clipes cujo próprio cabeçalho, medido, disse outra coisa. Um clipe quadrado também serve numa linha vertical ou horizontal: solte e dimensione para preencher.",
+  "openvid.shapeNote": "As prateleiras desta biblioteca têm duas formas: três são quadradas de 512×512 (cortadas para treinamento de texto-para-vídeo) e uma é paisagem de 720p e 1080p. O primeiro uso do filtro de forma tira uma amostra única de cada prateleira (alguns segundos); depois o filtro quadrado acha as três prateleiras quadradas e o horizontal a prateleira deitada. Nenhum clipe vertical foi medido nela até agora. Um clipe quadrado também serve numa linha vertical ou horizontal: solte e dimensione para preencher.",
   "openvid.anyLength": "Qualquer duração",
   "openvid.underFive": "Menos de 5 s",
   "openvid.fiveToFifteen": "5–15 s",

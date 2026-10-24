@@ -933,7 +933,7 @@
   "openvid.squareShape": "Carré",
   "openvid.verticalShape": "Vertical",
   "openvid.horizontalShape": "Horizontal",
-  "openvid.shapeNote": "Les clips de cette bibliothèque sont en 512×512 carré (OpenVid-1M a été découpé pour l'entraînement texte-vers-vidéo), donc un filtre vertical ou horizontal ne trouve que les clips dont l'en-tête, mesuré, disait autre chose. Un clip carré se pose aussi sur une timeline verticale ou horizontale : déposez-le et mettez-le à l'échelle pour remplir.",
+  "openvid.shapeNote": "Les étagères de cette bibliothèque ont deux formes : trois sont des carrés 512×512 (découpés pour l'entraînement texte-vers-vidéo) et une est en paysage 720p et 1080p. Le premier filtre de forme prélève une seule fois un échantillon de chaque étagère (quelques secondes) ; ensuite, le filtre carré trouve les trois étagères carrées et le filtre horizontal l'étagère en paysage. Aucun clip vertical n'y a encore été mesuré. Un clip carré se pose aussi sur une timeline verticale ou horizontale : déposez-le et mettez-le à l'échelle pour remplir.",
   "openvid.anyLength": "Toute durée",
   "openvid.underFive": "Moins de 5 s",
   "openvid.fiveToFifteen": "5–15 s",

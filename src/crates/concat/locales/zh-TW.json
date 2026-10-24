@@ -933,7 +933,7 @@
   "openvid.squareShape": "方形",
   "openvid.verticalShape": "直向",
   "openvid.horizontalShape": "橫向",
-  "openvid.shapeNote": "此庫的片段皆為 512×512 方形（OpenVid-1M 為文字生影片訓練裁切而成），因此直向或橫向篩選只會找到實際測量檔頭後確認不同的片段。方形片段一樣能放上直向或橫向時間軸：拖入並縮放至填滿即可。",
+  "openvid.shapeNote": "此媒體庫的櫃架有兩種形狀：三個為 512×512 方形（為文字生影片訓練裁剪），一個為 720p 與 1080p 橫向畫面。首次使用形狀篩選時會對每個櫃架取樣一次（幾秒鐘），之後方形篩選即可找到三個方形櫃架，橫向篩選找到橫向櫃架；目前尚未在此媒體庫測得豎向片段。方形片段同樣可以放到豎向或橫向時間軸上：拖入並縮放至填滿即可。",
   "openvid.anyLength": "任何長度",
   "openvid.underFive": "5 秒以內",
   "openvid.fiveToFifteen": "5–15 秒",

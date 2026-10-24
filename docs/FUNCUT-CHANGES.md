@@ -59,11 +59,12 @@ sides.
 
 The library pane grew a fourth stock page beside Media and Audio:
 **OpenVid** - 937,957 stock clips from the OpenVid-1M dataset on Hugging
-Face (Pixabay, Pexels and CelebV footage, cut to 512x512 with a caption
-and quality scores beside every clip), searched in a local index, fetched
-one clip at a time. The same library is scriptable: six `openvid.*` tools
-on the MCP server and JSON-RPC API, so an agent can search by caption and
-quality numbers, fetch and place clips without a window.
+Face (the Pixabay, Pexels and CelebV shelves cut to 512x512, and the WebVid
+shelf of 720p and 1080p landscape footage, each clip with a caption and
+quality scores beside it), searched in a local index, fetched one clip at
+a time. The same library is scriptable: six `openvid.*` tools on the MCP
+server and JSON-RPC API, so an agent can search by caption and quality
+numbers, fetch and place clips without a window.
 
 **How it stays small.** The dataset is 7.5 TB; what this machine holds is
 one SQLite index of 435 MB (six hundredths of one percent), downloaded
@@ -83,16 +84,24 @@ the index are zstd-compressed against a dictionary the index carries, and
 a page of forty decompresses in well under a millisecond. The one-time
 download is the only large moment, and it resumes if it is interrupted.
 
-**The honest parts.** The dataset's metadata carries no frame sizes, and
-the clips are in fact uniformly 512x512 (OpenVid-1M was cut for
-text-to-video training). The page does not take that on trust: a clip's
-frame size is read from its own MP4 header the first time the clip is
-fetched, and kept in a side table. The orientation filter narrows to the
-clips measured so far and says so in words, and the page's note tells
-someone filtering for vertical footage why nothing matches and how a
-square clip still sits on a vertical timeline. Search words are matched
-over the first 300 characters of each caption - the scene descriptions -
-and everything past that is one `openvid_get` away.
+**The honest parts.** The dataset's metadata carries no frame sizes. What
+the clips' own MP4 headers say, once read: the Pixabay, Pexels and CelebV
+shelves are 512x512 squares (cut for text-to-video training) and the WebVid
+shelf is 720p and 1080p landscape. A clip's frame size is read from its
+own header the first time it is fetched - the end of the file its shelf
+puts its `moov` box on, so one small read - and kept in a side table. The
+first shape filter also takes a one-time census: a sixteen-clip sample of
+every shelf, measured the same way in parallel and remembered, whose
+unanimous verdict widens the filter to that shelf's unmeasured clips - so
+Square finds the three square shelves at once and Horizontal the WebVid
+shelf, without measuring 938,000 files - while a clip its own header has
+spoken for is never overruled by its shelf's sample. Nothing vertical has
+been measured in this library; the vertical filter says so in words
+rather than returning everything quietly, and the page's note tells
+someone filtering for vertical footage how a square clip still sits on a
+vertical timeline. Search words are matched over the first 300 characters
+of each caption - the scene descriptions - and everything past that is
+one `openvid_get` away.
 
 ## 3. The feature: pause removal for voiceovers
 

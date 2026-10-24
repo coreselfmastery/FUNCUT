@@ -933,7 +933,7 @@
   "openvid.squareShape": "Vierkant",
   "openvid.verticalShape": "Verticaal",
   "openvid.horizontalShape": "Horizontaal",
-  "openvid.shapeNote": "De clips van deze bibliotheek zijn 512×512 vierkant (OpenVid-1M is geknipt voor tekst-naar-video-training), dus een verticaal of horizontaal filter vindt alleen clips waarvan de eigen header, gemeten, iets anders zei. Een vierkante clip past ook op een verticale of horizontale tijdlijn: laat vallen en schaal om te vullen.",
+  "openvid.shapeNote": "De planken van deze bibliotheek hebben twee vormen: drie zijn 512×512 vierkant (geknipt voor tekst-naar-video-training) en één is 720p- en 1080p-liggend. Het eerste vormfilter neemt een eenmalige steekproef van elke plank (een paar seconden); daarna vindt het vierkante filter de drie vierkante planken en het liggende filter de liggende plank. Er is nog geen verticale clip in gemeten. Een vierkante clip past ook op een verticale of horizontale tijdlijn: laat vallen en schaal om te vullen.",
   "openvid.anyLength": "Elke lengte",
   "openvid.underFive": "Onder 5 s",
   "openvid.fiveToFifteen": "5–15 s",

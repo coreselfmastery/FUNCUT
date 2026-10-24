@@ -930,7 +930,7 @@
   "openvid.squareShape": "Square",
   "openvid.verticalShape": "Vertical",
   "openvid.horizontalShape": "Horizontal",
-  "openvid.shapeNote": "This library’s clips are 512×512 square (OpenVid-1M was cut for text-to-video training), so a vertical or horizontal filter finds only clips whose own headers have been measured to say otherwise. A square clip still sits on a vertical or horizontal timeline: drop it on and scale it to fill.",
+  "openvid.shapeNote": "This library’s shelves come in two shapes: three are 512×512 squares (cut for text-to-video training) and one is 720p and 1080p landscape. The first shape filter takes a one-time sample of every shelf (a few seconds), after which the square filter finds the three square shelves and the horizontal filter the landscape one; no vertical clip has been measured in it yet. A square clip still sits on a vertical or horizontal timeline: drop it on and scale it to fill.",
   "openvid.anyLength": "Any length",
   "openvid.underFive": "Under 5s",
   "openvid.fiveToFifteen": "5–15s",

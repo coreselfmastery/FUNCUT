@@ -22,14 +22,22 @@
 //! Hub's CDN.
 //!
 //! An orientation filter works the same honest way. The dataset's metadata
-//! carries no frame size, and OpenVid-1M is in fact uniformly 512x512
-//! (it was cut for text-to-video training), but the page does not take that
-//! on trust: the first time a clip is shown, its MP4 trailer is fetched,
-//! the real width and height read out of the `tkhd` box, and the answer
-//! kept in a side table. A filter on Vertical or Horizontal then narrows
-//! to the clips whose headers say so - which, for this dataset, is none,
-//! and the page says that in plain words rather than quietly returning
-//! everything.
+//! carries no frame size, so the first time a clip is shown, the end its
+//! shelf puts the MP4's `moov` box on is fetched - the tail, except that
+//! the WebVid shelf's files are faststart and carry it at the front - and
+//! the real width and height read out of its `tkhd` box, into a side
+//! table. A shelf that guesses wrong costs one more small read, once.
+//! What the measurements say: the Pixabay, Pexels and CelebV shelves are
+//! 512x512 squares (cut for text-to-video training) and the WebVid shelf
+//! is 720p and 1080p landscape, so Square finds the one and Horizontal
+//! the other - and each says so only because the clips' own headers do.
+//! The first shape search also takes a census - one small sample of every
+//! shelf, measured the same way and remembered - whose unanimous verdict
+//! widens the filter to the shelf's unmeasured clips, so a person clicking
+//! Horizontal sees the WebVid shelf at once rather than a clip at a time.
+//! The census never overrules a measurement: a clip the `dims` table has
+//! spoken for is exactly what the filter says it is, whatever its shelf
+//! sampled as.
 //!
 //! Two doors lead here. The library pane's OpenVid page is the person's:
 //! a search field, the filters, cards with captions and scores, a click to
@@ -83,10 +91,24 @@ pub const DATASET_URL: &str =
 
 /// How large a trailer to read for a clip's frame size, at most. The MP4s
 /// in this dataset put their `moov` box - the one that names the width and
-/// height - at the end of the file, and the largest one seen in a thousand
-/// clips was 26 KB; 64 KB covers it with room, and a clip whose trailer
-/// still does not fit is simply one whose size stays unknown.
+/// height - at one end of the file or the other, and the largest one seen
+/// in a thousand clips was 26 KB; 64 KB covers it with room, and a clip
+/// whose box still does not fit is simply one whose size stays unknown.
 const TRAILER: u64 = 64 * 1024;
+
+/// How many clips a shelf's census samples: enough that a unanimous sample
+/// speaks for the shelf, few enough that the once-per-machine cost is a few
+/// seconds. A sample can be unlucky - which is why the verdict only ever
+/// widens a filter to the shelf's *unmeasured* clips, and a clip its own
+/// header has spoken for always wins over its shelf's sample. A sample of
+/// eight or fewer, or one that disagreed with itself, speaks for nothing.
+const CENSUS: i64 = 16;
+
+/// How many clips the census measures at once. Each read is one network
+/// round trip, so six at a time is the difference between a few seconds
+/// and a few tens of them; the connection each thread keeps warm is the
+/// other difference.
+const CENSUS_WIDTH: usize = 6;
 
 /// Where the page's own files live: `<data>/openvid/`, the index beside the
 /// clips. `data` is large state by the app's convention, which is right for
@@ -181,6 +203,18 @@ impl Source {
             Source::Other => 3,
         }
     }
+
+    /// The shelf a stored number is, as [`Source::number`] writes it. The
+    /// index only ever holds the four, so anything else is the last of
+    /// them rather than an error the reader cannot act on.
+    fn of_number(number: i64) -> Source {
+        match number {
+            0 => Source::Pixabay,
+            1 => Source::Pexels,
+            2 => Source::CelebV,
+            _ => Source::Other,
+        }
+    }
 }
 
 /// What a search asks for. Every field is optional; an all-`None` search is
@@ -241,9 +275,9 @@ impl Orientation {
     /// The shape a frame size is. Five per cent either way is the slack
     /// that lets 512x512 count as square while 544x544 with a stray crop
     /// still does. The search asks the same question of the measured
-    /// sizes in SQL, where the slack is spelled out beside it; this is
-    /// the shape a badge draws, and the test that keeps the two honest.
-    #[cfg(test)]
+    /// sizes in SQL - [`Orientation::sql`], which spells the slack out
+    /// beside it - and the census asks it of every sample it measures, so
+    /// the one definition serves the badge, the filter and the census.
     fn of((w, h): (u32, u32)) -> Orientation {
         if h as f64 > w as f64 * 1.05 {
             Orientation::Vertical
@@ -251,6 +285,27 @@ impl Orientation {
             Orientation::Horizontal
         } else {
             Orientation::Square
+        }
+    }
+
+    /// The shape a search asks of the measured sizes in `dims`, in SQL:
+    /// the same five-per-cent slack [`Orientation::of`] gives, spelled
+    /// where the query can use it. Kept beside `of` so the two cannot
+    /// drift apart.
+    fn sql(self) -> &'static str {
+        match self {
+            Orientation::Vertical => "dims.h > dims.w * 1.05",
+            Orientation::Horizontal => "dims.w > dims.h * 1.05",
+            Orientation::Square => "dims.h <= dims.w * 1.05 AND dims.w <= dims.h * 1.05",
+        }
+    }
+
+    /// The word the census table stores a shelf's verdict as.
+    fn word(self) -> &'static str {
+        match self {
+            Orientation::Vertical => "vertical",
+            Orientation::Horizontal => "horizontal",
+            Orientation::Square => "square",
         }
     }
 }
@@ -463,12 +518,27 @@ impl Library {
         let dict = meta("captions-dict")?;
         // The side table of frame sizes, written by this app as it browses
         // rather than shipped in the index: it is learned, not published.
+        // The census table beside it is learned too: one sample of each
+        // shelf, taken the first time a shape filter is asked for, whose
+        // unanimous verdict widens that filter to the shelf's unmeasured
+        // clips - never past a clip the `dims` table has spoken for.
         connection
             .execute(
                 "CREATE TABLE IF NOT EXISTS dims (
                      id INTEGER PRIMARY KEY,
                      w INTEGER NOT NULL,
                      h INTEGER NOT NULL
+                 )",
+                [],
+            )
+            .map_err(|error| open(&error.to_string()))?;
+        connection
+            .execute(
+                "CREATE TABLE IF NOT EXISTS census (
+                     source INTEGER PRIMARY KEY,
+                     shape TEXT NOT NULL,
+                     agreed INTEGER NOT NULL,
+                     sample INTEGER NOT NULL
                  )",
                 [],
             )
@@ -485,6 +555,24 @@ impl Library {
     /// are data to the search, not SQL.
     pub fn search(&self, query: &Query) -> Result<Found, String> {
         self.open_index()?;
+
+        // A shape filter asks something the index does not publish - a
+        // clip's frame size - so the first one takes the census: one
+        // sample of each shelf, measured and remembered, after which the
+        // shelf's unanimous verdict widens the filter to its unmeasured
+        // clips and the search answers from then on without the network.
+        // The census never fails a search: a shelf that would not be
+        // measured is a shelf the filter simply does not speak for.
+        if query.orientation.is_some() {
+            self.take_census();
+        }
+        // The shelves a shape filter may speak for, read before the
+        // search's own lock on the index: `censused` takes the same
+        // mutex, and a search that waited on itself would wait forever.
+        let censused: Vec<i64> = query
+            .orientation
+            .map_or_else(Vec::new, |shape| self.censused(shape));
+
         let held = self
             .db
             .get()
@@ -498,86 +586,70 @@ impl Library {
             .as_deref()
             .map(fts_words)
             .filter(|words| !words.is_empty());
-        let mut where_parts: Vec<&'static str> = Vec::new();
+        let mut where_parts: Vec<String> = Vec::new();
         let mut binds: Vec<Bind> = Vec::new();
         // The caption search, when there is one, is the first part and the
         // first bind: the FTS table is what the count and the page both
         // start from, and its `rank` is what orders a relevance sort.
         let from = if let Some(words) = words.as_deref() {
-            where_parts.push("clips_fts MATCH ?");
+            where_parts.push("clips_fts MATCH ?".to_owned());
             binds.push(Bind::Text(words.to_owned()));
             "clips_fts JOIN clips ON clips.id = clips_fts.rowid"
         } else {
             "clips"
         };
-        // An orientation filter needs the measured frame sizes as part of
-        // the *search*, not just the display, so it is an inner join here
-        // and the page query adds the left join for the cards' badges only
-        // when no orientation was asked for.
-        let (from_filtered, from_shown) = if query.orientation.is_some() {
-            (
-                format!("{from} JOIN dims ON dims.id = clips.id"),
-                format!("{from} JOIN dims ON dims.id = clips.id"),
-            )
+        // A shape filter reaches past the measured clips to the censused
+        // shelves' unmeasured ones, so it is a LEFT JOIN in the queries
+        // and the shape question itself lives in the WHERE below, asked
+        // of both at once. Without a shape, the join is the cards'
+        // business alone.
+        let from_shown = format!("{from} LEFT JOIN dims ON dims.id = clips.id");
+        let from_filtered = if query.orientation.is_some() {
+            from_shown.clone()
         } else {
-            (
-                from.to_owned(),
-                format!("{from} LEFT JOIN dims ON dims.id = clips.id"),
-            )
+            from.to_owned()
         };
         // Every scalar filter, in a fixed order, each a bound parameter.
         if let Some(value) = query.min_aesthetic {
-            where_parts.push("clips.aesthetic >= ?");
+            where_parts.push("clips.aesthetic >= ?".to_owned());
             binds.push(Bind::Real(value));
         }
         if let Some(value) = query.min_motion {
-            where_parts.push("clips.motion >= ?");
+            where_parts.push("clips.motion >= ?".to_owned());
             binds.push(Bind::Real(value));
         }
         if let Some(value) = query.max_motion {
-            where_parts.push("clips.motion <= ?");
+            where_parts.push("clips.motion <= ?".to_owned());
             binds.push(Bind::Real(value));
         }
         if let Some(value) = query.min_temporal {
-            where_parts.push("clips.temporal >= ?");
+            where_parts.push("clips.temporal >= ?".to_owned());
             binds.push(Bind::Real(value));
         }
         if let Some(value) = query.min_seconds {
-            where_parts.push("clips.seconds >= ?");
+            where_parts.push("clips.seconds >= ?".to_owned());
             binds.push(Bind::Real(value));
         }
         if let Some(value) = query.max_seconds {
-            where_parts.push("clips.seconds <= ?");
+            where_parts.push("clips.seconds <= ?".to_owned());
             binds.push(Bind::Real(value));
         }
         if let Some(value) = query.min_fps {
-            where_parts.push("clips.fps >= ?");
+            where_parts.push("clips.fps >= ?".to_owned());
             binds.push(Bind::Real(value));
         }
         if let Some(value) = query.camera.as_deref() {
-            where_parts.push("clips.camera = ?");
+            where_parts.push("clips.camera = ?".to_owned());
             binds.push(Bind::Text(value.to_owned()));
         }
         if let Some(source) = query.source {
-            where_parts.push("clips.source = ?");
+            where_parts.push("clips.source = ?".to_owned());
             binds.push(Bind::Integer(source.number()));
         }
         if let Some(orientation) = query.orientation {
-            // The shape is asked of the measured sizes themselves rather
-            // than of a stored column, so the five-per-cent slack lives in
-            // one place, [`Orientation::of`], beside the badge that shows
-            // it.
-            match orientation {
-                Orientation::Vertical => {
-                    where_parts.push("dims.h > dims.w * 1.05");
-                }
-                Orientation::Horizontal => {
-                    where_parts.push("dims.w > dims.h * 1.05");
-                }
-                Orientation::Square => {
-                    where_parts.push("dims.h <= dims.w * 1.05 AND dims.w <= dims.h * 1.05");
-                }
-            }
+            let (predicate, shelf_binds) = orientation_predicate(orientation, &censused);
+            where_parts.push(predicate);
+            binds.extend(shelf_binds);
         }
 
         let where_sql = if where_parts.is_empty() {
@@ -676,17 +748,21 @@ impl Library {
         if let Some(known) = self.dims_known(id)? {
             return Ok(Some(known));
         }
-        // A clip already on disk is read from the disk: the trailer is
+        // A clip already on disk is read from the disk: the ends are
         // the same bytes the Hub would send, without the network - and
-        // only the trailer, not the whole clip.
+        // only the ends, not the whole clip.
         let read = match self.dims_of_fetched(id) {
             Some(dims) => Some(dims),
             None => {
                 let range = self.clip_range(id)?;
-                let Some((file, pos, size)) = range else {
+                let Some((file, pos, size, source)) = range else {
                     return Ok(None);
                 };
-                self.read_dims(&file, pos, size)?
+                let agent = crate::net::agent(
+                    std::time::Duration::from_secs(20),
+                    std::time::Duration::from_secs(60),
+                );
+                self.read_dims(&file, pos, size, source, &agent)?
             }
         };
         match read {
@@ -698,9 +774,12 @@ impl Library {
         }
     }
 
-    /// A fetched clip's frame size, read from its own last bytes on
-    /// disk. `None` when the clip is not on disk or its trailer says
-    /// nothing this parser knows.
+    /// A fetched clip's frame size, read from its own bytes on disk: the
+    /// tail first, then the head when the tail says nothing, because a
+    /// faststart file carries its `moov` at the front. `None` when the
+    /// clip is not on disk or neither end says anything this parser
+    /// knows. Reading a local file costs nothing, so both ends are read
+    /// without asking the shelf which one to try first.
     fn dims_of_fetched(&self, id: i64) -> Option<(u32, u32)> {
         use std::io::Seek;
         let path = self.fetched(id)?;
@@ -710,7 +789,13 @@ impl Library {
         file.seek(std::io::SeekFrom::Start(end - length)).ok()?;
         let mut trailer = vec![0u8; length as usize];
         std::io::Read::read_exact(&mut file, &mut trailer).ok()?;
-        frame_size_of(&trailer)
+        if let Some(dims) = frame_size_of(&trailer) {
+            return Some(dims);
+        }
+        file.seek(std::io::SeekFrom::Start(0)).ok()?;
+        let mut head = vec![0u8; length as usize];
+        std::io::Read::read_exact(&mut file, &mut head).ok()?;
+        frame_size_of(&head)
     }
 
     /// The camera motions the library knows, most common first, for the
@@ -770,11 +855,199 @@ impl Library {
         Ok(())
     }
 
-    /// Where a clip's MP4 lives: the data file it sits in, and the byte
-    /// range inside that file. This is the whole trick of fetching one clip
+    /// The shelves - as the numbers the index stores - whose census sample
+    /// was unanimous for this shape. A shelf that was never censused, or
+    /// whose sample disagreed with itself, or that was sampled too thinly,
+    /// is not here: only clips their own headers have measured match the
+    /// shape, which is the answer a shelf must earn the right to widen.
+    fn censused(&self, shape: Orientation) -> Vec<i64> {
+        let Some(index) = self.db.get() else {
+            return Vec::new();
+        };
+        let Ok(index) = index.lock() else {
+            return Vec::new();
+        };
+        index
+            .db
+            .prepare(
+                "SELECT source FROM census WHERE shape = ? AND agreed = sample AND sample >= 8",
+            )
+            .and_then(|mut statement| {
+                let shelves = statement
+                    .query_map([shape.word()], |row| row.get::<_, i64>(0))?
+                    .filter_map(Result::ok)
+                    .collect::<Vec<i64>>();
+                Ok(shelves)
+            })
+            .unwrap_or_default()
+    }
+
+    /// Takes the census: for every shelf without a verdict, samples
+    /// [`CENSUS`] clips, measures their frame sizes - [`CENSUS_WIDTH`]
+    /// reads at a time over one shared agent, each reader keeping its
+    /// connection warm - and writes the verdict the sample earned, held
+    /// to no more than what it agreed on. The measurements themselves
+    /// land in `dims` like any other, so the census leaves real rows
+    /// behind rather than guesses. A first read that fails says the
+    /// network is not there and the whole census is abandoned: an
+    /// unanswered shelf is retried by the next shape search, never
+    /// silently guessed for. A shelf already censused is not asked
+    /// again - a mixed verdict is as final as a unanimous one, and
+    /// speaks for nothing.
+    fn take_census(&self) {
+        let lacking: Vec<i64> = match self.db.get().and_then(|db| db.lock().ok()) {
+            Some(index) => index
+                .db
+                .prepare(
+                    "SELECT source FROM clips \
+                     WHERE source NOT IN (SELECT source FROM census) GROUP BY source",
+                )
+                .and_then(|mut statement| {
+                    let shelves = statement
+                        .query_map([], |row| row.get::<_, i64>(0))?
+                        .filter_map(Result::ok)
+                        .collect::<Vec<i64>>();
+                    Ok(shelves)
+                })
+                .unwrap_or_default(),
+            None => return,
+        };
+        if lacking.is_empty() {
+            return;
+        }
+        // The samples: CENSUS clips of each shelf lacking a verdict.
+        let mut sample: Vec<(i64, String, u64, u64, Source)> = Vec::new();
+        {
+            let Some(index) = self.db.get().and_then(|db| db.lock().ok()) else {
+                return;
+            };
+            for shelf in &lacking {
+                let rows = index
+                    .db
+                    .prepare(
+                        "SELECT clips.id, files.name, clips.pos, clips.size, clips.source \
+                         FROM clips JOIN files ON files.id = clips.file \
+                         WHERE clips.source = ? ORDER BY random() LIMIT ?",
+                    )
+                    .and_then(|mut statement| {
+                        let rows = statement
+                            .query_map([*shelf, CENSUS], |row| {
+                                Ok((
+                                    row.get::<_, i64>(0)?,
+                                    row.get::<_, String>(1)?,
+                                    row.get::<_, i64>(2)?.max(0) as u64,
+                                    row.get::<_, i64>(3)?.max(0) as u64,
+                                    Source::of_number(row.get::<_, i64>(4)?),
+                                ))
+                            })?
+                            .filter_map(Result::ok)
+                            .collect::<Vec<(i64, String, u64, u64, Source)>>();
+                        Ok(rows)
+                    })
+                    .unwrap_or_default();
+                sample.extend(rows);
+            }
+        }
+        let Some(first) = sample.first() else {
+            return;
+        };
+        // One agent, shared by the readers: the census is one burst of
+        // small reads, and a connection each is the difference between
+        // seconds and tens of them.
+        let agent = crate::net::agent(
+            std::time::Duration::from_secs(20),
+            std::time::Duration::from_secs(60),
+        );
+        // The probe: a first read that fails says the network is not
+        // there, and nothing else is worth trying. An error here is not
+        // a verdict - no row is written, and the next search tries again.
+        if self
+            .read_dims(&first.1, first.2, first.3, first.4, &agent)
+            .is_err()
+        {
+            return;
+        }
+        // The measurements, CENSUS_WIDTH at a time. Each reader pulls
+        // the next row itself, so the reads spread themselves and no
+        // row is read twice. The counter is declared outside the scope
+        // because a spawned reader may live until the scope ends, and
+        // must be able to borrow it that long.
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let measured: Vec<(i64, Source, (u32, u32))> = std::thread::scope(|scope| {
+            let readers: Vec<_> = (0..CENSUS_WIDTH)
+                .map(|_| {
+                    scope.spawn(|| {
+                        let mut found: Vec<(i64, Source, (u32, u32))> = Vec::new();
+                        loop {
+                            let at = next.fetch_add(1, Ordering::Relaxed);
+                            if at >= sample.len() {
+                                break;
+                            }
+                            let (id, file, pos, size, source) = &sample[at];
+                            if let Ok(Some(dims)) =
+                                self.read_dims(file, *pos, *size, *source, &agent)
+                            {
+                                found.push((*id, *source, dims));
+                            }
+                        }
+                        found
+                    })
+                })
+                .collect();
+            readers
+                .into_iter()
+                .filter_map(|reader| reader.join().ok())
+                .flatten()
+                .collect()
+        });
+        for (id, _, dims) in &measured {
+            let _ = self.remember_dims(*id, *dims);
+        }
+        // The verdicts: each lacking shelf's plurality shape, with how
+        // many of its measured sample agreed. Unanimous and thick
+        // enough, `censused` lets it widen the filter; mixed, it is
+        // final and speaks for nothing.
+        let count = |source: i64, shape: Orientation| {
+            measured
+                .iter()
+                .filter(|(_, shelf, dims)| {
+                    shelf.number() == source && Orientation::of(*dims) == shape
+                })
+                .count()
+        };
+        if let Some(index) = self.db.get().and_then(|db| db.lock().ok()) {
+            for shelf in lacking {
+                let sample_of = measured
+                    .iter()
+                    .filter(|(_, source, _)| source.number() == shelf)
+                    .count();
+                if sample_of == 0 {
+                    continue; // Nothing measured: no verdict, retried later.
+                }
+                let verdict = [
+                    Orientation::Vertical,
+                    Orientation::Horizontal,
+                    Orientation::Square,
+                ]
+                .into_iter()
+                .max_by_key(|shape| count(shelf, *shape))
+                .unwrap_or(Orientation::Square);
+                let agreed = count(shelf, verdict);
+                let _ = index.db.execute(
+                    "INSERT OR REPLACE INTO census (source, shape, agreed, sample) VALUES (?, ?, ?, ?)",
+                    (shelf, verdict.word(), agreed as i64, sample_of as i64),
+                );
+            }
+        }
+    }
+
+    /// Where a clip's MP4 lives: the data file it sits in, the byte range
+    /// inside that file, and the shelf it came from - the shelf because it
+    /// is what says which end of the file the `moov` box is on, for
+    /// [`Library::read_dims`]. This is the whole trick of fetching one clip
     /// out of a 7.5 TB dataset - the index knows the range, the Hub honours
     /// a Range header, and nothing else moves.
-    fn clip_range(&self, id: i64) -> Result<Option<(String, u64, u64)>, String> {
+    fn clip_range(&self, id: i64) -> Result<Option<(String, u64, u64, Source)>, String> {
         let index = self
             .db
             .get()
@@ -783,7 +1056,7 @@ impl Library {
         index
             .db
             .query_row(
-                "SELECT files.name, clips.pos, clips.size \
+                "SELECT files.name, clips.pos, clips.size, clips.source \
                  FROM clips JOIN files ON files.id = clips.file WHERE clips.id = ?",
                 [id],
                 |row| {
@@ -791,6 +1064,7 @@ impl Library {
                         row.get::<_, String>(0)?,
                         row.get::<_, i64>(1)?.max(0) as u64,
                         row.get::<_, i64>(2)?.max(0) as u64,
+                        Source::of_number(row.get::<_, i64>(3)?),
                     ))
                 },
             )
@@ -801,15 +1075,45 @@ impl Library {
             })
     }
 
-    /// Reads a clip's trailer from the Hub and parses the frame size out of
-    /// it. One ranged GET of at most [`TRAILER`] bytes; the parse is
-    /// [`frame_size_of`], tested against a real clip of the dataset's own
-    /// making.
-    fn read_dims(&self, file: &str, pos: u64, size: u64) -> Result<Option<(u32, u32)>, String> {
-        let length = size.min(TRAILER);
-        let start = pos + size - length;
-        let bytes: Vec<u8> = ranged(file, start, length)?;
-        Ok(frame_size_of(&bytes))
+    /// Reads a clip's frame size from the Hub: one end of the file first -
+    /// which end is the shelf's to say, the WebVid shelf's files being
+    /// faststart and everyone else's carrying their `moov` at the back -
+    /// and the other end when the first says nothing, so a clip the shelf
+    /// misjudged costs one more small read, once, and is measured either
+    /// way. Each read is a ranged GET of at most [`TRAILER`] bytes over
+    /// the agent given - one agent for a single ask, the census's shared
+    /// one for its many - and the parse is [`frame_size_of`], tested
+    /// against a real clip of the dataset's own making.
+    fn read_dims(
+        &self,
+        file: &str,
+        pos: u64,
+        size: u64,
+        source: Source,
+        agent: &ureq::Agent,
+    ) -> Result<Option<(u32, u32)>, String> {
+        let read = |start: u64| -> Result<Option<(u32, u32)>, String> {
+            let length = size.min(TRAILER);
+            let bytes: Vec<u8> = ranged_with(agent, file, start, length)?;
+            Ok(frame_size_of(&bytes))
+        };
+        // A clip smaller than the trailer window is one read from either
+        // end: the head and the tail are the same bytes, so the second
+        // read is skipped by the starts being equal.
+        let head = pos;
+        let tail = pos + size - size.min(TRAILER);
+        let (first, second) = if source == Source::Other {
+            (head, tail)
+        } else {
+            (tail, head)
+        };
+        if let Some(dims) = read(first)? {
+            return Ok(Some(dims));
+        }
+        if second != first {
+            return read(second);
+        }
+        Ok(None)
     }
 
     /// Fetches a clip whole, into the page's own cache, and says where it
@@ -820,7 +1124,7 @@ impl Library {
         if let Some(path) = self.fetched(id) {
             return Ok(path);
         }
-        let Some((file, pos, size)) = self.clip_range(id)? else {
+        let Some((file, pos, size, _)) = self.clip_range(id)? else {
             return Err(format!("there is no clip {id} in the OpenVid library"));
         };
         let target = clip_path(&self.dirs, id);
@@ -991,14 +1295,16 @@ pub fn shared(dirs: &AppDirs) -> &'static Library {
 }
 
 /// Reads `length` bytes at `start` out of one of the dataset's data files
-/// on the Hub. The status must be 206 - a 200 would mean the range was
-/// ignored and the whole 16 GB file was about to arrive, which is stopped
-/// here rather than read.
-fn ranged(file: &str, start: u64, length: u64) -> Result<Vec<u8>, String> {
-    let agent = crate::net::agent(
-        std::time::Duration::from_secs(20),
-        std::time::Duration::from_secs(60),
-    );
+/// on the Hub, over the agent given: one of its own for a single ask, the
+/// census's shared one for its burst of them. The status must be 206 - a
+/// 200 would mean the range was ignored and the whole 16 GB file was
+/// about to arrive, which is stopped here rather than read.
+fn ranged_with(
+    agent: &ureq::Agent,
+    file: &str,
+    start: u64,
+    length: u64,
+) -> Result<Vec<u8>, String> {
     let url = format!("{DATASET_URL}/{file}");
     let response = agent
         .get(&url)
@@ -1045,12 +1351,32 @@ fn fts_words(raw: &str) -> String {
     words
 }
 
-/// The width and height a clip's MP4 trailer names, from its first video
-/// track's `tkhd` box. The dataset's MP4s put `moov` - the box holding the
-/// tracks - at the end of the file, so the trailer is where it lives; the
-/// search for the box starts from the trailer's end and works backwards,
-/// because a box's own bytes can contain the word "moov" too, and the
-/// size field before a real one always fits the bytes in hand.
+/// The SQL a shape is asked of a search, and the shelves - as the numbers
+/// the index stores - whose census said the same shape. Measured sizes
+/// answer first, and a censused shelf's *unmeasured* clips stand beside
+/// them: `dims.id IS NULL` is what keeps the sample in its place, because
+/// a clip whose own header has spoken - either way - is never overruled
+/// by its shelf's. A shape no shelf speaks for is asked of the measured
+/// sizes alone, which is every clip there is an answer for.
+fn orientation_predicate(shape: Orientation, shelves: &[i64]) -> (String, Vec<Bind>) {
+    let dims = shape.sql();
+    if shelves.is_empty() {
+        return (dims.to_owned(), Vec::new());
+    }
+    let seats = vec!["?"; shelves.len()].join(", ");
+    (
+        format!("({dims} OR (clips.source IN ({seats}) AND dims.id IS NULL))"),
+        shelves.iter().map(|n| Bind::Integer(*n)).collect(),
+    )
+}
+
+/// The width and height an MP4 end names, from its first video track's
+/// `tkhd` box. The dataset's MP4s put `moov` - the box holding the
+/// tracks - at one end of the file or the other; whichever end's bytes
+/// are in hand, the search for the box starts from the buffer's end and
+/// works backwards, because a box's own bytes can contain the word
+/// "moov" too, and the size field before a real one always fits the
+/// bytes in hand.
 fn frame_size_of(trailer: &[u8]) -> Option<(u32, u32)> {
     let mut at = trailer.len();
     while let Some(found) = trailer[..at].windows(4).rposition(|w| w == b"moov") {
@@ -1296,6 +1622,45 @@ mod tests {
         let dims = library.dims(id).expect("the trailer is read");
         assert_eq!(dims, Some((512, 512)), "the dataset's own shape");
 
+        // The census, as the first shape search takes it: every shelf
+        // sampled and measured, once, and the unanimous verdicts widening
+        // the shape filters from then on. The WebVid shelf is 720p and
+        // 1080p landscape, so Horizontal finds it whole; Vertical, with no
+        // shelf speaking for it and nothing measured tall, finds nothing -
+        // an honest nothing, which is the point.
+        let horizontal = library
+            .search(&Query {
+                orientation: Some(Orientation::Horizontal),
+                sort: Sort::Aesthetic,
+                limit: 5,
+                ..Query::default()
+            })
+            .expect("the horizontal search runs");
+        assert_eq!(horizontal.total, 553_789, "the WebVid shelf, whole");
+        assert!(
+            horizontal
+                .clips
+                .iter()
+                .all(|clip| clip.source == Source::Other),
+            "the censused shelf's clips"
+        );
+        let square = library
+            .search(&Query {
+                orientation: Some(Orientation::Square),
+                limit: 5,
+                ..Query::default()
+            })
+            .expect("the square search runs");
+        assert_eq!(square.total, 384_168, "the three square shelves, whole");
+        let vertical = library
+            .search(&Query {
+                orientation: Some(Orientation::Vertical),
+                limit: 5,
+                ..Query::default()
+            })
+            .expect("the vertical search runs");
+        assert_eq!(vertical.total, 0, "nothing in this library is tall");
+
         let cancel = AtomicBool::new(false);
         let path = library.fetch(id, &cancel).expect("the clip is fetched");
         let size = std::fs::metadata(&path).expect("the clip is on disk").len();
@@ -1315,5 +1680,31 @@ mod tests {
         );
         assert_eq!(Source::of("celebv_IMU00UwepuQ_5.mp4"), Source::CelebV);
         assert_eq!(Source::of("o2LQGDTAF0A_34_0to118.mp4"), Source::Other);
+    }
+
+    /// The shape predicate's two shapes: asked alone when no shelf speaks
+    /// for the shape, and asked beside the censused shelves' unmeasured
+    /// clips when one does. A shelf's number is a bound parameter, never
+    /// spliced into the SQL, exactly as every other filter is.
+    #[test]
+    fn the_shape_predicate_speaks_for_the_censused_shelves() {
+        let (alone, binds) = orientation_predicate(Orientation::Vertical, &[]);
+        assert_eq!(alone, "dims.h > dims.w * 1.05");
+        assert!(binds.is_empty());
+
+        let (widened, binds) = orientation_predicate(Orientation::Horizontal, &[3]);
+        assert_eq!(
+            widened,
+            "(dims.w > dims.h * 1.05 OR (clips.source IN (?) AND dims.id IS NULL))"
+        );
+        assert_eq!(binds.len(), 1);
+
+        let (square, binds) = orientation_predicate(Orientation::Square, &[0, 1, 2]);
+        assert_eq!(
+            square,
+            "(dims.h <= dims.w * 1.05 AND dims.w <= dims.h * 1.05 OR \
+             (clips.source IN (?, ?, ?) AND dims.id IS NULL))"
+        );
+        assert_eq!(binds.len(), 3);
     }
 }

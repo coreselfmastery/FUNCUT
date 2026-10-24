@@ -933,7 +933,7 @@
   "openvid.squareShape": "Quadrat",
   "openvid.verticalShape": "Hochkant",
   "openvid.horizontalShape": "Querformat",
-  "openvid.shapeNote": "Die Clips dieser Bibliothek sind 512×512 quadratisch (OpenVid-1M wurde für Text-zu-Video-Training geschnitten), daher findet ein Hochkant- oder Querfilter nur Clips, deren eigene Header beim Messen etwas anderes sagten. Ein quadratischer Clip passt auch auf eine hochkante oder querformatige Timeline: ablegen und zum Füllen skalieren.",
+  "openvid.shapeNote": "Die Regale dieser Bibliothek haben zwei Formen: drei sind 512×512-Quadrate (für Text-zu-Video-Training geschnitten) und eines ist 720p- und 1080p-Querformat. Der erste Formfilter nimmt eine einmalige Stichprobe jedes Regals (ein paar Sekunden); danach findet der Quadratfilter die drei quadratischen Regale und der Querfilter das Querformat-Regal. Ein hochkantiger Clip wurde darin noch nicht gemessen. Ein quadratischer Clip passt auch auf eine hochkante oder querformatige Timeline: ablegen und zum Füllen skalieren.",
   "openvid.anyLength": "Beliebige Länge",
   "openvid.underFive": "Unter 5 s",
   "openvid.fiveToFifteen": "5–15 s",

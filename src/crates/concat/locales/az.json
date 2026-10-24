@@ -933,7 +933,7 @@
   "openvid.squareShape": "Kvadrat",
   "openvid.verticalShape": "Şaquli",
   "openvid.horizontalShape": "Üfüqi",
-  "openvid.shapeNote": "Bu kitabxananın klipləri 512×512 kvadratdır (OpenVid-1M mətn-dən-video öyrənməsi üçün kəsilib), ona görə şaquli və ya üfüqi filtr yalnız başını ölçüb qeyri-kvadrat dediyi klipləri tapır. Kvadrat kip şaquli və ya üfüqi xətdə də işləyir: burax və doldurmaq üçün ölçüləndir.",
+  "openvid.shapeNote": "Bu kitabxananın rəfləri iki formalıdır: üçü 512×512 kvadrat (mətn-dən-video öyrənməsi üçün kəsilib), biri 720p və 1080p üfüqi. Şəkıl filtri ilk dəfə işə düşəndə hər rəfdən bir dəfə nümunə götürür (bir neçə saniyə); ondan sonra kvadrat filtre üç kvadrat rəfi, üfüqi filtre isə üfüqi rəfi tapır. Hələlik içində heç bir şaquli kip ölçülməyib. Kvadrat kip şaquli və ya üfüqi xətdə də işləyir: burax və doldurmaq üçün ölçüləndir.",
   "openvid.anyLength": "İstənilən uzunluq",
   "openvid.underFive": "5 san-dən az",
   "openvid.fiveToFifteen": "5–15 san",

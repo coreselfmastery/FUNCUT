@@ -933,7 +933,7 @@
   "openvid.squareShape": "Cuadrado",
   "openvid.verticalShape": "Vertical",
   "openvid.horizontalShape": "Horizontal",
-  "openvid.shapeNote": "Los clips de esta biblioteca son 512×512 cuadrados (OpenVid-1M se cortó para entrenar texto-a-vídeo), así que un filtro vertical u horizontal solo encuentra clips cuya propia cabecera, medida, dijo otra cosa. Un clip cuadrado también va en una línea vertical u horizontal: suéltalo y escala para rellenar.",
+  "openvid.shapeNote": "Los estantes de esta biblioteca tienen dos formas: tres son cuadrados de 512×512 (recortados para entrenar texto-a-vídeo) y uno es apaisado de 720p y 1080p. La primera vez, el filtro de forma toma una muestra única de cada estante (unos segundos); después el filtro cuadrado encuentra los tres estantes cuadrados y el apaisado, el estante apaisado. Aún no se ha medido en ella ningún clip vertical. Un clip cuadrado también va en una línea vertical u horizontal: suéltalo y escala para rellenar.",
   "openvid.anyLength": "Cualquier duración",
   "openvid.underFive": "Menos de 5 s",
   "openvid.fiveToFifteen": "5–15 s",

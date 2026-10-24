@@ -933,7 +933,7 @@
   "openvid.squareShape": "Quadrato",
   "openvid.verticalShape": "Verticale",
   "openvid.horizontalShape": "Orizzontale",
-  "openvid.shapeNote": "Le clip di questa libreria sono 512×512 quadrate (OpenVid-1M è stato tagliato per l'addestramento testo-in-video), quindi un filtro verticale o orizzontale trova solo le clip la cui intestazione, misurata, diceva altro. Una clip quadrata sta anche su una linea verticale o orizzontale: mollala e scalala per riempire.",
+  "openvid.shapeNote": "Gli scaffali di questa libreria hanno due forme: tre sono quadrati 512×512 (tagliati per l'addestramento testo-in-video) e uno è in formato orizzontale 720p e 1080p. La prima volta, il filtro forma prende un campione unico di ogni scaffale (pochi secondi); dopo, il filtro quadrato trova i tre scaffali quadrati e quello orizzontale lo scaffale panoramico. Nessuna clip verticale è ancora stata misurata. Una clip quadrata sta anche su una linea verticale o orizzontale: mollala e scalala per riempire.",
   "openvid.anyLength": "Qualsiasi durata",
   "openvid.underFive": "Meno di 5 s",
   "openvid.fiveToFifteen": "5–15 s",

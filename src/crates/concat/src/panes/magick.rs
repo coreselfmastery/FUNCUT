@@ -410,12 +410,16 @@ impl MagickPane {
     /// picture itself only when it is on this machine, and the shelf as
     /// the corner's own word.
     pub fn rows(&self) -> Vec<MagickCardData> {
-        let Some(library) = self.library();
         self.results
             .iter()
             .map(|sticker| {
-                let picture = library
-                    .and_then(|library| library.fetched(&sticker.id))
+                // The picture's own bytes, only when they are on this
+                // machine; an empty image until then, so the tile draws
+                // its glyph.
+                let cached = self
+                    .library()
+                    .and_then(|library| library.fetched(&sticker.id));
+                let picture = cached
                     .and_then(|path| crate::host::image_at(&path))
                     .unwrap_or_default();
                 MagickCardData {
@@ -427,7 +431,7 @@ impl MagickPane {
                     }
                     .into(),
                     image: picture,
-                    ready: library.is_some_and(|library| library.fetched(&sticker.id).is_some()),
+                    ready: cached.is_some(),
                     busy: self.fetching.contains_key(&sticker.id),
                     heart: self.hearted(&sticker.id),
                 }

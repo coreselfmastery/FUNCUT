@@ -32,6 +32,7 @@ pub mod jobs;
 pub mod lock;
 pub mod logs;
 pub mod machine;
+pub mod magick;
 pub mod media;
 pub mod memory;
 pub mod models;

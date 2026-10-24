@@ -909,6 +909,7 @@ impl VoiceoverPane {
             None => studio.apply(Command::AddClipAtFirstFree {
                 media_id: media_id.clone(),
                 start: landed.landing,
+                above: false,
             }),
         };
         if let Some(clip) = clip {

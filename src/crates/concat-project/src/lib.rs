@@ -4660,6 +4660,7 @@ mod tests {
             .apply(Command::AddClipAtFirstFree {
                 media_id: media_id.clone(),
                 start: 0.0,
+                above: false,
             })
             .expect("adds")
             .created_id
@@ -4680,18 +4681,21 @@ mod tests {
             .apply(Command::AddClipAtFirstFree {
                 media_id: media_id.clone(),
                 start: 0.0,
+                above: false,
             })
             .expect("adds");
         editor
             .apply(Command::AddClipAtFirstFree {
                 media_id: media_id.clone(),
                 start: 0.0,
+                above: false,
             })
             .expect("adds");
         let overflow = editor
             .apply(Command::AddClipAtFirstFree {
                 media_id: media_id.clone(),
                 start: 0.0,
+                above: false,
             })
             .expect("adds")
             .created_id
@@ -4709,6 +4713,7 @@ mod tests {
             .apply(Command::AddClipAtFirstFree {
                 media_id,
                 start: 20.0,
+                above: false,
             })
             .expect("adds")
             .created_id
@@ -4721,6 +4726,91 @@ mod tests {
                 .expect("exists")
                 .track_id,
             editor.project().active().tracks[0].id
+        );
+    }
+
+    /// The `above` walk is the titles' rather than the bottom-first one:
+    /// with video on the floor and a gap free below it, a clip asked to
+    /// sit over the picture lands above the highest occupied lane
+    /// anyway, and opens a lane at the top when every one above is
+    /// taken.
+    #[test]
+    fn add_at_first_free_above_lands_over_the_picture() {
+        let (mut editor, media_id, _) = fixture();
+        // A lane below the video, free for [0, 10): the bottom-first
+        // walk would take it, hiding a sticker under the video.
+        let low = editor.project().active().tracks[0].id.clone();
+        editor
+            .apply(Command::RemoveClips {
+                clip_ids: vec![
+                    editor
+                        .project()
+                        .active()
+                        .clips
+                        .iter()
+                        .find(|clip| clip.track_id == low)
+                        .expect("the fixture's clip")
+                        .id
+                        .clone(),
+                ],
+                ripple: false,
+            })
+            .expect("removes");
+        // The project's four lanes, all free now: nothing occupied for
+        // [0, 10), so even the titles' walk starts at the floor.
+        assert_eq!(editor.project().active().tracks.len(), 4);
+        let over = editor
+            .apply(Command::AddClipAtFirstFree {
+                media_id: media_id.clone(),
+                start: 0.0,
+                above: true,
+            })
+            .expect("adds")
+            .created_id
+            .expect("id");
+        let timeline = editor.project().active();
+        assert_eq!(
+            timeline.clip(&over).expect("exists").track_id,
+            timeline.tracks[0].id,
+            "with every lane free, over the picture is the floor lane, as a title would land"
+        );
+        // Video on the floor, then a sticker over it: the sticker takes
+        // the lane above the video's, never a free lane beneath.
+        let video = editor
+            .apply(Command::AddClip {
+                media_id: media_id.clone(),
+                track_id: timeline.tracks[0].id.clone(),
+                start: 0.0,
+                ripple: false,
+            })
+            .expect("adds")
+            .created_id
+            .expect("id");
+        let sticker = editor
+            .apply(Command::AddClipAtFirstFree {
+                media_id,
+                start: 0.0,
+                above: true,
+            })
+            .expect("adds")
+            .created_id
+            .expect("id");
+        let timeline = editor.project().active();
+        let video_lane = timeline.clip(&video).expect("exists").track_id.clone();
+        let sticker_lane = timeline.clip(&sticker).expect("exists").track_id.clone();
+        let video_row = timeline
+            .tracks
+            .iter()
+            .position(|track| track.id == video_lane)
+            .expect("the video's lane");
+        let sticker_row = timeline
+            .tracks
+            .iter()
+            .position(|track| track.id == sticker_lane)
+            .expect("the sticker's lane");
+        assert!(
+            sticker_row > video_row,
+            "the sticker lands above the video, not beneath it"
         );
     }
 
@@ -5034,6 +5124,7 @@ mod tests {
             Command::AddClipAtFirstFree {
                 media_id: "m1".to_owned(),
                 start: 2.0,
+                above: false,
             },
             Command::AddTextClip {
                 above: false,

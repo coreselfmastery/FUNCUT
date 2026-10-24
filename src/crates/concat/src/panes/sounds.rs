@@ -604,7 +604,11 @@ impl Studio {
                 start,
                 ripple: true,
             }),
-            None => self.apply(Command::AddClipAtFirstFree { media_id, start }),
+            None => self.apply(Command::AddClipAtFirstFree {
+                media_id,
+                start,
+                above: false,
+            }),
         };
         if let Some(id) = created {
             self.selection = vec![id];

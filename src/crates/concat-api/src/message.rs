@@ -436,6 +436,120 @@ pub enum Request {
         track: Option<String>,
     },
 
+    /// The sticker library's state: whether each shelf's index is on this
+    /// machine yet, how far along it is while it comes down, and how many
+    /// pictures it holds when it is ready. The one `magick` method that
+    /// works before the indexes are down; every other one refuses until
+    /// they are, with words that say so.
+    #[serde(rename = "magick.status")]
+    MagickStatus,
+
+    /// Starts the sticker shelves' one-time index downloads in the
+    /// background and returns at once; `magick.status` reports how far
+    /// they have got. The MAGICK index is ~16 MB checked against a
+    /// digest; OpenMoji's is ~2 MB. Nothing is downloaded by any other
+    /// method: they refuse until the shelf they read is ready.
+    #[serde(rename = "magick.prepare")]
+    MagickPrepare,
+
+    /// Searches the sticker library - two shelves of transparent PNGs:
+    /// MAGICK's 145,193 captioned AI-generated pictures (people, animals,
+    /// objects, gestures, chroma-keyed out of their backgrounds) and
+    /// OpenMoji's 4,565 emoji - and returns the best matches with
+    /// everything an agent needs to pick one without seeing it: the
+    /// caption, the shelf, and whether the picture's PNG is already on
+    /// this machine. `query` words are ANDed and prefix-matched against
+    /// the captions (the emoji's own words and tags both), ranked by
+    /// where the words matched and how rare they are, with the whole
+    /// phrase said as one run of words counting most; `source` narrows
+    /// to "magick" or "openmoji", `favourites` to the heart's list, and
+    /// `limit` (1-100, 20 when absent) and `offset` page through them.
+    #[serde(rename = "magick.search")]
+    MagickSearch {
+        /// Words to find in captions, ANDed and prefix-matched, best
+        /// match first.
+        #[serde(default)]
+        query: Option<String>,
+        /// Only this shelf: "magick" or "openmoji"; both when absent.
+        #[serde(default)]
+        source: Option<String>,
+        /// Only the pictures the heart was pressed on.
+        #[serde(default)]
+        favourites: Option<bool>,
+        /// At most this many, 1-100; 20 when absent.
+        #[serde(default)]
+        limit: Option<u32>,
+        /// Skip this many from the front, for the next page.
+        #[serde(default)]
+        offset: Option<u32>,
+    },
+
+    /// Everything about one or more stickers by id, from whichever shelf
+    /// holds each: the caption and the shelf, and where the picture's
+    /// PNG is on this machine when it has been fetched. At most 20 ids a
+    /// call.
+    #[serde(rename = "magick.get")]
+    MagickGet {
+        /// The sticker ids, as `magick.search` gave them.
+        ids: Vec<String>,
+    },
+
+    /// Fetches one picture's PNG into the app's own cache - one plain
+    /// GET, ~1 MB for a MAGICK picture, a few KB for an emoji - checked
+    /// to be a PNG that can hold transparency before it is kept - and
+    /// says where it landed. Nothing is added to any project; `magick.add`
+    /// is what puts one in an edit.
+    #[serde(rename = "magick.fetch")]
+    MagickFetch {
+        /// The picture's id.
+        id: String,
+    },
+
+    /// Fetches a picture, copies it into the project's own `magick`
+    /// folder, and lays it on the timeline *over* the picture - the
+    /// first free lane above the highest one occupied over its span, as
+    /// a title lands - so a sticker never hides beneath the video. The
+    /// placement fields are optional: `start` (seconds; without it the
+    /// picture only reaches the bin), `duration` (seconds; the still's
+    /// default hold when absent), `track` (a lane by name, in which case
+    /// it is taken as `clip_add` takes one, no overlay walk), `scale`
+    /// (0.05-8, 1 fills the frame), `offsetX`/`offsetY` (fractions of
+    /// the frame from the centre, positive right/down) and `rotation`
+    /// (degrees). The placement, when any is given, lands as one
+    /// undoable step beside the clip's own.
+    #[serde(rename = "magick.add")]
+    MagickAdd {
+        /// The project folder.
+        path: String,
+        /// The picture's id, as `magick.search` gave it.
+        id: String,
+        /// Lay it on the timeline from this moment.
+        #[serde(default)]
+        start: Option<f64>,
+        /// How long it stays, in seconds; the still's default hold when
+        /// absent.
+        #[serde(default)]
+        duration: Option<f64>,
+        /// The lane to lay it on, by name. Without it, the overlay walk:
+        /// the first free lane above the highest occupied.
+        #[serde(default)]
+        track: Option<String>,
+        /// Scale, 1 filling the frame.
+        #[serde(default)]
+        scale: Option<f64>,
+        /// Horizontal placement as a fraction of frame width from the
+        /// centre, positive right.
+        #[serde(default)]
+        offset_x: Option<f64>,
+        /// Vertical placement as a fraction of frame height from the
+        /// centre, positive down.
+        #[serde(default)]
+        offset_y: Option<f64>,
+        /// Rotation in degrees.
+        #[serde(default)]
+        rotation: Option<f64>,
+    },
+
     /// Every effect package the build knows, with its parameters, so a
     /// caller can build a valid chain without reading a manifest.
     #[serde(rename = "catalogue.list")]
@@ -617,6 +731,14 @@ pub enum Reply {
     BgmTrack(BgmTrack),
     /// [`Request::BgmImport`].
     BgmImported(BgmImport),
+    /// [`Request::MagickStatus`] and [`Request::MagickPrepare`].
+    Magick(MagickState),
+    /// [`Request::MagickSearch`].
+    MagickFound(MagickFound),
+    /// [`Request::MagickGet`] and [`Request::MagickFetch`].
+    MagickStickers(Vec<MagickEntry>),
+    /// [`Request::MagickAdd`].
+    MagickAdded(MagickAdd),
     /// [`Request::CatalogueList`].
     Packages(Vec<PackageInfo>),
     /// [`Request::TemplateList`].
@@ -912,6 +1034,97 @@ pub struct BgmImport {
     /// The media ids the tracks were given in the project's bin, in the
     /// order the ids were given in.
     pub media_ids: Vec<String>,
+    /// The project as it now stands.
+    pub view: Box<EditorView>,
+}
+
+/// The sticker library's state, as `magick.status` reports it and
+/// `magick.prepare` starts it towards. Both shelves, because a search
+/// with no shelf named reads both.
+#[derive(Clone, PartialEq, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MagickState {
+    /// The MAGICK shelf (OneOverZero's captioned AI-generated pictures):
+    /// "missing", "downloading" (with `percent`), "ready" or "failed"
+    /// (with `error`).
+    pub magick: String,
+    /// The OpenMoji shelf (the colour emoji set): "missing",
+    /// "downloading" (with `percent`), "ready" or "failed" (with
+    /// `error`).
+    pub openmoji: String,
+    /// How far the shelf still downloading has got, 0-100.
+    pub percent: u32,
+    /// How many pictures the MAGICK shelf holds, when it is ready.
+    pub magick_rows: Option<u64>,
+    /// How many pictures the OpenMoji shelf holds, when it is ready.
+    pub openmoji_rows: Option<u64>,
+    /// Why a shelf is not usable, when it is not. The shelf's own name
+    /// prefixes the words.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// What `magick.search` found.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MagickFound {
+    /// The stickers, `limit` of them from `offset`, best match first.
+    pub stickers: Vec<MagickEntry>,
+    /// How many match in all, this page aside.
+    pub total: u64,
+}
+
+/// One picture of the sticker library, as every `magick` method hands it
+/// back. Everything but `localPath` comes from the shelf's index; the
+/// picture's own bytes arrive only when it is fetched.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MagickEntry {
+    /// The picture's id in the library, and the id every verb takes
+    /// back.
+    pub id: String,
+    /// Which shelf it is on: "magick" or "openmoji".
+    pub source: String,
+    /// What the picture shows, in the dataset's own words: the caption
+    /// the search read.
+    pub subject: String,
+    /// Where the picture's PNG is on this machine, once fetched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_path: Option<String>,
+}
+
+impl MagickEntry {
+    /// The library's own sticker, as the API hands it back: the same
+    /// words, the shelf as a word, and - when the picture's bytes are on
+    /// this machine - where they are.
+    pub fn of(
+        sticker: &concat_host::magick::Sticker,
+        local: Option<&std::path::Path>,
+    ) -> MagickEntry {
+        MagickEntry {
+            id: sticker.id.clone(),
+            source: match sticker.source {
+                concat_host::magick::Source::Magick => "magick",
+                concat_host::magick::Source::Openmoji => "openmoji",
+            }
+            .to_owned(),
+            subject: sticker.subject.clone(),
+            local_path: local.map(|path| path.to_string_lossy().into_owned()),
+        }
+    }
+}
+
+/// What `magick.add` did.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MagickAdd {
+    /// The media id the picture was given in the project's bin.
+    pub media_id: String,
+    /// The clip's id, when the picture was laid on a lane.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clip_id: Option<String>,
+    /// Where the picture's copy landed inside the project.
+    pub file: String,
     /// The project as it now stands.
     pub view: Box<EditorView>,
 }

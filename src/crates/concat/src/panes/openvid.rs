@@ -459,7 +459,11 @@ impl Studio {
         };
         self.close_source();
         let start = f64::from(self.playhead.max(0.0));
-        let created = self.apply(concat_project::Command::AddClipAtFirstFree { media_id, start });
+        let created = self.apply(concat_project::Command::AddClipAtFirstFree {
+            media_id,
+            start,
+            above: false,
+        });
         if let Some(id) = created {
             self.selection = vec![id];
         }

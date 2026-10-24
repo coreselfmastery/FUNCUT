@@ -697,6 +697,8 @@ pub struct Models {
     /// The Music page's list and its category filter.
     pub music_results: Rc<VecModel<crate::ui::MusicCardData>>,
     pub music_categories: Rc<VecModel<SharedString>>,
+    /// The Stickers page's tiles.
+    pub magick_results: Rc<VecModel<crate::ui::MagickCardData>>,
     pub voices_saved: Rc<VecModel<crate::ui::VoiceCardData>>,
     pub sounds_concat: Rc<VecModel<crate::ui::SoundCardData>>,
     pub voices_builtin: Rc<VecModel<crate::ui::VoiceCardData>>,
@@ -780,6 +782,7 @@ impl Models {
             openvid_cameras: Rc::new(VecModel::default()),
             music_results: Rc::new(VecModel::default()),
             music_categories: Rc::new(VecModel::default()),
+            magick_results: Rc::new(VecModel::default()),
             voices_saved: Rc::new(VecModel::default()),
             sounds_concat: Rc::new(VecModel::default()),
             voices_builtin: Rc::new(VecModel::default()),
@@ -1053,6 +1056,8 @@ pub struct Studio {
     pub openvid: crate::panes::openvid::OpenvidPane,
     /// The library's Music page: the background-music library.
     pub music: crate::panes::bgm::MusicPane,
+    /// The library's Stickers page: the transparent-PNG library.
+    pub magick: crate::panes::magick::MagickPane,
     /// A file from the library lent the monitor and the speakers; see
     /// `crate::source`.
     pub source: Option<crate::source::Source>,
@@ -2426,6 +2431,7 @@ impl Studio {
             sounds: crate::panes::sounds::SoundsPane::open(&host.dirs),
             openvid: crate::panes::openvid::OpenvidPane::open(&host.dirs),
             music: crate::panes::bgm::MusicPane::open(&host.dirs),
+            magick: crate::panes::magick::MagickPane::open(&host.dirs),
             source: None,
             meters: crate::meters::MeterFeed::default(),
             voiceover: crate::panes::voiceover::VoiceoverPane::default(),
@@ -4081,6 +4087,7 @@ impl Studio {
             self.apply(Command::AddClipAtFirstFree {
                 media_id: plan.media.clone(),
                 start,
+                above: false,
             })
         };
         if let Some(id) = created {
@@ -8879,6 +8886,11 @@ impl Studio {
                 pane.update(msg, self);
                 self.music = pane;
             }
+            crate::panes::Msg::Magick(msg) => {
+                let mut pane = std::mem::take(&mut self.magick);
+                pane.update(msg, self);
+                self.magick = pane;
+            }
             crate::panes::Msg::Relink(msg) => {
                 let mut pane = std::mem::take(&mut self.relink);
                 pane.update(msg, self);
@@ -11592,6 +11604,50 @@ impl Studio {
                     .map(|(_, shown)| SharedString::from(shown.as_str())),
             );
             sync(&models.music_categories, categories);
+        }
+        // The Stickers page.
+        sync(&models.magick_results, self.magick.rows());
+        {
+            let page = app.global::<crate::ui::Magick>();
+            page.set_state(self.magick.combined());
+            let percent = [
+                concat_host::magick::Source::Magick,
+                concat_host::magick::Source::Openmoji,
+            ]
+            .into_iter()
+            .filter_map(|source| self.magick.library_status(source).percent_of_load())
+            .max()
+            .unwrap_or(0);
+            page.set_percent(percent as i32);
+            let error = [
+                (concat_host::magick::Source::Magick, "MAGICK"),
+                (concat_host::magick::Source::Openmoji, "OpenMoji"),
+            ]
+            .into_iter()
+            .filter_map(|(source, shelf)| match self.magick.library_status(source) {
+                concat_host::magick::Status::Failed(error) => Some(format!("{shelf}: {error}")),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+            page.set_error(SharedString::from(error.as_str()));
+            page.set_magick_rows(
+                self.magick
+                    .shelf_rows(concat_host::magick::Source::Magick)
+                    .map_or_else(SharedString::default, |rows| {
+                        SharedString::from(thousands(rows).as_str())
+                    }),
+            );
+            page.set_openmoji_rows(
+                self.magick
+                    .shelf_rows(concat_host::magick::Source::Openmoji)
+                    .map_or_else(SharedString::default, |rows| {
+                        SharedString::from(thousands(rows).as_str())
+                    }),
+            );
+            page.set_searching(self.magick.searching);
+            page.set_total(SharedString::from(thousands(self.magick.total).as_str()));
+            page.set_more((self.magick.results.len() as u64) < self.magick.total);
         }
         let (saved, builtin, styles, ready) = self.voice_cards();
         sync(&models.voices_saved, saved);

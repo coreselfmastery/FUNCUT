@@ -1,0 +1,365 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
+
+import { I18n } from "../i18n.slint";
+import { Theme, Glyph, Icon } from "../primitives/primitives.slint";
+import { SourcePreview } from "source-preview.slint";
+
+// The library's Stickers page: 149,758 transparent PNGs over two shelves -
+// MAGICK (OneOverZero's captioned AI-generated pictures, chroma-keyed out of
+// their backgrounds) and OpenMoji (the colour emoji set, CC-BY 4.0) -
+// searched in a local index, fetched one picture at a time.
+//
+// A picture's bytes never arrive until they are asked for - a click previews
+// one through the source preview, a plus lays it over the picture at the
+// playhead - and what the page needs once is the two indexes, ~18 MB, which
+// the status card offers to load and then keeps out of the way. A card shows
+// the picture itself once its PNG is on this machine, and a glyph until then:
+// fetching a page of thumbnails would cost a page of megabytes, which is not
+// what a search is for.
+//
+// One global for the page's data and verbs, read by the desk's library pane,
+// so nothing has to thread it through a seat.
+
+/// One picture, as a tile shows it. Everything is display-ready: the caption
+/// arrives as the dataset wrote it, and the picture arrives only when it is
+/// on this machine.
+export struct MagickCardData {
+    /// The picture's id in the library, as the verbs take it back.
+    id: string,
+    /// What the picture shows, in the dataset's own words.
+    subject: string,
+    /// Which shelf it is on, as the corner's word: "MAGICK" or "OpenMoji".
+    shelf: string,
+    /// The picture itself, once its PNG is on this machine; an empty image
+    /// until then, so the tile draws its glyph.
+    image: image,
+    /// The picture's PNG is already on this machine.
+    ready: bool,
+    /// Its bytes are coming down now. A picture is ~1 MB, so a mark rather
+    /// than a bar: the fetch is over before a bar has said anything.
+    busy: bool,
+    /// The picture is on the heart's list.
+    heart: bool,
+}
+
+export global Magick {
+    /// The search field's words, held here so the page's controls and the
+    /// Rust side read one thing.
+    in-out property <string> query;
+    /// The shelves: 0 both, 1 MAGICK, 2 OpenMoji.
+    in-out property <int> source;
+    /// Only the heart's list.
+    in-out property <bool> favourites;
+    /// 0 the indexes are not on this machine yet, 1 a download running,
+    /// 2 a shelf ready, 3 both failed, with `error` saying why.
+    in property <int> state;
+    /// How far the download has got, 0-100.
+    in property <int> percent;
+    /// The words that go with a state that is not ready.
+    in property <string> error;
+    /// How many pictures each shelf holds, once ready, with their
+    /// thousands separated: "145,193" and "4,565".
+    in property <string> magick-rows;
+    in property <string> openmoji-rows;
+    /// A search is running.
+    in property <bool> searching;
+    /// The pictures on the page, in the order the search ranked them.
+    in property <[MagickCardData]> results;
+    /// How many pictures match in all, formatted, this page aside.
+    in property <string> total;
+    /// Whether another page of results waits behind the More button.
+    in property <bool> more;
+
+    /// "Load the sticker library": the one-time fetch of both shelves'
+    /// indexes.
+    callback download();
+    /// A library pane turned to the page or away from it, so a status
+    /// read - are the indexes here yet? - happens as the page comes up.
+    callback shown(on: bool);
+    /// The search field's words changed, or a filter moved: run it again,
+    /// with every filter the page holds as it stands.
+    callback search(query: string, source: int, favourites: bool);
+    /// The next page of what the last search found.
+    callback more-loaded();
+    /// A tile clicked: preview the picture, fetching it first if need be.
+    callback preview(id: string);
+    /// A tile's plus: lay the picture over the video at the playhead,
+    /// fetching it first.
+    callback add(id: string);
+    /// A tile's heart: press or lift it.
+    callback heart(id: string);
+}
+
+/// A small square button on a tile: the heart, the plus.
+component TileButton inherits Rectangle {
+    in property <Glyph> glyph;
+    in property <bool> lit;
+    callback clicked();
+
+    width: 22px;
+    height: 22px;
+    border-radius: Theme.r-xs;
+    background: touch.has-hover || root.lit
+        ? Theme.accent
+        : Theme.field;
+
+    Icon {
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+        glyph: root.glyph;
+        size: 11px;
+        tint: touch.has-hover || root.lit ? Theme.on-accent : Theme.fg-muted;
+    }
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+/// One picture: the square it is drawn in - the picture itself when its
+/// PNG is on this machine, a glyph on a well until then - the caption as
+/// one elided line under it, the shelf's word in the corner, and the heart
+/// and the plus over it. A click previews; the plus lays it at the
+/// playhead; the heart keeps it on the list.
+export component MagickCard inherits Rectangle {
+    in property <MagickCardData> item;
+    in property <length> side;
+    callback preview();
+    callback add();
+    callback heart();
+
+    width: root.side;
+    height: root.side + 6px + 26px;
+    border-radius: Theme.r-sm;
+
+    if root.item.busy: Rectangle {
+        y: 0;
+        width: root.side;
+        height: 3px;
+        border-radius: 2px;
+        background: Theme.accent;
+        opacity: 0.7;
+    }
+
+    // The well: the image kind's own, so the transparency reads as
+    // see-through rather than as the page's own colour.
+    Rectangle {
+        y: 0;
+        width: root.side;
+        height: root.side;
+        clip: true;
+        border-radius: Theme.r-sm;
+        background: root.playing-row ? Theme.field-active
+            : touch.has-hover ? Theme.field-hover : Theme.field;
+
+        // The well the picture sits on, the bin's own image well: a
+        // colour the transparency reads as see-through against, the way
+        // a bin card's thumbnail well does.
+        Rectangle {
+            x: 0;
+            y: 0;
+            width: root.side;
+            height: root.side;
+            background: Theme.kind-image-well;
+        }
+
+        // The picture, when it is on this machine; fitted, not stretched:
+        // everything in this library is square, and the tile with it.
+        if root.item.image.width > 0: Image {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: parent.width - 8px;
+            height: parent.width - 8px;
+            source: root.item.image;
+            image-fit: contain;
+        }
+
+        // The glyph that stands in for the picture until then.
+        if root.item.image.width == 0: Icon {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            glyph: root.item.busy ? Glyph.import : Glyph.sticker;
+            size: parent.width * 0.34;
+            tint: Theme.fg-muted;
+        }
+
+        // The shelf's word, in the corner, out of the picture's way.
+        Rectangle {
+            x: 4px;
+            y: 4px;
+            border-radius: Theme.r-xs;
+            background: Theme.line;
+            Text {
+                x: 5px;
+                y: 2px;
+                text: root.item.shelf;
+                color: Theme.fg-muted;
+                font-size: Theme.fs-xs;
+            }
+        }
+
+        // The verbs, over the picture's top-right corner: the heart, the
+        // plus. Over the picture rather than beside the caption, so a
+        // tile is all thumb and the verbs are where the pointer already
+        // is.
+        HorizontalLayout {
+            x: parent.width - self.width - 4px;
+            y: 4px;
+            spacing: 2px;
+            TileButton {
+                glyph: Glyph.mask-heart;
+                lit: root.item.heart;
+                clicked => { root.heart(); }
+            }
+            TileButton {
+                glyph: Glyph.plus;
+                lit: false;
+                clicked => { root.add(); }
+            }
+        }
+    }
+
+    // The caption: one line, elided, the dataset's own words.
+    Text {
+        y: root.side + 6px;
+        width: root.side;
+        text: root.item.subject;
+        color: Theme.fg-dim;
+        font-size: Theme.fs-xs;
+        overflow: elide;
+        horizontal-alignment: center;
+    }
+
+    property <bool> playing-row: SourcePreview.card == root.item.id && root.item.id != "";
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.preview(); }
+    }
+}
+
+/// The tiles, one after another in wrapping rows, reached by the page's
+/// own scroll. `grid-cols-[repeat(auto-fill,minmax(96px,1fr))]`,
+/// arithmetic instead of a layout: Slint has no auto-fill grid, and a
+/// GridLayout wants its cells named at compile time, which a model cannot
+/// do - the bin's MediaGrid does the same arithmetic for the same reason.
+export component MagickGrid inherits Rectangle {
+    in property <[MagickCardData]> items;
+
+    property <length> gap: 8px;
+    property <length> min-tile: 96px;
+
+    property <int> cols: Math.max(1,
+        Math.floor((root.width + root.gap) / (root.min-tile + root.gap)));
+    property <length> tile-w: (root.width - (root.cols - 1) * root.gap) / root.cols;
+    property <int> rows: Math.ceil(root.items.length / root.cols);
+    property <length> row-pitch: root.tile-w + 6px + 26px + root.gap;
+    property <length> tiles-h:
+        root.rows > 0 ? root.rows * root.row-pitch - root.gap : 0px;
+
+    height: root.tiles-h;
+
+    for item[i] in root.items: MagickCard {
+        x: Math.mod(i, root.cols) * (root.tile-w + root.gap);
+        y: Math.floor(i / root.cols) * root.row-pitch;
+        side: root.tile-w;
+        item: item;
+        preview => { Magick.preview(item.id); }
+        add => { Magick.add(item.id); }
+        heart => { Magick.heart(item.id); }
+    }
+}
+
+/// The status card: what stands between the person and the library, said
+/// in words, with the one button that moves it along.
+export component MagickStatus inherits Rectangle {
+    border-radius: Theme.r;
+    background: Theme.field;
+    height: 200px;
+
+    VerticalLayout {
+        alignment: center;
+        padding: 16px;
+        spacing: 10px;
+
+        if Magick.state == 0 || Magick.state == 3: VerticalLayout {
+            alignment: center;
+            spacing: 10px;
+
+            Text {
+                text: I18n.t("magick.welcome");
+                color: Theme.fg;
+                font-size: Theme.fs;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: I18n.t("magick.welcomeHint");
+                color: Theme.fg-muted;
+                font-size: Theme.fs-sm;
+                wrap: word-wrap;
+                horizontal-alignment: center;
+            }
+            if Magick.state == 3: Text {
+                text: Magick.error;
+                color: Theme.danger;
+                font-size: Theme.fs-sm;
+                wrap: word-wrap;
+                horizontal-alignment: center;
+            }
+            Rectangle {
+                border-radius: Theme.r-sm;
+                height: Theme.h;
+                background: start.has-hover ? Theme.accent-hover : Theme.accent;
+                HorizontalLayout {
+                    alignment: center;
+                    Text {
+                        vertical-alignment: center;
+                        text: I18n.t("magick.download");
+                        color: Theme.on-accent;
+                        font-size: Theme.fs-sm;
+                    }
+                }
+                start := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { Magick.download(); }
+                }
+            }
+        }
+
+        if Magick.state == 1: VerticalLayout {
+            alignment: center;
+            spacing: 10px;
+
+            Text {
+                text: I18n.t("magick.loading");
+                color: Theme.fg;
+                font-size: Theme.fs;
+                horizontal-alignment: center;
+            }
+            Rectangle {
+                height: 6px;
+                border-radius: 3px;
+                background: Theme.line;
+                clip: true;
+
+                Rectangle {
+                    x: 0;
+                    y: 0;
+                    height: parent.height;
+                    width: parent.width * Math.min(100, Math.max(0, Magick.percent)) / 100;
+                    border-radius: 3px;
+                    background: Theme.accent;
+                }
+            }
+            Text {
+                text: "\{Magick.percent}% · MAGICK \{Magick.magick-rows} · OpenMoji \{Magick.openmoji-rows}";
+                color: Theme.fg-muted;
+                font-family: Theme.font-technical;
+                font-size: Theme.fs-sm;
+                horizontal-alignment: center;
+            }
+        }
+    }
+}

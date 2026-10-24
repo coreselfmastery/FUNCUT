@@ -409,6 +409,7 @@ impl SpeechPane {
                             let clip = studio.apply(Command::AddClipAtFirstFree {
                                 media_id,
                                 start: self.landing,
+                                above: false,
                             });
                             // In a style: its effects on the clip, as the
                             // library would put them there.

@@ -55,6 +55,29 @@ window) → `bgm_import` with `start: 0` to lay it on a lane in one
 undoable step. `surprise` as the sort is the shuffle that picks when you
 cannot; a track whose length is unknown is passed by a duration filter
 rather than guessed at.
+
+### Stickers (MAGICK and OpenMoji)
+
+The `magick` tools search 149,758 transparent-PNG overlays on two
+shelves and fetch only what is used. MAGICK is OneOverZero's dataset of
+145,193 captioned AI-generated pictures with the backgrounds already
+taken away (people, animals, objects, gestures); OpenMoji is the
+project's colour emoji set (4,565, CC-BY 4.0, and its tags are searched:
+"smile" finds the grinning face). Nothing is bundled: `magick_prepare`
+fetches both indexes once (~18 MB; poll `magick_status` until both are
+`ready`), and a picture's PNG arrives only when it is picked - one plain
+GET, ~1 MB for a MAGICK picture, a few KB for an emoji, checked to be a
+PNG that can hold transparency before it is kept. A typical run:
+`magick_search` with words ("red balloon", `source: "magick"`) →
+`magick_add` with `id`, `start` and a placement (`scale: 0.3,
+offsetX: 0.2`, `duration: 3`), which lays the picture *over* the video -
+the first free lane above the highest occupied, never beneath it - as
+one undoable step beside the clip's own. MAGICK's pictures are
+AI-generated and CC BY-NC 4.0: fine for personal video, not for
+commercial use; OpenMoji is CC-BY 4.0. The window's Stickers page
+searches the same engine, and its heart button keeps the favourites the
+`favourites` filter narrows by.
+
 ## Set it up
 
 Point your client at the Concat binary with the one argument `--mcp`.
@@ -108,6 +131,7 @@ Tools are named for what they do, and their argument schemas are generated from 
 | Stock clips | `openvid_status`, `openvid_prepare`, `openvid_search`, `openvid_get`, `openvid_fetch`, `openvid_import` |
 | Sound effects | `sounds_search`, `sounds_add` |
 | Music | `bgm_status`, `bgm_prepare`, `bgm_search`, `bgm_fetch`, `bgm_import` |
+| Stickers | `magick_status`, `magick_prepare`, `magick_search`, `magick_fetch`, `magick_add` |
 | Editing | `clip_add`, `clips_add_sequence`, `clip_trim`, `clips_split`, `clips_move`, `clips_remove`, `clip_update`, `clip_transform`, `clip_speed`, `clip_frame`, `track_add` |
 | Picture | `clip_mask`, `clip_stabilize`, `timeline_background` |
 | Titles and captions | `title_add`, `captions_add` |

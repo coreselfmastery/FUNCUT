@@ -673,6 +673,7 @@ fn one_clip_exports_whole_at_every_rate() {
     studio.apply(Command::AddClipAtFirstFree {
         media_id: peek,
         start: 0.0,
+        above: false,
     });
 
     for (num, den) in [
@@ -718,6 +719,7 @@ fn an_export_draws_on_a_lent_compositor() {
     studio.apply(Command::AddClipAtFirstFree {
         media_id: media,
         start: 0.0,
+        above: false,
     });
     let spec = ExportSpec {
         output: scratch
@@ -771,6 +773,7 @@ fn crop_and_flips_reach_the_picture() {
         .apply(Command::AddClipAtFirstFree {
             media_id: media,
             start: 0.0,
+            above: false,
         })
         .expect("the clip has an id");
     let set = |studio: &mut Studio, crop: Option<Crop>, flip_h: bool, flip_v: bool| {
@@ -881,6 +884,7 @@ fn a_background_fills_the_bars_in_the_export_and_the_monitor() {
         .apply(Command::AddClipAtFirstFree {
             media_id: media,
             start: 0.0,
+            above: false,
         })
         .expect("the clip has an id");
     let timeline_id = studio.project().active_timeline_id.clone();
@@ -1058,6 +1062,7 @@ fn fades_and_wipes_reach_the_picture() {
         .apply(Command::AddClipAtFirstFree {
             media_id: red_media,
             start: 0.0,
+            above: false,
         })
         .expect("the clip has an id");
     let track = studio.project().active().tracks[0].id.clone();
@@ -1065,6 +1070,7 @@ fn fades_and_wipes_reach_the_picture() {
         .apply(Command::AddClipAtFirstFree {
             media_id: blue_media,
             start: 3.0,
+            above: false,
         })
         .expect("the clip has an id");
     // A second of handle at the head of the blue clip, for an overlap to
@@ -1174,6 +1180,7 @@ fn an_hlg_clip_exports_through_the_gpu_conversion() {
     studio.apply(Command::AddClipAtFirstFree {
         media_id: media,
         start: 0.0,
+        above: false,
     });
     let exported = studio.export("an HLG clip");
     let [r, g, b] = exported.colour_at(0.5);
@@ -1244,6 +1251,7 @@ fn an_hlg_timeline_exports_as_hdr_or_sdr() {
     studio.apply(Command::AddClipAtFirstFree {
         media_id: media,
         start: 0.0,
+        above: false,
     });
     assert_eq!(
         studio.project().active().video.color_space,
@@ -1322,6 +1330,7 @@ fn a_colour_range_named_on_the_media_reaches_the_export() {
     studio.apply(Command::AddClipAtFirstFree {
         media_id: peek.clone(),
         start: 0.0,
+        above: false,
     });
 
     let as_tagged = studio.export("as tagged");
@@ -1394,12 +1403,14 @@ fn every_edit_still_exports() {
         .apply(Command::AddClipAtFirstFree {
             media_id: peek.clone(),
             start: 0.0,
+            above: false,
         })
         .expect("the clip has an id");
     let cam_clip = studio
         .apply(Command::AddClipAtFirstFree {
             media_id: cam,
             start: 12.0,
+            above: false,
         })
         .expect("the clip has an id");
     let exported = studio.export("two clips");
@@ -1744,10 +1755,12 @@ fn every_edit_still_exports() {
     studio.apply(Command::AddClipAtFirstFree {
         media_id: still_media,
         start: 17.0,
+        above: false,
     });
     studio.apply(Command::AddClipAtFirstFree {
         media_id: silent,
         start: 22.0,
+        above: false,
     });
     let end = studio.end();
     let exported = studio.export("still and silent clip");
@@ -1844,6 +1857,7 @@ fn every_edit_still_exports() {
     studio.apply(Command::AddClipAtFirstFree {
         media_id: peek,
         start: 0.0,
+        above: false,
     });
     let exported = studio.export("second timeline at 60");
     exported.expect_length(6.0);
@@ -1869,6 +1883,7 @@ fn the_edges_export_too() {
     studio.apply(Command::AddClipAtFirstFree {
         media_id: still_media,
         start: 0.0,
+        above: false,
     });
     let end = studio.end();
     let exported = studio.export("only a still");
@@ -1882,6 +1897,7 @@ fn the_edges_export_too() {
     studio.apply(Command::AddClipAtFirstFree {
         media_id: wav,
         start: 0.5,
+        above: false,
     });
     let end = studio.end();
     let exported = studio.export("only sound");
@@ -1897,6 +1913,7 @@ fn the_edges_export_too() {
         .apply(Command::AddClipAtFirstFree {
             media_id: cam.clone(),
             start: 0.0,
+            above: false,
         })
         .expect("the clip has an id");
     // One frame long, at the very end of the media - and, since a trim
@@ -1926,6 +1943,7 @@ fn the_edges_export_too() {
         .apply(Command::AddClipAtFirstFree {
             media_id: cam,
             start: 0.0,
+            above: false,
         })
         .expect("the clip has an id");
     studio.apply(Command::TrimClip {
@@ -2025,11 +2043,13 @@ fn an_export_decodes_on_the_hardware_when_preferred() {
     studio.apply(Command::AddClipAtFirstFree {
         media_id: peek,
         start: 0.0,
+        above: false,
     });
     let clip = studio
         .apply(Command::AddClipAtFirstFree {
             media_id: cam,
             start: 6.0,
+            above: false,
         })
         .expect("the clip has an id");
     // A retimed clip on the device: the pacing sits on top of it exactly
@@ -2171,6 +2191,7 @@ fn consolidation_after_pause_removal_preserves_picture_sound_and_undo() {
     studio.apply(Command::AddClipAtFirstFree {
         media_id,
         start: 0.0,
+        above: false,
     });
     for time in [1.0, 2.0, 3.0, 5.0] {
         studio.apply(Command::SplitClips {
@@ -2266,6 +2287,7 @@ fn consolidation_of_silent_fractional_frames_covers_the_original_span() {
         .apply(Command::AddClipAtFirstFree {
             media_id,
             start: 0.0,
+            above: false,
         })
         .unwrap();
     studio.apply(Command::TrimClip {
@@ -2330,6 +2352,7 @@ fn consolidation_preserves_the_timeline_clock_of_animated_effects() {
         .apply(Command::AddClipAtFirstFree {
             media_id,
             start: 5.0,
+            above: false,
         })
         .unwrap();
     studio.apply(Command::UpdateClip {
@@ -2382,6 +2405,7 @@ fn consolidation_keeps_the_global_frame_grid_at_fractional_starts() {
         .apply(Command::AddClipAtFirstFree {
             media_id,
             start: 5.01,
+            above: false,
         })
         .unwrap();
     studio.apply(Command::TrimClip {

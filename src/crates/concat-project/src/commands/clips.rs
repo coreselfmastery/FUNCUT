@@ -46,15 +46,24 @@ pub(super) fn apply(
             })
         }
 
-        Command::AddClipAtFirstFree { media_id, start } => {
+        Command::AddClipAtFirstFree {
+            media_id,
+            start,
+            above,
+        } => {
             let media = project
                 .media_by_id(&media_id)
                 .ok_or(CommandError::MediaGone)?
                 .clone();
             let duration = clip_length(&media);
             let timeline = project.active_mut();
-            let track_id = first_free_track(timeline, start, duration)
-                .unwrap_or_else(|| fresh_track(timeline, mint));
+            let track_id = match above {
+                // The titles' walk, for what sits over the picture.
+                true => first_free_track_above(timeline, start, duration)
+                    .unwrap_or_else(|| fresh_track(timeline, mint)),
+                false => first_free_track(timeline, start, duration)
+                    .unwrap_or_else(|| fresh_track(timeline, mint)),
+            };
             let id = mint.next("c");
             timeline
                 .clips

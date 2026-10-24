@@ -45,6 +45,7 @@ pub use concat_host::AppDirs;
 use concat_host::bgm::{self as bgm_library, Query as BgmQuery, Sort as BgmSort};
 use concat_host::cutout::{self, AnalyseRequest, Cutouts};
 use concat_host::export::{self, Exporter};
+use concat_host::magick as sticker_library;
 use concat_host::openvid::{self, Orientation, Query, Sort, Source};
 use concat_host::preview::{FrameSpec, Monitor};
 use concat_host::session::EditorView;
@@ -53,13 +54,14 @@ use concat_host::stabilize::{StabilizeRequest, Stabilizers};
 use concat_host::templates::{self, SlotFill};
 use concat_host::{ProjectInfo, Session, Titles, lock, media, projects};
 use concat_project::Command;
+use concat_project::commands::TrimEdge;
 use concat_project::model::VideoSettings;
 
 pub use message::{
     API_VERSION, ApiError, BgmFound, BgmImport, BgmState, BgmTrack, Dirs, Done, ErrorCode, Event,
-    ExportSpec, Fill, JobState, JobStatus, OpenvidClip, OpenvidFound, OpenvidImport, OpenvidState,
-    PackageInfo, ParamInfo, Picture, Reply, Request, Response, SoundEntry, SoundsAdded,
-    SoundsFound, Started, VersionInfo, Written,
+    ExportSpec, Fill, JobState, JobStatus, MagickAdd, MagickEntry, MagickFound, MagickState,
+    OpenvidClip, OpenvidFound, OpenvidImport, OpenvidState, PackageInfo, ParamInfo, Picture, Reply,
+    Request, Response, SoundEntry, SoundsAdded, SoundsFound, Started, VersionInfo, Written,
 };
 
 /// The export sheet's middle quality, and what an export gets when the
@@ -564,6 +566,49 @@ impl Api {
             } => Ok(Reply::BgmImported(
                 self.bgm_import(&path, &ids, start, track)?,
             )),
+            Request::MagickStatus => Ok(Reply::Magick(self.magick_state())),
+            Request::MagickPrepare => {
+                self.magick_prepare();
+                Ok(Reply::Magick(self.magick_state()))
+            }
+            Request::MagickSearch {
+                query,
+                source,
+                favourites,
+                limit,
+                offset,
+            } => Ok(Reply::MagickFound(self.magick_search(
+                query.as_deref(),
+                source.as_deref(),
+                favourites.unwrap_or(false),
+                limit,
+                offset,
+            )?)),
+            Request::MagickGet { ids } => Ok(Reply::MagickStickers(self.magick_get(&ids)?)),
+            Request::MagickFetch { id } => Ok(Reply::MagickStickers(self.magick_fetch(&id)?)),
+            Request::MagickAdd {
+                path,
+                id,
+                start,
+                duration,
+                track,
+                scale,
+                offset_x,
+                offset_y,
+                rotation,
+            } => Ok(Reply::MagickAdded(self.magick_add(
+                &path,
+                &id,
+                Placement {
+                    start,
+                    duration,
+                    track,
+                    scale,
+                    offset_x,
+                    offset_y,
+                    rotation,
+                },
+            )?)),
             Request::MediaImport { path, file } => view(self.import(&path, &file)?),
             Request::CatalogueList { kind } => Ok(Reply::Packages(catalogue(kind.as_deref())?)),
             Request::TemplateList => Ok(Reply::Templates(templates::list(&self.dirs.config))),
@@ -1109,6 +1154,7 @@ impl Api {
                     None => Command::AddClipAtFirstFree {
                         media_id: media_id.clone(),
                         start,
+                        above: false,
                     },
                 },
             )?;
@@ -1384,6 +1430,288 @@ impl Api {
         }
         Ok(BgmImport {
             media_ids,
+            view: Box::new(view),
+        })
+    }
+
+    // ── the sticker library ─────────────────────────────────────────────
+
+    /// The sticker library this API reads, from the app's own
+    /// directories. One per process, so the window's page and this
+    /// server share a download and a cache rather than racing each
+    /// other.
+    fn stickers(&self) -> &'static sticker_library::Library {
+        sticker_library::shared(&self.dirs)
+    }
+
+    /// [`Request::MagickStatus`]: both shelves, each in its own word.
+    pub fn magick_state(&self) -> MagickState {
+        let library = self.stickers();
+        let word = |source: sticker_library::Source| match library.status(source) {
+            sticker_library::Status::Missing => "missing".to_owned(),
+            sticker_library::Status::Downloading(percent) => format!("downloading ({percent}%)"),
+            sticker_library::Status::Ready => "ready".to_owned(),
+            sticker_library::Status::Failed(error) => format!("failed: {error}"),
+        };
+        let magick = word(sticker_library::Source::Magick);
+        let openmoji = word(sticker_library::Source::Openmoji);
+        let percent = [
+            sticker_library::Source::Magick,
+            sticker_library::Source::Openmoji,
+        ]
+        .into_iter()
+        .filter_map(|source| match library.status(source) {
+            sticker_library::Status::Downloading(percent) => Some(percent),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0);
+        let error = [
+            (sticker_library::Source::Magick, &magick),
+            (sticker_library::Source::Openmoji, &openmoji),
+        ]
+        .into_iter()
+        .filter(|(_, word)| word.starts_with("failed"))
+        .map(|(source, word)| format!("{}: {}", source.name(), word.trim_start_matches("failed: ")))
+        .reduce(|both, one| format!("{both}; {one}"));
+        MagickState {
+            magick,
+            openmoji,
+            percent,
+            magick_rows: library.rows(sticker_library::Source::Magick),
+            openmoji_rows: library.rows(sticker_library::Source::Openmoji),
+            error,
+        }
+    }
+
+    /// [`Request::MagickPrepare`]: both shelves' one-time index
+    /// downloads, started on their own threads because they are a few
+    /// MB and a parse follows them; a caller should not wait for them.
+    /// Their progress is what `magick.status` reports; a second call
+    /// while they run is a no-op, and the window's own page starting one
+    /// is the same download.
+    pub fn magick_prepare(&self) {
+        let library = self.stickers();
+        for source in sticker_library::Source::ALL {
+            if matches!(
+                library.status(source),
+                sticker_library::Status::Ready | sticker_library::Status::Downloading(_)
+            ) {
+                continue;
+            }
+            std::thread::spawn(move || {
+                // This flag is never set: the fetch runs to its end. A
+                // cancel is the process going away, which takes the
+                // thread with it; the indexes are re-read from the cache
+                // either way. The outcome lands in the status the next
+                // caller reads: `Failed`, with these words, rather than
+                // a log line this crate has no facade for.
+                let cancel = std::sync::atomic::AtomicBool::new(false);
+                let _ = library.prepare(source, &cancel);
+            });
+        }
+    }
+
+    /// [`Request::MagickSearch`]: the filters as the request carries
+    /// them, parsed once, with the words a caller chose kept as words.
+    pub fn magick_search(
+        &self,
+        query: Option<&str>,
+        source: Option<&str>,
+        favourites: bool,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<MagickFound, ApiError> {
+        // A shelf that is no shelf's is a refusal in words rather than
+        // an empty page, so a caller knows the ask was wrong and not
+        // that nothing matched.
+        let source = match source.map(sticker_library::Source::parse) {
+            Some(Some(source)) => Some(source),
+            Some(None) => {
+                return Err(ApiError::invalid(
+                    "the source must be magick or openmoji, not whatever was given",
+                ));
+            }
+            None => None,
+        };
+        let found = self
+            .stickers()
+            .search(&sticker_library::Query {
+                text: query.map(str::to_owned),
+                source,
+                favourites,
+                limit: limit.unwrap_or(20),
+                offset: offset.unwrap_or(0),
+            })
+            .map_err(ApiError::failed)?;
+        Ok(MagickFound {
+            stickers: found
+                .stickers
+                .iter()
+                .map(|sticker| {
+                    MagickEntry::of(sticker, self.stickers().fetched(&sticker.id).as_deref())
+                })
+                .collect(),
+            total: found.total,
+        })
+    }
+
+    /// [`Request::MagickGet`]: everything about up to 20 stickers by id,
+    /// from whichever shelf holds each.
+    pub fn magick_get(&self, ids: &[String]) -> Result<Vec<MagickEntry>, ApiError> {
+        if ids.is_empty() {
+            return Err(ApiError::failed("no sticker ids given".to_owned()));
+        }
+        if ids.len() > 20 {
+            return Err(ApiError::failed(
+                "at most 20 stickers a call; page through them".to_owned(),
+            ));
+        }
+        Ok(ids
+            .iter()
+            .filter_map(|id| {
+                self.stickers().find(id).map(|sticker| {
+                    MagickEntry::of(&sticker, self.stickers().fetched(id).as_deref())
+                })
+            })
+            .collect())
+    }
+
+    /// [`Request::MagickFetch`]: the picture's own bytes, one plain GET,
+    /// checked to be a PNG that can hold transparency before it is kept.
+    pub fn magick_fetch(&self, id: &str) -> Result<Vec<MagickEntry>, ApiError> {
+        let sticker = self
+            .stickers()
+            .find(id)
+            .ok_or_else(|| ApiError::failed(format!("there is no sticker {id}")))?;
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let mut progress = |_, _| {};
+        let path = self
+            .stickers()
+            .fetch(sticker.source, id, &cancel, &mut progress)
+            .map_err(ApiError::failed)?;
+        Ok(vec![MagickEntry::of(&sticker, Some(&path))])
+    }
+
+    /// [`Request::MagickAdd`]: fetch the picture when it is not on this
+    /// machine yet, copy it into the project's own `magick` folder, and
+    /// add it to the bin - laying it *over* the picture when `start` is
+    /// given, with the placement asked for as one undoable step beside
+    /// the clip's own.
+    pub fn magick_add(
+        &mut self,
+        path: &str,
+        id: &str,
+        placement: Placement,
+    ) -> Result<MagickAdd, ApiError> {
+        let sticker = self
+            .stickers()
+            .find(id)
+            .ok_or_else(|| ApiError::failed(format!("there is no sticker {id}")))?;
+        self.writable(path)?;
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let mut progress = |_, _| {};
+        let cached = self
+            .stickers()
+            .fetch(sticker.source, id, &cancel, &mut progress)
+            .map_err(ApiError::failed)?;
+        let folder = {
+            let session = self.session(path)?;
+            let folder = PathBuf::from(session.path()).join("magick");
+            std::fs::create_dir_all(&folder).map_err(|error| {
+                ApiError::failed(format!("could not create {}: {error}", folder.display()))
+            })?;
+            folder
+        };
+        // The caption plus the id: unique for as long as the picture is
+        // in the library, and the same picture imported twice is the
+        // same file, copied over itself.
+        let name = format!("{}-{id}.png", clean_name(&sticker.subject));
+        let into = folder.join(name);
+        std::fs::copy(&cached, &into).map_err(|error| {
+            ApiError::failed(format!("could not copy into the project: {error}"))
+        })?;
+        let item = media::probe(&into.to_string_lossy())
+            .map_err(ApiError::failed)?
+            .to_new_media();
+        let mut view = self.apply(path, Command::AddMedia { item })?;
+        let Some(media_id) = view
+            .project
+            .media
+            .iter()
+            .find(|item| item.path == into.to_string_lossy())
+            .map(|item| item.id.clone())
+        else {
+            return Err(ApiError::failed(
+                "the picture was imported but could not be found again".to_owned(),
+            ));
+        };
+        let mut clip_id = None;
+        if let Some(start) = placement.start {
+            view = self.apply(
+                path,
+                match placement.track.clone() {
+                    Some(track_id) => Command::AddClip {
+                        media_id: media_id.clone(),
+                        track_id,
+                        start,
+                        ripple: false,
+                    },
+                    // The overlay walk: over the picture, never beneath
+                    // it, the way a title lands.
+                    None => Command::AddClipAtFirstFree {
+                        media_id: media_id.clone(),
+                        start,
+                        above: true,
+                    },
+                },
+            )?;
+            clip_id = view.created_id.clone();
+            // The placement, when any was asked for: the clip's own
+            // shape, size and angle as one undoable step beside the
+            // clip's own.
+            let mut commands = Vec::new();
+            if let (Some(duration), Some(clip)) = (placement.duration, clip_id.as_deref()) {
+                let now = view
+                    .project
+                    .active()
+                    .clips
+                    .iter()
+                    .find(|held| held.id == clip)
+                    .map(|held| held.duration)
+                    .unwrap_or_default();
+                commands.push(Command::TrimClip {
+                    clip_id: clip.to_owned(),
+                    edge: TrimEdge::End,
+                    delta: duration - now,
+                    ripple: false,
+                });
+            }
+            if placement.scale.is_some()
+                || placement.offset_x.is_some()
+                || placement.offset_y.is_some()
+                || placement.rotation.is_some()
+            {
+                if let Some(clip) = clip_id.as_deref() {
+                    commands.push(Command::SetClipTransform {
+                        clip_id: clip.to_owned(),
+                        scale: placement.scale,
+                        offset_x: placement.offset_x,
+                        offset_y: placement.offset_y,
+                        rotation: placement.rotation,
+                        stretch_x: None,
+                        stretch_y: None,
+                    });
+                }
+            }
+            if !commands.is_empty() {
+                view = self.apply(path, Command::Batch { commands })?;
+            }
+        }
+        Ok(MagickAdd {
+            media_id,
+            clip_id,
+            file: into.to_string_lossy().into_owned(),
             view: Box::new(view),
         })
     }
@@ -1908,6 +2236,27 @@ fn key_of(path: &str) -> String {
         .unwrap_or_else(|_| path.to_owned())
 }
 
+/// A sticker's placement on the timeline, as `magick.add` was asked for
+/// it: every field optional, `start` being the one that puts the picture
+/// on a lane at all.
+pub struct Placement {
+    /// Lay it on the timeline from this moment, in seconds.
+    start: Option<f64>,
+    /// How long it stays; the still's default hold when absent.
+    duration: Option<f64>,
+    /// The lane by name; the overlay walk when absent.
+    track: Option<String>,
+    /// Scale, 1 filling the frame.
+    scale: Option<f64>,
+    /// Horizontal placement, frame widths from the centre, positive
+    /// right.
+    offset_x: Option<f64>,
+    /// Vertical placement, frame heights from the centre, positive down.
+    offset_y: Option<f64>,
+    /// Rotation in degrees.
+    rotation: Option<f64>,
+}
+
 /// A track's title as a file name a project can hold: the characters a
 /// plain name cannot carry taken out, the whole thing cut to a length a
 /// name was meant to be. The id beside it is what makes the name unique;
@@ -2145,6 +2494,7 @@ mod tests {
             command: Box::new(Command::AddClipAtFirstFree {
                 media_id,
                 start: 2.0,
+                above: false,
             }),
         })));
         assert!(placed.can_undo);
@@ -2190,6 +2540,7 @@ mod tests {
             command: Box::new(Command::AddClipAtFirstFree {
                 media_id: added.created_id.expect("minted"),
                 start: 0.0,
+                above: false,
             }),
         })));
         let clip_id = placed.project.active().clips[0].id.clone();
@@ -2275,6 +2626,55 @@ mod tests {
         assert_eq!(refused.code, ErrorCode::NotOpen);
     }
 
+    /// The sticker library refuses until its indexes are on this machine,
+    /// with the words that say what to do about it; a shelf that is no
+    /// shelf's never reaches the library at all; and an id no shelf holds
+    /// is a refusal of its own - the ask was wrong, not the library
+    /// empty. Nothing here touches the network.
+    #[test]
+    fn the_sticker_library_refuses_until_prepared() {
+        let (mut api, _scratch, _) = api();
+        let state = match ok(api.dispatch(Request::MagickStatus)) {
+            Reply::Magick(state) => state,
+            _ => panic!("the status is the status"),
+        };
+        assert_eq!(state.magick, "missing");
+        assert_eq!(state.openmoji, "missing");
+        assert_eq!(state.percent, 0);
+        assert!(state.error.is_none());
+        let refused = err(api.dispatch(Request::MagickSearch {
+            query: Some("waving".to_owned()),
+            source: None,
+            favourites: None,
+            limit: None,
+            offset: None,
+        }));
+        assert!(
+            refused.message.contains("magick.prepare"),
+            "{}",
+            refused.message
+        );
+        // A shelf that is no shelf's is refused before the library is
+        // asked.
+        let wrong = err(api.dispatch(Request::MagickSearch {
+            query: None,
+            source: Some("nonsense".to_owned()),
+            favourites: None,
+            limit: None,
+            offset: None,
+        }));
+        assert_eq!(wrong.code, ErrorCode::Invalid);
+        // And an id no shelf holds is a refusal of its own.
+        let unknown = err(api.dispatch(Request::MagickFetch {
+            id: "noSuchSticker".to_owned(),
+        }));
+        assert!(
+            unknown.message.contains("no sticker noSuchSticker"),
+            "{}",
+            unknown.message
+        );
+    }
+
     #[test]
     fn undo_and_redo_step_the_history() {
         let (mut api, scratch, _) = api();
@@ -2357,6 +2757,7 @@ mod tests {
             command: Box::new(Command::AddClipAtFirstFree {
                 media_id: added.created_id.expect("minted"),
                 start: 0.0,
+                above: false,
             }),
         }));
         let started = match ok(api.dispatch(Request::ExportRun {

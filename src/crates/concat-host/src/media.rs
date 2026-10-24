@@ -1083,6 +1083,7 @@ mod tests {
                 .apply(Command::AddClipAtFirstFree {
                     media_id,
                     start: 0.0,
+                    above: false,
                 })
                 .expect("places");
             let settings = DocumentSettings {

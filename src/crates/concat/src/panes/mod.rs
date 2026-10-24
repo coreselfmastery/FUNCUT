@@ -18,6 +18,7 @@ pub mod bgm;
 pub mod captions;
 pub mod export;
 pub mod glide;
+pub mod magick;
 pub mod media_bin;
 pub mod monitor;
 pub mod openvid;
@@ -62,6 +63,8 @@ pub enum Msg {
     Openvid(openvid::OpenvidMsg),
     /// To the library's Music page.
     Music(bgm::MusicMsg),
+    /// To the library's Stickers page.
+    Magick(magick::MagickMsg),
 }
 
 /// What a message says in the log: the activity trail of what the person
@@ -96,6 +99,7 @@ pub fn activity(msg: &Msg) -> Option<Activity> {
         | Msg::Speech(SpeechMsg::Progress(_))
         | Msg::Openvid(openvid::OpenvidMsg::Tick)
         | Msg::Music(bgm::MusicMsg::Tick)
+        | Msg::Magick(magick::MagickMsg::Tick)
         | Msg::Settings(SettingsMsg::ModelProgress { .. } | SettingsMsg::InstallProgress { .. }) => {
             return None;
         }
@@ -194,6 +198,43 @@ pub fn activity(msg: &Msg) -> Option<Activity> {
                     }
                 ),
             ));
+        }
+        Msg::Magick(magick::MagickMsg::Download) => {
+            return Some(Activity::once(
+                Info,
+                "stickers: the indexes' download began".to_owned(),
+            ));
+        }
+        Msg::Magick(magick::MagickMsg::Searched(result, _)) => {
+            return Some(Activity::once(
+                Info,
+                match result {
+                    Ok(found) => {
+                        format!(
+                            "stickers: {} of {} pictures",
+                            found.stickers.len(),
+                            found.total
+                        )
+                    }
+                    Err(error) => format!("stickers: the search failed, {error}"),
+                },
+            ));
+        }
+        Msg::Magick(magick::MagickMsg::Fetched(id, Ok(_), then)) => {
+            return Some(Activity::once(
+                Info,
+                format!(
+                    "stickers: picture {id} fetched, {:?}",
+                    if *then == magick::Then::Preview {
+                        "to preview"
+                    } else {
+                        "to the timeline"
+                    }
+                ),
+            ));
+        }
+        Msg::Magick(magick::MagickMsg::Heart(id)) => {
+            return Some(Activity::once(Info, format!("stickers: heart on {id}")));
         }
         Msg::Media(MediaMsg::Import(paths)) => {
             let names: Vec<String> = paths

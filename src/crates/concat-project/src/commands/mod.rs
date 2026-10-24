@@ -318,12 +318,20 @@ pub enum Command {
     },
     /// [`Command::AddClip`] without naming a lane: lands on the lowest
     /// track with nothing in the clip's span, falling back to the bottom
-    /// track (overlap and all) rather than refusing.
+    /// track (overlap and all) rather than refusing. With `above`, the
+    /// walk is the titles' instead - the first free lane *above* the
+    /// highest one occupied over the clip's span, a new one at the top
+    /// when every one above is taken - which is what anything meant to
+    /// sit *over* the picture wants: a sticker, a caption, a title.
     AddClipAtFirstFree {
         /// The bin item to cut from.
         media_id: String,
         /// Timeline position in seconds, floored at 0.
         start: f64,
+        /// Over the picture rather than under it; see the variant's own
+        /// words.
+        #[serde(default)]
+        above: bool,
     },
     /// Several bin items one after another on one lane, as one step: what
     /// a selection of cards dragged from the bin, or added at the playhead,

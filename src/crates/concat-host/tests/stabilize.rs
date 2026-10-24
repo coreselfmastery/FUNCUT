@@ -189,6 +189,7 @@ fn a_shaky_shot_is_measured_and_held_still() {
         .apply(Command::AddClipAtFirstFree {
             media_id,
             start: 0.0,
+            above: false,
         })
         .expect("adds")
         .created_id

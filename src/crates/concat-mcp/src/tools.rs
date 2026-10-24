@@ -355,6 +355,45 @@ pub fn catalogue() -> Vec<Tool> {
             Raw,
         ),
         method(
+            "magick_status",
+            "Sticker library status",
+            "Where the sticker library stands, shelf by shelf: `magick` (MAGICK: 145,193 captioned AI-generated transparent PNGs cut out of their backgrounds - people, animals, objects, gestures) and `openmoji` (4,565 transparent emoji, CC-BY 4.0) are each \"missing\" (call `magick_prepare` once, ~18 MB, then poll this), \"downloading\" (with `percent`), \"ready\" (with `magickRows`/`openmojiRows`) or \"failed\" (with `error`). 149,758 overlays in all; none in the repository - a picture's PNG moves only when picked.",
+            "magick.status",
+            Raw,
+        )
+        .reading(),
+        method(
+            "magick_prepare",
+            "Load the sticker library",
+            "Starts both shelves' one-time index downloads (~16 MB MAGICK, digest-checked; ~2 MB OpenMoji) and returns at once; poll `magick_status` until both are \"ready\". Nothing else downloads anything: every other `magick` tool refuses until the shelf it reads is ready.",
+            "magick.prepare",
+            Raw,
+        )
+        .idempotent(),
+        method(
+            "magick_search",
+            "Search stickers",
+            "Searches 149,758 transparent-PNG overlays - MAGICK's 145,193 captioned AI-generated pictures and OpenMoji's 4,565 emoji - by what their captions say: each match carries `id`, `source` (magick/openmoji), `subject` (the caption) and `localPath` when the PNG is already on this machine. `query` words are ANDed and prefix-matched - the emoji read their words and tags both - ranked by where and how rarely the words matched, the whole phrase as one run counting most: \"red balloon\" finds a red balloon, \"party\" the popper emoji. `source` narrows the shelf, `favourites` the heart's list, `limit` (1-100, default 20) and `offset` page. `magick_add` places one by id.",
+            "magick.search",
+            Raw,
+        )
+        .reading(),
+        method(
+            "magick_fetch",
+            "Fetch a sticker",
+            "Fetches one picture's PNG into the app's cache - one plain GET (~1 MB MAGICK, a few KB emoji), checked to be a PNG that can hold transparency - and returns it with `localPath`, its absolute path here. Adds nothing to any project; `magick_add` is what puts one in an edit.",
+            "magick.fetch",
+            Raw,
+        )
+        .idempotent(),
+        method(
+            "magick_add",
+            "Add a sticker",
+            "Adds one overlay (`id`, as `magick_search` gave it) to an open project: fetched, copied into the project's own `magick` folder, imported - with `start` (seconds) also laid *over* the picture, never beneath it: the first free lane above the highest occupied, as a title lands. Optional placement, one undoable step: `duration` (seconds), `track` (a lane by name, taken as `clip_add` takes one), `scale` (0.05-8, 1 fills the frame; a sticker usually wants ~0.2-0.4), `offsetX`/`offsetY` (frame fractions from centre, positive right/down), `rotation` (degrees). Returns `mediaId`, `clipId` when laid, and the summary.",
+            "magick.add",
+            Raw,
+        ),
+        method(
             "edit_apply",
             "Apply an edit",
             "Applies any one edit command to an open project, as one undoable step. `command` is an object tagged by `op` - every edit the window can make is one, with the same limits and refusals; the typed tools below are the common ones. `{\"op\": \"batch\", \"commands\": [...]}` applies several commands as one atomic, undoable step: all land or none does, and `createdId` is the last id minted inside. A refusal comes back as the sentence the window would show, with nothing changed. Returns the project summary; a command that creates something puts its id in `createdId`.",
@@ -1102,6 +1141,18 @@ mod tests {
             (
                 "bgm_import",
                 json!({ "path": "/tmp/Cut", "ids": ["lofi-0123456789ab"], "start": 0.0 }),
+            ),
+            ("magick_status", json!({})),
+            ("magick_prepare", json!({})),
+            (
+                "magick_search",
+                json!({ "query": "red balloon", "source": "magick", "limit": 10 }),
+            ),
+            ("magick_fetch", json!({ "id": "QlhA9gJbNR" })),
+            (
+                "magick_add",
+                json!({ "path": "/tmp/Cut", "id": "QlhA9gJbNR", "start": 1.0, "duration": 3.0,
+                        "scale": 0.3, "offsetX": 0.2, "offsetY": -0.1 }),
             ),
             (
                 "edit_apply",

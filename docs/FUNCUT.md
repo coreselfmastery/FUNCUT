@@ -10,6 +10,23 @@ the machine, and how easy it is to get onto one. The full ledger of what
 changed against upstream, number by number, is in
 [FUNCUT-CHANGES.md](FUNCUT-CHANGES.md).
 
+## The sticker library
+
+The library's **Stickers** page puts 149,758 transparent PNGs beside the
+stock clips and the music, none of them in the repository or the app:
+**MAGICK** - OneOverZero's dataset of 145,193 captioned AI-generated
+pictures with the backgrounds already taken away - and **OpenMoji**, the
+colour emoji set (4,565, CC-BY 4.0). The indexes download once, ~18 MB;
+a picture's PNG arrives only when it is picked, one plain GET, and a
+plus lays it *over* the video at the playhead, never beneath it. The
+search reads captions the way the sound library reads names - words
+ANDed, ranked by where and how rarely they matched - and the same
+engine answers the window and the five `magick` MCP tools
+(`magick_status`, `magick_prepare`, `magick_search`, `magick_fetch`,
+`magick_add`) the AI agent drives. The honest words - the pictures are
+AI-generated, MAGICK is CC BY-NC 4.0 (personal and non-commercial use,
+not commercial) - are in [MAGICK.md](MAGICK.md).
+
 ## The voiceover's pause removal
 
 Record a voiceover and the panel offers to cut the pauses out of the take:

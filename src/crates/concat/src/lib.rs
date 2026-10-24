@@ -58,6 +58,7 @@ use panes::Msg;
 use panes::bgm::MusicMsg;
 use panes::captions::CaptionsMsg;
 use panes::export::ExportMsg;
+use panes::magick::MagickMsg;
 use panes::media_bin::MediaMsg;
 use panes::monitor::MonitorMsg;
 use panes::openvid::OpenvidMsg;
@@ -405,6 +406,8 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
             .set_results(ModelRc::from(models.music_results.clone()));
         app.global::<crate::ui::Music>()
             .set_categories(ModelRc::from(models.music_categories.clone()));
+        app.global::<crate::ui::Magick>()
+            .set_results(ModelRc::from(models.magick_results.clone()));
         app.global::<Sounds>()
             .set_voices_builtin(ModelRc::from(models.voices_builtin.clone()));
         app.global::<Sounds>()
@@ -1491,6 +1494,36 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         }));
         music.on_shown(on_window!(|state, on: bool| {
             state.handle(Msg::Music(MusicMsg::Shown(on)));
+        }));
+
+        // ── the library's Stickers page ──
+        let magick = app.global::<crate::ui::Magick>();
+        magick.on_search(on_window!(
+            |state, query: SharedString, source: i32, favourites: bool| {
+                state.handle(Msg::Magick(MagickMsg::Search {
+                    query: query.to_string(),
+                    source,
+                    favourites,
+                }));
+            }
+        ));
+        magick.on_more_loaded(on_window!(|state| {
+            state.handle(Msg::Magick(MagickMsg::More));
+        }));
+        magick.on_preview(on_window!(|state, id: SharedString| {
+            state.handle(Msg::Magick(MagickMsg::Preview(id.to_string())));
+        }));
+        magick.on_add(on_window!(|state, id: SharedString| {
+            state.handle(Msg::Magick(MagickMsg::Add(id.to_string())));
+        }));
+        magick.on_heart(on_window!(|state, id: SharedString| {
+            state.handle(Msg::Magick(MagickMsg::Heart(id.to_string())));
+        }));
+        magick.on_download(on_window!(|state| {
+            state.handle(Msg::Magick(MagickMsg::Download));
+        }));
+        magick.on_shown(on_window!(|state, on: bool| {
+            state.handle(Msg::Magick(MagickMsg::Shown(on)));
         }));
 
         sounds.on_voice_remove(on_window!(|state, id: SharedString| {

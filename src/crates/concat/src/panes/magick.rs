@@ -489,8 +489,8 @@ impl Studio {
 
     /// The bin's id for a sticker in this project: its copy in the
     /// project's `magick` folder, made and imported when it is not there
-    /// yet. The picture's id travels in the name - `{caption}-{id}.png`
-    /// - so the same picture is always the same file and two different
+    /// yet. The picture's id travels in the name (`{caption}-{id}.png`),
+    /// so the same picture is always the same file and two different
     /// pictures never share one.
     fn adopt_magick(&mut self, name: &str, id: &str, path: &PathBuf) -> Result<String, String> {
         let project = self

@@ -28,7 +28,7 @@ pub fn os_description() -> String {
 /// from the report. Gathered once — every line of it is fixed for the life of
 /// the process — and handed over as a model that is never replaced.
 pub fn system_facts() -> Vec<(String, String)> {
-    let mut facts = vec![
+    let facts = vec![
         (
             t("sysinfo.application"),
             format!("Concat {}", env!("CARGO_PKG_VERSION")),

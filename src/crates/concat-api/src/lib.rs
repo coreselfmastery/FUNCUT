@@ -47,6 +47,7 @@ use concat_host::export::{self, Exporter};
 use concat_host::openvid::{self, Orientation, Query, Sort, Source};
 use concat_host::preview::{FrameSpec, Monitor};
 use concat_host::session::EditorView;
+use concat_host::sounds;
 use concat_host::stabilize::{StabilizeRequest, Stabilizers};
 use concat_host::templates::{self, SlotFill};
 use concat_host::{ProjectInfo, Session, Titles, lock, media, projects};
@@ -56,7 +57,7 @@ use concat_project::model::VideoSettings;
 pub use message::{
     API_VERSION, ApiError, Dirs, Done, ErrorCode, Event, ExportSpec, Fill, JobState, JobStatus,
     OpenvidClip, OpenvidFound, OpenvidImport, OpenvidState, PackageInfo, ParamInfo, Picture, Reply,
-    Request, Response, Started, VersionInfo, Written,
+    Request, Response, SoundEntry, SoundsAdded, SoundsFound, Started, VersionInfo, Written,
 };
 
 /// The export sheet's middle quality, and what an export gets when the
@@ -509,6 +510,23 @@ impl Api {
             } => Ok(Reply::OpenvidImported(
                 self.openvid_import(&path, &ids, start, track)?,
             )),
+            Request::SoundsSearch {
+                query,
+                category,
+                limit,
+                offset,
+            } => Ok(Reply::SoundsFound(self.sounds_search(
+                query.as_deref(),
+                category.as_deref(),
+                limit,
+                offset,
+            )?)),
+            Request::SoundsAdd {
+                path,
+                id,
+                start,
+                track,
+            } => Ok(Reply::SoundsAdded(self.sounds_add(&path, &id, start, track)?)),
             Request::MediaImport { path, file } => view(self.import(&path, &file)?),
             Request::CatalogueList { kind } => Ok(Reply::Packages(catalogue(kind.as_deref())?)),
             Request::TemplateList => Ok(Reply::Templates(templates::list(&self.dirs.config))),
@@ -918,6 +936,175 @@ impl Api {
         }
         Ok(OpenvidImport {
             media_ids,
+            view: Box::new(view),
+        })
+    }
+
+    // ── the built-in sound library ────────────────────────────────────────
+
+    /// The catalogue every `sounds` method reads: the one this machine
+    /// last fetched, or one brought down now when there is none yet - the
+    /// same list the window's Audio page loads on demand. `Err` when the
+    /// manifest cannot be reached and nothing is cached.
+    fn sounds_catalogue(&self) -> Result<sounds::Catalogue, ApiError> {
+        if let Some(catalogue) = sounds::cached_catalogue(&self.dirs) {
+            return Ok(catalogue);
+        }
+        sounds::fetch_catalogue(&self.dirs)
+            .map_err(ApiError::failed)?
+            .ok_or_else(|| ApiError::failed("the sound list is not published yet".to_owned()))
+    }
+
+    /// [`Request::SoundsSearch`]: the catalogue narrowed by the filters.
+    /// The words of `query` are ANDed and prefix-matched against each
+    /// sound's name, id, category and tags - the way the OpenVid search
+    /// narrows by caption - so "cinematic impact" finds an impact tagged
+    /// cinematic.
+    pub fn sounds_search(
+        &self,
+        query: Option<&str>,
+        category: Option<&str>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<SoundsFound, ApiError> {
+        let catalogue = self.sounds_catalogue()?;
+        let words: Vec<String> = query
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .split_whitespace()
+            .filter(|word| !word.is_empty())
+            .map(str::to_owned)
+            .collect();
+        let wanted = category.map(str::to_ascii_lowercase);
+        let matched: Vec<&sounds::Listed> = catalogue
+            .sounds
+            .iter()
+            .filter(|sound| {
+                wanted
+                    .as_deref()
+                    .is_none_or(|wanted| sound.category.to_ascii_lowercase() == wanted)
+            })
+            .filter(|sound| {
+                words.iter().all(|word| {
+                    let hay = format!(
+                        "{} {} {} {}",
+                        sound.name,
+                        sound.id,
+                        sound.category,
+                        sound.tags.join(" ")
+                    );
+                    hay.to_ascii_lowercase()
+                        .split_whitespace()
+                        .any(|token| token.starts_with(word))
+                })
+            })
+            .collect();
+        let total = matched.len() as u64;
+        let limit = limit.unwrap_or(20).clamp(1, 100) as usize;
+        let offset = offset.unwrap_or(0) as usize;
+        let rows = matched
+            .into_iter()
+            .skip(offset)
+            .take(limit)
+            .map(|sound| self.sound_entry(sound))
+            .collect();
+        Ok(SoundsFound {
+            sounds: rows,
+            total,
+        })
+    }
+
+    /// A library sound as the API hands it back: the manifest's row, and
+    /// where the file is when it is already on this machine.
+    fn sound_entry(&self, sound: &sounds::Listed) -> SoundEntry {
+        let cached = sounds::cached_file(&self.dirs, sound);
+        SoundEntry {
+            id: sound.id.clone(),
+            name: sound.name.clone(),
+            category: sound.category.clone(),
+            tags: sound.tags.clone(),
+            duration: sound.duration,
+            bytes: sound.bytes,
+            license: sound.license.clone(),
+            author: sound.author.clone(),
+            local_path: cached
+                .is_file()
+                .then(|| cached.to_string_lossy().into_owned()),
+        }
+    }
+
+    /// [`Request::SoundsAdd`]: download into the cache when it is not
+    /// there yet, copy into the project's own `audio` folder, and add to
+    /// the bin - laying it on a lane too when `start` is given, as one
+    /// undoable step.
+    pub fn sounds_add(
+        &mut self,
+        path: &str,
+        id: &str,
+        start: Option<f64>,
+        track: Option<String>,
+    ) -> Result<SoundsAdded, ApiError> {
+        let sound = self
+            .sounds_catalogue()?
+            .get(id)
+            .cloned()
+            .ok_or_else(|| ApiError::failed(format!("there is no sound {id}")))?;
+        self.writable(path)?;
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let cached = sounds::fetch_sound(&self.dirs, &sound, &cancel, &mut |_, _| {})
+            .map_err(ApiError::failed)?;
+        let folder = {
+            let session = self.session(path)?;
+            let folder = PathBuf::from(session.path()).join("audio");
+            std::fs::create_dir_all(&folder).map_err(|error| {
+                ApiError::failed(format!("could not create {}: {error}", folder.display()))
+            })?;
+            folder
+        };
+        // The library's own file name: unique for ever, and the same sound
+        // imported twice is the same file, copied over itself.
+        let into = folder.join(&sound.file);
+        std::fs::copy(&cached, &into).map_err(|error| {
+            ApiError::failed(format!("could not copy into the project: {error}"))
+        })?;
+        let item = media::probe(&into.to_string_lossy())
+            .map_err(ApiError::failed)?
+            .to_new_media();
+        let mut view = self.apply(path, Command::AddMedia { item })?;
+        let Some(media_id) = view
+            .project
+            .media
+            .iter()
+            .find(|item| item.path == into.to_string_lossy())
+            .map(|item| item.id.clone())
+        else {
+            return Err(ApiError::failed(
+                "the sound was imported but could not be found again".to_owned(),
+            ));
+        };
+        let mut clip_id = None;
+        if let Some(start) = start {
+            view = self.apply(
+                path,
+                match track {
+                    Some(track_id) => Command::AddClip {
+                        media_id: media_id.clone(),
+                        track_id,
+                        start,
+                        ripple: false,
+                    },
+                    None => Command::AddClipAtFirstFree {
+                        media_id: media_id.clone(),
+                        start,
+                    },
+                },
+            )?;
+            clip_id = view.created_id.clone();
+        }
+        Ok(SoundsAdded {
+            media_id,
+            clip_id,
+            file: into.to_string_lossy().into_owned(),
             view: Box::new(view),
         })
     }

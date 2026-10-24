@@ -39,7 +39,7 @@ const CONCAT: &str = "concat-";
 
 /// The Concat shelf's categories, as the manifest names them; the sidebar
 /// shows them in the interface's language, after All.
-pub const CATEGORIES: [&str; 5] = ["Whoosh", "Impact", "Riser", "Ambience", "Music"];
+pub const CATEGORIES: [&str; 6] = ["Whoosh", "Impact", "Riser", "Ambience", "Music", "UI"];
 
 /// Where the Concat shelf stands.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -86,6 +86,8 @@ pub enum SoundsMsg {
     ConcatLoaded(Result<Option<Catalogue>, String>),
     /// A category of the Concat shelf picked: 0 All, then [`CATEGORIES`].
     ConcatCategory(i32),
+    /// The Concat shelf's search words settled, after the pause.
+    ConcatQuery(String),
     /// A Concat sound's download, how far.
     Fetching(String, f32),
     /// A Concat sound's download is done.
@@ -107,6 +109,8 @@ pub struct SoundsPane {
     pub concat: ConcatState,
     /// The category shown: 0 All, then a row of [`CATEGORIES`].
     pub category: usize,
+    /// The words the Concat shelf is narrowed by, as typed.
+    pub query: String,
     /// Downloads running, by card: how far, and what to do once in.
     fetching: HashMap<String, (f32, Then)>,
     /// Stops the downloads when the window goes.
@@ -179,6 +183,9 @@ impl SoundsPane {
             },
             SoundsMsg::ConcatCategory(index) => {
                 self.category = (index.max(0) as usize).min(CATEGORIES.len());
+            }
+            SoundsMsg::ConcatQuery(words) => {
+                self.query = words;
             }
             SoundsMsg::Fetching(card, done) => {
                 if let Some((progress, _)) = self.fetching.get_mut(&card) {
@@ -350,12 +357,22 @@ impl SoundsPane {
         );
     }
 
-    /// The Concat shelf's rows, narrowed to the category picked.
+    /// The Concat shelf's rows, narrowed to the category picked and the
+    /// words typed: the words are ANDed and prefix-matched against each
+    /// sound's name, id, category and tags, the way the API's
+    /// `sounds.search` narrows by the same fields.
     pub fn concat_rows(&self) -> Vec<SoundCardData> {
         let category = self
             .category
             .checked_sub(1)
             .and_then(|row| CATEGORIES.get(row));
+        let words: Vec<String> = self
+            .query
+            .to_ascii_lowercase()
+            .split_whitespace()
+            .filter(|word| !word.is_empty())
+            .map(str::to_owned)
+            .collect();
         let Some(dirs) = self.dirs.as_ref() else {
             return Vec::new();
         };
@@ -364,6 +381,20 @@ impl SoundsPane {
             .iter()
             .filter(|sound| {
                 category.is_none_or(|wanted| sound.category.eq_ignore_ascii_case(wanted))
+            })
+            .filter(|sound| {
+                words.iter().all(|word| {
+                    let hay = format!(
+                        "{} {} {} {}",
+                        sound.name,
+                        sound.id,
+                        sound.category,
+                        sound.tags.join(" ")
+                    );
+                    hay.to_ascii_lowercase()
+                        .split_whitespace()
+                        .any(|token| token.starts_with(word))
+                })
             })
             .map(|sound| {
                 let card = format!("{CONCAT}{}", sound.id);
@@ -416,7 +447,7 @@ impl SoundsPane {
     }
 }
 
-/// A category as the interface says it: one of the five in its language,
+/// A category as the interface says it: one of the six in its language,
 /// or the manifest's own word.
 pub fn category_label(category: &str) -> String {
     match category.to_ascii_lowercase().as_str() {
@@ -425,6 +456,7 @@ pub fn category_label(category: &str) -> String {
         "riser" => t("sounds.catRiser"),
         "ambience" => t("sounds.catAmbience"),
         "music" => t("sounds.catMusic"),
+        "ui" => t("sounds.catUi"),
         _ => category.to_owned(),
     }
 }

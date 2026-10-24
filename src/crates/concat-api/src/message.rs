@@ -279,6 +279,57 @@ pub enum Request {
         track: Option<String>,
     },
 
+    /// Searches the built-in sound library - whooshes, impacts, risers,
+    /// ambiences, music and UI sounds, every one CC0 - and returns the
+    /// matches with everything an agent needs to pick one without hearing
+    /// it: the name, the category, the duration, the fetch cost in bytes,
+    /// and whether the file is already on this machine. `query` words are
+    /// ANDed and prefix-matched against the name, the id, the category and
+    /// each sound's tags, so "cinematic impact" finds an impact tagged
+    /// cinematic; `category` is one of Whoosh, Impact, Riser, Ambience,
+    /// Music or UI, case-insensitive; `limit` (1-100, 20 when absent) and
+    /// `offset` page through them. With nothing set, the whole library in
+    /// manifest order.
+    #[serde(rename = "sounds.search")]
+    SoundsSearch {
+        /// Words to find, ANDed and prefix-matched against each sound's
+        /// name, id, category and tags.
+        #[serde(default)]
+        query: Option<String>,
+        /// Only this category, case-insensitive: Whoosh, Impact, Riser,
+        /// Ambience, Music or UI.
+        #[serde(default)]
+        category: Option<String>,
+        /// At most this many sounds, 1-100; 20 when absent.
+        #[serde(default)]
+        limit: Option<u32>,
+        /// Skip this many from the front, for the next page.
+        #[serde(default)]
+        offset: Option<u32>,
+    },
+
+    /// Adds a built-in sound to an open project: downloaded into the
+    /// app's cache when it is not there yet (checked against the
+    /// manifest's digest), copied into the project's own `audio` folder so
+    /// the project owns its files, and imported into the bin. With `start`
+    /// it is also laid on a lane as one undoable step - `track` names the
+    /// lane, or the first with room when absent; without it, it waits in
+    /// the bin for `clip_add`. Returns the media id, the clip id when one
+    /// was laid, and where the copy landed.
+    #[serde(rename = "sounds.add")]
+    SoundsAdd {
+        /// The project folder.
+        path: String,
+        /// The sound's id, as `sounds.search` gave it.
+        id: String,
+        /// Lay it on the timeline at this moment.
+        #[serde(default)]
+        start: Option<f64>,
+        /// The lane to lay it on; the first lane with room when absent.
+        #[serde(default)]
+        track: Option<String>,
+    },
+
     /// Every effect package the build knows, with its parameters, so a
     /// caller can build a valid chain without reading a manifest.
     #[serde(rename = "catalogue.list")]
@@ -448,6 +499,10 @@ pub enum Reply {
     OpenvidClips(Vec<OpenvidClip>),
     /// [`Request::OpenvidImport`].
     OpenvidImported(OpenvidImport),
+    /// [`Request::SoundsSearch`].
+    SoundsFound(SoundsFound),
+    /// [`Request::SoundsAdd`].
+    SoundsAdded(SoundsAdded),
     /// [`Request::CatalogueList`].
     Packages(Vec<PackageInfo>),
     /// [`Request::TemplateList`].
@@ -574,6 +629,59 @@ pub struct OpenvidImport {
     /// The media ids the clips were given in the project's bin, in the
     /// order the ids were given in.
     pub media_ids: Vec<String>,
+    /// The project as it now stands.
+    pub view: Box<EditorView>,
+}
+
+/// What `sounds.search` found.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SoundsFound {
+    /// The sounds, `limit` of them from `offset`, in manifest order.
+    pub sounds: Vec<SoundEntry>,
+    /// How many match in all, this page aside.
+    pub total: u64,
+}
+
+/// One sound of the built-in library, as every `sounds` method hands it
+/// back. Everything but `localPath` comes from the manifest; `localPath`
+/// says where the sound's file is on this machine, when it has been
+/// downloaded already.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SoundEntry {
+    /// The sound's id in the library, and the id `sounds.add` takes back.
+    pub id: String,
+    /// What the shelf's row shows.
+    pub name: String,
+    /// Whoosh, Impact, Riser, Ambience, Music or UI.
+    pub category: String,
+    /// Words the search narrows by, beyond the name.
+    pub tags: Vec<String>,
+    /// Seconds.
+    pub duration: f64,
+    /// The file's size in bytes: what downloading the sound costs.
+    pub bytes: u64,
+    /// CC0-1.0: the licence every sound in the library carries.
+    pub license: String,
+    /// Who made it.
+    pub author: String,
+    /// Where the sound's file is on this machine, once downloaded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_path: Option<String>,
+}
+
+/// What `sounds.add` did.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SoundsAdded {
+    /// The media id the sound was given in the project's bin.
+    pub media_id: String,
+    /// The clip's id, when the sound was laid on a lane.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clip_id: Option<String>,
+    /// Where the sound's copy landed inside the project.
+    pub file: String,
     /// The project as it now stands.
     pub view: Box<EditorView>,
 }

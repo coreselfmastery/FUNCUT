@@ -7,8 +7,9 @@ marked as an estimate; nothing is a benchmark this fork ran on your machine,
 because the point of the changes is that the *machine decides* now.
 
 Three kinds of change live here: **memory sizing** (the caches that had one
-fixed size now scale to the machine) and **two new features** (the OpenVid
-stock library, and pause removal for voiceovers). Everything else in the program is upstream's own, including
+fixed size now scale to the machine) and **three new features** (the OpenVid
+stock library, pause removal for voiceovers, and the built-in CC0 sound
+library). Everything else in the program is upstream's own, including
 its existing small-machine machinery: proxies for large files, preview quality
 tiers, hardware decode where it wins, and the swap-friendly design of the
 playback cache.
@@ -157,6 +158,54 @@ anything but a constant-speed clip - a clip with a speed curve is not one a
 pause's place can be mapped onto, so the button waits until that is not the
 case.
 
+## 4. The feature: the built-in sound library
+
+Upstream's Audio page has a Mine shelf and a design for a shelf of Concat's
+own sounds, held back on "coming soon" because the assets repository it
+reads has no manifest published. This fork ships the library itself.
+
+**Where it is:** the Audio page's sidebar, "Built-in sounds" beside "My
+sounds", with a search field, a category filter and a refresh button. The
+MCP server grows two tools beside it: `sounds_search` and `sounds_add`.
+
+**What it is:** 110 sounds, all CC0, in `audio/` at the root of this
+repository - whooshes and swishes for transitions, impacts and cinematic
+booms, risers and sweeps, ambiences (rain, wind, parks, dungeons), short
+music beds, and UI clicks and digital pops. 7.1 MB in all; nothing ships
+inside the app or loads at startup. The sources are Kenney's audio packs
+and CC0 packs from OpenGameArt, each named in the manifest with the page a
+reviewer can check the licence on, plus ten risers and sweeps generated
+for this repository and dedicated to CC0. Every file was trimmed of head
+silence, normalised to −1 dBFS and encoded Ogg Vorbis q5 at 44.1 kHz; every
+entry carries its SHA-256, and the app checks a download against it and
+deletes anything that does not match.
+
+**How it reaches the app:** the manifest URL in `concat-host`'s `models.rs`
+now points at this fork (`raw.githubusercontent.com/coreselfmastery/FUNCUT`)
+instead of the unpublished upstream assets repository; each sound is
+fetched on first use from the `audio-v1` release mirror, then the repository
+itself, checked against its digest, and kept in the app's cache. The shelf
+is upstream's own design all the way down - it was built and wired, only
+unpublished - so the fork adds the UI it was missing (the sidebar row, the
+search field, the category filter, the load and retry buttons) and a sixth
+category, UI, with its word in all twenty-six locales.
+
+**Search, both ways:** the shelf's field narrows the list as you type -
+words ANDed and prefix-matched against each sound's name, id, category and
+tags, the same rule the OpenVid search uses on captions - and the API's
+`sounds.search` narrows by the same fields for agents, returning id, name,
+category, tags, duration, bytes and whether the file is already local.
+`sounds.add` downloads a sound if needed, copies it into the project's own
+`audio` folder, imports it into the bin and - with a `start` - lays it on a
+lane as one undoable step, exactly as the OpenVid import does for clips.
+
+**What it deliberately does not do:** nothing is bundled into the binary
+or fetched at startup; the shelf loads only when asked for, as upstream
+designed. Only CC0 is offered - the shelf's own rule, and the licence every
+curated pack actually carries - so nothing from the paid-for or
+attribution-required libraries can appear on it; those still belong on the
+Mine shelf, imported by hand, where they stay the user's own files.
+
 ## 3. The Intel graphics question, answered honestly
 
 A Celeron's integrated GPU (Intel UHD/HD Graphics) is already used by this
@@ -187,7 +236,7 @@ program exactly where it helps, and deliberately not where it does not:
   default is the CPU, and the proxy system covers 4K sources with
   quarter-size copies that decode smoothly anywhere.
 
-## 4. Everything else: verified, not changed
+## 5. Everything else: verified, not changed
 
 The rest of the fork's work was verification, and it is worth saying what
 that means concretely. The full engine test suites were run against every
@@ -205,7 +254,7 @@ that touch it are the memory table above (which changes *how much* is held,
 never what is computed) and `removeSpans`, which is exercised by the eleven
 engine tests listed above, including the keyframe and fade sharing.
 
-## 5. The files
+## 6. The files
 
 | File | What it is |
 | --- | --- |
@@ -217,5 +266,9 @@ engine tests listed above, including the keyframe and fade sharing.
 | `src/crates/concat-project/src/commands/` | new `removeSpans` command + tests |
 | `src/crates/concat/src/panes/voiceover.rs` | the button's wiring |
 | `src/crates/concat/ui/dialogs/voiceover.slint` | the button itself |
+| `audio/` | new: the CC0 sound library - 110 files and `manifest.json` |
+| `src/crates/concat-host/src/models.rs`, `sounds.rs` | the manifest and mirror URLs point at this fork; the `tags` a search narrows by |
+| `src/crates/concat-api/`, `src/crates/concat-mcp/` | the `sounds.search` / `sounds.add` methods and tools |
+| `src/crates/concat/src/panes/sounds.rs`, `ui/workspace/media-pane.slint`, `audio-page.slint`, `locales/` | the shelf's sidebar row, search field, category filter and words |
 | `src/crates/concat-export/`, `src/crates/concat-cli/` | pools sized for the machine |
 | `install-linux.sh`, `docs/FUNCUT.md` | the one-line installer; the small-machine notes |

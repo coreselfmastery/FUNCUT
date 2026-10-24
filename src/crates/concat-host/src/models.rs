@@ -44,11 +44,15 @@ pub fn mirror(file: &str) -> String {
 /// The Audio page's Concat sounds: the list of them, read the first time
 /// the shelf is asked for and never at startup. The schema, and where the
 /// files go, is `docs/AUDIO_LIBRARY.md`.
+///
+/// FUNCUT ships its own curated CC0 library (see `audio/` at the root of
+/// this repository): the manifest is served from this fork rather than the
+/// upstream assets repository, which has none published yet.
 pub const SOUNDS_MANIFEST: &str =
-    "https://raw.githubusercontent.com/concatapp/assets/main/audio/manifest.json";
+    "https://raw.githubusercontent.com/coreselfmastery/FUNCUT/main/audio/manifest.json";
 
 /// The repository the sounds live in.
-pub const SOUNDS_REPO: &str = "concatapp/assets";
+pub const SOUNDS_REPO: &str = "coreselfmastery/FUNCUT";
 
 /// The release the sounds are mirrored on, so a file moved in the
 /// repository does not take a sound off the shelf.

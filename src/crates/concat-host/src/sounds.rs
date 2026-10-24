@@ -304,7 +304,7 @@ pub struct Listed {
     pub id: String,
     /// What the row shows.
     pub name: String,
-    /// Whoosh, Impact, Riser, Ambience or Music.
+    /// Whoosh, Impact, Riser, Ambience, Music or UI.
     #[serde(default)]
     pub category: String,
     /// The file's name in the repository's `audio/` folder.
@@ -327,6 +327,11 @@ pub struct Listed {
     /// Lowercase hex: what the download must match.
     #[serde(default)]
     pub sha256: String,
+    /// Words a search narrows by, beyond the name: `["fast", "cinematic",
+    /// "transition"]`. Optional; the manifest FUNCUT ships carries them,
+    /// and the API's `sounds.search` reads them.
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 impl Listed {

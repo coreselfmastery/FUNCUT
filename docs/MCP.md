@@ -19,6 +19,17 @@ shelf's 720p/1080p landscape footage - nothing vertical has been measured
 in it, and an honest vertical search returns nothing rather than
 everything.
 
+### Sound effects
+
+The `sounds` tools search the built-in CC0 sound library this repository
+ships (see `docs/AUDIO_LIBRARY.md`) and place what they find:
+`sounds_search` with words against the name and tags ("cinematic
+impact", "click", or a `category`: Whoosh, Impact, Riser, Ambience,
+Music, UI) → `sounds_add` with `start: 0` to lay the sound on a lane in
+one undoable step. The first use of a sound downloads it (a few hundred
+kilobytes at most, checked against its SHA-256) and keeps it in the app's
+cache; every sound is CC0, so nothing asks for attribution.
+
 ## Set it up
 
 Point your client at the Concat binary with the one argument `--mcp`.
@@ -75,6 +86,7 @@ Tools are named for what they do, and their argument schemas are generated from 
 | Reading | `timeline_read` (compact: lanes, clips in time order, media, ids), `project_get` (everything), `concat_version` |
 | Media | `media_probe`, `media_import` |
 | Stock clips | `openvid_status`, `openvid_prepare`, `openvid_search`, `openvid_get`, `openvid_fetch`, `openvid_import` |
+| Sound effects | `sounds_search`, `sounds_add` |
 | Editing | `clip_add`, `clips_add_sequence`, `clip_trim`, `clips_split`, `clips_move`, `clips_remove`, `clip_update`, `clip_transform`, `clip_speed`, `clip_frame`, `track_add` |
 | Picture | `clip_mask`, `clip_stabilize`, `timeline_background` |
 | Titles and captions | `title_add`, `captions_add` |

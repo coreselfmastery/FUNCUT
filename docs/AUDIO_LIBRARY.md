@@ -1,5 +1,16 @@
 # The Concat sound library
 
+> **FUNCUT:** this fork ships the library itself - 110 CC0 sounds in
+> [`audio/`](../audio) with the manifest beside them, mirrored onto this
+> repository's `audio-v1` release - and the URLs the app reads point here
+> (`raw.githubusercontent.com/coreselfmastery/FUNCUT/main/audio/…`) rather
+> than at the upstream assets repository, which has nothing published yet.
+> The manifest carries one field this page's schema does not name:
+> `tags`, a list of words the shelf's search and the API's `sounds.search`
+> narrow by, beyond the name. Everything else below is the schema as the
+> app reads it. The making of this library is in
+> [FUNCUT-CHANGES.md](FUNCUT-CHANGES.md), section 4.
+
 The Library's **Audio** page has a **Concat** shelf of built-in sounds and
 music (#60). Nothing ships inside the app: the shelf reads a manifest from
 the [`concatapp/assets`](https://github.com/concatapp/assets) repository the

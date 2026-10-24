@@ -68,16 +68,22 @@ export global Sounds {
     in property <[SoundCardData]> mine;
     /// Sounds are being copied in.
     in property <bool> importing;
-    /// The Concat shelf: Concat's own sounds, narrowed to the category
-    /// picked, and where the shelf stands - 0 not asked for, 1 loading,
-    /// 2 listed, 3 coming soon (no list published yet), 4 unreachable.
+    /// The Concat shelf: Concat's own sounds, narrowed by the category
+    /// picked and the words typed, and where the shelf stands - 0 not
+    /// asked for, 1 loading, 2 listed, 3 coming soon (no list published
+    /// yet), 4 unreachable.
     in property <[SoundCardData]> concat;
     in property <int> concat-state;
-    /// 0 All, then Whoosh, Impact, Riser, Ambience, Music.
+    /// 0 All, then Whoosh, Impact, Riser, Ambience, Music, UI.
     in property <int> concat-category;
+    /// The Concat shelf's search words, as typed; the shelf narrows
+    /// itself to them after the pause.
+    in-out property <string> concat-query;
     /// "Load Concat sounds", Refresh, Try again: the list fetched.
     callback load-concat();
     callback concat-category-changed(index: int);
+    /// The search's words settled.
+    callback concat-query-changed(query: string);
 
     /// The Import button: the system's picker, for sound files.
     callback import();

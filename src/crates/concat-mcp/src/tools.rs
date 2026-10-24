@@ -301,6 +301,21 @@ pub fn catalogue() -> Vec<Tool> {
             Raw,
         ),
         method(
+            "sounds_search",
+            "Search the sound library",
+            "Searches the built-in CC0 sound library - whooshes, impacts, risers, ambiences, music beds and UI sounds - by what their names and tags say, without hearing anything: each match carries its `id`, `name`, `category`, `tags`, `duration` in seconds, `bytes` (the download cost), and `localPath` when the file is already on this machine. `query` words are ANDed and prefix-matched against the name, id, category and tags (\"cinematic impact\" finds an impact tagged cinematic; \"click\" the UI clicks), `category` narrows to Whoosh, Impact, Riser, Ambience, Music or UI. `sounds_add` places one by its id. Returns up to `limit` (default 20, at most 100) from `offset`, with `total` saying how many match in all.",
+            "sounds.search",
+            Raw,
+        )
+        .reading(),
+        method(
+            "sounds_add",
+            "Add a sound",
+            "Adds one built-in sound (`id`, as `sounds_search` gave it) to an open project: downloaded into the app's cache when it is not there yet and checked against its digest, copied into the project's own `audio` folder, and imported into the bin - with `start` (seconds) also laid on one lane as one undoable step, `track` naming the lane or the first with room when absent. Returns `mediaId`, `clipId` when a clip was laid, and the project summary; without `start`, place it with `clip_add`.",
+            "sounds.add",
+            Raw,
+        ),
+        method(
             "edit_apply",
             "Apply an edit",
             "Applies any one edit command to an open project, as one undoable step. `command` is an object tagged by `op` - every edit the window can make is one, with the same limits and refusals; the typed tools below are the common ones. `{\"op\": \"batch\", \"commands\": [...]}` applies several commands as one atomic, undoable step: all land or none does, and `createdId` is the last id minted inside. A refusal comes back as the sentence the window would show, with nothing changed. Returns the project summary; a command that creates something puts its id in `createdId`.",
@@ -1029,6 +1044,14 @@ mod tests {
             (
                 "openvid_import",
                 json!({ "path": "/tmp/Cut", "ids": [820338756299i64], "start": 0.0 }),
+            ),
+            (
+                "sounds_search",
+                json!({ "query": "cinematic impact", "category": "Impact", "limit": 10 }),
+            ),
+            (
+                "sounds_add",
+                json!({ "path": "/tmp/Cut", "id": "impact-glass-heavy", "start": 0.0 }),
             ),
             (
                 "edit_apply",

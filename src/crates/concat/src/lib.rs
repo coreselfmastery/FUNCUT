@@ -1465,6 +1465,9 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         sounds.on_concat_category_changed(on_window!(|state, index: i32| {
             state.handle(Msg::Sounds(SoundsMsg::ConcatCategory(index)));
         }));
+        sounds.on_concat_query_changed(on_window!(|state, words: SharedString| {
+            state.handle(Msg::Sounds(SoundsMsg::ConcatQuery(words.to_string())));
+        }));
         sounds.on_voice_open(on_window!(|state, id: SharedString| {
             state.open_voice(id.as_str());
         }));

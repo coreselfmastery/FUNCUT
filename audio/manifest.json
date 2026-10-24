@@ -1,0 +1,1911 @@
+{
+  "version": 1,
+  "sounds": [
+    {
+      "id": "ambience-dark-1",
+      "name": "Dark ambience 1",
+      "category": "Ambience",
+      "file": "ambience-dark-1.ogg",
+      "duration": 4.48,
+      "bytes": 64155,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/dark-ambiences",
+      "author": "johndh",
+      "tags": [
+        "dark",
+        "cinematic",
+        "tension",
+        "drone"
+      ],
+      "sha256": "272fd9d5b4da231a843177b3af2f22809a06f463ca5be06a88d6f1e9a1b71848"
+    },
+    {
+      "id": "ambience-dark-2",
+      "name": "Dark ambience 2",
+      "category": "Ambience",
+      "file": "ambience-dark-2.ogg",
+      "duration": 1.72,
+      "bytes": 24849,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/dark-ambiences",
+      "author": "johndh",
+      "tags": [
+        "dark",
+        "cinematic",
+        "tension",
+        "drone"
+      ],
+      "sha256": "9f75afcfcaf4d768d4f4e924213c73152f7ac408f62c5ac704d913875f488d5a"
+    },
+    {
+      "id": "ambience-dark-3",
+      "name": "Dark ambience 3",
+      "category": "Ambience",
+      "file": "ambience-dark-3.ogg",
+      "duration": 1.64,
+      "bytes": 24364,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/dark-ambiences",
+      "author": "johndh",
+      "tags": [
+        "dark",
+        "cinematic",
+        "tension",
+        "drone"
+      ],
+      "sha256": "73d4d4ea4a97d5a128779e7ef8b91fa998da55719ff361472bd57000ec8714a8"
+    },
+    {
+      "id": "ambience-dark-4",
+      "name": "Dark ambience 4",
+      "category": "Ambience",
+      "file": "ambience-dark-4.ogg",
+      "duration": 1.37,
+      "bytes": 20542,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/dark-ambiences",
+      "author": "johndh",
+      "tags": [
+        "dark",
+        "cinematic",
+        "tension",
+        "drone"
+      ],
+      "sha256": "237f1aca12d52063660f6c00a99915109a6c9dab24cf0ce5c72f7994d4a0008a"
+    },
+    {
+      "id": "ambience-dark-5",
+      "name": "Dark ambience 5",
+      "category": "Ambience",
+      "file": "ambience-dark-5.ogg",
+      "duration": 3.42,
+      "bytes": 49183,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/dark-ambiences",
+      "author": "johndh",
+      "tags": [
+        "dark",
+        "cinematic",
+        "tension",
+        "drone"
+      ],
+      "sha256": "4894bf99b2d6be12e5410c0e06e4fbd83697cbc2216059e7b95e8e31be117e5f"
+    },
+    {
+      "id": "ambience-dungeon",
+      "name": "Dungeon ambience, loopable",
+      "category": "Ambience",
+      "file": "ambience-dungeon.ogg",
+      "duration": 30.0,
+      "bytes": 508207,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/loopable-dungeon-ambience",
+      "author": "IgnasD",
+      "tags": [
+        "dungeon",
+        "dark",
+        "loop",
+        "fantasy"
+      ],
+      "sha256": "311f2555c854aec5f27950d75a4064b5972dddb7a7b91efcf1509a1d58488419"
+    },
+    {
+      "id": "ambience-park-birds",
+      "name": "Park, birds",
+      "category": "Ambience",
+      "file": "ambience-park-birds.ogg",
+      "duration": 30.0,
+      "bytes": 572578,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/park-ambiences",
+      "author": "unknown",
+      "tags": [
+        "birds",
+        "nature",
+        "park",
+        "day"
+      ],
+      "sha256": "91b3705c0584f1ce256164d65a193425f3e45822c22c13e29516b280ce8d0799"
+    },
+    {
+      "id": "ambience-park-river",
+      "name": "River, flowing",
+      "category": "Ambience",
+      "file": "ambience-park-river.ogg",
+      "duration": 30.0,
+      "bytes": 504231,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/park-ambiences",
+      "author": "unknown",
+      "tags": [
+        "river",
+        "water",
+        "nature",
+        "loop"
+      ],
+      "sha256": "4dbb9f8ad4a790cd30ea0f52b746e64fa6c3156f6e499903945000d76968d3b7"
+    },
+    {
+      "id": "ambience-park-wind",
+      "name": "Park, breeze in trees",
+      "category": "Ambience",
+      "file": "ambience-park-wind.ogg",
+      "duration": 25.0,
+      "bytes": 458955,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/park-ambiences",
+      "author": "unknown",
+      "tags": [
+        "wind",
+        "trees",
+        "nature"
+      ],
+      "sha256": "f0ad31fde46ab75af019c969ea5c10ff89db24430e2fdf84d9349687e535752c"
+    },
+    {
+      "id": "ambience-rain-1",
+      "name": "Rain, bed 1",
+      "category": "Ambience",
+      "file": "ambience-rain-1.ogg",
+      "duration": 27.0,
+      "bytes": 527319,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/rain-loopable",
+      "author": "Snabisch",
+      "tags": [
+        "rain",
+        "weather",
+        "loop",
+        "calm"
+      ],
+      "sha256": "4ab4d0e16937b20bdf471bb3274677ae2347c127e4ed25258aebb3ab015d99ad"
+    },
+    {
+      "id": "ambience-rain-2",
+      "name": "Rain, bed 2",
+      "category": "Ambience",
+      "file": "ambience-rain-2.ogg",
+      "duration": 26.0,
+      "bytes": 509899,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/rain-loopable",
+      "author": "Snabisch",
+      "tags": [
+        "rain",
+        "weather",
+        "loop",
+        "calm"
+      ],
+      "sha256": "017f33eda50725fd2f620e3118c31a8be3cc184793fb727314cf4af9e465fce5"
+    },
+    {
+      "id": "ambience-rain-3",
+      "name": "Rain, bed 3",
+      "category": "Ambience",
+      "file": "ambience-rain-3.ogg",
+      "duration": 30.0,
+      "bytes": 579995,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/rain-loopable",
+      "author": "Snabisch",
+      "tags": [
+        "rain",
+        "weather",
+        "loop",
+        "calm"
+      ],
+      "sha256": "35f3b520986d0e3f26bb2a6c357050ce6c75b3df119966f148f21d2ecaa2ef30"
+    },
+    {
+      "id": "ambience-rain-4",
+      "name": "Rain, bed 4",
+      "category": "Ambience",
+      "file": "ambience-rain-4.ogg",
+      "duration": 30.0,
+      "bytes": 594426,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/rain-loopable",
+      "author": "Snabisch",
+      "tags": [
+        "rain",
+        "weather",
+        "loop",
+        "calm"
+      ],
+      "sha256": "28ec0bb134275ddf4bbcf4f6e9f43b3cde42f8149760987a3ac0383cbaf5fecd"
+    },
+    {
+      "id": "ambience-space-wind",
+      "name": "Space wind, eerie",
+      "category": "Ambience",
+      "file": "ambience-space-wind.ogg",
+      "duration": 40.0,
+      "bytes": 664523,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/space-winds",
+      "author": "WolfTech",
+      "tags": [
+        "space",
+        "wind",
+        "sci-fi",
+        "drone"
+      ],
+      "sha256": "35e2932f8d32d85cd4b7b70ce7eadb58dabeeebd09075da41a9876482af0f1cd"
+    },
+    {
+      "id": "ambience-wind-1",
+      "name": "Wind, steady",
+      "category": "Ambience",
+      "file": "ambience-wind-1.ogg",
+      "duration": 30.0,
+      "bytes": 259547,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/wind1",
+      "author": "qubodup",
+      "tags": [
+        "wind",
+        "weather",
+        "loop"
+      ],
+      "sha256": "f0af639704fc1da0858e742f1be784a4f811cc6e93e4061273a60a39e6360fd8"
+    },
+    {
+      "id": "ambience-wind-2",
+      "name": "Wind, gusty",
+      "category": "Ambience",
+      "file": "ambience-wind-2.ogg",
+      "duration": 30.0,
+      "bytes": 258588,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/wind1",
+      "author": "qubodup",
+      "tags": [
+        "wind",
+        "weather",
+        "gust"
+      ],
+      "sha256": "765666a0e3b3c3cc8a0345ba9bc9979bad806989c6815f531ab82f618cb37cf8"
+    },
+    {
+      "id": "ambience-wind-whoosh",
+      "name": "Wind whoosh, looping",
+      "category": "Ambience",
+      "file": "ambience-wind-whoosh.ogg",
+      "duration": 5.96,
+      "bytes": 97430,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/wind-whoosh-loop",
+      "author": "unknown",
+      "tags": [
+        "wind",
+        "whoosh",
+        "loop"
+      ],
+      "sha256": "4ba5146503eae82044f494601a006ee418ea7b64ac118686beb3b2e2e3bd80bc"
+    },
+    {
+      "id": "impact-bell-heavy",
+      "name": "Bell impact, heavy",
+      "category": "Impact",
+      "file": "impact-bell-heavy.ogg",
+      "duration": 1.48,
+      "bytes": 17511,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/impact-sounds",
+      "author": "Kenney",
+      "tags": [
+        "game",
+        "foley"
+      ],
+      "sha256": "f5f98543e1c46c40998ac033ff7dfe4361650bbf5bccf6a3ce08cadb39806b61"
+    },
+    {
+      "id": "impact-boom-distant",
+      "name": "Distant boom, muffled",
+      "category": "Impact",
+      "file": "impact-boom-distant.ogg",
+      "duration": 5.0,
+      "bytes": 69713,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/muffled-distant-explosion",
+      "author": "Nenad Simic",
+      "tags": [
+        "cinematic",
+        "boom",
+        "explosion",
+        "distant",
+        "trailer"
+      ],
+      "sha256": "1996475480dd53a4506e1d698e4824cecae13e45861d5aac3dad7cddb92703fc"
+    },
+    {
+      "id": "impact-door-open-01",
+      "name": "Wood door, real",
+      "category": "Impact",
+      "file": "impact-door-open-01.ogg",
+      "duration": 0.43,
+      "bytes": 8529,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/100-cc0-metal-and-wood-sfx",
+      "author": "rubberduck",
+      "tags": [
+        "foley",
+        "real",
+        "recorded"
+      ],
+      "sha256": "057a9841c08676566a8cacdc88fc3b031498c1887d9d6e084855425ef0196766"
+    },
+    {
+      "id": "impact-explosion-crunch",
+      "name": "Explosion, crunchy",
+      "category": "Impact",
+      "file": "impact-explosion-crunch.ogg",
+      "duration": 0.78,
+      "bytes": 11668,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/sci-fi-sounds",
+      "author": "Kenney",
+      "tags": [
+        "explosion",
+        "sci-fi",
+        "cinematic"
+      ],
+      "sha256": "485c0517d04ee09aa39d4493bcb9d3edecce3bcc7e9c4eb0e30141ccb47a0fd5"
+    },
+    {
+      "id": "impact-footstep-concrete",
+      "name": "Footstep, concrete",
+      "category": "Impact",
+      "file": "impact-footstep-concrete.ogg",
+      "duration": 0.1,
+      "bytes": 5702,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/impact-sounds",
+      "author": "Kenney",
+      "tags": [
+        "footstep",
+        "foley",
+        "walk"
+      ],
+      "sha256": "b302a8076d0a9dab2c54fc184f652904f6774bd75a98d013a3f9fe320c99b8b2"
+    },
+    {
+      "id": "impact-generic-light",
+      "name": "Generic impact, light",
+      "category": "Impact",
+      "file": "impact-generic-light.ogg",
+      "duration": 0.16,
+      "bytes": 6108,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/impact-sounds",
+      "author": "Kenney",
+      "tags": [
+        "game",
+        "foley"
+      ],
+      "sha256": "1478b6794a8cd621b6bbe8570de76c593144394729870db708a004e69d99e3ec"
+    },
+    {
+      "id": "impact-glass-02",
+      "name": "Glass break, bright",
+      "category": "Impact",
+      "file": "impact-glass-02.ogg",
+      "duration": 0.37,
+      "bytes": 9475,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/100-cc0-sfx",
+      "author": "rubberduck",
+      "tags": [
+        "foley",
+        "cinematic",
+        "glass"
+      ],
+      "sha256": "6ab176b0c6c9ee70373f42a3e82bc5be30c92d2bf150f1651fe97aafa81b52b9"
+    },
+    {
+      "id": "impact-glass-04",
+      "name": "Glass break, crisp",
+      "category": "Impact",
+      "file": "impact-glass-04.ogg",
+      "duration": 0.89,
+      "bytes": 15291,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/100-cc0-sfx",
+      "author": "rubberduck",
+      "tags": [
+        "foley",
+        "cinematic",
+        "glass"
+      ],
+      "sha256": "d5fd54f6ff122ecd23a079a0fb8fdcbb91769857cbf54e0a560fc3bed1b74998"
+    },
+    {
+      "id": "impact-glass-heavy",
+      "name": "Glass impact, heavy",
+      "category": "Impact",
+      "file": "impact-glass-heavy.ogg",
+      "duration": 0.24,
+      "bytes": 7193,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/impact-sounds",
+      "author": "Kenney",
+      "tags": [
+        "game",
+        "foley"
+      ],
+      "sha256": "076bbdd1d250f1e80f5c3cdfbd717d6dfefd5ff6c00612bac6c1c76362c7bb79"
+    },
+    {
+      "id": "impact-hammer-02",
+      "name": "Hammer, real",
+      "category": "Impact",
+      "file": "impact-hammer-02.ogg",
+      "duration": 0.24,
+      "bytes": 7356,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/100-cc0-metal-and-wood-sfx",
+      "author": "rubberduck",
+      "tags": [
+        "foley",
+        "real",
+        "recorded"
+      ],
+      "sha256": "e62c5bd9e4723ae53c7d93561caeccc1acf521de0c21d3294c3c6d789f6cff02"
+    },
+    {
+      "id": "impact-hammer-04",
+      "name": "Hammer, real",
+      "category": "Impact",
+      "file": "impact-hammer-04.ogg",
+      "duration": 0.26,
+      "bytes": 7455,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/100-cc0-metal-and-wood-sfx",
+      "author": "rubberduck",
+      "tags": [
+        "foley",
+        "real",
+        "recorded"
+      ],
+      "sha256": "a20081cef73ab03ead401156817d09c817534d289da72f8288d66be653a38a6b"
+    },
+    {
+      "id": "impact-hit-01",
+      "name": "Hit, sharp",
+      "category": "Impact",
+      "file": "impact-hit-01.ogg",
+      "duration": 0.27,
+      "bytes": 7718,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/100-cc0-sfx",
+      "author": "rubberduck",
+      "tags": [
+        "foley",
+        "cinematic",
+        "hit"
+      ],
+      "sha256": "4487034f9bed3c1e81817af78922baecfdc1fc48be21a14943829c94a2454501"
+    },
+    {
+      "id": "impact-hit-04",
+      "name": "Hit, dull",
+      "category": "Impact",
+      "file": "impact-hit-04.ogg",
+      "duration": 0.45,
+      "bytes": 9859,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/100-cc0-sfx",
+      "author": "rubberduck",
+      "tags": [
+        "foley",
+        "cinematic",
+        "hit"
+      ],
+      "sha256": "534750fb238265a995b5ce931b8b444fb3c8bbfde4591afb04184cbe0799f840"
+    },
+    {
+      "id": "impact-metal-05",
+      "name": "Metal hit, low",
+      "category": "Impact",
+      "file": "impact-metal-05.ogg",
+      "duration": 0.84,
+      "bytes": 14479,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/100-cc0-sfx",
+      "author": "rubberduck",
+      "tags": [
+        "foley",
+        "cinematic",
+        "metal"
+      ],
+      "sha256": "ea7befcdcbc6742a1981392caf6d126f4023ade61c41231620a041bd7f34c26f"
+    },
+    {
+      "id": "impact-metal-10",
+      "name": "Metal hit, bright",
+      "category": "Impact",
+      "file": "impact-metal-10.ogg",
+      "duration": 0.73,
+      "bytes": 12508,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/100-cc0-sfx",
+      "author": "rubberduck",
+      "tags": [
+        "foley",
+        "cinematic",
+        "metal"
+      ],
+      "sha256": "ad101744b3abd1fc7efc953870d7b10965fcfafd3bd008fc281e9fa8948ebc21"
+    },
+    {
+      "id": "impact-metal-bing",
+      "name": "Metal bing, resonant",
+      "category": "Impact",
+      "file": "impact-metal-bing.ogg",
+      "duration": 0.72,
+      "bytes": 9646,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/metal-impact-sounds",
+      "author": "unknown",
+      "tags": [
+        "metal",
+        "foley",
+        "heavy"
+      ],
+      "sha256": "c4e3b3b57f4c00dff32c37b120f05a84e72de22eefdb2bdfe8e0a0c5e1bbbf53"
+    },
+    {
+      "id": "impact-metal-bong",
+      "name": "Metal bong, deep",
+      "category": "Impact",
+      "file": "impact-metal-bong.ogg",
+      "duration": 2.11,
+      "bytes": 21148,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/metal-impact-sounds",
+      "author": "unknown",
+      "tags": [
+        "metal",
+        "foley",
+        "heavy"
+      ],
+      "sha256": "f1ddaaf0deefcb8447f0786d9c9e43ef149280e2b642f8a5a67c539eef98e690"
+    },
+    {
+      "id": "impact-metal-clink",
+      "name": "Metal clink, light",
+      "category": "Impact",
+      "file": "impact-metal-clink.ogg",
+      "duration": 0.31,
+      "bytes": 7250,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/metal-impact-sounds",
+      "author": "unknown",
+      "tags": [
+        "metal",
+        "foley",
+        "light"
+      ],
+      "sha256": "8e6dca1688a30ad5a363a83a72c40ff5ea3917d91cd2c7300e9acef261b60b05"
+    },
+    {
+      "id": "impact-metal-falling-01",
+      "name": "Metal fall, real",
+      "category": "Impact",
+      "file": "impact-metal-falling-01.ogg",
+      "duration": 1.71,
+      "bytes": 24239,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/100-cc0-metal-and-wood-sfx",
+      "author": "rubberduck",
+      "tags": [
+        "foley",
+        "real",
+        "recorded"
+      ],
+      "sha256": "427043cbb99cb39ddb0b11c1cb15de1f204078b321cba63e3f153537b6746b63"
+    },
+    {
+      "id": "impact-metal-hit-01",
+      "name": "Metal hit, real",
+      "category": "Impact",
+      "file": "impact-metal-hit-01.ogg",
+      "duration": 0.27,
+      "bytes": 7316,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/100-cc0-metal-and-wood-sfx",
+      "author": "rubberduck",
+      "tags": [
+        "foley",
+        "real",
+        "recorded"
+      ],
+      "sha256": "b856b418bef537694ac64e97eaf39e7c13fa287e0ba02e3f705e9bb20998c86f"
+    },
+    {
+      "id": "impact-metal-hit-03",
+      "name": "Metal hit, real",
+      "category": "Impact",
+      "file": "impact-metal-hit-03.ogg",
+      "duration": 0.4,
+      "bytes": 9227,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/100-cc0-metal-and-wood-sfx",
+      "author": "rubberduck",
+      "tags": [
+        "foley",
+        "real",
+        "recorded"
+      ],
+      "sha256": "0c8fe0d214574483a963ee12932b06b5871ba743e0def82d6ad33ad6424466f1"
+    },
+    {
+      "id": "impact-metal-sci-fi",
+      "name": "Metal impact, sci-fi",
+      "category": "Impact",
+      "file": "impact-metal-sci-fi.ogg",
+      "duration": 0.63,
+      "bytes": 8575,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/sci-fi-sounds",
+      "author": "Kenney",
+      "tags": [
+        "sci-fi",
+        "metal"
+      ],
+      "sha256": "cb747ff6aa409285149271038e5c1d552700103ef92eeb2551dac93f55e7f3c0"
+    },
+    {
+      "id": "impact-metal-thud",
+      "name": "Metal thud, dull",
+      "category": "Impact",
+      "file": "impact-metal-thud.ogg",
+      "duration": 0.58,
+      "bytes": 9724,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/metal-impact-sounds",
+      "author": "unknown",
+      "tags": [
+        "metal",
+        "foley",
+        "heavy"
+      ],
+      "sha256": "0a3ab76f432544f27de771637dfa1619da66083861ba25017f705b4c6cc8239d"
+    },
+    {
+      "id": "impact-plate-heavy",
+      "name": "Plate impact, heavy",
+      "category": "Impact",
+      "file": "impact-plate-heavy.ogg",
+      "duration": 0.49,
+      "bytes": 9449,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/impact-sounds",
+      "author": "Kenney",
+      "tags": [
+        "game",
+        "foley"
+      ],
+      "sha256": "e23c35b1c4f3f6044f7078b3f11257865fb272cc30fffb3fb2fa9d5c8ddc6906"
+    },
+    {
+      "id": "impact-punch",
+      "name": "Punch, body",
+      "category": "Impact",
+      "file": "impact-punch.ogg",
+      "duration": 0.95,
+      "bytes": 20118,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/37-hitspunches",
+      "author": "unknown",
+      "tags": [
+        "punch",
+        "fight",
+        "foley"
+      ],
+      "sha256": "0d76f88503e7feb47e9189638d854f8f3f849ed4ddcabba4793e101cb2c1c667"
+    },
+    {
+      "id": "impact-slam-01",
+      "name": "Slam, hard",
+      "category": "Impact",
+      "file": "impact-slam-01.ogg",
+      "duration": 0.47,
+      "bytes": 10318,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/100-cc0-sfx",
+      "author": "rubberduck",
+      "tags": [
+        "foley",
+        "cinematic",
+        "slam"
+      ],
+      "sha256": "2e641595ea634bc56a682b81a00ebf8b564bd23b8e768c76bfe00f0adf1b4fb3"
+    },
+    {
+      "id": "impact-slam-05",
+      "name": "Slam, heavy",
+      "category": "Impact",
+      "file": "impact-slam-05.ogg",
+      "duration": 0.36,
+      "bytes": 9180,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/100-cc0-sfx",
+      "author": "rubberduck",
+      "tags": [
+        "foley",
+        "cinematic",
+        "slam"
+      ],
+      "sha256": "19881664cc2bb05b297df45376eb7b86d07e3b5722a87b6be52297ede11ff2b1"
+    },
+    {
+      "id": "impact-thwack",
+      "name": "Thwack, punchy",
+      "category": "Impact",
+      "file": "impact-thwack.ogg",
+      "duration": 0.31,
+      "bytes": 7349,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/thwack-sounds",
+      "author": "unknown",
+      "tags": [
+        "punch",
+        "hit",
+        "game"
+      ],
+      "sha256": "a873b918a5386f08b197da0a0f8bb5c4890de25e5ab112cc37635b845e8af636"
+    },
+    {
+      "id": "music-jingle-8bit",
+      "name": "Jingle, 8-bit",
+      "category": "Music",
+      "file": "music-jingle-8bit.ogg",
+      "duration": 1.76,
+      "bytes": 40630,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/music-jingles",
+      "author": "Kenney",
+      "tags": [
+        "jingle",
+        "retro",
+        "8bit"
+      ],
+      "sha256": "b9d421834f2d4cc3227b11743c2c133795a77d42d27f219f5674b58ed09ffde6"
+    },
+    {
+      "id": "music-jingle-hit",
+      "name": "Sting, hit",
+      "category": "Music",
+      "file": "music-jingle-hit.ogg",
+      "duration": 0.28,
+      "bytes": 8419,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/music-jingles",
+      "author": "Kenney",
+      "tags": [
+        "sting",
+        "hit",
+        "short"
+      ],
+      "sha256": "3540bcfc7ecc6a4b3cf8fee11ec3d4c41d8f5d90cb90765988e7552c73075aa3"
+    },
+    {
+      "id": "music-jingle-hit-2",
+      "name": "Sting, hit, punchy",
+      "category": "Music",
+      "file": "music-jingle-hit-2.ogg",
+      "duration": 0.61,
+      "bytes": 13496,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/music-jingles",
+      "author": "Kenney",
+      "tags": [
+        "sting",
+        "hit",
+        "punchy"
+      ],
+      "sha256": "1dcaa0b256212da76c3cf4996ddd8d36c3307a33f564f2902bf5d195270c8d40"
+    },
+    {
+      "id": "music-jingle-pizzicato",
+      "name": "Jingle, pizzicato",
+      "category": "Music",
+      "file": "music-jingle-pizzicato.ogg",
+      "duration": 0.49,
+      "bytes": 10064,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/music-jingles",
+      "author": "Kenney",
+      "tags": [
+        "jingle",
+        "short",
+        "bright"
+      ],
+      "sha256": "1feb9c7bb072997c7dfc333075d68f990d409196f2b074d76e5e64f5480310e3"
+    },
+    {
+      "id": "music-jingle-pizzicato-2",
+      "name": "Jingle, pizzicato, warm",
+      "category": "Music",
+      "file": "music-jingle-pizzicato-2.ogg",
+      "duration": 1.15,
+      "bytes": 17060,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/music-jingles",
+      "author": "Kenney",
+      "tags": [
+        "jingle",
+        "short",
+        "warm"
+      ],
+      "sha256": "7473bfc60081f04269ec8d09c07745a5f8c6af5e0e88f3c6d86e2101f5114984"
+    },
+    {
+      "id": "music-jingle-sax",
+      "name": "Jingle, sax",
+      "category": "Music",
+      "file": "music-jingle-sax.ogg",
+      "duration": 0.39,
+      "bytes": 10005,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/music-jingles",
+      "author": "Kenney",
+      "tags": [
+        "jingle",
+        "sax",
+        "smooth"
+      ],
+      "sha256": "820579ab6f0fe0e4a4a1a0550b58a20239000be7788c4b4bec7c29e1c4261de3"
+    },
+    {
+      "id": "music-jingle-sax-2",
+      "name": "Jingle, sax, upbeat",
+      "category": "Music",
+      "file": "music-jingle-sax-2.ogg",
+      "duration": 1.1,
+      "bytes": 21010,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/music-jingles",
+      "author": "Kenney",
+      "tags": [
+        "jingle",
+        "sax",
+        "upbeat"
+      ],
+      "sha256": "af45e3cb7175591d25ad49a0d7d899066a3b1e7e7fc6e0c325ab4429b84df1f4"
+    },
+    {
+      "id": "music-jingle-steel",
+      "name": "Jingle, steel drum",
+      "category": "Music",
+      "file": "music-jingle-steel.ogg",
+      "duration": 0.93,
+      "bytes": 15632,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/music-jingles",
+      "author": "Kenney",
+      "tags": [
+        "jingle",
+        "steel",
+        "tropical"
+      ],
+      "sha256": "4564c48dec66b943ac150e2fc8b4c787af58bcc2f485a6bf896e918a0ebb3b71"
+    },
+    {
+      "id": "music-jingle-steel-2",
+      "name": "Jingle, steel drum, bright",
+      "category": "Music",
+      "file": "music-jingle-steel-2.ogg",
+      "duration": 0.91,
+      "bytes": 14798,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/music-jingles",
+      "author": "Kenney",
+      "tags": [
+        "jingle",
+        "steel",
+        "bright"
+      ],
+      "sha256": "2d5855fdd82780d63313bb4a49c84e8f511bb0816feb5979ec95cafd57bfd45f"
+    },
+    {
+      "id": "music-sting-energetic",
+      "name": "Sting, energetic",
+      "category": "Music",
+      "file": "music-sting-energetic.ogg",
+      "duration": 0.75,
+      "bytes": 15170,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/music-jingles",
+      "author": "Kenney",
+      "tags": [
+        "sting",
+        "energetic",
+        "short"
+      ],
+      "sha256": "8cdd85222bb8cba9a55a808a1a9eb27e732d621a29e5825286f20be00ffe1702"
+    },
+    {
+      "id": "riser-braam-horn",
+      "name": "Trailer horn, swelling braam",
+      "category": "Riser",
+      "file": "riser-braam-horn.ogg",
+      "duration": 3.43,
+      "bytes": 24548,
+      "license": "CC0-1.0",
+      "source": "https://github.com/coreselfmastery/FUNCUT",
+      "author": "FUNCUT contributors",
+      "tags": [
+        "braam",
+        "horn",
+        "trailer",
+        "cinematic",
+        "tension"
+      ],
+      "sha256": "2cfb4f0fecda4c34570226888fd9e0841166683995c02779d7f8bf9e39f30eb6"
+    },
+    {
+      "id": "riser-noise-long",
+      "name": "Noise riser, long",
+      "category": "Riser",
+      "file": "riser-noise-long.ogg",
+      "duration": 4.68,
+      "bytes": 56445,
+      "license": "CC0-1.0",
+      "source": "https://github.com/coreselfmastery/FUNCUT",
+      "author": "FUNCUT contributors",
+      "tags": [
+        "riser",
+        "build",
+        "long",
+        "tension",
+        "trailer"
+      ],
+      "sha256": "41df89b36833494bb95fe224b485d9e19923f43d71bf290b80783b70efe9c530"
+    },
+    {
+      "id": "riser-noise-short",
+      "name": "Noise riser, short",
+      "category": "Riser",
+      "file": "riser-noise-short.ogg",
+      "duration": 2.62,
+      "bytes": 37544,
+      "license": "CC0-1.0",
+      "source": "https://github.com/coreselfmastery/FUNCUT",
+      "author": "FUNCUT contributors",
+      "tags": [
+        "riser",
+        "build",
+        "short",
+        "noise"
+      ],
+      "sha256": "d2dd13521b79cacc9c91c2fd1a2686a8d84e30357a59415714d762a34c3229e4"
+    },
+    {
+      "id": "riser-powerup-1",
+      "name": "Power-up sweep, bright",
+      "category": "Riser",
+      "file": "riser-powerup-1.ogg",
+      "duration": 3.61,
+      "bytes": 41134,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/power-up-sound-effects",
+      "author": "unknown",
+      "tags": [
+        "power",
+        "up",
+        "digital",
+        "sweep"
+      ],
+      "sha256": "6d9f1a5b201ce5758493626cc994c0d28c2df7efb50c0b60975e7061763b9e38"
+    },
+    {
+      "id": "riser-powerup-2",
+      "name": "Power-up sweep, warm",
+      "category": "Riser",
+      "file": "riser-powerup-2.ogg",
+      "duration": 3.61,
+      "bytes": 31197,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/power-up-sound-effects",
+      "author": "unknown",
+      "tags": [
+        "power",
+        "up",
+        "digital",
+        "sweep"
+      ],
+      "sha256": "21c0e4415873d6702e9f99ba02d128c6993a214f89cbc00fe82b87a0a645cfb0"
+    },
+    {
+      "id": "riser-powerup-3",
+      "name": "Power-up sweep, digital",
+      "category": "Riser",
+      "file": "riser-powerup-3.ogg",
+      "duration": 1.8,
+      "bytes": 18246,
+      "license": "CC0-1.0",
+      "source": "https://github.com/coreselfmastery/FUNCUT",
+      "author": "FUNCUT contributors",
+      "tags": [
+        "power",
+        "up",
+        "digital",
+        "sweep",
+        "retro"
+      ],
+      "sha256": "d8569520d93c5e1b5618e3b70b1565a8270e322214abd0137488b40e87e17d35"
+    },
+    {
+      "id": "riser-reverse-swell",
+      "name": "Reverse swell, abrupt cut",
+      "category": "Riser",
+      "file": "riser-reverse-swell.ogg",
+      "duration": 3.5,
+      "bytes": 46387,
+      "license": "CC0-1.0",
+      "source": "https://github.com/coreselfmastery/FUNCUT",
+      "author": "FUNCUT contributors",
+      "tags": [
+        "reverse",
+        "swell",
+        "build",
+        "transition"
+      ],
+      "sha256": "3a052dba6f62444105f1a5019777b1df08e042c76081bcacb3abeb5f546c7c2d"
+    },
+    {
+      "id": "riser-sweep-down",
+      "name": "Sweep down, release",
+      "category": "Riser",
+      "file": "riser-sweep-down.ogg",
+      "duration": 2.5,
+      "bytes": 11795,
+      "license": "CC0-1.0",
+      "source": "https://github.com/coreselfmastery/FUNCUT",
+      "author": "FUNCUT contributors",
+      "tags": [
+        "sweep",
+        "down",
+        "release",
+        "transition"
+      ],
+      "sha256": "edb247df5b581004985085a48355e2542037ba689548373fc6a353b9e43b2e90"
+    },
+    {
+      "id": "ui-bong",
+      "name": "Bong, round",
+      "category": "UI",
+      "file": "ui-bong.ogg",
+      "duration": 0.12,
+      "bytes": 4765,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds",
+      "author": "Kenney",
+      "tags": [
+        "bong",
+        "pop",
+        "retro"
+      ],
+      "sha256": "d017efa42b4e0161aa4e096b310b228ef793ea30b9de327f137c3eadf57c6d2f"
+    },
+    {
+      "id": "ui-click-sharp",
+      "name": "Click, sharp",
+      "category": "UI",
+      "file": "ui-click-sharp.ogg",
+      "duration": 0.1,
+      "bytes": 4734,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds",
+      "author": "Kenney",
+      "tags": [
+        "click",
+        "tap",
+        "press"
+      ],
+      "sha256": "cb2195be3be6625c45d38ba67d562886e698531c9833a780c923d5fc7523c408"
+    },
+    {
+      "id": "ui-click-soft",
+      "name": "Click, soft scratch",
+      "category": "UI",
+      "file": "ui-click-soft.ogg",
+      "duration": 0.14,
+      "bytes": 5579,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds",
+      "author": "Kenney",
+      "tags": [
+        "click",
+        "tap",
+        "soft",
+        "scratch"
+      ],
+      "sha256": "7f9d3481939386bd669334ebe49b528e5571af2e756b334f3d9c5685dc66de60"
+    },
+    {
+      "id": "ui-computer",
+      "name": "Computer, data burst",
+      "category": "UI",
+      "file": "ui-computer.ogg",
+      "duration": 5.0,
+      "bytes": 57900,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/sci-fi-sounds",
+      "author": "Kenney",
+      "tags": [
+        "computer",
+        "data",
+        "digital"
+      ],
+      "sha256": "9d2cbbbbec8097705a0150a6074d0f79fdd92310c6071db61a883e9951845d97"
+    },
+    {
+      "id": "ui-confirm-bright",
+      "name": "Confirmation, bright",
+      "category": "UI",
+      "file": "ui-confirm-bright.ogg",
+      "duration": 0.29,
+      "bytes": 5361,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds",
+      "author": "Kenney",
+      "tags": [
+        "confirm",
+        "success",
+        "positive"
+      ],
+      "sha256": "cb8ad7d3d41e026063c7ded290518fee617b51d371de344744837b8522481c64"
+    },
+    {
+      "id": "ui-confirm-gentle",
+      "name": "Confirmation, gentle",
+      "category": "UI",
+      "file": "ui-confirm-gentle.ogg",
+      "duration": 0.54,
+      "bytes": 7874,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds",
+      "author": "Kenney",
+      "tags": [
+        "confirm",
+        "success",
+        "soft"
+      ],
+      "sha256": "30a56328b30557efdf9d8cdd8cf58ee4c3b24b5534cba9bab4d1c734bc7be2e8"
+    },
+    {
+      "id": "ui-drop",
+      "name": "Drop, bloop",
+      "category": "UI",
+      "file": "ui-drop.ogg",
+      "duration": 0.13,
+      "bytes": 5900,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds",
+      "author": "Kenney",
+      "tags": [
+        "drop",
+        "bloop",
+        "motion"
+      ],
+      "sha256": "03b67a6f4a3afc82f3269b660f413a9a03b871b50211758f8e353ae370bc149a"
+    },
+    {
+      "id": "ui-error",
+      "name": "Error, buzz",
+      "category": "UI",
+      "file": "ui-error.ogg",
+      "duration": 0.16,
+      "bytes": 7174,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds",
+      "author": "Kenney",
+      "tags": [
+        "error",
+        "negative",
+        "denied"
+      ],
+      "sha256": "e30b986c5eade9f597c20b4f23d22f6b3692f86b264a190cedd0dc17df61e781"
+    },
+    {
+      "id": "ui-error-soft",
+      "name": "Error, soft",
+      "category": "UI",
+      "file": "ui-error-soft.ogg",
+      "duration": 0.17,
+      "bytes": 6775,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds",
+      "author": "Kenney",
+      "tags": [
+        "error",
+        "negative",
+        "soft"
+      ],
+      "sha256": "9fe365f380d19ef31e7bda622b495be109ce27ee53e350a29861ef445e7a3284"
+    },
+    {
+      "id": "ui-glass",
+      "name": "Glass ding, light",
+      "category": "UI",
+      "file": "ui-glass.ogg",
+      "duration": 0.28,
+      "bytes": 5789,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds",
+      "author": "Kenney",
+      "tags": [
+        "glass",
+        "ding",
+        "notice"
+      ],
+      "sha256": "c825120a7fbd96a7c48bc7d31dc9675cd823f45b965415ef98a9551fc61662bb"
+    },
+    {
+      "id": "ui-glitch",
+      "name": "Scratch, digital glitch",
+      "category": "UI",
+      "file": "ui-glitch.ogg",
+      "duration": 0.14,
+      "bytes": 6099,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds",
+      "author": "Kenney",
+      "tags": [
+        "glitch",
+        "scratch",
+        "digital",
+        "error"
+      ],
+      "sha256": "f8adfdd414b9de1d56a195f81f21b742e21c3f243bc15662903dbc1673a1100c"
+    },
+    {
+      "id": "ui-keypress",
+      "name": "Keypress, single",
+      "category": "UI",
+      "file": "ui-keypress.ogg",
+      "duration": 0.25,
+      "bytes": 7271,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/keyboard-soundpack-1-typing-and-single-keystrokes",
+      "author": "unicae games",
+      "tags": [
+        "keyboard",
+        "type",
+        "key"
+      ],
+      "sha256": "1fe524b7685931db57df35135a1709cb9798ed344783d1eb33112e44f48ddeca"
+    },
+    {
+      "id": "ui-laser",
+      "name": "Laser, zap",
+      "category": "UI",
+      "file": "ui-laser.ogg",
+      "duration": 1.04,
+      "bytes": 12712,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/digital-audio",
+      "author": "Kenney",
+      "tags": [
+        "laser",
+        "zap",
+        "digital"
+      ],
+      "sha256": "22ccbeba3e9a2c76d01f0617666d5fe829df830eb4474ed9206eacf913fbe76d"
+    },
+    {
+      "id": "ui-laser-retro",
+      "name": "Laser, retro zap",
+      "category": "UI",
+      "file": "ui-laser-retro.ogg",
+      "duration": 0.24,
+      "bytes": 6833,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/sci-fi-sounds",
+      "author": "Kenney",
+      "tags": [
+        "laser",
+        "zap",
+        "retro",
+        "motion"
+      ],
+      "sha256": "5af4f1e49647c5b8f185071064412b45086317c0ba00c00258dca19d018f146d"
+    },
+    {
+      "id": "ui-link",
+      "name": "Link, snap",
+      "category": "UI",
+      "file": "ui-link.ogg",
+      "duration": 1.27,
+      "bytes": 28242,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/atmospheric-interaction-sound-pack",
+      "author": "unknown",
+      "tags": [
+        "link",
+        "snap",
+        "attach"
+      ],
+      "sha256": "e454186eb567692fb9c128fa6de14bc5ccd88d33ffeaf8b50a56f61100911e91"
+    },
+    {
+      "id": "ui-maximize",
+      "name": "Maximize, zip up",
+      "category": "UI",
+      "file": "ui-maximize.ogg",
+      "duration": 0.26,
+      "bytes": 7186,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds",
+      "author": "Kenney",
+      "tags": [
+        "maximize",
+        "up",
+        "motion"
+      ],
+      "sha256": "b966ab87ec6a09110ed12fdde5431c4936a24cad05e294db36faf44ef2a25f8b"
+    },
+    {
+      "id": "ui-minimize",
+      "name": "Minimize, zip down",
+      "category": "UI",
+      "file": "ui-minimize.ogg",
+      "duration": 0.26,
+      "bytes": 7089,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds",
+      "author": "Kenney",
+      "tags": [
+        "minimize",
+        "down",
+        "motion"
+      ],
+      "sha256": "b517a8c38e92cb34cecb2d30df5a4636f5fc4369acd00115bc941898a641f90a"
+    },
+    {
+      "id": "ui-open",
+      "name": "Open, slide",
+      "category": "UI",
+      "file": "ui-open.ogg",
+      "duration": 0.15,
+      "bytes": 6127,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds",
+      "author": "Kenney",
+      "tags": [
+        "open",
+        "slide",
+        "motion"
+      ],
+      "sha256": "83a1d5a295c1fe54cba2721dc46edb0f993f9158dab0d2d2251bd48dd5781562"
+    },
+    {
+      "id": "ui-phase-jump",
+      "name": "Phase jump, warp",
+      "category": "UI",
+      "file": "ui-phase-jump.ogg",
+      "duration": 0.47,
+      "bytes": 9881,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/digital-audio",
+      "author": "Kenney",
+      "tags": [
+        "warp",
+        "jump",
+        "digital",
+        "motion"
+      ],
+      "sha256": "e9c4c7f68e3df8d96f7fc26c2bff6d34f5b3ffca9470a9bd28534b385bba7184"
+    },
+    {
+      "id": "ui-phaser-down",
+      "name": "Phaser down, digital",
+      "category": "UI",
+      "file": "ui-phaser-down.ogg",
+      "duration": 0.47,
+      "bytes": 10311,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/digital-audio",
+      "author": "Kenney",
+      "tags": [
+        "power",
+        "down",
+        "digital",
+        "sweep"
+      ],
+      "sha256": "3b7f1d357a88a61241a32e4bec5efbe575fb1b5c8358c952831aeb14a7214135"
+    },
+    {
+      "id": "ui-pluck",
+      "name": "Pluck, pop",
+      "category": "UI",
+      "file": "ui-pluck.ogg",
+      "duration": 0.1,
+      "bytes": 5803,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds",
+      "author": "Kenney",
+      "tags": [
+        "pluck",
+        "pop",
+        "motion"
+      ],
+      "sha256": "f72f498b433649fc2047269eadbde95c82dd2404fa47af34fc7d7be788a8522d"
+    },
+    {
+      "id": "ui-power-up",
+      "name": "Power up, digital",
+      "category": "UI",
+      "file": "ui-power-up.ogg",
+      "duration": 0.44,
+      "bytes": 7773,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/digital-audio",
+      "author": "Kenney",
+      "tags": [
+        "power",
+        "up",
+        "digital",
+        "retro"
+      ],
+      "sha256": "9e7866b2a77a8032f190aac704c378c7be0e9bee6ab6986da4c4f3bb9edb6796"
+    },
+    {
+      "id": "ui-question",
+      "name": "Question, ding",
+      "category": "UI",
+      "file": "ui-question.ogg",
+      "duration": 0.49,
+      "bytes": 6371,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds",
+      "author": "Kenney",
+      "tags": [
+        "question",
+        "ding",
+        "notice"
+      ],
+      "sha256": "7ae059846e264c459fc95563fb300ca1dec07c8f1ea1a0465ed538a7bac7fec0"
+    },
+    {
+      "id": "ui-scroll",
+      "name": "Scroll, tick",
+      "category": "UI",
+      "file": "ui-scroll.ogg",
+      "duration": 1.0,
+      "bytes": 14566,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds",
+      "author": "Kenney",
+      "tags": [
+        "scroll",
+        "tick",
+        "motion"
+      ],
+      "sha256": "873763698adc52c861518debc5590cad4d2473b977bdb7901df9661b373c07e1"
+    },
+    {
+      "id": "ui-select",
+      "name": "Select, tick",
+      "category": "UI",
+      "file": "ui-select.ogg",
+      "duration": 0.04,
+      "bytes": 5149,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds",
+      "author": "Kenney",
+      "tags": [
+        "select",
+        "tick",
+        "hover"
+      ],
+      "sha256": "9e60b51c972582a5758631e5a97cfc635a3956a2eaac9466c4dbe96b0b810c04"
+    },
+    {
+      "id": "ui-select-2",
+      "name": "Select, pop",
+      "category": "UI",
+      "file": "ui-select-2.ogg",
+      "duration": 0.04,
+      "bytes": 5156,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds",
+      "author": "Kenney",
+      "tags": [
+        "select",
+        "pop"
+      ],
+      "sha256": "22c5ea2f0c22735f122e2a348ca50c6e4e6fc7fb0e65064447b95c3112db7fc6"
+    },
+    {
+      "id": "ui-switch",
+      "name": "Switch, toggle",
+      "category": "UI",
+      "file": "ui-switch.ogg",
+      "duration": 0.61,
+      "bytes": 6263,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds",
+      "author": "Kenney",
+      "tags": [
+        "switch",
+        "toggle"
+      ],
+      "sha256": "10c1df42313d026937b43c187d6157b9325760bcd141c55e254ef9c83102442f"
+    },
+    {
+      "id": "ui-three-tone",
+      "name": "Three tone, low",
+      "category": "UI",
+      "file": "ui-three-tone.ogg",
+      "duration": 0.97,
+      "bytes": 9997,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/digital-audio",
+      "author": "Kenney",
+      "tags": [
+        "tone",
+        "beep",
+        "digital"
+      ],
+      "sha256": "d79dc41bfc3f8794ab090fc7d93fe5c86104f8236f542f0908a52860ec6d8c12"
+    },
+    {
+      "id": "ui-tick",
+      "name": "Tick, light",
+      "category": "UI",
+      "file": "ui-tick.ogg",
+      "duration": 0.04,
+      "bytes": 4492,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds",
+      "author": "Kenney",
+      "tags": [
+        "tick",
+        "notification",
+        "light"
+      ],
+      "sha256": "ab142caa89d62c9fbe55012cfb311f1a98db88811d9ba6959a8a03f41bfb4051"
+    },
+    {
+      "id": "ui-toggle",
+      "name": "Toggle, click",
+      "category": "UI",
+      "file": "ui-toggle.ogg",
+      "duration": 0.14,
+      "bytes": 5540,
+      "license": "CC0-1.0",
+      "source": "https://kenney.nl/assets/interface-sounds",
+      "author": "Kenney",
+      "tags": [
+        "toggle",
+        "switch",
+        "click"
+      ],
+      "sha256": "0cd59f34c8d434253e50ec5a999796d2e20d461ae96cea515486a05268d9ce74"
+    },
+    {
+      "id": "ui-unlink",
+      "name": "Unlink, pop",
+      "category": "UI",
+      "file": "ui-unlink.ogg",
+      "duration": 1.09,
+      "bytes": 25041,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/atmospheric-interaction-sound-pack",
+      "author": "unknown",
+      "tags": [
+        "unlink",
+        "pop",
+        "detach"
+      ],
+      "sha256": "328c53d2b532fd70755955372f0af303a280242e814c4376cbfbb5f27ba29f83"
+    },
+    {
+      "id": "whoosh-air-long",
+      "name": "Air whoosh, long",
+      "category": "Whoosh",
+      "file": "whoosh-air-long.ogg",
+      "duration": 5.0,
+      "bytes": 102525,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/air-whoosh",
+      "author": "unknown",
+      "tags": [
+        "transition",
+        "air",
+        "long",
+        "cinematic"
+      ],
+      "sha256": "fddfae44064d0f5b16ec38ef4b6db8db32f8cb97fdfedc758b4a47cf09c87af7"
+    },
+    {
+      "id": "whoosh-bamboo-1",
+      "name": "Bamboo whoosh 1",
+      "category": "Whoosh",
+      "file": "whoosh-bamboo-1.ogg",
+      "duration": 0.28,
+      "bytes": 9704,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/swish-bamboo-stick-weapon-swhoshes",
+      "author": "Dread Knight",
+      "tags": [
+        "transition",
+        "weapon",
+        "swing",
+        "bamboo"
+      ],
+      "sha256": "8755bf6331728e78245783827a25b9e82fcde48bfc0ffc7bd810ffe17da65ae1"
+    },
+    {
+      "id": "whoosh-bamboo-2",
+      "name": "Bamboo whoosh 2",
+      "category": "Whoosh",
+      "file": "whoosh-bamboo-2.ogg",
+      "duration": 0.2,
+      "bytes": 8322,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/swish-bamboo-stick-weapon-swhoshes",
+      "author": "Dread Knight",
+      "tags": [
+        "transition",
+        "weapon",
+        "swing",
+        "bamboo"
+      ],
+      "sha256": "468a2359327cc8af406d16b260eff869ec9941eeded440309aff83edaccdc846"
+    },
+    {
+      "id": "whoosh-bamboo-3",
+      "name": "Bamboo whoosh 3",
+      "category": "Whoosh",
+      "file": "whoosh-bamboo-3.ogg",
+      "duration": 0.58,
+      "bytes": 15096,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/swish-bamboo-stick-weapon-swhoshes",
+      "author": "Dread Knight",
+      "tags": [
+        "transition",
+        "weapon",
+        "swing",
+        "bamboo"
+      ],
+      "sha256": "0744cccf9c79f5a37143c74608d1b340d64fbead725f9e59aecc239c53f635ca"
+    },
+    {
+      "id": "whoosh-bamboo-4",
+      "name": "Bamboo whoosh 4",
+      "category": "Whoosh",
+      "file": "whoosh-bamboo-4.ogg",
+      "duration": 0.26,
+      "bytes": 9838,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/swish-bamboo-stick-weapon-swhoshes",
+      "author": "Dread Knight",
+      "tags": [
+        "transition",
+        "weapon",
+        "swing",
+        "bamboo"
+      ],
+      "sha256": "c6b7182b3620104b25083363e66c3d36a7cdd4a0e48f5576b8e4eb77dd8a2d7b"
+    },
+    {
+      "id": "whoosh-bamboo-5",
+      "name": "Bamboo whoosh 5",
+      "category": "Whoosh",
+      "file": "whoosh-bamboo-5.ogg",
+      "duration": 0.42,
+      "bytes": 12109,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/swish-bamboo-stick-weapon-swhoshes",
+      "author": "Dread Knight",
+      "tags": [
+        "transition",
+        "weapon",
+        "swing",
+        "bamboo"
+      ],
+      "sha256": "ca5276ceeaf2b90ca8aa79a66fa5eff6bec5b5cab77a528ef15e275f8445aa9c"
+    },
+    {
+      "id": "whoosh-cinematic-down",
+      "name": "Cinematic whoosh, falling",
+      "category": "Whoosh",
+      "file": "whoosh-cinematic-down.ogg",
+      "duration": 2.5,
+      "bytes": 32550,
+      "license": "CC0-1.0",
+      "source": "https://github.com/coreselfmastery/FUNCUT",
+      "author": "FUNCUT contributors",
+      "tags": [
+        "cinematic",
+        "trailer",
+        "falling",
+        "transition"
+      ],
+      "sha256": "61fe4adad005b0cd0e31c6495540cd31257a9e0dfbfb325ea8abe53b7a622117"
+    },
+    {
+      "id": "whoosh-cinematic-up",
+      "name": "Cinematic whoosh, rising",
+      "category": "Whoosh",
+      "file": "whoosh-cinematic-up.ogg",
+      "duration": 3.0,
+      "bytes": 37904,
+      "license": "CC0-1.0",
+      "source": "https://github.com/coreselfmastery/FUNCUT",
+      "author": "FUNCUT contributors",
+      "tags": [
+        "cinematic",
+        "trailer",
+        "rising",
+        "transition"
+      ],
+      "sha256": "0a5a780030b2b004794ea7ad5f8913f4923a14c7f3f96e04627e9fb05f0ffe69"
+    },
+    {
+      "id": "whoosh-fast-pass",
+      "name": "Whoosh, fast pass",
+      "category": "Whoosh",
+      "file": "whoosh-fast-pass.ogg",
+      "duration": 0.9,
+      "bytes": 16358,
+      "license": "CC0-1.0",
+      "source": "https://github.com/coreselfmastery/FUNCUT",
+      "author": "FUNCUT contributors",
+      "tags": [
+        "fast",
+        "short",
+        "pass",
+        "transition"
+      ],
+      "sha256": "16f97ff20da893431f58d64e9ee47364a1725d9eaf18e69778bc077dcd4a32da"
+    },
+    {
+      "id": "whoosh-sub-drop",
+      "name": "Sub drop, deep",
+      "category": "Whoosh",
+      "file": "whoosh-sub-drop.ogg",
+      "duration": 1.6,
+      "bytes": 8433,
+      "license": "CC0-1.0",
+      "source": "https://github.com/coreselfmastery/FUNCUT",
+      "author": "FUNCUT contributors",
+      "tags": [
+        "sub",
+        "drop",
+        "deep",
+        "trailer",
+        "bass"
+      ],
+      "sha256": "d6f27786459e4ad241df31e23b94c97dad8f0eda4312102faccd721c72a3568c"
+    },
+    {
+      "id": "whoosh-swish-1",
+      "name": "Swish, long",
+      "category": "Whoosh",
+      "file": "whoosh-swish-1.ogg",
+      "duration": 0.2,
+      "bytes": 8280,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/swishes-sound-pack",
+      "author": "qubodup",
+      "tags": [
+        "transition",
+        "swish",
+        "smooth"
+      ],
+      "sha256": "52febc58d94dc2f567234582a45954d4a69e096fbce79c21bcf0ca29f8e03a17"
+    },
+    {
+      "id": "whoosh-swish-2",
+      "name": "Swish, full",
+      "category": "Whoosh",
+      "file": "whoosh-swish-2.ogg",
+      "duration": 0.19,
+      "bytes": 8290,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/swishes-sound-pack",
+      "author": "qubodup",
+      "tags": [
+        "transition",
+        "swish",
+        "smooth"
+      ],
+      "sha256": "198591e411a6e8939d492b5dcded3efb3e56a6dc4e04bf66123a142afa399e4a"
+    },
+    {
+      "id": "whoosh-swish-3",
+      "name": "Swish, medium",
+      "category": "Whoosh",
+      "file": "whoosh-swish-3.ogg",
+      "duration": 0.15,
+      "bytes": 7582,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/swishes-sound-pack",
+      "author": "qubodup",
+      "tags": [
+        "transition",
+        "swish",
+        "fast"
+      ],
+      "sha256": "d785873b34c65bc0e80f53651b28c0c97d2a775dc1b368959b4bc91e104b3475"
+    },
+    {
+      "id": "whoosh-swish-4",
+      "name": "Swish, short",
+      "category": "Whoosh",
+      "file": "whoosh-swish-4.ogg",
+      "duration": 0.15,
+      "bytes": 7666,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/swishes-sound-pack",
+      "author": "qubodup",
+      "tags": [
+        "transition",
+        "swish",
+        "fast"
+      ],
+      "sha256": "1c13b8c9d1984a05e5375a90931de5a6d63aa6541e4168b1e4f6076ad002f699"
+    },
+    {
+      "id": "whoosh-swish-5",
+      "name": "Swish, quick",
+      "category": "Whoosh",
+      "file": "whoosh-swish-5.ogg",
+      "duration": 0.15,
+      "bytes": 7453,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/swishes-sound-pack",
+      "author": "qubodup",
+      "tags": [
+        "transition",
+        "swish",
+        "fast"
+      ],
+      "sha256": "a5f5b251071dc009621e9f3eefa0b5fd840e531d00b0619cfb5ac50ec8c10732"
+    },
+    {
+      "id": "whoosh-swish-6",
+      "name": "Swish, very quick",
+      "category": "Whoosh",
+      "file": "whoosh-swish-6.ogg",
+      "duration": 0.14,
+      "bytes": 7534,
+      "license": "CC0-1.0",
+      "source": "https://opengameart.org/content/swishes-sound-pack",
+      "author": "qubodup",
+      "tags": [
+        "transition",
+        "swish",
+        "fast"
+      ],
+      "sha256": "77fd149f8c5807391c0a3f8970aed8954f22a7903a87e6748d95fc3b8f3ff048"
+    }
+  ]
+}

@@ -420,7 +420,8 @@ impl MagickPane {
                     .library()
                     .and_then(|library| library.fetched(&sticker.id));
                 let picture = cached
-                    .and_then(|path| crate::host::image_at(&path))
+                    .as_ref()
+                    .and_then(|path| crate::host::image_at(path))
                     .unwrap_or_default();
                 MagickCardData {
                     id: sticker.id.as_str().into(),

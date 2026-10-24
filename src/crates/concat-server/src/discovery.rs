@@ -83,7 +83,6 @@ pub fn write(path: &Path, listing: &Listing) -> Result<(), String> {
     let staging = path.with_extension(format!("json.{}", std::process::id()));
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
@@ -93,7 +92,6 @@ pub fn write(path: &Path, listing: &Listing) -> Result<(), String> {
         .and_then(|mut file| {
             // The mode above applies to a file created now; one left from
             // before with wider permissions is narrowed here.
-            #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
                 file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
@@ -156,7 +154,6 @@ mod tests {
         );
         write(&path, &listing).expect("writes");
         assert_eq!(read(&path), Ok(Some(listing.clone())));
-        #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             let mode = std::fs::metadata(&path)

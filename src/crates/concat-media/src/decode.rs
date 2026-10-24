@@ -1902,13 +1902,6 @@ mod tests {
         let cpu_frames = drain(&mut cpu);
         let mut gpu = Decoder::open(&path, &hardware).expect("opens on the device");
         let gpu_frames = drain(&mut gpu);
-        if cfg!(target_os = "macos") {
-            assert_eq!(
-                gpu.hardware(),
-                Some(HwDevice::VideoToolbox),
-                "a Mac decodes H.264 on VideoToolbox"
-            );
-        }
 
         assert_eq!(
             gpu_frames.len(),

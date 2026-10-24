@@ -47,13 +47,11 @@ TABLES = {
     "whisper": CRATES / "concat-speech" / "src" / "transcribe.rs",
 }
 
-# The bundles a release publishes, as build-app.yml and mobile.yml name
-# them: platform, architecture, the kind of file, and its name with the
-# version to fill in. Installers and binaries, never an archive of a
-# folder - a person downloads the thing they run.
+# The bundles a release publishes, as build-app.yml names them: platform,
+# architecture, the kind of file, and its name with the version to fill
+# in. Installers and binaries, never an archive of a folder - a person
+# downloads the thing they run.
 BUNDLES = [
-    ("macos", "arm64", "dmg", "Concat-{v}-macos-arm64.dmg"),
-    ("macos", "x86_64", "dmg", "Concat-{v}-macos-x86_64.dmg"),
     ("linux", "x86_64", "deb", "Concat-{v}-linux-x86_64.deb"),
     ("linux", "x86_64", "rpm", "Concat-{v}-linux-x86_64.rpm"),
     ("linux", "x86_64", "appimage", "Concat-{v}-x86_64.AppImage"),
@@ -62,12 +60,6 @@ BUNDLES = [
     ("linux", "aarch64", "rpm", "Concat-{v}-linux-aarch64.rpm"),
     ("linux", "aarch64", "appimage", "Concat-{v}-aarch64.AppImage"),
     ("linux", "aarch64", "pacman", "Concat-{v}-linux-aarch64.pkg.tar.zst"),
-    ("windows", "x86_64", "setup", "Concat-{v}-windows-x86_64-setup.exe"),
-    ("windows", "x86_64", "msi", "Concat-{v}-windows-x86_64.msi"),
-    ("windows", "aarch64", "setup", "Concat-{v}-windows-aarch64-setup.exe"),
-    ("windows", "aarch64", "msi", "Concat-{v}-windows-aarch64.msi"),
-    ("android", "arm64", "apk", "Concat-{v}-android-arm64.apk"),
-    ("ios", "arm64", "ipa", "Concat-{v}-ios-arm64.ipa"),
 ]
 
 

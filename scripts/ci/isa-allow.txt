@@ -10,14 +10,6 @@
 # pattern                      avx2  fma   bmi    mulx/rorx  avx512
 
 # FFmpeg: every codec, filter and scaler picks its SIMD by av_get_cpu_flags.
-avcodec-*.dll                  any
-avdevice-*.dll                 any
-avfilter-*.dll                 any
-avformat-*.dll                 any
-avutil-*.dll                   any
-postproc-*.dll                 any
-swresample-*.dll               any
-swscale-*.dll                  any
 libavcodec.so*                 any
 libavdevice.so*                any
 libavfilter.so*                any
@@ -29,20 +21,10 @@ libswscale.so*                 any
 
 # Microsoft's ONNX Runtime: MLAS chooses its kernels by CPUID. Its general
 # code is built for the baseline (1.28.0 holds no BMI instructions at all).
-onnxruntime.dll                any
-onnxruntime_providers_shared.dll any
 libonnxruntime.so*             any
-
-# sherpa-onnx's Windows DLLs: built with the static MSVC runtime, whose
-# maths functions carry FMA3 twins chosen at run time.
-sherpa-onnx-c-api.dll          any
-sherpa-onnx-cxx-api.dll        any
 
 # The MSVC runtime, shipped beside the binary: memcpy and friends pick
 # their AVX2 paths at run time.
-vcruntime140*.dll              any
-msvcp140*.dll                  any
-concrt140.dll                  any
 
 # whisper's CPU kernels, one module per x86_64 generation, of which ggml
 # loads only the best one the CPU's CPUID says it can run (build-app.yml,
@@ -70,20 +52,14 @@ concrt140.dll                  any
 # FMA or BMI at all, which a module compiled for Haswell would be full
 # of. So AVX2 is allowed a margin over those counts, and the rest none.
 # The .so files on Linux, built with GCC, still may hold nothing.
-ggml-cpu-x64.dll               16    0     0      0          0
-ggml-cpu-sse42.dll             16    0     0      0          0
-ggml-cpu-sandybridge.dll       16    0     0      0          0
-ggml-cpu-ivybridge.dll         16    0     0      0          0
-ggml.dll                       32    0     0      0          0
-whisper.dll                    48    0     0      0          0
 
 # Concat itself. It holds dispatched code of its own - memchr, aho-corasick
 # and ring choose AVX2 or BMI2 paths at run time (ring's hand-written
-# cryptography is where mulx and rorx come from), and Skia carries its
+# cryptography is where mulx and rorx comes from), and Skia carries its
 # Haswell and Skylake-X stages beside the baseline ones - so the vector
 # classes are not limited. The compiler-made BMI column is the one that
-# tells: pyke's static ONNX Runtime, linked into concat.exe in 0.2.5 and
-# 0.2.6 (#313), brought some 2,700 of them. On Linux the binary also links
+# tells: pyke's static ONNX Runtime, linked into concat in 0.2.5 and
+# 0.2.6 (#313), brought some 2,700 of them. The binary also links
 # sherpa-onnx statically, with an ONNX Runtime of its own inside.
 #
 # PROVISIONAL: these BMI limits are estimates, not measurements, so for
@@ -92,5 +68,4 @@ whisper.dll                    48    0     0      0          0
 # prints each binary's counts. Once it has, set the limit a margin above
 # the count shown, without the `~`, so the next library compiled for
 # Haswell fails the build.
-concat.exe                     -     -     ~1000  -          -
 concat                         -     -     ~1000  -          -

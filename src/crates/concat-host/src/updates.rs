@@ -203,13 +203,6 @@ pub fn standing(current: Version, releases: &[Release]) -> Standing {
 /// that goes in its place.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PackageKind {
-    /// A macOS disk image with the app in it.
-    Dmg,
-    /// The Windows installer, `Concat-<version>-windows-<arch>-setup.exe`.
-    Setup,
-    /// The Windows Installer package, `Concat-<version>-windows-<arch>.msi`:
-    /// the per-machine install an administrator deploys.
-    Msi,
     /// A Linux AppImage: one file, started where it lies.
     AppImage,
     /// A Debian package.
@@ -224,9 +217,6 @@ impl PackageKind {
     /// The key the release manifest files the package under.
     pub fn key(self) -> &'static str {
         match self {
-            PackageKind::Dmg => "dmg",
-            PackageKind::Setup => "setup",
-            PackageKind::Msi => "msi",
             PackageKind::AppImage => "appimage",
             PackageKind::Deb => "deb",
             PackageKind::Rpm => "rpm",
@@ -240,8 +230,6 @@ impl PackageKind {
 pub enum Fixed {
     /// A Flatpak: Flatpak keeps it up to date.
     Flatpak,
-    /// A phone: its app store keeps it up to date.
-    Store,
     /// Not installed from any package this knows - a build from the tree,
     /// a distribution's own package.
     NotFromPackage,
@@ -252,53 +240,14 @@ pub enum Fixed {
 pub fn installed_as() -> Result<PackageKind, Fixed> {
     static KNOWN: OnceLock<Result<PackageKind, Fixed>> = OnceLock::new();
     *KNOWN.get_or_init(|| {
-        if cfg!(target_os = "macos") {
-            Ok(PackageKind::Dmg)
-        } else if cfg!(target_os = "windows") {
-            let dir = std::env::current_exe()
-                .ok()
-                .and_then(|exe| exe.parent().map(Path::to_path_buf));
-            windows_kind(
-                dir.as_deref()
-                    .is_some_and(|dir| dir.join("unins000.exe").is_file()),
-                dir.as_deref().is_some_and(in_program_files),
-            )
-        } else if cfg!(target_os = "linux") {
-            linux_kind(
-                std::env::var_os("APPIMAGE").is_some(),
-                std::env::var_os("FLATPAK_ID").is_some(),
-                Path::new("/var/lib/dpkg/info/concat.list").exists(),
-                pacman_has_concat(),
-                rpm_has_concat(),
-            )
-        } else {
-            Err(Fixed::Store)
-        }
+        linux_kind(
+            std::env::var_os("APPIMAGE").is_some(),
+            std::env::var_os("FLATPAK_ID").is_some(),
+            Path::new("/var/lib/dpkg/info/concat.list").exists(),
+            pacman_has_concat(),
+            rpm_has_concat(),
+        )
     })
-}
-
-/// A Windows install, from where the executable is and what sits beside
-/// it. The setup leaves its
-/// uninstaller beside the program; the .msi leaves none and always
-/// installs under Program Files. Anything else - the portable zip, a build
-/// from the tree - came from no installer, and an update from here would
-/// put a second copy beside it rather than replace it.
-fn windows_kind(uninstaller: bool, program_files: bool) -> Result<PackageKind, Fixed> {
-    if uninstaller {
-        Ok(PackageKind::Setup)
-    } else if program_files {
-        Ok(PackageKind::Msi)
-    } else {
-        Err(Fixed::NotFromPackage)
-    }
-}
-
-/// Whether `dir` is under one of Windows' Program Files folders.
-fn in_program_files(dir: &Path) -> bool {
-    ["ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"]
-        .into_iter()
-        .filter_map(std::env::var_os)
-        .any(|root| dir.starts_with(root))
 }
 
 /// A Linux install, from what is on the machine: an AppImage says so in
@@ -352,7 +301,7 @@ fn rpm_has_concat() -> bool {
 /// hash to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Package {
-    /// Its file name, `Concat-0.2.5-macos-arm64.dmg`.
+    /// Its file name, `Concat-0.2.5-linux-x86_64.AppImage`.
     pub file: String,
     /// Where to fetch it.
     pub url: String,
@@ -362,13 +311,10 @@ pub struct Package {
     pub sha256: String,
 }
 
-/// The name the manifest gives this machine's architecture: the builds
-/// say `arm64` for a Mac and `aarch64` everywhere else.
+/// The name the manifest gives this machine's architecture.
 pub fn manifest_arch(os: &str, arch: &str) -> String {
-    match (os, arch) {
-        ("macos", "aarch64") => "arm64".to_owned(),
-        _ => arch.to_owned(),
-    }
+    let _ = os;
+    arch.to_owned()
 }
 
 /// The package of `kind` for `os` on `arch` in a release's manifest.
@@ -488,103 +434,12 @@ pub enum Installed {
 /// this build's place.
 pub fn install(package: &Path, kind: PackageKind) -> Result<Installed, String> {
     match kind {
-        PackageKind::Setup => {
-            Command::new(package)
-                .spawn()
-                .map_err(|error| format!("could not start {}: {error}", package.display()))?;
-            Ok(Installed::InstallerRunning)
-        }
-        // msiexec asks for the elevation a per-machine package needs, and
-        // the package's MajorUpgrade takes the old version out.
-        PackageKind::Msi => {
-            Command::new("msiexec")
-                .arg("/i")
-                .arg(package)
-                .spawn()
-                .map_err(|error| format!("could not start msiexec: {error}"))?;
-            Ok(Installed::InstallerRunning)
-        }
-        PackageKind::Dmg => replace_from_dmg(package),
         PackageKind::AppImage => replace_appimage(package),
         PackageKind::Deb | PackageKind::Rpm | PackageKind::Pacman => {
             run(Command::new("xdg-open").arg(package))?;
             Ok(Installed::Opened)
         }
     }
-}
-
-/// The `.app` this process runs from, or `None` for a bare binary.
-fn own_bundle() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    exe.ancestors()
-        .find(|path| path.extension().is_some_and(|extension| extension == "app"))
-        .map(Path::to_path_buf)
-}
-
-/// Mounts the image, copies the app out of it over this one's bundle, and
-/// unmounts. A process not running from a bundle - a build from the tree -
-/// gets the image opened in the Finder instead, to drag from as always;
-/// so does one whose bundle could not be replaced, with the reason.
-fn replace_from_dmg(dmg: &Path) -> Result<Installed, String> {
-    let Some(bundle) = own_bundle() else {
-        run(Command::new("open").arg(dmg))?;
-        return Ok(Installed::Opened);
-    };
-    let mount = std::env::temp_dir().join(format!("concat-update-{}", std::process::id()));
-    run(Command::new("hdiutil")
-        .args([
-            "attach",
-            "-nobrowse",
-            "-readonly",
-            "-noverify",
-            "-mountpoint",
-        ])
-        .arg(&mount)
-        .arg(dmg))?;
-    let swapped = swap_bundle(&mount, &bundle);
-    let _ = run(Command::new("hdiutil")
-        .arg("detach")
-        .arg(&mount)
-        .arg("-quiet"));
-    match swapped {
-        Ok(()) => Ok(Installed::Replaced),
-        Err(error) => {
-            let _ = run(Command::new("open").arg(dmg));
-            Err(error)
-        }
-    }
-}
-
-/// The app in `mount` copied beside `bundle`, then swapped in; the old
-/// bundle is put back if the swap fails halfway.
-fn swap_bundle(mount: &Path, bundle: &Path) -> Result<(), String> {
-    let fresh = std::fs::read_dir(mount)
-        .map_err(|error| format!("could not read the disk image: {error}"))?
-        .flatten()
-        .map(|entry| entry.path())
-        .find(|path| path.extension().is_some_and(|extension| extension == "app"))
-        .ok_or_else(|| "the disk image holds no app".to_owned())?;
-    let staged = bundle.with_extension("app.new");
-    let retired = bundle.with_extension("app.old");
-    let _ = std::fs::remove_dir_all(&staged);
-    let _ = std::fs::remove_dir_all(&retired);
-    // ditto, not a copy of our own: it keeps the bundle's signature,
-    // its links and its resource forks as the Finder would.
-    run(Command::new("ditto").arg(&fresh).arg(&staged))?;
-    std::fs::rename(bundle, &retired)
-        .map_err(|error| format!("could not move {} aside: {error}", bundle.display()))?;
-    if let Err(error) = std::fs::rename(&staged, bundle) {
-        let _ = std::fs::rename(&retired, bundle);
-        let _ = std::fs::remove_dir_all(&staged);
-        return Err(format!("could not put the new app in place: {error}"));
-    }
-    let _ = std::fs::remove_dir_all(&retired);
-    // The bundle came off the network, and Gatekeeper would refuse an
-    // unsigned one for that - the README's own advice for a first install.
-    let _ = run(Command::new("xattr")
-        .args(["-dr", "com.apple.quarantine"])
-        .arg(bundle));
-    Ok(())
 }
 
 /// Writes the new AppImage over the file this one was started from, which
@@ -611,29 +466,17 @@ fn replace_appimage(package: &Path) -> Result<Installed, String> {
 }
 
 /// Starts the build now in place a moment from now, so the caller can quit
-/// first. Nothing on Windows, where the installer offers to start the app
-/// itself.
+/// first.
 pub fn relaunch() -> Result<(), String> {
-    if cfg!(target_os = "macos") {
-        let bundle = own_bundle().ok_or_else(|| "not running from an app bundle".to_owned())?;
-        detach(
-            Command::new("sh")
-                .args(["-c", "sleep 1; open -n \"$0\""])
-                .arg(bundle),
-        )
-    } else if cfg!(target_os = "linux") {
-        let target = std::env::var_os("APPIMAGE")
-            .map(PathBuf::from)
-            .or_else(|| std::env::current_exe().ok())
-            .ok_or_else(|| "could not tell what to start".to_owned())?;
-        detach(
-            Command::new("sh")
-                .args(["-c", "sleep 1; exec \"$0\""])
-                .arg(target),
-        )
-    } else {
-        Ok(())
-    }
+    let target = std::env::var_os("APPIMAGE")
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_exe().ok())
+        .ok_or_else(|| "could not tell what to start".to_owned())?;
+    detach(
+        Command::new("sh")
+            .args(["-c", "sleep 1; exec \"$0\""])
+            .arg(target),
+    )
 }
 
 /// Runs a command to its end and reads its failure off standard error.
@@ -761,31 +604,25 @@ mod tests {
     const MANIFEST: &str = r#"{
         "schema": 2, "version": "0.2.6", "tag": "v0.2.6",
         "binaries": {
-            "macos": {"arm64": {"dmg": {"file": "Concat-0.2.6-macos-arm64.dmg", "url": "https://example.test/arm64.dmg", "bytes": 59456586, "sha256": "26cc"}}},
             "linux": {"x86_64": {"appimage": {"file": "Concat-0.2.6-linux-x86_64.AppImage", "url": "https://example.test/x.AppImage", "bytes": 1, "sha256": "5c75"},
-                                 "deb": {"file": "../evil.deb", "url": "https://example.test/evil", "bytes": 1, "sha256": "00"}}},
-            "windows": {"aarch64": {"setup": {"file": "Concat-0.2.6-windows-aarch64-setup.exe", "url": "https://example.test/setup.exe", "sha256": "7042"}}}
+                                 "deb": {"file": "../evil.deb", "url": "https://example.test/evil", "bytes": 1, "sha256": "00"}},
+                      "aarch64": {"appimage": {"file": "Concat-0.2.6-linux-aarch64.AppImage", "url": "https://example.test/a.AppImage", "sha256": "7042"}}}
         }
     }"#;
 
     #[test]
     fn the_package_is_found_by_platform_architecture_and_kind() {
-        let mac =
-            package_from_manifest(MANIFEST, "macos", "aarch64", PackageKind::Dmg).expect("a Mac's");
-        assert_eq!(mac.file, "Concat-0.2.6-macos-arm64.dmg");
-        assert_eq!(mac.bytes, 59456586);
-        assert_eq!(mac.sha256, "26cc");
         let appimage = package_from_manifest(MANIFEST, "linux", "x86_64", PackageKind::AppImage)
             .expect("an AppImage");
         assert_eq!(appimage.url, "https://example.test/x.AppImage");
         // A size the manifest leaves out is zero, not a refusal.
-        let setup = package_from_manifest(MANIFEST, "windows", "aarch64", PackageKind::Setup)
-            .expect("an installer");
-        assert_eq!(setup.bytes, 0);
-        let missing = package_from_manifest(MANIFEST, "windows", "x86_64", PackageKind::Setup)
-            .expect_err("no x86_64 Windows build in this manifest");
+        let arm = package_from_manifest(MANIFEST, "linux", "aarch64", PackageKind::AppImage)
+            .expect("an arm build");
+        assert_eq!(arm.bytes, 0);
+        let missing = package_from_manifest(MANIFEST, "linux", "riscv64", PackageKind::AppImage)
+            .expect_err("no riscv64 build in this manifest");
         assert!(
-            missing.contains("no setup package for windows x86_64"),
+            missing.contains("no appimage package for linux riscv64"),
             "{missing}"
         );
         // A file name with a folder in it is not a file name.
@@ -795,11 +632,9 @@ mod tests {
     }
 
     #[test]
-    fn the_manifest_names_a_mac_arm64_and_everything_else_aarch64() {
-        assert_eq!(manifest_arch("macos", "aarch64"), "arm64");
-        assert_eq!(manifest_arch("macos", "x86_64"), "x86_64");
+    fn the_manifest_names_the_architecture_as_it_is() {
         assert_eq!(manifest_arch("linux", "aarch64"), "aarch64");
-        assert_eq!(manifest_arch("windows", "aarch64"), "aarch64");
+        assert_eq!(manifest_arch("linux", "x86_64"), "x86_64");
     }
 
     #[test]
@@ -829,18 +664,7 @@ mod tests {
             linux_kind(false, false, false, false, false),
             Err(Fixed::NotFromPackage)
         );
-        // The setup's uninstaller wins even under Program Files,
-        // where an administrator's run of the setup also puts it; the .msi
-        // is the Program Files install without one; the portable zip is
-        // neither.
-        assert_eq!(windows_kind(true, false), Ok(PackageKind::Setup));
-        assert_eq!(windows_kind(true, true), Ok(PackageKind::Setup));
-        assert_eq!(windows_kind(false, true), Ok(PackageKind::Msi));
-        assert_eq!(windows_kind(false, false), Err(Fixed::NotFromPackage));
         for kind in [
-            PackageKind::Dmg,
-            PackageKind::Setup,
-            PackageKind::Msi,
             PackageKind::AppImage,
             PackageKind::Deb,
             PackageKind::Rpm,

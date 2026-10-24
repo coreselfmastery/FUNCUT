@@ -97,7 +97,6 @@ impl Socket for TcpStream {
     }
 }
 
-#[cfg(unix)]
 impl Socket for std::os::unix::net::UnixStream {
     fn duplicate(&self) -> std::io::Result<Self> {
         self.try_clone()
@@ -190,7 +189,6 @@ pub(crate) fn serve_tcp(listener: TcpListener, door: Door) -> std::io::Result<Jo
 }
 
 /// Accepts JSON-RPC connections on a Unix socket until `stop` is set.
-#[cfg(unix)]
 pub(crate) fn serve_unix(
     listener: std::os::unix::net::UnixListener,
     door: Door,
@@ -720,8 +718,8 @@ mod tests {
     #[test]
     fn two_callers_share_one_api() {
         let (server, scratch) = server(None);
-        // Built as JSON rather than pasted into it: a Windows path's
-        // backslashes are escapes in a JSON string.
+        // Built as JSON rather than pasted into it, so no path can be
+        // misread as JSON escapes.
         let location = scratch.path().to_string_lossy().into_owned();
         let shared = scratch.path().join("Shared").to_string_lossy().into_owned();
         let mut first = Client::connect(&server);

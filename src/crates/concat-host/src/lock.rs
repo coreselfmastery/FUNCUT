@@ -170,7 +170,6 @@ impl Drop for ProjectLock {
 }
 
 /// Locks `file` without waiting: exclusively, or shared with other readers.
-#[cfg(not(windows))]
 fn try_lock(file: &File, exclusive: bool) -> Result<(), TryLockError> {
     if exclusive {
         file.try_lock()
@@ -179,57 +178,8 @@ fn try_lock(file: &File, exclusive: bool) -> Result<(), TryLockError> {
     }
 }
 
-#[cfg(not(windows))]
 fn unlock(file: &File) {
     let _ = file.unlock();
-}
-
-/// The byte a Windows lock covers: past anything the file will ever hold,
-/// so the words before it stay readable.
-#[cfg(windows)]
-const LOCKED_BYTE: u32 = u32::MAX;
-
-/// Locks `file` without waiting: exclusively, or shared with other readers.
-#[cfg(windows)]
-fn try_lock(file: &File, exclusive: bool) -> Result<(), TryLockError> {
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::Foundation::{ERROR_IO_PENDING, ERROR_LOCK_VIOLATION};
-    use windows_sys::Win32::Storage::FileSystem::{
-        LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY, LockFileEx,
-    };
-    let mut flags = LOCKFILE_FAIL_IMMEDIATELY;
-    if exclusive {
-        flags |= LOCKFILE_EXCLUSIVE_LOCK;
-    }
-    // SAFETY: the handle is `file`'s and open for as long as the call; the
-    // OVERLAPPED is zeroed apart from the offset, as LockFileEx wants.
-    let locked = unsafe {
-        let mut at: windows_sys::Win32::System::IO::OVERLAPPED = std::mem::zeroed();
-        at.Anonymous.Anonymous.Offset = LOCKED_BYTE;
-        LockFileEx(file.as_raw_handle(), flags, 0, 1, 0, &mut at)
-    };
-    if locked != 0 {
-        return Ok(());
-    }
-    let error = std::io::Error::last_os_error();
-    match error.raw_os_error() {
-        Some(code) if code == ERROR_LOCK_VIOLATION as i32 || code == ERROR_IO_PENDING as i32 => {
-            Err(TryLockError::WouldBlock)
-        }
-        _ => Err(TryLockError::Error(error)),
-    }
-}
-
-#[cfg(windows)]
-fn unlock(file: &File) {
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::Storage::FileSystem::UnlockFileEx;
-    // SAFETY: as for the lock.
-    unsafe {
-        let mut at: windows_sys::Win32::System::IO::OVERLAPPED = std::mem::zeroed();
-        at.Anonymous.Anonymous.Offset = LOCKED_BYTE;
-        UnlockFileEx(file.as_raw_handle(), 0, 1, 0, &mut at);
-    }
 }
 
 /// The owner a lock file names.
@@ -245,21 +195,12 @@ fn owner_in(file: &mut File) -> Owner {
 }
 
 /// Whether `path` is still the file `file` has open.
-#[cfg(unix)]
 fn same_file(file: &File, path: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
     match (file.metadata(), std::fs::metadata(path)) {
         (Ok(held), Ok(named)) => held.dev() == named.dev() && held.ino() == named.ino(),
         _ => false,
     }
-}
-
-/// Whether `path` is still the file `file` has open. On Windows a file
-/// another process is removing cannot be opened at all until it is gone,
-/// so a file that opened and locked is the one at the path.
-#[cfg(not(unix))]
-fn same_file(_file: &File, path: &Path) -> bool {
-    path.exists()
 }
 
 #[cfg(test)]

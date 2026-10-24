@@ -45,35 +45,18 @@ impl Gpu {
     pub fn acquire() -> Option<Gpu> {
         // Only the backend Slint's Skia renderer can share a device on:
         // Skia is built against the platform's own API, so a device on any
-        // other backend is refused at selection time. PRIMARY let wgpu pick
-        // Vulkan on Windows machines that offer it, and the window then
-        // failed to open with "Unsupported WGPU backend for use with Skia".
-        let backends = if cfg!(target_vendor = "apple") {
-            wgpu::Backends::METAL
-        } else if cfg!(windows) {
-            wgpu::Backends::DX12
-        } else {
-            wgpu::Backends::VULKAN
-        };
-        let mut descriptor = wgpu::InstanceDescriptor {
+        // other backend is refused at selection time.
+        let backends = wgpu::Backends::VULKAN;
+        let descriptor = wgpu::InstanceDescriptor {
             backends,
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         };
-        // FXC, never wgpu's default `Auto`: Concat ships no dxcompiler.dll,
-        // so `Auto` loads whichever one Windows finds on PATH - Obsidian's or
-        // another Electron app's - and a build that does not match wgpu, or
-        // needs instructions the CPU lacks, kills the process at the first
-        // shader (0xc000001d). FXC is in System32 and is what every machine
-        // without a stray DXC already compiles with (#418). WGPU_DX12_COMPILER
-        // still picks another, for trying DXC on a real GPU (#297).
-        descriptor.backend_options.dx12.shader_compiler =
-            wgpu::Dx12Compiler::from_env().unwrap_or(wgpu::Dx12Compiler::Fxc);
         let instance = wgpu::Instance::new(descriptor);
-        // CONCAT_GPU=software opens the software rasteriser - WARP on
-        // Windows, lavapipe on Linux - in place of the GPU: the way round a
-        // driver that draws the whole window as coloured dots (#389, #242),
+        // CONCAT_GPU=software opens the software rasteriser (lavapipe) in
+        // place of the GPU: the way round a driver that draws the whole
+        // window as coloured dots (#389, #242),
         // and the way to tell that it is the driver. The window works on
-        // WARP; see `is_software`.
+        // it; see `is_software`.
         let software = std::env::var("CONCAT_GPU")
             .is_ok_and(|value| value.trim().eq_ignore_ascii_case("software"));
         if software {
@@ -86,10 +69,9 @@ impl Gpu {
         }))
         .ok()?;
         // This is not always a GPU. wgpu ranks a CPU adapter last but never
-        // leaves it out, so on a machine whose hardware it will not drive -
-        // its D3D12 backend wants resource binding tier 2, which Intel's
-        // Broadwell-era chips do not have - the adapter that comes back is
-        // WARP, Windows' software rasteriser. The window still opens on it;
+        // leaves it out, so on a machine whose hardware it will not drive
+        // the adapter that comes back is lavapipe, the software rasteriser.
+        // The window still opens on it;
         // see `is_software` and platform.rs for what that changes.
         // https://github.com/jub0t/Concat/issues/135
         let info = adapter.get_info();
@@ -141,8 +123,8 @@ impl Gpu {
         })
     }
 
-    /// Whether the adapter is a software rasteriser - WARP on Windows,
-    /// llvmpipe on Linux - rather than a GPU. Everything still draws, only
+    /// Whether the adapter is a software rasteriser - llvmpipe - rather
+    /// than a GPU. Everything still draws, only
     /// slower, and the sysinfo sheet says so.
     pub fn is_software(&self) -> bool {
         self.adapter.get_info().device_type == wgpu::DeviceType::Cpu
@@ -161,7 +143,7 @@ impl Gpu {
 
 /// The adapter's driver as the log names it: the driver and its version
 /// where the API reports them, and "driver unknown" where it does not -
-/// Direct3D 12 reports neither, and an empty "driver )" read as a fault.
+/// an empty "driver )" read as a fault.
 /// https://github.com/jub0t/Concat/issues/223
 pub fn driver_of(info: &wgpu::AdapterInfo) -> String {
     let named = [info.driver.trim(), info.driver_info.trim()]

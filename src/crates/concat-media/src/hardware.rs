@@ -93,15 +93,7 @@ impl HwDevice {
     /// The device this binary's platform has, or `None` where there is no
     /// device worth choosing unasked: Linux, whose VAAPI is opt-in only.
     pub fn platform_default() -> Option<Self> {
-        if cfg!(any(target_os = "macos", target_os = "ios")) {
-            Some(HwDevice::VideoToolbox)
-        } else if cfg!(target_os = "windows") {
-            Some(HwDevice::D3d11va)
-        } else if cfg!(target_os = "android") {
-            Some(HwDevice::MediaCodec)
-        } else {
-            None
-        }
+        None
     }
 
     /// What the device is called on a label.
@@ -828,11 +820,8 @@ mod tests {
     }
 
     #[test]
-    fn the_platform_default_is_never_vaapi() {
-        assert_ne!(HwDevice::platform_default(), Some(HwDevice::Vaapi));
-        if cfg!(target_os = "macos") {
-            assert_eq!(HwDevice::platform_default(), Some(HwDevice::VideoToolbox));
-        }
+    fn there_is_no_platform_default() {
+        assert_eq!(HwDevice::platform_default(), None);
     }
 
     #[test]
@@ -868,17 +857,5 @@ mod tests {
             assert!(device(absent).is_none());
             assert!(device(absent).is_none());
         }
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn videotoolbox_decodes_h264_and_not_jpeg() {
-        assert!(HwDevice::VideoToolbox.linked());
-        let device = device(HwDevice::VideoToolbox).expect("a Mac has VideoToolbox");
-        assert_eq!(device.kind(), HwDevice::VideoToolbox);
-        let h264 = decoder::find(ffmpeg::codec::Id::H264).expect("an H.264 decoder");
-        assert_eq!(device.pixel_format(&h264), Some(Pixel::VIDEOTOOLBOX));
-        let jpeg = decoder::find(ffmpeg::codec::Id::MJPEG).expect("a JPEG decoder");
-        assert_eq!(device.pixel_format(&jpeg), None);
     }
 }

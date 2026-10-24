@@ -267,7 +267,7 @@ pub fn resolve(prefs: &Preferences, chord: &str) -> Option<&'static str> {
             _ => {}
         }
     }
-    if !cfg!(target_os = "macos") && chord == "ctrl+y" && !prefs.keybinds.contains_key("redo") {
+    if chord == "ctrl+y" && !prefs.keybinds.contains_key("redo") {
         return Some("redo");
     }
     None
@@ -640,14 +640,7 @@ mod tests {
     #[test]
     fn ctrl_y_redoes_where_the_platform_redoes_that_way() {
         let found = resolve(&Preferences::default(), "ctrl+y");
-        assert_eq!(
-            found,
-            if cfg!(target_os = "macos") {
-                None
-            } else {
-                Some("redo")
-            }
-        );
+        assert_eq!(found, Some("redo"));
         // The alias is the default's: rebind redo and it goes with it.
         let mut prefs = Preferences::default();
         prefs.keybinds.insert("redo".into(), "ctrl+r".into());

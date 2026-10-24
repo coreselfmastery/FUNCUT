@@ -44,7 +44,7 @@
 
 ## Acerca de
 
-Concat es un editor de vídeo gratuito y de código abierto, una alternativa a CapCut para macOS, Windows, Linux y Android. Cubre aquello para lo que la gente realmente abre CapCut: subtítulos automáticos, texto a voz, eliminación de fondo, animación por fotogramas clave, efectos y títulos, corte multipista, exportación 4K. Sin trampas: sin marca de agua, sin cuenta, sin suscripción, sin subir nada.
+Concat es un editor de vídeo gratuito y de código abierto, una alternativa a CapCut para Linux. Cubre aquello para lo que la gente realmente abre CapCut: subtítulos automáticos, texto a voz, eliminación de fondo, animación por fotogramas clave, efectos y títulos, corte multipista, exportación 4K. Sin trampas: sin marca de agua, sin cuenta, sin suscripción, sin subir nada.
 
 Todo corre en local sobre un motor nativo en Rust con un compositor por GPU. Instálalo, suelta el material, corta. Los modelos de IA para subtítulos, voces y recorte se descargan una vez desde Ajustes y después funcionan sin conexión. Tu material nunca sale de tu disco.
 
@@ -68,7 +68,7 @@ Todo corre en local sobre un motor nativo en Rust con un compositor por GPU. Ins
 - 📤 **Exportación.** H.264, HEVC, AV1. Hasta 4K 60, color de 10 bits.
 - 🦀 **Motor nativo en Rust.** Compositor por GPU, proxies, decodificación por hardware. El 4K se desplaza con fluidez.
 - 🤖 **Programable.** Una API JSON-RPC con la que los scripts y los agentes de IA pueden cortar vídeo. Compilando desde el código fuente se añaden gRPC y una herramienta de línea de comandos.
-- 🖥️ **macOS, Windows, Linux, Android.** 26 idiomas. La misma app, los mismos archivos de proyecto.
+- 🖥️ **Linux.** 26 idiomas. La misma app, los mismos archivos de proyecto.
 
 ## Descarga
 
@@ -81,11 +81,7 @@ Concat está en **beta**: funciona, y aún tiene aristas. [Cuéntalo](https://gi
 
 **Plataformas**
 
-- ✅ **Windows** · x86_64 (las compilaciones para ARM están en pausa, ver [#326](https://github.com/jub0t/Concat/issues/326)). Un instalador y un `.msi`. Si SmartScreen detiene una compilación sin firmar: **Más información** › **Ejecutar de todas formas**
-- ✅ **macOS** · Intel y Apple Silicon. Si macOS se niega a abrir una compilación sin firmar: `xattr -dr com.apple.quarantine /Applications/Concat.app`
 - ✅ **Linux** · x86_64 y ARM. `.deb`, `.rpm`, `.AppImage` y un paquete para Arch. También un Flatpak en **[Flatpark](https://flatpark.org/apps/app.concat.editor/)**, un remoto Flatpak comunitario que envuelve el `.deb` x86_64 de cada versión y se actualiza con ella
-- ✅ **Android** · teléfonos y tabletas
-- ✅ **iOS / iPadOS** · iPhone y iPad, por sideload
 
 ✅ Compatible · 🚧 En desarrollo · 🧪 Por probar
 

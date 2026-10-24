@@ -9,8 +9,7 @@
 //! to it; nothing here decides what an edit means.
 //!
 //! A library so that every entry point is a few lines: `main.rs` on the
-//! desktop and on iOS, and the `concat-android` activity on Android. Each
-//! one calls [`run`].
+//! desktop. It calls [`run`].
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -40,25 +39,10 @@ mod gpu;
 mod grading;
 mod host;
 mod i18n;
-/// The iPhone's pickers and its way to Photos; see the module.
-#[cfg(target_os = "ios")]
-mod ios;
 mod keymap;
 mod meters;
-mod platform;
-/// What a phone's own crate installs before the window runs: the way to
-/// the system's file picker, and where a finished export is put so the
-/// phone shows it. See `platform::pick_files_async` and
-/// `platform::publish_export`.
-#[cfg(any(target_os = "android", target_os = "ios"))]
-pub use platform::{
-    ExportPublisher, FilePicker, PickKinds, install_export_publisher, install_file_picker,
-};
-#[cfg(target_os = "android")]
-pub use platform::{LinkOpener, install_link_opener};
-#[cfg(any(target_os = "android", target_os = "ios"))]
-pub use platform::{MicrophoneAccess, install_microphone_access};
 mod panes;
+mod platform;
 mod prefs;
 mod presets;
 mod source;
@@ -66,30 +50,7 @@ mod speed_ramp;
 mod studio;
 mod sysinfo;
 /// Native Wayland file drops, which winit does not report; see the module.
-#[cfg(target_os = "linux")]
 mod wayland_drop;
-/// Elsewhere the listener is a name that starts nothing, so platform.rs
-/// reads the same on every desktop.
-#[cfg(not(any(target_os = "linux", target_os = "android")))]
-mod wayland_drop {
-    /// Nothing to listen to: no desktop but Linux draws through Wayland.
-    pub struct Listener;
-
-    impl Listener {
-        /// Never starts; see the Linux module for what it would do.
-        ///
-        /// # Safety
-        ///
-        /// Nothing is dereferenced; the contract is the Linux module's.
-        pub unsafe fn start(
-            _display: std::ptr::NonNull<std::ffi::c_void>,
-            _surface: std::ptr::NonNull<std::ffi::c_void>,
-            _sink: impl Fn(Vec<std::path::PathBuf>) + Send + 'static,
-        ) -> Option<Listener> {
-            None
-        }
-    }
-}
 
 use dock::{Dock, SEAT_MIN_GRAB, SEAT_MIN_H, SEAT_MIN_W};
 use host::{Host, Shell};
@@ -197,12 +158,6 @@ pub(crate) fn close_window(
 
 /// [`run_with_project`], or [`smoke`] when `smoke` is set.
 fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::PlatformError> {
-    // What Import and a finished export reach on an iPhone. Android's own
-    // crate installs its; iOS runs this crate's binary, so it is here.
-    // https://github.com/jub0t/Concat/issues/332
-    #[cfg(target_os = "ios")]
-    ios::install();
-
     // The interface scale: a percent of the display's own, applied once
     // the window is up and kept through moves between monitors; see
     // `platform::apply_ui_scale`. https://github.com/jub0t/Concat/issues/320
@@ -304,7 +259,6 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     // The base fonts, so the preset cards can be drawn in them.
     fonts::register();
     let app = App::new()?;
-    app.set_macos(platform::MACOS);
     // A phone wears the phone shell - see ui/phone/ - and its lanes keep
     // the playhead at their middle; the strip and the dock are the desk's.
     let phone = platform::phone();
@@ -312,7 +266,7 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     // The launch screen's version line, and whether its drop zone is
     // offered: a drag in from the system is a desk's (see platform.rs).
     app.set_app_version(env!("CARGO_PKG_VERSION").into());
-    app.set_can_drop(cfg!(not(any(target_os = "android", target_os = "ios"))));
+    app.set_can_drop(true);
 
     // The user's own packages - imported looks, and any effect folder they
     // or the community wrote - sit beside the built-ins from the first
@@ -650,7 +604,7 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
             }
         }
     });
-    app.set_own_window_buttons(platform::OWN_WINDOW_BUTTONS);
+    app.set_own_window_buttons(true);
 
     // Mutate, then republish. Every handler is one of these three: the whole
     // window, the lanes alone (for the handlers a pointer drives directly,
@@ -2528,16 +2482,11 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     // loop's end takes below, for the same reason - the engine's threads
     // are not waited on.
     if smoke {
-        // whisper's CPU kernels, which the x86_64 Windows and Linux bundles
+        // whisper's CPU kernels, which the x86_64 Linux bundles
         // carry as modules beside the program, one per CPU generation, for
         // ggml to choose from (#388). A bundle without them starts and
         // fails at its first transcription, so the smoke run loads them.
-        // Not elsewhere: there they are linked in, and asking ggml for its
-        // devices would only bring Metal up on a Mac runner for nothing.
-        #[cfg(all(
-            target_arch = "x86_64",
-            any(target_os = "windows", target_os = "linux")
-        ))]
+        #[cfg(target_arch = "x86_64")]
         match concat_speech::transcribe::cpu_backend() {
             Ok(cpu) => log::info!("smoke: whisper runs on {cpu}"),
             Err(error) => {
@@ -2594,20 +2543,6 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         std::mem::forget(startup_mark);
         leave(1);
     }
-    // Android ends the loop when it destroys the activity - Back on the
-    // launch screen, or the system taking it back - with no close request
-    // first, and the process then left without a save: the edits since the
-    // last autosave were lost and the project's lock was left behind. A
-    // desktop's every way out closes the project before the loop ends.
-    #[cfg(target_os = "android")]
-    Shell::with(|shell, _| {
-        let mut studio = shell.studio.borrow_mut();
-        if studio.session.is_some()
-            && let Err(error) = studio.close_project()
-        {
-            log::warn!("close: the activity ended and the project could not be saved: {error}");
-        }
-    });
     stop_exports();
     drop(startup_mark);
     leave(0);
@@ -2768,7 +2703,7 @@ pub fn draw_in_software() {
 /// still running - the GPU's, the engine's, the audio output's - not
 /// waited on.
 ///
-/// On Linux it is `_exit`, not `exit`: `exit` runs the C libraries' exit
+/// It is `_exit`, not `exit`: `exit` runs the C libraries' exit
 /// handlers under those threads, and they are not written for it - most
 /// likely Mesa's llvmpipe, tearing its LLVM down while its rasteriser
 /// threads are still drawing. On an arm64 machine with no GPU,
@@ -2779,17 +2714,12 @@ pub fn draw_in_software() {
 /// writes are written before the window closes.
 fn leave(code: i32) -> ! {
     log::logger().flush();
-    #[cfg(target_os = "linux")]
-    {
-        use std::io::Write;
-        let _ = std::io::stdout().flush();
-        let _ = std::io::stderr().flush();
-        // SAFETY: `_exit` ends the process there and then; nothing of
-        // this one's is touched after it.
-        unsafe { libc::_exit(code) }
-    }
-    #[cfg(not(target_os = "linux"))]
-    std::process::exit(code);
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    // SAFETY: `_exit` ends the process there and then; nothing of
+    // this one's is touched after it.
+    unsafe { libc::_exit(code) }
 }
 
 #[cfg(test)]

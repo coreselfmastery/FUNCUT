@@ -86,8 +86,7 @@ Until `audio/manifest.json` exists (the request answers 404), the shelf says
 | `author` | no | Who made it, when known. CC0 owes no attribution, but it is kind to keep. |
 | `sha256` | yes | The SHA-256 of the file's bytes, lowercase hex, 64 characters. An entry without a valid digest is left off the shelf, and a download that doesn't match it is deleted. |
 
-Compute a digest with `shasum -a 256 <file>` (macOS/Linux) or
-`Get-FileHash -Algorithm SHA256 <file>` (Windows; lowercase the result).
+Compute a digest with `sha256sum <file>`.
 
 ## Rules for the selection
 

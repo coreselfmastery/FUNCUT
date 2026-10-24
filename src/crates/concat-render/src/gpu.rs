@@ -831,13 +831,7 @@ impl WgpuCompositor {
         let software_only = software_only
             || std::env::var("CONCAT_GPU")
                 .is_ok_and(|value| value.trim().eq_ignore_ascii_case("software"));
-        let own = if cfg!(target_vendor = "apple") {
-            wgpu::Backends::METAL
-        } else if cfg!(windows) {
-            wgpu::Backends::DX12
-        } else {
-            wgpu::Backends::VULKAN
-        };
+        let own = wgpu::Backends::VULKAN;
         [own, wgpu::Backends::all()]
             .into_iter()
             .find_map(|backends| Self::on_backends(backends, software_only))

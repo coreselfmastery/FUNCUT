@@ -84,56 +84,21 @@ impl VideoCodec {
     /// The FFmpeg encoders that make this codec, best first; an export
     /// takes the first that is linked and opens.
     ///
-    /// A phone has its platform's hardware and nothing else: its FFmpeg is
-    /// built LGPL with MediaCodec or VideoToolbox and none of the GPL
-    /// encoders (scripts/ffmpeg-mobile.sh), and its cores are no match for
-    /// its chip anyway.
-    ///
-    /// On a desktop the software encoders lead, and the machine's own
+    /// The software encoders lead, and the machine's own
     /// comes after them for an FFmpeg built without them. With `hardware`,
-    /// the GPU's leads for HEVC and AV1: VideoToolbox on macOS, and on
-    /// Windows and Linux NVIDIA's NVENC, Intel's Quick Sync and AMD's AMF,
-    /// in that order - many times faster than x265 and, at these rates, as
-    /// good to look at. Whichever of those the machine has no chip for
-    /// does not open, and the export takes the next. H.264 stays with x264
+    /// the GPU's leads for HEVC and AV1: NVIDIA's NVENC, Intel's Quick
+    /// Sync and AMD's AMF, in that order - many times faster than x265
+    /// and, at these rates, as good to look at. Whichever of those the
+    /// machine has no chip for does not open, and the export takes the
+    /// next. H.264 stays with x264
     /// wherever it is linked: the hardware H.264 encoders spend noticeably
     /// more bits for the same picture, and H.264 is the choice made for
-    /// compatibility, not speed. Media Foundation, Windows' own, is last:
-    /// it runs on whatever the machine has, and says little about how.
+    /// compatibility, not speed.
     pub fn encoders(self, hardware: bool) -> &'static [&'static str] {
-        let macos = cfg!(target_os = "macos");
-        let windows = cfg!(target_os = "windows");
-        if cfg!(target_os = "android") {
-            return match self {
-                VideoCodec::H264 => &["h264_mediacodec"],
-                VideoCodec::Hevc => &["hevc_mediacodec"],
-                VideoCodec::Av1 => &["av1_mediacodec"],
-            };
-        }
-        if cfg!(target_os = "ios") {
-            return match self {
-                VideoCodec::H264 => &["h264_videotoolbox"],
-                VideoCodec::Hevc => &["hevc_videotoolbox"],
-                VideoCodec::Av1 => &[],
-            };
-        }
         match self {
-            VideoCodec::H264 if macos => &["libx264", "h264_videotoolbox"],
-            VideoCodec::H264 if windows => {
-                &["libx264", "h264_nvenc", "h264_qsv", "h264_amf", "h264_mf"]
-            }
             VideoCodec::H264 => &["libx264", "h264_nvenc", "h264_qsv", "h264_amf"],
-            VideoCodec::Hevc if hardware && macos => &["hevc_videotoolbox", "libx265"],
-            VideoCodec::Hevc if macos => &["libx265", "hevc_videotoolbox"],
-            VideoCodec::Hevc if hardware && windows => {
-                &["hevc_nvenc", "hevc_qsv", "hevc_amf", "libx265", "hevc_mf"]
-            }
-            VideoCodec::Hevc if windows => {
-                &["libx265", "hevc_nvenc", "hevc_qsv", "hevc_amf", "hevc_mf"]
-            }
             VideoCodec::Hevc if hardware => &["hevc_nvenc", "hevc_qsv", "hevc_amf", "libx265"],
             VideoCodec::Hevc => &["libx265", "hevc_nvenc", "hevc_qsv", "hevc_amf"],
-            VideoCodec::Av1 if macos => &["libsvtav1", "libaom-av1"],
             VideoCodec::Av1 if hardware => {
                 &["av1_nvenc", "av1_qsv", "av1_amf", "libsvtav1", "libaom-av1"]
             }
@@ -160,8 +125,7 @@ impl VideoCodec {
 
     /// Whether an export in it would open here: an encoder for it is
     /// linked and, where that is the platform's hardware, the chip takes
-    /// it. Linked is not enough on a phone: its FFmpeg carries MediaCodec's
-    /// encoder for every codec, and few phones have an AV1 one.
+    /// it.
     ///
     /// The export sheet asks this on its first publish, before the window
     /// shows, so it opens as little as it can: a linked software encoder
@@ -328,25 +292,12 @@ fn svt_preset(preset: &str) -> u8 {
         .map_or(6, |index| SVT[index])
 }
 
-/// VideoToolbox's quality, 1 to 100 with 100 the best, for an x264 CRF:
-/// 16 lands at 65 and 26 at 43, which is where the files come out about
-/// the size x264 makes them.
-fn videotoolbox_quality(crf: u8) -> u8 {
-    (100.0 - f32::from(crf) * 2.2).round().clamp(1.0, 100.0) as u8
-}
-
 /// Which kind of encoder an FFmpeg encoder is: what it takes its pictures
 /// in, and what it is steered by.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Family {
     /// x264, x265, SVT-AV1, libaom: planar 4:2:0, steered by a CRF.
     Software,
-    /// Apple's: semi-planar 4:2:0, steered by a quality.
-    VideoToolbox,
-    /// Android's: semi-planar 4:2:0 at eight bits, steered by a bitrate.
-    MediaCodec,
-    /// Windows': semi-planar 4:2:0 at eight bits, steered by a bitrate.
-    MediaFoundation,
     /// NVIDIA's NVENC: semi-planar 4:2:0, steered by a constant quality.
     Nvenc,
     /// Intel's Quick Sync: semi-planar 4:2:0, steered by a quality (ICQ).
@@ -357,13 +308,7 @@ enum Family {
 
 impl Family {
     fn of(encoder_name: &str) -> Self {
-        if encoder_name.ends_with("_videotoolbox") {
-            Family::VideoToolbox
-        } else if encoder_name.ends_with("_mediacodec") {
-            Family::MediaCodec
-        } else if encoder_name.ends_with("_mf") {
-            Family::MediaFoundation
-        } else if encoder_name.ends_with("_nvenc") {
+        if encoder_name.ends_with("_nvenc") {
             Family::Nvenc
         } else if encoder_name.ends_with("_qsv") {
             Family::Qsv
@@ -375,8 +320,7 @@ impl Family {
     }
 
     /// The pixel format the family's encoders take. Semi-planar for the
-    /// hardware, which is the layout every one of them reads - MediaCodec
-    /// also names planar, and a good share of phones refuse it.
+    /// hardware, which is the layout every one of them reads.
     fn pixel_format(self, ten_bit: bool) -> Pixel {
         match (self, ten_bit) {
             (Family::Software, false) => Pixel::YUV420P,
@@ -384,12 +328,6 @@ impl Family {
             (_, false) => Pixel::NV12,
             (_, true) => Pixel::P010LE,
         }
-    }
-
-    /// Whether the family's encoders are told a bitrate rather than a
-    /// quality, in VBR as in CBR.
-    fn steered_by_bitrate(self) -> bool {
-        matches!(self, Family::MediaCodec | Family::MediaFoundation)
     }
 
     /// Whether this is the platform's hardware rather than the CPU.
@@ -404,23 +342,20 @@ impl Family {
     /// Linux laptops with two GPUs (#309) - and no in-process probe can
     /// catch that, so these are opened only by an export that has reached
     /// them in its list, never to answer a question about the machine.
-    /// VideoToolbox, MediaCodec and Media Foundation are the operating
-    /// system's own and answer with an error.
     fn vendor_driver(self) -> bool {
         matches!(self, Family::Nvenc | Family::Qsv | Family::Amf)
     }
 }
 
 /// Whether the environment leaves `encoder_name` on, given `var` to read
-/// it. `CONCAT_HARDWARE_ENCODE=0` switches every hardware encoder off on a
-/// desktop, for a machine whose driver crashes when one is opened; a
-/// phone has nothing else, so it is not switched off there. NVENC is also
+/// it. `CONCAT_HARDWARE_ENCODE=0` switches every hardware encoder off,
+/// for a machine whose driver crashes when one is opened. NVENC is also
 /// off when `CUDA_VISIBLE_DEVICES` hides every CUDA device - set but
 /// empty, or leading with `-1` - since it then cannot open, and on the
 /// laptops where libcuda crashes that is the usual way to say so.
 fn switched_on(encoder_name: &str, var: impl Fn(&str) -> Option<std::ffi::OsString>) -> bool {
     let family = Family::of(encoder_name);
-    if !family.hardware() || cfg!(any(target_os = "android", target_os = "ios")) {
+    if !family.hardware() {
         return true;
     }
     if var("CONCAT_HARDWARE_ENCODE").is_some_and(|value| value.to_string_lossy().trim() == "0") {
@@ -512,7 +447,6 @@ fn opens(codec: VideoCodec, encoder_name: &'static str) -> bool {
         tags,
         None,
         true,
-        Attempt::AsAsked,
     );
     if let Err(error) = &result {
         log::info!("{encoder_name} does not open here: {error}");
@@ -554,25 +488,23 @@ fn opens_here(codec: VideoCodec, encoder_name: &'static str) -> bool {
     answer
 }
 
-/// Whether the encoder takes ten-bit pictures. FFmpeg's MediaCodec and
-/// Media Foundation encoders are fed eight bits only here; VideoToolbox
-/// and AMF make ten-bit HEVC but not ten-bit H.264, and NVENC and Quick
-/// Sync make ten-bit HEVC and AV1.
+/// Whether the encoder takes ten-bit pictures. AMF makes ten-bit HEVC
+/// but not ten-bit H.264, and NVENC and Quick Sync make ten-bit HEVC and
+/// AV1.
 fn takes_ten_bits(encoder_name: &str) -> bool {
     match Family::of(encoder_name) {
         Family::Software => true,
-        Family::VideoToolbox | Family::Amf => encoder_name.starts_with("hevc_"),
+        Family::Amf => encoder_name.starts_with("hevc_"),
         Family::Nvenc | Family::Qsv => {
             encoder_name.starts_with("hevc_") || encoder_name.starts_with("av1_")
         }
-        Family::MediaCodec | Family::MediaFoundation => false,
     }
 }
 
-/// The bitrate in kbps a CRF comes to, for an encoder that is steered by a
-/// bitrate alone: the export sheet's rule for its size estimate - 16 Mb/s
+/// The bitrate in kbps a CRF comes to: 16 Mb/s
 /// for H.264 at 1080p30 and CRF 16, halving about every five steps -
 /// scaled by the pixels, the rate and the codec's size factor.
+#[cfg(test)]
 fn implied_kbps(
     codec: VideoCodec,
     crf: u8,
@@ -593,51 +525,6 @@ fn implied_kbps(
 /// One encoder's context, set up and opened for the file: the frame's
 /// size, rate and tags, and the settings `encoder_name` is steered by.
 /// Returns the encoder and the pixel format it takes its pictures in.
-/// How an encoder is asked to open. A phone's chip turns away an export
-/// it cannot do with nothing past FFmpeg's "Generic error in an external
-/// library" (#491) - a bitrate past its ceiling, a rate it was not built
-/// for, colour keys an older component does not know - and a phone has no
-/// other encoder linked. So a MediaCodec encoder that will not open as
-/// asked is asked plainly, and then Android's own software encoder is
-/// asked by name: slow, but on every phone.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Attempt {
-    /// Everything the export asked for.
-    AsAsked,
-    /// The chip's own rate control, a bitrate it can hold, a declared rate
-    /// of 30 at most and no colour keys.
-    Plain,
-    /// One of Android's own components, by name, asked plainly.
-    Component(&'static str),
-}
-
-/// The ways to ask `encoder_name`, in order.
-fn attempts(encoder_name: &str) -> &'static [Attempt] {
-    use Attempt::*;
-    match encoder_name {
-        // c2.android.* since Android 10; OMX.google.* before it.
-        "h264_mediacodec" => &[
-            AsAsked,
-            Plain,
-            Component("c2.android.avc.encoder"),
-            Component("OMX.google.h264.encoder"),
-        ],
-        "hevc_mediacodec" => &[AsAsked, Plain, Component("c2.android.hevc.encoder")],
-        "av1_mediacodec" => &[AsAsked, Plain, Component("c2.android.av1.encoder")],
-        _ => &[AsAsked],
-    }
-}
-
-/// The most a plain ask puts on a phone's chip, in kb/s: room for a clean
-/// 1080p, and twice that above it.
-fn plain_kbps(width: u32, height: u32) -> u32 {
-    if u64::from(width) * u64::from(height) <= 1920 * 1088 {
-        16_000
-    } else {
-        32_000
-    }
-}
-
 fn open_video(
     encoder_name: &'static str,
     codec: ffmpeg::Codec,
@@ -652,11 +539,9 @@ fn open_video(
     ),
     hdr: Option<Signal>,
     global_header: bool,
-    attempt: Attempt,
 ) -> Result<(encoder::video::Encoder, Pixel)> {
     let pq = hdr == Some(Signal::Pq);
     let family = Family::of(encoder_name);
-    let plain = attempt != Attempt::AsAsked;
     let pixel_format = family.pixel_format(options.ten_bit);
     let cbr = options.rate_mode == RateMode::Cbr && options.bitrate_kbps > 0;
     let average = options.rate_mode == RateMode::Average && options.bitrate_kbps > 0;
@@ -669,34 +554,19 @@ fn open_video(
     video.set_format(pixel_format);
     video.set_time_base(rate.invert());
     let fps = f64::from(rate.numerator()) / f64::from(rate.denominator().max(1));
-    // Asked plainly, a chip is told 30 at most: the rate is what it sizes
-    // its work by and may refuse past, while the frames' times come from
-    // the time base and are untouched.
-    video.set_frame_rate(Some(if plain && fps > 30.5 {
-        ffmpeg::Rational::new(30, 1)
-    } else {
-        rate
-    }));
+    video.set_frame_rate(Some(rate));
     let (primaries, transfer, matrix) = tags;
-    // Asked plainly, no colour keys at all: an older codec2 component
-    // refuses some it does not know, and untagged 8-bit video is read as
-    // the limited-range Rec. 709 it is.
-    if !plain {
-        video.set_colorspace(matrix);
-        // The range the frames will be converted to below, so the tag is
-        // true; VideoToolbox reads it to pick its full- or video-range
-        // pixel format, the software encoders write it into the stream.
-        video.set_color_range(options.color_range.as_ffmpeg());
-    }
+    video.set_colorspace(matrix);
+    // The range the frames will be converted to below, so the tag is
+    // true; the software encoders write it into the stream.
+    video.set_color_range(options.color_range.as_ffmpeg());
     // SAFETY: `video` owns a live AVCodecContext; primaries and
     // transfer have no setter in the bindings, and all three are plain
     // fields the encoder reads at open.
     unsafe {
         let context = video.as_mut_ptr();
-        if !plain {
-            (*context).color_primaries = primaries.into();
-            (*context).color_trc = transfer.into();
-        }
+        (*context).color_primaries = primaries.into();
+        (*context).color_trc = transfer.into();
         if options.threads > 0 {
             (*context).thread_count = i32::from(options.threads);
         }
@@ -727,29 +597,9 @@ fn open_video(
         }
     }
 
-    // The encoders steered by a bitrate alone take one whatever the mode:
-    // the target in CBR, and in VBR the rate the CRF would come to.
-    // Asked plainly, no more than a phone's chip is sure to hold.
-    let ceiling = |kbps: u32| {
-        if plain {
-            kbps.min(plain_kbps(width, height))
-        } else {
-            kbps
-        }
-    };
-    if family.steered_by_bitrate() {
-        let kbps = if cbr || average {
-            options.bitrate_kbps
-        } else {
-            implied_kbps(options.codec, options.crf, width, height, rate)
-        };
-        video.set_bit_rate(ceiling(kbps) as usize * 1000);
-        // Two seconds between keyframes, where MediaCodec's own default
-        // is one per second rounded from a GOP of twelve frames.
-        video.set_gop((fps.round().max(1.0) * 2.0) as u32);
-    }
     // An average, on the context as well as in each encoder's own words:
     // the AV1 encoders read the target and the ceiling from there.
+    let ceiling = |kbps: u32| kbps;
     if average {
         let kbps = ceiling(options.bitrate_kbps);
         video.set_bit_rate(kbps as usize * 1000);
@@ -822,42 +672,6 @@ fn open_video(
         "libaom-av1" => ffmpeg::dict! {
             "crf" => &options.crf.saturating_add(8).min(63).to_string(),
             "cpu-used" => "6",
-        },
-        // VideoToolbox steers by the context's bitrate when it is given no
-        // quality.
-        "hevc_videotoolbox" | "h264_videotoolbox" if average => ffmpeg::dict! {
-            "profile" => match (encoder_name, options.ten_bit) {
-                ("h264_videotoolbox", _) => "high",
-                (_, true) => "main10",
-                (_, false) => "main",
-            },
-            "allow_sw" => "1",
-        },
-        "hevc_videotoolbox" | "h264_videotoolbox" => ffmpeg::dict! {
-            "q:v" => &videotoolbox_quality(options.crf).to_string(),
-            "profile" => match (encoder_name, options.ten_bit) {
-                ("h264_videotoolbox", _) => "high",
-                (_, true) => "main10",
-                (_, false) => "main",
-            },
-            // A machine without the hardware still gets a file.
-            "allow_sw" => "1",
-        },
-        // A phone's chip. The NDK's MediaCodec, not the Java one: no
-        // JavaVM is handed to FFmpeg, and the NDK needs none.
-        _ if family == Family::MediaCodec => match attempt {
-            Attempt::AsAsked => ffmpeg::dict! {
-                "bitrate_mode" => if cbr { "cbr" } else { "vbr" },
-            },
-            // The chip's own rate control, whatever it is.
-            Attempt::Plain => ffmpeg::Dictionary::new(),
-            Attempt::Component(component) => ffmpeg::dict! {
-                "codec_name" => component,
-            },
-        },
-        // Windows' Media Foundation, whatever the machine has behind it.
-        _ if family == Family::MediaFoundation => ffmpeg::dict! {
-            "rate_control" => if cbr { "cbr" } else { "u_vbr" },
         },
         // The GPUs' own. Each is told the CRF as its own constant quality
         // in VBR - NVENC's CQ, Quick Sync's ICQ and AMF's QP all run on
@@ -1262,9 +1076,7 @@ impl Encoder {
             .contains(format::Flags::GLOBAL_HEADER);
 
         // Every encoder the linked FFmpeg has for the codec, best first,
-        // and among them the first that opens. Being linked is not being
-        // able: a phone's FFmpeg carries MediaCodec's encoders for every
-        // codec, and the chip it runs on has a few of them.
+        // and among them the first that opens.
         let candidates: Vec<(&'static str, ffmpeg::Codec)> = options
             .codec
             .linked(options.hardware, options.ten_bit)
@@ -1283,36 +1095,30 @@ impl Encoder {
         let mut failure = None;
         let mut opened = None;
         'encoders: for (name, codec) in candidates {
-            for &attempt in attempts(name) {
-                match open_video(
-                    name,
-                    codec,
-                    path,
-                    (width, height),
-                    rate,
-                    options,
-                    tags,
-                    hdr,
-                    global_header,
-                    attempt,
-                ) {
-                    Ok((encoder, pixel_format)) => {
-                        // Opening proves the chip, for the export sheet's
-                        // label. A refusal is not remembered: it may be
-                        // this export's size or depth, not the machine.
-                        if attempt == Attempt::AsAsked && Family::of(name).hardware() {
-                            remember(name, true);
-                        }
-                        if attempt != Attempt::AsAsked {
-                            log::warn!("{name} opened only when asked {attempt:?}");
-                        }
-                        opened = Some((name, codec, encoder, pixel_format));
-                        break 'encoders;
+            match open_video(
+                name,
+                codec,
+                path,
+                (width, height),
+                rate,
+                options,
+                tags,
+                hdr,
+                global_header,
+            ) {
+                Ok((encoder, pixel_format)) => {
+                    // Opening proves the chip, for the export sheet's
+                    // label. A refusal is not remembered: it may be
+                    // this export's size or depth, not the machine.
+                    if Family::of(name).hardware() {
+                        remember(name, true);
                     }
-                    Err(error) => {
-                        log::warn!("{name} would not open {attempt:?}: {error}");
-                        failure = Some(error);
-                    }
+                    opened = Some((name, codec, encoder, pixel_format));
+                    break 'encoders;
+                }
+                Err(error) => {
+                    log::warn!("{name} would not open: {error}");
+                    failure = Some(error);
                 }
             }
         }
@@ -1420,7 +1226,7 @@ impl Encoder {
         })
     }
 
-    /// Which FFmpeg encoder is doing the work, e.g. "hevc_videotoolbox".
+    /// Which FFmpeg encoder is doing the work, e.g. "hevc_nvenc".
     pub fn encoder_name(&self) -> &'static str {
         self.encoder_name
     }
@@ -1433,10 +1239,7 @@ impl Encoder {
     /// Hands the encoder a frame, or the end of the stream with `None`, as
     /// FFmpeg's send-and-receive contract asks: an encoder that answers
     /// "try again" has finished packets waiting to be read, and takes the
-    /// same frame once they are. Android's MediaCodec encoders say so
-    /// whenever their input buffers are full, which on a phone is most
-    /// exports; treated as a failure, it ended every H.264 export there
-    /// a fraction of a second in. An encoder that keeps saying it for
+    /// same frame once they are. An encoder that keeps saying it for
     /// [`ENCODER_PATIENCE`] is stuck, and the export fails saying so.
     fn send(&mut self, frame: Option<&Video>) -> Result<()> {
         let sent = patiently(
@@ -1469,10 +1272,7 @@ impl Encoder {
 
     /// Reads out what the encoder still holds once it has been told the
     /// stream ended, until it says it has handed back the last packet.
-    /// FFmpeg's contract has no "try again" here, but its MediaCodec
-    /// wrapper waits a few milliseconds for each output buffer and says
-    /// "try again" when none has come yet, frames still inside it; stopping
-    /// there cut the end off a phone's export with no error. An encoder
+    /// An encoder
     /// that hands back nothing for [`ENCODER_PATIENCE`] is stuck, and the
     /// export fails saying so rather than writing a file short of its end.
     fn flush(&mut self) -> Result<()> {
@@ -1528,8 +1328,7 @@ impl Encoder {
 
 /// How long an encoder may keep answering "try again" to one frame, its
 /// finished packets read out between asks, before the export calls it
-/// stuck. A phone's MediaCodec encoder frees an input buffer within a few
-/// milliseconds of its output being read; ten seconds is a stall.
+/// stuck.
 const ENCODER_PATIENCE: std::time::Duration = std::time::Duration::from_secs(10);
 /// The pause between two asks, so a busy hardware encoder is waited for
 /// rather than spun on.
@@ -1850,7 +1649,7 @@ mod tests {
     }
 
     /// After the end of the stream, an encoder that says "try again" with
-    /// frames still inside it (MediaCodec's) is read again until it says it
+    /// frames still inside it is read again until it says it
     /// has handed back the last, and one that hands back nothing for the
     /// whole of the patience is called stuck rather than taken as done.
     #[test]
@@ -2078,8 +1877,6 @@ mod tests {
         assert_eq!(svt_preset("medium"), 6);
         assert_eq!(svt_preset("veryfast"), 10);
         assert_eq!(svt_preset("nonsense"), 6);
-        assert_eq!(videotoolbox_quality(16), 65);
-        assert_eq!(videotoolbox_quality(26), 43);
         assert_eq!(fourcc(*b"hvc1"), 0x3163_7668);
     }
 
@@ -2146,52 +1943,13 @@ mod tests {
 
     /// Each kind of encoder is handed the pictures it reads, and ten bits
     /// only where it takes them.
-    /// A phone's encoder that will not open as asked is asked plainly,
-    /// then Android's own software one is asked by name; every other
-    /// encoder is asked once, as before (#491).
-    #[test]
-    fn a_phone_encoder_is_asked_again_before_the_export_fails() {
-        assert_eq!(
-            attempts("h264_mediacodec"),
-            [
-                Attempt::AsAsked,
-                Attempt::Plain,
-                Attempt::Component("c2.android.avc.encoder"),
-                Attempt::Component("OMX.google.h264.encoder"),
-            ]
-        );
-        assert_eq!(attempts("hevc_mediacodec")[1], Attempt::Plain);
-        assert_eq!(attempts("libx264"), [Attempt::AsAsked]);
-        assert_eq!(attempts("h264_videotoolbox"), [Attempt::AsAsked]);
-        assert_eq!(plain_kbps(1920, 1080), 16_000);
-        assert_eq!(plain_kbps(1080, 1920), 16_000, "upright is the same size");
-        assert_eq!(plain_kbps(3840, 2160), 32_000);
-    }
-
     #[test]
     fn each_encoder_family_takes_its_own_pictures() {
         assert_eq!(Family::of("libx264").pixel_format(false), Pixel::YUV420P);
         assert_eq!(Family::of("libx265").pixel_format(true), Pixel::YUV420P10LE);
-        assert_eq!(
-            Family::of("hevc_videotoolbox").pixel_format(true),
-            Pixel::P010LE
-        );
-        assert_eq!(
-            Family::of("h264_mediacodec").pixel_format(false),
-            Pixel::NV12
-        );
-        assert!(Family::of("h264_mediacodec").steered_by_bitrate());
-        assert!(!Family::of("libx264").steered_by_bitrate());
-        assert!(takes_ten_bits("libx265") && takes_ten_bits("hevc_videotoolbox"));
-        for eight in [
-            "h264_videotoolbox",
-            "hevc_mediacodec",
-            "h264_mediacodec",
-            "hevc_mf",
-            "h264_nvenc",
-            "h264_amf",
-            "av1_amf",
-        ] {
+        assert_eq!(Family::of("hevc_nvenc").pixel_format(false), Pixel::NV12);
+        assert!(takes_ten_bits("libx265") && takes_ten_bits("hevc_nvenc"));
+        for eight in ["h264_nvenc", "h264_amf", "av1_amf"] {
             assert!(!takes_ten_bits(eight), "{eight}");
         }
         assert!(takes_ten_bits("hevc_nvenc") && takes_ten_bits("av1_qsv"));
@@ -2199,31 +1957,19 @@ mod tests {
         for gpu in ["h264_nvenc", "hevc_qsv", "av1_amf"] {
             assert!(Family::of(gpu).hardware(), "{gpu}");
             assert_eq!(Family::of(gpu).pixel_format(false), Pixel::NV12, "{gpu}");
-            assert!(!Family::of(gpu).steered_by_bitrate(), "{gpu}");
         }
     }
 
-    /// Every codec has an encoder listed for every platform but AV1 on
-    /// iOS, and a phone lists its hardware alone, whatever `hardware` says:
-    /// its FFmpeg has nothing else.
+    /// Every codec has an encoder listed, and a software encoder behind
+    /// any hardware one, so what is linked is what can be encoded.
     #[test]
-    fn a_phone_is_asked_for_its_own_hardware() {
+    fn every_codec_has_an_encoder_listed() {
         for codec in VideoCodec::ALL {
             for hardware in [false, true] {
                 let names = codec.encoders(hardware);
-                if cfg!(target_os = "android") {
-                    assert!(names.iter().all(|name| name.ends_with("_mediacodec")));
-                } else if cfg!(target_os = "ios") {
-                    assert!(names.iter().all(|name| name.ends_with("_videotoolbox")));
-                } else {
-                    assert!(!names.is_empty(), "{codec:?}");
-                }
+                assert!(!names.is_empty(), "{codec:?}");
             }
-            // A desktop has a software encoder behind any hardware one, so
-            // what is linked is what can be encoded.
-            if !cfg!(any(target_os = "android", target_os = "ios")) {
-                assert_eq!(codec.encodable(), codec.available(), "{codec:?}");
-            }
+            assert_eq!(codec.encodable(), codec.available(), "{codec:?}");
         }
     }
 
@@ -2241,14 +1987,6 @@ mod tests {
         }));
         assert!(asked.is_empty(), "opened {asked:?}");
 
-        // A phone has only its system's encoders, and they are asked.
-        let mut asked = Vec::new();
-        assert!(!encodable_among(["av1_mediacodec"].into_iter(), |name| {
-            asked.push(name);
-            false
-        }));
-        assert_eq!(asked, ["av1_mediacodec"]);
-
         // A vendor's is taken as linked, never opened, even with nothing
         // behind it.
         assert!(encodable_among(["hevc_nvenc"].into_iter(), |name| panic!(
@@ -2258,7 +1996,8 @@ mod tests {
 
     /// The label opens no vendor's encoder: an NVENC an export has not
     /// opened is not counted, one it has is, and the walk stops at
-    /// software as the export would.
+    /// software as the export would. Every hardware encoder on Linux is a
+    /// vendor's, so each counts only when an export opened it.
     #[test]
     fn the_hardware_label_opens_no_vendor_driver() {
         let names = || ["hevc_nvenc", "hevc_qsv", "libx265"].into_iter();
@@ -2273,12 +2012,6 @@ mod tests {
             ["libx265", "hevc_nvenc"].into_iter(),
             |_| Some(true),
             never
-        ));
-        // A system encoder is still asked.
-        assert!(leads_with_hardware(
-            ["hevc_videotoolbox", "libx265"].into_iter(),
-            |_| None,
-            |name| name == "hevc_videotoolbox"
         ));
     }
 
@@ -2320,43 +2053,6 @@ mod tests {
             "av1_nvenc",
             env(&[("CUDA_VISIBLE_DEVICES", "0")])
         ));
-    }
-
-    /// On a Mac, the fallback H.264 encoder for an FFmpeg without x264
-    /// opens with the settings it is handed, and the iPhone's H.264 is the
-    /// same encoder.
-    #[test]
-    fn the_hardware_h264_encoder_opens() {
-        ffi::init();
-        let Some(codec) = encoder::find_by_name("h264_videotoolbox") else {
-            eprintln!("h264_videotoolbox not in the linked FFmpeg; skipped");
-            return;
-        };
-        let path = std::env::temp_dir().join("concat-encode-h264-videotoolbox.mp4");
-        let tags = (
-            ffmpeg::color::Primaries::BT709,
-            ffmpeg::color::TransferCharacteristic::BT709,
-            ffmpeg::color::Space::BT709,
-        );
-        let options = EncodeOptions {
-            codec: VideoCodec::H264,
-            crf: 20,
-            ..EncodeOptions::default()
-        };
-        let (_, format) = open_video(
-            "h264_videotoolbox",
-            codec,
-            &path,
-            (1280, 720),
-            ffmpeg::Rational::new(30, 1),
-            &options,
-            tags,
-            None,
-            true,
-            Attempt::AsAsked,
-        )
-        .expect("opens");
-        assert_eq!(format, Pixel::NV12);
     }
 
     /// On a Radeon, ten-bit HEVC is AMF's, and its file says Main 10 - the

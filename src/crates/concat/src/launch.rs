@@ -157,7 +157,6 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     #[test]
     fn preserves_non_unicode_paths_for_the_open_error_handler() {
         use std::os::unix::ffi::OsStringExt;

@@ -97,7 +97,6 @@ fn file_name(path: &str) -> &str {
     path.rsplit(['/', '\\']).next().unwrap_or(path)
 }
 
-#[cfg(unix)]
 mod platform {
     use super::{CRASHING, Line, Ordering, file_name};
     use std::cell::UnsafeCell;
@@ -226,16 +225,7 @@ mod platform {
 
     unsafe fn fault_address(info: *mut libc::siginfo_t) -> usize {
         // SAFETY: as `on_signal` says.
-        unsafe {
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            {
-                (*info).si_addr() as usize
-            }
-            #[cfg(not(any(target_os = "linux", target_os = "android")))]
-            {
-                (*info).si_addr as usize
-            }
-        }
+        unsafe { (*info).si_addr() as usize }
     }
 
     /// Where the faulting instruction is, on the targets Concat ships to.
@@ -247,26 +237,10 @@ mod platform {
         // SAFETY: an SA_SIGINFO handler's third argument is a ucontext_t.
         unsafe {
             let context = context as *const libc::ucontext_t;
-            #[cfg(all(
-                any(target_os = "linux", target_os = "android"),
-                target_arch = "x86_64"
-            ))]
+            #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
             return Some((*context).uc_mcontext.gregs[libc::REG_RIP as usize] as usize);
-            #[cfg(all(
-                any(target_os = "linux", target_os = "android"),
-                target_arch = "aarch64"
-            ))]
+            #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
             return Some((*context).uc_mcontext.pc as usize);
-            #[cfg(all(target_vendor = "apple", target_arch = "aarch64"))]
-            return (*context)
-                .uc_mcontext
-                .as_ref()
-                .map(|m| m.__ss.__pc as usize);
-            #[cfg(all(target_vendor = "apple", target_arch = "x86_64"))]
-            return (*context)
-                .uc_mcontext
-                .as_ref()
-                .map(|m| m.__ss.__rip as usize);
             #[allow(unreachable_code)]
             None
         }
@@ -278,21 +252,7 @@ mod platform {
         let mut name = [0u8; 64];
         // SAFETY: each call writes at most the buffer's length, NUL
         // included.
-        let named = unsafe {
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            {
-                libc::prctl(libc::PR_GET_NAME, name.as_mut_ptr()) == 0
-            }
-            #[cfg(target_vendor = "apple")]
-            {
-                libc::pthread_getname_np(libc::pthread_self(), name.as_mut_ptr().cast(), name.len())
-                    == 0
-            }
-            #[cfg(not(any(target_os = "linux", target_os = "android", target_vendor = "apple")))]
-            {
-                false
-            }
-        };
+        let named = unsafe { libc::prctl(libc::PR_GET_NAME, name.as_mut_ptr()) == 0 };
         let name = CStr::from_bytes_until_nul(&name)
             .ok()
             .and_then(|name| name.to_str().ok())
@@ -319,173 +279,6 @@ mod platform {
             }
         }
     }
-}
-
-#[cfg(windows)]
-mod platform {
-    use super::{CRASHING, Line, Ordering, file_name};
-    use std::fmt::Write as _;
-    use std::os::windows::io::IntoRawHandle;
-    use std::sync::atomic::AtomicPtr;
-    use windows_sys::Win32::Foundation::{HANDLE, HMODULE};
-    use windows_sys::Win32::Storage::FileSystem::WriteFile;
-    use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE};
-    use windows_sys::Win32::System::Diagnostics::Debug::{
-        EXCEPTION_POINTERS, LPTOP_LEVEL_EXCEPTION_FILTER, SetUnhandledExceptionFilter,
-    };
-    use windows_sys::Win32::System::LibraryLoader::{
-        GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-        GetModuleFileNameW, GetModuleHandleExW,
-    };
-
-    /// The log file's duplicate, or null before the log opens.
-    static FILE: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
-
-    /// The filter that was there before, which is called after this one.
-    static mut PREVIOUS: LPTOP_LEVEL_EXCEPTION_FILTER = None;
-
-    /// What the codes a crash arrives as mean.
-    const CODES: [(u32, &str); 9] = [
-        (0xC000_0005, "EXCEPTION_ACCESS_VIOLATION"),
-        (0xC000_0006, "EXCEPTION_IN_PAGE_ERROR"),
-        (
-            0xC000_001D,
-            "EXCEPTION_ILLEGAL_INSTRUCTION: an instruction this CPU does not have",
-        ),
-        (0xC000_0094, "EXCEPTION_INT_DIVIDE_BY_ZERO"),
-        (0xC000_0096, "EXCEPTION_PRIV_INSTRUCTION"),
-        (0xC000_00FD, "EXCEPTION_STACK_OVERFLOW"),
-        (0xC000_0409, "STATUS_STACK_BUFFER_OVERRUN"),
-        (0xC000_0374, "STATUS_HEAP_CORRUPTION"),
-        (0xE06D_7363, "an uncaught C++ exception"),
-    ];
-
-    pub(super) fn keep(file: std::fs::File) {
-        let handle = file.into_raw_handle();
-        let old = FILE.swap(handle, Ordering::SeqCst);
-        if !old.is_null() {
-            // SAFETY: `old` was a handle this module owned.
-            unsafe { windows_sys::Win32::Foundation::CloseHandle(old) };
-        }
-    }
-
-    pub(super) unsafe fn install() {
-        // SAFETY: PREVIOUS is written here, once, before the filter that
-        // reads it can run.
-        unsafe { PREVIOUS = SetUnhandledExceptionFilter(Some(on_exception)) };
-    }
-
-    unsafe extern "system" fn on_exception(pointers: *const EXCEPTION_POINTERS) -> i32 {
-        if !CRASHING.swap(true, Ordering::SeqCst) {
-            // SAFETY: Windows hands the filter a valid record.
-            let line = unsafe { describe(pointers) };
-            write(&line);
-        }
-        // SAFETY: as `install` says.
-        match unsafe { PREVIOUS } {
-            // SAFETY: the filter that was installed before this one.
-            Some(previous) => unsafe { previous(pointers) },
-            // EXCEPTION_CONTINUE_SEARCH: on to Windows Error Reporting.
-            None => 0,
-        }
-    }
-
-    unsafe fn describe(pointers: *const EXCEPTION_POINTERS) -> Line {
-        let mut line = Line::new();
-        let _ = write!(line, "FATAL [");
-        // A thread Rust started has its name already, so this is a read;
-        // on one a library started it is "?".
-        let _ = write!(line, "{}", std::thread::current().name().unwrap_or("?"));
-        let _ = write!(line, "] crash");
-        // SAFETY: as `on_exception` says.
-        let record = unsafe { (*pointers).ExceptionRecord.as_ref() };
-        let Some(record) = record else {
-            let _ = writeln!(line);
-            return line;
-        };
-        let code = record.ExceptionCode as u32;
-        let _ = write!(line, ": {code:#010X}");
-        if let Some((_, name)) = CODES.iter().find(|(c, _)| *c == code) {
-            let _ = write!(line, " {name}");
-        }
-        if matches!(code, 0xC000_0005 | 0xC000_0006) && record.NumberParameters >= 2 {
-            let what = match record.ExceptionInformation[0] {
-                0 => "reading",
-                1 => "writing",
-                8 => "executing",
-                _ => "at",
-            };
-            let _ = write!(line, ", {what} {:#x},", record.ExceptionInformation[1]);
-        }
-        where_(&mut line, record.ExceptionAddress as usize);
-        let _ = writeln!(line);
-        line
-    }
-
-    /// ` in foo.dll+0x1234`, or the bare address when no module has it.
-    fn where_(line: &mut Line, address: usize) {
-        let mut module: HMODULE = std::ptr::null_mut();
-        let mut path = [0u16; 260];
-        // SAFETY: the flags make GetModuleHandleExW take an address and
-        // leave the module's reference count alone; the path is written
-        // within the buffer's length.
-        let found = unsafe {
-            GetModuleHandleExW(
-                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
-                    | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                address as *const u16,
-                &mut module,
-            ) != 0
-        };
-        let len = if found {
-            // SAFETY: as above.
-            unsafe { GetModuleFileNameW(module, path.as_mut_ptr(), path.len() as u32) as usize }
-        } else {
-            0
-        };
-        if len == 0 {
-            let _ = write!(line, " at {address:#x}");
-            return;
-        }
-        // The name, decoded into a buffer on the stack.
-        let mut name = Line::new();
-        for c in char::decode_utf16(path[..len].iter().copied()) {
-            let _ = name.write_char(c.unwrap_or(char::REPLACEMENT_CHARACTER));
-        }
-        let name = std::str::from_utf8(name.bytes()).unwrap_or("?");
-        let offset = address.wrapping_sub(module as usize);
-        let _ = write!(line, " in {}+{offset:#x}", file_name(name));
-    }
-
-    fn write(line: &Line) {
-        let bytes = line.bytes();
-        let put = |handle: HANDLE| {
-            if handle.is_null() || handle as isize == -1 {
-                return;
-            }
-            let mut written = 0u32;
-            // SAFETY: a handle this process holds; a failed write is
-            // ignored, there being nowhere left to say so.
-            unsafe {
-                WriteFile(
-                    handle,
-                    bytes.as_ptr(),
-                    bytes.len() as u32,
-                    &mut written,
-                    std::ptr::null_mut(),
-                );
-            }
-        };
-        // SAFETY: GetStdHandle only reads the process's parameters.
-        put(unsafe { GetStdHandle(STD_ERROR_HANDLE) });
-        put(FILE.load(Ordering::SeqCst));
-    }
-}
-
-#[cfg(not(any(unix, windows)))]
-mod platform {
-    pub(super) fn keep(_: std::fs::File) {}
-    pub(super) unsafe fn install() {}
 }
 
 #[cfg(test)]
@@ -528,14 +321,8 @@ mod tests {
             .lines()
             .find(|line| line.starts_with("FATAL ["))
             .unwrap_or_else(|| panic!("no crash line in: {stderr}"));
-        #[cfg(unix)]
         assert!(
             line.contains("SIGSEGV") || line.contains("SIGBUS"),
-            "{line}"
-        );
-        #[cfg(windows)]
-        assert!(
-            line.contains("EXCEPTION_ACCESS_VIOLATION, writing 0x10"),
             "{line}"
         );
         assert!(line.contains(" in "), "no module in: {line}");

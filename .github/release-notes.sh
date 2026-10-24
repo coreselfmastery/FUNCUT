@@ -7,10 +7,7 @@
 # then how to download each bundle and the checksum file.
 #
 # "Before you install" says what the pipeline could not vouch for, so a
-# release never reads as more checked than it was. The caller says which:
-# WINDOWS_SIGNED=false when no certificate signed the Windows bundles, and
-# ANDROID_STARTED=false when no launch check got as far as the APK's own
-# code.
+# release never reads as more checked than it was.
 #
 # What changed is the subjects of the commits between the two refs,
 # filtered as follows.
@@ -44,7 +41,7 @@ type='^[a-z0-9]+(\([^)]*\))?!?: '
 # scope where it has one and its type where it has not - a fix reads as a
 # fix at a glance, and the text rows stand apart from the timeline's. A
 # subject with neither carries no mark rather than a wrong one.
-marks='text=📝 speech=🗣️ enhance=🗣️ keyframes=🎞️ effects=✨ render=✨ colour=✨ color=✨ timeline=✂️ media=📁 export=📤 settings=⚙️ i18n=🌍 locales=🌍 api=🤖 server=🤖 android=📱 ios=📱 models=📦 inspector=🖥️ window=🖥️ workspace=🖥️ ui=🖥️ start=🖥️ feat=✨ fix=🐛 perf=⚡'
+marks='text=📝 speech=🗣️ enhance=🗣️ keyframes=🎞️ effects=✨ render=✨ colour=✨ color=✨ timeline=✂️ media=📁 export=📤 settings=⚙️ i18n=🌍 locales=🌍 api=🤖 server=🤖 models=📦 inspector=🖥️ window=🖥️ workspace=🖥️ ui=🖥️ start=🖥️ feat=✨ fix=🐛 perf=⚡'
 changes=$(git log "$since..$until" --no-merges --format='%s' 2>/dev/null \
   | grep -Ev '^((Create|Update) [^ ]+\.[a-z]+|Version [0-9]|Lock the flake|Format the workspace|Changelog for|Merge )' \
   | grep -Ev 'in the (export|pool) tests$' \
@@ -81,31 +78,14 @@ if [ -n "$changes" ]; then
   echo "$changes"
   echo
 fi
-caveats=()
-if [ "${WINDOWS_SIGNED:-true}" = false ]; then
-  caveats+=("- **Windows:** this release is not code-signed yet. SmartScreen asks before it runs: **More info** › **Run anyway**. Where Smart App Control is on, Windows refuses unsigned programs; see the [code signing policy](https://github.com/jub0t/concat/blob/main/CODE_SIGNING.md).")
-fi
-if [ "${ANDROID_STARTED:-true}" = false ]; then
-  caveats+=("- **Android:** no automated check has started this APK: CI's emulators run x86_64 and it is built for arm64. If it does not open on your phone, [say so](https://github.com/jub0t/concat/issues).")
-fi
-if [ "${#caveats[@]}" -gt 0 ]; then
-  echo "### Before you install"
-  echo
-  printf '%s\n' "${caveats[@]}"
-  echo
-fi
 cat <<'MD'
 ### Download
 
-A self-contained build for every platform Concat ships on.
+A self-contained build for every architecture Concat ships on.
 
-| | Apple silicon | Intel / x86_64 | arm64 |
-|---|---|---|---|
-| macOS | `macos-arm64.dmg` | `macos-x86_64.dmg` | |
-| Windows | | `windows-x86_64-setup.exe`, `.msi` | |
-| Linux | | `linux-x86_64.deb`, `.rpm`, `x86_64.AppImage` | `linux-aarch64.deb`, `.rpm`, `aarch64.AppImage` |
-| Android | | | `android-arm64.apk` |
-| iOS / iPadOS | | | `ios-arm64.ipa` |
+| | x86_64 | arm64 |
+|---|---|---|
+| Linux | `linux-x86_64.deb`, `.rpm`, `x86_64.AppImage` | `linux-aarch64.deb`, `.rpm`, `aarch64.AppImage` |
 
 `SHA256SUMS` lists each file's checksum.
 MD

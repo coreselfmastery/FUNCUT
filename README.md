@@ -3,7 +3,7 @@
 </p>
 
 <h1 align="center">Concat</h1>
-<h3 align="center">The free, open-source, cross-platform CapCut replacement.</h3>
+<h3 align="center">The free, open-source CapCut replacement for Linux.</h3>
 
 > [!NOTE]
 > **FUNCUT** - this repository is that editor tuned for small, low-memory
@@ -49,7 +49,7 @@
 
 ## About
 
-Concat is a free, open-source video editor and a CapCut alternative for macOS, Windows, Linux and Android. It covers what people actually open CapCut for: auto-captions, text-to-speech, background removal, keyframe animation, effects and titles, multi-track cutting, 4K export. With none of the catches: no watermark, no account, no subscription, no upload.
+Concat is a free, open-source video editor and a CapCut alternative for Linux. It covers what people actually open CapCut for: auto-captions, text-to-speech, background removal, keyframe animation, effects and titles, multi-track cutting, 4K export. With none of the catches: no watermark, no account, no subscription, no upload.
 
 Everything runs locally on a native Rust engine with a GPU compositor. Install it, drop in footage, cut. The AI models for captions, voices and cutout download once from Settings and work offline after that. Your footage never leaves your disk.
 
@@ -74,38 +74,32 @@ Everything runs locally on a native Rust engine with a GPU compositor. Install i
 - 📤 **Export.** H.264, HEVC, AV1. Up to 4K 60, 10-bit colour.
 - 🦀 **Native Rust engine.** GPU compositor, proxies, hardware decode. 4K scrubs smoothly.
 - 🤖 **Scriptable.** An MCP server built in, so Claude and other AI agents can edit with it ([one line to set up](docs/MCP.md)), and a JSON-RPC API for scripts. A build from source adds gRPC and a command-line tool.
-- 🖥️ **macOS, Windows, Linux, Android.** 26 languages. Same app, same project files.
+- 🖥️ **Linux.** x86_64 and ARM. 26 languages. Same app, same project files.
 
 ## Download
 
 Two ways in:
 
 1. **[The website](https://concatenate.pages.dev/#download)** hands you the right build for your machine. Start here.
-2. **[GitHub Releases](https://github.com/jub0t/Concat/releases)** has every build for every platform, with installers, packages and checksums. For when you want to pick.
+2. **[GitHub Releases](https://github.com/jub0t/Concat/releases)** has every build for every architecture, with installers, packages and checksums. For when you want to pick.
 
 Concat is in **beta**: it works, and it still has edges. [Say so](https://github.com/jub0t/Concat/issues) when you find one.
 
 **Platforms**
 
-- ✅ **Windows** · x86_64 (ARM builds are paused, see [#326](https://github.com/jub0t/Concat/issues/326)). A setup and an `.msi`. If SmartScreen stops an unsigned build: **More info** › **Run anyway**
-- ✅ **macOS** · Intel and Apple silicon. If macOS refuses to open an unsigned build: `xattr -dr com.apple.quarantine /Applications/Concat.app`
 - ✅ **Linux** · x86_64 and ARM. `.deb`, `.rpm`, `.AppImage` and an Arch package. Also a Flatpak on **[Flatpark](https://flatpark.org/apps/app.concat.editor/)**, a community Flatpak remote that wraps the x86_64 `.deb` of each release and updates with it
-- ✅ **Android** · phones and tablets
-- ✅ **iOS / iPadOS** · iPhone and iPad, sideloaded
 
 ✅ Supported · 🚧 Work in progress · 🧪 To be tested
 
 **System requirements** and the optional model sizes are on [the website](https://concatenate.pages.dev/guides/system-requirements).
 
-**[Code signing policy](CODE_SIGNING.md)**: why the Windows builds are not signed yet, and what Concat sends over the network (nothing you did not ask for).
+**[Code signing policy](CODE_SIGNING.md)**: what Concat sends over the network (nothing you did not ask for).
 
 ## Build from source
 
 You need Rust 1.93 or newer (see `rust-version` in `src/Cargo.toml`), the FFmpeg 7+ development libraries, cmake and a C++ compiler.
 
-- **macOS:** `brew install ffmpeg`
-- **Windows:** from [FFmpeg's Windows downloads](https://ffmpeg.org/download.html#build-windows), take BtbN's `win64-gpl-shared` build (the one CI uses), unpack it and point `FFMPEG_DIR` at it
-- **Linux:** use your distro's FFmpeg if it is version 7 or newer, otherwise use a BtbN `shared` build with `FFMPEG_DIR` like on Windows
+- **Linux:** use your distro's FFmpeg if it is version 7 or newer, otherwise use a BtbN `shared` build (see `scripts/ci/deps.lock`) and point `FFMPEG_DIR` at it. Or run `./install-linux.sh` from the repo root, which does all of it.
 
 Then:
 

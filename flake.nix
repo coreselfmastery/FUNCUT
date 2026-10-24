@@ -1,6 +1,5 @@
 {
-  # Concat on Nix, Linux only: the people asking for a flake run Linux, and
-  # the macOS and Windows builds ship from release.yml.
+  # Concat on Nix, Linux only: the people asking for a flake run Linux.
   #
   #   nix build            the editor window, ./result/bin/concat
   #   nix run              build and launch it

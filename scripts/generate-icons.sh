@@ -9,7 +9,7 @@
 #              (a 512px render of assets/new_concat_logo_512_rounded_light_theme.svg)
 #   output-dir assets/icons
 #
-# Uses sips on macOS, ImageMagick (magick/convert) elsewhere.
+# Uses ImageMagick (magick/convert).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

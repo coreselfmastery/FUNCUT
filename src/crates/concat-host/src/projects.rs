@@ -391,12 +391,10 @@ impl Drop for Temporary {
 }
 
 /// Whether a failed replace is another program holding the file for a
-/// moment: on Windows, access denied (5) or a sharing violation (32).
-/// Elsewhere a rename is not refused that way, so nothing is retried.
-fn transient(error: &std::io::Error) -> bool {
-    cfg!(windows)
-        && (error.kind() == std::io::ErrorKind::PermissionDenied
-            || matches!(error.raw_os_error(), Some(5 | 32)))
+/// moment. A rename is not refused that way on Linux, so nothing is
+/// retried.
+fn transient(_error: &std::io::Error) -> bool {
+    false
 }
 
 static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(0);
@@ -552,20 +550,12 @@ fn write_recents(config: &Path, entries: &[ProjectInfo]) -> Result<(), String> {
         .map_err(|error| format!("could not write the recents list: {error}"))
 }
 
-/// Compares paths case-insensitively, because Windows does, and on Windows
-/// with either slash, because a path typed or joined with `/` names the same
-/// folder as the one the file dialog hands back with `\`. A trailing
-/// separator names the same folder too.
+/// Compares paths, with a trailing separator naming the same folder.
 fn same_path(left: &str, right: &str) -> bool {
     fn spelled(path: &str) -> String {
-        let path = if cfg!(windows) {
-            path.replace('/', "\\")
-        } else {
-            path.to_owned()
-        };
-        path.trim_end_matches(['/', '\\']).to_owned()
+        path.trim_end_matches('/').to_owned()
     }
-    spelled(left).eq_ignore_ascii_case(&spelled(right))
+    spelled(left) == spelled(right)
 }
 
 /// Turns a project name into something a filesystem will accept. Also used
@@ -731,20 +721,11 @@ mod tests {
     }
 
     #[test]
-    fn paths_compare_case_insensitively() {
-        assert!(same_path("D:\\Work\\Film", "d:\\work\\film"));
-        assert!(!same_path("D:\\Work\\Film", "D:\\Work\\Other"));
+    fn paths_compare_the_same_folder() {
+        assert!(same_path("/work/Film", "/work/Film"));
+        assert!(!same_path("/work/Film", "/work/Other"));
+        assert!(!same_path("/work/film", "/work/Film"));
         assert!(same_path("/work/film/", "/work/film"));
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn either_slash_names_the_same_folder_on_windows() {
-        assert!(same_path(
-            "C:\\Temp\\.tmp1\\Round trip",
-            "C:\\Temp\\.tmp1/Round trip"
-        ));
-        assert!(same_path("C:/Work/Film/", "c:\\work\\film"));
     }
 
     /// A project folder of this test's own, swept if it is already there.
@@ -862,7 +843,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&blocked);
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_failed_save_keeps_the_document_it_had() {
         use std::os::unix::fs::PermissionsExt;

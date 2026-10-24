@@ -44,7 +44,7 @@
 
 ## O projektu
 
-Concat je besplatan videouređivač otvorenog koda i alternativa CapCutu za macOS, Windows, Linux i Android. Pokriva ono zbog čega ljudi zapravo otvaraju CapCut: automatske titlove, pretvorbu teksta u govor, uklanjanje pozadine, animaciju ključnim kadrovima, efekte i naslove, višetračno rezanje, izvoz u 4K. Bez ikakvih kvaka: bez vodenog žiga, bez računa, bez pretplate, bez učitavanja.
+Concat je besplatan videouređivač otvorenog koda i alternativa CapCutu za Linux. Pokriva ono zbog čega ljudi zapravo otvaraju CapCut: automatske titlove, pretvorbu teksta u govor, uklanjanje pozadine, animaciju ključnim kadrovima, efekte i naslove, višetračno rezanje, izvoz u 4K. Bez ikakvih kvaka: bez vodenog žiga, bez računa, bez pretplate, bez učitavanja.
 
 Sve se izvodi lokalno na nativnom Rust motoru s GPU kompozitorom. Instalirajte, ubacite snimke, režite. AI modeli za titlove, glasove i izrezivanje preuzimaju se jednom iz Postavki i nakon toga rade izvan mreže. Vaše snimke nikada ne napuštaju vaš disk.
 
@@ -68,7 +68,7 @@ Sve se izvodi lokalno na nativnom Rust motoru s GPU kompozitorom. Instalirajte, 
 - 📤 **Izvoz.** H.264, HEVC, AV1. Do 4K 60, 10-bitna boja.
 - 🦀 **Nativni Rust motor.** GPU kompozitor, proxyji, hardversko dekodiranje. 4K se pregledava glatko.
 - 🤖 **Skriptabilan.** JSON-RPC API kojim skripte i AI agenti mogu rezati video. Inačica izgrađena iz izvornog koda dodaje gRPC i alat za naredbeni redak.
-- 🖥️ **macOS, Windows, Linux, Android.** 26 jezika. Ista aplikacija, iste datoteke projekta.
+- 🖥️ **Linux.** 26 jezika. Ista aplikacija, iste datoteke projekta.
 
 ## Preuzimanje
 
@@ -81,11 +81,7 @@ Concat je u **beti**: radi, a još ima rubova. [Javite](https://github.com/jub0t
 
 **Platforme**
 
-- ✅ **Windows** · x86_64 (ARM inačice su pauzirane, vidi [#326](https://github.com/jub0t/Concat/issues/326)). Instalacija i `.msi`. Ako SmartScreen zaustavi nepotpisanu inačicu: **Više informacija** › **Svejedno pokreni**
-- ✅ **macOS** · Intel i Apple Silicon. Ako macOS odbije otvoriti nepotpisanu inačicu: `xattr -dr com.apple.quarantine /Applications/Concat.app`
 - ✅ **Linux** · x86_64 i ARM. `.deb`, `.rpm`, `.AppImage` i Arch paket. Također Flatpak na **[Flatparku](https://flatpark.org/apps/app.concat.editor/)**, Flatpak repozitoriju zajednice koji omata x86_64 `.deb` svakog izdanja i ažurira se s njim
-- ✅ **Android** · telefoni i tableti
-- ✅ **iOS / iPadOS** · iPhone i iPad, sideloadom
 
 ✅ Podržano · 🚧 U izradi · 🧪 Za testiranje
 

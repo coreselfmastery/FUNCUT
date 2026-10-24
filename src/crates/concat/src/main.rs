@@ -1,11 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
-//! The editor window as a program: what a desktop or an iPhone launches.
+//! The editor window as a program: what a desktop launches.
 //! Everything is in the library; see `lib.rs`.
-
-// Hide the console window on Windows in release builds.
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod launch;
 

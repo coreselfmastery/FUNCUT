@@ -44,7 +44,7 @@
 
 ## 關於
 
-Concat 是一款免費、開源的影片編輯器，是 macOS、Windows、Linux 與 Android 上的 CapCut 替代方案。它涵蓋了人們真正打開 CapCut 要做的事：自動字幕、文字轉語音、背景移除、關鍵影格動畫、特效與標題、多軌剪輯、4K 輸出。而且沒有任何陷阱：無浮水印、不需帳號、不需訂閱、不上傳。
+Concat 是一款免費、開源的影片編輯器，是 Linux上的 CapCut 替代方案。它涵蓋了人們真正打開 CapCut 要做的事：自動字幕、文字轉語音、背景移除、關鍵影格動畫、特效與標題、多軌剪輯、4K 輸出。而且沒有任何陷阱：無浮水印、不需帳號、不需訂閱、不上傳。
 
 一切都在本機執行，基於帶 GPU 合成器的原生 Rust 引擎。安裝、拖入素材、開剪。字幕、語音與去背所用的 AI 模型只需在設定中下載一次，之後離線可用。您的素材永遠不會離開您的硬碟。
 
@@ -68,7 +68,7 @@ Concat 是一款免費、開源的影片編輯器，是 macOS、Windows、Linux 
 - 📤 **輸出。** H.264、HEVC、AV1。最高 4K 60，10 位元色彩。
 - 🦀 **原生 Rust 引擎。** GPU 合成器、代理、硬體解碼。4K 拖曳也順暢。
 - 🤖 **可指令碼化。** 提供 JSON-RPC API，指令碼與 AI 代理可以用它剪影片。從原始碼建置還會加上 gRPC 與命令列工具。
-- 🖥️ **macOS、Windows、Linux、Android。** 26 種語言。同一個應用程式，同樣的專案檔。
+- 🖥️ **Linux。** 26 種語言。同一個應用程式，同樣的專案檔。
 
 ## 下載
 
@@ -81,11 +81,7 @@ Concat 處於 **測試版**：能用，但還有毛邊。遇到了請 [告訴我
 
 **平台**
 
-- ✅ **Windows** · x86_64（ARM 版本已暫停，見 [#326](https://github.com/jub0t/Concat/issues/326)）。安裝程式與 `.msi`。如果 SmartScreen 攔截未簽署版本：**其他資訊** › **仍要執行**
-- ✅ **macOS** · Intel 與 Apple 晶片。如果 macOS 拒絕開啟未簽署版本：`xattr -dr com.apple.quarantine /Applications/Concat.app`
 - ✅ **Linux** · x86_64 與 ARM。`.deb`、`.rpm`、`.AppImage` 與 Arch 套件。另有 **[Flatpark](https://flatpark.org/apps/app.concat.editor/)** 上的 Flatpak，這是一個社群 Flatpak 儲存庫，封裝每個版本的 x86_64 `.deb` 並隨之更新
-- ✅ **Android** · 手機與平板
-- ✅ **iOS / iPadOS** · iPhone 與 iPad，需側載
 
 ✅ 已支援 · 🚧 開發中 · 🧪 待測試
 

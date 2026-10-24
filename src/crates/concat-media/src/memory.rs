@@ -23,9 +23,8 @@ pub fn total() -> Option<u64> {
     *TOTAL.get_or_init(read)
 }
 
-/// Linux, Android, macOS and the other Unixes: the count of physical pages
-/// times their size, which every one of them answers through `sysconf`.
-#[cfg(unix)]
+/// The count of physical pages times their size, which the system answers
+/// through `sysconf`.
 fn read() -> Option<u64> {
     // SAFETY: `sysconf` reads a system constant and has no preconditions;
     // a negative answer means "not known" and is handled below.
@@ -36,25 +35,6 @@ fn read() -> Option<u64> {
         )
     };
     (pages > 0 && size > 0).then(|| pages as u64 * size as u64)
-}
-
-/// Windows: `GlobalMemoryStatusEx`, the total physical memory it reports.
-#[cfg(windows)]
-fn read() -> Option<u64> {
-    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
-    // SAFETY: the struct is plain data, zeroed and then given its own
-    // length as the call requires; the call only writes into it.
-    unsafe {
-        let mut status: MEMORYSTATUSEX = std::mem::zeroed();
-        status.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
-        (GlobalMemoryStatusEx(&mut status) != 0 && status.ullTotalPhys > 0)
-            .then_some(status.ullTotalPhys)
-    }
-}
-
-#[cfg(not(any(unix, windows)))]
-fn read() -> Option<u64> {
-    None
 }
 
 /// The memory at and under which a machine counts as small: six gigabytes,

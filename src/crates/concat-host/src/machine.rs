@@ -3,8 +3,8 @@
 
 //! The machine a run is on, as the first lines of its log say it.
 //!
-//! The questions every crash report starts with - which Windows, which
-//! CPU, does it have AVX2, which build is this - each took a round trip
+//! The questions every crash report starts with - which distribution,
+//! which CPU, does it have AVX2, which build is this - each took a round trip
 //! with the reporter (#313, #318). The log now answers them before it is
 //! asked. Nothing here is sent anywhere; it is written into the run's own
 //! log file like every other line.
@@ -21,8 +21,7 @@ pub fn build() -> String {
     )
 }
 
-/// One line about the system: its name and version, and the device where
-/// a phone says which one it is.
+/// One line about the system: its name and version.
 pub fn system() -> String {
     os::describe().unwrap_or_else(|| std::env::consts::OS.to_owned())
 }
@@ -90,33 +89,18 @@ fn features() -> (Vec<&'static str>, Vec<&'static str>) {
 
 /// The CPU's marketing name.
 fn cpu_name() -> Option<String> {
-    #[cfg(windows)]
-    {
-        os::registry(
-            r"HARDWARE\DESCRIPTION\System\CentralProcessor\0",
-            "ProcessorNameString",
-        )
-    }
-    #[cfg(target_vendor = "apple")]
-    {
-        os::sysctl("machdep.cpu.brand_string")
-    }
-    #[cfg(all(not(windows), not(target_vendor = "apple"), target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     {
         x86_brand()
     }
-    #[cfg(all(
-        not(windows),
-        not(target_vendor = "apple"),
-        not(target_arch = "x86_64")
-    ))]
+    #[cfg(not(target_arch = "x86_64"))]
     {
         None
     }
 }
 
 /// The brand string CPUID leaves 0x80000002-4 spell out.
-#[cfg(all(not(windows), not(target_vendor = "apple"), target_arch = "x86_64"))]
+#[cfg(target_arch = "x86_64")]
 fn x86_brand() -> Option<String> {
     use std::arch::x86_64::__cpuid;
     // SAFETY: CPUID is on every x86-64 CPU.
@@ -137,164 +121,6 @@ fn x86_brand() -> Option<String> {
     (!name.is_empty()).then(|| name.to_owned())
 }
 
-#[cfg(windows)]
-mod os {
-    use windows_sys::Win32::System::Registry::{HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RegGetValueW};
-
-    const VERSION_KEY: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
-
-    /// "Windows 11 Pro 24H2 (build 26100.4061)". The product name in the
-    /// registry still says Windows 10 on Windows 11, so the build number
-    /// decides which it is.
-    pub(super) fn describe() -> Option<String> {
-        let build: u32 = registry(VERSION_KEY, "CurrentBuildNumber")?.parse().ok()?;
-        let product = registry(VERSION_KEY, "ProductName").unwrap_or_default();
-        let product = if build >= 22000 {
-            product.replace("Windows 10", "Windows 11")
-        } else {
-            product
-        };
-        let display = registry(VERSION_KEY, "DisplayVersion").unwrap_or_default();
-        let revision =
-            registry_dword(VERSION_KEY, "UBR").map_or(String::new(), |ubr| format!(".{ubr}"));
-        Some(format!("{product} {display} (build {build}{revision})").replace("  ", " "))
-    }
-
-    /// A string value under HKEY_LOCAL_MACHINE.
-    pub(super) fn registry(key: &str, value: &str) -> Option<String> {
-        let key = wide(key);
-        let value = wide(value);
-        let mut buf = [0u16; 256];
-        let mut size = std::mem::size_of_val(&buf) as u32;
-        // SAFETY: the buffers are NUL-terminated and `size` is the
-        // output buffer's length in bytes.
-        let status = unsafe {
-            RegGetValueW(
-                HKEY_LOCAL_MACHINE,
-                key.as_ptr(),
-                value.as_ptr(),
-                RRF_RT_REG_SZ,
-                std::ptr::null_mut(),
-                buf.as_mut_ptr().cast(),
-                &mut size,
-            )
-        };
-        if status != 0 {
-            return None;
-        }
-        let len = (size as usize / 2).saturating_sub(1).min(buf.len());
-        let text = String::from_utf16_lossy(&buf[..len]);
-        let text = text.trim_matches(char::from(0)).trim();
-        (!text.is_empty()).then(|| text.to_owned())
-    }
-
-    /// A number value under HKEY_LOCAL_MACHINE.
-    fn registry_dword(key: &str, value: &str) -> Option<u32> {
-        use windows_sys::Win32::System::Registry::RRF_RT_REG_DWORD;
-        let key = wide(key);
-        let value = wide(value);
-        let mut out = 0u32;
-        let mut size = 4u32;
-        // SAFETY: as in `registry`, with a four-byte output.
-        let status = unsafe {
-            RegGetValueW(
-                HKEY_LOCAL_MACHINE,
-                key.as_ptr(),
-                value.as_ptr(),
-                RRF_RT_REG_DWORD,
-                std::ptr::null_mut(),
-                (&mut out as *mut u32).cast(),
-                &mut size,
-            )
-        };
-        (status == 0).then_some(out)
-    }
-
-    fn wide(text: &str) -> Vec<u16> {
-        text.encode_utf16().chain(std::iter::once(0)).collect()
-    }
-}
-
-#[cfg(target_vendor = "apple")]
-mod os {
-    /// "macOS 15.6.1 · Mac15,6", or "iOS 26.0 · iPhone17,1".
-    pub(super) fn describe() -> Option<String> {
-        let version = sysctl("kern.osproductversion")?;
-        let name = if cfg!(target_os = "ios") {
-            "iOS"
-        } else {
-            "macOS"
-        };
-        let model = sysctl(if cfg!(target_os = "ios") {
-            "hw.machine"
-        } else {
-            "hw.model"
-        });
-        Some(match model {
-            Some(model) => format!("{name} {version} · {model}"),
-            None => format!("{name} {version}"),
-        })
-    }
-
-    /// A string the kernel answers by name.
-    pub(super) fn sysctl(name: &str) -> Option<String> {
-        let name = std::ffi::CString::new(name).ok()?;
-        let mut buf = [0u8; 256];
-        let mut len = buf.len();
-        // SAFETY: `len` is the buffer's length, and sysctlbyname writes no
-        // more than that.
-        let status = unsafe {
-            libc::sysctlbyname(
-                name.as_ptr(),
-                buf.as_mut_ptr().cast(),
-                &mut len,
-                std::ptr::null_mut(),
-                0,
-            )
-        };
-        if status != 0 {
-            return None;
-        }
-        let text = std::ffi::CStr::from_bytes_until_nul(&buf[..len.min(buf.len())])
-            .ok()?
-            .to_str()
-            .ok()?
-            .trim();
-        (!text.is_empty()).then(|| text.to_owned())
-    }
-}
-
-#[cfg(target_os = "android")]
-mod os {
-    /// "Android 11 (API 30) · Google Pixel 4a".
-    pub(super) fn describe() -> Option<String> {
-        let release = property("ro.build.version.release")?;
-        let api = property("ro.build.version.sdk").unwrap_or_default();
-        let maker = property("ro.product.manufacturer").unwrap_or_default();
-        let model = property("ro.product.model").unwrap_or_default();
-        Some(
-            format!("Android {release} (API {api}) · {maker} {model}")
-                .trim()
-                .to_owned(),
-        )
-    }
-
-    fn property(name: &str) -> Option<String> {
-        let name = std::ffi::CString::new(name).ok()?;
-        let mut buf = [0u8; 92]; // PROP_VALUE_MAX
-        // SAFETY: the buffer is PROP_VALUE_MAX bytes, all a value can be.
-        let len = unsafe { libc::__system_property_get(name.as_ptr(), buf.as_mut_ptr().cast()) };
-        if len <= 0 {
-            return None;
-        }
-        let text = String::from_utf8_lossy(&buf[..len as usize])
-            .trim()
-            .to_owned();
-        (!text.is_empty()).then_some(text)
-    }
-}
-
-#[cfg(all(unix, not(target_vendor = "apple"), not(target_os = "android")))]
 mod os {
     /// "Linux Mint 22.3 · kernel 7.0.0-10-generic".
     pub(super) fn describe() -> Option<String> {
@@ -311,13 +137,6 @@ mod os {
             Some(kernel) => format!("{release} · kernel {}", kernel.trim()),
             None => release,
         })
-    }
-}
-
-#[cfg(not(any(unix, windows)))]
-mod os {
-    pub(super) fn describe() -> Option<String> {
-        None
     }
 }
 

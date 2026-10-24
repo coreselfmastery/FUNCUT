@@ -3,9 +3,8 @@
 
 //! One ONNX model, loaded and ready to run.
 //!
-//! A thin coat over ONNX Runtime: a session with the platform's
-//! accelerator registered ahead of the CPU - CoreML on Apple, DirectML on
-//! Windows, NNAPI on Android - and one call that takes named `f32`
+//! A thin coat over ONNX Runtime: a session with the CPU provider
+//! registered, and one call that takes named `f32`
 //! tensors and gives named `f32` tensors back. Every model this crate
 //! runs is a picture in and a picture out, so that is all the surface it
 //! needs; what each model's tensors mean lives beside the model.
@@ -58,30 +57,8 @@ pub struct Output {
 /// so does every model download: a gigabyte fetched for a runtime that
 /// cannot run it is a gigabyte wasted.
 ///
-/// Only an Intel Mac has anything to do. Its runtime is loaded now rather
-/// than at launch (see [`crate::onnx`]), and not at all on a macOS older
-/// than the one it is built for, where loading it is what closed the app.
-/// The answer is kept: neither changes while the process runs.
+/// The runtime is linked into the app, so there is nothing to do here.
 pub fn ready() -> Result<(), String> {
-    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-    {
-        static LOADED: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
-        LOADED
-            .get_or_init(|| {
-                if let Some(why) = crate::onnx::unavailable() {
-                    return Err(why.to_string());
-                }
-                let library = crate::onnx::library();
-                // `commit` is false when an environment is already set,
-                // which is nothing to report: the library is loaded.
-                let _ = ort::init_from(&library)
-                    .map_err(|error| format!("could not load ONNX Runtime: {error}"))?
-                    .commit();
-                Ok(())
-            })
-            .clone()
-    }
-    #[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
     Ok(())
 }
 
@@ -170,20 +147,10 @@ fn accelerators() -> Vec<ort::ep::ExecutionProviderDispatch> {
         .collect()
 }
 
-#[cfg(target_vendor = "apple")]
-fn platform_accelerator() -> Option<ort::ep::ExecutionProviderDispatch> {
-    Some(ort::ep::CoreML::default().build())
-}
-
-#[cfg(target_os = "android")]
-fn platform_accelerator() -> Option<ort::ep::ExecutionProviderDispatch> {
-    Some(ort::ep::NNAPI::default().build())
-}
-
-// Not DirectML on Windows: the bundle ships Microsoft's CPU build of the
-// runtime, which has no DirectML, and asking it for one crashed the second
-// session a process opened - an object cutout after a person one (#399).
-#[cfg(not(any(target_vendor = "apple", target_os = "android")))]
+// No platform accelerator on Linux: the runtime's CPU provider is the
+// one asked for. (On the platforms that had one, asking for an
+// accelerator the shipped runtime lacked crashed the second session a
+// process opened - an object cutout after a person one, #399.)
 fn platform_accelerator() -> Option<ort::ep::ExecutionProviderDispatch> {
     None
 }

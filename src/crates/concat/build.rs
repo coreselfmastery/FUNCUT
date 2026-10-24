@@ -103,28 +103,6 @@ fn main() {
         std::fs::write(out, table).expect("write bundled_cards.rs");
     }
 
-    // The .exe's icon. The window's own is set in app.slint, but Explorer,
-    // the Start menu and a pinned taskbar button read the file's resources,
-    // and without one they show Windows' generic program icon. Needs the
-    // Windows SDK's rc.exe, which an MSVC toolchain has.
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
-        let icon = "../../../assets/icons/concat.ico";
-        println!("cargo:rerun-if-changed={icon}");
-        // The file's name and description as Windows shows them in its
-        // properties, and as code signing checks them: "Concat" in every
-        // build, where the default would be the crate's lower-case name.
-        winresource::WindowsResource::new()
-            .set_icon(icon)
-            .set("ProductName", "Concat")
-            .set("FileDescription", "Concat")
-            .set(
-                "LegalCopyright",
-                "Copyright 2026 Jareer Abdullah and Concat contributors, AGPL-3.0-or-later",
-            )
-            .compile()
-            .expect("could not embed the Windows icon");
-    }
-
     // Three facts about the build that the built thing cannot ask for at run
     // time. Settings > About shows them in the block a bug report is copied
     // out of: which triple this binary is for, which profile it came out of,

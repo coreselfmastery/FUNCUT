@@ -35,11 +35,8 @@ import pathlib
 import re
 import sys
 
-# A Windows console prints in its code page - cp1252, most often - which
-# has no Bengali, no Persian and no CJK, and the first locale name printed
-# was an UnicodeEncodeError. The words are written as UTF-8 wherever this
-# runs; a stream that cannot be reconfigured (one replaced by a test
-# harness) is left as it is.
+# The words are written as UTF-8 wherever this runs; a stream that cannot
+# be reconfigured (one replaced by a test harness) is left as it is.
 for _stream in (sys.stdout, sys.stderr):
     try:
         _stream.reconfigure(encoding="utf-8")

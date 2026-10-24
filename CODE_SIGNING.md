@@ -1,28 +1,18 @@
-# Code signing policy
+# Network and update policy
 
-**Windows releases are not code-signed yet.** Windows shows a SmartScreen
-warning before an unsigned program runs (**More info** › **Run anyway**), and
-where Smart App Control is on, it refuses to run it at all. Once Concat has a
-signing certificate, every Windows release is signed under this policy.
+The Linux packages are distributed through GitHub Releases with a
+`SHA256SUMS` checksum file; verify a download against it before installing
+one by hand (`sha256sum --check SHA256SUMS --ignore-missing`).
 
-## What will be signed
+## How a release is made
 
-The Windows program (`concat.exe`) and its installers (the setup `.exe` and the
-`.msi`), built from this repository. Libraries Concat ships but does not build
-from its own source, such as FFmpeg's and sherpa-onnx's DLLs and Microsoft's
-ONNX Runtime and Visual C++ runtime, are not signed with this certificate; they
-carry their own maintainers' signatures where they have them.
-
-## How a signed release is made
-
-- Every signed file is built by GitHub Actions from a tagged commit of
+- Every package is built by GitHub Actions from a tagged commit of
   <https://github.com/jub0t/concat>, by the workflows in
   [`.github/workflows`](.github/workflows) (`release.yml`, which calls
-  `build-app.yml`). Nothing built on a person's machine is signed.
+  `build-app.yml`).
 - A release is built only after the tests pass on the tagged commit, and each
-  Windows bundle is launched before it is uploaded (see
+  bundle is launched before it is uploaded (see
   [`scripts/ci`](scripts/ci)).
-- Every signing request is approved by hand by an approver, below.
 - The workflows and build scripts are part of the source and are reviewed like
   any other change.
 

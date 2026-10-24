@@ -169,39 +169,19 @@ impl Default for StartPane {
 }
 
 /// Where a new project goes unless told otherwise; see [`location_on`].
-/// On an iPhone the folder is made here, so that the Files app shows it
-/// from the first launch and not only from the first project.
 fn default_location() -> String {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     let desktop = dirs::desktop_dir();
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    let desktop = None;
-    let location = location_on(std::env::consts::OS, desktop, home_folder);
-    if cfg!(target_os = "ios")
-        && !location.is_empty()
-        && let Err(error) = std::fs::create_dir_all(&location)
-    {
-        log::warn!("could not make {location}: {error}");
-    }
-    location
+    location_on(std::env::consts::OS, desktop, home_folder)
 }
 
 /// Where a new project goes on `os`: a Concat folder on the desktop. The
-/// desktop the system names, not `~/Desktop`: on Windows OneDrive often
-/// moves it, and on Linux it is called what the desktop's language calls
-/// it. A phone has no desk. An Android phone's projects live at the top of
-/// the folder the file manager shows for the app. An iPhone's live in the
-/// app's Documents, the one folder of its sandbox the Files app can show:
-/// `~/Desktop` there is a folder the app is not allowed to make, and every
-/// new project failed with EPERM. https://github.com/jub0t/Concat/issues/299
+/// desktop the system names, not `~/Desktop`: on Linux it is called what
+/// the desktop's language calls it.
 fn location_on(os: &str, desktop: Option<PathBuf>, home: impl Fn(&str) -> String) -> String {
-    match os {
-        "android" => home("Concat"),
-        "ios" => home("Documents/Concat"),
-        _ => desktop
-            .map(|desktop| desktop.join("Concat").to_string_lossy().into_owned())
-            .unwrap_or_else(|| home("Desktop/Concat")),
-    }
+    let _ = os;
+    desktop
+        .map(|desktop| desktop.join("Concat").to_string_lossy().into_owned())
+        .unwrap_or_else(|| home("Desktop/Concat"))
 }
 
 /// What an unnamed project is called, in the interface's language: the name
@@ -543,20 +523,13 @@ impl StartPane {
 mod tests {
     use super::*;
 
-    /// An iPhone's projects go in its Documents, whatever a desktop would
-    /// have said; a desktop's go on the desktop the system names.
+    /// A new project goes on the desktop the system names.
     #[test]
     fn each_platform_has_a_place_for_new_projects() {
         let home = |name: &str| format!("/home/{name}");
         let desktop = || Some(PathBuf::from("/desk"));
         assert_eq!(
-            location_on("ios", desktop(), home),
-            "/home/Documents/Concat"
-        );
-        assert_eq!(location_on("ios", None, home), "/home/Documents/Concat");
-        assert_eq!(location_on("android", None, home), "/home/Concat");
-        assert_eq!(
-            PathBuf::from(location_on("macos", desktop(), home)),
+            PathBuf::from(location_on("linux", desktop(), home)),
             Path::new("/desk").join("Concat")
         );
         assert_eq!(location_on("linux", None, home), "/home/Desktop/Concat");

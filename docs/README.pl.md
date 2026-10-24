@@ -44,7 +44,7 @@
 
 ## O Concat
 
-Concat to darmowy, otwartoźródłowy edytor wideo i alternatywa dla CapCuta na systemy macOS, Windows, Linux i Android. Robi to, po co ludzie naprawdę otwierają CapCuta: automatyczne napisy, zamianę tekstu na mowę, usuwanie tła, animację na klatkach kluczowych, efekty i napisy tytułowe, montaż na wielu ścieżkach, eksport w 4K. I to bez żadnych haczyków: bez znaku wodnego, bez konta, bez subskrypcji, bez wysyłania plików.
+Concat to darmowy, otwartoźródłowy edytor wideo i alternatywa dla CapCuta na systemy Linux. Robi to, po co ludzie naprawdę otwierają CapCuta: automatyczne napisy, zamianę tekstu na mowę, usuwanie tła, animację na klatkach kluczowych, efekty i napisy tytułowe, montaż na wielu ścieżkach, eksport w 4K. I to bez żadnych haczyków: bez znaku wodnego, bez konta, bez subskrypcji, bez wysyłania plików.
 
 Wszystko działa lokalnie, na natywnym silniku napisanym w Rust, z kompozytorem na GPU. Zainstaluj, wrzuć materiał, tnij. Modele AI do napisów, głosów i wycinania pobierasz raz w Ustawieniach, a potem działają offline. Twój materiał nigdy nie opuszcza dysku.
 
@@ -68,7 +68,7 @@ Wszystko działa lokalnie, na natywnym silniku napisanym w Rust, z kompozytorem 
 - 📤 **Eksport.** H.264, HEVC, AV1. Do 4K 60, kolor 10-bitowy.
 - 🦀 **Natywny silnik w Rust.** Kompozytor na GPU, proxy, sprzętowe dekodowanie. Nawet 4K przewija się płynnie.
 - 🤖 **Skryptowalny.** API w JSON-RPC, przez które skrypty i agenci AI mogą montować wideo. Wersja zbudowana ze źródeł dodaje gRPC i narzędzie wiersza poleceń.
-- 🖥️ **macOS, Windows, Linux, Android.** 26 języków. Ta sama aplikacja, te same pliki projektów.
+- 🖥️ **Linux.** 26 języków. Ta sama aplikacja, te same pliki projektów.
 
 ## Pobieranie
 
@@ -81,11 +81,7 @@ Concat jest w fazie **beta**: działa, ale wciąż ma swoje niedoróbki. [Daj zn
 
 **Platformy**
 
-- ✅ **Windows** · x86_64 (wersje na ARM są wstrzymane, zobacz [#326](https://github.com/jub0t/Concat/issues/326)). Instalator i `.msi`. Jeśli SmartScreen zatrzyma niepodpisaną wersję: **Więcej informacji** › **Uruchom mimo to**
-- ✅ **macOS** · Intel i Apple silicon. Jeśli macOS nie chce otworzyć niepodpisanej wersji: `xattr -dr com.apple.quarantine /Applications/Concat.app`
 - ✅ **Linux** · x86_64 i ARM. `.deb`, `.rpm`, `.AppImage` i pakiet dla Archa. Do tego Flatpak na **[Flatpark](https://flatpark.org/apps/app.concat.editor/)**, społecznościowym repozytorium Flatpak, które opakowuje `.deb` dla x86_64 z każdego wydania i aktualizuje się razem z nim
-- ✅ **Android** · telefony i tablety
-- ✅ **iOS / iPadOS** · iPhone i iPad, przez sideloading
 
 ✅ Obsługiwane · 🚧 W trakcie prac · 🧪 Do przetestowania
 

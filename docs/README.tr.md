@@ -44,7 +44,7 @@
 
 ## Hakkında
 
-Concat; macOS, Windows, Linux ve Android için ücretsiz, açık kaynaklı bir video düzenleyici ve bir CapCut alternatifidir. İnsanların CapCut’ı gerçekten ne için açtıklarını karşılar: otomatik altyazı, metinden sese, arka plan kaldırma, anahtar kare animasyonu, efektler ve yazılar, çok parçalı kurgu, 4K dışa aktarma. Hiçbir tuzak olmadan: filigran yok, hesap yok, abonelik yok, yükleme yok.
+Concat; Linuxiçin ücretsiz, açık kaynaklı bir video düzenleyici ve bir CapCut alternatifidir. İnsanların CapCut’ı gerçekten ne için açtıklarını karşılar: otomatik altyazı, metinden sese, arka plan kaldırma, anahtar kare animasyonu, efektler ve yazılar, çok parçalı kurgu, 4K dışa aktarma. Hiçbir tuzak olmadan: filigran yok, hesap yok, abonelik yok, yükleme yok.
 
 Her şey, GPU birleştiricili yerel bir Rust motorunda yerel olarak çalışır. Kurun, görüntüleri bırakın, kesin. Altyazı, ses ve kesme için yapay zekâ modelleri Ayarlar’dan bir kez indirilir ve sonrasında çevrimdışı çalışır. Görüntüleriniz diskinizden asla çıkmaz.
 
@@ -68,7 +68,7 @@ Her şey, GPU birleştiricili yerel bir Rust motorunda yerel olarak çalışır.
 - 📤 **Dışa aktarma.** H.264, HEVC, AV1. 4K 60’a kadar, 10 bit renk.
 - 🦀 **Yerel Rust motoru.** GPU birleştirici, proxy’ler, donanım çözme. 4K akıcı gezinir.
 - 🤖 **Betiklenebilir.** Betiklerin ve yapay zekâ ajanlarının video kesebileceği bir JSON-RPC API’si. Kaynaktan derlenen sürüm buna gRPC ve bir komut satırı aracı ekler.
-- 🖥️ **macOS, Windows, Linux, Android.** 26 dil. Aynı uygulama, aynı proje dosyaları.
+- 🖥️ **Linux.** 26 dil. Aynı uygulama, aynı proje dosyaları.
 
 ## İndir
 
@@ -81,11 +81,7 @@ Concat **beta** aşamasında: çalışıyor, ama hâlâ pürüzleri var. Bir tan
 
 **Platformlar**
 
-- ✅ **Windows** · x86_64 (ARM derlemelerine ara verildi, bkz. [#326](https://github.com/jub0t/Concat/issues/326)). Bir kurulum ve bir `.msi`. SmartScreen imzasız bir derlemeyi durdurursa: **Daha fazla bilgi** › **Yine de çalıştır**
-- ✅ **macOS** · Intel ve Apple Silicon. macOS imzasız bir derlemeyi açmayı reddederse: `xattr -dr com.apple.quarantine /Applications/Concat.app`
 - ✅ **Linux** · x86_64 ve ARM. `.deb`, `.rpm`, `.AppImage` ve bir Arch paketi. Ayrıca her sürümün x86_64 `.deb`’ini saran ve onunla güncellenen topluluk Flatpak deposu **[Flatpark](https://flatpark.org/apps/app.concat.editor/)** üzerinde bir Flatpak
-- ✅ **Android** · telefonlar ve tabletler
-- ✅ **iOS / iPadOS** · iPhone ve iPad, sideload ile
 
 ✅ Destekleniyor · 🚧 Çalışılıyor · 🧪 Test edilecek
 

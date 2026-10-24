@@ -67,27 +67,9 @@ serde_json.workspace = true
 cpal = "0.16"
 memmap2 = "0.9"
 
-# The machine's memory, for sizing the caches to it; see memory.rs.
-[target.'cfg(unix)'.dependencies]
+# The machine's memory, for sizing the caches to it; see memory.rs; and
+# the crash handler's signals, the lock file's flock, the tripwire's kill.
 libc = "0.2"
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = [
-  "Win32_Media",
-  "Win32_System_SystemInformation",
-  # crash.rs: the unhandled-exception filter and what it reads and writes.
-  "Win32_Foundation",
-  "Win32_Storage_FileSystem",
-  "Win32_System_Console",
-  "Win32_System_Diagnostics_Debug",
-  "Win32_System_IO",
-  "Win32_System_Kernel",
-  "Win32_System_LibraryLoader",
-  # machine.rs: the Windows version and the CPU's name.
-  "Win32_System_Registry",
-  # jobs.rs: whether the process that left a mark is still running.
-  "Win32_System_Threading",
-] }
 
 [dev-dependencies]
 tempfile = "3"

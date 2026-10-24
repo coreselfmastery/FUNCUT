@@ -463,11 +463,7 @@ impl std::fmt::Display for ReadError {
 /// lines use.
 #[cfg_attr(not(feature = "chatterbox"), allow(dead_code))]
 fn accelerator() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "CoreML"
-    } else {
-        "the accelerator"
-    }
+    "the accelerator"
 }
 
 /// `read` on `engine`, and when an engine loaded for the accelerator fails
@@ -1200,16 +1196,12 @@ fn load_pocket(dir: &Path, accelerated: bool) -> Result<OfflineTts, String> {
         .ok_or_else(|| "the speech engine failed to load - try re-downloading the model".to_owned())
 }
 
-/// The ONNX Runtime provider sherpa is asked for: CoreML on a Mac, the CPU
-/// otherwise, and the CPU when the load for CoreML failed. sherpa falls back to the CPU
-/// itself, with a line in the log, where its runtime was built without
-/// the one asked for.
+/// The ONNX Runtime provider sherpa is asked for: the CPU. sherpa falls
+/// back to the CPU itself, with a line in the log, where its runtime was
+/// built without the one asked for.
 fn provider(accelerated: bool) -> &'static str {
-    if accelerated && cfg!(target_os = "macos") {
-        "coreml"
-    } else {
-        "cpu"
-    }
+    let _ = accelerated;
+    "cpu"
 }
 
 /// The threads the engine may use: every core up to eight.

@@ -108,9 +108,6 @@ export component TitleBar inherits Rectangle {
     in property <string> project-name: I18n.t("common.untitledProject");
     /// "saved", "saving…" — the little truth beside the name. Empty hides it.
     in property <string> status: I18n.t("common.saved");
-    /// Leaves room for the traffic lights and drops nothing else; on other
-    /// platforms the strip starts at the left edge.
-    in property <bool> macos: true;
     /// The launch screen's face: the theme toggle and the window buttons,
     /// and nothing else. The menus act on a project, the panel picker and
     /// Export act on an edit, and on this screen there is neither — a strip
@@ -193,7 +190,7 @@ export component TitleBar inherits Rectangle {
         y: 0;
         width: parent.width;
         height: parent.height;
-        padding-left: root.macos ? 80px : 8px;
+        padding-left: 8px;
         // No right padding when the strip ends in its own buttons: the close
         // button belongs in the corner, not eight pixels shy of it.
         padding-right: root.own-buttons ? 0px : 8px;

@@ -5,7 +5,7 @@
 #
 #   scripts/ci/isa-scan.sh FILE_OR_FOLDER...
 #
-# Every PE (.exe, .dll) and ELF file found is disassembled with
+# Every ELF file found is disassembled with
 # llvm-objdump, and each instruction from a set the x86_64 baseline the
 # bundles promise (AVX, nothing newer; see GGML_* in build-app.yml) does not
 # include is counted, by class:
@@ -134,7 +134,7 @@ files=()
 for arg in "$@"; do
   if [ -d "$arg" ]; then
     while IFS= read -r -d '' f; do files+=("$f"); done \
-      < <(find "$arg" -type f \( -name '*.exe' -o -name '*.dll' -o -name '*.so' -o -name '*.so.*' -o -perm -u+x \) -print0)
+      < <(find "$arg" -type f \( -name '*.so' -o -name '*.so.*' -o -perm -u+x \) -print0)
   else
     files+=("$arg")
   fi

@@ -3,70 +3,21 @@
 
 //! What Settings > About reports about this machine and this build.
 
-use crate::i18n::{t, tf};
+use crate::i18n::t;
 
 pub fn os_description() -> String {
-    #[cfg(target_os = "macos")]
-    {
-        // Bare `sw_vers` prints all three lines at once, so this is one
-        // process rather than the three the flags would cost.
-        let fields = std::process::Command::new("sw_vers")
-            .output()
-            .ok()
-            .filter(|out| out.status.success())
-            .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
-            .unwrap_or_default();
-        let field = |key: &str| {
-            fields
+    // The distribution's own name for itself, which is what a report
+    // wants; the kernel version is the next question, not the first.
+    let pretty = std::fs::read_to_string("/etc/os-release")
+        .ok()
+        .and_then(|release| {
+            release
                 .lines()
-                .find_map(|line| line.strip_prefix(key)?.split(':').nth(1))
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_owned)
-        };
-        let name = field("ProductName").unwrap_or_else(|| "macOS".into());
-        match (field("ProductVersion"), field("BuildVersion")) {
-            (Some(version), Some(build)) => format!("{name} {version} ({build})"),
-            (Some(version), None) => format!("{name} {version}"),
-            _ => name,
-        }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        // The distribution's own name for itself, which is what a report
-        // wants; the kernel version is the next question, not the first.
-        let pretty = std::fs::read_to_string("/etc/os-release")
-            .ok()
-            .and_then(|release| {
-                release
-                    .lines()
-                    .find_map(|line| line.strip_prefix("PRETTY_NAME="))
-                    .map(|value| value.trim_matches('"').to_owned())
-            })
-            .filter(|value| !value.is_empty());
-        pretty.unwrap_or_else(|| "Linux".into())
-    }
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        // CREATE_NO_WINDOW: the app is a GUI-subsystem binary with no
-        // console to lend, so cmd would open one of its own and it would
-        // flash up over Settings for the moment `ver` takes.
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        std::process::Command::new("cmd")
-            .args(["/c", "ver"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-            .ok()
-            .filter(|out| out.status.success())
-            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_owned())
-            .filter(|value| !value.is_empty())
-            .unwrap_or_else(|| "Windows".into())
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-    {
-        std::env::consts::OS.to_owned()
-    }
+                .find_map(|line| line.strip_prefix("PRETTY_NAME="))
+                .map(|value| value.trim_matches('"').to_owned())
+        })
+        .filter(|value| !value.is_empty());
+    pretty.unwrap_or_else(|| "Linux".into())
 }
 
 /// What Settings > About shows under "System information", and what its copy
@@ -113,15 +64,5 @@ pub fn system_facts() -> Vec<(String, String)> {
         ),
         (t("sysinfo.toolchain"), env!("BUILD_RUSTC").into()),
     ];
-    // An Intel Mac older than the ONNX Runtime it carries runs everything
-    // but background removal, the smart brushes, Enhance and Chatterbox
-    // (#333). Each says so when asked; this says it once, where a person
-    // looks to see what their machine can do, and in the report they paste.
-    if let Some(why) = concat_vision::onnx::unavailable() {
-        facts.push((
-            t("sysinfo.aiFeatures"),
-            tf("sysinfo.aiNeedsMacos", &[&why.needs]),
-        ));
-    }
     facts
 }

@@ -44,7 +44,7 @@
 
 ## Giới thiệu
 
-Concat là trình biên tập video miễn phí, mã nguồn mở và là lựa chọn thay thế CapCut cho macOS, Windows, Linux và Android. Nó làm được những việc mà người ta thực sự mở CapCut để làm: phụ đề tự động, chuyển văn bản thành giọng nói, xóa nền, hoạt ảnh keyframe, hiệu ứng và tiêu đề, cắt nhiều track, xuất 4K. Không có bất kỳ ràng buộc nào: không watermark, không tài khoản, không đăng ký, không tải lên.
+Concat là trình biên tập video miễn phí, mã nguồn mở và là lựa chọn thay thế CapCut cho Linux. Nó làm được những việc mà người ta thực sự mở CapCut để làm: phụ đề tự động, chuyển văn bản thành giọng nói, xóa nền, hoạt ảnh keyframe, hiệu ứng và tiêu đề, cắt nhiều track, xuất 4K. Không có bất kỳ ràng buộc nào: không watermark, không tài khoản, không đăng ký, không tải lên.
 
 Mọi thứ chạy cục bộ trên engine Rust gốc với trình tổng hợp GPU. Cài đặt, kéo thả footage, cắt. Các mô hình AI cho phụ đề, giọng nói và tách nền tải một lần từ Cài đặt và sau đó hoạt động ngoại tuyến. Footage của bạn không bao giờ rời khỏi ổ đĩa của bạn.
 
@@ -68,7 +68,7 @@ Mọi thứ chạy cục bộ trên engine Rust gốc với trình tổng hợp 
 - 📤 **Xuất.** H.264, HEVC, AV1. Lên đến 4K 60, màu 10-bit.
 - 🦀 **Engine Rust gốc.** Trình tổng hợp GPU, proxy, giải mã phần cứng. Tua 4K mượt mà.
 - 🤖 **Có thể lập trình.** API JSON-RPC để script và các tác nhân AI cắt video. Bản dựng từ mã nguồn có thêm gRPC và công cụ dòng lệnh.
-- 🖥️ **macOS, Windows, Linux, Android.** 26 ngôn ngữ. Cùng một ứng dụng, cùng tệp dự án.
+- 🖥️ **Linux.** 26 ngôn ngữ. Cùng một ứng dụng, cùng tệp dự án.
 
 ## Tải về
 
@@ -81,11 +81,7 @@ Concat đang ở giai đoạn **beta**: nó hoạt động, và vẫn còn vài 
 
 **Nền tảng**
 
-- ✅ **Windows** · x86_64 (bản dựng ARM đang tạm dừng, xem [#326](https://github.com/jub0t/Concat/issues/326)). Một bộ cài và một `.msi`. Nếu SmartScreen chặn bản dựng chưa ký: **More info** › **Run anyway**
-- ✅ **macOS** · Intel và Apple Silicon. Nếu macOS từ chối mở bản dựng chưa ký: `xattr -dr com.apple.quarantine /Applications/Concat.app`
 - ✅ **Linux** · x86_64 và ARM. `.deb`, `.rpm`, `.AppImage` và gói Arch. Ngoài ra còn Flatpak trên **[Flatpark](https://flatpark.org/apps/app.concat.editor/)**, một kho Flatpak cộng đồng đóng gói `.deb` x86_64 của mỗi bản phát hành và cập nhật theo nó
-- ✅ **Android** · điện thoại và máy tính bảng
-- ✅ **iOS / iPadOS** · iPhone và iPad, qua sideload
 
 ✅ Được hỗ trợ · 🚧 Đang thực hiện · 🧪 Cần kiểm thử
 

@@ -1,36 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
-//! What the window asks of the platform it runs on.
+//! What the window asks of the platform it runs on: Linux, through winit,
+//! X11 and Wayland.
 //!
-//! Four things differ between a desk and a phone: how the backend is
-//! chosen, how a file or folder is picked, whether the window has a title
-//! strip of its own to drag, and whether a file dragged in from outside the
-//! window is even a thing that can happen. Everything else in the crate is
-//! the same tree, the same state and the same callbacks, so the differences
-//! live here and nowhere else.
-//!
-//! Desktop and iOS draw through the winit backend; Android through Slint's
-//! android-activity backend, which the activity sets up before [`crate::run`]
-//! is called. File dialogs are the desktop's: on a phone a pick goes through
-//! the system's document picker, which arrives with the phone layout. A drag
-//! in from the OS is a desktop thing for the same reason: winit reports
-//! `DroppedFile` on macOS, Windows and X11, and not on iOS, which has no
-//! such gesture - nor on Wayland, where the window listens for the drop
-//! itself; see [`crate::wayland_drop`].
+//! The window draws through the winit backend. File dialogs are the
+//! desktop's own. A drag in from the OS arrives on X11 as winit's
+//! `DroppedFile`, and on Wayland, where winit reports nothing, the window
+//! listens for the drop itself; see [`crate::wayland_drop`].
 
 use std::path::PathBuf;
 
 use slint::PlatformError;
-// The winit backend, and so these, exist everywhere but Android, which
-// draws through Slint's android-activity backend and has no winit at all.
-#[cfg(not(target_os = "android"))]
 use slint::winit_030::winit::event::{ElementState, MouseButton, WindowEvent};
-#[cfg(not(target_os = "android"))]
 use slint::winit_030::winit::event_loop::ActiveEventLoop;
-#[cfg(not(target_os = "android"))]
 use slint::winit_030::winit::window::{Window as WinitWindow, WindowId};
-#[cfg(not(target_os = "android"))]
 use slint::winit_030::{CustomApplicationHandler, EventResult};
 
 use crate::gpu::Gpu;
@@ -49,14 +33,13 @@ pub fn set_ui_scale(percent: Option<u32>) {
 ///
 /// Not through SLINT_SCALE_FACTOR, as it was: Slint takes that as the
 /// whole factor, not a multiplier, and ignores the display's scale while
-/// it is set, so "100 %" made the interface smaller on a Windows laptop at
-/// 150 % and halved it on a Retina Mac, and moving the window to another
+/// it is set, so "100 %" made the interface smaller on a laptop at
+/// 150 %, and moving the window to another
 /// monitor no longer rescaled it. The display's scale is winit's, which no
 /// dispatch here changes; this runs when the window first shows, when the
 /// choice changes, and after every move to a monitor of another scale. A
 /// SLINT_SCALE_FACTOR set by hand still wins, and then nothing is done.
 /// https://github.com/jub0t/Concat/issues/320
-#[cfg(not(target_os = "android"))]
 pub fn apply_ui_scale(window: &slint::Window) {
     use slint::winit_030::WinitWindowAccessor;
     if std::env::var_os("SLINT_SCALE_FACTOR").is_some() {
@@ -93,14 +76,9 @@ pub fn apply_ui_scale(window: &slint::Window) {
     });
 }
 
-/// A phone sets its size the system's way; there is nothing to scale.
-#[cfg(target_os = "android")]
-pub fn apply_ui_scale(_window: &slint::Window) {}
-
 /// [`apply_ui_scale`] on the open window, once the event in hand is done:
 /// Slint applies a display's own scale as it handles the event, and the
 /// chosen percent goes on top of that afterwards.
-#[cfg(not(target_os = "android"))]
 fn reapply_ui_scale(delay: std::time::Duration) {
     slint::Timer::single_shot(delay, || {
         crate::host::Shell::with(|_, app| {
@@ -127,11 +105,10 @@ fn reapply_ui_scale(delay: std::time::Duration) {
 /// does, so a click from one field into the next still lands a caret.
 ///
 /// And on Linux, the window's edges. X11 and Wayland take the resize
-/// borders away with the decorations, where Windows keeps them, so a
+/// borders away with the decorations, so a
 /// press within a few pixels of the frame is handed to the window manager
 /// as a resize (winit's `drag_resize_window`) before Slint sees it, and
 /// the pointer wears the matching arrow while it is there.
-#[cfg(not(target_os = "android"))]
 struct DropHandler {
     pending: Vec<PathBuf>,
     on_dropped: Box<dyn Fn(Vec<PathBuf>)>,
@@ -161,19 +138,16 @@ struct DropHandler {
     edge: Option<ResizeDirection>,
 }
 
-#[cfg(not(target_os = "android"))]
 use slint::winit_030::winit::window::{CursorIcon, ResizeDirection};
 
 /// How far in from the frame a press still resizes, in logical pixels.
 /// Wide enough to find without aiming, narrow enough to leave the strip's
 /// buttons and the panes' own edges theirs.
-#[cfg(not(target_os = "android"))]
 const EDGE: f64 = 6.0;
 
 /// The edge of a `width` × `height` window that (`x`, `y`) is on, all in
 /// physical pixels, with `band` the depth of an edge. Corners first, so the
 /// diagonal wins where two edges meet.
-#[cfg(not(target_os = "android"))]
 fn edge_at(x: f64, y: f64, width: f64, height: f64, band: f64) -> Option<ResizeDirection> {
     let (west, east) = (x < band, x >= width - band);
     let (north, south) = (y < band, y >= height - band);
@@ -190,7 +164,6 @@ fn edge_at(x: f64, y: f64, width: f64, height: f64, band: f64) -> Option<ResizeD
     })
 }
 
-#[cfg(not(target_os = "android"))]
 fn edge_cursor(edge: ResizeDirection) -> CursorIcon {
     match edge {
         ResizeDirection::North => CursorIcon::NResize,
@@ -204,7 +177,6 @@ fn edge_cursor(edge: ResizeDirection) -> CursorIcon {
     }
 }
 
-#[cfg(not(target_os = "android"))]
 impl DropHandler {
     fn new(
         on_dropped: impl Fn(Vec<PathBuf>) + 'static,
@@ -223,11 +195,7 @@ impl DropHandler {
             on_pressed_away: Box::new(on_pressed_away),
             on_focused: Box::new(on_focused),
             on_exiting: Box::new(on_exiting),
-            edges: cfg!(not(any(
-                target_os = "macos",
-                target_os = "windows",
-                target_os = "ios"
-            ))) && !phone(),
+            edges: !phone(),
             edge: None,
         }
     }
@@ -239,7 +207,6 @@ impl DropHandler {
 /// for the keyboard's sake - and when the press is on the input itself,
 /// give or take a few pixels of its padding, which is where a caret is
 /// placed rather than where a field is left.
-#[cfg(not(target_os = "android"))]
 fn press_misses_focused_input(window: &slint::Window, x: f32, y: f32) -> bool {
     use slint::private_unstable_api::re_exports::{LogicalPoint, TextInput, WindowInner};
 
@@ -260,7 +227,6 @@ fn press_misses_focused_input(window: &slint::Window, x: f32, y: f32) -> bool {
     !inside
 }
 
-#[cfg(not(target_os = "android"))]
 impl CustomApplicationHandler for DropHandler {
     fn window_event(
         &mut self,
@@ -368,7 +334,6 @@ impl CustomApplicationHandler for DropHandler {
 /// The Wayland drop listener for `window`, when the window is a Wayland
 /// one: it puts each drop's paths in `arrived` and wakes the event loop,
 /// whose next `about_to_wait` hands them over. None on any other display.
-#[cfg(not(target_os = "android"))]
 fn listen_for_wayland_drops(
     window: &WinitWindow,
     arrived: &std::sync::Arc<std::sync::Mutex<Vec<PathBuf>>>,
@@ -396,35 +361,30 @@ fn listen_for_wayland_drops(
     unsafe { crate::wayland_drop::Listener::start(display.display, surface.surface, sink) }
 }
 
-/// Whether the window draws the macOS traffic lights over its own strip.
-pub const MACOS: bool = cfg!(target_os = "macos");
-
 /// Whether the window is a phone's: one screen, held upright, driven by a
 /// finger. The editor then wears the phone shell (ui/phone/) rather than
 /// the strip and the dock, whatever the screen's size - a tablet is a big
-/// phone here, not a small desk. True on Android and iOS; on a desk,
-/// `CONCAT_PHONE=1` in the environment asks for the same shell in a window,
-/// which is how the phone layout is worked on without a phone. That window
-/// keeps the platform's own title bar - the phone shell has no strip to
-/// drag by and no window buttons, and a phone has no such buttons to show
-/// over its screen - so the desk's chrome sits above the phone's screen,
-/// the way a simulator's does, and never on it.
+/// phone here, not a small desk. `CONCAT_PHONE=1` in the environment asks
+/// for the same shell in a window, which is how the phone layout is worked
+/// on without a phone. That window keeps the platform's own title bar -
+/// the phone shell has no strip to drag by and no window buttons, and a
+/// phone has no such buttons to show over its screen - so the desk's
+/// chrome sits above the phone's screen, the way a simulator's does, and
+/// never on it.
 pub fn phone() -> bool {
-    cfg!(any(target_os = "android", target_os = "ios"))
-        || std::env::var_os("CONCAT_PHONE").is_some_and(|value| !value.is_empty() && value != "0")
+    std::env::var_os("CONCAT_PHONE").is_some_and(|value| !value.is_empty() && value != "0")
 }
 
 /// Chooses and installs the backend, and hands back the device the
 /// renderer and the engine's compositor share, when there is one.
 ///
 /// `on_files_dropped` fires on the event-loop thread with the paths of a
-/// file (or several) dragged in from outside the window - Finder, Explorer,
-/// a file manager - batched into one call per drag. It is taken here,
+/// file (or several) dragged in from outside the window - a file manager -
+/// batched into one call per drag. It is taken here,
 /// before the window exists, because the backend - and the hook into its
 /// event loop that OS drops arrive through - has to be selected before
 /// anything is built on top of it; see [`DropHandler`]. `on_focused` fires
 /// the same way each time the window is brought back to the front.
-#[cfg(not(target_os = "android"))]
 pub fn select_backend(
     on_files_dropped: impl Fn(Vec<PathBuf>) + 'static,
     on_pressed_away: impl Fn() + 'static,
@@ -468,39 +428,14 @@ pub fn select_backend(
     selector = match &gpu {
         Some(gpu) => selector.require_wgpu_30(gpu.configuration()),
         None if software => selector.renderer_name("skia-software".into()),
-        None => {
-            // Without a shared device, ask for the platform's own API by
-            // name: Skia picks its surface from a cfg chain, and requiring
-            // one turns a silent fall back to the CPU rasteriser into a
-            // refusal to start, which is a fault you can see.
-            #[cfg(target_vendor = "apple")]
-            {
-                selector.require_metal()
-            }
-            #[cfg(target_family = "windows")]
-            {
-                selector.require_d3d()
-            }
-            #[cfg(not(any(target_vendor = "apple", target_family = "windows")))]
-            {
-                selector
-            }
-        }
+        None => selector,
     };
 
     // The custom title bar. The window draws its own strip, so the
-    // platform's is not wanted - but each platform is asked in its own way.
+    // platform's is not wanted.
     //
-    // macOS keeps the real title bar and makes it invisible: transparent,
-    // untitled, with the content view under it. That is what keeps the
-    // traffic lights, which are the window's and not ours to draw, and the
-    // strip leaves 80px for them (title-bar.slint).
-    //
-    // Everywhere else the decorations go entirely and the strip carries its
-    // own minimise, maximise and close. On Windows winit keeps WS_SIZEBOX
-    // when the caption goes, so the edges still resize, and the undecorated
-    // shadow keeps the DWM drop shadow the caption would otherwise have
-    // taken with it.
+    // The decorations go entirely and the strip carries its own minimise,
+    // maximise and close.
     //
     // The attributes below are the window's first state; what keeps the
     // decorations off is the Slint window's `no-frame` (app.slint), which
@@ -513,26 +448,6 @@ pub fn select_backend(
     // its own, so the platform's title bar stays, buttons and all, above
     // the phone's screen rather than over it. See `phone`.
     let desk = !phone();
-    #[cfg(target_os = "macos")]
-    if desk {
-        use slint::winit_030::winit::platform::macos::WindowAttributesExtMacOS;
-        selector = selector.with_winit_window_attributes_hook(|attributes| {
-            attributes
-                .with_titlebar_transparent(true)
-                .with_title_hidden(true)
-                .with_fullsize_content_view(true)
-        });
-    }
-    #[cfg(target_os = "windows")]
-    if desk {
-        use slint::winit_030::winit::platform::windows::WindowAttributesExtWindows;
-        selector = selector.with_winit_window_attributes_hook(|attributes| {
-            attributes
-                .with_decorations(false)
-                .with_undecorated_shadow(true)
-        });
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "android")))]
     if desk {
         selector = selector
             .with_winit_window_attributes_hook(|attributes| attributes.with_decorations(false));
@@ -549,68 +464,49 @@ pub fn select_backend(
 
 /// Tells the user the window could not start, in a dialog of the platform's
 /// own, because the console the error would otherwise go to is not one a
-/// double-clicked build has: on Windows a GUI subsystem binary has no
-/// standard error, and the app was exiting with the reason written to
-/// nowhere. The log file is named so the reader has something to attach.
+/// double-clicked build has. The log file is named so the reader has
+/// something to attach.
 /// https://github.com/jub0t/Concat/issues/135
 pub fn report_startup_failure(error: &str) {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        let mut description = format!("Concat could not start.\n\n{error}");
-        if let Some(path) = concat_host::logs::current() {
-            description.push_str(&format!("\n\nLog: {}", path.display()));
-        }
-        rfd::MessageDialog::new()
-            .set_level(rfd::MessageLevel::Error)
-            .set_title("Concat")
-            .set_description(description)
-            .set_buttons(rfd::MessageButtons::Ok)
-            .show();
+    let mut description = format!("Concat could not start.\n\n{error}");
+    if let Some(path) = concat_host::logs::current() {
+        description.push_str(&format!("\n\nLog: {}", path.display()));
     }
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    let _ = error;
+    rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Error)
+        .set_title("Concat")
+        .set_description(description)
+        .set_buttons(rfd::MessageButtons::Ok)
+        .show();
 }
 
-/// Whether the strip should draw its own window buttons: everywhere the
-/// platform's decorations were taken off, which is everywhere but macOS,
-/// where the traffic lights stay the window's.
-pub const OWN_WINDOW_BUTTONS: bool = !MACOS;
-
 /// A shortcut as this platform writes it, from the parts a `@keys` takes:
-/// `["Control", "Shift", "Z"]` reads ⇧⌘Z on a Mac and Ctrl+Shift+Z on
-/// Windows and Linux, because Slint takes `Control` for ⌘ there. The same
-/// parts as the binding in app.slint, so a menu row names the keys that
-/// work on the machine it is shown on.
+/// `"Control", "Shift", "Z"` reads Ctrl+Shift+Z. The same parts as
+/// the binding in app.slint, so a menu row names the keys that work on
+/// the machine it is shown on.
 pub fn keys(parts: &[&str]) -> String {
     slint::Keys::from_parts(parts.iter().copied())
         .map(|keys| keys.to_string())
         .unwrap_or_default()
 }
 
-/// The delete key as this platform writes it: ⌫ on a Mac, Del elsewhere,
+/// The delete key as this platform writes it: Del,
 /// with Shift in front for the ripple delete. Either key deletes
-/// (app.slint); these are the names each platform's own menus use.
+/// (app.slint); these are the names the platform's own menus use.
 pub fn delete_key(shift: bool) -> String {
-    let apple = cfg!(any(target_os = "macos", target_os = "ios"));
-    match (apple, shift) {
-        (true, false) => "⌫".into(),
-        (true, true) => "⇧⌫".into(),
-        (false, false) => "Del".into(),
-        (false, true) => "Shift+Del".into(),
+    if shift {
+        "Shift+Del".into()
+    } else {
+        "Del".into()
     }
 }
 
 /// Minimises the window: the strip's first button.
 pub fn minimize(window: &slint::Window) {
-    #[cfg(not(target_os = "android"))]
-    {
-        use slint::winit_030::WinitWindowAccessor;
-        window.with_winit_window(|window| {
-            window.set_minimized(true);
-        });
-    }
-    #[cfg(target_os = "android")]
-    let _ = window;
+    use slint::winit_030::WinitWindowAccessor;
+    window.with_winit_window(|window| {
+        window.set_minimized(true);
+    });
 }
 
 /// Maximises a window that opened larger than its screen. The window asks
@@ -620,12 +516,7 @@ pub fn minimize(window: &slint::Window) {
 /// handles out of reach, and could not be moved back or made smaller
 /// (#347). Maximised it fills the work area, taskbar and all, and the
 /// title strip's double-click restores it.
-/// macOS shrinks a window to its screen by itself, so there it is left be.
-#[cfg(not(target_os = "android"))]
 fn fit_to_screen(window: &WinitWindow) {
-    if cfg!(target_os = "macos") {
-        return;
-    }
     let Some(monitor) = window.current_monitor() else {
         return;
     };
@@ -646,85 +537,37 @@ fn fit_to_screen(window: &WinitWindow) {
 }
 
 /// Whether the window is currently maximised, for the strip to pick the
-/// maximise or the restore glyph. False where there is no such state.
+/// maximise or the restore glyph.
 pub fn is_maximized(window: &slint::Window) -> bool {
-    #[cfg(not(target_os = "android"))]
-    {
-        use slint::winit_030::WinitWindowAccessor;
-        window
-            .with_winit_window(|window| window.is_maximized())
-            .unwrap_or(false)
-    }
-    #[cfg(target_os = "android")]
-    {
-        let _ = window;
-        false
-    }
-}
-
-/// On Android the activity installed the backend before calling in, and
-/// that backend draws on a device of its own; the monitor composites on the
-/// CPU and hands the renderer finished pixels. Android has no OS drag to
-/// wire up - a file arrives through the document picker instead - so
-/// `on_files_dropped` is taken only to keep the signature the same as the
-/// desktop's and is never called.
-#[cfg(target_os = "android")]
-pub fn select_backend(
-    on_files_dropped: impl Fn(Vec<PathBuf>) + 'static,
-    // Android has no pointer to press away with; the screen's own keyboard
-    // dismisses, and the field goes with it.
-    _on_pressed_away: impl Fn() + 'static,
-    // Nor a window that loses and regains the front: the activity owns the
-    // screen, and a file comes back through the picker.
-    _on_focused: impl Fn() + 'static,
-    // Nor a desktop event loop whose end this hook watches.
-    _on_exiting: impl Fn() + 'static,
-) -> Result<Option<Gpu>, PlatformError> {
-    let _ = on_files_dropped;
-    Ok(None)
+    use slint::winit_030::WinitWindowAccessor;
+    window
+        .with_winit_window(|window| window.is_maximized())
+        .unwrap_or(false)
 }
 
 /// Starts a window drag from the title strip.
 pub fn begin_drag(window: &slint::Window) {
-    #[cfg(not(target_os = "android"))]
-    {
-        use slint::winit_030::WinitWindowAccessor;
-        window.with_winit_window(|window| {
-            let _ = window.drag_window();
-        });
-    }
-    #[cfg(target_os = "android")]
-    let _ = window;
+    use slint::winit_030::WinitWindowAccessor;
+    window.with_winit_window(|window| {
+        let _ = window.drag_window();
+    });
 }
 
 /// Maximises the window, or restores it: the title strip's double-click.
 pub fn toggle_maximize(window: &slint::Window) {
-    #[cfg(not(target_os = "android"))]
-    {
-        use slint::winit_030::WinitWindowAccessor;
-        window.with_winit_window(|window| {
-            window.set_maximized(!window.is_maximized());
-        });
-    }
-    #[cfg(target_os = "android")]
-    let _ = window;
+    use slint::winit_030::WinitWindowAccessor;
+    window.with_winit_window(|window| {
+        window.set_maximized(!window.is_maximized());
+    });
 }
 
 /// Asks for a folder, starting at `start` when there is one.
 pub fn pick_folder(title: &str, start: &str) -> Option<PathBuf> {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        let mut dialog = rfd::FileDialog::new().set_title(title);
-        if let Some(folder) = existing_folder(start) {
-            dialog = dialog.set_directory(folder);
-        }
-        dialog.pick_folder()
+    let mut dialog = rfd::FileDialog::new().set_title(title);
+    if let Some(folder) = existing_folder(start) {
+        dialog = dialog.set_directory(folder);
     }
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        let _ = (title, start);
-        None
-    }
+    dialog.pick_folder()
 }
 
 /// Where a folder dialog asked to start at `start` can open: `start`
@@ -733,390 +576,117 @@ pub fn pick_folder(title: &str, start: &str) -> Option<PathBuf> {
 /// GNOME's chooser (Nautilus, behind the portal) fails on a folder that is
 /// not there, where GTK's quietly opens elsewhere.
 /// https://github.com/jub0t/Concat/issues/331
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn existing_folder(start: &str) -> Option<&std::path::Path> {
     std::path::Path::new(start)
         .ancestors()
         .find(|folder| folder.is_dir())
 }
 
-/// What a phone does when asked for files: shows the system's picker for
-/// the kinds asked for (see [`PickKinds`]) and calls back, later, with what
-/// was chosen - an empty list for nothing. Installed by the phone's own
-/// crate before the window runs; see [`install_file_picker`].
-#[cfg(any(target_os = "android", target_os = "ios"))]
-pub type FilePicker = Box<dyn Fn(PickKinds, Box<dyn FnOnce(Vec<PathBuf>) + Send>) + Send + Sync>;
-
-/// What a phone's picker is asked to offer, from the desktop dialog's
-/// list of extensions: media - some of video, sound and pictures - which
-/// the phone's own pickers know by kind, or files by their extensions
-/// (subtitles, fonts), which a phone's providers type so variously that
-/// the extensions are all there is to go on.
-#[cfg(any(target_os = "android", target_os = "ios", test))]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PickKinds {
-    /// Media, by kind; every kind when no list was given.
-    Media {
-        video: bool,
-        audio: bool,
-        image: bool,
-    },
-    /// Anything else, by extension, lowercase and without the dot.
-    Files(Vec<String>),
-}
-
-#[cfg(any(target_os = "android", target_os = "ios", test))]
-impl PickKinds {
-    /// The kinds a dialog filter's extensions ask for. No filter is every
-    /// kind of media, as Import asks.
-    pub fn of(extensions: Option<&[&str]>) -> Self {
-        let Some(extensions) = extensions.filter(|list| !list.is_empty()) else {
-            return PickKinds::Media {
-                video: true,
-                audio: true,
-                image: true,
-            };
-        };
-        let (mut video, mut audio, mut image) = (false, false, false);
-        for extension in extensions {
-            match media_kind(extension) {
-                Some(MediaKind::Video) => video = true,
-                Some(MediaKind::Audio) => audio = true,
-                Some(MediaKind::Image) => image = true,
-                None => {
-                    return PickKinds::Files(
-                        extensions
-                            .iter()
-                            .map(|ext| ext.to_ascii_lowercase())
-                            .collect(),
-                    );
-                }
-            }
-        }
-        PickKinds::Media {
-            video,
-            audio,
-            image,
-        }
-    }
-}
-
-#[cfg(any(target_os = "android", target_os = "ios", test))]
-enum MediaKind {
-    Video,
-    Audio,
-    Image,
-}
-
-#[cfg(any(target_os = "android", target_os = "ios", test))]
-/// Which kind of media a file with this extension is, if it is media.
-fn media_kind(extension: &str) -> Option<MediaKind> {
-    match extension.to_ascii_lowercase().as_str() {
-        "mp4" | "mov" | "mkv" | "webm" | "avi" | "m4v" | "mts" | "m2ts" | "3gp" => {
-            Some(MediaKind::Video)
-        }
-        "mp3" | "wav" | "aac" | "m4a" | "flac" | "ogg" | "opus" | "aif" | "aiff" => {
-            Some(MediaKind::Audio)
-        }
-        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "tif" | "tiff" | "heic" | "heif"
-        | "svg" | "svgz" => Some(MediaKind::Image),
-        _ => None,
-    }
-}
-
-#[cfg(any(target_os = "android", target_os = "ios"))]
-static FILE_PICKER: std::sync::OnceLock<FilePicker> = std::sync::OnceLock::new();
-
-/// Installs the picker a phone answers [`pick_files_async`] with. Once;
-/// a second call is ignored.
-#[cfg(any(target_os = "android", target_os = "ios"))]
-pub fn install_file_picker(picker: FilePicker) {
-    let _ = FILE_PICKER.set(picker);
-}
-
-/// What a phone does with a finished export: moves the file to where the
-/// phone's own gallery and file manager show it, and says where. The
-/// export itself writes into the app's own folder, which on a phone
-/// nothing but the app can open. Installed by the phone's own crate before
-/// the window runs, where the phone can be asked at all; see
-/// [`install_export_publisher`].
-#[cfg(any(target_os = "android", target_os = "ios"))]
-pub struct ExportPublisher {
-    /// Where the files go, as the phone names it: "Movies/Concat".
-    pub folder: String,
-    /// Moves the file there and answers with its path under the phone's
-    /// storage, or with why it could not, leaving the file where it was.
-    /// It copies a whole video, so it is called off the window's thread.
-    pub publish: Box<dyn Fn(&std::path::Path) -> Result<String, String> + Send + Sync>,
-    /// The same for a small file that is not a video - a subtitle file -
-    /// with its MIME type: moved to where the phone's file manager shows
-    /// it (Android's Download/Concat, the iPhone's Files), never over
-    /// another file, and answered with where, as the person would look
-    /// for it.
-    pub publish_document:
-        Box<dyn Fn(&std::path::Path, &str) -> Result<String, String> + Send + Sync>,
-}
-
-#[cfg(any(target_os = "android", target_os = "ios"))]
-static EXPORT_PUBLISHER: std::sync::OnceLock<ExportPublisher> = std::sync::OnceLock::new();
-
-/// Installs where a phone puts a finished export. Once; a second call is
-/// ignored.
-#[cfg(any(target_os = "android", target_os = "ios"))]
-pub fn install_export_publisher(publisher: ExportPublisher) {
-    let _ = EXPORT_PUBLISHER.set(publisher);
-}
-
-/// Whether the app may record from the microphone, asking when it has not
-/// been told: on a phone, false puts the system's question up and comes
-/// back at once, and the answer is read the next time this is asked.
-/// Installed by the phone's own crate; see [`install_microphone_access`].
-#[cfg(any(target_os = "android", target_os = "ios"))]
-pub type MicrophoneAccess = Box<dyn Fn() -> bool + Send + Sync>;
-
-#[cfg(any(target_os = "android", target_os = "ios"))]
-static MICROPHONE_ACCESS: std::sync::OnceLock<MicrophoneAccess> = std::sync::OnceLock::new();
-
-/// Installs how a phone is asked for its microphone. Once; a second call
-/// is ignored.
-#[cfg(any(target_os = "android", target_os = "ios"))]
-pub fn install_microphone_access(access: MicrophoneAccess) {
-    let _ = MICROPHONE_ACCESS.set(access);
-}
-
-/// Opens a web address in the browser, on a phone. Installed by the phone's
-/// own crate; see [`install_link_opener`].
-#[cfg(target_os = "android")]
-pub type LinkOpener = Box<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
-
-#[cfg(target_os = "android")]
-static LINK_OPENER: std::sync::OnceLock<LinkOpener> = std::sync::OnceLock::new();
-
-/// Installs how a phone opens a web address. Once; a second call is
-/// ignored.
-#[cfg(target_os = "android")]
-pub fn install_link_opener(opener: LinkOpener) {
-    let _ = LINK_OPENER.set(opener);
-}
-
 /// Opens a web address in the system's browser: the launch screen's
-/// guides, the repository, the release notes. A desktop hands it to the
-/// platform's opener; Android to an ACTION_VIEW intent through the
-/// activity, iOS to UIApplication. An address that goes nowhere says why.
+/// guides, the repository, the release notes. An address that goes nowhere
+/// says why.
 pub fn open_link(url: &str) -> Result<(), String> {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        opener::open(url).map_err(|error| error.to_string())
-    }
-    #[cfg(target_os = "android")]
-    {
-        match LINK_OPENER.get() {
-            Some(open) => open(url),
-            None => Err(format!("this device has no browser to open {url} with")),
-        }
-    }
-    #[cfg(target_os = "ios")]
-    {
-        crate::ios::open_link(url)
-    }
+    opener::open(url).map_err(|error| error.to_string())
 }
 
-/// Whether the microphone may be opened now. A desktop asks when the
-/// device opens, which is the system's business, so it is always yes here;
-/// a phone with nothing installed is too, and the device's own error says
-/// the rest.
+/// Whether the microphone may be opened now. The system is asked when the
+/// device opens, which is its own business, so it is always yes here; the
+/// device's own error says the rest.
 pub fn microphone_allowed() -> bool {
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        MICROPHONE_ACCESS.get().is_none_or(|access| access())
-    }
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        true
-    }
+    true
 }
 
 /// Where a finished export ends up on this device when that is not the
-/// folder the export writes into: a phone's "Movies/Concat". None on a
-/// desktop, and on a phone too old to be asked, where the file stays where
-/// the sheet says.
+/// folder the export writes into. None: the file is written where the
+/// person chose.
 pub fn published_folder() -> Option<&'static str> {
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        EXPORT_PUBLISHER
-            .get()
-            .map(|publisher| publisher.folder.as_str())
-    }
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        None
-    }
+    None
 }
 
-/// Hands a finished export to the phone on a thread of its own, and calls
-/// `on_done` with where it went or why it did not - on that thread; the
-/// caller hops to the window's. False when there is nothing to hand it to:
-/// the file stays where it was written, and `on_done` is never called.
+/// Hands a finished export to the platform on a thread of its own, and
+/// calls `on_done` with where it went or why it did not - on that thread;
+/// the caller hops to the window's. False when there is nothing to hand
+/// it to: the file stays where it was written, and `on_done` is never
+/// called.
 pub fn publish_export(
     path: std::path::PathBuf,
     on_done: impl FnOnce(Result<String, String>) + Send + 'static,
 ) -> bool {
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        let Some(publisher) = EXPORT_PUBLISHER.get() else {
-            return false;
-        };
-        std::thread::Builder::new()
-            .name("export publish".into())
-            .spawn(move || on_done((publisher.publish)(&path)))
-            .is_ok()
-    }
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        let _ = (path, on_done);
-        false
-    }
+    let _ = (path, on_done);
+    false
 }
 
 /// [`publish_export`] for a document - a subtitle file - of MIME type
-/// `mime`: handed to the phone on a thread of its own, `on_done` told
-/// where it went or why not. False when there is nothing to hand it to -
-/// a desktop, where the file was written where the person chose, or a
-/// phone too old to be asked - and `on_done` is never called.
+/// `mime`. False: the file was written where the person chose, and
+/// `on_done` is never called.
 pub fn publish_document(
     path: std::path::PathBuf,
     mime: &'static str,
     on_done: impl FnOnce(Result<String, String>) + Send + 'static,
 ) -> bool {
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        let Some(publisher) = EXPORT_PUBLISHER.get() else {
-            return false;
-        };
-        std::thread::Builder::new()
-            .name("document publish".into())
-            .spawn(move || on_done((publisher.publish_document)(&path, mime)))
-            .is_ok()
-    }
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        let _ = (path, mime, on_done);
-        false
-    }
+    let _ = (path, mime, on_done);
+    false
 }
 
 /// Asks for files and calls `on_picked` with them, on whichever thread the
 /// platform answers from - the caller hops to the window's thread itself.
 ///
-/// On a desktop the dialog blocks and the callback runs before this
-/// returns. On a phone the system's picker is another screen: this returns
-/// at once and the callback comes when the picker is dismissed, through
-/// the picker the phone's crate installed. `filter` is the desktop
-/// dialog's; a phone's picker is asked for the same kinds of file, as
-/// [`PickKinds`] reads them from it.
+/// The dialog blocks and the callback runs before this returns. `filter`
+/// names a family and its extensions, and limits the dialog to them.
 pub fn pick_files_async(
     title: &str,
     filter: Option<(&str, &[&str])>,
     on_picked: impl FnOnce(Vec<PathBuf>) + Send + 'static,
 ) {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        if let Some(paths) = pick_files(title, filter) {
-            on_picked(paths);
-        }
-    }
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        let _ = title;
-        let kinds = PickKinds::of(filter.map(|(_, extensions)| extensions));
-        match FILE_PICKER.get() {
-            Some(picker) => picker(kinds, Box::new(on_picked)),
-            None => log::warn!("no file picker on this platform yet"),
-        }
+    if let Some(paths) = pick_files(title, filter) {
+        on_picked(paths);
     }
 }
 
 /// Asks where to write a file, starting in `directory` with `name` filled
 /// in, limited to the family `filter` names. None when the dialog was
-/// dismissed - and on a phone, which has no such dialog: the caller writes
-/// where it would have suggested, and says where.
+/// dismissed.
 pub fn save_file(
     title: &str,
     directory: &std::path::Path,
     name: &str,
     filter: (&str, &[&str]),
 ) -> Option<PathBuf> {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        let (family, extensions) = filter;
-        rfd::FileDialog::new()
-            .set_title(title)
-            .set_directory(directory)
-            .set_file_name(name)
-            .add_filter(family, extensions)
-            .save_file()
-    }
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        let _ = (title, directory, name, filter);
-        None
-    }
+    let (family, extensions) = filter;
+    rfd::FileDialog::new()
+        .set_title(title)
+        .set_directory(directory)
+        .set_file_name(name)
+        .add_filter(family, extensions)
+        .save_file()
 }
 
 /// Asks for files. `filter` names a family and its extensions, and limits
 /// the dialog to them.
 pub fn pick_files(title: &str, filter: Option<(&str, &[&str])>) -> Option<Vec<PathBuf>> {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        let mut dialog = rfd::FileDialog::new().set_title(title);
-        if let Some((name, extensions)) = filter {
-            dialog = dialog.add_filter(name, extensions);
-        }
-        dialog.pick_files()
+    let mut dialog = rfd::FileDialog::new().set_title(title);
+    if let Some((name, extensions)) = filter {
+        dialog = dialog.add_filter(name, extensions);
     }
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        let _ = (title, filter);
-        None
-    }
+    dialog.pick_files()
 }
 
 /// Shows a written file in the platform's file manager.
-///
-/// A phone has no file manager to hand a path to, and says so rather than
-/// appearing to work: a control that silently does nothing is worse than one
-/// that explains itself. The path is in the message, which is the part a
-/// developer on a cable can still use.
 pub fn reveal(path: &str) -> Result<(), String> {
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
-    {
-        opener::reveal(path).map_err(|error| error.to_string())
-    }
-    #[cfg(any(target_os = "android", target_os = "ios"))]
-    {
-        Err(format!(
-            "this device has no file manager to open {path} with"
-        ))
-    }
+    opener::reveal(path).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A menu row names the keys the way the platform it runs on does:
-    /// the Mac's glyphs there, Ctrl and Shift spelled out everywhere else.
+    /// A menu row names the keys the way the platform writes them:
+    /// Ctrl and Shift spelled out.
     #[test]
     fn shortcuts_read_the_way_the_platform_writes_them() {
-        if cfg!(target_os = "macos") {
-            assert_eq!(keys(&["Control", "Shift", "Z"]), "⇧⌘Z");
-            assert_eq!(keys(&["Control", ","]), "⌘,");
-            assert_eq!(delete_key(true), "⇧⌫");
-        } else {
-            assert_eq!(keys(&["Control", "Shift", "Z"]), "Ctrl+Shift+Z");
-            assert_eq!(keys(&["Control", ","]), "Ctrl+,");
-            assert_eq!(delete_key(true), "Shift+Del");
-        }
+        assert_eq!(keys(&["Control", "Shift", "Z"]), "Ctrl+Shift+Z");
+        assert_eq!(keys(&["Control", ","]), "Ctrl+,");
+        assert_eq!(delete_key(true), "Shift+Del");
     }
 
     /// The frame's edges resize, corners diagonally, and the middle of the
@@ -1137,7 +707,6 @@ mod tests {
     /// A folder dialog opens on a folder that exists: a default location
     /// not made yet opens on the folder it would be made in, one that
     /// exists opens as given, and no location asks for none.
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     #[test]
     fn a_folder_dialog_starts_at_a_folder_that_exists() {
         let root = std::env::temp_dir().join(format!("concat-pick-{}", std::process::id()));
@@ -1153,35 +722,5 @@ mod tests {
         );
         assert_eq!(existing_folder(""), None);
         std::fs::remove_dir_all(&root).unwrap();
-    }
-
-    /// A phone's picker is asked for what the desktop dialog would show:
-    /// media by kind, and subtitles or fonts by their extensions - an
-    /// .srt is not media, and a picker that offered only media hid it.
-    #[test]
-    fn a_phone_picker_is_asked_for_the_dialogs_kinds() {
-        let every = PickKinds::Media {
-            video: true,
-            audio: true,
-            image: true,
-        };
-        assert_eq!(PickKinds::of(None), every);
-        assert_eq!(PickKinds::of(Some(&["mp4", "WAV", "png"])), every);
-        assert_eq!(
-            PickKinds::of(Some(&["mp3", "flac"])),
-            PickKinds::Media {
-                video: false,
-                audio: true,
-                image: false,
-            }
-        );
-        assert_eq!(
-            PickKinds::of(Some(&["SRT"])),
-            PickKinds::Files(vec!["srt".to_owned()])
-        );
-        assert_eq!(
-            PickKinds::of(Some(&["ttf", "otf"])),
-            PickKinds::Files(vec!["ttf".to_owned(), "otf".to_owned()])
-        );
     }
 }

@@ -1499,19 +1499,8 @@ fn best_compositor() -> Result<WgpuCompositor, String> {
 /// What an export or a preview says on a machine that offers no GPU and no
 /// software renderer either: on Linux, where the software renderer is a
 /// package away, which package.
-#[cfg(target_os = "linux")]
 const NO_RENDERER: &str = "no GPU or software renderer is available to draw with - install \
      Mesa's Vulkan drivers (lavapipe)";
-
-/// On a phone there is nothing to install: the one GPU it has would not
-/// open, and the log says which and why (#312).
-#[cfg(any(target_os = "android", target_os = "ios"))]
-const NO_RENDERER: &str = "this device's GPU could not be used to draw with";
-
-/// Elsewhere the platform's own software renderer is always there, so
-/// this is a machine whose GPU and fallback both refused.
-#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "ios")))]
-const NO_RENDERER: &str = "no GPU or software renderer is available to draw with";
 
 /// How many times an export's device may die under it before the export
 /// gives up: the first death is answered with a fresh device on the GPU,
@@ -3369,18 +3358,11 @@ mod tests {
         assert!(progress_due(7, PROGRESS_INTERVAL));
     }
 
-    /// Only Linux is told to install a software renderer: a phone has
-    /// nothing to install, and Windows and macOS have theirs built in.
+    /// Linux is told to install a software renderer, which is a package
+    /// away.
     #[test]
-    fn the_no_renderer_advice_fits_the_platform() {
-        assert_eq!(
-            NO_RENDERER.contains("lavapipe"),
-            cfg!(target_os = "linux"),
-            "{NO_RENDERER}"
-        );
-        if cfg!(any(target_os = "android", target_os = "ios")) {
-            assert!(NO_RENDERER.contains("GPU could not be used"));
-        }
+    fn the_no_renderer_advice_names_the_package() {
+        assert!(NO_RENDERER.contains("lavapipe"), "{NO_RENDERER}");
     }
 
     /// Two clips cut at 4 s on one track, the incoming one with two

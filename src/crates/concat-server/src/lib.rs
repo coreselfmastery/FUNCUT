@@ -140,10 +140,6 @@ impl Config {
     /// Refuses a configuration this build or platform cannot serve, or a
     /// token too weak to stand in front of it.
     pub fn check(&self) -> Result<(), String> {
-        #[cfg(not(unix))]
-        if self.socket.is_some() {
-            return Err("a Unix socket needs a Unix".to_owned());
-        }
         #[cfg(not(feature = "grpc"))]
         if self.grpc.is_some() {
             return Err(
@@ -268,7 +264,6 @@ impl Server {
             );
         }
 
-        #[cfg(unix)]
         if let Some(path) = config.socket {
             let shown = path.display().to_string();
             let _ = std::fs::remove_file(&path);
@@ -409,12 +404,11 @@ impl Server {
         }
         self.stop.store(true, Ordering::SeqCst);
         // A blocked accept wakes for a connection; make one - to loopback
-        // when the bind was to every interface, which Windows refuses to
-        // connect to and which would leave the join below waiting for ever.
+        // when the bind was to every interface, which would leave the join
+        // below waiting for ever.
         if let Some(address) = self.json {
             let _ = TcpStream::connect_timeout(&loopback(address), WAKE_PATIENCE);
         }
-        #[cfg(unix)]
         if let Some(path) = &self.socket {
             let _ = std::os::unix::net::UnixStream::connect(path);
         }
@@ -425,7 +419,6 @@ impl Server {
         for thread in self.listeners.drain(..) {
             let _ = thread.join();
         }
-        #[cfg(unix)]
         if let Some(path) = self.socket.take() {
             let _ = std::fs::remove_file(path);
         }

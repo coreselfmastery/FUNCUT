@@ -54,16 +54,13 @@ Point your client at the Concat binary with the one argument `--mcp`.
 
 | System | Command |
 | --- | --- |
-| macOS | `/Applications/Concat.app/Contents/MacOS/concat` |
-| Windows (installed for you) | `%LOCALAPPDATA%\Programs\Concat\concat.exe` |
-| Windows (installed for everyone, or the .msi) | `C:\Program Files\Concat\concat.exe` |
 | Linux (.deb, .rpm, Arch) | `/usr/bin/concat` |
 | Linux (AppImage) | the `.AppImage` file itself |
 
 **Claude Code:**
 
 ```sh
-claude mcp add concat -- /Applications/Concat.app/Contents/MacOS/concat --mcp
+claude mcp add concat -- /usr/bin/concat --mcp
 ```
 
 **Claude Desktop** (Settings > Developer > Edit Config, `claude_desktop_config.json`), and most other clients, which take the same shape:
@@ -72,14 +69,12 @@ claude mcp add concat -- /Applications/Concat.app/Contents/MacOS/concat --mcp
 {
   "mcpServers": {
     "concat": {
-      "command": "/Applications/Concat.app/Contents/MacOS/concat",
+      "command": "/usr/bin/concat",
       "args": ["--mcp"]
     }
   }
 }
 ```
-
-On Windows, write the path with doubled backslashes in JSON: `"C:\\Program Files\\Concat\\concat.exe"`.
 
 ## How it reaches Concat
 
@@ -90,7 +85,7 @@ On Windows, write the path with doubled backslashes in JSON: `"C:\\Program Files
 
 Choose explicitly with `--mcp window` (fail rather than run on its own) or `--mcp headless`; the default is `--mcp auto`. To reach a server elsewhere, set `CONCAT_API_ADDRESS` (e.g. `127.0.0.1:7420`) and `CONCAT_API_TOKEN` in the client's `env` for the server.
 
-Either way the agent writes files - projects, exports, frames - only under your home folder. Set `CONCAT_MCP_ROOTS` (a path list, `:`-separated, `;` on Windows) to allow other folders in headless mode.
+Either way the agent writes files - projects, exports, frames - only under your home folder. Set `CONCAT_MCP_ROOTS` (a path list, `:`-separated) to allow other folders in headless mode.
 
 The agent edits projects of its own; it does not edit the project open in the window while you watch. That ("live mode") is planned in [#337](https://github.com/jub0t/Concat/issues/337).
 

@@ -12007,41 +12007,22 @@ impl Studio {
                     true,
                 ),
                 rule(),
-                // The last row is each platform's own word for leaving:
-                // Close Window on a Mac, where ⌘W is it; Exit on Windows,
-                // where Alt+F4 is; Quit on Linux, with Ctrl+Q. Off the Mac
-                // Ctrl+W closes the document instead, which is the project.
+                // The last row is the platform's own word for leaving:
+                // Quit, with Ctrl+Q. Ctrl+W closes the document instead,
+                // which is the project.
                 row(
                     "close-project",
                     t("studio.closeProject"),
                     Glyph::Import,
-                    &if platform::MACOS {
-                        String::new()
-                    } else {
-                        platform::keys(&["Control", "W"])
-                    },
+                    &platform::keys(&["Control", "W"]),
                     true,
                 ),
                 MenuItemData {
                     id: "close-window".into(),
-                    label: if platform::MACOS {
-                        t("studio.closeWindow")
-                    } else if cfg!(windows) {
-                        t("studio.exit")
-                    } else {
-                        t("studio.quit")
-                    }
-                    .into(),
+                    label: t("studio.quit").into(),
                     kind: MenuRow::Action,
                     glyph: Glyph::Close,
-                    shortcut: if platform::MACOS {
-                        platform::keys(&["Control", "W"])
-                    } else if cfg!(windows) {
-                        platform::keys(&["Alt", "F4"])
-                    } else {
-                        platform::keys(&["Control", "Q"])
-                    }
-                    .into(),
+                    shortcut: platform::keys(&["Control", "Q"]).into(),
                     enabled: true,
                     danger: true,
                     checkable: false,
@@ -12966,8 +12947,6 @@ mod tests {
         let home = std::env::home_dir().expect("a home directory");
         let folder = std::path::PathBuf::from(home_folder("Desktop/Concat"));
         assert_eq!(folder, home.join("Desktop").join("Concat"));
-        #[cfg(windows)]
-        assert!(!folder.to_string_lossy().contains('/'));
     }
 
     /// A quarter turn swaps the bounds' pixel extents, which in fractions

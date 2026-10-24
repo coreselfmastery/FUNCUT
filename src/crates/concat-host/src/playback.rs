@@ -365,25 +365,6 @@ impl Shared {
     }
 }
 
-/// Asks Windows for a millisecond timer while something plays. Its default
-/// tick is 15.6 ms, which turns the window's frame timer into an uneven
-/// 16-or-31 ms beat the picture judders to; elsewhere timers are already
-/// fine-grained.
-fn fine_timer(on: bool) {
-    #[cfg(windows)]
-    // SAFETY: plain calls with a constant period; each begin is paired with
-    // one end by the caller's flag.
-    unsafe {
-        if on {
-            windows_sys::Win32::Media::timeBeginPeriod(1);
-        } else {
-            windows_sys::Win32::Media::timeEndPeriod(1);
-        }
-    }
-    #[cfg(not(windows))]
-    let _ = on;
-}
-
 /// One decode waiting for a worker.
 struct DecodeJob {
     spec: ClipSpec,
@@ -426,8 +407,6 @@ pub struct Playback {
     /// The set most recently sent to the callback, for re-seeding a rebuilt
     /// stream. The supervisor reads it; `resync` writes it.
     last_active: Arc<Mutex<Vec<ActiveClip>>>,
-    /// Whether this holds the fine timer; see [`fine_timer`].
-    fine: AtomicBool,
 }
 
 /// A playback failure the user would otherwise experience as unexplained
@@ -501,7 +480,6 @@ impl Playback {
                 available: Condvar::new(),
             }),
             last_active,
-            fine: AtomicBool::new(false),
         });
 
         for index in 0..DECODE_WORKERS {
@@ -517,9 +495,6 @@ impl Playback {
 
     /// Starts playing from `position` seconds.
     pub fn play(&self, position: f64) {
-        if !self.fine.swap(true, Ordering::Relaxed) {
-            fine_timer(true);
-        }
         self.shared.stamp(position);
         self.shared.playing.store(true, Ordering::Relaxed);
         let _ = self.tx.send(Msg::Play(position.max(0.0)));
@@ -528,9 +503,6 @@ impl Playback {
     /// Stops playing; the position holds.
     pub fn pause(&self) {
         self.shared.playing.store(false, Ordering::Relaxed);
-        if self.fine.swap(false, Ordering::Relaxed) {
-            fine_timer(false);
-        }
         let _ = self.tx.send(Msg::Pause);
     }
 

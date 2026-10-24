@@ -44,7 +44,7 @@
 
 ## Tentang
 
-Concat adalah penyunting video gratis dan sumber terbuka, alternatif CapCut untuk macOS, Windows, Linux, dan Android. Ia mencakup hal-hal yang sebenarnya dicari orang saat membuka CapCut: teks otomatis, teks ke suara, penghapusan latar, animasi keyframe, efek dan judul, pemotongan multi-trek, ekspor 4K. Tanpa jebakan apa pun: tanpa tanda air, tanpa akun, tanpa langganan, tanpa unggahan.
+Concat adalah penyunting video gratis dan sumber terbuka, alternatif CapCut untuk Linux. Ia mencakup hal-hal yang sebenarnya dicari orang saat membuka CapCut: teks otomatis, teks ke suara, penghapusan latar, animasi keyframe, efek dan judul, pemotongan multi-trek, ekspor 4K. Tanpa jebakan apa pun: tanpa tanda air, tanpa akun, tanpa langganan, tanpa unggahan.
 
 Semuanya berjalan lokal di mesin Rust native dengan kompositor GPU. Pasang, jatuhkan rekaman, potong. Model AI untuk teks, suara, dan pemotongan latar diunduh sekali dari Pengaturan dan setelah itu bekerja luring. Rekaman Anda tidak pernah meninggalkan disk Anda.
 
@@ -68,7 +68,7 @@ Semuanya berjalan lokal di mesin Rust native dengan kompositor GPU. Pasang, jatu
 - 📤 **Ekspor.** H.264, HEVC, AV1. Hingga 4K 60, warna 10-bit.
 - 🦀 **Mesin Rust native.** Kompositor GPU, proxy, dekode perangkat keras. 4K digeser dengan mulus.
 - 🤖 **Bisa diskrip.** API JSON-RPC yang bisa dipakai skrip dan agen AI untuk memotong video. Build dari kode sumber menambahkan gRPC dan alat baris perintah.
-- 🖥️ **macOS, Windows, Linux, Android.** 26 bahasa. Aplikasi yang sama, berkas proyek yang sama.
+- 🖥️ **Linux.** 26 bahasa. Aplikasi yang sama, berkas proyek yang sama.
 
 ## Unduh
 
@@ -81,11 +81,7 @@ Concat masih **beta**: ia bekerja, dan masih ada sisi kasarnya. [Beri tahu](http
 
 **Platform**
 
-- ✅ **Windows** · x86_64 (build ARM sedang dijeda, lihat [#326](https://github.com/jub0t/Concat/issues/326)). Sebuah setup dan `.msi`. Jika SmartScreen menghentikan build tanpa tanda tangan: **More info** › **Run anyway**
-- ✅ **macOS** · Intel dan Apple Silicon. Jika macOS menolak membuka build tanpa tanda tangan: `xattr -dr com.apple.quarantine /Applications/Concat.app`
 - ✅ **Linux** · x86_64 dan ARM. `.deb`, `.rpm`, `.AppImage`, dan paket Arch. Juga Flatpak di **[Flatpark](https://flatpark.org/apps/app.concat.editor/)**, remote Flatpak komunitas yang membungkus `.deb` x86_64 setiap rilis dan ikut memperbarui bersamanya
-- ✅ **Android** · ponsel dan tablet
-- ✅ **iOS / iPadOS** · iPhone dan iPad, lewat sideload
 
 ✅ Didukung · 🚧 Dalam pengerjaan · 🧪 Perlu diuji
 

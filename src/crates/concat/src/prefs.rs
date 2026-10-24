@@ -386,13 +386,11 @@ fn salvage(bytes: &[u8]) -> Preferences {
     serde_json::from_value(serde_json::Value::Object(kept)).unwrap_or_default()
 }
 
-/// Writes a new file only this account can read, on Unix; elsewhere as
-/// the platform makes files, which on Windows is the profile's own folder.
+/// Writes a new file only this account can read.
 fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
     let mut file = options.open(path)?;
     file.write_all(bytes)?;
@@ -447,7 +445,6 @@ mod tests {
 
         prefs.save(&dirs);
         assert!(Preferences::load(&dirs).magnetic);
-        #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             let mode = std::fs::metadata(dirs.config.join(FILE))

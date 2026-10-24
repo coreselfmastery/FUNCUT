@@ -173,7 +173,6 @@ impl Drop for Tripwire {
 }
 
 /// Whether process `pid` is running.
-#[cfg(unix)]
 fn alive(pid: u32) -> bool {
     let Ok(pid) = libc::pid_t::try_from(pid) else {
         return false;
@@ -182,32 +181,6 @@ fn alive(pid: u32) -> bool {
     // signalled, and touches no memory of ours.
     let answer = unsafe { libc::kill(pid, 0) };
     answer == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-}
-
-/// Whether process `pid` is running.
-#[cfg(windows)]
-fn alive(pid: u32) -> bool {
-    use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
-    use windows_sys::Win32::System::Threading::{
-        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-    };
-    // SAFETY: a handle opened here, read once and closed once; a null one
-    // (no such process, or one we may not open) is never used.
-    unsafe {
-        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-        if process.is_null() {
-            return false;
-        }
-        let mut code = 0u32;
-        let read = GetExitCodeProcess(process, &mut code);
-        CloseHandle(process);
-        read != 0 && code == STILL_ACTIVE as u32
-    }
-}
-
-#[cfg(not(any(unix, windows)))]
-fn alive(_pid: u32) -> bool {
-    false
 }
 
 #[cfg(test)]
@@ -219,11 +192,9 @@ mod tests {
         let dir =
             std::env::temp_dir().join(format!("concat-tripwire-alive-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
-        // pid 1 is always running on a unix.
-        if cfg!(unix) {
-            std::fs::write(dir.join("running"), "1").expect("writes");
-            assert!(!Tripwire::tripped(&dir), "a live process's mark");
-        }
+        // pid 1 is always running.
+        std::fs::write(dir.join("running"), "1").expect("writes");
+        assert!(!Tripwire::tripped(&dir), "a live process's mark");
         std::fs::write(dir.join("running"), "not a pid").expect("writes");
         assert!(Tripwire::tripped(&dir), "a mark with no process in it");
         let _ = std::fs::remove_dir_all(&dir);

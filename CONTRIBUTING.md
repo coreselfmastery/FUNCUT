@@ -25,8 +25,9 @@ invisible from outside.
 ## Setting up
 
 You will need Rust (see `rust-version` in `src/Cargo.toml`), the FFmpeg
-7+ development libraries (`brew install ffmpeg`; see `src/README.md` for
-Windows and Linux), cmake and a C++ compiler. Then:
+7+ development libraries (see `src/README.md`), cmake and a C++ compiler.
+Or run `./install-linux.sh` from the repo root, which installs all of it.
+Then:
 
 ```sh
 cd src && cargo run -p concat

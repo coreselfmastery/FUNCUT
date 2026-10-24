@@ -376,8 +376,8 @@ impl SoundsPane {
 
     /// The Concat shelf's rows, narrowed to the category picked and the
     /// words typed, best match first: the one search the API's
-    /// `sounds.search` asks too, in `concat_host::sounds::Catalogue::search`
-    /// - the words ANDed and prefix-matched against each sound's name,
+    /// `sounds.search` asks too, in `concat_host::sounds::Catalogue::search` -
+    /// the words ANDed and prefix-matched against each sound's name,
     /// id, category, tags, use-for lines and description, ranked by where
     /// they matched, the name counting most - so the sounds whose names
     /// say the query come first and the ones that merely mention it trail.

@@ -323,12 +323,11 @@ pub fn reset_all(prefs: &mut Preferences) {
 /// away, because a binding that fired first would make the new
 /// shortcut a lie.
 pub fn reserved(chord: &str) -> bool {
-    // Ctrl+O and Ctrl+W are the window's everywhere; the rest only hold
-    // where their bindings are enabled — a Mac's menus and quit are the
-    // system's own.
-    let apple = cfg!(any(target_os = "macos", target_os = "ios"));
+    // Ctrl+O and Ctrl+W are the window's everywhere; the rest hold where
+    // their bindings are enabled - F10 opens the menu bar, Alt+F/E/V its
+    // menus, and Ctrl+Q is the quit the bar's own entry is.
     matches!(chord, "ctrl+o" | "ctrl+w")
-        || (!apple && matches!(chord, "ctrl+q" | "f10" | "alt+f" | "alt+e" | "alt+v"))
+        || matches!(chord, "ctrl+q" | "f10" | "alt+f" | "alt+e" | "alt+v")
 }
 
 /// The chord the key event makes, or `None` when the press is no chord:
@@ -728,11 +727,9 @@ mod tests {
         assert!(!reserved("w"));
         assert!(!reserved("ctrl+z"));
         assert!(!reserved("alt+m"));
-        if cfg!(not(any(target_os = "macos", target_os = "ios"))) {
-            assert!(reserved("f10"));
-            assert!(reserved("alt+f"));
-            assert!(reserved("ctrl+q"));
-        }
+        assert!(reserved("f10"));
+        assert!(reserved("alt+f"));
+        assert!(reserved("ctrl+q"));
     }
 
     #[test]

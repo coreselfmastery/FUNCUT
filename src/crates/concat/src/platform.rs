@@ -628,21 +628,6 @@ pub fn publish_document(
     false
 }
 
-/// Asks for files and calls `on_picked` with them, on whichever thread the
-/// platform answers from - the caller hops to the window's thread itself.
-///
-/// The dialog blocks and the callback runs before this returns. `filter`
-/// names a family and its extensions, and limits the dialog to them.
-pub fn pick_files_async(
-    title: &str,
-    filter: Option<(&str, &[&str])>,
-    on_picked: impl FnOnce(Vec<PathBuf>) + Send + 'static,
-) {
-    if let Some(paths) = pick_files(title, filter) {
-        on_picked(paths);
-    }
-}
-
 /// Asks where to write a file, starting in `directory` with `name` filled
 /// in, limited to the family `filter` names. None when the dialog was
 /// dismissed.

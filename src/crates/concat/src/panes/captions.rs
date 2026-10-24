@@ -301,11 +301,6 @@ impl CaptionsPane {
             .as_ref()
             .map(|session| PathBuf::from(session.path()))
             .unwrap_or_else(|| PathBuf::from(crate::studio::home_folder("Documents")));
-        if cfg!(any(target_os = "android", target_os = "ios")) {
-            let path = unique_path(&folder, &name);
-            self.export_srt(studio, &path);
-            return;
-        }
         let title = t("captions.exportSrt");
         let family = t("captions.subRipSubtitles");
         crate::host::after_dialog(
@@ -654,23 +649,6 @@ fn file_stem(studio: &Studio) -> String {
     } else {
         stem.to_owned()
     }
-}
-
-/// `name` in `dir`, or `name (2)`, `name (3)`... until nothing there is
-/// written over.
-fn unique_path(dir: &Path, name: &str) -> PathBuf {
-    let first = dir.join(name);
-    if !first.exists() {
-        return first;
-    }
-    let (stem, ext) = match name.rfind('.') {
-        Some(dot) if dot > 0 => (&name[..dot], &name[dot..]),
-        _ => (name, ""),
-    };
-    (2..)
-        .map(|n| dir.join(format!("{stem} ({n}){ext}")))
-        .find(|path| !path.exists())
-        .unwrap_or(first)
 }
 
 /// [`CaptionsPane::subject_clip`] with the studio taken out: `selected`

@@ -517,8 +517,8 @@ impl Studio {
 
     /// The bin's id for a music track in this project: its copy in the
     /// project's `bgm` folder, made and imported when it is not there
-    /// yet. The track's id travels in the name - `{title}-{id tail}.mp3`
-    /// - so the same track is always the same file and two different
+    /// yet. The track's id travels in the name - `{title}-{id tail}.mp3` -
+    /// so the same track is always the same file and two different
     /// tracks never share one.
     fn adopt_bgm(&mut self, name: &str, id: &str, path: &PathBuf) -> Result<String, String> {
         let project = self

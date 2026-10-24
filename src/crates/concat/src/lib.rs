@@ -275,12 +275,7 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     let mut studio = Studio::new(host);
     studio.set_phone(phone);
     if safe {
-        let notice = if cfg!(target_os = "android") {
-            "start.safeModePhone"
-        } else {
-            "start.safeMode"
-        };
-        studio.notify(&i18n::t(notice), false);
+        studio.notify(&i18n::t("start.safeMode"), false);
     }
     studio.reload_packages(false);
     studio.watch_packages();
@@ -2646,15 +2641,10 @@ const SAFE_AFTER: std::time::Duration = std::time::Duration::from_secs(15);
 /// The next build tries the GPU again: 0.2.8 kept the CPU for good, and a
 /// Task Manager kill or a crash an update fixed left fast machines drawing
 /// every hover on it (#476). Settings > General's GPU switch goes back
-/// sooner. On Windows and Linux, which have a software rasteriser to draw
-/// on, and on Android, where the safe way is OpenGL ES in place of Vulkan:
-/// a phone whose Vulkan driver dies on the first frame closed on every
-/// launch, and the backend's fall back to OpenGL ES only catches a surface
-/// that fails to open (#507). A Mac has neither.
+/// sooner. Linux has a software rasteriser to draw on - lavapipe, which
+/// the CI carries for exactly this - so the safe way is always a way that
+/// opens (#507).
 fn safe_start() -> (Option<concat_host::jobs::Tripwire>, bool) {
-    if !cfg!(any(windows, target_os = "linux", target_os = "android")) {
-        return (None, false);
-    }
     let Ok(dirs) = concat_host::AppDirs::locate() else {
         return (None, false);
     };

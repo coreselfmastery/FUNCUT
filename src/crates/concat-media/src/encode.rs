@@ -2029,23 +2029,22 @@ mod tests {
                     .map(|(_, value)| std::ffi::OsString::from(value))
             }
         }
-        let desktop = !cfg!(any(target_os = "android", target_os = "ios"));
         assert!(switched_on("hevc_nvenc", env(&[])));
         assert!(switched_on(
             "libx265",
             env(&[("CONCAT_HARDWARE_ENCODE", "0")])
         ));
-        assert_eq!(
-            switched_on("hevc_qsv", env(&[("CONCAT_HARDWARE_ENCODE", "0")])),
-            !desktop
-        );
+        assert!(!switched_on(
+            "hevc_qsv",
+            env(&[("CONCAT_HARDWARE_ENCODE", "0")])
+        ));
         assert!(switched_on(
             "hevc_qsv",
             env(&[("CONCAT_HARDWARE_ENCODE", "1")])
         ));
         for hidden in ["", "-1", " -1,0"] {
             let vars = [("CUDA_VISIBLE_DEVICES", hidden)];
-            assert_eq!(switched_on("av1_nvenc", env(&vars)), !desktop, "{hidden:?}");
+            assert!(!switched_on("av1_nvenc", env(&vars)), "{hidden:?}");
             assert!(switched_on("av1_qsv", env(&vars)), "{hidden:?}");
         }
         assert!(switched_on(

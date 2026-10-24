@@ -331,6 +331,103 @@ pub enum Request {
     },
 
     /// Every effect package the build knows, with its parameters, so a
+    /// The background-music library's state: both shelves - FreePD (the
+    /// Internet Archive's mirror of Kevin MacLeod's CC0 library, ~1,000
+    /// tracks) and Lo-Fi (Moby's MobyGratis instrumentals as the OpenLo-Fi
+    /// pack, 166 tracks) - each "missing" (its list is not on this machine
+    /// yet; `bgm.prepare` brings it, a few MB and a one-time measuring of
+    /// the Lo-Fi zip, then poll this until "ready"), "loading" (with
+    /// `percent`, the Lo-Fi census), "ready" (with `tracks`, how many it
+    /// holds) or "failed" (with `error"). The one `bgm` method that works
+    /// before a shelf is ready.
+    #[serde(rename = "bgm.status")]
+    BgmStatus,
+
+    /// Starts both shelves' one-time catalog fetches in the background and
+    /// returns at once; `bgm.status` reports how far they have got. The
+    /// lists are a few MB and are kept, so a second call on a warm machine
+    /// does nothing; every other `bgm` method refuses until the shelf it
+    /// reads is ready, with words that say so.
+    #[serde(rename = "bgm.prepare")]
+    BgmPrepare,
+
+    /// Searches the background-music library - 1,191 whole CC0 tracks
+    /// across both shelves, with titles, artists, categories and lengths -
+    /// and returns the best matches with everything a caller needs to pick
+    /// one without hearing it: the artist, the grouping, the seconds, the
+    /// fetch cost in bytes, whether it is already on this machine. Every
+    /// filter is optional; a search with none of them set is the library
+    /// as it comes, which is also what `sort` is for.
+    #[serde(rename = "bgm.search")]
+    BgmSearch {
+        /// Words to find in titles, artists and categories. ANDed and
+        /// prefix-matched: "city rain" finds tracks holding both a word
+        /// starting "city" and one starting "rain", best matches first.
+        #[serde(default)]
+        query: Option<String>,
+        /// One shelf only: "freepd" or "lofi"; both when absent.
+        #[serde(default)]
+        source: Option<String>,
+        /// One category only, as the shelf spells it: FreePD's folders
+        /// ("upbeat", "epic", "comedy", "scoring", "world", …) or the
+        /// Lo-Fi pack's own ("chillhop", "late-night",
+        /// "ambient-lofi", …); any when absent.
+        #[serde(default)]
+        category: Option<String>,
+        /// Seconds at least this.
+        #[serde(default)]
+        min_seconds: Option<f64>,
+        /// Seconds at most this.
+        #[serde(default)]
+        max_seconds: Option<f64>,
+        /// How to order: "relevance" (the default with `query`),
+        /// "shortest", "longest" or "surprise" (a different order every
+        /// call). A track whose length is unknown goes last, either way
+        /// round, rather than first.
+        #[serde(default)]
+        sort: Option<String>,
+        /// At most this many tracks, 1-100; 20 when absent.
+        #[serde(default)]
+        limit: Option<u32>,
+        /// Skip this many from the front, for the next page.
+        #[serde(default)]
+        offset: Option<u32>,
+    },
+
+    /// Fetches one track into the app's own cache - FreePD as its own
+    /// file from the Archive, Lo-Fi as one ranged read of exactly that
+    /// track's span out of the pack's 554 MB zip, inflated and checked
+    /// against the CRC the zip itself carries - and says where it landed.
+    /// `track.bytes` of bandwidth, nothing else. Nothing is added to any
+    /// project; import the file with `bgm.import` (or `media.import` on
+    /// the path) when it is wanted on a timeline.
+    #[serde(rename = "bgm.fetch")]
+    BgmFetch {
+        /// The track's id, as `bgm.search` gave it.
+        id: String,
+    },
+
+    /// Fetches tracks and adds them to an open project's bin, each copied
+    /// into the project's own `bgm` folder first so the project owns its
+    /// files. With `start` they are also laid on one lane in the order
+    /// given, as one undoable step; without it they wait in the bin for
+    /// `clips_add_sequence` or `clip_add`. Returns the media ids they were
+    /// given. At most 20 tracks a call.
+    #[serde(rename = "bgm.import")]
+    BgmImport {
+        /// The project folder.
+        path: String,
+        /// The track ids, in the order they should play.
+        ids: Vec<String>,
+        /// Lay them on the timeline from this moment, in sequence.
+        #[serde(default)]
+        start: Option<f64>,
+        /// The lane to lay them on; the first lane with room when absent.
+        #[serde(default)]
+        track: Option<String>,
+    },
+
+    /// Every effect package the build knows, with its parameters, so a
     /// caller can build a valid chain without reading a manifest.
     #[serde(rename = "catalogue.list")]
     CatalogueList {
@@ -503,6 +600,14 @@ pub enum Reply {
     SoundsFound(SoundsFound),
     /// [`Request::SoundsAdd`].
     SoundsAdded(SoundsAdded),
+    /// [`Request::BgmStatus`] and [`Request::BgmPrepare`].
+    Bgm(BgmState),
+    /// [`Request::BgmSearch`].
+    BgmFound(BgmFound),
+    /// [`Request::BgmFetch`].
+    BgmTrack(BgmTrack),
+    /// [`Request::BgmImport`].
+    BgmImported(BgmImport),
     /// [`Request::CatalogueList`].
     Packages(Vec<PackageInfo>),
     /// [`Request::TemplateList`].
@@ -682,6 +787,105 @@ pub struct SoundsAdded {
     pub clip_id: Option<String>,
     /// Where the sound's copy landed inside the project.
     pub file: String,
+    /// The project as it now stands.
+    pub view: Box<EditorView>,
+}
+
+/// The background-music library's state, as `bgm.status` reports it and
+/// `bgm.prepare` starts it towards. Both shelves, because a search reads
+/// both.
+#[derive(Clone, PartialEq, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BgmState {
+    /// The FreePD shelf (the Internet Archive's mirror of Kevin MacLeod's
+    /// CC0 library): "missing", "loading" (with that shelf's `percent`),
+    /// "ready" or "failed" (with `freepdError`).
+    pub freepd: String,
+    /// The Lo-Fi shelf (Moby's MobyGratis instrumentals, as the OpenLo-Fi
+    /// pack): "missing", "loading" (with that shelf's `percent`), "ready"
+    /// or "failed" (with `lofiError`).
+    pub lofi: String,
+    /// How far the slower shelf's one-time work has got, 0-100: the Lo-Fi
+    /// census, which measures every track's place and length out of the
+    /// pack's zip with one small ranged read a track.
+    pub percent: u32,
+    /// How many tracks the FreePD shelf holds, when it is ready.
+    pub freepd_tracks: Option<u64>,
+    /// How many tracks the Lo-Fi shelf holds, when it is ready.
+    pub lofi_tracks: Option<u64>,
+    /// Why a shelf is not usable, when it is not. The shelf's own name
+    /// prefixes the words.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// What `bgm.search` found.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BgmFound {
+    /// The tracks, `limit` of them from `offset` in the order asked for.
+    pub tracks: Vec<BgmTrack>,
+    /// How many match in all, this page aside.
+    pub total: u64,
+}
+
+/// One track of the background-music library, as every `bgm` method hands
+/// it back. Everything but `localPath` comes from the shelf's catalog; the
+/// bytes arrive only when the track is fetched.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BgmTrack {
+    /// The track's id, and the id every verb takes back.
+    pub id: String,
+    /// Which shelf the track is on: "freepd" or "lofi".
+    pub source: String,
+    /// What the card says.
+    pub title: String,
+    /// Who made it, when the catalog says.
+    pub artist: String,
+    /// The shelf's own grouping, lowercase: "upbeat", "comedy",
+    /// "late-night", ... .
+    pub category: String,
+    /// Seconds, as the catalog gives them; `0` when the Lo-Fi census
+    /// could not measure a track, and a duration filter passes such a
+    /// track by rather than guessing at it.
+    pub seconds: f64,
+    /// The track's size in bytes: what fetching it costs.
+    pub bytes: u64,
+    /// Where the track's file is on this machine, once fetched.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_path: Option<String>,
+}
+
+impl BgmTrack {
+    /// The library's own track, as the API hands it back: the same
+    /// numbers, the shelf as a word, and - when the track's bytes are on
+    /// this machine - where they are.
+    pub fn of(track: &concat_host::bgm::Track, local: Option<&std::path::Path>) -> BgmTrack {
+        BgmTrack {
+            id: track.id.clone(),
+            source: match track.source {
+                concat_host::bgm::Source::FreePd => "freepd",
+                concat_host::bgm::Source::Lofi => "lofi",
+            }
+            .to_owned(),
+            title: track.title.clone(),
+            artist: track.artist.clone(),
+            category: track.category.clone(),
+            seconds: track.duration,
+            bytes: track.bytes,
+            local_path: local.map(|path| path.to_string_lossy().into_owned()),
+        }
+    }
+}
+
+/// What `bgm.import` did.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BgmImport {
+    /// The media ids the tracks were given in the project's bin, in the
+    /// order the ids were given in.
+    pub media_ids: Vec<String>,
     /// The project as it now stands.
     pub view: Box<EditorView>,
 }

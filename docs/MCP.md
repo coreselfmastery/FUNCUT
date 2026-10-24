@@ -29,7 +29,25 @@ Music, UI) → `sounds_add` with `start: 0` to lay the sound on a lane in
 one undoable step. The first use of a sound downloads it (a few hundred
 kilobytes at most, checked against its SHA-256) and keeps it in the app's
 cache; every sound is CC0, so nothing asks for attribution.
+### Background music (FreePD and MobyGratis)
 
+The `bgm` tools search 1,191 whole CC0 music tracks on two shelves and
+fetch only what is used. FreePD is the Internet Archive's mirror of Kevin
+MacLeod's CC0 library (~1,000 tracks, grouped as freepd.com grouped them:
+upbeat, epic, comedy, scoring, world…); Lo-Fi is Moby's MobyGratis
+instrumentals as the OpenLo-Fi pack (166 tracks, 10 categories). Nothing
+is bundled: `bgm_prepare` fetches both shelves' catalogs once (a few MB,
+plus a one-time measuring of the Lo-Fi pack's zip, a few seconds; poll
+`bgm_status` until both are `ready`), and a track's audio arrives only
+when it is picked - FreePD as its own file, a Lo-Fi track as **one ranged
+read of exactly that track's span out of the pack's 554 MB zip**, never
+the whole zip. A typical run: `bgm_search` with words and a length
+("city rain", `maxSeconds: 180`, `source: "lofi"`) → `bgm_fetch` to check
+a candidate's `localPath` (or just listen: the same file previews in the
+window) → `bgm_import` with `start: 0` to lay it on a lane in one
+undoable step. `surprise` as the sort is the shuffle that picks when you
+cannot; a track whose length is unknown is passed by a duration filter
+rather than guessed at.
 ## Set it up
 
 Point your client at the Concat binary with the one argument `--mcp`.
@@ -87,6 +105,7 @@ Tools are named for what they do, and their argument schemas are generated from 
 | Media | `media_probe`, `media_import` |
 | Stock clips | `openvid_status`, `openvid_prepare`, `openvid_search`, `openvid_get`, `openvid_fetch`, `openvid_import` |
 | Sound effects | `sounds_search`, `sounds_add` |
+| Music | `bgm_status`, `bgm_prepare`, `bgm_search`, `bgm_fetch`, `bgm_import` |
 | Editing | `clip_add`, `clips_add_sequence`, `clip_trim`, `clips_split`, `clips_move`, `clips_remove`, `clip_update`, `clip_transform`, `clip_speed`, `clip_frame`, `track_add` |
 | Picture | `clip_mask`, `clip_stabilize`, `timeline_background` |
 | Titles and captions | `title_add`, `captions_add` |

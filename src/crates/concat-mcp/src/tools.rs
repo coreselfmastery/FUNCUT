@@ -316,6 +316,45 @@ pub fn catalogue() -> Vec<Tool> {
             Raw,
         ),
         method(
+            "bgm_status",
+            "Music library status",
+            "Where the background-music library stands, shelf by shelf: `freepd` (the Internet Archive's mirror of Kevin MacLeod's CC0 library) and `lofi` (Moby's MobyGratis instrumentals, as the OpenLo-Fi pack) are each \"missing\" (their list is not on this machine yet - call `bgm_prepare` once, a few MB, then poll this until \"ready\"), \"loading\" (with `percent`: the one-time measuring of the Lo-Fi zip, a few seconds), \"ready\" (with `freepdTracks`/`lofiTracks`, how many each holds: 1,025 and 166) or \"failed\" (with `error`). 1,191 whole CC0 tracks in all; none of them in the repository - a track's bytes move only when it is picked.",
+            "bgm.status",
+            Raw,
+        )
+        .reading(),
+        method(
+            "bgm_prepare",
+            "Load the music library",
+            "Starts both shelves' one-time catalog fetches and returns at once; poll `bgm_status` until both are \"ready\". The FreePD list is the Archive item's own file listing (~1 MB) and the Lo-Fi list is the pack's manifest, beside which every track's place and length in the pack's 554 MB zip is measured once with one small ranged read a track (the `percent` you watch). Nothing else downloads anything: every other `bgm` tool refuses until the shelf it reads is ready.",
+            "bgm.prepare",
+            Raw,
+        )
+        .idempotent(),
+        method(
+            "bgm_search",
+            "Search music",
+            "Searches 1,191 whole CC0 background-music tracks by what their titles, artists and categories say, without hearing anything: each match carries the title, the artist (Kevin MacLeod, Moby, Rafael Krux, ...), the category (FreePD's own folders - upbeat, epic, comedy, scoring, world, ... - and the Lo-Fi pack's - chillhop, late-night, ambient-lofi, ...), `seconds`, `bytes` (the fetch cost), whether it is already on this machine (`localPath`), and which shelf it is on (`source`: freepd or lofi). Every filter is optional: `query` words are ANDed and prefix-matched (\"city rain\"), `source` is freepd/lofi, `category` takes a shelf's own spelling, `minSeconds`/`maxSeconds` set the length (a track whose length is unknown is passed by rather than guessed at), and `sort` is relevance/shortest/longest/surprise. Returns up to `limit` (default 20, at most 100) from `offset`, with `total` saying how many match in all.",
+            "bgm.search",
+            Raw,
+        )
+        .reading(),
+        method(
+            "bgm_fetch",
+            "Fetch a track",
+            "Fetches one track into the app's own cache - FreePD as its own file from the Archive, Lo-Fi as one ranged read of exactly that track's span out of the pack's 554 MB zip, inflated and checked against the CRC the zip itself carries - and returns the track with `localPath`, its absolute path on this machine. `track.bytes` of bandwidth, nothing else. Adds nothing to any project; `bgm_import` or `media_import` is what puts it in an edit.",
+            "bgm.fetch",
+            Raw,
+        )
+        .idempotent(),
+        method(
+            "bgm_import",
+            "Import music",
+            "Fetches tracks and adds them to an open project's media bin, each copied into the project's own `bgm` folder first so the project owns its files. With `start` (seconds) they are also laid on one lane in the order given, as one undoable step - `track` names the lane, or the first with room when absent. Returns `mediaIds` and the project summary; without `start`, place them with `clips_add_sequence` or `clip_add`. At most 20 tracks a call.",
+            "bgm.import",
+            Raw,
+        ),
+        method(
             "edit_apply",
             "Apply an edit",
             "Applies any one edit command to an open project, as one undoable step. `command` is an object tagged by `op` - every edit the window can make is one, with the same limits and refusals; the typed tools below are the common ones. `{\"op\": \"batch\", \"commands\": [...]}` applies several commands as one atomic, undoable step: all land or none does, and `createdId` is the last id minted inside. A refusal comes back as the sentence the window would show, with nothing changed. Returns the project summary; a command that creates something puts its id in `createdId`.",
@@ -1052,6 +1091,17 @@ mod tests {
             (
                 "sounds_add",
                 json!({ "path": "/tmp/Cut", "id": "impact-glass-heavy", "start": 0.0 }),
+            ),
+            ("bgm_status", json!({})),
+            ("bgm_prepare", json!({})),
+            (
+                "bgm_search",
+                json!({ "query": "city rain", "source": "lofi", "category": "late-night", "limit": 10 }),
+            ),
+            ("bgm_fetch", json!({ "id": "lofi-0123456789ab" })),
+            (
+                "bgm_import",
+                json!({ "path": "/tmp/Cut", "ids": ["lofi-0123456789ab"], "start": 0.0 }),
             ),
             (
                 "edit_apply",

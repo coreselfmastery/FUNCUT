@@ -256,3 +256,31 @@ License. The still lives at `src/crates/concat-host/assets/card-still.jpg`
 and is embedded in the app; each card is the effect's own shader run over
 it on the GPU when the app first needs the card (`concat-host`'s
 `cards.rs`).
+
+## The background-music library (FreePD and MobyGratis)
+
+The library's Music page (#71) serves two shelves of whole tracks, fetched
+on demand from their own publishers and never bundled with the app or held
+in this repository.
+
+**FreePD** (~1,000 tracks) is Kevin MacLeod's CC0 library, fetched from the
+Internet Archive's mirror of the site (https://archive.org/details/freepd),
+which is the source freepd.com itself pointed at before it closed. The
+catalog is the Archive item's own file listing; each track is the item's
+own file. The tracks are CC0 1.0 (public domain), contributed by Kevin
+MacLeod, Frank Nora, Alexander Nakarada, Rafael Krux, Bryan Teoh, Komiku,
+Monplaisir, *imp*, DimensionBucket, Magdalen, Hussalonia, Manny the
+Martyr and others; the app names each track's artist on its card, which
+CC0 does not require and the library does anyway. FreePD:
+https://freepd.com (site closed; the Archive item is the source).
+
+**Lo-Fi** (166 tracks) is Moby's MobyGratis instrumentals, republished as
+the OpenLo-Fi pack (https://github.com/btahir/open-lofi) under CC0 1.0,
+with Moby's own blessing at https://mobygratis.com. The catalog is the
+pack's own manifest and the tracks are read, one ranged read each, out of
+the pack's single zip on its GitHub release; the app credits each track
+to "Moby (MobyGratis)". MobyGratis: https://mobygratis.com.
+
+Nothing here is redistributed by this repository: the URLs are constants
+in `src/crates/concat-host/src/bgm.rs`, and what a user's machine fetches
+is kept in that machine's own cache. See `docs/BGM.md`.

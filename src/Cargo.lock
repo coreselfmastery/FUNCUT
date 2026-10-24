@@ -1253,6 +1253,8 @@ dependencies = [
  "concat-text",
  "concat-vision",
  "cpal",
+ "crc32fast",
+ "flate2",
  "libc",
  "log",
  "memmap2",

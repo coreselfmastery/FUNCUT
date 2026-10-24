@@ -8,8 +8,9 @@ because the point of the changes is that the *machine decides* now.
 
 Three kinds of change live here: **memory sizing** (the caches that had one
 fixed size now scale to the machine) and **three new features** (the OpenVid
-stock library, pause removal for voiceovers, and the built-in CC0 sound
-library). Everything else in the program is upstream's own, including
+stock library, the background-music library, pause removal for
+voiceovers, and the built-in CC0 sound library). Everything else in the
+program is upstream's own, including
 its existing small-machine machinery: proxies for large files, preview quality
 tiers, hardware decode where it wins, and the swap-friendly design of the
 playback cache.
@@ -104,7 +105,48 @@ vertical timeline. Search words are matched over the first 300 characters
 of each caption - the scene descriptions - and everything past that is
 one `openvid_get` away.
 
-## 3. The feature: pause removal for voiceovers
+## 3. The feature: the background-music library
+
+The library pane grew a fifth page beside Media, Audio and OpenVid:
+**Music** - 1,191 whole CC0 background tracks on two shelves, searched
+locally, fetched one track at a time. FreePD is the Internet Archive's
+mirror of Kevin MacLeod's CC0 library (~1,000 tracks, grouped the way
+freepd.com grouped them); Lo-Fi is Moby's MobyGratis instrumentals as the
+OpenLo-Fi pack (166 tracks, 10 categories). Both shelves are scriptable:
+five `bgm.*` tools on the MCP server and JSON-RPC API, so a person and an
+agent see one library.
+
+**How it stays small.** Nothing is bundled - not in the app, not in this
+repository. A shelf's catalog arrives once (the Archive item's own file
+listing, ~1 MB; the pack's own manifest, ~30 KB) and is kept, and a
+track's audio arrives only when the track is picked, into `<data>/bgm`.
+The Lo-Fi pack's whole audio sits in one 554 MB zip on a GitHub release,
+and that zip honours byte ranges - so the library reads the zip's own
+central directory once (~80 KB), measures every member's place and length
+from its own headers (one ~4 KB ranged read a track, five at a time,
+kept), and fetches a track as **one ranged read of exactly that track's
+span**, inflated and checked against the CRC the zip itself carries. The
+other 550 MB never moves; a small machine's disk never holds it either.
+
+**What it costs on a small machine.** The catalogs are JSON held as one
+`Vec` per shelf - a page of results is forty tracks - and nothing about
+the library is resident beyond that and the tracks this machine has
+actually played. The FreePD listing is 1 MB on the network once; the
+Lo-Fi census is ~700 KB of ranged reads once; every fetch after that is
+a single track's own size.
+
+**The honest parts.** The zip and the manifest are pinned to the same
+release tag, and a kept zip index is believed only while the live zip
+still says the same total size - a zip that disagrees is read again
+rather than misread. A Lo-Fi track's playing time is measured from its
+own first MPEG frames (a Xing header's frame count exactly, a plain
+frame's bitrate as the estimate a CBR track deserves); a track whose
+length could not be measured is passed by a duration filter rather than
+guessed at, and its card says "?" rather than a number. Nothing on
+either shelf pays a licence: both are CC0 1.0, each card names its
+artist, and `THIRD_PARTY_NOTICES.md` says where every byte comes from.
+
+## 4. The feature: pause removal for voiceovers
 
 Upstream records voiceovers well - count-in, teleprompter, retake, landing
 the take on a lane under the picture - but cutting the pauses out of a take
@@ -158,7 +200,7 @@ anything but a constant-speed clip - a clip with a speed curve is not one a
 pause's place can be mapped onto, so the button waits until that is not the
 case.
 
-## 4. The feature: the built-in sound library
+## 5. The feature: the built-in sound library
 
 Upstream's Audio page has a Mine shelf and a design for a shelf of Concat's
 own sounds, held back on "coming soon" because the assets repository it
@@ -206,7 +248,7 @@ curated pack actually carries - so nothing from the paid-for or
 attribution-required libraries can appear on it; those still belong on the
 Mine shelf, imported by hand, where they stay the user's own files.
 
-## 3. The Intel graphics question, answered honestly
+## 6. The Intel graphics question, answered honestly
 
 A Celeron's integrated GPU (Intel UHD/HD Graphics) is already used by this
 program exactly where it helps, and deliberately not where it does not:
@@ -236,7 +278,7 @@ program exactly where it helps, and deliberately not where it does not:
   default is the CPU, and the proxy system covers 4K sources with
   quarter-size copies that decode smoothly anywhere.
 
-## 5. Everything else: verified, not changed
+## 7. Everything else: verified, not changed
 
 The rest of the fork's work was verification, and it is worth saying what
 that means concretely. The full engine test suites were run against every
@@ -254,7 +296,7 @@ that touch it are the memory table above (which changes *how much* is held,
 never what is computed) and `removeSpans`, which is exercised by the eleven
 engine tests listed above, including the keyframe and fade sharing.
 
-## 6. The files
+## 8. The files
 
 | File | What it is |
 | --- | --- |
@@ -270,5 +312,10 @@ engine tests listed above, including the keyframe and fade sharing.
 | `src/crates/concat-host/src/models.rs`, `sounds.rs` | the manifest and mirror URLs point at this fork; the `tags` a search narrows by |
 | `src/crates/concat-api/`, `src/crates/concat-mcp/` | the `sounds.search` / `sounds.add` methods and tools |
 | `src/crates/concat/src/panes/sounds.rs`, `ui/workspace/media-pane.slint`, `audio-page.slint`, `locales/` | the shelf's sidebar row, search field, category filter and words |
+| `src/crates/concat-host/src/bgm.rs` | new: the music library - catalogs, ranged reads, search, tests |
+| `src/crates/concat/src/panes/bgm.rs` | new: the Music page's wiring |
+| `src/crates/concat/ui/workspace/bgm-page.slint` | new: the Music page itself |
+| `src/crates/concat-api`, `src/crates/concat-mcp` | the `bgm.*` methods and the five agent tools |
+| `docs/BGM.md` | the music library's own page |
 | `src/crates/concat-export/`, `src/crates/concat-cli/` | pools sized for the machine |
 | `install-linux.sh`, `docs/FUNCUT.md` | the one-line installer; the small-machine notes |

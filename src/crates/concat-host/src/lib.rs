@@ -19,6 +19,7 @@
 //! Nothing here knows about a window. Long work reports through callbacks
 //! and cancels through flags, and the caller decides which thread it runs on.
 
+pub mod bgm;
 pub mod brush;
 pub mod cards;
 pub mod consolidate;

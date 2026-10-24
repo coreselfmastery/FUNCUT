@@ -14,6 +14,7 @@
 //! The panes move here one at a time from the window's controller; the
 //! export sheet is the first, and the shape the rest follow.
 
+pub mod bgm;
 pub mod captions;
 pub mod export;
 pub mod glide;
@@ -59,6 +60,8 @@ pub enum Msg {
     Sounds(sounds::SoundsMsg),
     /// To the library's OpenVid page.
     Openvid(openvid::OpenvidMsg),
+    /// To the library's Music page.
+    Music(bgm::MusicMsg),
 }
 
 /// What a message says in the log: the activity trail of what the person
@@ -92,6 +95,7 @@ pub fn activity(msg: &Msg) -> Option<Activity> {
         | Msg::Captions(CaptionsMsg::Progress(_))
         | Msg::Speech(SpeechMsg::Progress(_))
         | Msg::Openvid(openvid::OpenvidMsg::Tick)
+        | Msg::Music(bgm::MusicMsg::Tick)
         | Msg::Settings(SettingsMsg::ModelProgress { .. } | SettingsMsg::InstallProgress { .. }) => {
             return None;
         }
@@ -154,6 +158,36 @@ pub fn activity(msg: &Msg) -> Option<Activity> {
                 format!(
                     "openvid: clip {id} fetched, {:?}",
                     if *then == openvid::Then::Preview {
+                        "to preview"
+                    } else {
+                        "to the timeline"
+                    }
+                ),
+            ));
+        }
+        Msg::Music(bgm::MusicMsg::Download) => {
+            return Some(Activity::once(
+                Info,
+                "music: the catalogs' download began".to_owned(),
+            ));
+        }
+        Msg::Music(bgm::MusicMsg::Searched(result, _)) => {
+            return Some(Activity::once(
+                Info,
+                match result {
+                    Ok(found) => {
+                        format!("music: {} of {} tracks", found.tracks.len(), found.total)
+                    }
+                    Err(error) => format!("music: the search failed, {error}"),
+                },
+            ));
+        }
+        Msg::Music(bgm::MusicMsg::Fetched(id, Ok(_), then)) => {
+            return Some(Activity::once(
+                Info,
+                format!(
+                    "music: track {id} fetched, {:?}",
+                    if *then == bgm::Then::Preview {
                         "to preview"
                     } else {
                         "to the timeline"

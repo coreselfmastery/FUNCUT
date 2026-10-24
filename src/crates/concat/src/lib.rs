@@ -94,6 +94,7 @@ mod wayland_drop {
 use dock::{Dock, SEAT_MIN_GRAB, SEAT_MIN_H, SEAT_MIN_W};
 use host::{Host, Shell};
 use panes::Msg;
+use panes::bgm::MusicMsg;
 use panes::captions::CaptionsMsg;
 use panes::export::ExportMsg;
 use panes::media_bin::MediaMsg;
@@ -451,6 +452,10 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
             .set_results(ModelRc::from(models.openvid_results.clone()));
         app.global::<crate::ui::OpenVid>()
             .set_cameras(ModelRc::from(models.openvid_cameras.clone()));
+        app.global::<crate::ui::Music>()
+            .set_results(ModelRc::from(models.music_results.clone()));
+        app.global::<crate::ui::Music>()
+            .set_categories(ModelRc::from(models.music_categories.clone()));
         app.global::<Sounds>()
             .set_voices_builtin(ModelRc::from(models.voices_builtin.clone()));
         app.global::<Sounds>()
@@ -1507,6 +1512,34 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         }));
         openvid.on_shown(on_window!(|state, on: bool| {
             state.handle(Msg::Openvid(OpenvidMsg::Shown(on)));
+        }));
+
+        // ── the library's Music page ──
+        let music = app.global::<crate::ui::Music>();
+        music.on_search(on_window!(
+            |state, query: SharedString, source: i32, category: i32, order: i32| {
+                state.handle(Msg::Music(MusicMsg::Search {
+                    query: query.to_string(),
+                    source,
+                    category,
+                    order,
+                }));
+            }
+        ));
+        music.on_more_loaded(on_window!(|state| {
+            state.handle(Msg::Music(MusicMsg::More));
+        }));
+        music.on_preview(on_window!(|state, id: SharedString| {
+            state.handle(Msg::Music(MusicMsg::Preview(id.to_string())));
+        }));
+        music.on_add(on_window!(|state, id: SharedString| {
+            state.handle(Msg::Music(MusicMsg::Add(id.to_string())));
+        }));
+        music.on_download(on_window!(|state| {
+            state.handle(Msg::Music(MusicMsg::Download));
+        }));
+        music.on_shown(on_window!(|state, on: bool| {
+            state.handle(Msg::Music(MusicMsg::Shown(on)));
         }));
 
         sounds.on_voice_remove(on_window!(|state, id: SharedString| {

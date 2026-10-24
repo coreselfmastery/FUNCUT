@@ -45,6 +45,14 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 # The index's captions are zstd-compressed against a dictionary the index
 # itself carries; decompressed a page at a time, never whole.
 zstd = "0.14"
+# The background-music library's Lo-Fi shelf reads its tracks out of the
+# pack's one zip on a GitHub release with ranged reads: the members are
+# deflated, and each one is inflated and checked against the CRC the zip's
+# own directory carries. The Rust backend, so no C is built for it.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+# The same CRC-32 the zip carries, to check a fetched track against: the
+# crate flate2's own backend already brings in, named here for what it is.
+crc32fast = "1"
 # The log facade. The engine writes `log::warn!` and logs.rs is what puts
 # the line in a file; a phone puts it in logcat as well.
 log = { version = "0.4", features = ["std"] }

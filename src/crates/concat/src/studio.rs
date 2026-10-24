@@ -687,6 +687,9 @@ pub struct Models {
     pub sounds_mine: Rc<VecModel<crate::ui::SoundCardData>>,
     pub openvid_results: Rc<VecModel<crate::ui::OpenvidCardData>>,
     pub openvid_cameras: Rc<VecModel<SharedString>>,
+    /// The Music page's list and its category filter.
+    pub music_results: Rc<VecModel<crate::ui::MusicCardData>>,
+    pub music_categories: Rc<VecModel<SharedString>>,
     pub voices_saved: Rc<VecModel<crate::ui::VoiceCardData>>,
     pub sounds_concat: Rc<VecModel<crate::ui::SoundCardData>>,
     pub voices_builtin: Rc<VecModel<crate::ui::VoiceCardData>>,
@@ -768,6 +771,8 @@ impl Models {
             sounds_mine: Rc::new(VecModel::default()),
             openvid_results: Rc::new(VecModel::default()),
             openvid_cameras: Rc::new(VecModel::default()),
+            music_results: Rc::new(VecModel::default()),
+            music_categories: Rc::new(VecModel::default()),
             voices_saved: Rc::new(VecModel::default()),
             sounds_concat: Rc::new(VecModel::default()),
             voices_builtin: Rc::new(VecModel::default()),
@@ -1029,6 +1034,8 @@ pub struct Studio {
     /// The library's Audio page: the user's own sounds.
     pub sounds: crate::panes::sounds::SoundsPane,
     pub openvid: crate::panes::openvid::OpenvidPane,
+    /// The library's Music page: the background-music library.
+    pub music: crate::panes::bgm::MusicPane,
     /// A file from the library lent the monitor and the speakers; see
     /// `crate::source`.
     pub source: Option<crate::source::Source>,
@@ -2399,6 +2406,7 @@ impl Studio {
             speech: crate::panes::speech::SpeechPane::with_saved(&host.dirs),
             sounds: crate::panes::sounds::SoundsPane::open(&host.dirs),
             openvid: crate::panes::openvid::OpenvidPane::open(&host.dirs),
+            music: crate::panes::bgm::MusicPane::open(&host.dirs),
             source: None,
             meters: crate::meters::MeterFeed::default(),
             voiceover: crate::panes::voiceover::VoiceoverPane::default(),
@@ -8791,6 +8799,11 @@ impl Studio {
                 pane.update(msg, self);
                 self.openvid = pane;
             }
+            crate::panes::Msg::Music(msg) => {
+                let mut pane = std::mem::take(&mut self.music);
+                pane.update(msg, self);
+                self.music = pane;
+            }
             crate::panes::Msg::Relink(msg) => {
                 let mut pane = std::mem::take(&mut self.relink);
                 pane.update(msg, self);
@@ -11446,6 +11459,67 @@ impl Studio {
                     .map(|camera| SharedString::from(camera.as_str())),
             );
             sync(&models.openvid_cameras, cameras);
+        }
+        // The Music page.
+        sync(&models.music_results, self.music.rows());
+        {
+            let page = app.global::<crate::ui::Music>();
+            // The page's one word for the shelves, as the pane works it
+            // out: 0 both missing, 1 a load running, 2 a shelf ready,
+            // 3 both failed.
+            page.set_state(self.music.combined());
+            // The per-cent that names the loading is the Lo-Fi census -
+            // the FreePD listing is one file that arrives in a moment -
+            // and the words that go with a failure name the shelf that
+            // failed, whichever it was.
+            let percent = match &self.music.lofi {
+                concat_host::bgm::Status::Loading(percent) => *percent,
+                _ => match &self.music.freepd {
+                    concat_host::bgm::Status::Loading(percent) => *percent,
+                    _ => 0,
+                },
+            };
+            let error = [(&self.music.freepd, "FreePD"), (&self.music.lofi, "Lo-Fi")]
+                .into_iter()
+                .filter_map(|(status, shelf)| match status {
+                    concat_host::bgm::Status::Failed(error) => {
+                        Some(format!("{shelf}: {error}"))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            page.set_percent(percent as i32);
+            page.set_error(SharedString::from(error.as_str()));
+            page.set_freepd_rows(
+                self.music
+                    .rows(concat_host::bgm::Source::FreePd)
+                    .map_or_else(SharedString::default, |rows| {
+                        SharedString::from(thousands(rows).as_str())
+                    }),
+            );
+            page.set_lofi_rows(
+                self.music
+                    .rows(concat_host::bgm::Source::Lofi)
+                    .map_or_else(SharedString::default, |rows| {
+                        SharedString::from(thousands(rows).as_str())
+                    }),
+            );
+            page.set_searching(self.music.searching);
+            page.set_total(SharedString::from(thousands(self.music.total).as_str()));
+            page.set_more((self.music.results.len() as u64) < self.music.total);
+            // "Any category" leads the list, so 0 is that and the rest
+            // are both shelves' own groupings, each with its first letter
+            // standing up.
+            let mut categories =
+                vec![SharedString::from(crate::i18n::t("bgm.anyCategory"))];
+            categories.extend(
+                self.music
+                    .categories
+                    .iter()
+                    .map(|(_, shown)| SharedString::from(shown.as_str())),
+            );
+            sync(&models.music_categories, categories);
         }
         let (saved, builtin, styles, ready) = self.voice_cards();
         sync(&models.voices_saved, saved);

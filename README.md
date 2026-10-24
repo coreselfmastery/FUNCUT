@@ -66,6 +66,7 @@ Everything runs locally on a native Rust engine with a GPU compositor. Install i
 - 🧍 **Background removal.** People, objects, or paint the mask yourself.
 - 🎞️ **Keyframes.** Position, scale, rotation, opacity, volume, effect parameters. Curve editor built in.
 - ✨ **100 effects, filters and transitions.** GPU-rendered, live in the preview.
+- 🎵 **A music library that costs nothing to hold.** 1,191 whole CC0 background tracks on two shelves - FreePD (Kevin MacLeod and friends) and Moby's MobyGratis instrumentals - searched locally, fetched one track at a time. The Lo-Fi pack's 554 MB zip is never downloaded: each of its tracks is one ranged read of exactly that track's span.
 - ✂️ **Cut fast.** Split, trim, ripple, merge, freeze frame, speed. Magnetic timeline if you want it.
 - 🎚️ **Multi-track, multi-timeline.** Several cuts in one project. Blend modes, crop, flips.
 - 📝 **Titles.** Fonts, stroke, shadow, background plate. Presets to start from.

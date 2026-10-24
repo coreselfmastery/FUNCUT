@@ -15,6 +15,8 @@ import { ContextMenu, MenuItemData } from "../primitives/context-menu.slint";
 import { SourcePreview } from "source-preview.slint";
 import { Sounds, SoundList, VoiceList } from "audio-page.slint";
 import { OpenVid, OpenVidList, OpenVidStatus } from "openvid-page.slint";
+import { Music, MusicList, MusicStatus } from "bgm-page.slint";
+import { Music, MusicList, MusicStatus } from "bgm-page.slint";
 
 export { SourcePreview }
 
@@ -1900,6 +1902,7 @@ export component MediaPane inherits Rectangle {
     changed tab => {
         Sounds.shown(root.tab == 8);
         OpenVid.shown(root.tab == 9);
+        Music.shown(root.tab == 10);
     }
     property <bool> openvid-shelves-open: true;
     property <bool> openvid-shapes-open: true;
@@ -1923,6 +1926,18 @@ export component MediaPane inherits Rectangle {
             Sounds.concat-query-changed(Sounds.concat-query);
         }
     }
+    // The Music search's debounce, for the same reason.
+    music-debounce := Timer {
+        interval: 350ms;
+        running: false;
+        triggered => {
+            Music.search(Music.query, Music.source, Music.category, Music.order);
+        }
+    }
+    /// The Music page's sidebar: the shelves. The category list is the
+    /// page header's, where a category costs more room than the sidebar
+    /// has and the shelves' own names are the sidebar's worth of it.
+    property <bool> music-shelves-open: true;
     /// The Audio page's shelf: 0 = Mine, 1 = the built-in Concat sounds,
     /// 10 = Voices, 11 = Styles.
     property <int> audio-category;
@@ -2068,6 +2083,14 @@ export component MediaPane inherits Rectangle {
                             label: I18n.t("openvid.openvid");
                             current: root.tab == 9;
                             clicked => { root.tab = 9; }
+                        }
+                        // Beside the stock library: the music library,
+                        // where CapCut keeps its own.
+                        LibraryTab {
+                            glyph: Glyph.music;
+                            label: I18n.t("bgm.music");
+                            current: root.tab == 10;
+                            clicked => { root.tab = 10; }
                         }
                         LibraryTab {
                             glyph: Glyph.text-mark;
@@ -2389,6 +2412,37 @@ export component MediaPane inherits Rectangle {
                             label: I18n.t("openvid.horizontalShape");
                             current: OpenVid.shape == 3;
                             clicked => { OpenVid.shape = 3; OpenVid.search(OpenVid.query, OpenVid.source, OpenVid.shape, OpenVid.duration, OpenVid.quality, OpenVid.camera, OpenVid.order); }
+                        }
+                    }
+
+                    // Music: the two shelves. The categories are the page
+                    // header's Select, where a whole list of them has the
+                    // room to be scrolled past.
+                    if root.tab == 10: VerticalLayout {
+                        spacing: 1px;
+                        CategoryHeading {
+                            height: 26px;
+                            title: I18n.t("bgm.shelves");
+                            open: root.music-shelves-open;
+                            toggled => { root.music-shelves-open = !root.music-shelves-open; }
+                        }
+                        if root.music-shelves-open: CategoryRow {
+                            height: 24px;
+                            label: I18n.t("bgm.allShelves");
+                            current: Music.source == 0;
+                            clicked => { Music.source = 0; Music.search(Music.query, Music.source, Music.category, Music.order); }
+                        }
+                        if root.music-shelves-open: CategoryRow {
+                            height: 24px;
+                            label: "FreePD";
+                            current: Music.source == 1;
+                            clicked => { Music.source = 1; Music.search(Music.query, Music.source, Music.category, Music.order); }
+                        }
+                        if root.music-shelves-open: CategoryRow {
+                            height: 24px;
+                            label: "Lo-Fi";
+                            current: Music.source == 2;
+                            clicked => { Music.source = 2; Music.search(Music.query, Music.source, Music.category, Music.order); }
                         }
                     }
 
@@ -2973,6 +3027,107 @@ export component MediaPane inherits Rectangle {
                                 more := TouchArea {
                                     mouse-cursor: pointer;
                                     clicked => { OpenVid.more-loaded(); }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Music: the background-music library. Everything above
+                // the list is the asking; the list is the answer.
+                if root.tab == 10: VerticalLayout {
+                    padding: 8px;
+                    spacing: 8px;
+
+                    // The words, debounced: a search is quick but the page
+                    // does not need one a keystroke.
+                    SearchField {
+                        placeholder: I18n.t("bgm.searchPlaceholder");
+                        text: Music.query;
+                        edited(text) => {
+                            Music.query = text;
+                            music-debounce.restart();
+                        }
+                        // accepted lands here too, through the debounce:
+                        // Enter is just a pause in the typing.
+                    }
+
+                    // The narrowing that is not words: the shelf, the
+                    // category, the order.
+                    HorizontalLayout {
+                        spacing: 4px;
+                        Select {
+                            horizontal-stretch: 0;
+                            width: self.natural-width;
+                            options: [I18n.t("bgm.allShelves"), "FreePD", "Lo-Fi"];
+                            current: Music.source;
+                            changed(index) => { Music.source = index; Music.category = 0; Music.search(Music.query, Music.source, Music.category, Music.order); }
+                        }
+                        Select {
+                            horizontal-stretch: 0;
+                            width: self.natural-width;
+                            options: Music.categories;
+                            current: Music.category;
+                            changed(index) => { Music.category = index; Music.search(Music.query, Music.source, Music.category, Music.order); }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        Select {
+                            horizontal-stretch: 0;
+                            width: self.natural-width;
+                            options: [I18n.t("bgm.sortRelevance"), I18n.t("bgm.sortShortest"),
+                                I18n.t("bgm.sortLongest"), I18n.t("bgm.sortSurprise")];
+                            icons: [Glyph.search, Glyph.clock, Glyph.clock, Glyph.sparkle];
+                            current: Music.order;
+                            changed(index) => { Music.order = index; Music.search(Music.query, Music.source, Music.category, Music.order); }
+                        }
+                    }
+
+                    // What stands between the person and the library,
+                    // when something does.
+                    if Music.state != 2: MusicStatus { }
+
+                    if Music.state == 2: VerticalLayout {
+                        spacing: 8px;
+
+                        if Music.results.length == 0 && !Music.searching: Empty {
+                            glyph: Glyph.music;
+                            text: Music.query == ""
+                                ? I18n.t("bgm.searchHint")
+                                : I18n.t("bgm.nothingFound");
+                        }
+
+                        MusicList {
+                            items: Music.results;
+                        }
+
+                        // The count, and the next page when there is one.
+                        if Music.results.length > 0: HorizontalLayout {
+                            spacing: 8px;
+                            Text {
+                                text: I18n.t1("bgm.trackCount", Music.total);
+                                color: Theme.fg-muted;
+                                font-size: Theme.fs-xs;
+                                vertical-alignment: center;
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                            if Music.more: Rectangle {
+                                height: Theme.h;
+                                border-radius: Theme.r-sm;
+                                background: more-music.has-hover ? Theme.field-hover : Theme.field;
+                                HorizontalLayout {
+                                    alignment: center;
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    Text {
+                                        vertical-alignment: center;
+                                        text: I18n.t("bgm.more");
+                                        color: Theme.fg-muted;
+                                        font-size: Theme.fs-sm;
+                                    }
+                                }
+                                more-music := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { Music.more-loaded(); }
                                 }
                             }
                         }

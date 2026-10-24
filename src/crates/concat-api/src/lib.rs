@@ -42,6 +42,7 @@ use concat_effects::Catalogue;
 use concat_effects::manifest::Kind;
 use concat_export::{ExportClip, ExportRequest};
 pub use concat_host::AppDirs;
+use concat_host::bgm::{self as bgm_library, Query as BgmQuery, Sort as BgmSort};
 use concat_host::cutout::{self, AnalyseRequest, Cutouts};
 use concat_host::export::{self, Exporter};
 use concat_host::openvid::{self, Orientation, Query, Sort, Source};
@@ -55,9 +56,10 @@ use concat_project::Command;
 use concat_project::model::VideoSettings;
 
 pub use message::{
-    API_VERSION, ApiError, Dirs, Done, ErrorCode, Event, ExportSpec, Fill, JobState, JobStatus,
-    OpenvidClip, OpenvidFound, OpenvidImport, OpenvidState, PackageInfo, ParamInfo, Picture, Reply,
-    Request, Response, SoundEntry, SoundsAdded, SoundsFound, Started, VersionInfo, Written,
+    API_VERSION, ApiError, BgmFound, BgmImport, BgmState, BgmTrack, Dirs, Done, ErrorCode, Event,
+    ExportSpec, Fill, JobState, JobStatus, OpenvidClip, OpenvidFound, OpenvidImport, OpenvidState,
+    PackageInfo, ParamInfo, Picture, Reply, Request, Response, SoundEntry, SoundsAdded,
+    SoundsFound, Started, VersionInfo, Written,
 };
 
 /// The export sheet's middle quality, and what an export gets when the
@@ -528,6 +530,39 @@ impl Api {
                 track,
             } => Ok(Reply::SoundsAdded(
                 self.sounds_add(&path, &id, start, track)?,
+            )),
+            Request::BgmStatus => Ok(Reply::Bgm(self.bgm_state())),
+            Request::BgmPrepare => {
+                self.bgm_prepare();
+                Ok(Reply::Bgm(self.bgm_state()))
+            }
+            Request::BgmSearch {
+                query,
+                source,
+                category,
+                min_seconds,
+                max_seconds,
+                sort,
+                limit,
+                offset,
+            } => Ok(Reply::BgmFound(self.bgm_search(
+                query,
+                source,
+                category,
+                min_seconds,
+                max_seconds,
+                sort,
+                limit,
+                offset,
+            )?)),
+            Request::BgmFetch { id } => Ok(Reply::BgmTrack(self.bgm_fetch(&id)?)),
+            Request::BgmImport {
+                path,
+                ids,
+                start,
+                track,
+            } => Ok(Reply::BgmImported(
+                self.bgm_import(&path, &ids, start, track)?,
             )),
             Request::MediaImport { path, file } => view(self.import(&path, &file)?),
             Request::CatalogueList { kind } => Ok(Reply::Packages(catalogue(kind.as_deref())?)),
@@ -1132,6 +1167,251 @@ impl Api {
         }
     }
 
+    // ── the background-music library ─────────────────────────────────────
+
+    /// The music library this API reads, from the app's own directories.
+    /// One per process, so the window's page and this server share a
+    /// download and a cache rather than racing each other.
+    fn music(&self) -> &'static bgm_library::Library {
+        bgm_library::shared(&self.dirs)
+    }
+
+    /// [`Request::BgmStatus`]: both shelves, each in its own word.
+    pub fn bgm_state(&self) -> BgmState {
+        let library = self.music();
+        let word = |source: bgm_library::Source| match library.status(source) {
+            bgm_library::Status::Missing => ("missing".to_owned(), None),
+            bgm_library::Status::Loading(percent) => {
+                (format!("loading ({percent}%)"), Some(percent))
+            }
+            bgm_library::Status::Ready => ("ready".to_owned(), None),
+            bgm_library::Status::Failed(error) => (format!("failed: {error}"), None),
+        };
+        let (freepd, _) = word(bgm_library::Source::FreePd);
+        let (lofi, lofi_percent) = word(bgm_library::Source::Lofi);
+        // The per-cent that names the whole state is the slower shelf's:
+        // the FreePD listing is one file that arrives in a moment, and the
+        // Lo-Fi census is the one a caller can watch.
+        let percent = match library.status(bgm_library::Source::Lofi) {
+            bgm_library::Status::Loading(percent) => percent,
+            _ => match library.status(bgm_library::Source::FreePd) {
+                bgm_library::Status::Loading(percent) => percent,
+                _ => lofi_percent.unwrap_or(0),
+            },
+        };
+        let error = [
+            (bgm_library::Source::FreePd, &freepd),
+            (bgm_library::Source::Lofi, &lofi),
+        ]
+        .into_iter()
+        .filter(|(_, word)| word.starts_with("failed"))
+        .map(|(source, word)| format!("{}: {}", source.name(), word.trim_start_matches("failed: ")))
+        .reduce(|both, one| format!("{both}; {one}"));
+        BgmState {
+            freepd,
+            lofi,
+            percent,
+            freepd_tracks: library.rows(bgm_library::Source::FreePd),
+            lofi_tracks: library.rows(bgm_library::Source::Lofi),
+            error,
+        }
+    }
+
+    /// [`Request::BgmPrepare`]: both shelves' one-time catalog fetches,
+    /// started on their own threads because they are a few MB and the
+    /// Lo-Fi census after them takes seconds; a caller should not wait
+    /// for them. Their progress is what `bgm.status` reports; a second
+    /// call while they run is a no-op, and the window's own page starting
+    /// one is the same download.
+    pub fn bgm_prepare(&self) {
+        let library = self.music();
+        for source in [bgm_library::Source::FreePd, bgm_library::Source::Lofi] {
+            if matches!(
+                library.status(source),
+                bgm_library::Status::Ready | bgm_library::Status::Loading(_)
+            ) {
+                continue;
+            }
+            std::thread::spawn(move || {
+                // This flag is never set: the fetch runs to its end. A
+                // cancel is the process going away, which takes the thread
+                // with it; the catalogs are re-read from the cache either
+                // way.
+                let cancel = std::sync::atomic::AtomicBool::new(false);
+                // The outcome lands in the status the next caller reads:
+                // `Failed`, with these words, rather than a log line this
+                // crate has no facade for.
+                let _ = library.prepare(source, &cancel);
+            });
+        }
+    }
+
+    /// [`Request::BgmSearch`]: the filters as the request carries them,
+    /// parsed once, with the words a caller chose kept as words.
+    #[allow(clippy::too_many_arguments)]
+    pub fn bgm_search(
+        &self,
+        query: Option<String>,
+        source: Option<String>,
+        category: Option<String>,
+        min_seconds: Option<f64>,
+        max_seconds: Option<f64>,
+        sort: Option<String>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> Result<BgmFound, ApiError> {
+        let source = source
+            .map(|name| match name.to_ascii_lowercase().as_str() {
+                "freepd" => Ok(bgm_library::Source::FreePd),
+                "lofi" | "lo-fi" | "openlofi" => Ok(bgm_library::Source::Lofi),
+                other => Err(ApiError::failed(format!(
+                    "the source must be freepd or lofi, not {other:?}"
+                ))),
+            })
+            .transpose()?;
+        let sort = match sort.as_deref().map(str::to_ascii_lowercase).as_deref() {
+            None | Some("relevance") => BgmSort::Relevance,
+            Some("shortest") => BgmSort::Shortest,
+            Some("longest") => BgmSort::Longest,
+            Some("surprise") => BgmSort::Surprise,
+            Some(other) => {
+                return Err(ApiError::failed(format!(
+                    "the sort must be relevance, shortest, longest or surprise, not {other:?}"
+                )));
+            }
+        };
+        let found = self
+            .music()
+            .search(&BgmQuery {
+                text: query,
+                source,
+                category,
+                min_seconds,
+                max_seconds,
+                sort,
+                limit: limit.unwrap_or(20),
+                offset: offset.unwrap_or(0),
+            })
+            .map_err(ApiError::failed)?;
+        Ok(BgmFound {
+            tracks: found
+                .tracks
+                .iter()
+                .map(|track| BgmTrack::of(track, self.music().fetched(&track.id).as_deref()))
+                .collect(),
+            total: found.total,
+        })
+    }
+
+    /// [`Request::BgmFetch`]: the track's own bytes, from whichever shelf
+    /// holds it.
+    pub fn bgm_fetch(&self, id: &str) -> Result<BgmTrack, ApiError> {
+        let library = self.music();
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let mut progress = |_, _| {};
+        let path = library
+            .fetch(id, &cancel, &mut progress)
+            .map_err(ApiError::failed)?;
+        let Some(track) = library.track(id).map_err(ApiError::failed)? else {
+            return Err(ApiError::failed(format!("there is no track {id}")));
+        };
+        Ok(BgmTrack::of(&track, Some(&path)))
+    }
+
+    /// [`Request::BgmImport`]: fetch, copy into the project's own
+    /// `bgm` folder, and add to the bin - one undoable step, or two when
+    /// the tracks are also laid on a lane.
+    pub fn bgm_import(
+        &mut self,
+        path: &str,
+        ids: &[String],
+        start: Option<f64>,
+        track: Option<String>,
+    ) -> Result<BgmImport, ApiError> {
+        if ids.is_empty() {
+            return Err(ApiError::failed("no track ids given".to_owned()));
+        }
+        if ids.len() > 20 {
+            return Err(ApiError::failed(
+                "at most 20 tracks a call; page through them".to_owned(),
+            ));
+        }
+        self.writable(path)?;
+        let folder = {
+            let session = self.session(path)?;
+            let folder = std::path::PathBuf::from(session.path()).join("bgm");
+            std::fs::create_dir_all(&folder).map_err(|error| {
+                ApiError::failed(format!("could not create {}: {error}", folder.display()))
+            })?;
+            folder
+        };
+        let library = self.music();
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        // Everything is fetched and copied before anything is added, so a
+        // track that will not arrive refuses the whole request rather
+        // than leaving half a set behind.
+        let mut copies = Vec::new();
+        for id in ids {
+            let mut progress = |_, _| {};
+            let cached = library
+                .fetch(id, &cancel, &mut progress)
+                .map_err(ApiError::failed)?;
+            let Some(found) = library.track(id).map_err(ApiError::failed)? else {
+                return Err(ApiError::failed(format!("there is no track {id}")));
+            };
+            // The title plus the id: unique for as long as the track is in
+            // the catalog, and the same track imported twice is the same
+            // file, copied over itself.
+            let name = format!("{}-{}.mp3", clean_name(&found.title), &id[id.len() - 6..]);
+            let into = folder.join(&name);
+            std::fs::copy(&cached, &into).map_err(|error| {
+                ApiError::failed(format!("could not copy into the project: {error}"))
+            })?;
+            copies.push(into);
+        }
+        let mut commands = Vec::new();
+        for file in &copies {
+            let item = media::probe(&file.to_string_lossy())
+                .map_err(ApiError::failed)?
+                .to_new_media();
+            commands.push(Command::AddMedia { item });
+        }
+        let mut view = self.apply(path, Command::Batch { commands })?;
+        // The ids the copies were given, by the paths they landed at: a
+        // batch reports only its last minted id, and the caller needs
+        // every one.
+        let media_ids: Vec<String> = copies
+            .iter()
+            .filter_map(|file| {
+                view.project
+                    .media
+                    .iter()
+                    .find(|item| item.path == file.to_string_lossy())
+                    .map(|item| item.id.clone())
+            })
+            .collect();
+        if media_ids.len() != copies.len() {
+            return Err(ApiError::failed(
+                "the tracks were imported but not all of them were found again".to_owned(),
+            ));
+        }
+        if let Some(start) = start {
+            view = self.apply(
+                path,
+                Command::AddClipsInSequence {
+                    media_ids: media_ids.clone(),
+                    track_id: track,
+                    start,
+                    ripple: false,
+                },
+            )?;
+        }
+        Ok(BgmImport {
+            media_ids,
+            view: Box::new(view),
+        })
+    }
+
     /// [`Request::TemplateInstantiate`].
     pub fn instantiate(
         &mut self,
@@ -1650,6 +1930,30 @@ fn key_of(path: &str) -> String {
     std::fs::canonicalize(path)
         .map(|canonical| canonical.to_string_lossy().into_owned())
         .unwrap_or_else(|_| path.to_owned())
+}
+
+/// A track's title as a file name a project can hold: the characters a
+/// plain name cannot carry taken out, the whole thing cut to a length a
+/// name was meant to be. The id beside it is what makes the name unique;
+/// this only makes it polite.
+fn clean_name(title: &str) -> String {
+    let clean: String = title
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let clean = clean.trim().trim_matches('.');
+    let cut: String = clean.chars().take(60).collect();
+    if cut.is_empty() {
+        "Track".to_owned()
+    } else {
+        cut
+    }
 }
 
 fn not_open(path: &str) -> ApiError {

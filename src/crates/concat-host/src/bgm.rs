@@ -1750,7 +1750,7 @@ mod tests {
         assert!(mp3_duration(&tagged, 838_656).is_some());
 
         // No frame at all: nothing, rather than a guess.
-        assert!(mp3_duration(&vec![0u8; 64], 1000).is_none());
+        assert!(mp3_duration(&[0u8; 64], 1000).is_none());
     }
 
     /// The zip's own directory is read out of a real zip's bytes - the

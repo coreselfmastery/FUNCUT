@@ -553,7 +553,6 @@ fn open_video(
     video.set_height(height);
     video.set_format(pixel_format);
     video.set_time_base(rate.invert());
-    let fps = f64::from(rate.numerator()) / f64::from(rate.denominator().max(1));
     video.set_frame_rate(Some(rate));
     let (primaries, transfer, matrix) = tags;
     video.set_colorspace(matrix);

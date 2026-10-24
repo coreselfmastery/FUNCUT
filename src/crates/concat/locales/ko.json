@@ -729,6 +729,7 @@
   "start.removeFromList": "목록에서 제거",
   "start.reportProblem": "문제 신고",
   "start.reportProblemNote": "고칠 수 있도록 보내야 할 내용",
+  "start.safeMode": "Concat closed while starting once, so it draws in software until its next update: slower, but it opens. To try the graphics card now, turn on Draw on the GPU in Settings > General.",
   "start.searchProjects": "프로젝트 검색",
   "start.settingsApplyWholeEdit": "이 설정은 편집 전체에 적용되며 나중에 바꿀 수 없습니다.",
   "start.shape": "모양",

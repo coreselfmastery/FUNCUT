@@ -729,6 +729,7 @@
   "start.removeFromList": "从列表中移除",
   "start.reportProblem": "报告问题",
   "start.reportProblemNote": "需要发送什么才能修复",
+  "start.safeMode": "Concat closed while starting once, so it draws in software until its next update: slower, but it opens. To try the graphics card now, turn on Draw on the GPU in Settings > General.",
   "start.searchProjects": "搜索项目",
   "start.settingsApplyWholeEdit": "这些设置作用于整个剪辑，之后无法更改。",
   "start.shape": "形状",

@@ -729,6 +729,7 @@
   "start.removeFromList": "Xóa khỏi danh sách",
   "start.reportProblem": "Báo cáo sự cố",
   "start.reportProblemNote": "Cần gửi gì để có thể sửa",
+  "start.safeMode": "Concat closed while starting once, so it draws in software until its next update: slower, but it opens. To try the graphics card now, turn on Draw on the GPU in Settings > General.",
   "start.searchProjects": "Tìm dự án",
   "start.settingsApplyWholeEdit": "Các cài đặt này áp dụng cho toàn bộ bản dựng và không thể thay đổi sau này.",
   "start.shape": "Tỷ lệ khung hình",

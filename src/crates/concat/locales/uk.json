@@ -729,6 +729,7 @@
   "start.removeFromList": "Прибрати зі списку",
   "start.reportProblem": "Повідомити про проблему",
   "start.reportProblemNote": "Що надіслати, щоб це виправили",
+  "start.safeMode": "Concat closed while starting once, so it draws in software until its next update: slower, but it opens. To try the graphics card now, turn on Draw on the GPU in Settings > General.",
   "start.searchProjects": "Пошук проєктів",
   "start.settingsApplyWholeEdit": "Ці параметри застосовуються до всього монтажу, і змінити їх пізніше не можна.",
   "start.shape": "Формат",

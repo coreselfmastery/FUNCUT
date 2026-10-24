@@ -729,6 +729,7 @@
   "start.removeFromList": "הסרה מהרשימה",
   "start.reportProblem": "דיווח על בעיה",
   "start.reportProblemNote": "מה לשלוח כדי שאפשר יהיה לתקן",
+  "start.safeMode": "Concat closed while starting once, so it draws in software until its next update: slower, but it opens. To try the graphics card now, turn on Draw on the GPU in Settings > General.",
   "start.searchProjects": "חיפוש פרויקטים",
   "start.settingsApplyWholeEdit": "ההגדרות האלה חלות על כל העריכה ולא ניתן לשנות אותן מאוחר יותר.",
   "start.shape": "צורה",

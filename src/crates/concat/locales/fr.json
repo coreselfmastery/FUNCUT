@@ -729,6 +729,7 @@
   "start.removeFromList": "Retirer de la liste",
   "start.reportProblem": "Signaler un problème",
   "start.reportProblemNote": "Quoi envoyer pour que ce soit corrigé",
+  "start.safeMode": "Concat closed while starting once, so it draws in software until its next update: slower, but it opens. To try the graphics card now, turn on Draw on the GPU in Settings > General.",
   "start.searchProjects": "Rechercher des projets",
   "start.settingsApplyWholeEdit": "Ces réglages s'appliquent à tout le montage et ne pourront plus être changés.",
   "start.shape": "Forme",

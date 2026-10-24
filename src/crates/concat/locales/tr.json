@@ -729,6 +729,7 @@
   "start.removeFromList": "Listeden kaldır",
   "start.reportProblem": "Sorun bildir",
   "start.reportProblemNote": "Düzeltilebilmesi için ne gönderilmeli",
+  "start.safeMode": "Concat closed while starting once, so it draws in software until its next update: slower, but it opens. To try the graphics card now, turn on Draw on the GPU in Settings > General.",
   "start.searchProjects": "Projelerde ara",
   "start.settingsApplyWholeEdit": "Bu ayarlar tüm düzenleme için geçerlidir ve sonradan değiştirilemez.",
   "start.shape": "Biçim",

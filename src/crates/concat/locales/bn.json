@@ -729,6 +729,7 @@
   "start.removeFromList": "তালিকা থেকে সরান",
   "start.reportProblem": "সমস্যা জানান",
   "start.reportProblemNote": "ঠিক করার জন্য কী পাঠাবেন",
+  "start.safeMode": "Concat closed while starting once, so it draws in software until its next update: slower, but it opens. To try the graphics card now, turn on Draw on the GPU in Settings > General.",
   "start.searchProjects": "প্রকল্প খুঁজুন",
   "start.settingsApplyWholeEdit": "এই সেটিংস পুরো সম্পাদনায় প্রযোজ্য এবং পরে বদলানো যাবে না।",
   "start.shape": "আকৃতি",

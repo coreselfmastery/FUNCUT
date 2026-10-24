@@ -526,7 +526,9 @@ impl Api {
                 id,
                 start,
                 track,
-            } => Ok(Reply::SoundsAdded(self.sounds_add(&path, &id, start, track)?)),
+            } => Ok(Reply::SoundsAdded(
+                self.sounds_add(&path, &id, start, track)?,
+            )),
             Request::MediaImport { path, file } => view(self.import(&path, &file)?),
             Request::CatalogueList { kind } => Ok(Reply::Packages(catalogue(kind.as_deref())?)),
             Request::TemplateList => Ok(Reply::Templates(templates::list(&self.dirs.config))),

@@ -501,7 +501,6 @@
   "settings.exposedAddressWarning": "This address can be reached from the network. Anything that reaches it with the token can read and write files as you can, and the connection is not encrypted.",
   "settings.forMainlandChina": "For mainland China",
   "settings.fromFlatpak": "Installed as a Flatpak: updates come through Flatpak.",
-  "settings.fromStore": "Updates come through the store.",
   "settings.general": "General",
   "settings.gpu": "Draw on the GPU",
   "settings.gpuHint": "Off, the window and the preview draw in software: slower, but out of the way of a graphics driver that closes Concat. It turns off by itself if Concat closes while starting, until Concat's next update. Takes effect the next time Concat starts.",

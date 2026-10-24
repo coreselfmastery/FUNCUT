@@ -928,7 +928,6 @@ impl SettingsPane {
 fn fixed_note(why: Fixed) -> String {
     match why {
         Fixed::Flatpak => t("settings.fromFlatpak"),
-        Fixed::Store => t("settings.fromStore"),
         Fixed::NotFromPackage => t("settings.notFromPackage"),
     }
 }

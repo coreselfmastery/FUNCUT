@@ -501,7 +501,6 @@
   "settings.exposedAddressWarning": "Diese Adresse ist aus dem Netzwerk erreichbar. Alles, was sie mit dem Token erreicht, kann Dateien lesen und schreiben wie du, und die Verbindung ist nicht verschlüsselt.",
   "settings.forMainlandChina": "Für Festlandchina",
   "settings.fromFlatpak": "Als Flatpak installiert: Updates kommen über Flatpak.",
-  "settings.fromStore": "Updates kommen über den Store.",
   "settings.general": "Allgemein",
   "settings.gpu": "Auf der GPU zeichnen",
   "settings.gpuHint": "Aus: Fenster und Vorschau werden in Software gezeichnet – langsamer, aber unberührt von einem Grafiktreiber, der Concat beendet. Die Option schaltet sich von selbst aus, wenn Concat beim Starten geschlossen wird. Wirkt ab dem nächsten Start von Concat.",

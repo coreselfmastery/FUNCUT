@@ -501,7 +501,6 @@
   "settings.exposedAddressWarning": "Ten adres jest osiągalny z sieci. Wszystko, co dotrze do niego z tokenem, może czytać i zapisywać pliki tak jak Ty, a połączenie nie jest szyfrowane.",
   "settings.forMainlandChina": "Dla Chin kontynentalnych",
   "settings.fromFlatpak": "Zainstalowano jako Flatpak: aktualizacje przychodzą przez Flatpak.",
-  "settings.fromStore": "Aktualizacje przychodzą przez sklep.",
   "settings.general": "Ogólne",
   "settings.gpu": "Rysuj na GPU",
   "settings.gpuHint": "Wyłączone: okno i podgląd są rysowane programowo – wolniej, ale z dala od sterownika grafiki, który zamyka Concat. Wyłącza się samo, jeśli Concat zamknie się podczas uruchamiania. Działa od następnego uruchomienia Concat.",

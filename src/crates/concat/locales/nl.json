@@ -501,7 +501,6 @@
   "settings.exposedAddressWarning": "Dit adres is bereikbaar vanaf het netwerk. Alles wat het met het token bereikt, kan bestanden lezen en schrijven zoals jij, en de verbinding is niet versleuteld.",
   "settings.forMainlandChina": "Voor het Chinese vasteland",
   "settings.fromFlatpak": "Geïnstalleerd als Flatpak: updates komen via Flatpak.",
-  "settings.fromStore": "Updates komen via de store.",
   "settings.general": "Algemeen",
   "settings.gpu": "Tekenen op de GPU",
   "settings.gpuHint": "Uit: het venster en de voorvertoning tekenen in software; trager, maar buiten bereik van een grafisch stuurprogramma dat Concat afsluit. Het gaat vanzelf uit als Concat tijdens het opstarten sluit. Werkt vanaf de volgende keer dat Concat start.",

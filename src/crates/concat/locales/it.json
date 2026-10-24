@@ -501,7 +501,6 @@
   "settings.exposedAddressWarning": "Questo indirizzo è raggiungibile dalla rete. Qualunque cosa lo raggiunga con il token può leggere e scrivere file come te, e la connessione non è cifrata.",
   "settings.forMainlandChina": "Per la Cina continentale",
   "settings.fromFlatpak": "Installato come Flatpak: gli aggiornamenti arrivano tramite Flatpak.",
-  "settings.fromStore": "Gli aggiornamenti arrivano tramite lo store.",
   "settings.general": "Generale",
   "settings.gpu": "Disegna sulla GPU",
   "settings.gpuHint": "Disattivato, la finestra e l'anteprima vengono disegnate via software: più lento, ma al riparo da un driver grafico che chiude Concat. Si disattiva da solo se Concat si chiude durante l'avvio. Ha effetto dal prossimo avvio di Concat.",

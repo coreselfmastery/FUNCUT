@@ -501,7 +501,6 @@
   "settings.exposedAddressWarning": "Alamat ini dapat dijangkau dari jaringan. Apa pun yang menjangkaunya dengan token dapat membaca dan menulis file seperti Anda, dan koneksinya tidak terenkripsi.",
   "settings.forMainlandChina": "Untuk Tiongkok daratan",
   "settings.fromFlatpak": "Diinstal sebagai Flatpak: pembaruan datang melalui Flatpak.",
-  "settings.fromStore": "Pembaruan datang melalui toko aplikasi.",
   "settings.general": "Umum",
   "settings.gpu": "Menggambar dengan GPU",
   "settings.gpuHint": "Jika nonaktif, jendela dan pratinjau digambar secara perangkat lunak: lebih lambat, tetapi terhindar dari driver grafis yang menutup Concat. Opsi ini nonaktif dengan sendirinya jika Concat tertutup saat dimulai. Berlaku saat Concat dimulai berikutnya.",

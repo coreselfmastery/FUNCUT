@@ -501,7 +501,6 @@
   "settings.exposedAddressWarning": "Bu adrese ağdan erişilebilir. Belirteçle ona ulaşan her şey dosyaları sizin gibi okuyup yazabilir ve bağlantı şifrelenmez.",
   "settings.forMainlandChina": "Çin anakarası için",
   "settings.fromFlatpak": "Flatpak olarak yüklü: güncellemeler Flatpak üzerinden gelir.",
-  "settings.fromStore": "Güncellemeler mağaza üzerinden gelir.",
   "settings.general": "Genel",
   "settings.gpu": "GPU'da çiz",
   "settings.gpuHint": "Kapalıyken pencere ve önizleme yazılımla çizilir: daha yavaş, ama Concat'i kapatan bir grafik sürücüsünden uzak. Concat açılırken kapanırsa kendiliğinden kapanır. Concat'in bir sonraki açılışında geçerli olur.",

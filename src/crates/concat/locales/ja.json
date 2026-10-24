@@ -501,7 +501,6 @@
   "settings.exposedAddressWarning": "このアドレスにはネットワークから到達できます。トークンを持ってここに届くものは、あなたと同じようにファイルを読み書きでき、接続は暗号化されません。",
   "settings.forMainlandChina": "中国本土向け",
   "settings.fromFlatpak": "Flatpak としてインストールされています。アップデートは Flatpak から行われます。",
-  "settings.fromStore": "アップデートはストアから行われます。",
   "settings.general": "全般",
   "settings.gpu": "GPU で描画",
   "settings.gpuHint": "オフでは、ウィンドウとプレビューをソフトウェアで描画します。遅くなりますが、Concat を終了させてしまうグラフィックドライバーを避けられます。起動中に Concat が終了した場合は自動でオフになります。次に Concat を起動したときから反映されます。",

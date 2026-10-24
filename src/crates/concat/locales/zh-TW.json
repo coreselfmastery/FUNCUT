@@ -501,7 +501,6 @@
   "settings.exposedAddressWarning": "此位址可從網路存取。任何帶著權杖存取它的程式都能像你一樣讀寫檔案，且連線未加密。",
   "settings.forMainlandChina": "適用於中國大陸",
   "settings.fromFlatpak": "以 Flatpak 安裝：更新透過 Flatpak 進行。",
-  "settings.fromStore": "更新透過商店進行。",
   "settings.general": "一般",
   "settings.gpu": "使用 GPU 繪製",
   "settings.gpuHint": "關閉時，視窗和預覽改用軟體繪製：較慢，但能避開會讓 Concat 關閉的顯示卡驅動程式。如果 Concat 在啟動時關閉，此項會自動關閉。下次啟動 Concat 時生效。",

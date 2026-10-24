@@ -501,7 +501,6 @@
   "settings.exposedAddressWarning": "Bu ünvana şəbəkədən çatmaq olar. Tokenlə ona çatan hər kəs sizin kimi faylları oxuya və yaza bilər, bağlantı isə şifrələnmir.",
   "settings.forMainlandChina": "Materik Çin üçün",
   "settings.fromFlatpak": "Flatpak kimi quraşdırılıb: yeniləmələr Flatpak vasitəsilə gəlir.",
-  "settings.fromStore": "Yeniləmələr mağaza vasitəsilə gəlir.",
   "settings.general": "Ümumi",
   "settings.gpu": "GPU ilə çək",
   "settings.gpuHint": "Söndürüləndə pəncərə və önizləmə proqram təminatı ilə çəkilir: daha yavaş, amma Concat-ı bağlayan qrafik drayverindən uzaq. Concat açılarkən bağlanarsa, bu özü-özünə söndürülür. Concat növbəti dəfə açılanda qüvvəyə minir.",

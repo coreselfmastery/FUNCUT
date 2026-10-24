@@ -501,7 +501,6 @@
   "settings.exposedAddressWarning": "Địa chỉ này có thể truy cập qua mạng. Bất cứ thứ gì tới được nó cùng mã thông báo đều có thể đọc và ghi tệp như bạn, và kết nối không được mã hóa.",
   "settings.forMainlandChina": "Dành cho Trung Quốc đại lục",
   "settings.fromFlatpak": "Được cài đặt dưới dạng Flatpak: cập nhật được thực hiện qua Flatpak.",
-  "settings.fromStore": "Cập nhật được thực hiện qua cửa hàng ứng dụng.",
   "settings.general": "Chung",
   "settings.gpu": "Vẽ bằng GPU",
   "settings.gpuHint": "Khi tắt, cửa sổ và bản xem trước được vẽ bằng phần mềm: chậm hơn, nhưng tránh được trình điều khiển đồ họa khiến Concat bị đóng. Tùy chọn này tự tắt nếu Concat bị đóng khi đang khởi động. Có hiệu lực từ lần khởi động Concat tiếp theo.",

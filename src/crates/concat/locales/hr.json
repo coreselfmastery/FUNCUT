@@ -501,7 +501,6 @@
   "settings.exposedAddressWarning": "Ova adresa dostupna je s mreže. Sve što do nje dođe s tokenom može čitati i pisati datoteke kao vi, a veza nije šifrirana.",
   "settings.forMainlandChina": "Za kontinentalnu Kinu",
   "settings.fromFlatpak": "Instalirano kao Flatpak: ažuriranja dolaze putem Flatpaka.",
-  "settings.fromStore": "Ažuriranja dolaze putem trgovine.",
   "settings.general": "Općenito",
   "settings.gpu": "Crtaj na GPU-u",
   "settings.gpuHint": "Isključeno, prozor i pregled crtaju se softverski: sporije, ali izvan dosega grafičkog upravljačkog programa koji zatvara Concat. Samo se isključuje ako se Concat zatvori tijekom pokretanja. Primjenjuje se od sljedećeg pokretanja Concata.",

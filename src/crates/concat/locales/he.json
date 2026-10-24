@@ -501,7 +501,6 @@
   "settings.exposedAddressWarning": "הכתובת הזו נגישה מהרשת. כל מה שמגיע אליה עם האסימון יכול לקרוא ולכתוב קבצים כמוך, והחיבור אינו מוצפן.",
   "settings.forMainlandChina": "לסין היבשתית",
   "settings.fromFlatpak": "מותקן כ-Flatpak: העדכונים מגיעים דרך Flatpak.",
-  "settings.fromStore": "העדכונים מגיעים דרך החנות.",
   "settings.general": "כללי",
   "settings.gpu": "ציור ב-GPU",
   "settings.gpuHint": "כשכבוי, החלון והתצוגה המקדימה מצוירים בתוכנה: איטי יותר, אבל מחוץ לדרכו של מנהל התקן גרפי שסוגר את Concat. ההגדרה נכבית מעצמה אם Concat נסגר בזמן ההפעלה. נכנס לתוקף בהפעלה הבאה של Concat.",

@@ -1516,16 +1516,18 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
 
         // ── the library's Music page ──
         let music = app.global::<crate::ui::Music>();
-        music.on_search(on_window!(
-            |state, query: SharedString, source: i32, category: i32, order: i32| {
-                state.handle(Msg::Music(MusicMsg::Search {
-                    query: query.to_string(),
-                    source,
-                    category,
-                    order,
-                }));
-            }
-        ));
+        music.on_search(on_window!(|state,
+                                    query: SharedString,
+                                    source: i32,
+                                    category: i32,
+                                    order: i32| {
+            state.handle(Msg::Music(MusicMsg::Search {
+                query: query.to_string(),
+                source,
+                category,
+                order,
+            }));
+        }));
         music.on_more_loaded(on_window!(|state| {
             state.handle(Msg::Music(MusicMsg::More));
         }));

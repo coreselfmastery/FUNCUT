@@ -154,10 +154,9 @@ impl MusicPane {
                         let shown = {
                             let mut chars = category.chars();
                             match chars.next() {
-                                Some(first) => first
-                                    .to_uppercase()
-                                    .collect::<String>()
-                                    + chars.as_str(),
+                                Some(first) => {
+                                    first.to_uppercase().collect::<String>() + chars.as_str()
+                                }
                                 None => String::new(),
                             }
                         };
@@ -169,7 +168,7 @@ impl MusicPane {
     }
 
     /// How many tracks a shelf holds, once ready.
-    pub fn rows(&self, source: Source) -> Option<u64> {
+    pub fn shelf_rows(&self, source: Source) -> Option<u64> {
         self.library().and_then(|library| library.rows(source))
     }
 
@@ -280,9 +279,13 @@ impl MusicPane {
                 );
                 let cancel = Arc::clone(&self.cancel);
                 for source in [Source::FreePd, Source::Lofi] {
+                    // Each spawn takes its own copy: the loop's second
+                    // iteration cannot borrow what the first moved.
+                    let dirs = dirs.clone();
+                    let cancel = Arc::clone(&cancel);
                     crate::host::spawn(
                         move || library::shared(&dirs).prepare(source, &cancel),
-                        |studio, _, _, result| {
+                        move |studio, _, _, result| {
                             // The verdict before the words: the words
                             // consume the result, and a half-moved value
                             // cannot be asked what it was.
@@ -411,10 +414,13 @@ impl MusicPane {
         }
         self.fetching.insert(id.clone(), then);
         let cancel = AtomicBool::new(false);
+        // The worker takes its own copy of the id: the completion's copy
+        // is the one the message carries.
+        let fetching = id.clone();
         crate::host::spawn(
             move || {
                 let mut progress = |_, _| {};
-                library.fetch(&id, &cancel, &mut progress)
+                library.fetch(&fetching, &cancel, &mut progress)
             },
             move |studio, _, _, result| {
                 studio.handle(Msg::Music(MusicMsg::Fetched(id, result, then)));
@@ -524,7 +530,11 @@ impl Studio {
         let size = std::fs::metadata(path)
             .map_err(|error| format!("{}: {error}", path.display()))?
             .len();
-        let target = folder.join(format!("{}-{}.mp3", clean(name), &id[id.len().saturating_sub(6)..]));
+        let target = folder.join(format!(
+            "{}-{}.mp3",
+            clean(name),
+            &id[id.len().saturating_sub(6)..]
+        ));
         let target_text = target.to_string_lossy().into_owned();
         if let Some(item) = self
             .project()

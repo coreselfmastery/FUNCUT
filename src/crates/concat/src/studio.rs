@@ -11482,9 +11482,7 @@ impl Studio {
             let error = [(&self.music.freepd, "FreePD"), (&self.music.lofi, "Lo-Fi")]
                 .into_iter()
                 .filter_map(|(status, shelf)| match status {
-                    concat_host::bgm::Status::Failed(error) => {
-                        Some(format!("{shelf}: {error}"))
-                    }
+                    concat_host::bgm::Status::Failed(error) => Some(format!("{shelf}: {error}")),
                     _ => None,
                 })
                 .collect::<Vec<_>>()
@@ -11493,14 +11491,14 @@ impl Studio {
             page.set_error(SharedString::from(error.as_str()));
             page.set_freepd_rows(
                 self.music
-                    .rows(concat_host::bgm::Source::FreePd)
+                    .shelf_rows(concat_host::bgm::Source::FreePd)
                     .map_or_else(SharedString::default, |rows| {
                         SharedString::from(thousands(rows).as_str())
                     }),
             );
             page.set_lofi_rows(
                 self.music
-                    .rows(concat_host::bgm::Source::Lofi)
+                    .shelf_rows(concat_host::bgm::Source::Lofi)
                     .map_or_else(SharedString::default, |rows| {
                         SharedString::from(thousands(rows).as_str())
                     }),
@@ -11511,8 +11509,7 @@ impl Studio {
             // "Any category" leads the list, so 0 is that and the rest
             // are both shelves' own groupings, each with its first letter
             // standing up.
-            let mut categories =
-                vec![SharedString::from(crate::i18n::t("bgm.anyCategory"))];
+            let mut categories = vec![SharedString::from(crate::i18n::t("bgm.anyCategory"))];
             categories.extend(
                 self.music
                     .categories

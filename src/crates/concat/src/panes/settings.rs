@@ -57,6 +57,12 @@ pub enum SettingsMsg {
     PlayheadStopsChanged(bool),
     /// The proxies switch: whether large files get a smaller copy to play.
     ProxiesChanged(bool),
+    /// The scrub switch: whether a drag of the playhead reads the proxies
+    /// too, rather than playback alone.
+    ProxyScrubChanged(bool),
+    /// The codec row of the proxies: an index into
+    /// [`concat_host::proxy::ProxyCodec::ALL`].
+    ProxyCodecChanged(i32),
     /// The GPU switch: on, the window and the compositor draw on the GPU;
     /// off, in software. Read at the next launch.
     GpuChanged(bool),
@@ -324,6 +330,33 @@ impl SettingsPane {
                 // On, the media already in the project gets its proxies
                 // straight away (refresh_art's stamp holds the switch);
                 // off, playback reads the files from the next frame.
+            }
+            SettingsMsg::ProxyScrubChanged(on) => {
+                studio.prefs.proxy_scrub = Some(on);
+                studio.prefs.save(&studio.host.dirs);
+                // Nothing to see to: the next scrub of the playhead reads
+                // the preference as it builds its frame, and a scrub under
+                // way right now trades its source on the frame after.
+            }
+            SettingsMsg::ProxyCodecChanged(index) => {
+                let Some(codec) = concat_host::proxy::ProxyCodec::ALL
+                    .get(index.max(0) as usize)
+                    .copied()
+                else {
+                    return;
+                };
+                if studio.prefs.proxy_codec() == codec {
+                    return;
+                }
+                studio.prefs.proxy_codec = Some(codec.name().to_owned());
+                studio.prefs.save(&studio.host.dirs);
+                // The codec is part of a proxy's name, so the copies
+                // already written are the other codec's: the project's
+                // media is asked for its proxies again - the art stamp
+                // changed with the codec, and refresh_art, which runs
+                // after every message, does the asking - and the ones
+                // nothing asks for any more are swept.
+                studio.proxies_retargeted();
             }
             SettingsMsg::GpuChanged(on) => {
                 studio.prefs.software_gpu = !on;
@@ -854,6 +887,8 @@ impl SettingsPane {
                 .unwrap_or(2) as i32,
             playhead_stops: self.playhead_stops,
             proxies: studio.prefs.proxies,
+            proxy_scrub: studio.prefs.proxies_on_scrub(),
+            proxy_codec: studio.prefs.proxy_codec().index() as i32,
             gpu: !studio.prefs.draws_in_software(),
             gpu_switchable: cfg!(any(windows, target_os = "linux")),
             magnetic: studio.prefs.magnetic(),

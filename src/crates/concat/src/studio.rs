@@ -73,6 +73,13 @@ use crate::presets::{self, TextPreset};
 use crate::speed_ramp;
 use crate::ui::*;
 
+/// How long after the last sample of a scrub the playhead still counts
+/// as being scrubbed: long enough that a pointer held still mid-drag does
+/// not drop out of the gesture, short enough that the original's frame -
+/// the one the paused monitor owes - follows the drag's end within a
+/// beat. See [`Studio::scrubbing`].
+const SCRUB_LINGER: std::time::Duration = std::time::Duration::from_millis(250);
+
 /// The monitor's output sizes, matching the picker's rows.
 pub const OUTPUTS: [(i32, i32); 6] = [
     (1920, 1080),
@@ -863,9 +870,11 @@ pub struct Studio {
     /// event.
     art_failed: HashSet<String>,
     /// What the last art scan was for: the document's revision, the
-    /// screen, and how much was pending. The scan runs when one of them
-    /// changes and is a comparison on the pointer stream between.
-    art_stamp: Option<(u64, bool, usize, bool)>,
+    /// screen, how much was pending, and the proxy facts - whether they
+    /// are on, and the codec they are written in, so a change of either
+    /// in the Settings sheet is seen to at once. The scan runs when one
+    /// of them changes and is a comparison on the pointer stream between.
+    art_stamp: Option<(u64, bool, usize, bool, concat_host::proxy::ProxyCodec)>,
     /// Media whose proxy has been seen to, this project: `proxy::ensure`
     /// costs two stats of the file, and once is enough.
     proxied: HashSet<String>,
@@ -886,6 +895,14 @@ pub struct Studio {
     /// beat that moves them while they do; see `panes::glide`.
     coast: crate::panes::glide::Coast,
     glide_beat: slint::Timer,
+    /// When the playhead was last scrubbed - dragged by hand along the
+    /// ruler, over a clip's edge under trim-follow, along the phone's
+    /// lanes, or by the glide a throw left behind - and the beat that
+    /// watches for the drag going quiet. While a sample of one is recent
+    /// the playhead counts as scrubbing, and the monitor reads the
+    /// proxies as playback does; see [`Studio::scrubbing`].
+    scrub_at: Option<std::time::Instant>,
+    scrub_beat: slint::Timer,
     /// The preview axis: the instant under the pointer while it crosses the
     /// lanes, which the monitor shows instead of the playhead's. None when
     /// the pointer is elsewhere, or the axis is off, or the cut is playing.
@@ -2351,6 +2368,8 @@ impl Studio {
             transport: slint::Timer::default(),
             coast: crate::panes::glide::Coast::default(),
             glide_beat: slint::Timer::default(),
+            scrub_at: None,
+            scrub_beat: slint::Timer::default(),
             hover: None,
             hover_hush: slint::Timer::default(),
             clipboard: Vec::new(),
@@ -3237,6 +3256,40 @@ impl Studio {
             let at = self.coast.clock();
             self.coast.tracker.push(at, f64::from(self.playhead));
         }
+        self.scrubbing_sampled();
+    }
+
+    /// Notes a sample of a scrub gesture - the playhead dragged by hand -
+    /// and starts the beat that watches for the gesture going quiet. See
+    /// [`Studio::scrubbing`].
+    fn scrubbing_sampled(&mut self) {
+        self.scrub_at = Some(std::time::Instant::now());
+        self.scrub_beat
+            .start(slint::TimerMode::SingleShot, SCRUB_LINGER, || {
+                crate::host::Shell::with(|shell, _| {
+                    // The drag has gone quiet: the playhead has come to
+                    // rest, and the paused monitor owes the original's
+                    // frame - the one the export would make - over the
+                    // working copy the scrub was reading. Only when one
+                    // is on screen: at Full quality, or with the proxies
+                    // off, the scrub read the file and there is nothing
+                    // to trade back.
+                    let mut studio = shell.studio.borrow_mut();
+                    if !studio.playing && studio.monitor.frame_was_proxied {
+                        studio.request_preview();
+                    }
+                });
+            });
+    }
+
+    /// Whether the playhead is being scrubbed: the last sample of a drag
+    /// of it - the desk's ruler, a clip's edge under trim-follow, the
+    /// phone's lanes, the glide a throw left in - is recent. The monitor
+    /// then reads the proxies for as long as Settings allows it, so the
+    /// picture follows the pointer instead of waiting on the original's
+    /// decode.
+    pub fn scrubbing(&self) -> bool {
+        self.scrub_at.is_some_and(|at| at.elapsed() < SCRUB_LINGER)
     }
 
     /// The finger that dragged the phone's lanes along the cut has let go:
@@ -3287,6 +3340,9 @@ impl Studio {
         let limit = f64::from(limit);
         let reached = wanted <= 0.0 || wanted >= limit;
         self.seek(wanted.clamp(0.0, limit) as f32);
+        // The glide is the scrub a finger threw, carrying on without it:
+        // every step of one is a sample of the same gesture.
+        self.scrubbing_sampled();
         if going && !reached {
             self.coast.glide = Some((glide, since, limit as f32));
         } else {
@@ -3363,6 +3419,47 @@ impl Studio {
         self.media = bin;
     }
 
+    /// Removes the proxies under `session`'s project that the project's
+    /// media - read as it reads them, and written in the codec Settings
+    /// chooses - does not name: the copies of media no longer in the
+    /// project, read as a range they no longer are, or left behind by a
+    /// switch of the proxy codec. Nothing else sweeps cache/proxy.
+    fn sweep_stale_proxies(&self, session: &Session) {
+        let project_dir = std::path::Path::new(session.path());
+        let codec = self.prefs.proxy_codec();
+        let kept: HashSet<std::path::PathBuf> = session
+            .project()
+            .media
+            .iter()
+            .filter_map(|item| {
+                concat_host::proxy::path_for(
+                    project_dir,
+                    &item.path,
+                    item.color_range.map(concat_export::engine_range),
+                    item.color_space.is_hdr(),
+                    codec,
+                )
+            })
+            .collect();
+        let swept = concat_host::proxy::sweep(project_dir, &kept);
+        if swept > 0 {
+            log::info!("{swept} stale proxies swept from {}", project_dir.display());
+        }
+    }
+
+    /// The proxy codec was changed in Settings: the copies already written
+    /// are named for the other codec, so they are not the ones to read.
+    /// Every media item is asked for its proxy again - `request_media_art`
+    /// writes the choice's, the art stamp having changed with the codec -
+    /// and the copies nothing asks for any more are swept. Called from the
+    /// settings sheet's own message, so the stamp is compared after.
+    pub(crate) fn proxies_retargeted(&mut self) {
+        self.proxied.clear();
+        if let Some(session) = self.session.as_ref() {
+            self.sweep_stale_proxies(session);
+        }
+    }
+
     /// Decodes art for every media item that has none yet: its pictures
     /// and the waveform of its default audio stream - and, for every clip
     /// that plays another of its media's streams, that stream's waveform
@@ -3411,6 +3508,7 @@ impl Studio {
                 height,
                 range,
                 hdr,
+                self.prefs.proxy_codec(),
             );
             self.proxied.insert(id);
         }
@@ -8421,24 +8519,7 @@ impl Studio {
                 // The proxies of media no longer in the project, or read
                 // as a range they no longer are, go now: nothing else
                 // sweeps cache/proxy.
-                let project_dir = std::path::Path::new(session.path());
-                let kept: HashSet<std::path::PathBuf> = session
-                    .project()
-                    .media
-                    .iter()
-                    .filter_map(|item| {
-                        concat_host::proxy::path_for(
-                            project_dir,
-                            &item.path,
-                            item.color_range.map(concat_export::engine_range),
-                            item.color_space.is_hdr(),
-                        )
-                    })
-                    .collect();
-                let swept = concat_host::proxy::sweep(project_dir, &kept);
-                if swept > 0 {
-                    log::info!("{swept} stale proxies swept from {}", project_dir.display());
-                }
+                self.sweep_stale_proxies(&session);
                 self.session = Some(session);
                 // The relink dialog belongs to the project that opened it;
                 // this project's own check follows below.
@@ -11546,8 +11627,11 @@ impl Studio {
             self.revision,
             self.on_start,
             self.art_pending.len() + self.posters_pending.len(),
-            // Proxies switched on in Settings are seen to at once.
+            // Proxies switched on in Settings are seen to at once; so is
+            // a switch of the codec they are written in, which is as
+            // fresh a copy as the switch that turned them on.
             self.prefs.proxies,
+            self.prefs.proxy_codec(),
         );
         if self.art_stamp == Some(stamp) {
             if !self.on_start {

@@ -14,6 +14,11 @@
 //! do, and see the original. The copy is named after the file's path,
 //! size and modification time, so a file replaced on disk gets a fresh
 //! one and the old copy is swept with the rest of the cache.
+//!
+//! Which codec the copy is written in is Settings' to say, as
+//! [`ProxyCodec`]: H.264, the small file, or MJPEG, whose every frame is
+//! a keyframe of its own and which nothing has to seek within - the
+//! scrubbiest there is, at several times the file.
 
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
@@ -31,6 +36,56 @@ const PIXELS_WITHOUT_PROXY: u64 = 1920 * 1080;
 /// shorter than [`SHORTEST_LONG_SIDE`].
 const DIVISOR: u32 = 4;
 const SHORTEST_LONG_SIDE: u32 = 960;
+
+/// The codec a proxy is written in, chosen in Settings > General. An HDR
+/// file's proxy keeps its signal whatever this says - HEVC in ten bits,
+/// HLG or PQ as the file is - because MJPEG carries neither.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum ProxyCodec {
+    /// H.264, veryfast, CRF 23: the small copy, quick enough to decode.
+    /// The default - the one every proxy was before the setting existed,
+    /// which is why its name stays the one those copies are filed under.
+    #[default]
+    H264,
+    /// MJPEG at qscale 3: every frame a keyframe, nothing to seek to and
+    /// no neighbours to reconstruct first, so a drag of the playhead
+    /// reads whatever frame it lands on at once - about half again the
+    /// scrub speed of H.264 on the same machine, in Blender's proxy
+    /// benchmark, for several times the file. The choice for a disk with
+    /// room and a timeline that must follow the pointer.
+    Mjpeg,
+}
+
+impl ProxyCodec {
+    /// Every codec, in the order the Settings menu lists them.
+    pub const ALL: [ProxyCodec; 2] = [ProxyCodec::H264, ProxyCodec::Mjpeg];
+
+    /// The name a setting stores.
+    pub fn name(self) -> &'static str {
+        match self {
+            ProxyCodec::H264 => "h264",
+            ProxyCodec::Mjpeg => "mjpeg",
+        }
+    }
+
+    /// The codec a stored name means, or `None` for one nobody stores.
+    pub fn parse(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "h264" | "h.264" => Some(ProxyCodec::H264),
+            "mjpeg" | "m-jpeg" | "motion jpeg" => Some(ProxyCodec::Mjpeg),
+            _ => None,
+        }
+    }
+
+    /// The index into [`ProxyCodec::ALL`] a stored name is, so the sheet's
+    /// dropdown can be seeded from the preference.
+    pub fn index(self) -> usize {
+        ProxyCodec::ALL
+            .iter()
+            .position(|codec| *codec == self)
+            .unwrap_or(0)
+    }
+}
 
 /// Whether a `width` by `height` file is worth a proxy.
 pub fn wanted(width: u32, height: u32) -> bool {
@@ -54,13 +109,17 @@ pub fn size_for(width: u32, height: u32) -> (u32, u32) {
 /// since the copy is written from the corrected picture and a correction
 /// changed is a different copy - and by whether the file is HDR, whose
 /// proxy keeps its signal, so the tone-mapped copies earlier builds wrote
-/// of one are written again. None for a file that cannot be stat'ed,
+/// of one are written again. A proxy in the codec other than H.264 - the
+/// one every proxy was before the codec was a choice - is named for that
+/// too, so a switch of codec in Settings writes the choice's copy and
+/// not the old one renamed. None for a file that cannot be stat'ed,
 /// which cannot be read either.
 pub fn path_for(
     project: &Path,
     media: &str,
     range: Option<ColorRange>,
     hdr: bool,
+    codec: ProxyCodec,
 ) -> Option<PathBuf> {
     let meta = std::fs::metadata(media).ok()?;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -71,6 +130,9 @@ pub fn path_for(
     }
     if hdr {
         "hdr".hash(&mut hasher);
+    }
+    if codec != ProxyCodec::H264 {
+        codec.name().hash(&mut hasher);
     }
     if let Ok(modified) = meta.modified()
         && let Ok(since) = modified.duration_since(std::time::UNIX_EPOCH)
@@ -86,12 +148,13 @@ pub fn path_for(
 }
 
 /// The proxy of `media` under `project`, read as `range`, when it has
-/// been written - an HDR one or an SDR one, whichever there is: a
-/// filmstrip reads either.
+/// been written - an HDR one or an SDR one, in either codec, whichever
+/// there is: a filmstrip reads any of them.
 pub fn existing(project: &Path, media: &str, range: Option<ColorRange>) -> Option<PathBuf> {
     [true, false]
         .into_iter()
-        .filter_map(|hdr| path_for(project, media, range, hdr))
+        .flat_map(|hdr| ProxyCodec::ALL.map(move |codec| (hdr, codec)))
+        .filter_map(|(hdr, codec)| path_for(project, media, range, hdr, codec))
         .find(|path| path.is_file())
 }
 
@@ -107,11 +170,12 @@ pub fn ensure(
     height: u32,
     range: Option<ColorRange>,
     hdr: bool,
+    codec: ProxyCodec,
 ) -> bool {
     if !wanted(width, height) {
         return false;
     }
-    let Some(target) = path_for(project, media, range, hdr) else {
+    let Some(target) = path_for(project, media, range, hdr, codec) else {
         return false;
     };
     let pool = crate::scheduler().pool();
@@ -133,7 +197,7 @@ pub fn ensure(
     let source = media.to_owned();
     let size = size_for(width, height);
     crate::scheduler().submit(Priority::Proxy, move || {
-        match write(&source, &target, size, range) {
+        match write(&source, &target, size, range, codec) {
             Ok(()) => {
                 crate::scheduler()
                     .pool()
@@ -185,19 +249,24 @@ pub fn sweep(project: &Path, keep: &HashSet<PathBuf>) -> usize {
     removed
 }
 
-/// Writes the proxy of `source`, read as `range`, at `size` to `target`:
-/// H.264, a fast preset, two threads, in software, into a temporary name
-/// that is moved into place only when whole, so a copy that is there is a
-/// copy that is complete. The copy is tagged video range and converted to
-/// match, so it is read as it is and needs no correction of its own. An
-/// HDR source's copy keeps its signal - HEVC in ten bits, HLG or PQ as the
-/// source is, on the hardware encoder where there is one - so an HDR
-/// timeline plays it as the original draws when paused.
+/// Writes the proxy of `source`, read as `range`, at `size` to `target`
+/// in `codec` (an HDR source's copy keeps its signal and is HEVC
+/// whatever the codec says, since MJPEG carries neither): two threads,
+/// in software, into a temporary name that is moved into place only when
+/// whole, so a copy that is there is a copy that is complete. The copy
+/// is tagged with the levels it holds and converted to match - video
+/// range for H.264, JPEG's own full range for MJPEG, which the encoder
+/// will take no other way - so it is read as it is and needs no
+/// correction of its own. An HDR source's copy keeps its signal - HEVC
+/// in ten bits, HLG or PQ as the source is, on the hardware encoder
+/// where there is one - so an HDR timeline plays it as the original
+/// draws when paused.
 pub fn write(
     source: &str,
     target: &Path,
     (width, height): (u32, u32),
     range: Option<ColorRange>,
+    codec: ProxyCodec,
 ) -> Result<(), String> {
     let info = concat_media::probe(source).map_err(|error| error.to_string())?;
     let (rate, signal) = info
@@ -220,20 +289,33 @@ pub fn write(
         .in_range(range)
         .deep(hdr);
     let mut decoder = Decoder::open(source, &options).map_err(|error| error.to_string())?;
+    // The codec Settings chose for SDR copies. MJPEG's quality is its
+    // qscale - three is the production-tested profile, near enough to
+    // the original at a quarter the size - and its levels are JPEG's
+    // own, full range, which the encoder insists on and the copy reads
+    // back as (`ColorRange::implied` knows an MJPEG file is full range,
+    // so it needs no correction of its own).
+    let mjpeg = codec == ProxyCodec::Mjpeg;
     let encoding = EncodeOptions {
         codec: if hdr {
             VideoCodec::Hevc
+        } else if mjpeg {
+            VideoCodec::Mjpeg
         } else {
             VideoCodec::H264
         },
         preset: "veryfast".to_owned(),
-        crf: 23,
+        crf: if mjpeg { 3 } else { 23 },
         // A proxy is a working copy: the CRF says how good, and no
         // bitrate target ever applies to it.
         rate_mode: RateMode::Vbr,
         bitrate_kbps: 0,
         ten_bit: false,
-        color_range: ColorRange::Limited,
+        color_range: if mjpeg && !hdr {
+            ColorRange::Full
+        } else {
+            ColorRange::Limited
+        },
         // HEVC in ten bits costs the CPU far more than H.264 does; the
         // media engine does it for nothing where there is one.
         hardware: hdr,
@@ -315,12 +397,12 @@ mod tests {
         }
         let source = media.to_string_lossy().into_owned();
         let project = dir.join("project");
-        let target = path_for(&project, &source, None, true).expect("a path");
+        let target = path_for(&project, &source, None, true, ProxyCodec::H264).expect("a path");
         assert_ne!(
             Some(&target),
-            path_for(&project, &source, None, false).as_ref()
+            path_for(&project, &source, None, false, ProxyCodec::H264).as_ref()
         );
-        write(&source, &target, (320, 180), None).expect("writes the proxy");
+        write(&source, &target, (320, 180), None, ProxyCodec::H264).expect("writes the proxy");
         let info = concat_media::probe(&target).expect("probes");
         let video = info.video.expect("has pictures");
         assert_eq!((video.codec.as_str(), video.signal), ("hevc", Signal::Hlg));
@@ -395,7 +477,7 @@ mod tests {
         let project = dir.join("project");
         let source = media.to_string_lossy().into_owned();
         assert!(
-            ensure(&project, &source, 2560, 1440, None, false),
+            ensure(&project, &source, 2560, 1440, None, false, ProxyCodec::H264),
             "worth a proxy"
         );
         crate::scheduler().drain();
@@ -409,7 +491,15 @@ mod tests {
             Some(proxy.as_path())
         );
         // Second time round: nothing to write, still adopted.
-        assert!(ensure(&project, &source, 2560, 1440, None, false));
+        assert!(ensure(
+            &project,
+            &source,
+            2560,
+            1440,
+            None,
+            false,
+            ProxyCodec::H264
+        ));
         let time = FrameRate::THIRTY.time_of_frame(2);
         let moving = pool
             .frame(&concat_media::FrameRequest::new(&source, time, 480, 270).from_proxy(true))
@@ -420,7 +510,100 @@ mod tests {
             .expect("reads the original");
         assert_eq!((paused.width(), paused.height()), (480, 270));
         // A file not worth a proxy is left alone.
-        assert!(!ensure(&project, &source, 1280, 720, None, false));
+        assert!(!ensure(
+            &project,
+            &source,
+            1280,
+            720,
+            None,
+            false,
+            ProxyCodec::H264
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A proxy in MJPEG is a quarter of the file, every frame a keyframe,
+    /// and full range as JPEG is by definition: the colours come back as
+    /// they went in, not lifted by a range the copy forgot it held. Its
+    /// name is the H.264 one's plus the codec, so the two never stand in
+    /// for each other.
+    #[test]
+    fn an_mjpeg_proxy_round_trips_the_picture_and_has_its_own_name() {
+        use concat_core::frame::Frame;
+        use concat_core::time::FrameRate;
+        let dir = std::env::temp_dir().join(format!("concat-proxy-mjpeg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let media = dir.join("big.mp4");
+        {
+            let mut encoder = Encoder::create(
+                &media,
+                2560,
+                1440,
+                FrameRate::THIRTY,
+                &EncodeOptions {
+                    preset: "ultrafast".to_owned(),
+                    hardware: false,
+                    ..EncodeOptions::default()
+                },
+            )
+            .expect("encodes");
+            for index in 0..6u8 {
+                let mut frame = Frame::black(2560, 1440);
+                frame.fill([index * 40, 20, 200, 255]);
+                encoder.write_frame(&frame).expect("writes");
+            }
+            encoder.finish().expect("finishes");
+        }
+        let project = dir.join("project");
+        let source = media.to_string_lossy().into_owned();
+        let h264 = path_for(&project, &source, None, false, ProxyCodec::H264).expect("a path");
+        let mjpeg = path_for(&project, &source, None, false, ProxyCodec::Mjpeg).expect("a path");
+        assert_ne!(h264, mjpeg, "a codec switch is another copy");
+        assert!(
+            ensure(
+                &project,
+                &source,
+                2560,
+                1440,
+                None,
+                false,
+                ProxyCodec::Mjpeg
+            ),
+            "worth a proxy"
+        );
+        crate::scheduler().drain();
+        assert!(mjpeg.is_file(), "the MJPEG copy was written");
+        let info = concat_media::probe(&mjpeg).expect("probes");
+        let video = info.video.expect("has pictures");
+        assert_eq!(
+            (video.width, video.height),
+            (960, 540),
+            "a quarter of the long side, as the H.264 one is"
+        );
+        let pool = crate::scheduler().pool();
+        assert_eq!(
+            pool.proxy_of(Path::new(&source)).as_deref(),
+            Some(mjpeg.as_path())
+        );
+        // The last frame is (200, 20, 200) in the original's terms; the
+        // proxy's copy of it comes back near enough - a washed-out
+        // number is a range the copy held and the read-back denied.
+        let time = FrameRate::THIRTY.time_of_frame(5);
+        let frame = pool
+            .frame(&concat_media::FrameRequest::new(&source, time, 480, 270).from_proxy(true))
+            .expect("reads the proxy");
+        let at = 4 * (200 * 480 + 240);
+        let pixel = |shift: usize| frame.pixels()[at + shift];
+        for (channel, wanted) in [(0, 200u8), (1, 20), (2, 200)] {
+            let got = pixel(channel);
+            assert!(
+                got.abs_diff(wanted) < 24,
+                "channel {channel} came back {got}, wanted near {wanted}"
+            );
+        }
+        // A filmstrip's reader finds the MJPEG copy as it would the
+        // H.264 one.
+        assert_eq!(existing(&project, &source, None), Some(mjpeg));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -431,7 +614,14 @@ mod tests {
         let media = dir.join("clip.mp4");
         std::fs::write(&media, b"one").expect("writes");
         let project = dir.join("project");
-        let first = path_for(&project, &media.to_string_lossy(), None, false).expect("a path");
+        let first = path_for(
+            &project,
+            &media.to_string_lossy(),
+            None,
+            false,
+            ProxyCodec::H264,
+        )
+        .expect("a path");
         assert!(first.starts_with(project.join("cache").join("proxy")));
         assert!(existing(&project, &media.to_string_lossy(), None).is_none());
         // Read as another range, the file is another proxy too: the copy
@@ -441,18 +631,27 @@ mod tests {
             &media.to_string_lossy(),
             Some(ColorRange::Full),
             false,
+            ProxyCodec::H264,
         )
         .expect("a path");
         assert_ne!(first, full, "a file read as full range is another proxy");
         std::fs::write(&media, b"one more byte").expect("writes");
-        let second = path_for(&project, &media.to_string_lossy(), None, false).expect("a path");
+        let second = path_for(
+            &project,
+            &media.to_string_lossy(),
+            None,
+            false,
+            ProxyCodec::H264,
+        )
+        .expect("a path");
         assert_ne!(first, second, "a changed file is another proxy");
         assert!(
             path_for(
                 &project,
                 &dir.join("missing.mp4").to_string_lossy(),
                 None,
-                false
+                false,
+                ProxyCodec::H264,
             )
             .is_none()
         );

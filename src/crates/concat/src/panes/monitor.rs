@@ -78,6 +78,10 @@ pub struct MonitorPane {
     pub image: slint::Image,
     busy: bool,
     wanted: bool,
+    /// Whether the request out now - or the frame on screen, once it is
+    /// back - asked for the proxies: what tells the end of a scrub to
+    /// trade the working copy it was reading for the original's frame.
+    pub frame_was_proxied: bool,
     /// Said once per project: a monitor that cannot decode says so, and
     /// then stops repeating itself.
     failed: bool,
@@ -244,13 +248,21 @@ impl MonitorPane {
             moving: studio.playing || studio.source.as_ref().is_some_and(|source| source.playing),
             // Playback reads the proxies at Half and Quarter; Full plays
             // the files themselves, or Full would be the proxy blurred up.
-            // With proxies off in Settings it plays the files at every
-            // quality, a proxy left from before included.
+            // A scrub of the playhead reads them too, when Settings
+            // allows it: the drag asks for frames as fast as the pointer
+            // moves, and the working copy is the one that can keep up -
+            // a drag that stops is followed by the original's frame a
+            // beat later (the studio's `scrub_beat`). With proxies off in
+            // Settings it plays the files at every quality, a proxy left
+            // from before included.
             proxy: studio.prefs.proxies
-                && (studio.playing || studio.source.as_ref().is_some_and(|source| source.playing))
+                && (studio.playing
+                    || studio.source.as_ref().is_some_and(|source| source.playing)
+                    || (studio.prefs.proxies_on_scrub() && studio.scrubbing()))
                 && quality > 0,
             color_space: studio.project().active().video.color_space,
         };
+        self.frame_was_proxied = spec.proxy;
         if !studio.playing {
             self.cadence.report(studio.project().active().video.rate());
         }

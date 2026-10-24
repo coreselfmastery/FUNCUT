@@ -47,10 +47,29 @@ pub enum VideoCodec {
     /// AV1: smaller again, royalty-free, the web's; slower to encode in
     /// software and not every old device plays it.
     Av1,
+    /// MJPEG: motion JPEG, every frame a keyframe of its own. Never
+    /// offered for an export - H.264 and its friends are far smaller -
+    /// but the codec a proxy can be written in, where the point is how
+    /// fast a frame anywhere in the file decodes: nothing to seek to,
+    /// no frames either side to reconstruct first. Blender's proxy
+    /// benchmark put MJPEG about half again the scrub speed of H.264 on
+    /// the same machine, at several times the file.
+    ///
+    /// JPEG is full range by definition - 0-255 - and the encoder
+    /// refuses a limited tag, so a file in it is written [`ColorRange::
+    /// Full`] whatever the caller asked; `ColorRange::implied` knows a
+    /// file that comes back is full range, so it needs no correction of
+    /// its own. Eight bits only, and steered by qscale rather than a
+    /// CRF or a preset: see [`VideoCodec::encoders`] and the opening of
+    /// `mjpeg` in `open_video`.
+    Mjpeg,
 }
 
 impl VideoCodec {
-    /// Every codec, in the order a menu lists them.
+    /// Every codec an export offers, in the order a menu lists them.
+    /// MJPEG is not among them - it is a proxy codec, never a delivery
+    /// one - so [`VideoCodec::encodable`] answers no for it rather than
+    /// panicking off the end of this list.
     pub const ALL: [VideoCodec; 3] = [VideoCodec::H264, VideoCodec::Hevc, VideoCodec::Av1];
 
     /// The name a document or a request stores.
@@ -59,6 +78,7 @@ impl VideoCodec {
             VideoCodec::H264 => "h264",
             VideoCodec::Hevc => "hevc",
             VideoCodec::Av1 => "av1",
+            VideoCodec::Mjpeg => "mjpeg",
         }
     }
 
@@ -68,6 +88,7 @@ impl VideoCodec {
             "h264" | "h.264" | "avc" => Some(VideoCodec::H264),
             "hevc" | "h265" | "h.265" => Some(VideoCodec::Hevc),
             "av1" => Some(VideoCodec::Av1),
+            "mjpeg" | "m-jpeg" | "motion jpeg" => Some(VideoCodec::Mjpeg),
             _ => None,
         }
     }
@@ -78,6 +99,7 @@ impl VideoCodec {
             VideoCodec::H264 => "H.264",
             VideoCodec::Hevc => "HEVC",
             VideoCodec::Av1 => "AV1",
+            VideoCodec::Mjpeg => "MJPEG",
         }
     }
 
@@ -103,6 +125,11 @@ impl VideoCodec {
                 &["av1_nvenc", "av1_qsv", "av1_amf", "libsvtav1", "libaom-av1"]
             }
             VideoCodec::Av1 => &["libsvtav1", "libaom-av1", "av1_nvenc", "av1_qsv", "av1_amf"],
+            // The one encoder there is, in software, always: there is no
+            // GPU's MJPEG to fall through to, and none is wanted - a
+            // proxy is written while the editor is in use, and the CPU's
+            // is quick enough not to be noticed.
+            VideoCodec::Mjpeg => &["mjpeg"],
         }
     }
 
@@ -134,10 +161,11 @@ impl VideoCodec {
     /// is opened once, at 720p, and the answer kept for the process.
     pub fn encodable(self) -> bool {
         static KNOWN: [OnceLock<bool>; 3] = [const { OnceLock::new() }; 3];
-        let slot = VideoCodec::ALL
-            .iter()
-            .position(|codec| *codec == self)
-            .expect("every codec is in ALL");
+        let Some(slot) = VideoCodec::ALL.iter().position(|codec| *codec == self) else {
+            // Not an export codec - MJPEG, the proxy one - so nothing an
+            // export would open in.
+            return false;
+        };
         *KNOWN[slot].get_or_init(|| {
             encodable_among(self.linked(true, false), |name| opens_here(self, name))
         })
@@ -173,6 +201,11 @@ impl VideoCodec {
             VideoCodec::H264 => 1.0,
             VideoCodec::Hevc => 0.6,
             VideoCodec::Av1 => 0.5,
+            // Not that an export asks: every frame a standalone JPEG, at
+            // the proxy's qscale of three. Several times H.264 at CRF 23
+            // is what the benchmark measured, and the file is the price
+            // of the seek.
+            VideoCodec::Mjpeg => 6.0,
         }
     }
 }
@@ -223,7 +256,8 @@ pub struct EncodeOptions {
     pub preset: String,
     /// Constant rate factor on x264's scale, lower being better quality
     /// and a bigger file; the other encoders are handed their own
-    /// equivalent.
+    /// equivalent - MJPEG its qscale, on which two is near lossless and
+    /// the proxy's three is plenty.
     pub crf: u8,
     /// VBR (the CRF carries the quality) or CBR (the bitrate is the
     /// target). Default VBR, so an unchanged export means an unchanged
@@ -488,12 +522,19 @@ fn opens_here(codec: VideoCodec, encoder_name: &'static str) -> bool {
     answer
 }
 
+/// FFmpeg's `FF_QP2LAMBDA`: the lambda one unit of quality is counted in
+/// when a `-q:v N` of the command line becomes `global_quality` on the
+/// encoder's context. A fixed factor of the ABI, written here rather than
+/// reached for through the bindings, which do not carry the define.
+const LAMBDA: i32 = 118;
+
 /// Whether the encoder takes ten-bit pictures. AMF makes ten-bit HEVC
 /// but not ten-bit H.264, and NVENC and Quick Sync make ten-bit HEVC and
 /// AV1.
 fn takes_ten_bits(encoder_name: &str) -> bool {
     match Family::of(encoder_name) {
-        Family::Software => true,
+        // MJPEG is eight bits a channel, full stop: no ten-bit JPEG.
+        Family::Software => encoder_name != "mjpeg",
         Family::Amf => encoder_name.starts_with("hevc_"),
         Family::Nvenc | Family::Qsv => {
             encoder_name.starts_with("hevc_") || encoder_name.starts_with("av1_")
@@ -542,7 +583,14 @@ fn open_video(
 ) -> Result<(encoder::video::Encoder, Pixel)> {
     let pq = hdr == Some(Signal::Pq);
     let family = Family::of(encoder_name);
-    let pixel_format = family.pixel_format(options.ten_bit);
+    // JPEG's own pixel format: full range 4:2:0, which is what the file
+    // comes back as - the `j` is libavcodec's way of saying so, and the
+    // encoder refuses a limited tag on any format.
+    let pixel_format = if encoder_name == "mjpeg" {
+        Pixel::YUVJ420P
+    } else {
+        family.pixel_format(options.ten_bit)
+    };
     let cbr = options.rate_mode == RateMode::Cbr && options.bitrate_kbps > 0;
     let average = options.rate_mode == RateMode::Average && options.bitrate_kbps > 0;
     let mut video = ffmpeg::codec::Context::new_with_codec(codec)
@@ -568,6 +616,14 @@ fn open_video(
         (*context).color_trc = transfer.into();
         if options.threads > 0 {
             (*context).thread_count = i32::from(options.threads);
+        }
+        if options.codec == VideoCodec::Mjpeg {
+            // The CLI's `-q:v N`, as the library does it: the QSCALE flag
+            // and a global quality of N lambda. MJPEG has no preset and
+            // no CRF of its own; qscale two is near lossless, thirty-one
+            // is rubble, and the number rides in `crf`.
+            (*context).flags |= ffmpeg::sys::AV_CODEC_FLAG_QSCALE as i32;
+            (*context).global_quality = i32::from(options.crf) * LAMBDA;
         }
     }
     if global_header {
@@ -672,6 +728,10 @@ fn open_video(
             "crf" => &options.crf.saturating_add(8).min(63).to_string(),
             "cpu-used" => "6",
         },
+        // MJPEG takes nothing through the dictionary: no preset, no CRF,
+        // no rate control a proxy would want. Its quality is the QSCALE
+        // flag and the global quality set on the context above.
+        "mjpeg" => ffmpeg::dict! {},
         // The GPUs' own. Each is told the CRF as its own constant quality
         // in VBR - NVENC's CQ, Quick Sync's ICQ and AMF's QP all run on
         // the same 0-51 scale as x264's CRF - and the target in CBR.
@@ -1022,7 +1082,7 @@ impl Encoder {
                 });
             }
         };
-        if options.codec == VideoCodec::H264 {
+        if matches!(options.codec, VideoCodec::H264 | VideoCodec::Mjpeg) {
             return Err(Error::Ffi {
                 operation: "open an HDR encoder",
                 path: path.to_path_buf(),

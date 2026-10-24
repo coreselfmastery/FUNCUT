@@ -2008,6 +2008,12 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     app.on_settings_proxies_changed(on_window!(|state, on: bool| {
         state.handle(Msg::Settings(SettingsMsg::ProxiesChanged(on)));
     }));
+    app.on_settings_proxy_scrub_changed(on_window!(|state, on: bool| {
+        state.handle(Msg::Settings(SettingsMsg::ProxyScrubChanged(on)));
+    }));
+    app.on_settings_proxy_codec_changed(on_window!(|state, index: i32| {
+        state.handle(Msg::Settings(SettingsMsg::ProxyCodecChanged(index)));
+    }));
     app.on_settings_gpu_changed(on_window!(|state, on: bool| {
         state.handle(Msg::Settings(SettingsMsg::GpuChanged(on)));
     }));

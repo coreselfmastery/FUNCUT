@@ -72,6 +72,11 @@ export struct SettingsData {
     playhead-stops: bool,
     /// large files get a smaller copy for playback
     proxies: bool,
+    /// a scrub of the playhead reads the smaller copies too
+    proxy-scrub: bool,
+    /// 0 H.264 (smaller files), 1 MJPEG (fastest scrubbing): the codec
+    /// the smaller copies are written in
+    proxy-codec: int,
     /// the window and the compositor draw on the GPU, not in software
     gpu: bool,
     /// there is a software rasteriser to draw on instead: Windows, Linux
@@ -620,6 +625,11 @@ export component SettingsDialog inherits Modal {
     callback scale-changed(index: int);
     callback playhead-stops-changed(on: bool);
     callback proxies-changed(on: bool);
+    /// The proxies' own switch: a scrub of the playhead reads them too.
+    callback proxy-scrub-changed(on: bool);
+    /// The proxies' codec, as an index into the two the row lists:
+    /// 0 H.264, 1 MJPEG.
+    callback proxy-codec-changed(index: int);
     callback gpu-changed(on: bool);
     callback magnetic-changed(on: bool);
     callback download-source-changed(index: int);
@@ -953,6 +963,42 @@ export component SettingsDialog inherits Modal {
                     on: root.data.proxies;
                     open: false;
                     switched(on) => { root.proxies-changed(on); }
+                }
+
+                // The proxies' own settings, which only mean anything
+                // while the switch above is on. On, a drag of the playhead
+                // reads the copies as playback does - the picture follows
+                // the pointer instead of waiting on the original's decode,
+                // and the original's frame follows the drag's end.
+                if root.data.proxies: DialogSection {
+                    ruled: false;
+                    title: I18n.t("settings.proxyScrub");
+                    hint: I18n.t("settings.proxyScrubHint");
+                    switchable: true;
+                    on: root.data.proxy-scrub;
+                    open: false;
+                    switched(on) => { root.proxy-scrub-changed(on); }
+                }
+
+                // What the copies are written in. H.264 is the smaller
+                // file; MJPEG's every frame is a keyframe of its own, so
+                // a scrub lands anywhere without a seek - around half
+                // again the scrub speed, at several times the file.
+                if root.data.proxies: DialogSection {
+                    ruled: false;
+                    title: I18n.t("settings.proxyCodec");
+                    hint: I18n.t("settings.proxyCodecHint");
+                    choices: [
+                        I18n.t("settings.proxyCodecH264"),
+                        I18n.t("settings.proxyCodecMjpeg"),
+                    ];
+                    choice-details: [
+                        I18n.t("settings.proxyCodecH264Detail"),
+                        I18n.t("settings.proxyCodecMjpegDetail"),
+                    ];
+                    choice: root.data.proxy-codec;
+                    open: false;
+                    chose(index) => { root.proxy-codec-changed(index); }
                 }
 
                 // Off, the window and the compositor draw in software:

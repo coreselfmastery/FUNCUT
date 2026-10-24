@@ -68,6 +68,20 @@ pub struct Preferences {
     /// may not take (an HDR one opened NVENC first), and the person who
     /// wants one for smoother playback turns it on in Settings.
     pub proxies: bool,
+    /// Whether a scrub of the playhead reads the proxies too - the drag
+    /// of a ruler, a clip's edge under trim-follow, the phone's lanes -
+    /// rather than only playback doing so. `None` is on: whoever has
+    /// turned the proxies on wants the picture to follow the pointer,
+    /// and the working copy is what can keep up with it. Read through
+    /// [`Preferences::proxies_on_scrub`].
+    pub proxy_scrub: Option<bool>,
+    /// The codec the proxies are written in, by name - "h264" or
+    /// "mjpeg" - or `None` for H.264, the default and the smaller file:
+    /// quick enough to decode, and what every proxy was before the codec
+    /// was a choice. MJPEG is the other one - every frame a keyframe, at
+    /// several times the file, and the fastest scrub there is. Read
+    /// through [`Preferences::proxy_codec`].
+    pub proxy_codec: Option<String>,
     /// Drawing in software: the window and the compositor on the
     /// platform's software rasteriser (WARP, lavapipe) instead of the GPU,
     /// as the person chose in Settings > General or with `concat
@@ -173,6 +187,25 @@ impl Default for VoiceoverPrefs {
 }
 
 impl Preferences {
+    /// Whether a scrub of the playhead reads the proxies; see
+    /// `proxy_scrub`. On unless the sheet was told otherwise.
+    pub fn proxies_on_scrub(&self) -> bool {
+        self.proxy_scrub.unwrap_or(true)
+    }
+
+    /// The codec the proxies are written in; see `proxy_codec`. H.264
+    /// unless the sheet was told otherwise, and for a name nothing
+    /// stores - a codec a newer build chose and this one does not know -
+    /// back to H.264 rather than to whatever happens to sit at the old
+    /// position, the way a name the accent list no longer has falls back
+    /// to the default.
+    pub fn proxy_codec(&self) -> concat_host::proxy::ProxyCodec {
+        self.proxy_codec
+            .as_deref()
+            .and_then(concat_host::proxy::ProxyCodec::parse)
+            .unwrap_or_default()
+    }
+
     /// Whether the timeline shows its VU meters; see `vu_meters`.
     pub fn meters_shown(&self) -> bool {
         self.vu_meters.unwrap_or(true)

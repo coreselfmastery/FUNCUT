@@ -273,6 +273,11 @@ export component App inherits Window {
     callback settings-scale-changed(index: int);
     callback settings-playhead-stops-changed(on: bool);
     callback settings-proxies-changed(on: bool);
+    /// The proxies' own switch: a scrub of the playhead reads them too.
+    callback settings-proxy-scrub-changed(on: bool);
+    /// The proxies' codec, as an index into the two the row lists:
+    /// 0 H.264, 1 MJPEG.
+    callback settings-proxy-codec-changed(index: int);
     callback settings-gpu-changed(on: bool);
     callback settings-magnetic-changed(on: bool);
     callback settings-download-source-changed(index: int);
@@ -876,6 +881,8 @@ export component App inherits Window {
         scale-changed(index) => { root.settings-scale-changed(index); }
         playhead-stops-changed(on) => { root.settings-playhead-stops-changed(on); }
         proxies-changed(on) => { root.settings-proxies-changed(on); }
+        proxy-scrub-changed(on) => { root.settings-proxy-scrub-changed(on); }
+        proxy-codec-changed(index) => { root.settings-proxy-codec-changed(index); }
         gpu-changed(on) => { root.settings-gpu-changed(on); }
         magnetic-changed(on) => { root.settings-magnetic-changed(on); }
         download-source-changed(index) => { root.settings-download-source-changed(index); }

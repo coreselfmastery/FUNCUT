@@ -151,21 +151,22 @@ fn main() {
         .map_err(|v| v.to_string())
         .unwrap();
 
-        let mut bindings = bindgen::Builder::default()
+        // Shadowed per optional backend rather than assigned through a
+        // `mut`: a build with neither the metal nor the vulkan feature -
+        // the Linux CI, and any default `cargo check` - would otherwise
+        // warn about an unused mut on every build, and a warning a tree
+        // lints with -D warnings should not print anywhere.
+        let bindings = bindgen::Builder::default()
             .rust_edition(bindgen::RustEdition::Edition2021)
             .rust_target(package_msrv)
             .header("wrapper.h");
 
         #[cfg(feature = "metal")]
-        {
-            bindings = bindings.header("whisper.cpp/ggml/include/ggml-metal.h");
-        }
+        let bindings = bindings.header("whisper.cpp/ggml/include/ggml-metal.h");
         #[cfg(feature = "vulkan")]
-        {
-            bindings = bindings
-                .header("whisper.cpp/ggml/include/ggml-vulkan.h")
-                .clang_arg("-DGGML_USE_VULKAN=1");
-        }
+        let bindings = bindings
+            .header("whisper.cpp/ggml/include/ggml-vulkan.h")
+            .clang_arg("-DGGML_USE_VULKAN=1");
 
         let bindings = bindings
             .clang_arg("-I./whisper.cpp/")

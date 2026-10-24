@@ -304,7 +304,8 @@ pub struct Listed {
     pub id: String,
     /// What the row shows.
     pub name: String,
-    /// Whoosh, Impact, Riser, Ambience, Music or UI.
+    /// Whoosh, Impact, Riser, Ambience, Music, UI, Motion, Notification,
+    /// Keyboard, Digital, Foley or Writing.
     #[serde(default)]
     pub category: String,
     /// The file's name in the repository's `audio/` folder.
@@ -332,6 +333,27 @@ pub struct Listed {
     /// and the API's `sounds.search` reads them.
     #[serde(default)]
     pub tags: Vec<String>,
+    /// What the sound is, in a sentence a person or an agent can read
+    /// before hearing anything: "A fast, crisp whip of air with a bright
+    /// edge and a little push behind it." Optional; the search reads it,
+    /// after the name and the tags, and the API hands it back so an
+    /// agent can pick with it.
+    #[serde(default)]
+    pub description: String,
+    /// What the sound is for, as short lines: `["Whip pans", "Fast cuts
+    /// between scenes"]`. Optional; the search reads them, and the API
+    /// hands them back. What a sound is *not* for is deliberately not
+    /// carried: the description says so in its own words when it matters,
+    /// and a search that matched what to avoid would find the wrong
+    /// sounds on purpose.
+    #[serde(default, rename = "useFor")]
+    pub use_for: Vec<String>,
+    /// Seconds into the file the sound lands its peak: the moment a move
+    /// should meet, when the library says so. Optional; the API hands it
+    /// back so an agent can place the file by the moment it is for
+    /// rather than by its start.
+    #[serde(default, rename = "syncAt")]
+    pub sync_at: Option<f64>,
 }
 
 impl Listed {
@@ -367,6 +389,121 @@ impl Catalogue {
     /// The sound by its id.
     pub fn get(&self, id: &str) -> Option<&Listed> {
         self.sounds.iter().find(|sound| sound.id == id)
+    }
+
+    /// The catalogue narrowed by `query` and `category`, best first: the
+    /// one search the shelf's field and the API's `sounds.search` both
+    /// ask, so a person and an agent are answered by the same list. With
+    /// neither set, the whole library in manifest order.
+    pub fn search(&self, query: &str, category: Option<&str>) -> Vec<&Listed> {
+        let words = query_words(query);
+        let wanted = category.map(str::to_ascii_lowercase);
+        let mut matched: Vec<&Listed> = self
+            .sounds
+            .iter()
+            .filter(|sound| {
+                wanted
+                    .as_deref()
+                    .is_none_or(|wanted| sound.category.to_ascii_lowercase() == wanted)
+            })
+            .filter(|sound| words.is_empty() || sound.score(&words).is_some())
+            .collect();
+        if !words.is_empty() {
+            // Best first: what the name says outranks what the tags say,
+            // which outranks what the description merely mentions. The
+            // sort is stable, so sounds that score the same stay in the
+            // order the manifest put them.
+            matched.sort_by_key(|sound| std::cmp::Reverse(sound.score(&words)));
+        }
+        matched
+    }
+}
+
+// ── the search ─────────────────────────────────────────────────────────
+
+/// The words of a query: lowercased, cut at anything that is not a letter
+/// or a digit, empties dropped - "Cinematic  IMPACT!" is cinematic and
+/// impact. Digits stay, so "1s" and "808" are words. The little words
+/// that only glue a sentence together - "a", "the", "for", "with" - are
+/// dropped, so "soft swish for a card transition" asks what it means and
+/// not one word more. They are dropped rather than matched: "in" and
+/// "out" stay, being what a zip does, and "up" and "down" what a power
+/// does.
+fn query_words(query: &str) -> Vec<String> {
+    const GLUE: [&str; 10] = [
+        "a", "an", "the", "for", "with", "and", "or", "of", "to", "that",
+    ];
+    query
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty() && !GLUE.contains(word))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The words of a sound's field, the same cuts [`query_words`] makes, so
+/// "Whoosh, fast and hard" and "whoosh fast" speak the same language.
+fn field_words(text: &str) -> Vec<String> {
+    query_words(text)
+}
+
+/// Where `word` lands in `field`: `exact` for one of the field's own
+/// words, `prefix` for the front of one ("whoosh" finds "whooshes"),
+/// `None` when it matches nothing there.
+fn hit(word: &str, field: &[String], exact: u32, prefix: u32) -> Option<u32> {
+    if field.iter().any(|token| token == word) {
+        Some(exact)
+    } else if field.iter().any(|token| token.starts_with(word)) {
+        Some(prefix)
+    } else {
+        None
+    }
+}
+
+impl Listed {
+    /// How well this sound answers the query's `words`: `None` when any
+    /// word matches nowhere - the query is ANDed, as it always was - and
+    /// otherwise a number that says where the words matched, so the
+    /// search can sort by it. A word scores by its best field: the name
+    /// counts most (a word of it 12, a prefix of it 9), then the tags
+    /// (8 and 6), then the id and the category (5 and 4), then the
+    /// use-for lines (3 and 2) and the description (2 and 1), which say
+    /// what a sound is for rather than what it is. Every word of the
+    /// query landing in the name adds 4 more, so "fast whoosh" puts
+    /// *Whoosh, fast* ahead of a whoosh merely tagged fast.
+    pub fn score(&self, words: &[String]) -> Option<u32> {
+        if words.is_empty() {
+            return Some(0);
+        }
+        let name = field_words(&self.name);
+        let tags: Vec<String> = self.tags.iter().flat_map(|tag| field_words(tag)).collect();
+        let id = field_words(&self.id);
+        let category = field_words(&self.category);
+        let used: Vec<String> = self
+            .use_for
+            .iter()
+            .flat_map(|line| field_words(line))
+            .collect();
+        let description = field_words(&self.description);
+        let mut total = 0;
+        let mut all_in_name = true;
+        for word in words {
+            let in_name = hit(word, &name, 12, 9);
+            let best = [
+                in_name,
+                hit(word, &tags, 8, 6),
+                hit(word, &id, 5, 4),
+                hit(word, &category, 5, 4),
+                hit(word, &used, 3, 2),
+                hit(word, &description, 2, 1),
+            ]
+            .into_iter()
+            .flatten()
+            .max()?;
+            all_in_name &= in_name.is_some();
+            total += best;
+        }
+        Some(total + u32::from(all_in_name) * 4)
     }
 }
 
@@ -548,6 +685,215 @@ mod tests {
             Path::new("/cache/sounds/aaaaaaaaaaaa-w.ogg")
         );
         assert!(Catalogue::parse(b"not json").is_err());
+    }
+
+    /// A little catalogue to search, in the shape the manifest FUNCUT
+    /// ships now carries: names, tags, a description and use-for lines.
+    fn search_fixture() -> Catalogue {
+        let digest = "a".repeat(64);
+        let rows = [
+            format!(
+                r#"{{"id":"whoosh-fast","name":"Whoosh, fast","category":"Whoosh",
+                "file":"a.ogg","duration":0.25,"license":"CC0-1.0","sha256":"{digest}",
+                "tags":["fast","air"],
+                "description":"A fast, crisp whip of air.",
+                "useFor":["Whip pans","Fast cuts"]}}"#
+            ),
+            format!(
+                r#"{{"id":"whoosh-slow","name":"Whoosh, slow","category":"Whoosh",
+                "file":"b.ogg","duration":0.9,"license":"CC0-1.0","sha256":"{digest}",
+                "tags":["slow","air"],
+                "description":"A slow swell of air.",
+                "useFor":["Reveals"]}}"#
+            ),
+            format!(
+                r#"{{"id":"click-button","name":"Button click","category":"UI",
+                "file":"c.ogg","duration":0.05,"license":"CC0-1.0","sha256":"{digest}",
+                "tags":["interface","tap"],
+                "description":"A small plastic button.",
+                "useFor":["Menus","Buttons"]}}"#
+            ),
+            format!(
+                r#"{{"id":"swipe-fast","name":"Swipe, fast","category":"Motion",
+                "file":"d.ogg","duration":0.3,"license":"CC0-1.0","sha256":"{digest}",
+                "tags":["fast","swipe"],
+                "description":"A quick swipe of air for a card transition.",
+                "useFor":["Fast cuts between scenes"]}}"#
+            ),
+        ];
+        let body = format!(r#"{{"version":1,"sounds":[{}]}}"#, rows.join(","),);
+        Catalogue::parse(body.as_bytes()).expect("the fixture parses")
+    }
+
+    /// The words are still ANDed and still prefix-matched, so the old
+    /// queries find what they found; a word that matches nowhere leaves
+    /// the sound out, and no query at all is the whole manifest order.
+    #[test]
+    fn words_are_anded_and_prefix_matched() {
+        let catalogue = search_fixture();
+        let ids = |query: &str| -> Vec<&str> {
+            catalogue
+                .search(query, None)
+                .into_iter()
+                .map(|sound| sound.id.as_str())
+                .collect()
+        };
+        assert_eq!(ids("whoosh"), ["whoosh-fast", "whoosh-slow"]);
+        assert_eq!(ids("fast whoosh"), ["whoosh-fast"]);
+        // "whip" is neither name, id, tag nor category: only the fast
+        // whoosh's description says it, and that is enough to find it.
+        assert_eq!(ids("whip"), ["whoosh-fast"]);
+        assert!(ids("explosion").is_empty());
+        assert_eq!(
+            ids(""),
+            ["whoosh-fast", "whoosh-slow", "click-button", "swipe-fast"]
+        );
+        // "swe" is the front of "swell" in a description: a prefix finds
+        // a word anywhere it is written.
+        assert_eq!(ids("swe"), ["whoosh-slow"]);
+        // "swi" is the front of both "Swipe"'s name and the word "swipe"
+        // in its description, and of nothing else.
+        assert_eq!(ids("swi"), ["swipe-fast"]);
+        // The glue of a sentence is not a word of it: "a whoosh with a
+        // fast edge" asks for a whoosh that is fast, and "the explosion"
+        // still finds nothing.
+        assert_eq!(ids("a whoosh"), ["whoosh-fast", "whoosh-slow"]);
+        assert_eq!(ids("the whip"), ["whoosh-fast"]);
+        assert!(ids("the explosion").is_empty());
+    }
+
+    /// Where a word matched says how high it ranks: all three of these
+    /// sounds answer "air", but the two whose *tags* say it come before
+    /// the one only a description mentions, and sounds that tie keep the
+    /// manifest's order.
+    #[test]
+    fn where_a_word_landed_says_how_high_it_ranks() {
+        let catalogue = search_fixture();
+        let ids: Vec<&str> = catalogue
+            .search("air", None)
+            .into_iter()
+            .map(|sound| sound.id.as_str())
+            .collect();
+        assert_eq!(ids, ["whoosh-fast", "whoosh-slow", "swipe-fast"]);
+        let tags = catalogue.get("whoosh-fast").unwrap();
+        let description = catalogue.get("swipe-fast").unwrap();
+        assert!(
+            tags.score(&["air".to_owned()]).unwrap()
+                > description.score(&["air".to_owned()]).unwrap()
+        );
+        // A word of the name outranks a word of the id: "swipe" is both
+        // the swipe's name and nowhere else in the fixture.
+        assert_eq!(
+            catalogue
+                .get("swipe-fast")
+                .unwrap()
+                .score(&["swipe".to_owned()]),
+            Some(16)
+        );
+    }
+
+    /// The category narrows first and the words narrow what is left, and
+    /// the case of either is the other's.
+    #[test]
+    fn the_category_narrows_before_the_words() {
+        let catalogue = search_fixture();
+        let ids: Vec<&str> = catalogue
+            .search("click", Some("ui"))
+            .into_iter()
+            .map(|sound| sound.id.as_str())
+            .collect();
+        assert_eq!(ids, ["click-button"]);
+        assert!(catalogue.search("whoosh", Some("UI")).is_empty());
+    }
+
+    /// The manifest's new fields round-trip - a description, use-for
+    /// lines and a sync point survive a parse - and an old manifest
+    /// without them still reads, its sounds searching on name, id,
+    /// category and tags alone.
+    #[test]
+    fn the_new_fields_round_trip_and_old_manifests_still_read() {
+        let with = search_fixture();
+        assert_eq!(
+            with.get("whoosh-fast").unwrap().description,
+            "A fast, crisp whip of air."
+        );
+        assert_eq!(
+            with.get("whoosh-fast").unwrap().use_for,
+            ["Whip pans", "Fast cuts"]
+        );
+        let digest = "a".repeat(64);
+        let old = format!(
+            r#"{{"version":1,"sounds":[{{"id":"w","name":"Whoosh","category":"Whoosh",
+                "file":"w.ogg","duration":1.0,"license":"CC0-1.0","sha256":"{digest}"}}]}}"#
+        );
+        let catalogue = Catalogue::parse(old.as_bytes()).expect("an old manifest reads");
+        assert_eq!(catalogue.search("whoosh", None).len(), 1);
+        assert_eq!(catalogue.sounds[0].description, "");
+        assert!(catalogue.sounds[0].use_for.is_empty());
+        assert_eq!(catalogue.sounds[0].sync_at, None);
+    }
+
+    /// A sync point is carried as seconds, and stays absent when the
+    /// manifest does not say one.
+    #[test]
+    fn a_sync_point_is_carried_in_seconds() {
+        let digest = "a".repeat(64);
+        let body = format!(
+            r#"{{"version":1,"sounds":[
+                {{"id":"w","name":"Whoosh","category":"Whoosh","file":"w.ogg",
+                  "duration":0.25,"license":"CC0-1.0","sha256":"{digest}","syncAt":0.092}}
+            ]}}"#
+        );
+        let catalogue = Catalogue::parse(body.as_bytes()).expect("parses");
+        assert_eq!(catalogue.sounds[0].sync_at, Some(0.092));
+    }
+
+    /// The manifest this repository ships, read where it is committed:
+    /// it parses whole, every row offered, and the searches the shelf
+    /// and an agent both ask find what they should, ranked. Skipped
+    /// quietly outside a checkout - a crate vendored alone carries no
+    /// library to read.
+    #[test]
+    fn the_shipped_manifest_parses_and_searches() {
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../audio/manifest.json");
+        let Ok(bytes) = std::fs::read(&manifest) else {
+            return;
+        };
+        let catalogue = Catalogue::parse(&bytes).expect("the shipped manifest parses");
+        assert!(
+            catalogue.sounds.len() >= 430,
+            "the whole library is offered, {} rows",
+            catalogue.sounds.len()
+        );
+        assert_eq!(catalogue.search("", None).len(), catalogue.sounds.len());
+        let top = |query: &str| {
+            catalogue
+                .search(query, None)
+                .into_iter()
+                .take(3)
+                .map(|sound| sound.id.as_str())
+                .collect::<Vec<_>>()
+        };
+        // Every word of a natural ask, glue dropped, finds the one sound
+        // that says them all.
+        assert_eq!(
+            top("soft swish for a card transition"),
+            ["whoosh-medium-soft"]
+        );
+        assert_eq!(
+            top("fast whoosh"),
+            ["whoosh-fast-hard", "whoosh-fast-medium", "whoosh-fast-pass"]
+        );
+        assert_eq!(
+            top("success notification")[0],
+            "notification-success-bubble"
+        );
+        assert_eq!(top("pen writing")[0], "writing-pen-write");
+        assert_eq!(top("glitch")[0], "digital-glitch-clear");
+        assert_eq!(top("data chart")[0], "data-chart-reveal");
+        assert_eq!(top("sub drop")[0], "bass-sub-drop-long");
+        // and the words a description says are found by their front
+        assert_eq!(top("sparkle reveal")[0], "shimmer-long-sparkle");
     }
 
     /// An index that names a file outside the folder is not believed.

@@ -23,12 +23,19 @@ everything.
 
 The `sounds` tools search the built-in CC0 sound library this repository
 ships (see `docs/AUDIO_LIBRARY.md`) and place what they find:
-`sounds_search` with words against the name and tags ("cinematic
-impact", "click", or a `category`: Whoosh, Impact, Riser, Ambience,
-Music, UI) → `sounds_add` with `start: 0` to lay the sound on a lane in
-one undoable step. The first use of a sound downloads it (a few hundred
-kilobytes at most, checked against its SHA-256) and keeps it in the app's
-cache; every sound is CC0, so nothing asks for attribution.
+`sounds_search` with words against the name, tags, use-for lines and
+description ("cinematic impact", "click", "soft swish for a card
+transition" - the little words are dropped, and where a word matched
+ranks it: the name counts most, then the tags, then the description - or
+a `category`: Whoosh, Impact, Riser, Motion, UI, Notification, Keyboard,
+Digital, Foley, Writing, Ambience, Music) → `sounds_add` with `start: 0`
+to lay the sound on a lane in one undoable step. Each match carries what
+an agent needs to pick without hearing anything: a `description` of what
+the sound is, `useFor` lines saying what it is for, and `syncAt`, seconds
+in where its peak lands, for placing it by the moment it is for. The
+first use of a sound downloads it (a few hundred kilobytes at most,
+checked against its SHA-256) and keeps it in the app's cache; every sound
+is CC0, so nothing asks for attribution.
 ### Background music (FreePD and MobyGratis)
 
 The `bgm` tools search 1,191 whole CC0 music tracks on two shelves and

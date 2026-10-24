@@ -2840,8 +2840,11 @@ export component MediaPane inherits Rectangle {
                             width: self.natural-width;
                             options: [I18n.t("sounds.allCategories"),
                                 I18n.t("sounds.catWhoosh"), I18n.t("sounds.catImpact"),
-                                I18n.t("sounds.catRiser"), I18n.t("sounds.catAmbience"),
-                                I18n.t("sounds.catMusic"), I18n.t("sounds.catUi")];
+                                I18n.t("sounds.catRiser"), I18n.t("sounds.catMotion"),
+                                I18n.t("sounds.catUi"), I18n.t("sounds.catNotification"),
+                                I18n.t("sounds.catKeyboard"), I18n.t("sounds.catDigital"),
+                                I18n.t("sounds.catFoley"), I18n.t("sounds.catWriting"),
+                                I18n.t("sounds.catAmbience"), I18n.t("sounds.catMusic")];
                             current: Sounds.concat-category;
                             changed(index) => {
                                 Sounds.concat-category-changed(index);

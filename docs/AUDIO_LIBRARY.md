@@ -1,15 +1,20 @@
 # The Concat sound library
 
-> **FUNCUT:** this fork ships the library itself - 110 CC0 sounds in
+> **FUNCUT:** this fork ships the library itself - 430 CC0 sounds in
 > [`audio/`](../audio) with the manifest beside them, mirrored onto this
 > repository's `audio-v1` release - and the URLs the app reads point here
 > (`raw.githubusercontent.com/coreselfmastery/FUNCUT/main/audio/…`) rather
 > than at the upstream assets repository, which has nothing published yet.
-> The manifest carries one field this page's schema does not name:
+> The manifest carries three fields this page's schema does not name:
 > `tags`, a list of words the shelf's search and the API's `sounds.search`
-> narrow by, beyond the name. Everything else below is the schema as the
-> app reads it. The making of this library is in
-> [FUNCUT-CHANGES.md](FUNCUT-CHANGES.md), section 4.
+> narrow by, beyond the name; `description`, a sentence saying what the
+> sound is, and `useFor`, short lines saying what it is for, both searched
+> after the name and the tags and both handed back to an agent by
+> `sounds.search`; and `syncAt`, seconds into the file where the sound's
+> peak lands, which the API hands back so a sound can be placed by the
+> moment it is for. Everything else below is the schema as the app reads
+> it. The making of this library is in
+> [FUNCUT-CHANGES.md](FUNCUT-CHANGES.md), sections 5 and 7.
 
 The Library's **Audio** page has a **Concat** shelf of built-in sounds and
 music (#60). Nothing ships inside the app: the shelf reads a manifest from
@@ -66,6 +71,10 @@ Until `audio/manifest.json` exists (the request answers 404), the shelf says
       "license": "CC0-1.0",
       "source": "https://freesound.org/s/123456/",
       "author": "someone",
+      "tags": ["fast", "air", "transition"],
+      "description": "A fast, crisp whip of air.",
+      "useFor": ["Whip pans", "Fast cuts between scenes"],
+      "syncAt": 0.092,
       "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
     }
   ]
@@ -77,13 +86,17 @@ Until `audio/manifest.json` exists (the request answers 404), the shelf says
 | `version` | yes | The manifest format: `1`. |
 | `sounds[].id` | yes | Stable for ever, unique, `[a-z0-9-]` only. Projects don't store it, but the app's cache does. |
 | `name` | yes | What the row shows. English. Keep it short and descriptive. |
-| `category` | yes | One of `Whoosh`, `Impact`, `Riser`, `Ambience`, `Music`. These five are translated in the app. Any other value shows only under "All". |
+| `category` | yes | One of `Whoosh`, `Impact`, `Riser`, `Motion`, `UI`, `Notification`, `Keyboard`, `Digital`, `Foley`, `Writing`, `Ambience`, `Music`. These are translated in the app. Any other value shows only under "All". |
 | `file` | yes | The file name in `audio/`: a plain name, no folders. `.ogg` (Vorbis/Opus), `.mp3`, `.m4a`, `.flac` or `.wav`. |
 | `duration` | yes | Seconds, as a number. The row shows it before the file is downloaded. |
 | `bytes` | recommended | The file's size. It drives the progress bar. |
 | `license` | yes | `CC0-1.0`. Only CC0 is accepted. An entry with any other licence is left off the shelf. |
 | `source` | yes | Where the file was found (Freesound, Kenney, OpenGameArt…): the page a reviewer can check the licence on. |
 | `author` | no | Who made it, when known. CC0 owes no attribution, but it is kind to keep. |
+| `tags` | no | Words the search narrows by, beyond the name. |
+| `description` | no | What the sound is, in a sentence. The search reads it after the name and the tags, and `sounds.search` hands it back so an agent can pick without hearing. |
+| `useFor` | no | What the sound is for, as short lines. Searched like `description`, and handed back by `sounds.search`. |
+| `syncAt` | no | Seconds into the file where the sound's peak lands, when the source says: where a move should meet it. Handed back by `sounds.search`, so a caller can place the file by the moment it is for rather than by its start. |
 | `sha256` | yes | The SHA-256 of the file's bytes, lowercase hex, 64 characters. An entry without a valid digest is left off the shelf, and a download that doesn't match it is deleted. |
 
 Compute a digest with `sha256sum <file>`.

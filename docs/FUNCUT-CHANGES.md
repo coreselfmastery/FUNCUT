@@ -7,9 +7,10 @@ marked as an estimate; nothing is a benchmark this fork ran on your machine,
 because the point of the changes is that the *machine decides* now.
 
 Three kinds of change live here: **memory sizing** (the caches that had one
-fixed size now scale to the machine) and **three new features** (the OpenVid
+fixed size now scale to the machine) and **five new features** (the OpenVid
 stock library, the background-music library, pause removal for
-voiceovers, and the built-in CC0 sound library). Everything else in the
+voiceovers, the built-in CC0 sound library, and the Wyzowl sound effects
+that grew it to 430). Everything else in the
 program is upstream's own, including
 its existing small-machine machinery: proxies for large files, preview quality
 tiers, hardware decode where it wins, and the swap-friendly design of the
@@ -278,7 +279,66 @@ program exactly where it helps, and deliberately not where it does not:
   default is the CPU, and the proxy system covers 4K sources with
   quarter-size copies that decode smoothly anywhere.
 
-## 7. Everything else: verified, not changed
+## 7. The feature: the Wyzowl sound effects, and a search that ranks
+
+Section 5's library of 110 sounds grew by **320 CC0 sound effects from
+Wyzowl's sfx-kit** (https://huggingface.co/datasets/wyzowl/sfx-kit) - a
+collection built for video editors, with whooshes, swishes, zips, swipes,
+reverse whooshes, risers and fallers, impacts, cinematic hits, booms and
+bass drops, pops and transforms and shimmers, UI clicks, keyboard
+typing, phone sounds, notifications, digital glitches, data and chart
+sounds, foley materials, everyday props, mechanical switches, writing
+and drawing, money, clocks, celebration and logo stings - **430 sounds,
+4.4 MB more of Ogg, 11.5 MB in all**.
+
+**What the metadata carries:** every one of the 320 arrives with more
+than a name: a `description` ("A fast, crisp whip of air with a bright
+edge and a little push behind it"), `useFor` lines ("Whip pans", "Fast
+cuts between scenes", "Carousel and tab swipes"), and a `syncAt` point
+- where in the file the sound's peak lands, the moment a move should
+meet. The sounds themselves were only re-encoded: 48 kHz stereo and mono
+Ogg Vorbis q5 out of the dataset's 24-bit WAV masters, no re-gain and no
+trimming, because the dataset's loudness tiers (a *hard* whoosh is
+louder than a *soft* one on purpose) and its timing metadata are the
+product, and both must survive the conversion.
+
+**Search, both ways, that ranks:** the search is now one implementation
+in `concat-host` - `Catalogue::search` - asked by both the shelf's field
+and the API's `sounds.search`, so a person and an agent are answered by
+the same list. The words are still ANDed and still prefix-matched, but
+they now match in six places instead of four - name, id, category, tags,
+use-for lines and description - and where they matched says the order:
+a word of the name counts most, then a tag, then the description, so
+"fast whoosh" puts *Whoosh, fast and hard* ahead of a whoosh merely
+tagged fast, and "card transition" finds the whooshes and swipes whose
+use-for lines suggest cards. The little words that only glue a sentence
+- "a", "the", "for", "with" - are dropped, so an agent's natural
+"soft swish for a card transition" asks what it means and not one word
+more; "in" and "out" stay, being what a zip does. `sounds.search` hands
+the description, the use-for lines and the sync point back, so an agent
+that cannot listen can still pick with the ears the metadata lends it,
+and place by the moment a sound is for.
+
+**Where the categories went:** the shelf's filter grew from six to
+twelve - Whoosh, Impact, Riser, Motion, UI, Notification, Keyboard,
+Digital, Foley, Writing, Ambience, Music - folding the dataset's own 28
+categories into the ones a person browses by, each word translated in
+all 26 locales. The dataset's own category words ride along in each
+sound's tags ("swish", "zip", "notification", "foley"), so the search
+narrows by them without a filter row of their own. A person hears a
+sound the way the shelf always played it - a click previews it, fetching
+it first (a few kilobytes now) when it is not cached; a plus or a drag
+lays it on the timeline.
+
+**What it deliberately does not do:** no `avoidFor` field is carried -
+a search that matched what to avoid would find the wrong sounds on
+purpose, and the descriptions say their own cautions in their own words
+- and nothing of the dataset's pro extras (LUFS, true peak, rate ranges,
+pairing advice) beyond the sync point, which is the one an agent can act
+on. Everything else stays in the dataset, which the manifest's `source`
+line points at.
+
+## 8. Everything else: verified, not changed
 
 The rest of the fork's work was verification, and it is worth saying what
 that means concretely. The full engine test suites were run against every
@@ -296,7 +356,7 @@ that touch it are the memory table above (which changes *how much* is held,
 never what is computed) and `removeSpans`, which is exercised by the eleven
 engine tests listed above, including the keyframe and fade sharing.
 
-## 8. The files
+## 9. The files
 
 | File | What it is |
 | --- | --- |
@@ -308,8 +368,8 @@ engine tests listed above, including the keyframe and fade sharing.
 | `src/crates/concat-project/src/commands/` | new `removeSpans` command + tests |
 | `src/crates/concat/src/panes/voiceover.rs` | the button's wiring |
 | `src/crates/concat/ui/dialogs/voiceover.slint` | the button itself |
-| `audio/` | new: the CC0 sound library - 110 files and `manifest.json` |
-| `src/crates/concat-host/src/models.rs`, `sounds.rs` | the manifest and mirror URLs point at this fork; the `tags` a search narrows by |
+| `audio/` | new: the CC0 sound library - 430 files and `manifest.json` (110 curated, 320 from Wyzowl's sfx-kit) |
+| `src/crates/concat-host/src/models.rs`, `sounds.rs` | the manifest and mirror URLs point at this fork; the `tags`, `description`, `useFor` and `syncAt` a search narrows by, and `Catalogue::search`, the one ranked search both the shelf and the API ask |
 | `src/crates/concat-api/`, `src/crates/concat-mcp/` | the `sounds.search` / `sounds.add` methods and tools |
 | `src/crates/concat/src/panes/sounds.rs`, `ui/workspace/media-pane.slint`, `audio-page.slint`, `locales/` | the shelf's sidebar row, search field, category filter and words |
 | `src/crates/concat-host/src/bgm.rs` | new: the music library - catalogs, ranged reads, search, tests |

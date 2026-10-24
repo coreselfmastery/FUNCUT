@@ -279,25 +279,34 @@ pub enum Request {
         track: Option<String>,
     },
 
-    /// Searches the built-in sound library - whooshes, impacts, risers,
-    /// ambiences, music and UI sounds, every one CC0 - and returns the
-    /// matches with everything an agent needs to pick one without hearing
-    /// it: the name, the category, the duration, the fetch cost in bytes,
-    /// and whether the file is already on this machine. `query` words are
-    /// ANDed and prefix-matched against the name, the id, the category and
-    /// each sound's tags, so "cinematic impact" finds an impact tagged
-    /// cinematic; `category` is one of Whoosh, Impact, Riser, Ambience,
-    /// Music or UI, case-insensitive; `limit` (1-100, 20 when absent) and
+    /// Searches the built-in sound library - 430 CC0 sounds: whooshes,
+    /// impacts, risers, ambiences, music beds, UI clicks, motion pops,
+    /// notifications, keyboards, glitches, foley and writing - and returns
+    /// the matches best first, with everything an agent needs to pick one
+    /// without hearing it: the name, the category, the duration, the fetch
+    /// cost in bytes, a description of what the sound is, the use-for lines
+    /// the manifest carries, and whether the file is already on this
+    /// machine. `query` words are ANDed and prefix-matched against the
+    /// name, the id, the category, the tags, the use-for lines and the
+    /// description, and where a word matched says how high its sound
+    /// stands: the name counts most, then the tags, then the description,
+    /// so "fast whoosh" puts a *Whoosh, fast* ahead of a whoosh merely
+    /// tagged fast, and "card transition" finds a swipe its use-for lines
+    /// suggest. `category` is one of Whoosh, Impact, Riser, Ambience,
+    /// Music, UI, Motion, Notification, Keyboard, Digital, Foley or
+    /// Writing, case-insensitive; `limit` (1-100, 20 when absent) and
     /// `offset` page through them. With nothing set, the whole library in
     /// manifest order.
     #[serde(rename = "sounds.search")]
     SoundsSearch {
         /// Words to find, ANDed and prefix-matched against each sound's
-        /// name, id, category and tags.
+        /// name, id, category, tags, use-for lines and description, best
+        /// match first.
         #[serde(default)]
         query: Option<String>,
         /// Only this category, case-insensitive: Whoosh, Impact, Riser,
-        /// Ambience, Music or UI.
+        /// Ambience, Music, UI, Motion, Notification, Keyboard, Digital,
+        /// Foley or Writing.
         #[serde(default)]
         category: Option<String>,
         /// At most this many sounds, 1-100; 20 when absent.
@@ -742,7 +751,9 @@ pub struct OpenvidImport {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SoundsFound {
-    /// The sounds, `limit` of them from `offset`, in manifest order.
+    /// The sounds, `limit` of them from `offset`, best match first -
+    /// by where the query's words matched - or in manifest order
+    /// when the query is empty.
     pub sounds: Vec<SoundEntry>,
     /// How many match in all, this page aside.
     pub total: u64,
@@ -759,7 +770,8 @@ pub struct SoundEntry {
     pub id: String,
     /// What the shelf's row shows.
     pub name: String,
-    /// Whoosh, Impact, Riser, Ambience, Music or UI.
+    /// Whoosh, Impact, Riser, Ambience, Music, UI, Motion, Notification,
+    /// Keyboard, Digital, Foley or Writing.
     pub category: String,
     /// Words the search narrows by, beyond the name.
     pub tags: Vec<String>,
@@ -771,6 +783,20 @@ pub struct SoundEntry {
     pub license: String,
     /// Who made it.
     pub author: String,
+    /// What the sound is, in a sentence: what a person hears told to the
+    /// one who cannot. Empty when the manifest carries none.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    /// What the sound is for, as short lines the manifest carries:
+    /// "Whip pans", "Fast cuts between scenes". Empty when it carries
+    /// none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub use_for: Vec<String>,
+    /// Seconds into the file the sound lands its peak: where a move
+    /// should meet it, when the manifest says - place the sound this
+    /// much before the moment it is for. Absent when it does not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sync_at: Option<f64>,
     /// Where the sound's file is on this machine, once downloaded.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub local_path: Option<String>,

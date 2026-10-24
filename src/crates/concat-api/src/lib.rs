@@ -992,11 +992,14 @@ impl Api {
             .ok_or_else(|| ApiError::failed("the sound list is not published yet".to_owned()))
     }
 
-    /// [`Request::SoundsSearch`]: the catalogue narrowed by the filters.
-    /// The words of `query` are ANDed and prefix-matched against each
-    /// sound's name, id, category and tags - the way the OpenVid search
-    /// narrows by caption - so "cinematic impact" finds an impact tagged
-    /// cinematic.
+    /// [`Request::SoundsSearch`]: the catalogue narrowed by the filters,
+    /// best first. The words of `query` are ANDed and prefix-matched
+    /// against each sound's name, id, category, tags, use-for lines and
+    /// description - the one search the window's shelf asks too, in
+    /// `concat_host::sounds::Catalogue::search` - and where a word
+    /// matched says how high its sound stands: the name counts most,
+    /// then the tags, then the description, so "fast whoosh" puts a
+    /// *Whoosh, fast* ahead of a whoosh merely tagged fast.
     pub fn sounds_search(
         &self,
         query: Option<&str>,
@@ -1005,37 +1008,7 @@ impl Api {
         offset: Option<u32>,
     ) -> Result<SoundsFound, ApiError> {
         let catalogue = self.sounds_catalogue()?;
-        let words: Vec<String> = query
-            .unwrap_or_default()
-            .to_ascii_lowercase()
-            .split_whitespace()
-            .filter(|word| !word.is_empty())
-            .map(str::to_owned)
-            .collect();
-        let wanted = category.map(str::to_ascii_lowercase);
-        let matched: Vec<&sounds::Listed> = catalogue
-            .sounds
-            .iter()
-            .filter(|sound| {
-                wanted
-                    .as_deref()
-                    .is_none_or(|wanted| sound.category.to_ascii_lowercase() == wanted)
-            })
-            .filter(|sound| {
-                words.iter().all(|word| {
-                    let hay = format!(
-                        "{} {} {} {}",
-                        sound.name,
-                        sound.id,
-                        sound.category,
-                        sound.tags.join(" ")
-                    );
-                    hay.to_ascii_lowercase()
-                        .split_whitespace()
-                        .any(|token| token.starts_with(word))
-                })
-            })
-            .collect();
+        let matched = catalogue.search(query.unwrap_or_default(), category);
         let total = matched.len() as u64;
         let limit = limit.unwrap_or(20).clamp(1, 100) as usize;
         let offset = offset.unwrap_or(0) as usize;
@@ -1064,6 +1037,9 @@ impl Api {
             bytes: sound.bytes,
             license: sound.license.clone(),
             author: sound.author.clone(),
+            description: sound.description.clone(),
+            use_for: sound.use_for.clone(),
+            sync_at: sound.sync_at,
             local_path: cached
                 .is_file()
                 .then(|| cached.to_string_lossy().into_owned()),

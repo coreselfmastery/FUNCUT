@@ -38,8 +38,25 @@ const MINE: &str = "mine-";
 const CONCAT: &str = "concat-";
 
 /// The Concat shelf's categories, as the manifest names them; the sidebar
-/// shows them in the interface's language, after All.
-pub const CATEGORIES: [&str; 6] = ["Whoosh", "Impact", "Riser", "Ambience", "Music", "UI"];
+/// shows them in the interface's language, after All. The first six the
+/// library has always had; the last six arrived with the Wyzowl sfx-kit
+/// (see `docs/AUDIO_LIBRARY.md`), and any category a manifest names that
+/// is not here still shows under All, with the manifest's own word as its
+/// label.
+pub const CATEGORIES: [&str; 12] = [
+    "Whoosh",
+    "Impact",
+    "Riser",
+    "Motion",
+    "UI",
+    "Notification",
+    "Keyboard",
+    "Digital",
+    "Foley",
+    "Writing",
+    "Ambience",
+    "Music",
+];
 
 /// Where the Concat shelf stands.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -358,44 +375,23 @@ impl SoundsPane {
     }
 
     /// The Concat shelf's rows, narrowed to the category picked and the
-    /// words typed: the words are ANDed and prefix-matched against each
-    /// sound's name, id, category and tags, the way the API's
-    /// `sounds.search` narrows by the same fields.
+    /// words typed, best match first: the one search the API's
+    /// `sounds.search` asks too, in `concat_host::sounds::Catalogue::search`
+    /// - the words ANDed and prefix-matched against each sound's name,
+    /// id, category, tags, use-for lines and description, ranked by where
+    /// they matched, the name counting most - so the sounds whose names
+    /// say the query come first and the ones that merely mention it trail.
     pub fn concat_rows(&self) -> Vec<SoundCardData> {
         let category = self
             .category
             .checked_sub(1)
             .and_then(|row| CATEGORIES.get(row));
-        let words: Vec<String> = self
-            .query
-            .to_ascii_lowercase()
-            .split_whitespace()
-            .filter(|word| !word.is_empty())
-            .map(str::to_owned)
-            .collect();
         let Some(dirs) = self.dirs.as_ref() else {
             return Vec::new();
         };
         self.catalogue
-            .sounds
-            .iter()
-            .filter(|sound| {
-                category.is_none_or(|wanted| sound.category.eq_ignore_ascii_case(wanted))
-            })
-            .filter(|sound| {
-                words.iter().all(|word| {
-                    let hay = format!(
-                        "{} {} {} {}",
-                        sound.name,
-                        sound.id,
-                        sound.category,
-                        sound.tags.join(" ")
-                    );
-                    hay.to_ascii_lowercase()
-                        .split_whitespace()
-                        .any(|token| token.starts_with(word))
-                })
-            })
+            .search(&self.query, category.copied())
+            .into_iter()
             .map(|sound| {
                 let card = format!("{CONCAT}{}", sound.id);
                 let progress = self.fetching.get(&card).map_or(-1.0, |(done, _)| *done);
@@ -447,16 +443,22 @@ impl SoundsPane {
     }
 }
 
-/// A category as the interface says it: one of the six in its language,
-/// or the manifest's own word.
+/// A category as the interface says it: one of the twelve in its
+/// language, or the manifest's own word.
 pub fn category_label(category: &str) -> String {
     match category.to_ascii_lowercase().as_str() {
         "whoosh" => t("sounds.catWhoosh"),
         "impact" => t("sounds.catImpact"),
         "riser" => t("sounds.catRiser"),
+        "motion" => t("sounds.catMotion"),
+        "ui" => t("sounds.catUi"),
+        "notification" => t("sounds.catNotification"),
+        "keyboard" => t("sounds.catKeyboard"),
+        "digital" => t("sounds.catDigital"),
+        "foley" => t("sounds.catFoley"),
+        "writing" => t("sounds.catWriting"),
         "ambience" => t("sounds.catAmbience"),
         "music" => t("sounds.catMusic"),
-        "ui" => t("sounds.catUi"),
         _ => category.to_owned(),
     }
 }

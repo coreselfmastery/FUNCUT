@@ -809,11 +809,12 @@ fn image_url(source: Source, id: &str) -> Option<String> {
 fn index_sources(source: Source) -> Vec<String> {
     match source {
         Source::Magick => {
+            // The Hub's own copy behind the release, with hf-mirror.com
+            // behind that: the same bytes, the digest the judge of
+            // whichever answers.
             let mut urls = vec![INDEX_URL.to_owned()];
-            for url in [INDEX_URL_HF] {
-                urls.extend(crate::models::hf_mirror(url));
-                urls.push(url.to_owned());
-            }
+            urls.extend(crate::models::hf_mirror(INDEX_URL_HF));
+            urls.push(INDEX_URL_HF.to_owned());
             urls
         }
         Source::Openmoji => vec![OPENMOJI_INDEX.to_owned()],
@@ -943,9 +944,9 @@ fn lands_how(word: &str, caption: &str) -> Option<i64> {
 
 /// Whether `bytes` is a PNG that can hold transparency: the signature,
 /// a header whose width and height are real, and either colour type 6
-/// - truecolour with an alpha channel, what MAGICK serves - or colour
-/// type 3 with a `tRNS` chunk - a palette PNG that says which of its
-/// colours are see-through, what OpenMoji serves.
+/// (truecolour with an alpha channel, what MAGICK serves) or colour
+/// type 3 with a `tRNS` chunk (a palette PNG that says which of its
+/// colours are see-through, what OpenMoji serves).
 fn is_png_with_alpha(bytes: &[u8]) -> bool {
     const SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
     if bytes.len() < 33 || bytes[..8] != SIGNATURE || &bytes[12..16] != b"IHDR" {

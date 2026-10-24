@@ -1687,22 +1687,21 @@ impl Api {
                     ripple: false,
                 });
             }
-            if placement.scale.is_some()
-                || placement.offset_x.is_some()
-                || placement.offset_y.is_some()
-                || placement.rotation.is_some()
+            if let Some(clip) = clip_id.as_deref()
+                && (placement.scale.is_some()
+                    || placement.offset_x.is_some()
+                    || placement.offset_y.is_some()
+                    || placement.rotation.is_some())
             {
-                if let Some(clip) = clip_id.as_deref() {
-                    commands.push(Command::SetClipTransform {
-                        clip_id: clip.to_owned(),
-                        scale: placement.scale,
-                        offset_x: placement.offset_x,
-                        offset_y: placement.offset_y,
-                        rotation: placement.rotation,
-                        stretch_x: None,
-                        stretch_y: None,
-                    });
-                }
+                commands.push(Command::SetClipTransform {
+                    clip_id: clip.to_owned(),
+                    scale: placement.scale,
+                    offset_x: placement.offset_x,
+                    offset_y: placement.offset_y,
+                    rotation: placement.rotation,
+                    stretch_x: None,
+                    stretch_y: None,
+                });
             }
             if !commands.is_empty() {
                 view = self.apply(path, Command::Batch { commands })?;

@@ -32,6 +32,7 @@
 //! whenever. The API and the MCP server reach the same library through
 //! the same methods, so a person and an agent see one shelf each.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -243,6 +244,7 @@ pub fn shared(dirs: &AppDirs) -> &'static Library {
         dirs: dirs.clone(),
         freepd: Shelf::new(),
         lofi: Shelf::new(),
+        turns: Mutex::new(HashMap::new()),
     })
 }
 
@@ -326,6 +328,14 @@ pub struct Library {
     freepd: Shelf,
     /// Moby's MobyGratis instrumentals, as the OpenLo-Fi pack.
     lofi: Shelf,
+    /// One turn per track: a track's fetch holds its own lock, so two
+    /// askers of the same track - the window's click and the API's
+    /// call, or two windows over one data folder - queue behind each
+    /// other instead of appending to the same partial from two
+    /// places, which `models::download`'s resume would let corrupt
+    /// the track silently. The second asker wakes, finds the track on
+    /// disk, and returns it.
+    turns: Mutex<HashMap<String, Arc<Mutex<()>>>>,
 }
 
 impl Library {
@@ -512,6 +522,22 @@ impl Library {
                 track.title, track.bytes
             ));
         }
+        // The track's turn: one writer at a time, and the askers that
+        // queued behind the winner find the track on disk when theirs
+        // comes round.
+        let turn = {
+            let mut turns = self
+                .turns
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            Arc::clone(turns.entry(track.id.clone()).or_default())
+        };
+        let _held = turn.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        // Another asker may have finished the track while this one
+        // waited for its turn.
+        if target.is_file() {
+            return Ok(target);
+        }
         let folder = target.parent().unwrap_or_else(|| Path::new("."));
         std::fs::create_dir_all(folder)
             .map_err(|error| format!("could not create {}: {error}", folder.display()))?;
@@ -530,7 +556,7 @@ impl Library {
                 // A partial FreePD download is worth keeping - the next
                 // attempt resumes it - but a Lo-Fi span is one read, and
                 // a wrong-size or failed one is better gone.
-                if track.source == Source::FreePd && error != "cancelled" {
+                if track.source == Source::Lofi {
                     let _ = std::fs::remove_file(&partial);
                 }
                 Err(error)
@@ -851,7 +877,13 @@ fn read_zip(agent: &ureq::Agent, total: u64) -> Result<ZipIndex, String> {
     // The end-of-central-directory record is in the last 64 KB; the zip
     // is half a gigabyte, so no zip64 endings are looked for and one
     // found is refused in words rather than misread.
-    let tail = ranged(agent, total.saturating_sub(64 * 1024 + 21), total - 1)?;
+    let tail = ranged(
+        agent,
+        total.saturating_sub(64 * 1024 + 21),
+        total
+            .checked_sub(1)
+            .ok_or_else(|| "the zip says it is empty".to_owned())?,
+    )?;
     let eocd = tail
         .windows(4)
         .rposition(|window| window == b"PK\x05\x06")
@@ -870,8 +902,16 @@ fn read_zip(agent: &ureq::Agent, total: u64) -> Result<ZipIndex, String> {
         return Err("the zip's own directory sits outside the zip".to_owned());
     }
 
-    // The central directory itself: every member's place and span.
-    let directory = ranged(agent, at, at + size - 1)?;
+    // The central directory itself: every member's place and span. A
+    // directory that claims no size is refused rather than read with
+    // arithmetic that would wrap trying to reach its last byte.
+    let directory = ranged(
+        agent,
+        at,
+        at.checked_add(size)
+            .and_then(|end| end.checked_sub(1))
+            .ok_or_else(|| "the zip's own directory was cut short".to_owned())?,
+    )?;
     let mut members: Vec<ZipEntry> = Vec::with_capacity(entries);
     let mut place = 0usize;
     for _ in 0..entries {

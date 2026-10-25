@@ -62,8 +62,11 @@ pub enum MusicMsg {
         order: i32,
     },
     /// The search's worker is done. The second field says whether the
-    /// page asked for the next page of an existing search or a fresh one.
-    Searched(Result<Found, String>, bool),
+    /// page asked for the next page of an existing search or a fresh one;
+    /// the third is the search the answer belongs to, so an answer that
+    /// arrives after a newer search was asked is dropped rather than
+    /// laying its results over the newer one's.
+    Searched(Result<Found, String>, bool, u64),
     /// The next page of what the last search found.
     More,
     /// A card clicked: preview the track, fetching it first if need be.
@@ -92,6 +95,11 @@ pub struct MusicPane {
     pub total: u64,
     /// A search or its next page is running.
     pub searching: bool,
+    /// The searches asked so far, counted up as each is sent: the number
+    /// an answer must still carry to be the current search's, so one
+    /// that arrives late - the workers are a pool, not a queue - is
+    /// dropped rather than laid over a newer search's results.
+    epoch: u64,
     /// The last search, as it was asked: what More asks more of.
     last: Option<Query>,
     /// Fetches running, by card id: what the bytes are for.
@@ -121,6 +129,7 @@ impl MusicPane {
             results: Vec::new(),
             total: 0,
             searching: false,
+            epoch: 0,
             last: None,
             fetching: HashMap::new(),
             categories: Vec::new(),
@@ -232,13 +241,24 @@ impl MusicPane {
                 self.search(search, false);
             }
             MusicMsg::More => {
+                if self.searching {
+                    return;
+                }
                 let Some(mut search) = self.last.clone() else {
                     return;
                 };
                 search.offset += search.limit;
+                // The bumped query is kept, not cloned away: More asks
+                // more of *it*, and a query thrown away after the bump
+                // re-fetches the second page on every press after the
+                // first.
+                self.last = Some(search.clone());
                 self.search(search, true);
             }
-            MusicMsg::Searched(result, appended) => {
+            MusicMsg::Searched(result, appended, epoch) => {
+                if epoch != self.epoch {
+                    return; // A newer search was asked; this answer is late.
+                }
                 self.searching = false;
                 match result {
                     Ok(found) => {
@@ -381,10 +401,12 @@ impl MusicPane {
             return;
         }
         self.searching = true;
+        self.epoch += 1;
+        let epoch = self.epoch;
         crate::host::spawn(
             move || library.search(&query),
             move |studio, _, _, result| {
-                studio.handle(Msg::Music(MusicMsg::Searched(result, appended)));
+                studio.handle(Msg::Music(MusicMsg::Searched(result, appended, epoch)));
             },
         );
     }
@@ -483,6 +505,7 @@ impl Default for MusicPane {
             results: Vec::new(),
             total: 0,
             searching: false,
+            epoch: 0,
             last: None,
             fetching: HashMap::new(),
             categories: Vec::new(),

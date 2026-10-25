@@ -28,9 +28,12 @@
 //! once and the job reports through the [`EventSink`] the API was made
 //! with, from that thread, which is why the sink must be `Send + Sync`.
 
+mod analysis;
 mod job;
 pub mod message;
 pub mod rpc;
+#[cfg(feature = "speech")]
+mod speech;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -250,6 +253,13 @@ pub struct Api {
     book: Arc<job::Book>,
     /// [`VersionInfo::capabilities`], in the order they were added.
     capabilities: Vec<String>,
+    /// The ear this API shares with the window's captions, when this build
+    /// speaks.
+    #[cfg(feature = "speech")]
+    transcriber: Arc<concat_speech::Transcriber>,
+    /// The voice, when this build speaks.
+    #[cfg(feature = "speech")]
+    speech: Arc<concat_speech::Speech>,
 }
 
 /// A way to stop the jobs of one [`Api`] from any thread, without waiting
@@ -309,6 +319,10 @@ impl Api {
             jobs: Jobs::default(),
             dirs,
             capabilities: CAPABILITIES.iter().map(|name| (*name).to_owned()).collect(),
+            #[cfg(feature = "speech")]
+            transcriber: Arc::new(concat_speech::Transcriber::new()),
+            #[cfg(feature = "speech")]
+            speech: Arc::new(concat_speech::Speech::new()),
         }
     }
 
@@ -640,6 +654,51 @@ impl Api {
                     None => Ok(Reply::Picture(self.picture(&path, time, size)?)),
                 }
             }
+            Request::AnalysisScenes {
+                path,
+                threshold,
+                detector,
+                min_scene_len,
+            } => Ok(Reply::Started(self.analysis_scenes(
+                &path,
+                threshold,
+                detector,
+                min_scene_len,
+            )?)),
+            Request::AnalysisBeats { path } => {
+                Ok(Reply::Started(self.analysis_beats(&path)?))
+            }
+            Request::AnalysisSilence {
+                path,
+                threshold_db,
+                min_silence_ms,
+            } => Ok(Reply::Started(
+                self.analysis_silence(&path, threshold_db, min_silence_ms)?,
+            )),
+            #[cfg(feature = "speech")]
+            Request::SpeechTranscribe { path, model, language } => Ok(Reply::Started(
+                self.speech_transcribe(&path, model, language)?,
+            )),
+            #[cfg(not(feature = "speech"))]
+            Request::SpeechTranscribe { .. } => Err(ApiError::new(
+                ErrorCode::Refused,
+                "this build does not speak: it was built without the speech feature",
+            )),
+            #[cfg(feature = "speech")]
+            Request::SpeechGenerate {
+                project,
+                text,
+                voice,
+                speed,
+                model,
+            } => Ok(Reply::Started(self.speech_generate(
+                &project, &text, voice, speed, model,
+            )?)),
+            #[cfg(not(feature = "speech"))]
+            Request::SpeechGenerate { .. } => Err(ApiError::new(
+                ErrorCode::Refused,
+                "this build does not speak: it was built without the speech feature",
+            )),
         }
     }
 
@@ -1889,6 +1948,8 @@ impl Api {
         self.cutouts.cancel();
         self.stabilizers.cancel();
         self.exporter.cancel();
+        // And the jobs that are only this API's: an analysis or a voice.
+        self.book.cancel(job);
         Ok(())
     }
 

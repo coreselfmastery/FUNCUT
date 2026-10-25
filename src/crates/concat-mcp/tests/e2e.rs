@@ -417,3 +417,59 @@ fn through_a_running_server_the_agent_shares_its_api() {
     drop(other);
     server.stop();
 }
+
+#[test]
+fn an_agent_measures_media_and_is_refused_honestly() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let home = scratch.path().to_path_buf();
+    let mut agent = Agent::spawn(&home, "headless", &[]);
+
+    // A file that is not there is refused at once: no job, no waiting.
+    let (_, reply) = agent.ask(
+        "tools/call",
+        json!({ "name": "analyze_scenes", "arguments": { "path": "/nowhere/a.mp4" } }),
+    );
+    let refused = reply.get("result").cloned().expect("a result");
+    assert_eq!(refused["isError"], true, "{refused}");
+
+    // A job that never ran is named, not spun on.
+    let (_, reply) = agent.ask(
+        "tools/call",
+        json!({ "name": "analysis_wait", "arguments": { "job": "j0", "timeoutSeconds": 1 } }),
+    );
+    let refused = reply.get("result").cloned().expect("a result");
+    assert_eq!(refused["isError"], true, "{refused}");
+
+    // A whisper model that is not downloaded says so - when the job is
+    // waited on, as the refusal of a started job, which is the honest shape:
+    // the reply the agent hands the user, not a retry loop.
+    let mut wav: Vec<u8> = Vec::new();
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&116u32.to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&8000u32.to_le_bytes());
+    wav.extend_from_slice(&16000u32.to_le_bytes());
+    wav.extend_from_slice(&2u16.to_le_bytes());
+    wav.extend_from_slice(&16u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&80u32.to_le_bytes());
+    wav.extend_from_slice(&[0u8; 80]);
+    let voice = home.join("voice.wav");
+    std::fs::write(&voice, &wav).expect("a wav");
+    let heard = agent.tool(
+        "transcribe",
+        json!({ "path": voice.to_string_lossy(), "model": "tiny.en" }),
+    );
+    let job = heard["structuredContent"]["job"].as_str().expect("a job");
+    let waited = agent.tool("analysis_wait", json!({ "job": job, "timeoutSeconds": 30 }));
+    assert_eq!(waited["structuredContent"]["state"], "failed", "{waited}");
+    let said = waited["structuredContent"]["error"]["message"]
+        .as_str()
+        .expect("the refusal");
+    assert!(said.contains("not downloaded"), "{said}");
+
+    agent.end();
+}

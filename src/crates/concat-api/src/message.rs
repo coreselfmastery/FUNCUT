@@ -636,6 +636,89 @@ pub enum Request {
         #[serde(default)]
         height: Option<u32>,
     },
+
+    /// Finds where one shot becomes another in a video, on a job of its
+    /// own: the scenes a watcher would call, as {start, end} seconds. The
+    /// result, once the job ends, is the status's `output` as JSON. Needs
+    /// the Python extras once - the reply names the pip line when they are
+    /// missing.
+    #[serde(rename = "analysis.scenes")]
+    AnalysisScenes {
+        /// The video to watch.
+        path: String,
+        /// How big a change counts as a cut, 3.0 the default; higher finds
+        /// fewer cuts.
+        #[serde(default)]
+        threshold: Option<f64>,
+        /// "adaptive" (the default), "content" or "threshold".
+        #[serde(default)]
+        detector: Option<String>,
+        /// Cuts closer together than this many seconds are one scene; 0.6
+        /// when absent.
+        #[serde(default)]
+        min_scene_len: Option<f64>,
+    },
+    /// Finds a piece of music's tempo, beat grid and onsets, on a job of
+    /// its own: the numbers a cut aligned to the beat is cut by. The
+    /// result, once the job ends, is the status's `output` as JSON
+    /// (`beatsMs`, `downbeatsMs`, `onsetsMs`, `bpm`).
+    #[serde(rename = "analysis.beats")]
+    AnalysisBeats {
+        /// The audio to hear.
+        path: String,
+    },
+    /// Finds a recording's silent spans - the dead air to cut - on a job
+    /// of its own: `spans` (and their complement, `speech`) in seconds,
+        /// the shape `edit.apply`'s `removeSpans` takes.
+    #[serde(rename = "analysis.silence")]
+    AnalysisSilence {
+        /// The recording to measure.
+        path: String,
+        /// How far below full scale counts as quiet, 35 dB the default;
+        /// 30 for a hot voice, 40 for a noisy room.
+        #[serde(default)]
+        threshold_db: Option<f64>,
+        /// Spans shorter than this are not silence worth cutting; 500 ms
+        /// the default.
+        #[serde(default)]
+        min_silence_ms: Option<i64>,
+    },
+    /// Transcribes a recording: the words with their times, as caption
+    /// segments, on a job of its own. The result, once the job ends, is the
+    /// status's `output` as JSON. Needs the whisper model downloaded - the
+    /// reply says which is missing when it is.
+    #[serde(rename = "speech.transcribe")]
+    SpeechTranscribe {
+        /// The media to hear.
+        path: String,
+        /// The whisper model, "base.en" when absent; "small" for other
+        /// languages.
+        #[serde(default)]
+        model: Option<String>,
+        /// The language hint, when the caller knows it.
+        #[serde(default)]
+        language: Option<String>,
+    },
+    /// Speaks `text` as a WAV in the project's own audio folder, on a job
+    /// of its own - a voiceover in one call. The waited status's `output`
+    /// is the WAV's path and its length. Needs the voice model downloaded;
+    /// Kokoro is the one that fits a small machine.
+    #[serde(rename = "speech.generate")]
+    SpeechGenerate {
+        /// The project that will own the WAV.
+        project: String,
+        /// What to say.
+        text: String,
+        /// The voice: 2 af_bella, 8 af_river, 11 am_adam, 14 am_fenrir,
+        /// 17 am_onyx - Kokoro 0-52.
+        voice: i32,
+        /// Speaking rate, 1.0 when absent.
+        #[serde(default)]
+        speed: Option<f64>,
+        /// The voice model, "kokoro-int8-multi-lang-v1_0" when absent.
+        #[serde(default)]
+        model: Option<String>,
+    },
 }
 
 /// One template slot and the file that takes it.
@@ -1501,6 +1584,29 @@ pub enum Event {
         /// went wrong.
         error: ApiError,
     },
+    /// An analysis or speech job ended with its result: `output` is the
+        /// JSON it printed - a scene list, a beat grid, a transcript - or
+        /// the file a voice was written to. The job is over.
+    #[serde(rename = "analysis.done")]
+    AnalysisDone {
+        /// The job.
+        job: String,
+        /// What it worked on: the media it read, or the project.
+        path: String,
+        /// The result, as JSON text.
+        output: String,
+    },
+    /// An analysis or speech job did not finish. The job is over.
+    #[serde(rename = "analysis.failed")]
+    AnalysisFailed {
+        /// The job.
+        job: String,
+        /// What it worked on.
+        path: String,
+        /// Why: [`ErrorCode::Cancelled`] when asked to stop, otherwise what
+        /// went wrong - a missing model, a missing Python extra.
+        error: ApiError,
+    },
 }
 
 impl Event {
@@ -1522,7 +1628,9 @@ impl Event {
             | Event::StabilizeProgress { job, .. }
             | Event::ExportProgress { job, .. }
             | Event::ExportDone { job, .. }
-            | Event::ExportFailed { job, .. } => job,
+            | Event::ExportFailed { job, .. }
+            | Event::AnalysisDone { job, .. }
+            | Event::AnalysisFailed { job, .. } => job,
         }
     }
 }

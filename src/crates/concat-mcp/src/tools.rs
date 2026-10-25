@@ -612,6 +612,50 @@ pub fn catalogue() -> Vec<Tool> {
             idempotent: true,
             action: Action::PreviewFrame,
         },
+        method(
+            "analyze_scenes",
+            "Find scene cuts",
+            "Finds where one shot becomes another in a video: a job returning {start, end} scenes in seconds (PySceneDetect). Wait with analysis_wait; the result is the status's `output`. Optional: threshold (3.0 default), detector (\"adaptive\" default), minSceneLen seconds (0.6 default). The reply says the pip line when the Python extras are missing.",
+            "analysis.scenes",
+            Raw,
+        ),
+        method(
+            "analyze_beats",
+            "Find the beat grid",
+            "Measures a piece of music on a job: bpm, the beat grid and onsets in milliseconds (beatsMs, downbeatsMs, onsetsMs), the numbers a beat-aligned cut is cut by. Wait with analysis_wait; the result is the status's `output`.",
+            "analysis.beats",
+            Raw,
+        ),
+        method(
+            "analyze_silence",
+            "Find dead air",
+            "Finds a recording's silent spans on a job: spans and their complement speech, in seconds - the shape edit_apply's removeSpans cuts by. Wait with analysis_wait; the result is the status's `output`. Optional: thresholdDb (35 default), minSilenceMs (500 default).",
+            "analysis.silence",
+            Raw,
+        ),
+        method(
+            "transcribe",
+            "Transcribe a recording",
+            "Hears a media file on a job with whisper.cpp: the words as caption segments with their times, for word-synced captions and timing every cut. Wait with analysis_wait; the result is the status's `output`. The model comes from Settings > Transcriber (`base.en` default, `small` for other languages); the reply names it when it is missing.",
+            "speech.transcribe",
+            Raw,
+        ),
+        method(
+            "tts_generate",
+            "Speak a voiceover",
+            "Speaks `text` with a `voice` as a WAV in an open project's own audio folder - a voiceover in one call, ready for media_import. Wait with analysis_wait; the status's `output` is the WAV's path and length. Voices are the Settings > Speech ids (Kokoro 0-52); the model must be downloaded there.",
+            "speech.generate",
+            Raw,
+        ),
+        Tool {
+            name: "analysis_wait",
+            title: "Wait for a job",
+            description: "Waits for any job - an analysis, a transcription, a voice, an export - to end, up to `timeoutSeconds` (60 by default, 600 at most), and returns its status; a finished analysis carries its JSON result in the status's `output`. If the job is still running when the time is up, call it again.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::ExportWait,
+        },
     ]
 }
 
@@ -1258,6 +1302,18 @@ mod tests {
                 "preview_frame",
                 json!({ "path": "/tmp/Cut", "time": 1.5, "width": 320, "height": 180 }),
             ),
+            ("analyze_scenes", json!({ "path": "/tmp/a.mp4", "threshold": 3.5 })),
+            ("analyze_beats", json!({ "path": "/tmp/bgm.mp3" })),
+            (
+                "analyze_silence",
+                json!({ "path": "/tmp/vo.wav", "thresholdDb": 35, "minSilenceMs": 500 }),
+            ),
+            ("transcribe", json!({ "path": "/tmp/a.mp4", "model": "base.en" })),
+            (
+                "tts_generate",
+                json!({ "project": "/tmp/Cut", "text": "Hello, agent", "voice": 8, "speed": 1.0 }),
+            ),
+            ("analysis_wait", json!({ "job": "j1", "timeoutSeconds": 30 })),
         ]
     }
 

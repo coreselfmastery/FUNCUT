@@ -78,6 +78,38 @@ commercial use; OpenMoji is CC-BY 4.0. The window's Stickers page
 searches the same engine, and its heart button keeps the favourites the
 `favourites` filter narrows by.
 
+### Analysis and speech (the agent's senses)
+
+Six tools give an agent what a director has before touching a timeline: the
+shot list, the beat grid, the dead air, the words - and a voice. Each runs
+as a job (returns `job` at once) and is waited on with `analysis_wait`, the
+same loop as `export_wait`, which returns the status; a finished analysis
+carries its JSON result in the status's `output`:
+
+- `analyze_scenes` - PySceneDetect's shot changes of a video, `{start,
+  end}` seconds. Optional threshold/detector/minSceneLen.
+- `analyze_beats` - librosa's bpm, beat grid and onsets of a piece of
+  music, in milliseconds (`beatsMs`, `downbeatsMs`, `onsetsMs`).
+- `analyze_silence` - the dead air of a recording, `spans` and their
+  complement `speech` in seconds, the shape `edit.apply`'s `removeSpans`
+  cuts by. Optional thresholdDb (35 default) and minSilenceMs (500).
+- `transcribe` - whisper.cpp's words with their times, as caption segments;
+  the model comes from Settings > Transcriber (`base.en` default, `small`
+  for other languages).
+- `tts_generate` - a voiceover spoken to a WAV in an open project's own
+  audio folder; `output` is its path and length, ready for `media_import`.
+  Voices are the same ids the Settings > Speech page shows (Kokoro 0-52);
+  the model comes from Settings > Speech.
+- `analysis_wait` - waits for any job (analysis, speech or export) up to
+  `timeoutSeconds` (60 default, 600 at most) and returns its status.
+
+The first three need a Python 3 with the extras named in the analysis
+folder's `requirements.txt` (scenedetect, OpenCV headless, librosa) - a
+one-time `pip install -r <app data>/analysis/requirements.txt`. When
+something is missing the reply says the exact line to run instead of
+failing silently; `analyze_silence` prefers an `ffmpeg` binary on PATH and
+falls back to librosa when there is none.
+
 ## Set it up
 
 Point your client at the Concat binary with the one argument `--mcp`.
@@ -136,6 +168,8 @@ Tools are named for what they do, and their argument schemas are generated from 
 | Picture | `clip_mask`, `clip_stabilize`, `timeline_background` |
 | Titles and captions | `title_add`, `captions_add` |
 | Keyframes and effects | `keyframe_set`, `keyframe_clear`, `effects_list`, `effect_layer_add`, `effect_key_set` |
+| Analysis | `analyze_scenes`, `analyze_beats`, `analyze_silence`, `analysis_wait` (results as JSON in the status's `output`) |
+| Speech | `transcribe`, `tts_generate` |
 | Anything else | `edit_apply` (any edit command, or a batch of them as one undo step), `edit_undo`, `edit_redo` |
 | Templates | `template_list`, `template_instantiate` |
 | Export | `export_start`, `export_status`, `export_wait` (with progress), `export_cancel` |

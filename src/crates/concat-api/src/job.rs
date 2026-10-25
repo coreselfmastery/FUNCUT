@@ -106,6 +106,19 @@ impl Book {
                 };
                 status.error = Some(error.clone());
             }
+            Event::AnalysisDone { output, .. } => {
+                status.state = JobState::Done;
+                status.output = output.clone();
+                status.fraction = 1.0;
+            }
+            Event::AnalysisFailed { error, .. } => {
+                status.state = if error.code == ErrorCode::Cancelled {
+                    JobState::Cancelled
+                } else {
+                    JobState::Failed
+                };
+                status.error = Some(error.clone());
+            }
         }
         if status.state != JobState::Running {
             inner.running.remove(&job);
@@ -142,6 +155,20 @@ impl Book {
                 .find(|status| status.job == job)
                 .cloned()
         })
+    }
+
+    /// Raises one running job's stop flag: how `export.cancel` stops an
+    /// analysis or a voice at its next frame. False when the job is not
+    /// running.
+    pub(crate) fn cancel(&self, job: &str) -> bool {
+        let inner = self.inner();
+        match inner.running.get(job) {
+            Some(flag) => {
+                flag.store(true, Ordering::Relaxed);
+                true
+            }
+            None => false,
+        }
     }
 
     /// Raises every running job's stop flag. How many there were.

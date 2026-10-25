@@ -12,6 +12,12 @@ concat-project.workspace = true
 concat-effects.workspace = true
 concat-export.workspace = true
 concat-host.workspace = true
+# Speech on the API - `speech.transcribe` and `speech.generate` - behind
+# the `speech` feature, so the heavy native audio tree stays out of builds
+# that do not speak (the same separation that keeps this crate out of
+# `concat-speech`'s dependents). The app, the MCP server and the daemon
+# turn it on.
+concat-speech = { workspace = true, optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
 # The frame method hands back a PNG: the one picture format every
@@ -25,6 +31,10 @@ schemars = { workspace = true, optional = true }
 # A JSON Schema for every request, generated from the types and their doc
 # comments: what concat-mcp gives an agent for each tool's arguments.
 schema = ["dep:schemars", "concat-project/schema"]
+# The ear and the voice: whisper.cpp in process and the Kokoro/Pocket/
+# Chatterbox models, for `speech.transcribe` and `speech.generate`. Off, the
+# two reply with a refusal that says the build does not speak.
+speech = ["dep:concat-speech"]
 
 [dev-dependencies]
 tempfile = "3"

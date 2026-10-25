@@ -459,10 +459,12 @@ mod tests {
     #[test]
     fn the_tool_list_fits_an_agents_context() {
         // Every tool's schema sits in the agent's context for the whole
-        // session. Measured at about 105 KB in all, 41 KB of it the whole
-        // edit vocabulary under edit_apply and 6 KB the sticker library's
-        // five tools; a type that grows past these is worth a look
-        // before it ships.
+        // session. Measured at about 162 KB for the sixty-one editing and
+        // library tools, 41 KB of it the whole edit vocabulary under
+        // edit_apply, and 7 KB the analysis and speech jobs; a harness that
+        // defers discovery - Forge, Claude Code - fetches these schemas on
+        // demand rather than holding them, but a tool list that grows past
+        // this is worth a look before it ships.
         let toolbox = crate::tools::Toolbox::new();
         let sizes: Vec<(String, usize)> = toolbox
             .list()
@@ -470,7 +472,7 @@ mod tests {
             .map(|tool| (tool["name"].to_string(), tool.to_string().len()))
             .collect();
         let total: usize = sizes.iter().map(|(_, size)| size).sum();
-        assert!(total < 165_000, "{total}: {sizes:?}");
+        assert!(total < 172_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }

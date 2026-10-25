@@ -357,14 +357,13 @@ fn probe_setup() -> (Result<bool, String>, Result<bool, String>) {
 /// not wired already. Ok(true) is wired, Ok(false) is not; Err is why it
 /// could not be asked.
 fn connect_forge() -> Result<bool, String> {
-    let (code, _) = forge(&["mcp", "get", "funcut"]).map_err(|error| error)?;
+    let (code, _) = forge(&["mcp", "get", "funcut"])?;
     if code == 0 {
         return Ok(true);
     }
     let (code, words) = forge(&[
         "mcp", "add", "funcut", "concat", "--", "--mcp", "window", "-s", "user",
-    ])
-    .map_err(|error| error)?;
+    ])?;
     if code == 0 {
         Ok(true)
     } else {
@@ -374,8 +373,7 @@ fn connect_forge() -> Result<bool, String> {
 
 /// Installs this repository's skill into the harness.
 fn install_skill() -> Result<bool, String> {
-    let (code, words) =
-        forge(&["skill", "install", "coreselfmastery/FUNCUT"]).map_err(|error| error)?;
+    let (code, words) = forge(&["skill", "install", "coreselfmastery/FUNCUT"])?;
     if code == 0 {
         Ok(true)
     } else {

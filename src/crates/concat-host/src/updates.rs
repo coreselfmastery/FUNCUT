@@ -33,16 +33,26 @@ use std::sync::atomic::AtomicBool;
 use crate::dirs::AppDirs;
 use crate::models;
 
-/// The repository the releases are read from.
-pub const REPO: &str = "jub0t/Concat";
+/// The repository the releases are read from: this fork's own, with
+/// upstream Concat's as the fallback when the fork has published none -
+/// the same preference `install-linux.sh` gives a person at the command
+/// line. An in-app update offered from upstream would swap the fork's
+/// tuning for a build the fork never made.
+pub const REPO: &str = "coreselfmastery/FUNCUT";
+
+/// Upstream Concat, whose releases a fork with none of its own published
+/// falls back to.
+const UPSTREAM_REPO: &str = "jub0t/Concat";
 
 /// The first release with a Version page: the earliest one a person can
 /// come back from, so the earliest one offered.
 pub const FIRST_SWITCHABLE: Version = Version::new(0, 2, 5);
 
-/// GitHub's list of the repository's releases, newest first. A hundred
+/// GitHub's list of a repository's releases, newest first. A hundred
 /// covers years of releases at this pace.
-const RELEASES_URL: &str = "https://api.github.com/repos/jub0t/Concat/releases?per_page=100";
+fn releases_url(repo: &str) -> String {
+    format!("https://api.github.com/repos/{repo}/releases?per_page=100")
+}
 
 /// What a download that was stopped says.
 pub const CANCELLED: &str = "the download was cancelled";
@@ -108,15 +118,20 @@ pub struct Release {
     pub version: Version,
     /// Its tag on GitHub, `v0.2.5`, which names its download folder.
     pub tag: String,
+    /// The repository the release lives in: this fork, or upstream
+    /// when the fork has published none and the list fell back to it.
+    /// A release's manifest is where its own repository keeps it.
+    pub repo: &'static str,
     /// The day it was published, `2026-09-24`; empty when GitHub did not
     /// say.
     pub published: String,
 }
 
 /// Reads GitHub's answer to the releases request: the stable releases from
-/// [`FIRST_SWITCHABLE`] on, newest first. Drafts and pre-releases are left
-/// out, as is anything whose tag is not a plain version.
-pub fn releases_from_json(json: &str) -> Result<Vec<Release>, String> {
+/// [`FIRST_SWITCHABLE`] on, newest first, belonging to `repo`. Drafts and
+/// pre-releases are left out, as is anything whose tag is not a plain
+/// version.
+fn releases_from_json(json: &str, repo: &'static str) -> Result<Vec<Release>, String> {
     let value: serde_json::Value = serde_json::from_str(json)
         .map_err(|error| format!("the release list does not read as JSON: {error}"))?;
     let Some(entries) = value.as_array() else {
@@ -151,6 +166,7 @@ pub fn releases_from_json(json: &str) -> Result<Vec<Release>, String> {
             Some(Release {
                 version,
                 tag: tag.to_owned(),
+                repo,
                 published,
             })
         })
@@ -171,9 +187,16 @@ fn github_message(value: &serde_json::Value) -> String {
         )
 }
 
-/// Asks GitHub for the releases; see [`releases_from_json`].
+/// Asks GitHub for the releases; see [`releases_from_json`]. This fork's
+/// own are preferred, and only a fork that has published none of them -
+/// or whose list would not answer - takes upstream Concat's, the way
+/// `install-linux.sh` falls back at the command line.
 pub fn fetch_releases() -> Result<Vec<Release>, String> {
-    releases_from_json(&get_text(RELEASES_URL)?)
+    let own = get_text(&releases_url(REPO)).and_then(|json| releases_from_json(&json, REPO));
+    match own {
+        Ok(releases) if !releases.is_empty() => Ok(releases),
+        _ => releases_from_json(&get_text(&releases_url(UPSTREAM_REPO))?, UPSTREAM_REPO),
+    }
 }
 
 /// Where this build sits among the releases.
@@ -358,15 +381,16 @@ pub fn package_from_manifest(
     })
 }
 
-/// Where a release's manifest is.
-pub fn manifest_url(tag: &str) -> String {
-    format!("https://github.com/{REPO}/releases/download/{tag}/manifest.json")
+/// Where a release's manifest is: in the repository the release came
+/// from, which is where its packages are too.
+pub fn manifest_url(repo: &str, tag: &str) -> String {
+    format!("https://github.com/{repo}/releases/download/{tag}/manifest.json")
 }
 
 /// The package of `kind` for this machine in `release`, from its manifest.
 pub fn fetch_package(release: &Release, kind: PackageKind) -> Result<Package, String> {
     package_from_manifest(
-        &get_text(&manifest_url(&release.tag))?,
+        &get_text(&manifest_url(release.repo, &release.tag))?,
         std::env::consts::OS,
         std::env::consts::ARCH,
         kind,
@@ -569,7 +593,7 @@ mod tests {
 
     #[test]
     fn the_list_keeps_stable_releases_from_the_first_switchable_newest_first() {
-        let releases = releases_from_json(RELEASES).expect("reads");
+        let releases = releases_from_json(RELEASES, REPO).expect("reads");
         let versions: Vec<String> = releases
             .iter()
             .map(|release| release.version.to_string())
@@ -578,20 +602,23 @@ mod tests {
         assert_eq!(releases[0].tag, "v0.2.6");
         assert_eq!(releases[0].published, "2026-10-01");
         assert_eq!(releases[1].published, "2026-09-28");
-        assert!(releases_from_json("[]").expect("reads").is_empty());
+        assert!(releases_from_json("[]", REPO).expect("reads").is_empty());
     }
 
     #[test]
     fn a_refusal_from_github_is_read_out_in_its_own_words() {
-        let error = releases_from_json(r#"{"message": "API rate limit exceeded for 1.2.3.4."}"#)
-            .expect_err("refused");
+        let error = releases_from_json(
+            r#"{"message": "API rate limit exceeded for 1.2.3.4."}"#,
+            REPO,
+        )
+        .expect_err("refused");
         assert!(error.contains("rate limit"), "{error}");
-        assert!(releases_from_json("not json").is_err());
+        assert!(releases_from_json("not json", REPO).is_err());
     }
 
     #[test]
     fn standing_says_where_this_build_sits() {
-        let releases = releases_from_json(RELEASES).expect("reads");
+        let releases = releases_from_json(RELEASES, REPO).expect("reads");
         assert_eq!(
             standing(Version::new(0, 2, 5), &releases),
             Standing::Behind(Version::new(0, 2, 6))
@@ -673,7 +700,11 @@ mod tests {
             assert!(!kind.key().is_empty());
         }
         assert_eq!(
-            manifest_url("v0.2.6"),
+            manifest_url(REPO, "v0.2.6"),
+            "https://github.com/coreselfmastery/FUNCUT/releases/download/v0.2.6/manifest.json"
+        );
+        assert_eq!(
+            manifest_url(UPSTREAM_REPO, "v0.2.6"),
             "https://github.com/jub0t/Concat/releases/download/v0.2.6/manifest.json"
         );
     }

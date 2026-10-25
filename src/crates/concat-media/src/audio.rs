@@ -411,12 +411,11 @@ pub fn mix_to_file(clips: &[AudioClip], duration: f64, destination: &Path) -> Re
         let decoder = ffmpeg::codec::Context::from_parameters(stream.parameters())
             .and_then(|context| context.decoder().audio())
             .map_err(|error| ffi::fail("open decoder", path, error))?;
-        // Near the in-point: the packet at or before it. The graph cuts the
-        // rest, by the lead measured off the first frame below.
+        // Near the in-point: the packet of the sound at or before it, on the
+        // sound's own timestamps. The graph cuts the rest, by the lead
+        // measured off the first frame below.
         if clip.source_start > 0.0 {
-            let target =
-                ((clip.source_start + start) * f64::from(ffmpeg::sys::AV_TIME_BASE)) as i64;
-            let _ = input.seek(target, ..=target);
+            let _ = ffi::seek_audio(&mut input, stream_index, clip.source_start + start);
         }
         let label = format!("{index}:a");
         let mut mix_input = MixInput {
@@ -1239,6 +1238,55 @@ mod tests {
             (seconds - 16.0).abs() < 0.1,
             "the mix is {seconds}s, not 16s"
         );
+    }
+
+    /// A clip trimmed into a Program Stream mixes from its first sample,
+    /// not from behind the in-point. The fixture's sound is interleaved
+    /// behind its picture, and the mix's seek used to be made on the
+    /// picture's timestamps, forward: it landed past the in-point and the
+    /// overshoot went in as silence in front of the clip. The tone has
+    /// sounded from half a second in, so a cut at 3.5 s is inside it (#535).
+    #[test]
+    fn a_trimmed_program_stream_clip_mixes_from_its_first_sample() {
+        use crate::{AudioDecoder, AudioOptions, SampleFormat};
+        let output =
+            std::env::temp_dir().join(format!("concat-mix-ps-{}.m4a", std::process::id()));
+        let source = format!(
+            "{}/fixtures/sound-behind-the-picture.mpg",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let piece = AudioClip {
+            duration: 0.6,
+            source_start: 3.5,
+            ..clip(&source)
+        };
+        mix_to_file(&[piece], 0.6, &output).expect("mixes");
+        let options = AudioOptions {
+            rate: 8_000,
+            channels: 1,
+            format: SampleFormat::F32,
+            ..AudioOptions::default()
+        };
+        let mut decoder = AudioDecoder::open(&output, &options).expect("opens the mix");
+        let mut samples: Vec<f32> = Vec::new();
+        while let Some(frame) = decoder.next_frame().expect("decodes") {
+            let bytes = &frame.data(0)[..frame.samples() * 4];
+            samples.extend(
+                bytes
+                    .chunks_exact(4)
+                    .map(|b| f32::from_ne_bytes([b[0], b[1], b[2], b[3]])),
+            );
+        }
+        let onset = samples
+            .iter()
+            .position(|sample| sample.abs() > 0.05)
+            .expect("the tone is in the mix") as f64
+            / 8_000.0;
+        assert!(
+            onset < 0.03,
+            "the tone starts {onset:.3} s in, not at once"
+        );
+        let _ = std::fs::remove_file(&output);
     }
 
     #[test]

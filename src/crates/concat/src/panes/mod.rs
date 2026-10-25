@@ -17,6 +17,7 @@
 pub mod bgm;
 pub mod captions;
 pub mod export;
+pub mod forge;
 pub mod glide;
 pub mod magick;
 pub mod media_bin;
@@ -65,6 +66,8 @@ pub enum Msg {
     Music(bgm::MusicMsg),
     /// To the library's Stickers page.
     Magick(magick::MagickMsg),
+    /// To the library's Forge page.
+    Forge(forge::ForgeMsg),
 }
 
 /// What a message says in the log: the activity trail of what the person
@@ -77,6 +80,7 @@ pub enum Msg {
 pub fn activity(msg: &Msg) -> Option<Activity> {
     use captions::CaptionsMsg;
     use export::ExportMsg;
+    use forge::ForgeMsg;
     use log::Level::{Debug, Info};
     use media_bin::MediaMsg;
     use monitor::MonitorMsg;
@@ -100,7 +104,8 @@ pub fn activity(msg: &Msg) -> Option<Activity> {
         | Msg::Openvid(openvid::OpenvidMsg::Tick)
         | Msg::Music(bgm::MusicMsg::Tick)
         | Msg::Magick(magick::MagickMsg::Tick)
-        | Msg::Settings(SettingsMsg::ModelProgress { .. } | SettingsMsg::InstallProgress { .. }) => {
+        | Msg::Settings(SettingsMsg::ModelProgress { .. } | SettingsMsg::InstallProgress { .. })
+        | Msg::Forge(ForgeMsg::Line(_) | ForgeMsg::Shown(_)) => {
             return None;
         }
         // A wheel tick that zooms by nothing - a trackpad's idle events -
@@ -235,6 +240,28 @@ pub fn activity(msg: &Msg) -> Option<Activity> {
         }
         Msg::Magick(magick::MagickMsg::Heart(id)) => {
             return Some(Activity::once(Info, format!("stickers: heart on {id}")));
+        }
+        Msg::Forge(ForgeMsg::Start { .. }) => {
+            return Some(Activity::once(Info, "forge: run started".to_owned()));
+        }
+        Msg::Forge(ForgeMsg::Ended(code)) => {
+            return Some(Activity::once(
+                Info,
+                if code == 0 {
+                    "forge: run finished".to_owned()
+                } else {
+                    format!("forge: run ended at {code}")
+                },
+            ));
+        }
+        Msg::Forge(ForgeMsg::Connected(Ok(true))) => {
+            return Some(Activity::once(Info, "forge: connected".to_owned()));
+        }
+        Msg::Forge(ForgeMsg::Installed(Ok(true))) => {
+            return Some(Activity::once(
+                Info,
+                "forge: the skill is installed".to_owned(),
+            ));
         }
         Msg::Media(MediaMsg::Import(paths)) => {
             let names: Vec<String> = paths

@@ -699,6 +699,8 @@ pub struct Models {
     pub music_categories: Rc<VecModel<SharedString>>,
     /// The Stickers page's tiles.
     pub magick_results: Rc<VecModel<crate::ui::MagickCardData>>,
+    /// The Forge page's log.
+    pub forge_log: Rc<VecModel<SharedString>>,
     pub voices_saved: Rc<VecModel<crate::ui::VoiceCardData>>,
     pub sounds_concat: Rc<VecModel<crate::ui::SoundCardData>>,
     pub voices_builtin: Rc<VecModel<crate::ui::VoiceCardData>>,
@@ -783,6 +785,7 @@ impl Models {
             music_results: Rc::new(VecModel::default()),
             music_categories: Rc::new(VecModel::default()),
             magick_results: Rc::new(VecModel::default()),
+            forge_log: Rc::new(VecModel::default()),
             voices_saved: Rc::new(VecModel::default()),
             sounds_concat: Rc::new(VecModel::default()),
             voices_builtin: Rc::new(VecModel::default()),
@@ -1053,6 +1056,8 @@ pub struct Studio {
     pub speech: crate::panes::speech::SpeechPane,
     /// The library's Audio page: the user's own sounds.
     pub sounds: crate::panes::sounds::SoundsPane,
+    /// The library's Forge page: the AI director's chair.
+    pub forge: crate::panes::forge::ForgePane,
     pub openvid: crate::panes::openvid::OpenvidPane,
     /// The library's Music page: the background-music library.
     pub music: crate::panes::bgm::MusicPane,
@@ -2429,6 +2434,7 @@ impl Studio {
             captions: crate::panes::captions::CaptionsPane::default(),
             speech: crate::panes::speech::SpeechPane::with_saved(&host.dirs),
             sounds: crate::panes::sounds::SoundsPane::open(&host.dirs),
+            forge: crate::panes::forge::ForgePane::default(),
             openvid: crate::panes::openvid::OpenvidPane::open(&host.dirs),
             music: crate::panes::bgm::MusicPane::open(&host.dirs),
             magick: crate::panes::magick::MagickPane::open(&host.dirs),
@@ -8891,6 +8897,11 @@ impl Studio {
                 pane.update(msg, self);
                 self.sounds = pane;
             }
+            crate::panes::Msg::Forge(msg) => {
+                let mut pane = std::mem::take(&mut self.forge);
+                pane.update(msg, self);
+                self.forge = pane;
+            }
             crate::panes::Msg::Openvid(msg) => {
                 let mut pane = std::mem::take(&mut self.openvid);
                 pane.update(msg, self);
@@ -11519,6 +11530,15 @@ impl Studio {
         }
         app.global::<crate::ui::Sounds>()
             .set_importing(self.sounds.importing);
+        // The Forge page.
+        sync(&models.forge_log, self.forge.log_lines());
+        {
+            let page = app.global::<crate::ui::Forge>();
+            page.set_running(self.forge.running);
+            page.set_status(self.forge.status.clone().into());
+            page.set_connected(self.forge.connected.unwrap_or(false));
+            page.set_installed(self.forge.installed.unwrap_or(false));
+        }
         // The OpenVid page.
         sync(&models.openvid_results, self.openvid.rows());
         {

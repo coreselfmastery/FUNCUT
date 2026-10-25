@@ -1,0 +1,269 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
+
+import { I18n } from "../i18n.slint";
+import { Theme } from "../primitives/primitives.slint";
+import { Select } from "../primitives/select.slint";
+
+// The library's Forge page (#12): an AI director for the project.
+//
+// The page is a director's chair, not a wizard: the script is the source of
+// truth, the choices say what the voice and the look are, and Start hands the
+// whole thing to the `forge` harness - which reads the funcut-director skill
+// and drives a Concat project through its MCP server (docs/forge/FORGE.md).
+// Every line the agent prints streams into the log; the edits it makes are
+// the window's own undoable commands, seen on the timeline as they happen.
+//
+// One global for the page's state and verbs, so the pane that owns the work
+// is the same on the desk's library pane and the phone's sheet.
+
+/// The Forge page's state and verbs.
+export global Forge {
+    /// A run is going: Start is a Cancel, the fields are held.
+    in property <bool> running;
+    /// One line of state: "idle", or what the run is doing.
+    in property <string> status;
+    /// What the agent printed, oldest first.
+    in property <[string]> log;
+    /// The `forge` binary was found and the funcut server is wired to it.
+    in property <bool> connected;
+    /// The funcut-director skill is installed where forge reads it.
+    in property <bool> installed;
+    /// The script box, as typed: what Start hands over with the choices.
+    in-out property <string> script;
+
+    /// The script and the three choices went to the harness.
+    callback forge-start(script: string, voice: int, niche: int, mood: int);
+    /// Cancel stops the run; the agent's next line is its last.
+    callback forge-cancel();
+    /// The Connect button: forge mcp add funcut concat -- --mcp window.
+    callback connect-forge();
+    /// The Install button: forge skill install, of this repository.
+    callback install-skill();
+    /// Open Settings on the Forge page, where the keys live.
+    callback open-settings();
+    /// A library pane turned to the page or away from it.
+    callback shown(on: bool);
+}
+
+// A page's button: a field that turns accent when it is the thing to do,
+// and danger when it undoes what is doing.
+component PageButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> primary;
+    in property <bool> danger;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    height: 34px;
+    border-radius: Theme.r;
+    background: !root.enabled ? Theme.field
+        : (root.primary || root.danger)
+            ? (touch.has-hover ? (root.danger ? Theme.danger-soft : Theme.accent)
+                               : (root.danger ? Theme.danger : Theme.accent))
+            : touch.has-hover ? Theme.field-hover : Theme.field;
+    opacity: root.enabled ? 1.0 : 0.5;
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { if (root.enabled) { root.clicked(); } }
+    }
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        alignment: center;
+
+        Text {
+            text: root.label;
+            color: (root.primary || root.danger) && root.enabled ? Theme.on-accent : Theme.fg;
+            font-size: Theme.fs-sm;
+            font-weight: Theme.weight-title;
+        }
+    }
+}
+
+// One line of the agent's log, a little quieter than the words it quotes.
+component LogLine inherits Text {
+    in property <string> line;
+    text: root.line;
+    color: Theme.fg-muted;
+    font-family: Theme.font-technical;
+    font-size: Theme.fs-xs;
+    overflow: elide;
+}
+
+// The Forge page itself: the script, the choices, the start, and the log of
+// what the director is doing. The pane it sits in scrolls the whole column.
+export component ForgePage inherits VerticalLayout {
+    padding: 8px;
+    spacing: 8px;
+
+    // The script: the words the voiceover will say, which the plan is cut
+    // to. Kept in the page between runs.
+    Rectangle {
+        height: 148px;
+        border-radius: Theme.r;
+        background: Theme.field;
+        clip: true;
+
+        Rectangle {
+            clip: true;
+
+            input := TextInput {
+                x: 8px;
+                y: 8px;
+                width: parent.width - 16px;
+                height: Math.max(parent.height - 16px, self.preferred-height);
+                text <=> Forge.script;
+                font-size: Theme.fs-sm;
+                color: Theme.fg;
+                wrap: word-wrap;
+                enabled: !Forge.running;
+            }
+
+            if Forge.script == "" && !input.has-focus: Text {
+                x: 8px;
+                y: 8px;
+                text: I18n.t("forge.scriptPlaceholder");
+                color: Theme.fg-dim;
+                font-size: Theme.fs-sm;
+            }
+        }
+    }
+
+    // The choices: the voice that reads the script, the niche its playbook
+    // covers, and the music's mood for the bed under it.
+    HorizontalLayout {
+        spacing: 8px;
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 2px;
+            Text {
+                text: I18n.t("forge.voice");
+                color: Theme.fg-muted;
+                font-size: Theme.fs-xs;
+            }
+            voice-select := Select {
+                current: 0;
+                enabled: !Forge.running;
+                options: ["af_bella", "af_river", "am_adam", "am_fenrir", "am_onyx"];
+            }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 2px;
+            Text {
+                text: I18n.t("forge.niche");
+                color: Theme.fg-muted;
+                font-size: Theme.fs-xs;
+            }
+            niche-select := Select {
+                current: 0;
+                enabled: !Forge.running;
+                options: ["Science", "History", "Tech", "Luxury", "Motivation",
+                          "Finance", "Horror", "Fitness", "Gaming", "How-to"];
+            }
+        }
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 2px;
+            Text {
+                text: I18n.t("forge.mood");
+                color: Theme.fg-muted;
+                font-size: Theme.fs-xs;
+            }
+            mood-select := Select {
+                current: 0;
+                enabled: !Forge.running;
+                options: ["Ambient wonder", "Documentary tension", "Epic build",
+                          "Synth pulse", "Elegant strings", "Lo-fi chill"];
+            }
+        }
+    }
+
+    // Start, or Cancel while it runs; and the setup beside it: the harness
+    // connected and the skill installed, each greyed once it is.
+    HorizontalLayout {
+        spacing: 8px;
+
+        PageButton {
+            label: Forge.running ? I18n.t("forge.cancel") : I18n.t("forge.start");
+            primary: !Forge.running && Forge.script != "";
+            danger: Forge.running;
+            enabled: Forge.running || Forge.script != "";
+            clicked => {
+                if (Forge.running) {
+                    Forge.forge-cancel();
+                } else {
+                    Forge.forge-start(Forge.script, voice-select.current,
+                        niche-select.current, mood-select.current);
+                }
+            }
+        }
+
+        PageButton {
+            label: Forge.connected ? I18n.t("forge.connected") : I18n.t("forge.connect");
+            enabled: !Forge.connected && !Forge.running;
+            clicked => { Forge.connect-forge(); }
+        }
+
+        PageButton {
+            label: Forge.installed ? I18n.t("forge.installed") : I18n.t("forge.install");
+            enabled: !Forge.installed && !Forge.running;
+            clicked => { Forge.install-skill(); }
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: center;
+            Text {
+                text: Forge.status;
+                color: Theme.fg-dim;
+                font-size: Theme.fs-xs;
+                overflow: elide;
+                horizontal-alignment: right;
+            }
+        }
+    }
+
+    // The agent's words as it works, newest at the foot. The log is capped
+    // where it is filled (the pane keeps the tail), and the column this
+    // page sits in scrolls.
+    Rectangle {
+        border-radius: Theme.r;
+        background: Theme.panel;
+        clip: true;
+
+        if Forge.log.length == 0: Text {
+            x: 12px;
+            y: 12px;
+            width: parent.width - 24px;
+            text: I18n.t("forge.logEmpty");
+            color: Theme.fg-dim;
+            font-size: Theme.fs-sm;
+            wrap: word-wrap;
+        }
+
+        VerticalLayout {
+            x: 12px;
+            width: parent.width - 24px;
+            padding-top: 12px;
+            padding-bottom: 12px;
+            padding-right: 8px;
+            spacing: 2px;
+
+            for line in Forge.log: LogLine {
+                line: line;
+            }
+        }
+    }
+
+    if !Forge.connected || !Forge.installed: Text {
+        text: I18n.t("forge.setupHint");
+        color: Theme.fg-dim;
+        font-size: Theme.fs-xs;
+        wrap: word-wrap;
+    }
+}

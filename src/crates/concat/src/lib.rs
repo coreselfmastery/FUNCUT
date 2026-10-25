@@ -408,6 +408,8 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
             .set_categories(ModelRc::from(models.music_categories.clone()));
         app.global::<crate::ui::Magick>()
             .set_results(ModelRc::from(models.magick_results.clone()));
+        app.global::<crate::ui::Forge>()
+            .set_log(ModelRc::from(models.forge_log.clone()));
         app.global::<Sounds>()
             .set_voices_builtin(ModelRc::from(models.voices_builtin.clone()));
         app.global::<Sounds>()
@@ -1528,6 +1530,33 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
 
         sounds.on_voice_remove(on_window!(|state, id: SharedString| {
             state.forget_voice(id.as_str());
+        }));
+    }
+
+    // ── the library's Forge page ──
+    {
+        let forge = app.global::<crate::ui::Forge>();
+        forge.on_forge_start(on_window!(
+            |state, script: SharedString, voice: i32, niche: i32, mood: i32| {
+                state.handle(Msg::Forge(crate::panes::forge::ForgeMsg::Start {
+                    script: script.to_string(),
+                    voice,
+                    niche,
+                    mood,
+                }));
+            }
+        ));
+        forge.on_forge_cancel(on_window!(|state| {
+            state.handle(Msg::Forge(crate::panes::forge::ForgeMsg::Cancel));
+        }));
+        forge.on_connect_forge(on_window!(|state| {
+            state.handle(Msg::Forge(crate::panes::forge::ForgeMsg::Connect));
+        }));
+        forge.on_install_skill(on_window!(|state| {
+            state.handle(Msg::Forge(crate::panes::forge::ForgeMsg::Install));
+        }));
+        forge.on_shown(on_window!(|state, on: bool| {
+            state.handle(Msg::Forge(crate::panes::forge::ForgeMsg::Shown(on)));
         }));
     }
     // Text to speech keeps the sample it reads in as a voice of the

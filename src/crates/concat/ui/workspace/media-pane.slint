@@ -17,6 +17,7 @@ import { Sounds, SoundList, VoiceList } from "audio-page.slint";
 import { OpenVid, OpenVidList, OpenVidStatus } from "openvid-page.slint";
 import { Music, MusicList, MusicStatus } from "bgm-page.slint";
 import { Magick, MagickGrid, MagickStatus } from "magick-page.slint";
+import { Forge, ForgePage } from "forge-page.slint";
 
 export { SourcePreview }
 
@@ -1904,6 +1905,7 @@ export component MediaPane inherits Rectangle {
         OpenVid.shown(root.tab == 9);
         Music.shown(root.tab == 10);
         Magick.shown(root.tab == 11);
+        Forge.shown(root.tab == 12);
     }
     property <bool> openvid-shelves-open: true;
     property <bool> openvid-shapes-open: true;
@@ -2111,6 +2113,14 @@ export component MediaPane inherits Rectangle {
                             label: I18n.t("magick.stickers");
                             current: root.tab == 11;
                             clicked => { root.tab = 11; }
+                        }
+                        // Beside the sticker library: the AI director,
+                        // which is what the stock libraries are for.
+                        LibraryTab {
+                            glyph: Glyph.sparkle;
+                            label: I18n.t("forge.forge");
+                            current: root.tab == 12;
+                            clicked => { root.tab = 12; }
                         }
                         LibraryTab {
                             glyph: Glyph.text-mark;
@@ -3091,6 +3101,10 @@ export component MediaPane inherits Rectangle {
                         }
                     }
                 }
+
+                // Forge: the AI director. The script is the asking; the
+                // agent, run by the forge harness, is the answer.
+                if root.tab == 12: ForgePage { }
 
                 // Music: the background-music library. Everything above
                 // the list is the asking; the list is the answer.

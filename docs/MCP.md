@@ -376,7 +376,7 @@ Tools are named for what they do, and their argument schemas are generated from 
 | Stickers | `magick_status`, `magick_prepare`, `magick_search`, `magick_fetch`, `magick_add` |
 | Editing | `clip_add`, `clips_add_sequence`, `clip_trim`, `clips_split`, `clip_cut_spans`, `clips_move`, `clips_remove`, `clip_update`, `clip_transform`, `clip_speed`, `clip_frame`, `clip_audio_levels_db`, `track_add` |
 | Picture | `clip_mask`, `clip_stabilize`, `timeline_background` |
-| Titles and captions | `title_add`, `captions_add` |
+| Titles and captions | `title_add`, `title_style_words` (some words in another colour, weight, size...), `title_clear_word_styles`, `captions_add` |
 | Keyframes and effects | `keyframe_set`, `keyframe_clear`, `effects_list`, `effect_layer_add`, `effect_key_set` |
 | Analysis | `analyze_scenes`, `analyze_beats`, `analyze_silence`, `analysis_wait` (results as JSON in the status's `output`) |
 | Speech | `transcribe`, `tts_generate`, `models_list`, `models_download` |

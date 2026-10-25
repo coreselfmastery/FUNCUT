@@ -238,7 +238,17 @@ pub fn sweep(project: &Path, keep: &HashSet<PathBuf>) -> usize {
     let mut removed = 0;
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().is_some_and(|extension| extension == "mp4")
+        // A proxy in mid-write sits under a `.part.mp4` name beside its
+        // target - the muxer needs the extension to know the container -
+        // and is not in the `writing` set, which the writer's *target*
+        // is in: it is skipped rather than unlinked under the encoder,
+        // which would write on to a dead inode and lose the whole
+        // transcode at the rename.
+        let part = path
+            .file_stem()
+            .is_some_and(|stem| stem.to_string_lossy().ends_with(".part"));
+        if !part
+            && path.extension().is_some_and(|extension| extension == "mp4")
             && !keep.contains(&path)
             && !writing.contains(&path)
             && std::fs::remove_file(&path).is_ok()
@@ -667,7 +677,9 @@ mod tests {
         let kept = dir.join("1111111111111111.mp4");
         let stale = dir.join("2222222222222222.mp4");
         let busy = dir.join("3333333333333333.mp4");
-        let partial = dir.join("4444444444444444.mp4.part");
+        // The real partial's name: `write` puts it beside the target,
+        // extension kept for the muxer, `.part` before it.
+        let partial = dir.join("4444444444444444.part.mp4");
         for file in [&kept, &stale, &busy, &partial] {
             std::fs::write(file, b"x").expect("writes");
         }

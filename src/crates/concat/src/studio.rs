@@ -3516,7 +3516,22 @@ impl Studio {
                 hdr,
                 self.prefs.proxy_codec(),
             );
-            self.proxied.insert(id);
+            // A copy that is only queued can still fail to write, and a
+            // write that failed is worth asking for again: the id is
+            // held back until the copy is on disk, so the next pass
+            // re-asks for one that never landed. Asking again is cheap
+            // - a stat and a set lookup - while the write runs.
+            if concat_host::proxy::path_for(
+                std::path::Path::new(&project_path),
+                &path,
+                range,
+                hdr,
+                self.prefs.proxy_codec(),
+            )
+            .is_some_and(|target| target.is_file())
+            {
+                self.proxied.insert(id);
+            }
         }
         /// One job: the art key it fills, and what to decode.
         struct Want {

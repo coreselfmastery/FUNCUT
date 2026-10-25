@@ -40,11 +40,9 @@ FFmpeg is licensed under the LGPL-2.1-or-later; builds that include x264
 (which the H.264 export uses) are GPL-2.0-or-later. Concat's own sources are
 AGPL-3.0-or-later, and section 13 of the GPL-3.0 and AGPL-3.0 expressly
 permits linking the two, so a distributed build may be conveyed on those
-terms. Which FFmpeg a binary carries depends on the machine that built it:
-Homebrew's on macOS, a BtbN `gpl-shared` build
-(https://github.com/BtbN/FFmpeg-Builds) on Windows and Linux and in CI, and
-on Android and iOS an LGPL build without x264, compiled from FFmpeg's source
-by `src/scripts/ffmpeg-mobile.sh` and linked statically.
+terms. The Linux bundles carry a BtbN `gpl-shared` build
+(https://github.com/BtbN/FFmpeg-Builds), unmodified, as BtbN publishes
+it - the same build CI links against.
 FFmpeg source code: https://ffmpeg.org/download.html
 
 ## whisper.cpp
@@ -163,8 +161,7 @@ The licence does not permit selling the font on its own; shipping the
 
 Text to speech uses the sherpa-onnx runtime
 (https://github.com/k2-fsa/sherpa-onnx, Apache-2.0), linked statically on
-macOS and Linux, and on Windows, Android and iOS shipped with the app as
-the prebuilt shared libraries k2-fsa publishes. It carries onnxruntime
+Linux. It carries onnxruntime
 (MIT), piper-phonemize (MIT) and espeak-ng
 (**GPL-3.0-or-later**, https://github.com/espeak-ng/espeak-ng) for
 grapheme-to-phoneme conversion. Because espeak-ng is compiled into the app
@@ -201,30 +198,13 @@ anyone passing the sound off as a person's should know is not there.
 
 The cutout models run on Microsoft's ONNX Runtime
 (https://github.com/microsoft/onnxruntime, MIT), through the `ort` crate
-(https://github.com/pykeio/ort, MIT OR Apache-2.0). On Apple silicon and
-the phones it is linked into the app from pyke's builds of it; an Intel
-Mac's bundle carries Microsoft's last shared build for that machine in
-`Contents/Frameworks`. The Linux and Windows bundles ship Microsoft's own
-shared build of ONNX Runtime 1.28.0 beside the binary - `lib/libonnxruntime.so.1.28.0` on Linux,
-`onnxruntime.dll` beside `concat.exe` on Windows, one runtime that the
+(https://github.com/pykeio/ort, MIT OR Apache-2.0). The Linux bundles ship
+Microsoft's own shared build of ONNX Runtime 1.28.0 beside the binary -
+`lib/libonnxruntime.so.1.28.0`, one runtime that the
 `ort` crate and sherpa-onnx share - unmodified, as Microsoft publishes it
 at https://github.com/microsoft/onnxruntime/releases/tag/v1.28.0. Its
 licence (MIT, Copyright (c) Microsoft Corporation) and third-party
 notices are in that release's archive.
-
-## Microsoft Visual C++ runtime (Windows)
-
-The Windows bundles and installers carry the Microsoft Visual C++ runtime
-DLLs the program and its DLLs import - `vcruntime140.dll`,
-`vcruntime140_1.dll`, `msvcp140.dll` and their kin, whichever the build
-finds imported - copied unmodified from the redistributable folder of the
-Visual Studio that built the release (`VC\Redist\MSVC\<version>\<arch>\
-Microsoft.VC14x.CRT`). They are Microsoft's, not Concat's, and are not
-covered by Concat's licence: they are redistributed under the terms
-Microsoft sets for them, the Microsoft Software License Terms for Visual
-Studio and its list of distributable code (for Visual Studio 2022,
-https://learn.microsoft.com/visualstudio/releases/2022/redistribution),
-which permit shipping them alongside an application that uses them.
 
 ## The cutout models
 
@@ -254,10 +234,9 @@ and are never bundled; the three that are downloaded come from Concat's own
 mirror of the sources named above, described below. They are all run by
 ONNX Runtime
 (https://github.com/microsoft/onnxruntime, MIT) through the `ort` crate
-(https://github.com/pykeio/ort, MIT OR Apache-2.0), with the platform's
-own accelerator behind it where the runtime has one: CoreML on macOS and
-iOS, NNAPI on Android. How each platform carries the runtime is under
-"ONNX Runtime" above.
+(https://github.com/pykeio/ort, MIT OR Apache-2.0), with whatever
+accelerator the runtime brings on this machine. How the runtime is
+carried is under "ONNX Runtime" above.
 
 ## The model mirror
 

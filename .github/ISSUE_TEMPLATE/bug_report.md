@@ -23,16 +23,11 @@ A clear and concise description of what you expected to happen.
 **Screenshots**
 If applicable, add screenshots to help explain your problem.
 
-**Desktop (please complete the following information):**
- - OS: [e.g. iOS]
- - Browser [e.g. chrome, safari]
- - Version [e.g. 22]
-
-**Smartphone (please complete the following information):**
+**System (please complete the following information):**
  - Distribution: [e.g. Ubuntu 24.04]
- - OS: [e.g. iOS8.1]
- - Browser [e.g. stock browser, safari]
- - Version [e.g. 22]
+ - Desktop: [e.g. GNOME on Wayland]
+ - Version: [e.g. 0.2.8, from Settings > About]
+ - Installed as: [e.g. AppImage / .deb / .rpm / pacman / from source]
 
 **Additional context**
 Add any other context about the problem here.

@@ -1,0 +1,114 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "funcut-director/edit-plan/v1",
+  "title": "FUNCUT edit plan",
+  "description": "The one-pass plan a director emits after measuring, before cutting. Times are seconds unless a field says otherwise.",
+  "type": "object",
+  "required": ["segments", "audio"],
+  "properties": {
+    "title": { "type": "string", "description": "Working title of the video." },
+    "aspect": { "type": "string", "enum": ["16:9", "9:16", "1:1", "4:5"], "description": "Delivery aspect; 9:16 for shorts/reels/tiktok." },
+    "niche": { "type": "string", "description": "The niche playbook in use, e.g. history, tech, luxury, motivation, finance, science, horror, fitness, gaming, howto." },
+    "segments": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The timeline, in order. Segment i covers [start, end); gaps or overlaps are plan errors.",
+      "items": {
+        "type": "object",
+        "required": ["start", "end", "visual"],
+        "properties": {
+          "start": { "type": "number", "minimum": 0 },
+          "end": { "type": "number", "minimum": 0, "description": "Must be greater than start." },
+          "spoken": { "type": "string", "description": "The narration words this segment covers (for caption grouping)." },
+          "visual": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": { "type": "string", "enum": ["broll", "textCard", "titleCard", "existing"], "description": "broll = OpenVid clip; textCard/titleCard = styled text over background (fallbacks); existing = footage already imported." },
+              "query": { "type": "string", "description": "broll: the openvid_search query. Follow prompts/broll_matching.md." },
+              "orientation": { "type": "string", "enum": ["vertical", "horizontal", "square"] },
+              "sort": { "type": "string", "enum": ["relevance", "aesthetic", "motion", "temporal", "shortest", "longest", "surprise"] },
+              "clipId": { "type": ["integer", "null"], "description": "Filled after search: the chosen clip's id, never invented." },
+              "trimIn": { "type": "number", "minimum": 0, "description": "Seconds into the source where the clip starts." },
+              "trimOut": { "type": "number", "description": "Seconds into the source where it ends (leave longer than the segment; trim after placing)." },
+              "preset": { "type": "string", "description": "textCard/titleCard: one of the 31 text presets, e.g. concat.impact, concat.lower-third, concat.bold-caption." },
+              "text": { "type": "string", "description": "textCard/titleCard: the words on screen." },
+              "motion": { "type": "string", "enum": ["ken-burns-in", "ken-burns-out", "slide-left", "slide-right", "parallax-up", "punch-zoom", "static"], "description": "Keyframe recipe from prompts/keyframes_motion.md." }
+            }
+          },
+          "sfx": {
+            "type": ["object", "null"],
+            "properties": {
+              "query": { "type": "string", "description": "sounds_search query using a real category: Whoosh, Impact, Riser, Motion, UI, Notification, Keyboard, Digital, Foley, Writing, Ambience, Music." },
+              "peakAt": { "type": "number", "description": "The time the sound's PEAK must land on — usually the segment's first frame." },
+              "gainDb": { "type": "number", "default": 0, "description": "-12 to 0; -6 is a typical support level." }
+            }
+          },
+          "transitionIn": {
+            "type": ["object", "null"],
+            "properties": {
+              "effect": { "type": "string", "description": "One of the 22 transition ids, e.g. concat.dissolve, concat.whip-pan, concat.glitch-transition." },
+              "seconds": { "type": "number", "default": 0.5, "description": "0.25-1.0; 0 (absent) means a hard cut." }
+            }
+          },
+          "captions": { "type": ["boolean", "null"], "description": "Word-synced captions over this segment; null = follow the video default." }
+        }
+      }
+    },
+    "audio": {
+      "type": "object",
+      "description": "The audio beds.",
+      "properties": {
+        "voiceover": {
+          "type": ["object", "null"],
+          "properties": {
+            "source": { "type": "string", "enum": ["tts", "file"], "description": "tts = tts_generate made it; file = user-provided." },
+            "voice": { "type": "integer", "description": "TTS voice id (Kokoro 0-52; e.g. 2 af_bella, 8 af_river, 11 am_adam)." },
+            "speed": { "type": "number", "default": 1.0 },
+            "model": { "type": "string", "default": "kokoro-int8-multi-lang-v1_0" }
+          }
+        },
+        "bgm": {
+          "type": ["object", "null"],
+          "properties": {
+            "query": { "type": "string", "description": "bgm_search query (mood words: 'epic tension', 'chillhop', 'upbeat')" },
+            "source": { "type": "string", "enum": ["freepd", "lofi"] },
+            "trackId": { "type": ["string", "null"], "description": "Filled after search; never invented." },
+            "alignTo": { "type": "string", "enum": ["downbeats", "beats", "none"] },
+            "duckDb": { "type": "number", "default": -12, "description": "Music level under speech, -9 to -15." }
+          }
+        },
+        "sfxEnabled": { "type": "boolean", "default": true }
+      }
+    },
+    "captions": {
+      "type": "object",
+      "description": "Video-wide caption style; per-segment flags override presence only.",
+      "properties": {
+        "wordSynced": { "type": "boolean", "default": true },
+        "fontSize": { "type": "number", "default": 0.05, "description": "Fraction of frame height; 0.04 engine default, 0.05-0.06 for short-form." },
+        "fontWeight": { "type": "integer", "default": 700 },
+        "offsetY": { "type": "number", "default": 0.35, "description": "Fraction from center; positive is lower." },
+        "emphasisColor": { "type": "string", "description": "#rrggbb for key words." },
+        "background": { "type": ["string", "null"], "description": "Optional plate '#rrggbb[aa]' for readability; null = no plate." }
+      }
+    },
+    "grade": {
+      "type": ["object", "null"],
+      "properties": {
+        "filter": { "type": "string", "description": "One of the 57 filter ids, e.g. concat.teal-orange, concat.noir, concat.warm." },
+        "intensityKey": { "type": "string", "description": "The package's intensity param key from effects_list, e.g. 'temperature'." },
+        "intensity": { "type": "number", "description": "Value within the param's min/max from effects_list." }
+      }
+    },
+    "export": {
+      "type": "object",
+      "properties": {
+        "output": { "type": "string", "description": "The .mp4 path to write." },
+        "crf": { "type": "integer", "default": 20 },
+        "codec": { "type": "string", "enum": ["h264", "hevc", "av1"], "default": "h264" },
+        "platform": { "type": "string", "description": "youtube, shorts, reels, tiktok — sets loudness/length expectations only." }
+      }
+    }
+  }
+}

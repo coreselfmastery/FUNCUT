@@ -1,0 +1,97 @@
+{
+  "title": "Why the Sea Is Salty",
+  "aspect": "9:16",
+  "niche": "science",
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 4.2,
+      "spoken": "Every drop of ocean you've ever tasted was a mountain first.",
+      "visual": {
+        "type": "broll",
+        "query": "rocky mountain cliff eroding waves crash",
+        "orientation": "vertical",
+        "sort": "aesthetic",
+        "trimIn": 1.0,
+        "trimOut": 7.0,
+        "motion": "ken-burns-in"
+      },
+      "sfx": { "query": "Riser swell into impact", "peakAt": 0.0, "gainDb": -8 },
+      "transitionIn": null,
+      "captions": true
+    },
+    {
+      "start": 4.2,
+      "end": 9.0,
+      "spoken": "Rain falls on rock, dissolves its minerals, and rivers carry that salt to the sea.",
+      "visual": {
+        "type": "broll",
+        "query": "river flowing through canyon aerial",
+        "orientation": "vertical",
+        "sort": "relevance",
+        "trimIn": 0.0,
+        "trimOut": 8.0,
+        "motion": "parallax-up"
+      },
+      "sfx": { "query": "Water flowing river ambience", "peakAt": 4.4, "gainDb": -12 },
+      "transitionIn": { "effect": "concat.dissolve", "seconds": 0.5 },
+      "captions": true
+    },
+    {
+      "start": 9.0,
+      "end": 14.5,
+      "spoken": "The ocean can never fill up: water leaves as vapor, but the salt stays behind.",
+      "visual": {
+        "type": "broll",
+        "query": "sun glare over ocean waves slow motion evaporation",
+        "orientation": "vertical",
+        "sort": "temporal",
+        "trimIn": 2.0,
+        "trimOut": 9.0,
+        "motion": "ken-burns-out"
+      },
+      "sfx": { "query": "Whoosh soft motion", "peakAt": 9.2, "gainDb": -14 },
+      "transitionIn": { "effect": "concat.light-leak-flash", "seconds": 0.4 },
+      "captions": true
+    },
+    {
+      "start": 14.5,
+      "end": 18.6,
+      "spoken": "Four billion years of that, times every river on Earth.",
+      "visual": {
+        "type": "textCard",
+        "preset": "concat.impact",
+        "text": "4,000,000,000 YEARS",
+        "motion": "punch-zoom"
+      },
+      "sfx": { "query": "Impact deep boom", "peakAt": 14.6, "gainDb": -10 },
+      "transitionIn": { "effect": "concat.glitch-transition", "seconds": 0.3 },
+      "captions": true
+    },
+    {
+      "start": 18.6,
+      "end": 24.0,
+      "spoken": "So the next mouthful of seawater is really a mountain, dissolved. Follow for one fact like this a day.",
+      "visual": {
+        "type": "broll",
+        "query": "person standing shoreline sunset ocean wide",
+        "orientation": "vertical",
+        "sort": "aesthetic",
+        "trimIn": 0.0,
+        "trimOut": 6.5,
+        "motion": "ken-burns-in"
+      },
+      "sfx": { "query": "Ocean waves ambience", "peakAt": 19.0, "gainDb": -14 },
+      "transitionIn": { "effect": "concat.dissolve", "seconds": 0.6 },
+      "captions": true
+    }
+  ],
+  "audio": {
+    "voiceover": { "source": "tts", "voice": 8, "speed": 1.0, "model": "kokoro-int8-multi-lang-v1_0" },
+    "bgm": { "query": "ambient documentary wonder", "source": "freepd", "trackId": null, "alignTo": "downbeats", "duckDb": -12 },
+    "sfxEnabled": true
+  },
+  "captions": { "wordSynced": true, "fontSize": 0.055, "fontWeight": 700, "offsetY": 0.32, "emphasisColor": "#7fd8ff", "background": null },
+  "grade": { "filter": "concat.teal-orange", "intensityKey": "intensity", "intensity": 0.6 },
+  "export": { "output": "/home/user/Videos/sea-salt.mp4", "crf": 20, "codec": "h264", "platform": "shorts" }
+}

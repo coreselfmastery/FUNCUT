@@ -477,7 +477,11 @@ impl Library {
             };
             progress.store(percent.min(100), Ordering::Relaxed);
         };
-        let outcome = (|| {
+        // A cancelled or interrupted download leaves its partial in place:
+        // the next attempt in this process picks up from it by range, the
+        // way `models::download` is built to. Only bytes that fail the
+        // digest - deleted inside - are not worth resuming.
+        (|| {
             crate::models::download(
                 INDEX_URL,
                 &partial,
@@ -499,11 +503,7 @@ impl Library {
             }
             std::fs::rename(&partial, &target)
                 .map_err(|error| format!("could not keep {}: {error}", target.display()))
-        })();
-        // A cancelled or interrupted download leaves its partial in
-        // place: the next attempt in this process picks up from it by
-        // range, the way `models::download` is built to.
-        outcome
+        })()
     }
 
     /// Opens the index, or says why not. The connection is kept in WAL mode

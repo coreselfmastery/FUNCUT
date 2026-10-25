@@ -60,8 +60,11 @@ pub enum OpenvidMsg {
         order: i32,
     },
     /// The search's worker is done. The second field says whether the
-    /// page asked for the next page of an existing search or a fresh one.
-    Searched(Result<Found, String>, bool),
+    /// page asked for the next page of an existing search or a fresh one;
+    /// the third is the search the answer belongs to, so an answer that
+    /// arrives after a newer search was asked is dropped rather than
+    /// laying its results over the newer one's.
+    Searched(Result<Found, String>, bool, u64),
     /// The next page of what the last search found.
     More,
     /// A card clicked: preview the clip, fetching it first if need be.
@@ -73,6 +76,9 @@ pub enum OpenvidMsg {
     /// The download's own tick: the pane asks the library where it stands
     /// and publishes, four times a second, until it is done.
     Tick,
+    /// The download's worker has returned, however it ended: the poll
+    /// can stop once the library is no longer mid-download.
+    Ended,
     /// A fetch is done, and what its bytes were for.
     Fetched(String, Result<PathBuf, String>, Then),
 }
@@ -89,6 +95,11 @@ pub struct OpenvidPane {
     pub total: u64,
     /// A search or its next page is running.
     pub searching: bool,
+    /// The searches asked so far, counted up as each is sent: the number
+    /// an answer must still carry to be the current search's, so one
+    /// that arrives late - the workers are a pool, not a queue - is
+    /// dropped rather than laid over a newer search's results.
+    epoch: u64,
     /// The last search, as it was asked: what More asks more of.
     last: Option<Query>,
     /// Fetches running, by card id: what the bytes are for.
@@ -112,6 +123,7 @@ impl OpenvidPane {
             results: Vec::new(),
             total: 0,
             searching: false,
+            epoch: 0,
             last: None,
             fetching: HashMap::new(),
             cameras: Vec::new(),
@@ -212,13 +224,24 @@ impl OpenvidPane {
                 self.search(search, false);
             }
             OpenvidMsg::More => {
+                if self.searching {
+                    return;
+                }
                 let Some(mut search) = self.last.clone() else {
                     return;
                 };
                 search.offset += search.limit;
+                // The bumped query is kept, not cloned away: More asks
+                // more of *it*, and a query thrown away after the bump
+                // re-fetches the second page on every press after the
+                // first.
+                self.last = Some(search.clone());
                 self.search(search, true);
             }
-            OpenvidMsg::Searched(result, appended) => {
+            OpenvidMsg::Searched(result, appended, epoch) => {
+                if epoch != self.epoch {
+                    return; // A newer search was asked; this answer is late.
+                }
                 self.searching = false;
                 match result {
                     Ok(found) => {
@@ -238,7 +261,13 @@ impl OpenvidPane {
                 let Some(dirs) = self.dirs.clone() else {
                     return;
                 };
-                if matches!(self.state, library::Status::Downloading(_)) {
+                // The library's own word, not the pane's copy of it: a
+                // download the API's `openvid_prepare` began leaves the
+                // pane's state stale, and a second press would only be
+                // told there is nothing to do.
+                if self.library().is_some_and(|library| {
+                    matches!(library.status(), library::Status::Downloading(_))
+                }) {
                     return;
                 }
                 self.state = library::Status::Downloading(0);
@@ -266,6 +295,7 @@ impl OpenvidPane {
                             Ok(()) => t("openvid.indexReady"),
                             Err(error) => format!("{}: {error}", t("openvid.downloadFailed")),
                         };
+                        studio.handle(Msg::Openvid(OpenvidMsg::Ended));
                         studio.notify(&words, failed);
                     },
                 );
@@ -284,6 +314,23 @@ impl OpenvidPane {
                     _ => {}
                 }
             }
+            OpenvidMsg::Ended => {
+                let Some(library) = self.library() else {
+                    self.timer.stop();
+                    return;
+                };
+                self.state = library.status();
+                // A download the API began in this window can still be
+                // running when the pane's own worker returns with
+                // "nothing to do"; its progress is still worth drawing.
+                // A failed download leaves no file and no open index,
+                // so `status` says `Missing` - the poll would run for
+                // the page's life if it waited for `Failed`.
+                if !matches!(self.state, library::Status::Downloading(_)) {
+                    self.timer.stop();
+                    self.refresh();
+                }
+            }
             OpenvidMsg::Fetched(id, result, then) => {
                 self.fetching.remove(&id);
                 let Some(library) = self.library() else {
@@ -292,9 +339,6 @@ impl OpenvidPane {
                 let Ok(id_number) = id.parse::<i64>() else {
                     return;
                 };
-                // The frame size is free now that the bytes are local, and
-                // the card that asked is redrawn with it.
-                let _ = library.dims(id_number);
                 let name = library
                     .clip(id_number)
                     .ok()
@@ -302,10 +346,19 @@ impl OpenvidPane {
                     .map(|clip| clip.name)
                     .unwrap_or_default();
                 match result {
-                    Ok(path) => match then {
-                        Then::Preview => studio.preview_file(&id, &name, &path),
-                        Then::Place => studio.place_openvid(&name, &id, &path),
-                    },
+                    // The frame size is free now that the bytes are local,
+                    // and the card that asked is redrawn with it. On the
+                    // failed road there is nothing on disk to read, and
+                    // the network read `dims` would fall back to is not
+                    // the window's thread's work: it can hold the window
+                    // for the read's whole timeout.
+                    Ok(path) => {
+                        let _ = library.dims(id_number);
+                        match then {
+                            Then::Preview => studio.preview_file(&id, &name, &path),
+                            Then::Place => studio.place_openvid(&name, &id, &path),
+                        }
+                    }
                     Err(error) if error == "cancelled" => {}
                     Err(error) => studio.notify(&tf("openvid.fetchFailed", &[&name, &error]), true),
                 }
@@ -348,10 +401,12 @@ impl OpenvidPane {
             return;
         }
         self.searching = true;
+        self.epoch += 1;
+        let epoch = self.epoch;
         crate::host::spawn(
             move || library.search(&query),
             move |studio, _, _, result| {
-                studio.handle(Msg::Openvid(OpenvidMsg::Searched(result, appended)));
+                studio.handle(Msg::Openvid(OpenvidMsg::Searched(result, appended, epoch)));
             },
         );
     }
@@ -433,6 +488,7 @@ impl Default for OpenvidPane {
             results: Vec::new(),
             total: 0,
             searching: false,
+            epoch: 0,
             last: None,
             fetching: HashMap::new(),
             cameras: Vec::new(),

@@ -427,9 +427,19 @@ impl Library {
     /// running in this process is not an error, just nothing to do.
     pub fn prepare(&self, cancel: &AtomicBool) -> Result<(), String> {
         if index_path(&self.dirs).is_file() {
-            // Present, but perhaps not openable; the caller's status will
-            // say which, and there is nothing to download either way.
-            return self.open_index();
+            // Present, but perhaps not openable. A version this build
+            // cannot read is re-downloaded rather than argued with -
+            // the module's own promise - so an index left behind by an
+            // older build heals itself instead of failing forever over
+            // a file nothing will ever open. Anything else that will
+            // not open is the caller's status to say.
+            match self.open_index() {
+                Ok(()) => return Ok(()),
+                Err(why) if why.contains("this build reads") => {
+                    let _ = std::fs::remove_file(index_path(&self.dirs));
+                }
+                Err(why) => return Err(why),
+            }
         }
         if self.running.swap(true, Ordering::SeqCst) {
             return Ok(()); // One is already running; its progress is the
@@ -477,14 +487,22 @@ impl Library {
                 &mut report,
             )
             .map_err(|error| format!("the OpenVid index could not be fetched: {error}"))?;
-            crate::models::verify(&partial, INDEX_SHA256)
-                .map_err(|error| format!("the OpenVid index did not verify: {error}"))?;
+            match crate::models::verify(&partial, INDEX_SHA256) {
+                Ok(()) => {}
+                Err(error) => {
+                    // Bytes that fail the digest are not a partial worth
+                    // resuming: they are deleted, not kept for a retry
+                    // that would only fail the same way.
+                    let _ = std::fs::remove_file(&partial);
+                    return Err(format!("the OpenVid index did not verify: {error}"));
+                }
+            }
             std::fs::rename(&partial, &target)
                 .map_err(|error| format!("could not keep {}: {error}", target.display()))
         })();
-        if outcome.is_err() {
-            let _ = std::fs::remove_file(&partial);
-        }
+        // A cancelled or interrupted download leaves its partial in
+        // place: the next attempt in this process picks up from it by
+        // range, the way `models::download` is built to.
         outcome
     }
 

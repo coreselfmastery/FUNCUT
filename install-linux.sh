@@ -223,20 +223,36 @@ for repo in "$REPO" "$FALLBACK"; do
         # can install, which is what the script itself would fall back to.
         LISTED=$(printf '%s\n' "$STREAM" | awk -F'\t' -v limit=3 '
             $1 == "RELEASE" {
-                if (named) print ""
                 tag = $2
-                named = 0
-                releases++
-                past = (releases > limit)
+                order[++releases] = tag
                 next
             }
-            !past && $1 ~ /\.(AppImage|deb|rpm|zst)$/ {
-                if (!named) { print "  " tag; named = 1 }
-                print "    " $1
+            $1 ~ /\.(AppImage|deb|rpm|zst)$/ {
+                held[tag]++
+                asset[tag, held[tag]] = $1
             }
             END {
-                if (releases > limit)
-                    print "  (and " releases - limit " older releases)"
+                shown = 0
+                older = 0
+                for (i = 1; i <= releases; i++) {
+                    t = order[i]
+                    if (!held[t]) continue   # a shelf, not a package release
+                    if (shown >= limit) { older++; continue }
+                    if (shown) print ""
+                    print "  " t
+                    # The API hands the assets back in no particular order;
+                    # a list is read in one.
+                    for (j = 2; j <= held[t]; j++) {
+                        v = asset[t, j]
+                        for (k = j - 1; k >= 1 && asset[t, k] > v; k--)
+                            asset[t, k + 1] = asset[t, k]
+                        asset[t, k + 1] = v
+                    }
+                    for (j = 1; j <= held[t]; j++) print "    " asset[t, j]
+                    shown++
+                }
+                if (older)
+                    print "  (and " older (older == 1 ? " older release" : " older releases") ")"
             }
         ')
         if [ -n "$LISTED" ]; then

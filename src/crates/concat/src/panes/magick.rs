@@ -60,8 +60,11 @@ pub enum MagickMsg {
         favourites: bool,
     },
     /// The search's worker is done. The second field says whether the
-    /// page asked for the next page of an existing search or a fresh one.
-    Searched(Result<Found, String>, bool),
+    /// page asked for the next page of an existing search or a fresh one;
+    /// the third is the search the answer belongs to, so an answer that
+    /// arrives after a newer search was asked is dropped rather than
+    /// laying its results over the newer one's.
+    Searched(Result<Found, String>, bool, u64),
     /// The next page of what the last search found.
     More,
     /// A tile clicked: preview the picture, fetching it first if need be.
@@ -92,10 +95,22 @@ pub struct MagickPane {
     pub total: u64,
     /// A search or its next page is running.
     pub searching: bool,
+    /// The searches asked so far, counted up as each is sent: the number
+    /// an answer must still carry to be the current search's, so one
+    /// that arrives late - the workers are a pool, not a queue - is
+    /// dropped rather than laid over a newer search's results.
+    epoch: u64,
     /// The last search, as it was asked: what More asks more of.
     last: Option<Query>,
     /// Fetches running, by picture id: what the bytes are for.
     fetching: HashMap<String, Then>,
+    /// The tiles' pictures, decoded once as their bytes land and kept
+    /// for as long as the page shows them: a publish runs `rows` for
+    /// every message the window handles, and re-decoding a page of PNGs
+    /// at their native size each time - a fetched page is a couple of
+    /// hundred megabytes of pixels - would hold the window's thread
+    /// through all of it. An `Image` is a handle, cheap to clone.
+    pictures: HashMap<String, slint::Image>,
     /// The heart's list, read once when the page needs it.
     hearts: Vec<String>,
     /// Stops the loads when the window goes.
@@ -119,8 +134,10 @@ impl MagickPane {
             results: Vec::new(),
             total: 0,
             searching: false,
+            epoch: 0,
             last: None,
             fetching: HashMap::new(),
+            pictures: HashMap::new(),
             hearts: Vec::new(),
             cancel: Arc::new(AtomicBool::new(false)),
             dirs: Some(dirs.clone()),
@@ -196,13 +213,24 @@ impl MagickPane {
                 self.search(search, false);
             }
             MagickMsg::More => {
+                if self.searching {
+                    return;
+                }
                 let Some(mut search) = self.last.clone() else {
                     return;
                 };
                 search.offset += search.limit;
+                // The bumped query is kept, not cloned away: More asks
+                // more of *it*, and a query thrown away after the bump
+                // re-fetches the second page on every press after the
+                // first.
+                self.last = Some(search.clone());
                 self.search(search, true);
             }
-            MagickMsg::Searched(result, appended) => {
+            MagickMsg::Searched(result, appended, epoch) => {
+                if epoch != self.epoch {
+                    return; // A newer search was asked; this answer is late.
+                }
                 self.searching = false;
                 match result {
                     Ok(found) => {
@@ -210,6 +238,11 @@ impl MagickPane {
                         if appended {
                             self.results.extend(found.stickers);
                         } else {
+                            // A fresh page lays over the old one: the
+                            // pictures the old page had decoded are not
+                            // this page's to show. A failed search keeps
+                            // the old page standing, pictures and all.
+                            self.pictures.clear();
                             self.results = found.stickers;
                         }
                     }
@@ -305,10 +338,19 @@ impl MagickPane {
                     .map(|sticker| sticker.subject)
                     .unwrap_or_default();
                 match result {
-                    Ok(path) => match then {
-                        Then::Preview => studio.preview_file(&id, &name, &path),
-                        Then::Place => studio.place_magick(&name, &id, &path),
-                    },
+                    Ok(path) => {
+                        // Decoded once here, while this message is the
+                        // only work the window's thread is doing anyway:
+                        // every later publish reads the handle back
+                        // without touching the PNG's bytes again.
+                        if let Some(picture) = crate::host::image_at(&path) {
+                            self.pictures.insert(id.clone(), picture);
+                        }
+                        match then {
+                            Then::Preview => studio.preview_file(&id, &name, &path),
+                            Then::Place => studio.place_magick(&name, &id, &path),
+                        }
+                    }
                     Err(error) if error == "cancelled" => {}
                     Err(error) => studio.notify(&tf("magick.fetchFailed", &[&name, &error]), true),
                 }
@@ -351,10 +393,12 @@ impl MagickPane {
             return;
         }
         self.searching = true;
+        self.epoch += 1;
+        let epoch = self.epoch;
         crate::host::spawn(
             move || library.search(&query),
             move |studio, _, _, result| {
-                studio.handle(Msg::Magick(MagickMsg::Searched(result, appended)));
+                studio.handle(Msg::Magick(MagickMsg::Searched(result, appended, epoch)));
             },
         );
     }
@@ -371,6 +415,11 @@ impl MagickPane {
                 .find(&id)
                 .map(|sticker| sticker.subject)
                 .unwrap_or_default();
+            // Prime the tile's picture while the window is on this click
+            // anyway, so the publishes that follow read the handle.
+            self.pictures
+                .entry(id.clone())
+                .or_insert_with(|| crate::host::image_at(&path).unwrap_or_default());
             match then {
                 Then::Preview => studio.preview_file(&id, &name, &path),
                 Then::Place => studio.place_magick(&name, &id, &path),
@@ -413,16 +462,21 @@ impl MagickPane {
         self.results
             .iter()
             .map(|sticker| {
-                // The picture's own bytes, only when they are on this
-                // machine; an empty image until then, so the tile draws
-                // its glyph.
+                // The picture's own handle, decoded once as its bytes
+                // landed; an empty image until then, so the tile draws
+                // its glyph. A picture this machine already had before
+                // the page was shown is decoded the first time it is
+                // asked for, the way it always was.
                 let cached = self
                     .library()
                     .and_then(|library| library.fetched(&sticker.id));
-                let picture = cached
-                    .as_ref()
-                    .and_then(|path| crate::host::image_at(path))
-                    .unwrap_or_default();
+                let picture = match self.pictures.get(&sticker.id) {
+                    Some(picture) => picture.clone(),
+                    None => cached
+                        .as_ref()
+                        .and_then(|path| crate::host::image_at(path))
+                        .unwrap_or_default(),
+                };
                 MagickCardData {
                     id: sticker.id.as_str().into(),
                     subject: sticker.subject.as_str().into(),
@@ -450,8 +504,10 @@ impl Default for MagickPane {
             results: Vec::new(),
             total: 0,
             searching: false,
+            epoch: 0,
             last: None,
             fetching: HashMap::new(),
+            pictures: HashMap::new(),
             hearts: Vec::new(),
             cancel: Arc::new(AtomicBool::new(false)),
             dirs: None,

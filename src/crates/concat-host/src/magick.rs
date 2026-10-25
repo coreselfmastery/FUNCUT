@@ -134,6 +134,18 @@ impl Source {
         }
     }
 
+    /// The shelf's seat among the library's per-shelf arrays: a
+    /// download, and its progress, are a shelf's own, not the whole
+    /// library's - the pane loads both shelves at once, and one flag
+    /// shared between them would have the loser's `prepare` say
+    /// "nothing to do" and return a success it never earned.
+    fn seat(self) -> usize {
+        match self {
+            Source::Magick => 0,
+            Source::Openmoji => 1,
+        }
+    }
+
     /// Both shelves, in the order the page lists them.
     pub const ALL: [Source; 2] = [Source::Magick, Source::Openmoji];
 }
@@ -254,16 +266,17 @@ pub struct Library {
     /// 16 MB of TSV per keystroke would be absurd, and per search
     /// merely wasteful.
     shelves: OnceLock<Mutex<Shelves>>,
-    /// Where the download stands, as a per-cent 0-100. An atomic rather
-    /// than the shelves' mutex, so the download's worker can tick it
-    /// without taking a lock a search is reading.
-    progress: AtomicU32,
-    /// Set while a download is running in *this* process, so a second
-    /// `prepare` - from the pane and the window's API server at once,
-    /// say - cannot start a second one. Across processes, the partial
-    /// file's name carries the pid, so two downloaders never write the
-    /// same file either.
-    running: AtomicBool,
+    /// Where each shelf's download stands, as a per-cent 0-100. An
+    /// atomic rather than the shelves' mutex, so a download's worker
+    /// can tick it without taking a lock a search is reading.
+    progress: [AtomicU32; 2],
+    /// Set while a download is running in *this* process, per shelf,
+    /// so a second `prepare` of the same shelf - from the pane and the
+    /// window's API server at once, say - cannot start a second one,
+    /// while the other shelf's prepare runs alongside it. Across
+    /// processes, the partial file's name carries the pid, so two
+    /// downloaders never write the same file either.
+    running: [AtomicBool; 2],
     /// The heart's list, loaded once and written through on every
     /// change.
     favourites: Mutex<Option<Vec<String>>>,
@@ -275,8 +288,8 @@ pub fn shared(dirs: &AppDirs) -> &'static Library {
     LIBRARY.get_or_init(|| Library {
         dirs: dirs.clone(),
         shelves: OnceLock::new(),
-        progress: AtomicU32::new(0),
-        running: AtomicBool::new(false),
+        progress: [AtomicU32::new(0), AtomicU32::new(0)],
+        running: [AtomicBool::new(false), AtomicBool::new(false)],
         favourites: Mutex::new(None),
     })
 }
@@ -286,8 +299,9 @@ impl Library {
     /// never opened (opened now, so the answer is honest), missing, or
     /// the last failure's words.
     pub fn status(&self, source: Source) -> Status {
-        if self.running.load(Ordering::Relaxed) {
-            return Status::Downloading(self.progress.load(Ordering::Relaxed));
+        let seat = source.seat();
+        if self.running[seat].load(Ordering::Relaxed) {
+            return Status::Downloading(self.progress[seat].load(Ordering::Relaxed));
         }
         let opened = self.shelves.get().is_some_and(|shelves| {
             shelves
@@ -333,13 +347,14 @@ impl Library {
             // way.
             return self.open_index(source);
         }
-        if self.running.swap(true, Ordering::SeqCst) {
+        let seat = source.seat();
+        if self.running[seat].swap(true, Ordering::SeqCst) {
             return Ok(()); // One is already running; its progress is
             // the one to watch.
         }
         let outcome = self.download_index(source, cancel);
-        self.running.store(false, Ordering::SeqCst);
-        self.progress.store(0, Ordering::Relaxed);
+        self.running[seat].store(false, Ordering::SeqCst);
+        self.progress[seat].store(0, Ordering::Relaxed);
         outcome
     }
 
@@ -360,7 +375,7 @@ impl Library {
             |name| name.to_string_lossy().into_owned(),
         );
         let partial = folder.join(format!("{name}.partial-{}", std::process::id()));
-        let progress = &self.progress;
+        let progress = &self.progress[source.seat()];
         let mut report = move |done: u64, total: u64| {
             let percent = if total > 0 {
                 ((done as f64 / total as f64) * 100.0).round() as u32
@@ -400,7 +415,26 @@ impl Library {
                             std::fs::rename(&partial, &target).map_err(|error| {
                                 format!("could not keep {}: {error}", target.display())
                             })?;
-                            return self.open_index(source);
+                            match self.open_index(source) {
+                                Ok(()) => return Ok(()),
+                                Err(error) => {
+                                    // An OpenMoji index that will not
+                                    // parse - the living upstream's JSON,
+                                    // with no digest to have checked - is
+                                    // taken back off the shelf rather
+                                    // than left as a file every later
+                                    // `prepare` refuses on sight: the
+                                    // next attempt downloads it again.
+                                    // MAGICK's digest has already said
+                                    // these bytes are the build's own,
+                                    // so its file stands to be argued
+                                    // with in words instead.
+                                    if let Source::Openmoji = source {
+                                        let _ = std::fs::remove_file(&target);
+                                    }
+                                    return Err(error);
+                                }
+                            }
                         }
                         Err(error) => {
                             let _ = std::fs::remove_file(&partial);
@@ -1003,8 +1037,8 @@ mod tests {
             Library {
                 dirs: AppDirs::under(&dir),
                 shelves: OnceLock::from(Mutex::new(rows)),
-                progress: AtomicU32::new(0),
-                running: AtomicBool::new(false),
+                progress: [AtomicU32::new(0), AtomicU32::new(0)],
+                running: [AtomicBool::new(false), AtomicBool::new(false)],
                 favourites: Mutex::new(None),
             },
             dir,
@@ -1280,8 +1314,8 @@ mod tests {
         let library = Library {
             dirs: dirs.clone(),
             shelves: OnceLock::new(),
-            progress: AtomicU32::new(0),
-            running: AtomicBool::new(false),
+            progress: [AtomicU32::new(0), AtomicU32::new(0)],
+            running: [AtomicBool::new(false), AtomicBool::new(false)],
             favourites: Mutex::new(None),
         };
         assert!(!library.is_favourite("QlhA9gJbNR"));
@@ -1298,8 +1332,8 @@ mod tests {
         let reread = Library {
             dirs,
             shelves: OnceLock::new(),
-            progress: AtomicU32::new(0),
-            running: AtomicBool::new(false),
+            progress: [AtomicU32::new(0), AtomicU32::new(0)],
+            running: [AtomicBool::new(false), AtomicBool::new(false)],
             favourites: Mutex::new(None),
         };
         assert_eq!(reread.favourite_ids(), vec!["QlhA9gJbNR".to_owned()]);

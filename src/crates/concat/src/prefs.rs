@@ -135,6 +135,11 @@ pub struct Preferences {
     /// The Concat API on a socket while the window is open.
     #[serde(default)]
     pub server: ServerPrefs,
+    /// The Forge page's provider keys: what the spawned harness is handed,
+    /// as its environment (Settings' own place would be the keyring forge
+    /// keeps itself; these are the ones the editor passes along).
+    #[serde(default)]
+    pub forge: ForgePrefs,
     /// The look new titles start from and generated captions are set in,
     /// kept from a title by the Text panel's "Use for new titles"; its
     /// words are empty. None starts titles in the bundled face.
@@ -289,6 +294,32 @@ impl Default for ServerPrefs {
             token: String::new(),
         }
     }
+}
+
+/// The Forge page's provider keys, one field a provider. They are kept
+/// beside the automation token - the same settings file, the same
+/// single-account, whole-file-or-nothing save - and injected into the
+/// spawned harness's environment as the provider's own `<NAME>_API_KEY`
+/// when a run starts, so the free tiers work without leaving the editor.
+/// `forge auth` (the OS keyring) stays the canonical home for keys used
+/// outside it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ForgePrefs {
+    /// Groq, the free tier the harness routes to first.
+    pub groq: String,
+    /// Google Gemini.
+    pub gemini: String,
+    /// OpenRouter: every model behind one key.
+    pub openrouter: String,
+    /// Mistral, La Plateforme.
+    pub mistral: String,
+    /// Cerebras, the generous free tier.
+    pub cerebras: String,
+    /// SambaNova.
+    pub sambanova: String,
+    /// NVIDIA NIM.
+    pub nim: String,
 }
 
 /// Where the window's server listens unless told otherwise: loopback, on

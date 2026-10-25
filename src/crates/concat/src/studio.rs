@@ -11538,6 +11538,14 @@ impl Studio {
             page.set_status(self.forge.status.clone().into());
             page.set_connected(self.forge.connected.unwrap_or(false));
             page.set_installed(self.forge.installed.unwrap_or(false));
+            let keys = &self.prefs.forge;
+            page.set_groq_key(keys.groq.clone().into());
+            page.set_gemini_key(keys.gemini.clone().into());
+            page.set_openrouter_key(keys.openrouter.clone().into());
+            page.set_mistral_key(keys.mistral.clone().into());
+            page.set_cerebras_key(keys.cerebras.clone().into());
+            page.set_sambanova_key(keys.sambanova.clone().into());
+            page.set_nim_key(keys.nim.clone().into());
         }
         // The OpenVid page.
         sync(&models.openvid_results, self.openvid.rows());

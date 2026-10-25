@@ -1558,6 +1558,14 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         forge.on_shown(on_window!(|state, on: bool| {
             state.handle(Msg::Forge(crate::panes::forge::ForgeMsg::Shown(on)));
         }));
+        forge.on_key_edited(on_window!(
+            |state, provider: SharedString, key: SharedString| {
+                state.handle(Msg::Forge(crate::panes::forge::ForgeMsg::KeyEdited {
+                    provider: provider.to_string(),
+                    key: key.to_string(),
+                }));
+            }
+        ));
     }
     // Text to speech keeps the sample it reads in as a voice of the
     // user's own, with a name and a picture.

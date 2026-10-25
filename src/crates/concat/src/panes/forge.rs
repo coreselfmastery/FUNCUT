@@ -92,6 +92,9 @@ pub enum ForgeMsg {
     Install,
     /// The install came back.
     Installed(Result<bool, String>),
+    /// A provider's key was edited: kept in the settings file, injected
+    /// into the harness's environment when a run starts.
+    KeyEdited { provider: String, key: String },
 }
 
 /// The page's state.
@@ -191,6 +194,21 @@ impl ForgePane {
                 self.set_status(t("forge.installFailed"));
                 studio.notify(&tf("forge.installFailedDetail", &[&error]), true);
             }
+            ForgeMsg::KeyEdited { provider, key } => {
+                let key = key.trim().to_owned();
+                let forge = &mut studio.prefs.forge;
+                match provider.as_str() {
+                    "groq" => forge.groq = key,
+                    "gemini" => forge.gemini = key,
+                    "openrouter" => forge.openrouter = key,
+                    "mistral" => forge.mistral = key,
+                    "cerebras" => forge.cerebras = key,
+                    "sambanova" => forge.sambanova = key,
+                    "nim" => forge.nim = key,
+                    _ => return,
+                }
+                studio.prefs.save(&studio.host.dirs);
+            }
         }
     }
 
@@ -230,9 +248,27 @@ impl ForgePane {
         );
         self.kill = Arc::new(AtomicBool::new(false));
         let kill = Arc::clone(&self.kill);
-        let spawned = Command::new("forge")
-            .arg("run")
-            .arg(prompt)
+        let mut command = Command::new("forge");
+        command.arg("run").arg(prompt);
+        // The provider keys the page keeps are handed to the harness as
+        // its environment, in each provider's own spelling, so the free
+        // tiers work without leaving the editor. Keys stacked in the
+        // harness's own keyring arrive on their own.
+        let forge = &studio.prefs.forge;
+        for (name, value) in [
+            ("GROQ_API_KEY", &forge.groq),
+            ("GEMINI_API_KEY", &forge.gemini),
+            ("OPENROUTER_API_KEY", &forge.openrouter),
+            ("MISTRAL_API_KEY", &forge.mistral),
+            ("CEREBRAS_API_KEY", &forge.cerebras),
+            ("SAMBANOVA_API_KEY", &forge.sambanova),
+            ("NVIDIA_API_KEY", &forge.nim),
+        ] {
+            if !value.trim().is_empty() {
+                command.env(name, value.trim());
+            }
+        }
+        let spawned = command
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn();

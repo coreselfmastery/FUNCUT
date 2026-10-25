@@ -31,6 +31,16 @@ export global Forge {
     in property <bool> installed;
     /// The script box, as typed: what Start hands over with the choices.
     in-out property <string> script;
+    /// The provider keys, as typed: injected into the harness's
+    /// environment when a run starts. Kept in the settings file beside
+    /// the automation token.
+    in-out property <string> groq-key;
+    in-out property <string> gemini-key;
+    in-out property <string> openrouter-key;
+    in-out property <string> mistral-key;
+    in-out property <string> cerebras-key;
+    in-out property <string> sambanova-key;
+    in-out property <string> nim-key;
 
     /// The script and the three choices went to the harness.
     callback forge-start(script: string, voice: int, niche: int, mood: int);
@@ -40,10 +50,19 @@ export global Forge {
     callback connect-forge();
     /// The Install button: forge skill install, of this repository.
     callback install-skill();
+    /// A key field was edited: the provider, and what it says now.
+    callback key-edited(provider: string, key: string);
     /// Open Settings on the Forge page, where the keys live.
     callback open-settings();
     /// A library pane turned to the page or away from it.
     callback shown(on: bool);
+}
+
+/// One provider's key row: the id the pane knows the provider by, and
+/// its name on the page.
+export struct ForgeKeyData {
+    id: string,
+    label: string,
 }
 
 // A page's button: a field that turns accent when it is the thing to do,
@@ -96,6 +115,19 @@ component LogLine inherits Text {
 // The Forge page itself: the script, the choices, the start, and the log of
 // what the director is doing. The pane it sits in scrolls the whole column.
 export component ForgePage inherits VerticalLayout {
+    // One row a provider: the id the pane knows the provider by, and its
+    // name on the page. Declared as page-list declares its rows, so the
+    // literals are typed by the property.
+    property <[ForgeKeyData]> key-rows: [
+        { id: "groq", label: "Groq" },
+        { id: "gemini", label: "Gemini" },
+        { id: "openrouter", label: "OpenRouter" },
+        { id: "mistral", label: "Mistral" },
+        { id: "cerebras", label: "Cerebras" },
+        { id: "sambanova", label: "SambaNova" },
+        { id: "nim", label: "NVIDIA NIM" },
+    ];
+
     padding: 8px;
     spacing: 8px;
 
@@ -265,5 +297,67 @@ export component ForgePage inherits VerticalLayout {
         color: Theme.fg-dim;
         font-size: Theme.fs-xs;
         wrap: word-wrap;
+    }
+
+    // The provider keys: what the spawned harness is handed, as its
+    // environment, so the free tiers work without leaving the editor.
+    // `forge auth` stays the canonical home for keys used elsewhere.
+    VerticalLayout {
+        spacing: 6px;
+
+        Text {
+            text: I18n.t("forge.keysTitle");
+            color: Theme.fg-muted;
+            font-size: Theme.fs-xs;
+        }
+
+        for row in key-rows: HorizontalLayout {
+            spacing: 8px;
+
+            VerticalLayout {
+                width: 96px;
+                alignment: center;
+                Text {
+                    text: row.label;
+                    color: Theme.fg-muted;
+                    font-size: Theme.fs-xs;
+                }
+            }
+
+            key-field := Rectangle {
+                horizontal-stretch: 1;
+                height: 30px;
+                border-radius: Theme.r-sm;
+                background: Theme.field;
+                border-width: 1px;
+                border-color: key-input.has-focus ? Theme.accent : Theme.line;
+                clip: true;
+
+                key-input := TextInput {
+                    x: 8px;
+                    y: (parent.height - self.height) / 2;
+                    width: parent.width - 16px;
+                    height: self.preferred-height;
+                    single-line: true;
+                    color: Theme.fg;
+                    font-size: Theme.fs-sm;
+                    text: row.id == "groq" ? Forge.groq-key
+                        : row.id == "gemini" ? Forge.gemini-key
+                        : row.id == "openrouter" ? Forge.openrouter-key
+                        : row.id == "mistral" ? Forge.mistral-key
+                        : row.id == "cerebras" ? Forge.cerebras-key
+                        : row.id == "sambanova" ? Forge.sambanova-key
+                        : Forge.nim-key;
+                    edited => { Forge.key-edited(row.id, self.text); }
+                }
+            }
+        }
+
+        Text {
+            text: I18n.t("forge.keysHint");
+            color: Theme.fg-dim;
+            font-size: Theme.fs-xs;
+            wrap: word-wrap;
+        }
     }
 }

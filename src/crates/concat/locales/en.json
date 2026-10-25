@@ -303,6 +303,8 @@
   "forge.installed": "Skill installed",
   "forge.installedStatus": "The skill is installed",
   "forge.installing": "Installing…",
+  "forge.keysHint": "Stack free keys comma-separated (two Groq keys are double the requests). forge auth remains the canonical home for keys; these are the ones the editor passes along.",
+  "forge.keysTitle": "Provider keys - handed to the harness when a run starts",
   "forge.logEmpty": "The agent's words appear here while it works.",
   "forge.mood": "Music",
   "forge.niche": "Niche",

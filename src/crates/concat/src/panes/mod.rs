@@ -147,7 +147,7 @@ pub fn activity(msg: &Msg) -> Option<Activity> {
                 "openvid: the index download began".to_owned(),
             ));
         }
-        Msg::Openvid(OpenvidMsg::Searched(result, _)) => {
+        Msg::Openvid(OpenvidMsg::Searched(result, _, _)) => {
             return Some(Activity::once(
                 Info,
                 match result {
@@ -175,7 +175,7 @@ pub fn activity(msg: &Msg) -> Option<Activity> {
                 "music: the catalogs' download began".to_owned(),
             ));
         }
-        Msg::Music(bgm::MusicMsg::Searched(result, _)) => {
+        Msg::Music(bgm::MusicMsg::Searched(result, _, _)) => {
             return Some(Activity::once(
                 Info,
                 match result {
@@ -205,7 +205,7 @@ pub fn activity(msg: &Msg) -> Option<Activity> {
                 "stickers: the indexes' download began".to_owned(),
             ));
         }
-        Msg::Magick(magick::MagickMsg::Searched(result, _)) => {
+        Msg::Magick(magick::MagickMsg::Searched(result, _, _)) => {
             return Some(Activity::once(
                 Info,
                 match result {

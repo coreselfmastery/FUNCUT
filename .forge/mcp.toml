@@ -1,0 +1,25 @@
+# The funcut MCP server, declared for the Forge harness.
+#
+# Running `forge` from this repository wires it to Concat with no further
+# setup: the project's .forge/mcp.toml is read after a one-time trust prompt.
+# At user scope instead - so it works from anywhere:
+#
+#   forge mcp add funcut concat -- --mcp window -s user
+#
+# call_timeout_secs is raised from the default 60: transcription, analysis
+# and export_wait are patient work. See docs/forge/FORGE.md.
+
+call_timeout_secs = 900
+
+[[servers]]
+name = "funcut"
+
+[servers.transport]
+type = "stdio"
+command = "concat"
+# The open window's server when it is serving (Settings > Automation >
+# Scripts and apps), an API in this process otherwise.
+args = ["--mcp", "auto"]
+
+[allow]
+servers = ["funcut"]

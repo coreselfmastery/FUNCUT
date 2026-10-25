@@ -20,6 +20,10 @@ __pycache__/
 venv/
 *.egg-info/
 
+# The analysis tools' synthetic fixtures: made by
+# src/crates/concat-api/analysis/tests/make_test_media.sh, never committed.
+src/crates/concat-api/analysis/tests/test_media/
+
 # Editors and OS
 .vscode/*
 !.vscode/extensions.json

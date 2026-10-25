@@ -26,8 +26,17 @@
 
 use std::path::Path;
 
-/// The repository the mirror lives on.
-pub const REPO: &str = "jub0t/Concat";
+/// The repository the mirror lives on: this fork's own releases.
+///
+/// It was `jub0t/Concat` - the upstream - until the mirror turned out never
+/// to have been filled there: every `models-v1` URL answered 404, so every
+/// download fell through to Hugging Face and then to the upstream the model
+/// came from. The mirror is what makes "the bytes we tested, under one
+/// roof" true, and a fork that carries its own models should serve them
+/// itself; `.github/workflows/models.yml` on this repository fills and
+/// publishes this tag. The fallbacks below still stand - a preference is
+/// where to look first, never the only place to look.
+pub const REPO: &str = "coreselfmastery/FUNCUT";
 
 /// The release every model is mirrored on.
 ///

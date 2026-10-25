@@ -247,7 +247,7 @@ pub fn activity(msg: &Msg) -> Option<Activity> {
         Msg::Forge(ForgeMsg::Ended(code)) => {
             return Some(Activity::once(
                 Info,
-                if code == 0 {
+                if *code == 0 {
                     "forge: run finished".to_owned()
                 } else {
                     format!("forge: run ended at {code}")

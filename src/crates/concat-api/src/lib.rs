@@ -665,18 +665,22 @@ impl Api {
                 detector,
                 min_scene_len,
             )?)),
-            Request::AnalysisBeats { path } => {
-                Ok(Reply::Started(self.analysis_beats(&path)?))
-            }
+            Request::AnalysisBeats { path } => Ok(Reply::Started(self.analysis_beats(&path)?)),
             Request::AnalysisSilence {
                 path,
                 threshold_db,
                 min_silence_ms,
-            } => Ok(Reply::Started(
-                self.analysis_silence(&path, threshold_db, min_silence_ms)?,
-            )),
+            } => Ok(Reply::Started(self.analysis_silence(
+                &path,
+                threshold_db,
+                min_silence_ms,
+            )?)),
             #[cfg(feature = "speech")]
-            Request::SpeechTranscribe { path, model, language } => Ok(Reply::Started(
+            Request::SpeechTranscribe {
+                path,
+                model,
+                language,
+            } => Ok(Reply::Started(
                 self.speech_transcribe(&path, model, language)?,
             )),
             #[cfg(not(feature = "speech"))]
@@ -691,9 +695,9 @@ impl Api {
                 voice,
                 speed,
                 model,
-            } => Ok(Reply::Started(self.speech_generate(
-                &project, &text, voice, speed, model,
-            )?)),
+            } => Ok(Reply::Started(
+                self.speech_generate(&project, &text, voice, speed, model)?,
+            )),
             #[cfg(not(feature = "speech"))]
             Request::SpeechGenerate { .. } => Err(ApiError::new(
                 ErrorCode::Refused,

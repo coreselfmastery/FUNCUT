@@ -163,10 +163,14 @@ def parity() -> list[str]:
 
 
 def check(wanted: dict[str, str], list_same: bool = False, strict: bool = False) -> int:
-    """Reports each locale's missing, stale and untranslated lines. Stale
-    fails; a line still in English is counted, listed with `list_same`, and
-    fails only with `strict` - there is a backlog of them, and it is to be
-    seen before it is to be enforced."""
+    """Reports each locale's missing, stale and untranslated lines. A stale
+    line (one the interface no longer has) and a missing one (a string the
+    interface shows and this locale has never been given) both fail: a
+    shipped language that falls back to a raw key - `forge.start` in place
+    of a word - is a bug, and the Forge page is what taught us that. A line
+    still in English is only counted, listed with `list_same`, and fails
+    with `strict` - there is a backlog of those, and it is to be seen
+    before it is to be enforced."""
     failed = 0
     untranslated = 0
     for path in sorted(LOCALES.glob("*.json")):
@@ -189,6 +193,8 @@ def check(wanted: dict[str, str], list_same: bool = False, strict: bool = False)
             failed = 1
         for key in missing:
             print(f"    missing: {key}  ({wanted[key]!r})")
+        if missing:
+            failed = 1
         if list_same or strict:
             for key in same:
                 print(f"    english: {key}  ({wanted[key]!r})")

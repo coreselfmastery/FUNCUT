@@ -1302,18 +1302,27 @@ mod tests {
                 "preview_frame",
                 json!({ "path": "/tmp/Cut", "time": 1.5, "width": 320, "height": 180 }),
             ),
-            ("analyze_scenes", json!({ "path": "/tmp/a.mp4", "threshold": 3.5 })),
+            (
+                "analyze_scenes",
+                json!({ "path": "/tmp/a.mp4", "threshold": 3.5 }),
+            ),
             ("analyze_beats", json!({ "path": "/tmp/bgm.mp3" })),
             (
                 "analyze_silence",
                 json!({ "path": "/tmp/vo.wav", "thresholdDb": 35, "minSilenceMs": 500 }),
             ),
-            ("transcribe", json!({ "path": "/tmp/a.mp4", "model": "base.en" })),
+            (
+                "transcribe",
+                json!({ "path": "/tmp/a.mp4", "model": "base.en" }),
+            ),
             (
                 "tts_generate",
                 json!({ "project": "/tmp/Cut", "text": "Hello, agent", "voice": 8, "speed": 1.0 }),
             ),
-            ("analysis_wait", json!({ "job": "j1", "timeoutSeconds": 30 })),
+            (
+                "analysis_wait",
+                json!({ "job": "j1", "timeoutSeconds": 30 }),
+            ),
         ]
     }
 

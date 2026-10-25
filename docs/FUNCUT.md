@@ -58,9 +58,13 @@ against the release's checksum first. Other shapes:
 ```
 
 The script looks for a release **on this fork first**, and falls back to
-Concat's own releases when the fork has none yet - the two are the same
-program, built by the same workflows. No checkout handy? Run it straight off
-the repository:
+Concat's own releases when the fork has none yet. The fallback is a working
+editor, but it is not this one: upstream carries none of FUNCUT's own work -
+no OpenVid, sticker or sound shelves, no Forge page, 42 MCP tools instead of
+61 - so if the fork has a published release, that is the one you want. (A
+release the workflows build starts as a draft, and a draft is invisible to
+this script; see the note below.) No checkout handy? Run it straight off the
+repository:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/coreselfmastery/FUNCUT/main/install-linux.sh | bash
@@ -89,6 +93,27 @@ sudo dnf install mesa-vulkan-drivers   # Fedora
 A machine with no GPU at all still runs: `mesa-vulkan-drivers` includes
 lavapipe, a software renderer - slower, but complete. On a laptop that
 already plays video, everything is usually already in place.
+
+#### Runtime libraries
+
+The AppImage bundles the editor, FFmpeg and the models' runtime, but not the
+system's sound and display libraries. On a full desktop install they are
+already there; on a **minimal** Debian, Ubuntu or Mint (a server image, a
+container, a bare netinst) the window dies before it opens with:
+
+```text
+error while loading shared libraries: libasound.so.2
+```
+
+```sh
+sudo apt install libasound2t64     # Debian 13+ and Ubuntu 24.04+
+sudo apt install libasound2        # Debian 12 and older
+sudo dnf install alsa-lib          # Fedora
+```
+
+Nothing else is needed beyond the Vulkan driver above. The `.deb` and `.rpm`
+packages declare their dependencies themselves, so `apt` and `dnf` bring
+these in for you - it is the no-root AppImage that cannot.
 
 ## What this fork changes
 

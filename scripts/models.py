@@ -35,8 +35,11 @@ MANIFEST = ROOT / "models" / "manifest.toml"
 CRATES = ROOT / "src" / "crates"
 
 # The repository the mirror lives on, and the engine constant that must
-# agree with this file about which release holds it.
-REPO = "jub0t/Concat"
+# agree with this file about which release holds it. This fork's own - the
+# mirror was never filled on the upstream, so every model URL answered 404
+# and every download fell through to the model's own publisher. The
+# `release` table's `models-v1` is filled by .github/workflows/models.yml.
+REPO = "coreselfmastery/FUNCUT"
 HOST_MODELS = CRATES / "concat-host" / "src" / "models.rs"
 
 # Where each family's table lives in the engine, for --check.

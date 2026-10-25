@@ -203,15 +203,49 @@ checksums_url() {
 }
 
 # ── find something to install ─────────────────────────────────────────
+SEEN=""
+VISITED=""
 for repo in "$REPO" "$FALLBACK"; do
     [ -n "$repo" ] || continue
+    [ "$repo" = "$VISITED" ] && continue
+    VISITED="$repo"
     say "looking for a release on $repo ..."
     STREAM=$(release_assets "$repo") || { say "  none readable there"; continue; }
     [ -n "$STREAM" ] || { say "  no published releases"; continue; }
 
     if [ "$LIST_ONLY" = "yes" ]; then
-        printf '%s\n' "$STREAM" | awk -F'\t' '{ print $1 }'
-        exit 0
+        # Only what this script can install. The data releases beside the app
+        # - the sound library's 430 files, the sticker index, the OpenVid
+        # index - are shelves the app fetches for itself, so a release with
+        # no package in it is not printed at all (and a release is named once,
+        # not once per file). Listing stops at neither repo: a fork whose only
+        # published releases are shelves still wants to show what upstream
+        # can install, which is what the script itself would fall back to.
+        LISTED=$(printf '%s\n' "$STREAM" | awk -F'\t' -v limit=3 '
+            $1 == "RELEASE" {
+                if (named) print ""
+                tag = $2
+                named = 0
+                releases++
+                past = (releases > limit)
+                next
+            }
+            !past && $1 ~ /\.(AppImage|deb|rpm|zst)$/ {
+                if (!named) { print "  " tag; named = 1 }
+                print "    " $1
+            }
+            END {
+                if (releases > limit)
+                    print "  (and " releases - limit " older releases)"
+            }
+        ')
+        if [ -n "$LISTED" ]; then
+            printf '%s\n' "$LISTED"
+            SEEN="yes"
+        else
+            say "  no packages in its releases"
+        fi
+        continue
     fi
 
     if PICKED=$(pick_asset "$STREAM" "$KIND" "$ARCH"); then
@@ -222,6 +256,11 @@ for repo in "$REPO" "$FALLBACK"; do
     fi
     say "  no $KIND for $ARCH in its releases"
 done
+
+if [ "$LIST_ONLY" = "yes" ]; then
+    [ -n "$SEEN" ] || say "nothing to install: no $KIND for $ARCH in $REPO or $FALLBACK"
+    exit 0
+fi
 
 [ -n "${ASSET_URL:-}" ] || die "nothing to install: no $KIND for $ARCH in $REPO or $FALLBACK.
 If this fork has no published release yet, see docs/FUNCUT.md - one push

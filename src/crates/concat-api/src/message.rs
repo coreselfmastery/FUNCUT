@@ -669,7 +669,7 @@ pub enum Request {
     },
     /// Finds a recording's silent spans - the dead air to cut - on a job
     /// of its own: `spans` (and their complement, `speech`) in seconds,
-        /// the shape `edit.apply`'s `removeSpans` takes.
+    /// the shape `edit.apply`'s `removeSpans` takes.
     #[serde(rename = "analysis.silence")]
     AnalysisSilence {
         /// The recording to measure.
@@ -1585,8 +1585,8 @@ pub enum Event {
         error: ApiError,
     },
     /// An analysis or speech job ended with its result: `output` is the
-        /// JSON it printed - a scene list, a beat grid, a transcript - or
-        /// the file a voice was written to. The job is over.
+    /// JSON it printed - a scene list, a beat grid, a transcript - or
+    /// the file a voice was written to. The job is over.
     #[serde(rename = "analysis.done")]
     AnalysisDone {
         /// The job.

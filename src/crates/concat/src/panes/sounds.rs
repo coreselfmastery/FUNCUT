@@ -257,9 +257,10 @@ impl SoundsPane {
                 self.importing = false;
                 let mut added = 0;
                 let mut failure = None;
-                // Oldest first, so the last picked ends up at the top
-                // with the rest of them under it in the order picked.
-                for result in results.into_iter().rev() {
+                // In the order picked, so the last picked is added last
+                // and ends up at the top, with the rest of them under it
+                // in the order picked.
+                for result in results.into_iter() {
                     match result.and_then(|sound| self.library.add(sound)) {
                         Ok(()) => added += 1,
                         Err(error) => failure = Some(error),

@@ -898,7 +898,17 @@ fn overlap(clips: &mut Vec<ExportClip>, cut: &Cut, frame: f64) -> Option<Overlap
         // Sound rides the picture: each side fades across the overlap
         // rather than arriving or leaving at full level.
         b.fade_in = b.fade_in.max(length);
-        b.track = a_track + 1;
+        // The lane above the outgoing, kept odd: the outgoing of a chained
+        // transition already sits on an odd overlay lane of its own (it was
+        // the incoming of the cut before), and one straight above would
+        // land the incoming on an EVEN lane - a real track's own doubled
+        // lane, where it disappears under that track's content for the
+        // whole overlap.
+        b.track = if a_track.is_multiple_of(2) {
+            a_track + 1
+        } else {
+            a_track + 2
+        };
     }
     if outgoing_runs {
         let a = &mut clips[cut.outgoing];
@@ -1317,7 +1327,7 @@ pub fn audio_pieces(clip: &ExportClip) -> Vec<AudioClip> {
     };
     // Pieces a tenth of a second long, or eight at least: fine enough that
     // a tempo step is not heard, coarse enough that the graph stays small.
-    let count = ((clip.duration / 0.1).ceil() as usize).clamp(8, 400);
+    let count = ((clip.duration / 0.1).ceil() as usize).clamp(8, 4_000);
     curve
         .pieces(count)
         .into_iter()
@@ -2505,6 +2515,46 @@ pub fn preview_moments(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    /// Chained transitions - A to B to C, each cut carrying one - must put
+    /// every incoming picture on its own ODD overlay lane. The outgoing of
+    /// the second cut is the incoming of the first (already on an odd
+    /// lane), and one straight above it is an EVEN lane: a real track's own
+    /// doubled lane, where the incoming picture would disappear under that
+    /// track's content for the whole overlap.
+    #[test]
+    fn chained_transitions_take_odd_lanes_one_each() {
+        let mut clips = vec![
+            ExportClip::blank(ClipKind::Video, 0.0, 2.0, 0),
+            ExportClip::blank(ClipKind::Video, 2.0, 2.0, 0),
+            ExportClip::blank(ClipKind::Video, 4.0, 2.0, 0),
+        ];
+        let transition = |kind: &str| TransitionSpec {
+            kind: kind.to_owned(),
+            duration: 0.5,
+            params: BTreeMap::new(),
+        };
+        clips[1].transition = Some(transition("wipe-left"));
+        clips[2].transition = Some(transition("wipe-right"));
+        resolve_transitions_at(&mut clips, FrameRate::THIRTY, 0.0);
+        let lanes: Vec<usize> = clips.iter().map(|clip| clip.track).collect();
+        // The first clip keeps its doubled lane; the two incoming pictures
+        // sit on odd lanes, each its own.
+        assert_eq!(lanes[0] % 2, 0, "the untouched outgoing keeps an even lane");
+        assert_eq!(
+            lanes[1] % 2,
+            1,
+            "the first incoming takes an odd lane: {lanes:?}"
+        );
+        assert_eq!(
+            lanes[2] % 2,
+            1,
+            "the second incoming takes an odd lane: {lanes:?}"
+        );
+        assert_ne!(lanes[1], lanes[2], "each transition its own overlay lane");
+    }
+
     /// A treatment on track 1 runs over what track 0 drew and not over what
     /// track 2 draws on top of it, and its strength blends the result back.
     #[test]

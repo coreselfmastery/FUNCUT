@@ -571,6 +571,15 @@ impl Manifest {
             if param.label.trim().is_empty() {
                 return Err(self.invalid(format!("parameter `{}` has no label", param.key)));
             }
+            // Finite first: a NaN bound passes every comparison there is,
+            // so `min is above max` never fires and the NaN reaches the
+            // parameters, where it renders into a filter chain as `NaN`.
+            if !(param.min.is_finite() && param.max.is_finite() && param.default.is_finite()) {
+                return Err(self.invalid(format!(
+                    "parameter `{}`: min, max and default must be finite numbers",
+                    param.key
+                )));
+            }
             if param.min > param.max {
                 return Err(self.invalid(format!("parameter `{}`: min is above max", param.key)));
             }

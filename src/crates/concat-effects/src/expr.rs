@@ -388,10 +388,23 @@ impl Expr {
 fn binary(op: Op, left: &Value, right: &Value) -> Result<Value, EvalError> {
     if let (Value::Int(a), Value::Int(b)) = (left, right) {
         let (a, b) = (*a, *b);
+        // Checked: a package whose expression computes past i64's ends
+        // would panic in a debug build and wrap silently in a release
+        // one, and either way its option value is garbage. An overflow is
+        // an evaluation error, which `compose` reports rather than uses.
         return Ok(match op {
-            Op::Add => Value::Int(a + b),
-            Op::Sub => Value::Int(a - b),
-            Op::Mul => Value::Int(a * b),
+            Op::Add => Value::Int(
+                a.checked_add(b)
+                    .ok_or_else(|| EvalError("integer overflow in +".to_string()))?,
+            ),
+            Op::Sub => Value::Int(
+                a.checked_sub(b)
+                    .ok_or_else(|| EvalError("integer overflow in -".to_string()))?,
+            ),
+            Op::Mul => Value::Int(
+                a.checked_mul(b)
+                    .ok_or_else(|| EvalError("integer overflow in *".to_string()))?,
+            ),
             Op::Div => Value::Float(a as f64 / b as f64),
             Op::Lt => Value::Int(i64::from(a < b)),
             Op::Gt => Value::Int(i64::from(a > b)),

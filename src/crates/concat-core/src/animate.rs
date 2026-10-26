@@ -54,9 +54,31 @@ impl Ease {
     /// Slow at both ends. CSS `ease-in-out`.
     pub const IN_OUT: Ease = Ease::new(0.42, 0.0, 0.58, 1.0);
 
-    /// The four control-point numbers, as given.
+    /// The four control-point numbers. The two x coordinates are clamped
+    /// into 0..=1 - where a legal timing function keeps them, as the doc
+    /// above promises - because a monotone `x(t)` is what the solver below
+    /// assumes, and an out-of-range x from a hand-made value would leave
+    /// bisection converging on the wrong t silently.
     pub const fn new(x1: f64, y1: f64, x2: f64, y2: f64) -> Ease {
-        Ease { x1, y1, x2, y2 }
+        // const fn: clamp is not, so the min/max are spelled out.
+        Ease {
+            x1: if x1 < 0.0 {
+                0.0
+            } else if x1 > 1.0 {
+                1.0
+            } else {
+                x1
+            },
+            y1,
+            x2: if x2 < 0.0 {
+                0.0
+            } else if x2 > 1.0 {
+                1.0
+            } else {
+                x2
+            },
+            y2,
+        }
     }
 
     /// Whether this is the straight line, to within a hair. What lets the
@@ -100,7 +122,7 @@ pub fn bezier_y_at_x(x1: f64, y1: f64, x2: f64, y2: f64, x: f64) -> f64 {
 
     for _ in 0..8 {
         let error = bezier_axis(x1, x2, t) - x;
-        if error.abs() < 1e-7 {
+        if error.abs() < 1e-7 && (0.0..=1.0).contains(&t) {
             return bezier_axis(y1, y2, t);
         }
         let slope = bezier_axis_slope(x1, x2, t);
@@ -108,6 +130,13 @@ pub fn bezier_y_at_x(x1: f64, y1: f64, x2: f64, y2: f64, x: f64) -> f64 {
             break;
         }
         t -= error / slope;
+        // A Newton step near a flat end can land outside the curve's own
+        // domain; an iterate out there is not an answer (its y is an
+        // extrapolation the bisection below would never have found), so
+        // the loop gives up on it rather than returning it.
+        if !(0.0..=1.0).contains(&t) {
+            break;
+        }
     }
 
     let (mut lo, mut hi) = (0.0_f64, 1.0_f64);

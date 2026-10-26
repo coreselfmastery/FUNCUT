@@ -614,9 +614,16 @@ fn open_video(
         let context = video.as_mut_ptr();
         (*context).color_primaries = primaries.into();
         (*context).color_trc = transfer.into();
-        if options.threads > 0 {
-            (*context).thread_count = i32::from(options.threads);
-        }
+        // Set unconditionally: 0 is libavcodec's own "count the cores"
+        // (the decoder side reads it exactly that way), and leaving the
+        // field untouched when the caller said nothing kept it at the
+        // allocated default of one - a single-threaded encode on a
+        // machine with dozens of cores, for no reason anyone chose.
+        (*context).thread_count = if options.threads > 0 {
+            i32::from(options.threads)
+        } else {
+            0
+        };
         if options.codec == VideoCodec::Mjpeg {
             // The CLI's `-q:v N`, as the library does it: the QSCALE flag
             // and a global quality of N lambda. MJPEG has no preset and

@@ -1799,6 +1799,11 @@ pub struct TransitionShader {
     source: Arc<str>,
     slots: Vec<Slot>,
     span: usize,
+    /// The manifest's own `xfade` name, for the GPU-less fallback: the
+    /// CPU reference draws it in plain arithmetic, so a transition keeps
+    /// its shape - a wipe stays a wipe - on a machine with no adapter,
+    /// instead of every one of them degrading to a dissolve.
+    xfade: Option<String>,
 }
 
 impl TransitionShader {
@@ -1813,6 +1818,10 @@ impl TransitionShader {
             source,
             slots,
             span,
+            xfade: manifest
+                .transition
+                .as_ref()
+                .and_then(|transition| transition.xfade.clone()),
         })
     }
 
@@ -1840,7 +1849,7 @@ impl TransitionShader {
             params: self.params_bytes(values, params),
             progress,
             lut,
-            xfade: None,
+            xfade: self.xfade.clone(),
         }
     }
 }

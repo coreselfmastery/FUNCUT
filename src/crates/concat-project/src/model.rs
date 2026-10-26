@@ -213,6 +213,10 @@ fn is_false(value: &bool) -> bool {
     !value
 }
 
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
 /// A lane. Deliberately untyped: any media goes on any track.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -2708,6 +2712,14 @@ pub struct Timeline {
     /// [`Timeline::clip_mut`]). Reading through the `Arc` is transparent.
     #[serde(deserialize_with = "wire::list")]
     pub clips: Vec<Arc<Clip>>,
+    /// Linkage: whether the other lanes follow an edit that closes up or
+    /// opens the main lane ([`Timeline::background_lane`]), so a caption,
+    /// a title, an overlay or a sound placed against the footage stays on
+    /// the frames it was placed against. CapCut's Linkage, Final Cut's
+    /// connected clips. On unless turned off, and left out of the document
+    /// while on.
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub linkage: bool,
     /// Fields this build does not know, kept so they round-trip.
     #[serde(flatten, default, skip_serializing_if = "Map::is_empty")]
     pub extra: Map<String, Value>,
@@ -2722,6 +2734,7 @@ impl Default for Timeline {
             background: Background::None,
             tracks: Vec::new(),
             clips: Vec::new(),
+            linkage: true,
             extra: Map::new(),
         }
     }
@@ -2941,6 +2954,7 @@ impl Project {
                     })
                     .collect(),
                 clips: Vec::new(),
+                linkage: true,
                 extra: Map::new(),
             })],
             active_timeline_id: "TL1".to_owned(),

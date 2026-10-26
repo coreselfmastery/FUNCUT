@@ -70,7 +70,8 @@ pub enum StepPosition {
     #[default]
     JumpEnd,
     /// Jump at the interval's start (CSS `jump-start`): `steps(4)` at
-    /// `t = 0.01` is already 1/4.
+    /// `t = 0.01` is already 1/4 - and so is `t = 0`, because the first
+    /// interval starts there and the rise leads it.
     JumpStart,
     /// No jump at either end (CSS `jump-none`): `n - 1` rises between 0
     /// and 1, so the first interval holds 0 and the last lands on 1.
@@ -221,16 +222,21 @@ pub fn bezier_y_at_x(x1: f64, y1: f64, x2: f64, y2: f64, x: f64) -> f64 {
 ///
 /// The four positions are the CSS ones, spelled the CSS way, because the
 /// name is what Geneva is handed and the bake must agree with
-/// [`Curve::apply`] sample for sample: a jump at an interval's *end* holds
-/// then rises on the boundary (`floor`), a jump at its *start* rises the
-/// moment the interval begins (`ceil`).
+/// [`Curve::apply`] sample for sample: the spec's algorithm is
+/// `floor(t * n)`, plus one for the positions that jump at an interval's
+/// start, clamped to the number of jumps - so a boundary belongs to the
+/// interval that *starts* there when the jump leads it, and to the one
+/// that ends there when the jump trails it.
 fn steps(t: f64, count: u32, position: StepPosition) -> f64 {
     let n = count.max(1) as f64;
     match position {
         // CSS `jump-end`, the default: hold, then jump on the boundary.
         StepPosition::JumpEnd => (t * n).floor() / n,
-        // CSS `jump-start`: the rise leads the interval.
-        StepPosition::JumpStart => (t * n).ceil() / n,
+        // CSS `jump-start`: the rise leads the interval. The spec's
+        // algorithm is `floor(t * n) + 1`, clamped to `n` - so a boundary
+        // belongs to the interval that starts there, and the first jump is
+        // at 0 itself. `ceil(t * n)` agrees only between boundaries.
+        StepPosition::JumpStart => ((t * n).floor() + 1.0).min(n) / n,
         // CSS `jump-none`: n - 1 interior rises of 1 / (n - 1), none at
         // the ends; n = 1 degenerates to the constant 0, as before.
         StepPosition::JumpNone => (t * n).floor().clamp(0.0, n - 1.0) / (n - 1.0).max(1.0),
@@ -375,6 +381,18 @@ mod tests {
         assert!((start.apply(0.01) - 0.25).abs() < 1e-12);
         assert!((start.apply(0.26) - 0.5).abs() < 1e-12);
         assert!((start.apply(1.0) - 1.0).abs() < 1e-12);
+        // And the first interval starts at 0, so its rise is already in
+        // effect there - the CSS spec's `floor(0 * 4) + 1` - just as every
+        // interior boundary belongs to the interval that starts on it.
+        assert!((start.apply(0.0) - 0.25).abs() < 1e-12);
+        assert!((start.apply(0.5) - 0.75).abs() < 1e-12);
+        // step-start is steps(1, jump-start): the end state, from 0 on.
+        let now = Curve::Steps {
+            count: 1,
+            position: StepPosition::JumpStart,
+        };
+        assert!((now.apply(0.0) - 1.0).abs() < 1e-12);
+        assert!((now.apply(0.999) - 1.0).abs() < 1e-12);
     }
 
     #[test]

@@ -721,6 +721,21 @@ pub enum Request {
         #[serde(default)]
         model: Option<String>,
     },
+    /// The speech and transcriber models this build knows, with which are
+    /// on disk. The ids are what `models.download` takes.
+    #[serde(rename = "models.list")]
+    ModelsList,
+    /// Downloads one model from Concat's mirror on a job of its own - the
+    /// headless way to the voices and transcribers, which the window
+    /// otherwise reaches through Settings. Wait with `export.status`; a
+    /// model already on disk is a no-op that ends at once.
+    #[serde(rename = "models.download")]
+    ModelsDownload {
+        /// Which family: "tts" or "whisper".
+        kind: String,
+        /// The model's id, from `models.list`.
+        id: String,
+    },
 }
 
 /// One template slot and the file that takes it.
@@ -834,12 +849,29 @@ pub enum Reply {
     Started(Started),
     /// [`Request::ExportStatus`].
     Job(JobStatus),
+    /// [`Request::ModelsList`].
+    #[cfg(feature = "speech")]
+    Models(ModelsState),
     /// [`Request::PreviewFrame`] with an output: the file written.
     Written(Written),
     /// [`Request::PreviewFrame`] without one: the picture itself.
     Picture(Picture),
     /// Methods with nothing to say beyond having worked.
     Done(Done),
+}
+
+/// What `models.list` reports: every voice and transcriber model this
+/// build knows, and which are on disk. The tts entries carry the voice
+/// families their ids read with; the transcriber entries say which are
+/// English-only.
+#[cfg(feature = "speech")]
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelsState {
+    /// The voice models, as the settings panel shows them.
+    pub tts: Vec<concat_speech::tts::ModelStatus>,
+    /// The transcriber models.
+    pub transcriber: Vec<concat_speech::transcribe::ModelStatus>,
 }
 
 /// The OpenVid library's state, as `openvid.status` reports it and

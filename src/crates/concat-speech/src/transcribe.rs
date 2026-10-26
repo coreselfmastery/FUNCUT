@@ -500,7 +500,8 @@ impl Transcriber {
         let model_path = model_file(dirs, &request.model_id)?;
         if !model_path.is_file() {
             return Err(format!(
-                "model {} is not downloaded - see Settings > Transcriber",
+                "model {} is not downloaded - download it with models_download, or \
+                 Settings > Transcriber in the window",
                 request.model_id
             ));
         }

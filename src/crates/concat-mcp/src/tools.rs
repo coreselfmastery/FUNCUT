@@ -665,8 +665,22 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "tts_generate",
             "Speak a voiceover",
-            "Speaks `text` with a `voice` as a WAV in an open project's own audio folder - a voiceover in one call, ready for media_import. Wait with analysis_wait; the status's `output` is the WAV's path and length. Voices are the Settings > Speech ids (Kokoro 0-52); the model must be downloaded there.",
+            "Speaks `text` with a `voice` as a WAV in an open project's own audio folder - a voiceover in one call, ready for media_import. Wait with analysis_wait; the status's `output` is the WAV's path and length. Voices are the Settings > Speech ids (Kokoro 0-52); a missing model is fetched headless with models_download.",
             "speech.generate",
+            Raw,
+        ),
+        method(
+            "models_list",
+            "List speech models",
+            "Every voice (tts) and transcriber (whisper) model this build knows, with each one's download size and whether it is on disk - the ids are what models_download takes and what tts_generate's and transcribe's model arguments accept.",
+            "models.list",
+            Raw,
+        ),
+        method(
+            "models_download",
+            "Download a speech model",
+            "Downloads one model from Concat's mirror on a job - the headless way to a voice or a transcriber, no window needed. kind is \"tts\" or \"whisper\"; ids come from models_list. A model already on disk ends at once. Wait with analysis_wait; the status's `output` confirms what landed.",
+            "models.download",
             Raw,
         ),
         Tool {
@@ -1860,6 +1874,11 @@ mod tests {
             (
                 "tts_generate",
                 json!({ "project": "/tmp/Cut", "text": "Hello, agent", "voice": 8, "speed": 1.0 }),
+            ),
+            ("models_list", json!({})),
+            (
+                "models_download",
+                json!({ "kind": "tts", "id": "kokoro-int8-multi-lang-v1_0" }),
             ),
             (
                 "analysis_wait",

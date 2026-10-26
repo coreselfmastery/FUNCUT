@@ -779,7 +779,8 @@ impl Speech {
         let dir = model_dir(dirs, &request.model_id)?;
         if !model_downloaded(dirs, &request.model_id) {
             return Err(format!(
-                "model {} is not downloaded - see Settings > Speech",
+                "model {} is not downloaded - download it with models_download, or \
+                 Settings > Speech in the window",
                 request.model_id
             ));
         }
@@ -875,13 +876,7 @@ impl Speech {
 
         // Chatterbox is its own loop: the recording in, the samples out,
         // and the file written here. Sherpa's families go on below.
-        // A named voice's recording lives in the Pocket bundle, whichever
-        // model reads it; a chosen recording needs no bundle at all.
-        let recordings = if is_clone(request.voice) {
-            dir.clone()
-        } else {
-            recordings_dir(dirs)?
-        };
+        let recordings = recordings_for(dirs, &dir, family, request.voice)?;
 
         #[cfg(feature = "chatterbox")]
         let tts = match tts {
@@ -1054,12 +1049,35 @@ const REFERENCE_RATE: u32 = 24_000;
 fn recordings_dir(dirs: &AppDirs) -> Result<PathBuf, String> {
     if !model_downloaded(dirs, POCKET_ID) {
         return Err(
-            "the stock voices are Pocket TTS's recordings - download Pocket TTS in Settings > \
-             Speech, or read in a sample voice of your own"
+            "the stock voices are Pocket TTS's recordings - download Pocket TTS with \
+             models_download, or in Settings > Speech in the window, or read in a sample \
+             voice of your own"
                 .to_owned(),
         );
     }
     model_dir(dirs, POCKET_ID)
+}
+
+/// The directory a request's voice is read from, when its family reads a
+/// recording at all. A chosen recording for a clone voice, the Pocket
+/// bundle for a named one - and nothing for Kokoro, whose voices are
+/// speaker ids: asking for the bundle on that path demanded a download
+/// the engine never reads.
+fn recordings_for(
+    dirs: &AppDirs,
+    dir: &Path,
+    family: Family,
+    voice: i32,
+) -> Result<PathBuf, String> {
+    match (family, is_clone(voice)) {
+        // Kokoro's voices are speaker ids: no recording is read.
+        (Family::Kokoro, _) => Ok(PathBuf::new()),
+        // A chosen recording needs no bundle at all.
+        (_, true) => Ok(dir.to_owned()),
+        // A named voice's recording lives in the Pocket bundle, whichever
+        // model reads it.
+        (_, false) => recordings_dir(dirs),
+    }
 }
 
 /// How far ahead of Chatterbox's last report its next is taken to be: it
@@ -1381,6 +1399,37 @@ mod tests {
         for model in KNOWN_MODELS {
             assert!(known(model.id).is_some());
         }
+    }
+
+    #[test]
+    fn a_kokoro_voice_is_not_asked_to_download_pocket() {
+        // Kokoro's voices are speaker ids: nothing is read from the Pocket
+        // bundle, so a Kokoro request with no Pocket on disk must not be
+        // told to download one. A named Pocket voice still is.
+        let dirs = AppDirs {
+            config: std::env::temp_dir(),
+            data: std::env::temp_dir().join(format!("concat-no-pocket-{}", std::process::id())),
+        };
+        let _ = std::fs::remove_dir_all(&dirs.data);
+        assert!(
+            recordings_for(&dirs, Path::new("/nowhere"), Family::Kokoro, 11).is_ok(),
+            "a Kokoro voice must not demand the Pocket bundle"
+        );
+        let error = recordings_for(&dirs, Path::new("/nowhere"), Family::Pocket, 1000)
+            .expect_err("the Pocket bundle is not on disk");
+        assert!(error.contains("Pocket"), "{error}");
+        // A clone voice reads its own recording, bundle or no bundle.
+        assert!(
+            recordings_for(
+                &dirs,
+                Path::new("/mine"),
+                Family::Chatterbox,
+                CHATTERBOX_CLONE
+            )
+            .as_deref()
+            .is_ok_and(Path::is_absolute)
+        );
+        let _ = std::fs::remove_dir_all(&dirs.data);
     }
 
     #[test]

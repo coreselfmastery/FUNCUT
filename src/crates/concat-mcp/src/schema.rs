@@ -484,7 +484,9 @@ mod tests {
         // Every tool's schema may sit in an agent's context for the whole
         // session. Keep the full list comfortably below the cap; a harness
         // that defers discovery can fetch individual schemas on demand, but
-        // a tool list that grows past this budget deserves a review.
+        // a tool list that grows past this budget deserves a review. The
+        // headless model tools (models_list, models_download) took it over
+        // 172 000 once; that growth was reviewed and the cap raised.
         let toolbox = crate::tools::Toolbox::new();
         let sizes: Vec<(String, usize)> = toolbox
             .list()
@@ -492,7 +494,7 @@ mod tests {
             .map(|tool| (tool["name"].to_string(), tool.to_string().len()))
             .collect();
         let total: usize = sizes.iter().map(|(_, size)| size).sum();
-        assert!(total < 172_000, "{total}: {sizes:?}");
+        assert!(total < 180_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }

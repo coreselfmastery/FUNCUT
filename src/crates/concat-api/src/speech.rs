@@ -20,7 +20,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::message::{ApiError, ErrorCode, Event, JobStatus, Started};
+use crate::message::{ApiError, ErrorCode, Event, JobStatus, ModelsState, Started};
 use crate::{Api, AppDirs, EventSink};
 
 /// The whisper model a transcription gets when the caller says nothing:
@@ -74,6 +74,20 @@ impl Api {
     ) -> Result<Started, ApiError> {
         self.session(project)?;
         self.writable(project)?;
+        // Refused here, before a job is booked, so a typo is one round
+        // trip rather than a job that starts and fails.
+        if concat_speech::tts::voice_family(voice).is_none() {
+            return Err(ApiError::new(
+                ErrorCode::Invalid,
+                format!("unknown voice {voice} - the Settings > Speech ids, Kokoro 0-52"),
+            ));
+        }
+        if speed.is_some_and(|value| !value.is_finite()) {
+            return Err(ApiError::new(
+                ErrorCode::Invalid,
+                "speed must be a finite number",
+            ));
+        }
         let request = concat_speech::tts::SpeakRequest {
             model_id: model.unwrap_or_else(|| DEFAULT_SPEECH.to_owned()),
             voice,
@@ -85,6 +99,56 @@ impl Api {
             project: project.to_owned(),
         };
         self.begin_speech(project, Work::Generate { request })
+    }
+
+    /// [`crate::Request::ModelsList`]: every voice and transcriber model
+    /// this build knows, with which are on disk.
+    pub fn models_list(&mut self) -> Result<ModelsState, ApiError> {
+        let tts = concat_speech::Speech::status(&self.dirs).map_err(ApiError::failed)?;
+        let transcriber =
+            concat_speech::Transcriber::status(&self.dirs).map_err(ApiError::failed)?;
+        Ok(ModelsState {
+            tts: tts.models,
+            transcriber: transcriber.models,
+        })
+    }
+
+    /// [`crate::Request::ModelsDownload`]: one model from Concat's mirror,
+    /// on a job of its own - the download a headless caller had no way to
+    /// start before, which the errors used to point at a Settings window
+    /// that is not there without the window.
+    pub fn models_download(&mut self, kind: &str, id: &str) -> Result<Started, ApiError> {
+        let known = match kind {
+            "tts" => concat_speech::Speech::status(&self.dirs)
+                .map_err(ApiError::failed)?
+                .models
+                .iter()
+                .any(|model| model.id == id),
+            "whisper" => concat_speech::Transcriber::status(&self.dirs)
+                .map_err(ApiError::failed)?
+                .models
+                .iter()
+                .any(|model| model.id == id),
+            other => {
+                return Err(ApiError::new(
+                    ErrorCode::Invalid,
+                    format!("unknown model kind {other:?} - tts or whisper"),
+                ));
+            }
+        };
+        if !known {
+            return Err(ApiError::new(
+                ErrorCode::NotFound,
+                format!("unknown {kind} model {id:?} - the ids are in models.list"),
+            ));
+        }
+        self.begin_speech(
+            id,
+            Work::Download {
+                kind: kind.to_owned(),
+                id: id.to_owned(),
+            },
+        )
     }
 
     /// One speech job: named and booked like an export, run on its own
@@ -141,6 +205,13 @@ enum Work {
         /// What to say, with which voice and where the WAV goes.
         request: concat_speech::tts::SpeakRequest,
     },
+    /// Bring one model down from the mirror: the headless download.
+    Download {
+        /// Which engine the model serves: "tts" or "whisper".
+        kind: String,
+        /// The model's id.
+        id: String,
+    },
 }
 
 /// One speech job on its thread.
@@ -183,6 +254,21 @@ impl SpeechJob {
                     .and_then(|result| {
                         serde_json::to_string(&result).map_err(|error| error.to_string())
                     })
+            }
+            Work::Download { kind, id } => {
+                let downloaded = if kind == "tts" {
+                    self.speech.download_model(&self.dirs, id, |_| {})
+                } else {
+                    self.transcriber.download_model(&self.dirs, id, |_| {})
+                };
+                downloaded.map(|()| {
+                    serde_json::json!({
+                        "kind": kind,
+                        "id": id,
+                        "downloaded": true,
+                    })
+                    .to_string()
+                })
             }
         };
         let event = if self.cancel.load(Ordering::Relaxed) {

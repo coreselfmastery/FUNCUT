@@ -488,6 +488,66 @@ fn an_agent_measures_media_and_is_refused_honestly() {
         .as_str()
         .expect("the refusal");
     assert!(said.contains("not downloaded"), "{said}");
+    // And the refusal names the headless remedy, not only a Settings page
+    // that is not there without a window.
+    assert!(said.contains("models_download"), "{said}");
+
+    agent.end();
+}
+
+#[test]
+fn an_agent_lists_models_and_is_refused_a_download_it_cannot_mean() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let home = scratch.path().to_path_buf();
+    let mut agent = Agent::spawn(&home, "headless", &[]);
+
+    // The list knows both families and says which are on disk.
+    let listed = agent.tool("models_list", json!({}));
+    let tts = listed["structuredContent"]["tts"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let whisper = listed["structuredContent"]["transcriber"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(!tts.is_empty(), "{listed}");
+    assert!(!whisper.is_empty(), "{listed}");
+    assert!(
+        tts.iter()
+            .any(|model| model["id"] == json!("kokoro-int8-multi-lang-v1_0")),
+        "{listed}"
+    );
+    assert!(
+        whisper.iter().any(|model| model["id"] == json!("base.en")),
+        "{listed}"
+    );
+    for model in tts.iter().chain(whisper.iter()) {
+        assert!(model["downloaded"].is_boolean(), "{model}");
+    }
+
+    // A kind that is not one of the two is refused before a job is booked.
+    let (_, reply) = agent.ask(
+        "tools/call",
+        json!({ "name": "models_download", "arguments": { "kind": "gpu", "id": "x" } }),
+    );
+    let refused = reply.get("result").cloned().expect("a result");
+    assert_eq!(refused["isError"], true, "{refused}");
+    let said = refused["content"][0]["text"].as_str().expect("the refusal");
+    assert!(said.contains("tts or whisper"), "{said}");
+
+    // A model the tables do not know is named, with where the ids are.
+    let (_, reply) = agent.ask(
+        "tools/call",
+        json!({
+            "name": "models_download",
+            "arguments": { "kind": "tts", "id": "not-a-model" }
+        }),
+    );
+    let refused = reply.get("result").cloned().expect("a result");
+    assert_eq!(refused["isError"], true, "{refused}");
+    let said = refused["content"][0]["text"].as_str().expect("the refusal");
+    assert!(said.contains("models.list"), "{said}");
 
     agent.end();
 }

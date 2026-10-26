@@ -7,18 +7,21 @@ the semantics, the units, and the traps.
 ## Jobs (the long work)
 
 `export_start` · `analysis_wait` · `export_wait` · `export_status` · `export_cancel` ·
-`analyze_scenes` · `analyze_beats` · `analyze_silence` · `transcribe` · `tts_generate`
+`analyze_scenes` · `analyze_beats` · `analyze_silence` · `transcribe` · `tts_generate` ·
+`models_list` · `models_download`
 
 Start tools return `{"job":"jN"}` at once. Wait with `analysis_wait` /
 `export_wait` `{job, timeoutSeconds}` (default 60, max 600; call again while
 `state == "running"`). `export_status {job}` works on ANY job. Results of
 analyses and transcription arrive as JSON in the waited status's `output`;
 `tts_generate`'s `output` is the WAV path (import it with `media_import`).
-Traps: transcription needs a downloaded whisper model (`tiny.en` fastest
-English, `base.en` the default sweet spot, `small` multilingual) — a "not
-downloaded" error is an instruction to surface, not a retry loop. Analysis
-tools need the Python extras installed (`scenedetect`, `opencv-headless`,
-`librosa`) — same rule: surface the pip hint.
+Traps: a "not downloaded" model error is one `models_download {kind,id}` call
+away — run `models_list` first, download what the plan needs, wait with
+`analysis_wait`, and never retry the failing tool in a loop (`tiny.en` fastest
+English whisper, `base.en` the default sweet spot, `small` multilingual;
+`kokoro-int8-multi-lang-v1_0` the default voice). Analysis tools need the
+Python extras installed (`scenedetect`, `opencv-headless`, `librosa`) — same
+rule: surface the pip hint.
 
 ## Projects and reading
 

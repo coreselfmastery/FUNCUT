@@ -703,6 +703,22 @@ impl Api {
                 ErrorCode::Refused,
                 "this build does not speak: it was built without the speech feature",
             )),
+            #[cfg(feature = "speech")]
+            Request::ModelsList => Ok(Reply::Models(self.models_list()?)),
+            #[cfg(not(feature = "speech"))]
+            Request::ModelsList => Err(ApiError::new(
+                ErrorCode::Refused,
+                "this build does not speak: it was built without the speech feature",
+            )),
+            #[cfg(feature = "speech")]
+            Request::ModelsDownload { kind, id } => {
+                Ok(Reply::Started(self.models_download(&kind, &id)?))
+            }
+            #[cfg(not(feature = "speech"))]
+            Request::ModelsDownload { .. } => Err(ApiError::new(
+                ErrorCode::Refused,
+                "this build does not speak: it was built without the speech feature",
+            )),
         }
     }
 

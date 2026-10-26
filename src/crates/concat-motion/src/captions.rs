@@ -36,7 +36,7 @@
 //! ```
 
 use crate::authoring::Op;
-use crate::comp::Comp;
+use crate::comp::{Comp, NodeKind};
 use crate::presets;
 use crate::sequence::{Scene, Sequence};
 
@@ -231,9 +231,17 @@ pub fn lay_out(words: &[Word], caps: &Captions) -> Vec<Line> {
             let line = &mut lines[index];
             line.at = previous_end;
             line.hold = round((natural_end - previous_end).max(caps.min_line));
+            // Words fully spoken before a pushed line could appear still
+            // light the moment the line does - in speaking order, never
+            // overlapping the word before them, each with a hair of a span
+            // - because an end at or before a start, or a start before the
+            // previous word's end, is a comp the engine refuses outright
+            // (E411, a word "ends at 0s, not after it starts at 0s").
+            let mut floor = 0.0f64;
             for word in &mut line.words {
-                word.start = round((word.start - push).max(0.0));
-                word.end = round((word.end - push).max(word.start));
+                word.start = round((word.start - push).max(floor));
+                word.end = round((word.end - push).max(word.start + 0.02));
+                floor = word.end;
             }
         }
     }
@@ -248,7 +256,32 @@ pub fn lay_out(words: &[Word], caps: &Captions) -> Vec<Line> {
 /// assets - so a caller that wants a plate underneath can set it.
 pub fn sequence(words: &[Word], caps: &Captions, width: u32, height: u32, fps: f64) -> Sequence {
     let mut reel = Sequence::new(width, height, fps);
-    let comp = preset(&caps.comp);
+    let mut comp = preset(&caps.comp);
+    // A caption comp is authored on one canvas and played on another: the
+    // kinetic preset is drawn for 1920x1080, and a reel is usually
+    // 1080x1920. The words are re-anchored to the frame itself - centred
+    // across it, in the lower third a thumb reads from, sized and wrapped
+    // to the frame's own width - because the authored absolute position
+    // (960, 900) lands near the right edge of a portrait frame and the
+    // words clip: the "wrong text placement" every vertical video carried.
+    let fit = f64::from(width) / f64::from(comp.width);
+    for node in &mut comp.nodes {
+        if node.id != caps.node {
+            continue;
+        }
+        if let NodeKind::Text(text) = &mut node.kind {
+            text.size = (text.size * fit).round().max(12.0);
+            if let Some(max_width) = text.max_width.as_mut() {
+                *max_width = f64::from(width) * 0.88;
+            } else {
+                text.max_width = Some(f64::from(width) * 0.88);
+            }
+        }
+        node.transform.position = Some(crate::comp::Point::new(
+            f64::from(width) * 0.5,
+            f64::from(height) * 0.75,
+        ));
+    }
     for line in lay_out(words, caps) {
         let scene = Scene::new(comp.clone())
             .starting_at(line.at)
@@ -475,8 +508,13 @@ mod tests {
         // both its words: they arrive already said.
         let second = &lines[1];
         assert!(second.at > 0.2, "the line is pushed past its words");
+        // They arrive already said: each lights on arrival, in speaking
+        // order, the second a hair after the first ends - never
+        // overlapping, never an end at or before a start, either of which
+        // is a comp the engine refuses outright.
         assert_eq!(second.words[0].start, 0.0);
-        assert_eq!(second.words[1].start, 0.0);
+        assert!(second.words[1].start >= second.words[0].end);
+        assert!(second.words[1].end > second.words[1].start);
     }
 
     #[test]

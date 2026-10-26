@@ -418,6 +418,26 @@ if ! command -v geneva >/dev/null 2>&1; then
     else
         say "  could not download it - the editor runs without it"
     fi
+
+    # The motion presets draw in three faces - Inter for text, Archivo for
+    # display, JetBrains Mono for code - all OFL, vendored in this
+    # repository under assets/fonts. Geneva resolves a family name through
+    # fontconfig, so a machine without them falls back to whatever is
+    # installed and the comps' metrics move: same comp, different look.
+    # Installed into the user's own fonts folder, no root needed.
+    FONTS_SRC="$(cd "$(dirname "$0")" && pwd)/assets/fonts"
+    if [ -d "$FONTS_SRC" ]; then
+        mkdir -p "$HOME/.local/share/fonts"
+        FONTS_COPIED=0
+        for FACE in "$FONTS_SRC"/*.ttf; do
+            [ -f "$FACE" ] || continue
+            cp "$FACE" "$HOME/.local/share/fonts/" && FONTS_COPIED=$((FONTS_COPIED + 1))
+        done
+        if [ "$FONTS_COPIED" -gt 0 ]; then
+            command -v fc-cache >/dev/null 2>&1 && fc-cache -f "$HOME/.local/share/fonts" >/dev/null 2>&1
+            say "  motion fonts installed: $FONTS_COPIED faces for the comps' own look"
+        fi
+    fi
 else
     say ""
     say "the motion sidecar: geneva is already on PATH - left as it is"

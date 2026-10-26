@@ -15,6 +15,10 @@ concat-api = { workspace = true, features = ["schema", "speech"] }
 # The window's server, reached as a client, and the file that says where
 # it is.
 concat-server.workspace = true
+# The motion layer the five motion tools wrap: presets, comps, frames,
+# bakes and word-timed caption reels - the design door an agent had no way
+# through before, which the director skill's Phase 5b always assumed.
+concat-motion.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]

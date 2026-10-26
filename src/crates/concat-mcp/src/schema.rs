@@ -486,7 +486,9 @@ mod tests {
         // that defers discovery can fetch individual schemas on demand, but
         // a tool list that grows past this budget deserves a review. The
         // headless model tools (models_list, models_download) took it over
-        // 172 000 once; that growth was reviewed and the cap raised.
+        // 172 000 and the five motion tools (motion_presets, motion_inspect,
+        // motion_frame, motion_bake, captions_animate) over 180 000; both
+        // growths were reviewed and the cap raised with them.
         let toolbox = crate::tools::Toolbox::new();
         let sizes: Vec<(String, usize)> = toolbox
             .list()
@@ -494,7 +496,7 @@ mod tests {
             .map(|tool| (tool["name"].to_string(), tool.to_string().len()))
             .collect();
         let total: usize = sizes.iter().map(|(_, size)| size).sum();
-        assert!(total < 180_000, "{total}: {sizes:?}");
+        assert!(total < 200_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }

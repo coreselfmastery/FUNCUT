@@ -18,6 +18,7 @@
 //! when it does not.
 
 pub mod backend;
+pub mod motion;
 pub mod protocol;
 pub mod schema;
 pub mod summary;

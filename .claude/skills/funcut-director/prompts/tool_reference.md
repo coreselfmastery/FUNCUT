@@ -23,6 +23,29 @@ English whisper, `base.en` the default sweet spot, `small` multilingual;
 Python extras installed (`scenedetect`, `opencv-headless`, `librosa`) — same
 rule: surface the pip hint.
 
+## Motion design (Phase 5b's engine)
+
+`motion_presets` · `motion_inspect {preset|comp, project?, ops?}` ·
+`motion_frame {project, preset|comp, at, ops?, width?}` ·
+`motion_bake {project, preset|comp, ops?, width?, height?, fps?, crf?, encode?, name?}` ·
+`captions_animate {project, words, preset?, wordsPerLine?, maxLineSeconds?, gapSeconds?, width?, height?, fps?, plate?, name?}`
+
+- The loop: `motion_presets` → `motion_inspect` (never guess node ids) → one
+  `ops` batch → `motion_frame` at 2-3 moments → `motion_bake {encode: true}` →
+  `media_import` the file → `clip_add` at the cut.
+- `ops` is the full authoring vocabulary: set-slot, set-text, set-words,
+  move, retime, set-track, set-track-points, fade-in, slide-to, pop,
+  add-group, add-rect, add-text, set-blend, set-opacity, set-duration,
+  set-background, delete. One batch, applied all-or-nothing.
+- Encoded files are opaque (H.264/VP9/ProRes carry no alpha here); a
+  transparent overlay keeps its alpha only as the PNG sequence in the bake
+  `dir`. Full-frame comps (stat cards, chapters, backdrops, stings) encode
+  perfectly; overlays go under a `plate` or wait for the Motion clip.
+- `captions_animate` needs MEASURED word times (`[text, start, end]`
+  triples). Whisper gives segment times - per-word estimates are not
+  timing. 1080x1920 30fps default; captions sit centered in the lower
+  third.
+
 ## Projects and reading
 
 `concat_version` · `project_list` · `project_create {location,name,video?}` ·

@@ -116,6 +116,30 @@ carries its JSON result in the status's `output`:
   export) up to `timeoutSeconds` (60 default, 600 at most) and returns its
   status.
 
+The motion layer - the design door the director skill's Phase 5b assumes -
+is five more tools, thin wrappers over the `concat-motion` crate (the same
+vocabulary the `concat-motion-agent` CLI speaks):
+
+- `motion_presets` - the twelve motion-graphics presets (lower thirds,
+  kinetic captions, stat cards, wordmark stings, pull quotes, chapter
+  chips, subscribe cards, terminals, bar charts, split compares, counting
+  numbers, mesh backdrops) with their slots, sizes and whether the Geneva
+  engine is on the machine.
+- `motion_inspect` - what is in a comp before it is touched: nodes, spans,
+  animated properties, slots, validation problems; an optional `ops` batch
+  is applied first, so an edit can be checked before it bakes.
+- `motion_frame` - one frame of a comp at a time in seconds, drawn in tens
+  of milliseconds and written under the project's `motion/`.
+- `motion_bake` - a comp (preset or file, optionally edited by `ops`)
+  baked to PNG frames under `cache/comps/`, and with `encode: true`
+  written as one video under `motion/` ready for `media_import` and
+  `clip_add`. The encoded file is opaque - only the PNG sequence keeps a
+  transparent comp's alpha.
+- `captions_animate` - a measured word-timed transcript as one caption
+  video: lines by the caption rules, each line a kinetic comp, baked and
+  encoded in one call. This is the word-synced caption path; the
+  timeline's own `captions_add` stays segment-timed.
+
 The first three need a Python 3 with the extras named in the analysis
 folder's `requirements.txt` (scenedetect, OpenCV headless, librosa) - a
 one-time `pip install -r <app data>/analysis/requirements.txt`. When
@@ -185,6 +209,7 @@ Tools are named for what they do, and their argument schemas are generated from 
 | Speech | `transcribe`, `tts_generate`, `models_list`, `models_download` |
 | Anything else | `edit_apply` (any edit command, or a batch of them as one undo step), `edit_undo`, `edit_redo` |
 | Templates | `template_list`, `template_instantiate` |
+| Motion design | `motion_presets`, `motion_inspect`, `motion_frame`, `motion_bake`, `captions_animate` |
 | Export | `export_start`, `export_status`, `export_wait` (with progress), `export_cancel` |
 | Looking | `preview_frame` (the composited frame as an image) |
 

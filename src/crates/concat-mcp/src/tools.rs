@@ -82,6 +82,16 @@ pub enum Action {
     PlanValidate,
     /// `preview.frame`, as an image.
     PreviewFrame,
+    /// The motion library, with the engine's own availability.
+    MotionPresets,
+    /// One comp summarised, ops applied first when given.
+    MotionInspect,
+    /// One frame of a comp, drawn and written under the project.
+    MotionFrame,
+    /// A comp baked, and encoded when asked.
+    MotionBake,
+    /// A word-timed transcript as one caption video.
+    CaptionsAnimate,
 }
 
 /// How a reply is shown to the agent.
@@ -684,6 +694,51 @@ pub fn catalogue() -> Vec<Tool> {
             Raw,
         ),
         Tool {
+            name: "motion_presets",
+            title: "List the motion library",
+            description: "Every motion-graphics preset - lower thirds, kinetic captions, stat cards, wordmark stings, pull quotes, chapter chips, subscribe cards, terminals, bar charts, split compares, counting numbers, mesh backdrops - with its category, frame size, duration, slots to fill and the nodes it animates, plus whether the Geneva engine is on this machine to bake it. The vocabulary Phase 5b of the director skill designs with; `motion_inspect` sees inside one.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::MotionPresets,
+        },
+        Tool {
+            name: "motion_inspect",
+            title: "Inspect a motion comp",
+            description: "What is in a motion comp before it is touched: every node with its kind, span, animated properties and first words, the slots it can be filled by, validation problems, and whether it needs the markup engine. Takes `preset` (an id from motion_presets) or `comp` (a file under the project's comps/), and applies an optional `ops` batch first - the same operations motion_bake applies - so an edit can be checked before it bakes.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::MotionInspect,
+        },
+        Tool {
+            name: "motion_frame",
+            title: "Draw one motion frame",
+            description: "One frame of a motion comp at `at` seconds - tens of milliseconds, no bake - written under the project's motion/ and returned as a PNG path. The look-before-you-bake of the design loop: mid-entrance, settled, mid-exit. Takes `preset` or `comp` (+ `project`), optional `ops`, and `width` to draw at another size.",
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            action: Action::MotionFrame,
+        },
+        Tool {
+            name: "motion_bake",
+            title: "Bake a motion comp",
+            description: "Bakes a motion comp - `preset` or `comp`, edited by an optional `ops` batch (set-slot, set-text, set-words, set-track, slide-to, pop, fade-in, add-text, ...) - into PNG frames under the project's cache/comps/, content-addressed by the comp's hash, and with `encode: true` writes one video file under motion/ ready for media_import and clip_add (`name` picks its file name; .webm is VP9, .mov ProRes 4444, otherwise H.264 - none carry alpha, which the PNG sequence keeps). Optional width/height (bake at the cut's size, never 4K for safety), fps, crf (0-51).",
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            action: Action::MotionBake,
+        },
+        Tool {
+            name: "captions_animate",
+            title: "Caption a transcript word by word",
+            description: "A word-timed transcript in, one caption video out: words as [text, start, end] triples (or objects), broken into lines by the caption rules (word count, sentence ends, silences), each line one kinetic caption comp, the whole thing baked and encoded under the project's motion/ ready for media_import and clip_add at the voiceover's start. Word times must be measured (whisper segments with per-word estimates will not do); 1080x1920 30fps by default. Optional: preset (default funcut.caption.kinetic), wordsPerLine, maxLineSeconds, gapSeconds, leadSeconds, tailSeconds, width, height, fps, plate (a still the captions render over), name.",
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            action: Action::CaptionsAnimate,
+        },
+        Tool {
             name: "analysis_wait",
             title: "Wait for a job",
             description: "Waits for any job - an analysis, a transcription, a voice, an export - to end, up to `timeoutSeconds` (60 by default, 600 at most), and returns its status; a finished analysis carries its JSON result in the status's `output`. If the job is still running when the time is up, call it again.",
@@ -707,7 +762,7 @@ pub struct Outcome {
 }
 
 impl Outcome {
-    fn json(value: Value) -> Outcome {
+    pub(crate) fn json(value: Value) -> Outcome {
         let text = serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
         Outcome {
             content: vec![json!({ "type": "text", "text": text })],
@@ -838,6 +893,11 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
             Some(schema)
         }
         Action::PreviewFrame => schemas.method("preview.frame"),
+        Action::MotionPresets
+        | Action::MotionInspect
+        | Action::MotionFrame
+        | Action::MotionBake
+        | Action::CaptionsAnimate => motion_schema(tool.name),
         Action::Mask => {
             let update = schemas.command("updateClip")?;
             let mut mask = schemas.def("ClipMask")?;
@@ -942,6 +1002,178 @@ fn plan_validate_schema() -> Option<Value> {
         "required": ["plan"],
         "additionalProperties": false,
     }))
+}
+
+/// The motion tools' inputs, written by hand: they wrap `concat-motion`
+/// rather than an API method, so there is no generated schema to read.
+/// Each names what it takes in the same words its description does.
+fn motion_schema(name: &str) -> Option<Value> {
+    // The four fields every comp-naming tool takes, merged into each
+    // tool's own properties by hand - json! has no spread, and these
+    // schemas are written, not generated.
+    let mut shared = Map::new();
+    shared.insert(
+        "preset".to_owned(),
+        json!({
+            "type": "string",
+            "description": "A preset id from motion_presets, e.g. funcut.lower-third.glass."
+        }),
+    );
+    shared.insert(
+        "comp".to_owned(),
+        json!({
+            "type": "string",
+            "description": "A comp file under the project's comps/, e.g. 'abc123.json'."
+        }),
+    );
+    shared.insert(
+        "project".to_owned(),
+        json!({
+            "type": "string",
+            "description": "The project folder - where comps/, cache/ and motion/ live."
+        }),
+    );
+    shared.insert(
+        "ops".to_owned(),
+        json!({
+            "type": "array",
+            "description": "Authoring operations applied before anything else: set-slot, \
+             set-text, set-words, move, retime, set-track, set-track-points, fade-in, \
+             slide-to, pop, add-group, add-rect, add-text, set-blend, set-opacity, \
+             set-duration, set-background, delete.",
+            "items": { "type": "object" }
+        }),
+    );
+    let with = |mut properties: Map<String, Value>, extra: &[(&str, Value)]| {
+        for (key, value) in extra {
+            properties.insert((*key).to_owned(), value.clone());
+        }
+        properties
+    };
+    let object = |properties: Map<String, Value>, required: &[&str]| {
+        json!({
+            "type": "object",
+            "required": required,
+            "properties": properties,
+            "additionalProperties": false,
+        })
+    };
+    let schema = match name {
+        "motion_presets" => object(Map::new(), &[]),
+        "motion_inspect" => object(shared, &[]),
+        "motion_frame" => object(
+            with(
+                shared,
+                &[
+                    (
+                        "at",
+                        json!({
+                            "type": "number", "minimum": 0,
+                            "description": "Seconds into the comp."
+                        }),
+                    ),
+                    (
+                        "width",
+                        json!({
+                            "type": "integer", "minimum": 1, "maximum": 8192,
+                            "description": "Draw at this width; the comp's own when absent."
+                        }),
+                    ),
+                ],
+            ),
+            &["project", "at"],
+        ),
+        "motion_bake" => object(
+            with(
+                shared,
+                &[
+                    (
+                        "width",
+                        json!({ "type": "integer", "minimum": 1, "maximum": 8192 }),
+                    ),
+                    (
+                        "height",
+                        json!({ "type": "integer", "minimum": 1, "maximum": 8192 }),
+                    ),
+                    (
+                        "fps",
+                        json!({ "type": "number", "minimum": 1, "maximum": 240 }),
+                    ),
+                    (
+                        "crf",
+                        json!({ "type": "integer", "minimum": 0, "maximum": 51, "default": 18 }),
+                    ),
+                    (
+                        "encode",
+                        json!({
+                            "type": "boolean",
+                            "description": "Also write one video file under motion/, ready \
+                             for media_import."
+                        }),
+                    ),
+                    (
+                        "name",
+                        json!({
+                            "type": "string",
+                            "description": "The encoded file's name; .webm is VP9, .mov \
+                             ProRes 4444, otherwise H.264."
+                        }),
+                    ),
+                ],
+            ),
+            &["project"],
+        ),
+        "captions_animate" => object(
+            with(
+                shared,
+                &[
+                    (
+                        "words",
+                        json!({
+                            "type": "array", "minItems": 1,
+                            "description": "The transcript as [text, start, end] triples, \
+                             seconds from the voiceover's start.",
+                            "items": {}
+                        }),
+                    ),
+                    (
+                        "wordsPerLine",
+                        json!({ "type": "integer", "minimum": 1, "maximum": 12, "default": 5 }),
+                    ),
+                    (
+                        "maxLineSeconds",
+                        json!({ "type": "number", "minimum": 0.5, "maximum": 12, "default": 3.6 }),
+                    ),
+                    (
+                        "gapSeconds",
+                        json!({ "type": "number", "minimum": 0, "maximum": 5, "default": 0.6 }),
+                    ),
+                    (
+                        "leadSeconds",
+                        json!({ "type": "number", "minimum": 0, "maximum": 2 }),
+                    ),
+                    (
+                        "tailSeconds",
+                        json!({ "type": "number", "minimum": 0, "maximum": 5 }),
+                    ),
+                    ("width", json!({ "type": "integer", "default": 1080 })),
+                    ("height", json!({ "type": "integer", "default": 1920 })),
+                    ("fps", json!({ "type": "number", "default": 30 })),
+                    (
+                        "plate",
+                        json!({
+                            "type": "string",
+                            "description": "A still under the project the captions render over."
+                        }),
+                    ),
+                    ("name", json!({ "type": "string" })),
+                ],
+            ),
+            &["project", "words"],
+        ),
+        _ => return None,
+    };
+    Some(schema)
 }
 
 /// The dB-aware audio-level tool's inputs. Its values are converted before
@@ -1078,6 +1310,11 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         Action::PlanValidate => Ok(Outcome::json(validate_plan_tool(arguments)?)),
         Action::ExportWait => export_wait(arguments, backend, context.cancelled, context.progress),
         Action::PreviewFrame => preview(arguments, backend),
+        Action::MotionPresets => crate::motion::presets_list(),
+        Action::MotionInspect => crate::motion::inspect(arguments),
+        Action::MotionFrame => crate::motion::frame(arguments),
+        Action::MotionBake => crate::motion::bake(arguments),
+        Action::CaptionsAnimate => crate::motion::captions_animate(arguments),
         Action::Mask => {
             let result = backend.call(mask(arguments)?)?;
             Ok(Outcome::json(summary::view(&result)))
@@ -1524,13 +1761,17 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
         let captions = captions
             .as_object()
             .ok_or_else(|| "captions must be an object".to_owned())?;
+        // Word-synced captions are a motion comp now, not a timeline
+        // caption style: captions_animate takes measured word times and
+        // bakes the kinetic line sequence. The timeline's own captions
+        // stay segment-timed - that is what transcribe provides.
         if captions.contains_key("wordSynced") {
-            return Err("word alignment is unsupported: the current transcription/caption tools provide segment timing only; remove `wordSynced` and use captions.syncMode = `segment`".to_owned());
+            return Err("the timeline's captions are segment-timed; set wordSynced aside and bake word-timed captions with captions_animate, which takes measured [text, start, end] words".to_owned());
         }
         if let Some(mode) = captions.get("syncMode")
             && mode.as_str() != Some("segment")
         {
-            return Err("captions.syncMode must be `segment`; word alignment is not provided by the current transcription/caption tools".to_owned());
+            return Err("captions.syncMode must be `segment`; word timing is captions_animate's, not the timeline captions'".to_owned());
         }
     }
     if let Some(bgm) = object
@@ -1947,6 +2188,23 @@ mod tests {
                 json!({ "project": "/tmp/Cut", "text": "Hello, agent", "voice": 8, "speed": 1.0 }),
             ),
             ("models_list", json!({})),
+            ("motion_presets", json!({})),
+            (
+                "motion_inspect",
+                json!({ "preset": "funcut.lower-third.glass" }),
+            ),
+            (
+                "motion_frame",
+                json!({ "project": "/tmp/Cut", "preset": "funcut.lower-third.glass", "at": 1.0 }),
+            ),
+            (
+                "motion_bake",
+                json!({ "project": "/tmp/Cut", "preset": "funcut.chapter.chip", "encode": true }),
+            ),
+            (
+                "captions_animate",
+                json!({ "project": "/tmp/Cut", "words": [["Make", 0.0, 0.4], ["it", 0.4, 0.8], ["move.", 0.8, 1.2]] }),
+            ),
             (
                 "models_download",
                 json!({ "kind": "tts", "id": "kokoro-int8-multi-lang-v1_0" }),
@@ -2025,6 +2283,22 @@ mod tests {
                 }
                 Action::PreviewFrame => request("preview.frame", sample.clone()),
                 Action::Mask => mask(sample.clone()),
+                // The motion tools wrap `concat-motion`, not the API: the
+                // two that need no engine and no project run for real,
+                // and the three that bake have had their arguments checked
+                // against their schemas above - their work needs the
+                // sidecar and a project, which a unit test has not.
+                Action::MotionPresets => {
+                    crate::motion::presets_list().expect("the library lists");
+                    continue;
+                }
+                Action::MotionInspect => {
+                    crate::motion::inspect(sample.clone()).expect("the sample inspects");
+                    continue;
+                }
+                Action::MotionFrame | Action::MotionBake | Action::CaptionsAnimate => {
+                    continue;
+                }
             };
             let built = built.unwrap_or_else(|error| panic!("{name}: {error}"));
             // Back again: the request as the API writes it fits the API's
@@ -2186,7 +2460,7 @@ mod tests {
         assert!(
             validate_edit_plan(&no_gap)
                 .unwrap_err()
-                .contains("word alignment")
+                .contains("captions_animate")
         );
     }
 

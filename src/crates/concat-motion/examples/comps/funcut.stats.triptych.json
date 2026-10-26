@@ -87,7 +87,7 @@
     {
       "node": "row",
       "field": "text",
-      "sample": "127 SHADER PACKS",
+      "sample": "SHADER PACKS",
       "label": "Numbers"
     }
   ]

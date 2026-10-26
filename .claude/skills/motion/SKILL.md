@@ -47,6 +47,7 @@ concat-motion-agent inspect comps/funcut.lower-third.glass.json
 concat-motion-agent edit comps/lt.json ops.json -o comps/lt2.json
 concat-motion-agent frame comps/lt2.json 1.5 -o still.png --width 960
 concat-motion-agent bake comps/lt2.json cache/lt --width 1280 --height 720
+concat-motion-agent reel storyboard.json -o reel.mp4
 concat-motion-agent help
 ```
 
@@ -57,6 +58,7 @@ concat-motion-agent help
 | `edit <comp> <ops.json\|- > [-o out]` | `{ok, written, hash, comp}` — the new summary |
 | `frame <comp> <sec> [-o png] [--width N]` | `{ok, at, frame}` |
 | `bake <comp> <dir> [--width --height --fps --opaque]` | `{ok, frames, width, height, fps, alpha, engine, engine_version, hash, dir, seconds, frames_per_second}` |
+| `reel <storyboard> [-o mp4] [--cache DIR] [--frame SECONDS] [--plan]` | `{ok, scenes, duration, layers, assets, warnings, written, seconds, frames_per_second, report}` |
 
 `ops.json` is `{"ops":[…]}` or a bare array; `-` reads stdin. In-repo:
 `cargo run -p concat-motion --bin concat-motion-agent -- <verb>`.
@@ -89,6 +91,16 @@ Kebab-case `op` tag, one JSON object each.
 
 Animatable properties: `position`, `scale`, `rotation`, `opacity`, `blur`, `dash`, `param:<key>`.
 `set-track` values are numbers; a `dash` or `position` track needs the same numeric shape the node uses.
+
+### Filling a slot
+
+`set-slot` finds the slot by its **label** or its node id and replaces *the words it stands in for* -
+a whole text run, or a span across inline tags (so a headline written `One <em>tap</em> away.` fills
+correctly and the emphasis inside the span goes with it). A sample that is nowhere in the markup is
+**refused with both the sample and the node**, because filling some other word would be a silent, wrong
+edit. A value is text, never markup: `<b>` in a value is escaped, so a slot cannot inject HTML.
+
+Filling a slot with the words it already has is fine - it is a fill, not a no-op error.
 
 ### Curves
 
@@ -140,7 +152,51 @@ Measured bake speed (2 CPU cores, no GPU): chapter chip 39 fps, caption 29, lowe
 
 ---
 
-## 5. Composition rules
+## 5. Sequences: many comps, one render
+
+A reel, an explainer or a title package is not one comp - it is several, in order, over plates, with a
+dip between them and music under. That is `sequence`:
+
+```rust
+let mut reel = sequence::Sequence::new(1920, 1080, 30.0);
+reel.asset("plate", Asset { src: "assets/plate.jpg".into(), kind: None });
+reel.push(sequence::Scene::new(presets::build("funcut.chapter.chip").unwrap()).over("plate", 0.05).holding(3.0));
+reel.bed(sequence::AudioBed::new("score").at(-2.0));
+let plan = sequence::plan(&geneva, &reel)?;
+plan.render(&geneva, cache, "reel.mp4")?;
+```
+
+- a scene with no `at` follows the one before it, so a reel is written in order;
+- `holding(n)` **retimes** the comp rather than cutting it off, so its motion stays inside its span;
+- layer and asset ids are per scene, so the same template can appear twice;
+- the curtain dips at every cut and is opaque at both ends;
+- `plan.frame(...)` checks one moment for pence before `plan.render(...)` pays for all of them.
+
+**From the agent door**, the same thing is one verb and one document:
+
+```sh
+concat-motion-agent reel storyboard.json -o reel.mp4        # or --frame 12.4, or --plan
+```
+
+```json
+{ "width": 1920, "height": 1080, "fps": 30,
+  "assets": { "plate": "assets/plate.jpg", "score": "assets/score.wav", "Inter": "assets/Inter.ttf" },
+  "scenes": [
+    { "preset": "funcut.chapter.chip", "hold": 3.0, "plate": "plate", "zoom": 0.04,
+      "ops": [ { "op": "set-slot", "slot": "Chapter", "value": "01 / INTRO" } ] },
+    { "comp": "comps/mine.json", "at": 3.0 }
+  ],
+  "audio": [ { "asset": "score", "gain_db": -2.0, "fade_in": 0.4, "fade_out": 1.2 } ],
+  "curtain": { "color": "#05060aff", "open": 0.6, "close": 0.8, "dip": 0.2, "depth": 1.0 } }
+```
+
+Ship every font the comps name as an asset (`"Inter": "assets/Inter.ttf"`), or the render says
+`W405` and another machine draws different type.
+
+The measured example is `examples/reel.rs`: thirteen scenes, twelve presets, 45.5 s, **1365 frames of
+1080p30 in 111 s on two cores**. Copy its shape rather than starting from an empty timeline.
+
+## 6. Composition rules
 
 - 5% title-safe inset on every edge; stack left edges on one x.
 - One accent colour per video; one appearance at a time.
@@ -155,7 +211,7 @@ Measured bake speed (2 CPU cores, no GPU): chapter chip 39 fps, caption 29, lowe
 
 ---
 
-## 6. Caption workflow (the highest-value move)
+## 7. Caption workflow (the highest-value move)
 
 ```
 1. transcribe → words with start/end
@@ -171,7 +227,7 @@ evenly by character count — never invent timings that drift from the audio.
 
 ---
 
-## 7. When something is refused
+## 8. When something is refused
 
 - The message names the node, the slot or the property. The fix is usually `inspect` again — the id
   you remember is not the id in the document.

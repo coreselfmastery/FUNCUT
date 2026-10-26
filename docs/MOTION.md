@@ -119,7 +119,7 @@ Measured in this sandbox — **2 CPU cores, no GPU, bundled OpenH264** (a deskto
 | pull quote | 180 | 13 |
 | before/after split | 135 | 12 |
 | stat cards | 150 | 11 |
-| mesh backdrop | 180 | 4 |
+| mesh backdrop | 180 | 3.9 |
 
 A single frame is **32–47 ms**, which is what makes a scrub responsive. Backdrops are the expensive
 case (full-frame radial gradients); bake them once, at the size you need, and reuse.
@@ -127,6 +127,65 @@ case (full-frame radial gradients); bake them once, at the size you need, and re
 **Alpha is PNG only.** Geneva documents its transparent output for the PNG image sequence; ProRes 4444
 and VP9 came back opaque in testing, so a comp bakes to PNG and the encoder turns it into whatever the
 project wants (ProRes 4444 and VP9-with-alpha are the export-side work).
+
+---
+
+## Sequences: many comps, one render
+
+A single comp bakes to its own little frame sequence. A **sequence** is what a reel, an explainer or a
+title package actually is: several comps, each with its own entrance, butted together over plates with
+a dip between them and a bed of music under the lot.
+
+```rust
+use concat_motion::authoring::Op;
+use concat_motion::comp::Asset;
+use concat_motion::{geneva::Geneva, presets, sequence};
+
+let mut reel = sequence::Sequence::new(1920, 1080, 30.0);
+reel.source_dir = ".".into();
+reel.asset("plate", Asset { src: "assets/plate.jpg".into(), kind: None });
+
+reel.push(
+    sequence::Scene::new(presets::build("funcut.lower-third.glass").expect("a preset"))
+        .over("plate", 0.05)                       // a still underneath, drifting 5%
+        .holding(3.6)                              // shorter than the comp: it runs shorter
+        .with_ops(vec![Op::SetSlot { slot: "Name".into(), value: "Grace Hopper".into() }]),
+);
+reel.bed(sequence::AudioBed::new("score").at(-2.0));
+
+let geneva = Geneva::discover(None).ok_or("no geneva binary")?;
+let plan = sequence::plan(&geneva, &reel)?;
+let cache = std::path::Path::new("cache/reel");
+plan.frame(&geneva, cache, 12.4, std::path::Path::new("check.jpg"))?;    // one still
+plan.render(&geneva, cache, std::path::Path::new("reel.mp4"))?;          // the whole thing
+```
+
+What `plan` guarantees:
+
+- **Every scene is validated and its operations applied first.** A shot that does not make sense stops
+  the plan and names the scene and the operation, rather than reaching a render.
+- **A scene's `hold` retimes the comp, it does not cut it off** — the comp's own length shrinks, so a
+  track keyed as a fraction of a span is still inside its span.
+- **Layer ids are prefixed per scene**, so two scenes using the same template never collide, and asset
+  ids are copied per scene so one scene can hold a different plate of the same name.
+- **One curtain** over everything, opaque at the ends and dipping at each cut, with times forced to
+  strictly increase.
+- **The output is one timeline**: a scene's own @keyframes, the plates, the curtain and the audio beds,
+  rendered in a single pass because they are one document.
+
+`Plan::write` copies every asset into the render directory, so the folder renders on a machine that has
+nothing else; `Plan::render` writes it and calls the engine.
+
+`examples/reel.rs` is a complete one: **thirteen scenes, twelve presets, 45.5 s**, with plates, a
+curtain and a synthesised score.
+
+```sh
+cargo run -p concat-motion --example reel -- --plan > reel.json
+cargo run -p concat-motion --example reel -- --frame 12.4 -o check.jpg
+cargo run -p concat-motion --example reel -- --assets . --cache cache/reel -o reel.mp4
+```
+
+Measured here: **1365 frames of 1080p30 in 111 s (12.2 fps, 7.0 MB at crf 18)** on two cores.
 
 ---
 
@@ -140,6 +199,7 @@ cargo run -p concat-motion --bin concat-motion-agent -- inspect comps/funcut.low
 cargo run -p concat-motion --bin concat-motion-agent -- edit comps/lt.json ops.json -o comps/lt2.json
 cargo run -p concat-motion --bin concat-motion-agent -- frame comps/lt2.json 1.5 -o still.png --width 960
 cargo run -p concat-motion --bin concat-motion-agent -- bake comps/lt2.json cache/lt --width 1280 --height 720
+cargo run -p concat-motion --bin concat-motion-agent -- reel storyboard.json -o reel.mp4
 ```
 
 `inspect` returns the comp summary a model needs: nodes with their kinds, spans, tracks and first
@@ -164,6 +224,21 @@ document. An operation that fails names its index, so a retry is one step, not a
   { "op": "add-text", "id": "kicker", "text": "CHAPTER 02", "size": 28, "weight": 700,
     "color": "#22d3c5", "x": 240, "y": 140 }
 ] }
+```
+
+`reel` is the whole-sequence verb: a storyboard of scenes (a preset id or a comp file each, with
+operations, a plate and a hold), shared assets, audio beds and a curtain, in one JSON document.
+
+```json
+{ "width": 1920, "height": 1080, "fps": 30,
+  "assets": { "plate": "assets/plate.jpg", "score": "assets/score.wav" },
+  "scenes": [
+    { "preset": "funcut.chapter.chip", "hold": 3.0, "plate": "plate", "zoom": 0.04,
+      "ops": [ { "op": "set-slot", "slot": "Chapter", "value": "01 / INTRO" } ] },
+    { "comp": "comps/mine.json", "at": 3.0 }
+  ],
+  "audio": [ { "asset": "score", "gain_db": -2.0 } ],
+  "curtain": { "color": "#05060aff", "open": 0.6, "close": 0.8, "dip": 0.2, "depth": 1.0 } }
 ```
 
 Operations: `set-slot`, `set-text`, `set-words`, `move`, `retime`, `set-track`, `fade-in`, `slide-to`,

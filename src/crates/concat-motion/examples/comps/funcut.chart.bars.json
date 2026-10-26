@@ -1,0 +1,72 @@
+{
+  "format": 1,
+  "id": "funcut.chart.bars",
+  "name": "Bar chart",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30.0,
+  "duration": 4.6,
+  "background": {
+    "r": 0.0,
+    "g": 0.0,
+    "b": 0.0,
+    "a": 0.0
+  },
+  "assets": {},
+  "curves": {},
+  "nodes": [
+    {
+      "id": "sheet",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.0,
+              "y1": 0.0,
+              "x2": 0.58,
+              "y2": 1.0
+            }
+          },
+          {
+            "at": 0.22,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "html",
+      "markup": "<div class=\"sheet\"><div class=\"head\"><div class=\"t\">What the motion layer adds</div><div class=\"s\">% EFFECT, CS</div></div><div class=\"plot\"><div class=\"col\"><div class=\"bar\" style=\"height: 96%; background: #22d3c5; animation-delay: 0.20s\"></div><div class=\"lab\">Linear light</div></div><div class=\"col\"><div class=\"bar\" style=\"height: 74%; background: #8b5cf6; animation-delay: 0.32s\"></div><div class=\"lab\">Alpha PNG</div></div><div class=\"col\"><div class=\"bar\" style=\"height: 58%; background: #ffc247; animation-delay: 0.44s\"></div><div class=\"lab\">Spring keys</div></div><div class=\"col\"><div class=\"bar\" style=\"height: 41%; background: #fb7185; animation-delay: 0.56s\"></div><div class=\"lab\">Lottie</div></div></div></div>",
+      "css": "\n.sheet { position: absolute; left: 160px; width: 1600px; top: 180px; height: 720px;\n  display: flex; flex-direction: column; gap: 18px; }\n.head { display: flex; flex-direction: row; align-items: baseline; gap: 16px; }\n.t { font-family: Archivo, Inter, DejaVu Sans; font-size: 46px; font-weight: 800; color: #f7f9ff; }\n.s { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 16px; letter-spacing: 0.22em; color: #9fb0bf; }\n.plot { position: relative; flex: 1; display: flex; flex-direction: row; align-items: flex-end;\n  gap: 56px; padding: 0 20px; border-bottom: 2px solid rgba(247,249,255,0.16); }\n.col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; }\n.bar { width: 100%; border-radius: 10px 10px 0 0; transform-origin: bottom center;\n  animation: rise 1s cubic-bezier(0.16,1,0.3,1) both; }\n.lab { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 17px; letter-spacing: 0.12em; color: #9fb0bf;\n  padding-top: 14px; }\n@keyframes rise { from { transform: scaleY(0) } to { transform: scaleY(1) } }\n",
+      "width": {
+        "px": 1920.0
+      },
+      "height": {
+        "px": 1080.0
+      }
+    }
+  ],
+  "slots": [
+    {
+      "node": "sheet",
+      "field": "text",
+      "sample": "What the motion layer adds",
+      "label": "Chart title"
+    }
+  ]
+}

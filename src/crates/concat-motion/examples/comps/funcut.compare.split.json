@@ -1,0 +1,72 @@
+{
+  "format": 1,
+  "id": "funcut.compare.split",
+  "name": "Before / after split",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30.0,
+  "duration": 4.5,
+  "background": {
+    "r": 0.0,
+    "g": 0.0,
+    "b": 0.0,
+    "a": 0.0
+  },
+  "assets": {},
+  "curves": {},
+  "nodes": [
+    {
+      "id": "frame",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 1.03
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.0,
+              "y1": 0.0,
+              "x2": 0.58,
+              "y2": 1.0
+            }
+          },
+          {
+            "at": 0.6,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "html",
+      "markup": "\n<div class=\"frame\">\n  <div class=\"side before\"><div class=\"tag b\">BEFORE</div><div class=\"big\">raw cut</div></div>\n  <div class=\"side after\"><div class=\"tag a\">AFTER</div><div class=\"big\">graded + motion</div></div>\n</div>\n<div class=\"wipe\"><div class=\"knob\"></div></div>\n",
+      "css": "\n.frame { position: absolute; left: 160px; width: 1600px; top: 200px; height: 680px;\n  border-radius: 22px; overflow: hidden; display: flex; flex-direction: row; }\n.side { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }\n.before { background: linear-gradient(150deg, #241a16, #3a2320); }\n.after { background: linear-gradient(150deg, #0d2a2a, #14343a); }\n.tag { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 18px; letter-spacing: 0.3em; }\n.tag.b { color: #e7a795; }\n.tag.a { color: #7fe3d6; }\n.big { font-family: Archivo, Inter, DejaVu Sans; font-size: 58px; font-weight: 800; color: #f7f9ff; letter-spacing: -0.02em; }\n.wipe { position: absolute; left: 50%; top: 200px; width: 4px; height: 680px; background: #f7f9ff;\n  box-shadow: 0 0 30px rgba(247,249,255,0.6); animation: wipe 1.4s cubic-bezier(0.16,1,0.3,1) 0.3s both; }\n.knob { position: absolute; left: 50%; top: 520px; width: 54px; height: 54px; border-radius: 999px;\n  background: #f7f9ff; margin-left: -27px; }\n@keyframes wipe { from { left: 12%; opacity: 0 } to { left: 50%; opacity: 1 } }\n",
+      "width": {
+        "px": 1920.0
+      },
+      "height": {
+        "px": 1080.0
+      }
+    }
+  ],
+  "slots": [
+    {
+      "node": "frame",
+      "field": "text",
+      "sample": "graded + motion",
+      "label": "After label"
+    }
+  ]
+}

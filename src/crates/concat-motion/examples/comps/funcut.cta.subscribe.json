@@ -1,0 +1,94 @@
+{
+  "format": 1,
+  "id": "funcut.cta.subscribe",
+  "name": "Subscribe card",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30.0,
+  "duration": 4.5,
+  "background": {
+    "r": 0.0,
+    "g": 0.0,
+    "b": 0.0,
+    "a": 0.0
+  },
+  "assets": {},
+  "curves": {},
+  "nodes": [
+    {
+      "id": "card",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.0,
+              "y1": 0.0,
+              "x2": 0.58,
+              "y2": 1.0
+            }
+          },
+          {
+            "at": 0.25,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            }
+          }
+        ],
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.94
+            },
+            "curve": {
+              "kind": "spring",
+              "stiffness": 260.0,
+              "damping": 15.0,
+              "mass": 1.0
+            }
+          },
+          {
+            "at": 0.5,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "html",
+      "markup": "\n<div class=\"wrap\">\n  <div class=\"ask\">One <em>tap</em> away.</div>\n  <div class=\"btn\"><div class=\"dot\"></div><div class=\"txt\">SUBSCRIBE</div></div>\n  <div class=\"sub\">NEW EPISODE EVERY FRIDAY</div>\n</div>\n",
+      "css": "\n.wrap { position: absolute; inset: 0; display: flex; flex-direction: column;\n  align-items: center; justify-content: center; gap: 30px; }\n.ask { font-family: Archivo, Inter, DejaVu Sans; font-size: 84px; font-weight: 900; letter-spacing: -0.035em;\n  color: #f7f9ff; }\n.ask em { font-style: normal; color: #ff2d55; }\n.btn { display: flex; flex-direction: row; align-items: center; gap: 14px;\n  padding: 20px 38px; border-radius: 999px; background: #ff2d55;\n  box-shadow: 0 18px 50px rgba(255,45,85,0.45);\n  animation: breathe 2.4s ease-in-out infinite; }\n.dot { width: 12px; height: 12px; border-radius: 999px; background: #ffffff; }\n.txt { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 22px; font-weight: 700; letter-spacing: 0.2em; color: #ffffff; }\n.sub { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 17px; letter-spacing: 0.24em; color: #9fb0bf; }\n@keyframes breathe { from { transform: scale(1) } 50% { transform: scale(1.055) } to { transform: scale(1) } }\n",
+      "width": {
+        "px": 1920.0
+      },
+      "height": {
+        "px": 1080.0
+      }
+    }
+  ],
+  "slots": [
+    {
+      "node": "card",
+      "field": "text",
+      "sample": "One tap away.",
+      "label": "Headline"
+    }
+  ]
+}

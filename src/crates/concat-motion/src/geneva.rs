@@ -202,7 +202,9 @@ impl Geneva {
             let opacity = node
                 .tracks
                 .get("opacity")
-                .and_then(|track| keyframes(track, Kind::Number, &mut warnings))
+                .and_then(|track| {
+                    keyframes(track, Kind::Number, span_of(comp, node), &mut warnings)
+                })
                 .unwrap_or_else(|| json!(node.opacity));
             if opacity != json!(1.0) {
                 clip.insert("opacity".into(), opacity);
@@ -224,7 +226,7 @@ impl Geneva {
                         let radius = node
                             .tracks
                             .get("blur")
-                            .and_then(|track| keyframes(track, Kind::Number, &mut warnings))
+                            .and_then(|track| keyframes(track, Kind::Number, span_of(comp, node), &mut warnings))
                             .unwrap_or_else(|| json!(radius));
                         effects.push(json!({ "kind": "blur", "radius": radius }));
                     }
@@ -323,6 +325,14 @@ impl Geneva {
             source,
         })?;
         Ok(document)
+    }
+
+    /// Run one Geneva command in `dir` and hand back the report it printed.
+    ///
+    /// Public for the sequence builder: a sequence is a timeline of its own,
+    /// not a comp, so it renders through the same door a bake does.
+    pub fn run_in(&self, dir: &Path, args: &[String]) -> Result<Json, MotionError> {
+        self.run(dir, args)
     }
 
     /// Run one Geneva command and hand back the report it printed.
@@ -518,6 +528,11 @@ fn staged_path(asset: &Asset) -> String {
 }
 
 /// The Geneva asset kind for an asset, or `None` when it does not read one.
+pub fn geneva_kind(asset: &Asset) -> Option<&'static str> {
+    geneva_asset_kind(asset)
+}
+
+/// The Geneva asset kind for an asset, or `None` when it does not read one.
 fn geneva_asset_kind(asset: &Asset) -> Option<&'static str> {
     let from_extension = Path::new(&asset.src)
         .extension()
@@ -555,10 +570,17 @@ enum Kind {
 }
 
 /// A track as a Geneva `keyframes` object, or `None` when it is empty.
-fn keyframes(track: &Track, kind: Kind, warnings: &mut Vec<String>) -> Option<Json> {
+///
+/// `span` is the node's length in seconds: a track's keys are stored at
+/// fractions of it, and the timeline wants seconds from the clip's start. A
+/// comp is written once and retimed anywhere, so the fraction is the fact and
+/// the seconds are the conversion - and a key written as a fraction would run
+/// the motion in the wrong time domain entirely.
+fn keyframes(track: &Track, kind: Kind, span: f64, warnings: &mut Vec<String>) -> Option<Json> {
     if track.is_empty() {
         return None;
     }
+    let span = if span > 1e-6 { span } else { 1.0 };
     let mut keys: Vec<&crate::track::Key> = track.keys.iter().collect();
     keys.sort_by(|a, b| a.at.partial_cmp(&b.at).unwrap_or(std::cmp::Ordering::Equal));
     let mut out = Vec::new();
@@ -573,11 +595,12 @@ fn keyframes(track: &Track, kind: Kind, warnings: &mut Vec<String>) -> Option<Js
                 continue;
             }
         };
+        let at = seconds(key.at * span);
         match &key.curve {
             Some(curve) if !matches!(curve, Curve::Linear) => {
-                out.push(json!([key.at, value, ease(curve)]))
+                out.push(json!([at, value, ease(curve)]))
             }
-            _ => out.push(json!([key.at, value])),
+            _ => out.push(json!([at, value])),
         }
     }
     (!out.is_empty()).then(|| json!({ "keyframes": out }))
@@ -623,7 +646,7 @@ fn effective_transform(comp: &Comp, node: &Node) -> Option<Json> {
     let position = node
         .tracks
         .get("position")
-        .and_then(|track| keyframes(track, Kind::Point, &mut warnings))
+        .and_then(|track| keyframes(track, Kind::Point, span_of(comp, node), &mut warnings))
         .or_else(|| {
             let point = base.position?;
             let placed = absolute_position(comp, node, point);
@@ -644,7 +667,7 @@ fn effective_transform(comp: &Comp, node: &Node) -> Option<Json> {
     let scale = node
         .tracks
         .get("scale")
-        .and_then(|track| keyframes(track, Kind::Number, &mut warnings))
+        .and_then(|track| keyframes(track, Kind::Number, span_of(comp, node), &mut warnings))
         .unwrap_or_else(|| json!(base.scale));
     if scale != json!(1.0) {
         map.insert("scale".into(), scale);
@@ -652,12 +675,22 @@ fn effective_transform(comp: &Comp, node: &Node) -> Option<Json> {
     let rotation = node
         .tracks
         .get("rotation")
-        .and_then(|track| keyframes(track, Kind::Number, &mut warnings))
+        .and_then(|track| keyframes(track, Kind::Number, span_of(comp, node), &mut warnings))
         .unwrap_or_else(|| json!(base.rotation));
     if rotation != json!(0.0) {
         map.insert("rotation".into(), rotation);
     }
     (!map.is_empty()).then_some(Json::Object(map))
+}
+
+/// How long a node runs, in seconds: its own duration, or the rest of the comp
+/// for a node that says `duration: 0`.
+fn span_of(comp: &Comp, node: &Node) -> f64 {
+    if node.duration > 0.0 {
+        node.duration
+    } else {
+        (comp.duration - node.start).max(0.0)
+    }
 }
 
 /// A node's position with its ancestors' transforms folded in, so a group's
@@ -970,6 +1003,7 @@ pub fn asset_map(comp: &Comp) -> BTreeMap<String, Asset> {
 mod tests {
     use super::*;
     use crate::comp::{Comp, Node, Transform, Word};
+    use crate::track::Key;
 
     fn text_comp() -> Comp {
         Comp {
@@ -1086,6 +1120,52 @@ mod tests {
         assert_eq!(
             ease(&Curve::SPRING_POP),
             json!({ "spring": { "stiffness": 260.0, "damping": 15.0, "mass": 1.0 } })
+        );
+    }
+
+    #[test]
+    fn tracks_are_written_in_seconds_from_the_node_s_own_span() {
+        // A key at a fraction of the node's length: half of a 4 s fade is 2 s
+        // on the timeline, not 0.5 s.
+        let mut comp = text_comp();
+        comp.nodes[0].duration = 4.0;
+        comp.nodes[0].tracks.insert(
+            "opacity".into(),
+            Track::new(vec![
+                Key::new(0.0, Value::number(0.0)),
+                Key::eased(0.5, Value::number(1.0), Curve::EASE_OUT),
+                Key::new(1.0, Value::number(1.0)),
+            ]),
+        );
+        let (document, warnings) = Geneva::at("geneva").timeline(&comp, &BakeRequest::default());
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let opacity = &document["layers"][0]["clips"][0]["opacity"]["keyframes"];
+        assert_eq!(opacity[0][0], json!("0s"));
+        assert_eq!(opacity[1][0], json!("2s"), "half of four seconds");
+        assert_eq!(opacity[2][0], json!("4s"));
+        assert_eq!(
+            opacity[1][2],
+            json!({ "cubic-bezier": [0.0, 0.0, 0.58, 1.0] })
+        );
+    }
+
+    #[test]
+    fn a_retimed_comp_keeps_its_motion_in_its_own_time() {
+        // The same track on a twice-as-long node runs twice as long: the
+        // fraction is the fact, the seconds are the conversion.
+        let mut comp = text_comp();
+        comp.nodes[0].duration = 8.0;
+        comp.nodes[0].tracks.insert(
+            "opacity".into(),
+            Track::new(vec![
+                Key::new(0.0, Value::number(0.0)),
+                Key::new(0.5, Value::number(1.0)),
+            ]),
+        );
+        let (document, _) = Geneva::at("geneva").timeline(&comp, &BakeRequest::default());
+        assert_eq!(
+            document["layers"][0]["clips"][0]["opacity"]["keyframes"][1][0],
+            json!("4s")
         );
     }
 

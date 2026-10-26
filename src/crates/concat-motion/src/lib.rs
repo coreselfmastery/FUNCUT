@@ -67,9 +67,10 @@ pub mod curve;
 pub mod engine;
 pub mod geneva;
 pub mod presets;
+pub mod sequence;
 pub mod track;
 
-pub use authoring::{apply, CompSummary, Op};
+pub use authoring::{CompSummary, Op, apply};
 pub use comp::{Comp, FORMAT, Node, NodeKind, Slot};
 pub use curve::{Curve, Spring, StepPosition};
 pub use engine::{

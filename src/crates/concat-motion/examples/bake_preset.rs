@@ -17,7 +17,9 @@ use concat_motion::presets;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args().skip(1);
-    let id = args.next().unwrap_or_else(|| "funcut.lower-third.glass".to_string());
+    let id = args
+        .next()
+        .unwrap_or_else(|| "funcut.lower-third.glass".to_string());
     let out = PathBuf::from(args.next().unwrap_or_else(|| "bake".to_string()));
 
     let comp = presets::build(&id).ok_or_else(|| format!("no preset called {id:?}"))?;
@@ -28,7 +30,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         return Err("the preset does not validate".into());
     }
-    println!("comp {} - {}x{} @ {} fps, {:.1}s, hash {:016x}", comp.id, comp.width, comp.height, comp.fps, comp.duration, comp.hash());
+    println!(
+        "comp {} - {}x{} @ {} fps, {:.1}s, hash {:016x}",
+        comp.id,
+        comp.width,
+        comp.height,
+        comp.fps,
+        comp.duration,
+        comp.hash()
+    );
     for slot in &comp.slots {
         println!("  slot {:?} on {}: {}", slot.label, slot.node, slot.sample);
     }
@@ -42,7 +52,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("geneva is present but does not run".into());
     }
 
-    let request = BakeRequest { alpha: true, ..BakeRequest::default() };
+    let request = BakeRequest {
+        alpha: true,
+        ..BakeRequest::default()
+    };
     let started = std::time::Instant::now();
     let baked = geneva.bake(&comp, &request, &out)?;
     let elapsed = started.elapsed();
@@ -61,6 +74,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let started = std::time::Instant::now();
     let frame = geneva.frame(&comp, comp.duration * 0.4, Some(960))?;
-    println!("single frame in {:.0} ms: {}", started.elapsed().as_millis(), frame.display());
+    println!(
+        "single frame in {:.0} ms: {}",
+        started.elapsed().as_millis(),
+        frame.display()
+    );
     Ok(())
 }

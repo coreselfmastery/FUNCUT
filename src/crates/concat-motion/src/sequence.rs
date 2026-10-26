@@ -1,0 +1,942 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
+
+//! A sequence: comps placed one after another on one timeline, as one render.
+//!
+//! A single comp bakes to its own little frame sequence. A *sequence* is what
+//! a reel, an explainer or a title package actually is - half a dozen comps,
+//! each with its own entrance, butted together over plates with a dip between
+//! them and a bed of music under the lot - and it is the reason a motion layer
+//! is worth having rather than a folder of GIFs.
+//!
+//! The document this builds is an ordinary Geneva timeline: every scene
+//! contributes its layers, shifted to its own start time; a plate goes under
+//! each scene that asks for one; one full-frame curtain dips between scenes;
+//! audio beds go in the timeline's own audio tracks. Nothing here is a second
+//! renderer - it is the same timeline a comp bakes through, with more than one
+//! comp in it.
+//!
+//! ```no_run
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! use concat_motion::{authoring, geneva::Geneva, presets, sequence};
+//!
+//! let mut reel = sequence::Sequence::new(1920, 1080, 30.0);
+//! reel.push(sequence::Scene::new(presets::build("funcut.sting.wordmark").expect("a preset")));
+//! reel.push(sequence::Scene::new(presets::build("funcut.caption.kinetic").expect("a preset")));
+//!
+//! let geneva = Geneva::discover(None).expect("the sidecar");
+//! let plan = sequence::plan(&geneva, &reel)?;
+//! plan.render(&geneva, std::path::Path::new("cache/reel"), std::path::Path::new("reel.mp4"))?;
+//! # Ok(())
+//! # }
+//! ```
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+use serde_json::{Map, Value as Json, json};
+
+use crate::authoring::{self, Op};
+use crate::comp::{Asset, Comp, Rgba};
+use crate::engine::{BakeRequest, MotionError};
+use crate::geneva::Geneva;
+
+/// One comp placed in a sequence.
+#[derive(Clone, Debug)]
+pub struct Scene {
+    /// The comp this scene shows.
+    pub comp: Comp,
+    /// Operations applied to the comp before it is placed, all or nothing.
+    pub ops: Vec<Op>,
+    /// Where it starts; `None` places it after the scene before it.
+    pub at: Option<f64>,
+    /// How long it holds; `None` is the comp's own length.
+    pub hold: Option<f64>,
+    /// A still underneath it, for a comp that is an overlay.
+    pub plate: Option<Plate>,
+}
+
+/// A still placed under a scene, optionally drifting.
+#[derive(Clone, Debug)]
+pub struct Plate {
+    /// An asset id on the sequence.
+    pub asset: String,
+    /// How much the still grows over the scene, as a scale delta: `0.06` is
+    /// six percent, which reads as life without reading as a zoom.
+    pub zoom: f64,
+}
+
+/// A bed of sound under the whole sequence.
+#[derive(Clone, Debug)]
+pub struct AudioBed {
+    /// An asset id on the sequence.
+    pub asset: String,
+    /// Gain in decibels.
+    pub gain_db: f64,
+    /// Fade up from silence.
+    pub fade_in: f64,
+    /// Fade to silence.
+    pub fade_out: f64,
+}
+
+/// The dip between scenes: a full-frame wash of one colour, opaque at the
+/// cuts and clear in between.
+#[derive(Clone, Copy, Debug)]
+pub struct Curtain {
+    /// The colour dipped through.
+    pub color: Rgba,
+    /// Fade up from it at the top of the sequence.
+    pub open: f64,
+    /// Fade down into it at the end.
+    pub close: f64,
+    /// Half-width of each dip, in seconds.
+    pub dip: f64,
+    /// How opaque it gets at the cut: 1 is a full cut to colour.
+    pub depth: f64,
+}
+
+impl Default for Curtain {
+    fn default() -> Self {
+        Curtain {
+            color: Rgba::new(0.02, 0.024, 0.04, 1.0),
+            open: 0.5,
+            close: 0.7,
+            dip: 0.22,
+            depth: 1.0,
+        }
+    }
+}
+
+/// A run of comps, plates and sound, rendered as one file.
+#[derive(Clone, Debug)]
+pub struct Sequence {
+    /// Frame width.
+    pub width: u32,
+    /// Frame height.
+    pub height: u32,
+    /// Frame rate.
+    pub fps: f64,
+    /// The master clear colour, opaque: a sequence is a picture, not an
+    /// overlay.
+    pub background: Rgba,
+    /// Where every asset path resolves from - the folder the reel was
+    /// written in. Assets are copied out of it into the render directory,
+    /// because an engine is never given a path that leaves its own.
+    pub source_dir: PathBuf,
+    /// The scenes, in order.
+    pub scenes: Vec<Scene>,
+    /// Shared assets the scenes and the sound refer to, by id.
+    pub assets: BTreeMap<String, Asset>,
+    /// The sound under it.
+    pub audio: Vec<AudioBed>,
+    /// The dip between scenes; `None` cuts hard.
+    pub curtain: Option<Curtain>,
+    /// Encoder quality, 0 to 51, lower is better.
+    pub crf: u8,
+}
+
+impl Sequence {
+    /// An empty sequence of the given frame.
+    pub fn new(width: u32, height: u32, fps: f64) -> Sequence {
+        Sequence {
+            width,
+            height,
+            fps,
+            background: Rgba::new(0.02, 0.024, 0.04, 1.0),
+            source_dir: PathBuf::new(),
+            scenes: Vec::new(),
+            assets: BTreeMap::new(),
+            audio: Vec::new(),
+            curtain: Some(Curtain::default()),
+            crf: 18,
+        }
+    }
+
+    /// Add a scene at the end.
+    pub fn push(&mut self, scene: Scene) -> &mut Sequence {
+        self.scenes.push(scene);
+        self
+    }
+
+    /// Add an asset the scenes or the sound refer to.
+    pub fn asset(&mut self, id: impl Into<String>, asset: Asset) -> &mut Sequence {
+        self.assets.insert(id.into(), asset);
+        self
+    }
+
+    /// Add a bed of sound.
+    pub fn bed(&mut self, bed: AudioBed) -> &mut Sequence {
+        self.audio.push(bed);
+        self
+    }
+
+    /// How long the sequence runs: the end of the last scene.
+    pub fn duration(&self) -> f64 {
+        self.layout().last().map(|(_, _, end)| *end).unwrap_or(0.0)
+    }
+
+    /// Each scene's start and length, with `at` and `hold` resolved.
+    ///
+    /// A scene that names no start follows the one before it, so a reel is
+    /// written in order without arithmetic; a scene that names no hold is as
+    /// long as its comp.
+    fn layout(&self) -> Vec<(usize, f64, f64)> {
+        let mut out = Vec::with_capacity(self.scenes.len());
+        let mut clock = 0.0;
+        for (index, scene) in self.scenes.iter().enumerate() {
+            let start = scene.at.unwrap_or(clock);
+            let length = scene.hold.unwrap_or(scene.comp.duration).max(0.1);
+            out.push((index, start, start + length));
+            clock = start + length;
+        }
+        out
+    }
+}
+
+impl Scene {
+    /// A scene showing `comp`.
+    pub fn new(comp: Comp) -> Scene {
+        Scene {
+            comp,
+            ops: Vec::new(),
+            at: None,
+            hold: None,
+            plate: None,
+        }
+    }
+
+    /// The operations to apply before placing it.
+    pub fn with_ops(mut self, ops: Vec<Op>) -> Scene {
+        self.ops = ops;
+        self
+    }
+
+    /// Start it at a time, rather than after the scene before it.
+    pub fn starting_at(mut self, at: f64) -> Scene {
+        self.at = Some(at);
+        self
+    }
+
+    /// Hold it for a length other than the comp's own.
+    pub fn holding(mut self, seconds: f64) -> Scene {
+        self.hold = Some(seconds);
+        self
+    }
+
+    /// Put a still under it.
+    pub fn over(mut self, asset: impl Into<String>, zoom: f64) -> Scene {
+        self.plate = Some(Plate {
+            asset: asset.into(),
+            zoom,
+        });
+        self
+    }
+}
+
+impl AudioBed {
+    /// A bed at unity gain.
+    pub fn new(asset: impl Into<String>) -> AudioBed {
+        AudioBed {
+            asset: asset.into(),
+            gain_db: 0.0,
+            fade_in: 0.5,
+            fade_out: 1.0,
+        }
+    }
+
+    /// Set the gain, in decibels.
+    pub fn at(mut self, gain_db: f64) -> AudioBed {
+        self.gain_db = gain_db;
+        self
+    }
+}
+
+/// A sequence laid out as one timeline, plus the files it needs beside it.
+#[derive(Clone, Debug)]
+pub struct Plan {
+    /// The Geneva timeline document.
+    pub document: Json,
+    /// Where each asset's bytes come from, by the path the document uses.
+    pub files: BTreeMap<String, PathBuf>,
+    /// Everything the mapping could not express, node by node.
+    pub warnings: Vec<String>,
+    /// How long it runs, in seconds.
+    pub duration: f64,
+    /// How many scenes it has.
+    pub scenes: usize,
+    /// Where the asset paths resolve from when they are relative.
+    pub source_root: PathBuf,
+}
+
+impl Plan {
+    /// The document, as text.
+    pub fn json(&self) -> String {
+        serde_json::to_string_pretty(&self.document).unwrap_or_default()
+    }
+
+    /// Write the timeline and copy in every asset it refers to, so the folder
+    /// is a render that needs nothing outside itself.
+    pub fn write(&self, dir: &Path) -> Result<PathBuf, MotionError> {
+        for (dest, source) in &self.files {
+            let to = dir.join(dest);
+            if to.is_file() {
+                continue;
+            }
+            if let Some(parent) = to.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| MotionError::Io {
+                    doing: "creating".into(),
+                    path: parent.to_path_buf(),
+                    source: error,
+                })?;
+            }
+            let from = if source.is_absolute() {
+                source.clone()
+            } else {
+                self.source_root.join(source)
+            };
+            std::fs::copy(&from, &to).map_err(|error| MotionError::Io {
+                doing: "copying an asset into the render".into(),
+                path: from,
+                source: error,
+            })?;
+        }
+        std::fs::create_dir_all(dir).map_err(|error| MotionError::Io {
+            doing: "creating".into(),
+            path: dir.to_path_buf(),
+            source: error,
+        })?;
+        let path = dir.join("timeline.json");
+        std::fs::write(&path, self.json()).map_err(|error| MotionError::Io {
+            doing: "writing".into(),
+            path: path.clone(),
+            source: error,
+        })?;
+        Ok(path)
+    }
+
+    /// Render the whole sequence to `out`, from a render directory.
+    pub fn render(&self, geneva: &Geneva, dir: &Path, out: &Path) -> Result<Json, MotionError> {
+        self.write(dir)?;
+        let args: Vec<String> = vec![
+            "--format".into(),
+            "json".into(),
+            "render".into(),
+            "timeline.json".into(),
+            "-o".into(),
+            out.display().to_string(),
+        ];
+        geneva.run_in(dir, &args)
+    }
+
+    /// Draw one still of the sequence, for checking a cut before rendering
+    /// the whole thing.
+    pub fn frame(
+        &self,
+        geneva: &Geneva,
+        dir: &Path,
+        at: f64,
+        out: &Path,
+    ) -> Result<Json, MotionError> {
+        self.write(dir)?;
+        let args: Vec<String> = vec![
+            "--format".into(),
+            "json".into(),
+            "frame".into(),
+            "timeline.json".into(),
+            "--at".into(),
+            format!("{at}s"),
+            "-o".into(),
+            out.display().to_string(),
+        ];
+        geneva.run_in(dir, &args)
+    }
+}
+
+/// Lay a sequence out as one Geneva timeline.
+///
+/// Every scene's comp is validated and its operations applied first: a shot
+/// that does not make sense stops the plan and names the scene, rather than
+/// reaching a render. The layers keep the comp's own ids, prefixed with the
+/// scene's index, so two scenes using the same template never collide.
+pub fn plan(geneva: &Geneva, sequence: &Sequence) -> Result<Plan, MotionError> {
+    let mut warnings = Vec::new();
+    let mut layers: Vec<Json> = Vec::new();
+    let mut assets: Map<String, Json> = Map::new();
+    let mut files: BTreeMap<String, PathBuf> = BTreeMap::new();
+
+    // Shared assets first: plates and sound name them, and they are staged
+    // once however many scenes use them.
+    for (id, asset) in &sequence.assets {
+        let staged = staged_name(id, &asset.src);
+        assets.insert(
+            id.clone(),
+            json!({ "src": staged, "kind": asset_kind(asset) }),
+        );
+        files.insert(staged, PathBuf::from(&asset.src));
+    }
+
+    let mut scene_ends: Vec<f64> = Vec::new();
+    for (index, scene) in sequence.scenes.iter().enumerate() {
+        let mut comp = if scene.ops.is_empty() {
+            scene.comp.clone()
+        } else {
+            authoring::apply(&scene.comp, &scene.ops).map_err(|error| MotionError::Engine {
+                code: None,
+                message: format!("scene {index} ({}): {error}", scene.comp.id),
+                help: Some("the batch is applied to the comp before it is placed".into()),
+            })?
+        };
+        // A scene that holds for less than its comp runs the comp shorter, not
+        // cut off: every node ends by the new end, so a track keyed as a
+        // fraction of a span is still inside its span rather than waving at a
+        // time the clip never reaches.
+        if let Some(hold) = scene.hold
+            && hold < comp.duration
+        {
+            comp.duration = hold;
+        }
+        for node in &mut comp.nodes {
+            if node.duration > 0.0 {
+                node.duration = node.duration.min(comp.duration - node.start);
+            }
+        }
+        let problems = comp.validate();
+        if !problems.is_empty() {
+            return Err(MotionError::Invalid {
+                diagnostics: problems,
+            });
+        }
+        let start = scene
+            .at
+            .unwrap_or_else(|| scene_ends.last().copied().unwrap_or(0.0));
+        let hold = scene.hold.unwrap_or(comp.duration).max(0.1);
+        scene_ends.push(start + hold);
+
+        // The plate goes under the scene's own layers, framed like footage.
+        if let Some(plate) = &scene.plate
+            && sequence.assets.contains_key(&plate.asset)
+        {
+            let mut clip = Map::new();
+            clip.insert(
+                "source".into(),
+                json!({ "kind": "image", "asset": plate.asset }),
+            );
+            clip.insert("fit".into(), json!("cover"));
+            clip.insert("start".into(), json!(seconds(start)));
+            clip.insert("duration".into(), json!(seconds(hold)));
+            if plate.zoom.abs() > 1e-9 {
+                clip.insert(
+                    "transform".into(),
+                    json!({ "scale": { "keyframes": [
+                        [0, 1.0],
+                        [seconds(hold), 1.0 + plate.zoom]
+                    ] } }),
+                );
+            }
+            layers.push(json!({
+                "id": format!("s{index}.plate"),
+                "clips": [Json::Object(clip)],
+            }));
+        }
+
+        // The comp's own layers, shifted to the scene's start.
+        let (document, scene_warnings) = geneva.timeline(
+            &comp,
+            &BakeRequest {
+                width: Some(sequence.width),
+                height: Some(sequence.height),
+                fps: Some(sequence.fps),
+                ..BakeRequest::default()
+            },
+        );
+        warnings.extend(
+            scene_warnings
+                .into_iter()
+                .map(|warning| format!("scene {index}: {warning}")),
+        );
+
+        for (id, asset) in document
+            .get("assets")
+            .and_then(Json::as_object)
+            .cloned()
+            .unwrap_or_default()
+        {
+            let staged = staged_name(
+                &format!("s{index}.{id}"),
+                asset["src"].as_str().unwrap_or_default(),
+            );
+            assets.insert(
+                format!("s{index}.{id}"),
+                json!({ "src": staged, "kind": asset["kind"].clone() }),
+            );
+            if let Some(asset) = comp.assets.get(&id) {
+                files.insert(staged, PathBuf::from(&asset.src));
+            }
+        }
+
+        for layer in document
+            .get("layers")
+            .and_then(Json::as_array)
+            .cloned()
+            .unwrap_or_default()
+        {
+            let id = layer["id"].as_str().unwrap_or("layer").to_string();
+            let mut clips = Vec::new();
+            for clip in layer["clips"].as_array().cloned().unwrap_or_default() {
+                let mut clip = match clip {
+                    Json::Object(map) => map,
+                    other => return Err(unsupported(&format!("scene {index}: a clip is {other}"))),
+                };
+                let offset = clip
+                    .get("start")
+                    .and_then(Json::as_str)
+                    .and_then(parse_seconds)
+                    .unwrap_or(0.0);
+                // A node with `duration: 0` runs to the end of its comp; in a
+                // sequence it must stop at the scene's end instead, or it would
+                // paint over every scene after it.
+                let own = clip
+                    .get("duration")
+                    .and_then(Json::as_str)
+                    .and_then(parse_seconds)
+                    .unwrap_or(comp.duration - offset);
+                let length = own.min(hold - offset).max(0.0);
+                if length <= 0.0 {
+                    warnings.push(format!(
+                        "scene {index}: the node {id:?} starts after its scene ends and was dropped"
+                    ));
+                    continue;
+                }
+                clip.insert("start".into(), json!(seconds(start + offset)));
+                clip.insert("duration".into(), json!(seconds(length)));
+                // Asset references inside the source move to the scene's own
+                // copy of the asset.
+                if let Some(source) = clip.get_mut("source").and_then(Json::as_object_mut)
+                    && let Some(Json::String(name)) = source.get_mut("asset")
+                {
+                    *name = format!("s{index}.{name}");
+                }
+                clips.push(Json::Object(clip));
+            }
+            if !clips.is_empty() {
+                layers.push(json!({ "id": format!("s{index}.{id}"), "clips": clips }));
+            }
+        }
+    }
+
+    let duration = scene_ends.iter().copied().fold(0.0_f64, f64::max);
+
+    // The curtain: over everything, opaque at the ends, dipping at each cut
+    // and clear in between.
+    if let Some(curtain) = sequence.curtain
+        && sequence.scenes.len() > 1
+    {
+        let mut marks: Vec<(f64, f64)> = vec![(0.0, 1.0), (curtain.open.min(duration / 4.0), 0.0)];
+        for end in &scene_ends[..scene_ends.len() - 1] {
+            let dip = curtain.dip.min(duration / 8.0);
+            marks.push(((end - dip).max(0.0), 0.0));
+            marks.push((*end, curtain.depth));
+            marks.push((end + dip, 0.0));
+        }
+        marks.push(((duration - curtain.close).max(0.0), 0.0));
+        marks.push((duration, 1.0));
+        marks.sort_by(|a, b| a.0.total_cmp(&b.0));
+        // A dip that lands on top of the previous one is a longer dip, not a
+        // second: the times must strictly increase or the track is refused.
+        let mut keys: Vec<Json> = Vec::new();
+        for (at, value) in marks {
+            if let Some(last) = keys.last()
+                && last[0]
+                    .as_str()
+                    .and_then(parse_seconds)
+                    .is_some_and(|t| at - t <= 0.001)
+            {
+                keys.pop();
+            }
+            keys.push(json!([seconds(at.max(0.0)), value]));
+        }
+        layers.push(json!({
+            "id": "curtain",
+            "clips": [{
+                "source": { "kind": "solid", "color": curtain.color.to_hex() },
+                "start": "0s",
+                "duration": seconds(duration),
+                "opacity": { "keyframes": keys },
+            }],
+        }));
+    }
+
+    let mut audio = Vec::new();
+    for bed in &sequence.audio {
+        if !sequence.assets.contains_key(&bed.asset) {
+            return Err(unsupported(&format!(
+                "the audio bed names the asset {:?}, which the sequence does not carry",
+                bed.asset
+            )));
+        }
+        audio.push(json!({
+            "id": format!("bed.{}", bed.asset),
+            "clips": [{
+                "asset": bed.asset,
+                "start": "0s",
+                "duration": seconds(duration),
+                "gain_db": bed.gain_db,
+                "fade_in": seconds(bed.fade_in.min(duration / 3.0)),
+                "fade_out": seconds(bed.fade_out.min(duration / 3.0)),
+            }],
+        }));
+    }
+
+    let mut output = Map::new();
+    output.insert("width".into(), json!(sequence.width));
+    output.insert("height".into(), json!(sequence.height));
+    output.insert("fps".into(), json!(sequence.fps));
+    output.insert("duration".into(), json!(seconds(duration)));
+    output.insert("background".into(), json!(sequence.background.to_hex()));
+    output.insert(
+        "encode".into(),
+        json!({
+            "container": "mp4",
+            "video": { "codec": "h264", "crf": sequence.crf },
+        }),
+    );
+
+    let mut document = Map::new();
+    document.insert("geneva".into(), json!(crate::geneva::TIMELINE_VERSION));
+    document.insert("output".into(), Json::Object(output));
+    if !assets.is_empty() {
+        document.insert("assets".into(), Json::Object(assets));
+    }
+    document.insert("layers".into(), Json::Array(layers));
+    if !audio.is_empty() {
+        document.insert("audio".into(), Json::Array(audio));
+    }
+
+    Ok(Plan {
+        document: Json::Object(document),
+        files,
+        warnings,
+        duration,
+        scenes: sequence.scenes.len(),
+        source_root: sequence.source_dir.clone(),
+    })
+}
+
+/// A name for an asset inside the render directory: one folder, one file,
+/// the id kept so two scenes cannot overwrite each other's pictures.
+fn staged_name(id: &str, src: &str) -> String {
+    let name = Path::new(src)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "asset".into());
+    let safe: String = id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    format!("assets/{safe}.{name}")
+}
+
+/// The Geneva asset kind for an asset, from its kind or its extension.
+fn asset_kind(asset: &Asset) -> &'static str {
+    crate::geneva::geneva_kind(asset).unwrap_or("image")
+}
+
+/// Seconds as the timeline writes them: `2s`, `0.5s`, `7.2s`.
+fn seconds(value: f64) -> String {
+    let text = format!("{:.3}", value.max(0.0));
+    let trimmed = text.trim_end_matches('0').trim_end_matches('.');
+    format!("{}s", if trimmed.is_empty() { "0" } else { trimmed })
+}
+
+/// Read `7.2s` or `7.2` back as a number.
+fn parse_seconds(text: &str) -> Option<f64> {
+    text.trim_end_matches('s').parse().ok()
+}
+
+/// A refusal that names what could not be expressed.
+fn unsupported(what: &str) -> MotionError {
+    MotionError::Unsupported {
+        node: "sequence".into(),
+        what: what.into(),
+        engine: crate::engine::EngineKind::Geneva,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::presets;
+
+    fn geneva() -> Geneva {
+        // The document mapping never runs the binary, so a name is enough.
+        Geneva::at("geneva")
+    }
+
+    fn reel(scenes: Vec<Scene>) -> Sequence {
+        let mut sequence = Sequence::new(1920, 1080, 30.0);
+        for scene in scenes {
+            sequence.push(scene);
+        }
+        sequence
+    }
+
+    fn layers(plan: &Plan) -> Vec<Json> {
+        plan.document["layers"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn scenes_are_placed_one_after_another_and_keep_their_own_ids() {
+        let plan = plan(
+            &geneva(),
+            &reel(vec![
+                Scene::new(presets::build("funcut.chapter.chip").expect("a preset")),
+                Scene::new(presets::build("funcut.sting.wordmark").expect("a preset")),
+            ]),
+        )
+        .expect("plans");
+
+        assert_eq!(plan.scenes, 2);
+        let ids: Vec<String> = layers(&plan)
+            .iter()
+            .map(|layer| layer["id"].as_str().unwrap_or_default().to_string())
+            .collect();
+        assert!(ids.contains(&"s0.chap".to_string()), "{ids:?}");
+        assert!(ids.contains(&"s1.mark".to_string()), "{ids:?}");
+        assert_eq!(
+            ids.iter().filter(|id| *id == "curtain").count(),
+            1,
+            "{ids:?}"
+        );
+        // The second scene starts where the first ends, not at zero.
+        let first_end = 5.0; // the chip's own length
+        let second = layers(&plan)
+            .into_iter()
+            .find(|layer| layer["id"].as_str().is_some_and(|id| id.starts_with("s1.")))
+            .expect("a layer from the second scene");
+        let start = second["clips"][0]["start"].as_str().expect("a start");
+        assert_eq!(parse_seconds(start).expect("a time"), first_end);
+        assert!(
+            (plan.duration - (first_end + 3.5)).abs() < 1e-6,
+            "{}",
+            plan.duration
+        );
+    }
+
+    #[test]
+    fn a_hold_shorter_than_the_comp_cuts_its_nodes_instead_of_leaking_them() {
+        let plan = plan(
+            &geneva(),
+            &reel(vec![
+                Scene::new(presets::build("funcut.chapter.chip").expect("a preset")).holding(2.0),
+                Scene::new(presets::build("funcut.sting.wordmark").expect("a preset")),
+            ]),
+        )
+        .expect("plans");
+
+        for layer in layers(&plan) {
+            let id = layer["id"].as_str().unwrap_or_default();
+            if !id.starts_with("s0.") {
+                continue;
+            }
+            for clip in layer["clips"].as_array().cloned().unwrap_or_default() {
+                let start = parse_seconds(clip["start"].as_str().unwrap_or("0s")).unwrap_or(0.0);
+                let length =
+                    parse_seconds(clip["duration"].as_str().unwrap_or("0s")).unwrap_or(0.0);
+                assert!(
+                    start + length <= 2.0 + 1e-6,
+                    "{id} runs to {}",
+                    start + length
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn two_scenes_never_share_an_asset_copy() {
+        let mut sequence = reel(vec![
+            Scene::new(presets::build("funcut.lower-third.glass").expect("a preset")),
+            Scene::new(presets::build("funcut.lower-third.glass").expect("a preset")),
+        ]);
+        sequence.asset(
+            "plate",
+            Asset {
+                src: "assets/plate_dark.jpg".into(),
+                kind: None,
+            },
+        );
+        sequence.scenes[0].plate = Some(Plate {
+            asset: "plate".into(),
+            zoom: 0.06,
+        });
+        sequence.scenes[1].plate = Some(Plate {
+            asset: "plate".into(),
+            zoom: 0.06,
+        });
+
+        let plan = plan(&geneva(), &sequence).expect("plans");
+        let staged = plan.document["assets"].as_object().expect("assets");
+        assert!(staged.contains_key("plate"), "{staged:?}");
+        let names: Vec<String> = plan.files.keys().cloned().collect();
+        let unique: std::collections::BTreeSet<&String> = names.iter().collect();
+        assert_eq!(names.len(), unique.len(), "{names:?}");
+        // Both scenes' plate layers point at the one staged copy.
+        let plates: Vec<Json> = layers(&plan)
+            .into_iter()
+            .filter(|layer| {
+                layer["id"]
+                    .as_str()
+                    .is_some_and(|id| id.ends_with(".plate"))
+            })
+            .collect();
+        assert_eq!(plates.len(), 2);
+        assert_eq!(plates[0]["clips"][0]["source"]["asset"], json!("plate"));
+    }
+
+    #[test]
+    fn the_curtain_is_opaque_at_both_ends_and_dips_at_the_cut() {
+        let plan = plan(
+            &geneva(),
+            &reel(vec![
+                Scene::new(presets::build("funcut.chapter.chip").expect("a preset")),
+                Scene::new(presets::build("funcut.sting.wordmark").expect("a preset")),
+            ]),
+        )
+        .expect("plans");
+        let curtain = layers(&plan)
+            .into_iter()
+            .find(|layer| layer["id"] == json!("curtain"))
+            .expect("a curtain");
+        let keys = curtain["clips"][0]["opacity"]["keyframes"]
+            .as_array()
+            .cloned()
+            .expect("keys");
+        let first = &keys[0];
+        let last = keys.last().expect("a last key");
+        assert_eq!(first[1], json!(1.0));
+        assert_eq!(last[1], json!(1.0));
+        assert!(
+            keys.iter().any(|key| key[1].as_f64() == Some(0.0)),
+            "clear in between"
+        );
+        assert!(
+            keys.iter().any(|key| key[1].as_f64() == Some(1.0)),
+            "opaque at the cut"
+        );
+        // Times strictly increase: geneva refuses a track that goes backwards.
+        let times: Vec<f64> = keys
+            .iter()
+            .map(|key| parse_seconds(key[0].as_str().unwrap_or("0")).unwrap_or(0.0))
+            .collect();
+        assert!(times.windows(2).all(|pair| pair[1] > pair[0]), "{times:?}");
+    }
+
+    #[test]
+    fn operations_are_applied_before_the_scene_is_placed() {
+        let scene = Scene::new(presets::build("funcut.lower-third.glass").expect("a preset"))
+            .with_ops(vec![Op::SetSlot {
+                slot: "Name".into(),
+                value: "Grace Hopper".into(),
+            }]);
+        let plan = plan(&geneva(), &reel(vec![scene])).expect("plans");
+        let text = plan.json();
+        assert!(
+            text.contains("Grace Hopper"),
+            "the filled name reached the timeline"
+        );
+    }
+
+    #[test]
+    fn an_operation_that_cannot_apply_names_its_scene() {
+        let error = plan(
+            &geneva(),
+            &reel(vec![
+                Scene::new(presets::build("funcut.chapter.chip").expect("a preset")),
+                Scene::new(presets::build("funcut.chapter.chip").expect("a preset")).with_ops(
+                    vec![Op::Move {
+                        node: "nope".into(),
+                        start: 1.0,
+                    }],
+                ),
+            ]),
+        )
+        .expect_err("refused");
+        let message = error.to_string();
+        assert!(message.contains("scene 1"), "{message}");
+        assert!(message.contains("nope"), "{message}");
+    }
+
+    #[test]
+    fn a_bed_of_sound_becomes_a_track_and_a_missing_asset_is_refused() {
+        let mut sequence = reel(vec![Scene::new(
+            presets::build("funcut.chapter.chip").expect("a preset"),
+        )]);
+        sequence.asset(
+            "score",
+            Asset {
+                src: "assets/score.wav".into(),
+                kind: None,
+            },
+        );
+        sequence.bed(AudioBed::new("score").at(-6.0));
+        let laid_out = plan(&geneva(), &sequence).expect("plans");
+        let audio = laid_out.document["audio"]
+            .as_array()
+            .cloned()
+            .expect("audio");
+        assert_eq!(audio[0]["clips"][0]["asset"], json!("score"));
+        assert_eq!(audio[0]["clips"][0]["gain_db"], json!(-6.0));
+        assert!(
+            laid_out
+                .files
+                .keys()
+                .any(|name| name.ends_with("score.wav"))
+        );
+
+        sequence.audio = vec![AudioBed::new("nothing")];
+        let error = plan(&geneva(), &sequence).expect_err("a bed with no asset is refused");
+        assert!(error.to_string().contains("nothing"), "{error}");
+    }
+
+    #[test]
+    fn a_single_scene_needs_no_curtain() {
+        let plan = plan(
+            &geneva(),
+            &reel(vec![Scene::new(
+                presets::build("funcut.chapter.chip").expect("a preset"),
+            )]),
+        )
+        .expect("plans");
+        assert!(
+            !layers(&plan)
+                .iter()
+                .any(|layer| layer["id"] == json!("curtain"))
+        );
+    }
+
+    #[test]
+    fn the_plan_is_a_geneva_document_with_one_opaque_master_frame() {
+        let plan = plan(
+            &geneva(),
+            &reel(vec![Scene::new(
+                presets::build("funcut.chapter.chip").expect("a preset"),
+            )]),
+        )
+        .expect("plans");
+        assert_eq!(plan.document["geneva"], json!("1.1"));
+        assert_eq!(plan.document["output"]["width"], json!(1920));
+        assert_eq!(
+            plan.document["output"]["encode"]["video"]["codec"],
+            json!("h264")
+        );
+        assert_eq!(plan.document["output"]["background"], json!("#05060aff"));
+    }
+}

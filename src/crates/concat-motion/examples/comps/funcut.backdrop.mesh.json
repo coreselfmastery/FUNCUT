@@ -1,0 +1,40 @@
+{
+  "format": 1,
+  "id": "funcut.backdrop.mesh",
+  "name": "Mesh backdrop",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30.0,
+  "duration": 6.0,
+  "background": {
+    "r": 0.023529411764705882,
+    "g": 0.027450980392156862,
+    "b": 0.043137254901960784,
+    "a": 1.0
+  },
+  "assets": {},
+  "curves": {},
+  "nodes": [
+    {
+      "id": "mesh",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "html",
+      "markup": "<div class=\"base\"></div><div class=\"g1\"></div><div class=\"g2\"></div><div class=\"g3\"></div><div class=\"line\" style=\"left: -120px; top: -120px; width: 1px; height: 1320px\"></div><div class=\"line\" style=\"left: 0px; top: -120px; width: 1px; height: 1320px\"></div><div class=\"line\" style=\"left: 120px; top: -120px; width: 1px; height: 1320px\"></div><div class=\"line\" style=\"left: 240px; top: -120px; width: 1px; height: 1320px\"></div><div class=\"line\" style=\"left: 360px; top: -120px; width: 1px; height: 1320px\"></div><div class=\"line\" style=\"left: 480px; top: -120px; width: 1px; height: 1320px\"></div><div class=\"line\" style=\"left: 600px; top: -120px; width: 1px; height: 1320px\"></div><div class=\"line\" style=\"left: 720px; top: -120px; width: 1px; height: 1320px\"></div><div class=\"line\" style=\"left: 840px; top: -120px; width: 1px; height: 1320px\"></div><div class=\"line\" style=\"left: 960px; top: -120px; width: 1px; height: 1320px\"></div><div class=\"line\" style=\"left: 1080px; top: -120px; width: 1px; height: 1320px\"></div><div class=\"line\" style=\"left: 1200px; top: -120px; width: 1px; height: 1320px\"></div><div class=\"line\" style=\"left: 1320px; top: -120px; width: 1px; height: 1320px\"></div><div class=\"line\" style=\"left: 1440px; top: -120px; width: 1px; height: 1320px\"></div><div class=\"line\" style=\"left: 1560px; top: -120px; width: 1px; height: 1320px\"></div><div class=\"line\" style=\"left: 1680px; top: -120px; width: 1px; height: 1320px\"></div><div class=\"line\" style=\"left: 1800px; top: -120px; width: 1px; height: 1320px\"></div><div class=\"line\" style=\"left: 1920px; top: -120px; width: 1px; height: 1320px\"></div><div class=\"line\" style=\"left: 2040px; top: -120px; width: 1px; height: 1320px\"></div><div class=\"line\" style=\"left: -120px; top: -120px; width: 2160px; height: 1px\"></div><div class=\"line\" style=\"left: -120px; top: 0px; width: 2160px; height: 1px\"></div><div class=\"line\" style=\"left: -120px; top: 120px; width: 2160px; height: 1px\"></div><div class=\"line\" style=\"left: -120px; top: 240px; width: 2160px; height: 1px\"></div><div class=\"line\" style=\"left: -120px; top: 360px; width: 2160px; height: 1px\"></div><div class=\"line\" style=\"left: -120px; top: 480px; width: 2160px; height: 1px\"></div><div class=\"line\" style=\"left: -120px; top: 600px; width: 2160px; height: 1px\"></div><div class=\"line\" style=\"left: -120px; top: 720px; width: 2160px; height: 1px\"></div><div class=\"line\" style=\"left: -120px; top: 840px; width: 2160px; height: 1px\"></div><div class=\"line\" style=\"left: -120px; top: 960px; width: 2160px; height: 1px\"></div><div class=\"line\" style=\"left: -120px; top: 1080px; width: 2160px; height: 1px\"></div><div class=\"line\" style=\"left: -120px; top: 1200px; width: 2160px; height: 1px\"></div><div class=\"vig\"></div>",
+      "css": "\n.base { position: absolute; inset: 0; background: linear-gradient(150deg, #06070b, #0a0c14 60%, #06070b); }\n.g1 { position: absolute; inset: 0; background: radial-gradient(circle at 24% 28%, #123a3a, #00000000);\n  animation: drift1 24s ease-in-out infinite; }\n.g2 { position: absolute; inset: 0; background: radial-gradient(circle at 76% 30%, #241a46, #00000000);\n  animation: drift2 30s ease-in-out infinite; }\n.g3 { position: absolute; inset: 0; background: radial-gradient(circle at 52% 86%, #3a2418, #00000000);\n  animation: drift1 27s ease-in-out infinite; }\n.line { position: absolute; background: rgba(247,249,255,0.06); }\n.vig { position: absolute; inset: 0;\n  background: radial-gradient(ellipse at 50% 50%, rgba(0,0,0,0) 38%, rgba(0,0,0,0.72) 100%); }\n@keyframes drift1 { from { transform: translate(0px, 0px) } 50% { transform: translate(70px, 40px) } to { transform: translate(0px, 0px) } }\n@keyframes drift2 { from { transform: translate(0px, 0px) } 50% { transform: translate(-80px, -30px) } to { transform: translate(0px, 0px) } }\n",
+      "width": {
+        "px": 1920.0
+      },
+      "height": {
+        "px": 1080.0
+      }
+    }
+  ],
+  "slots": []
+}

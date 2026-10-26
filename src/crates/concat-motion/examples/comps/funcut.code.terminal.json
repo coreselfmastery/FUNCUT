@@ -1,0 +1,97 @@
+{
+  "format": 1,
+  "id": "funcut.code.terminal",
+  "name": "Terminal reveal",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30.0,
+  "duration": 4.2,
+  "background": {
+    "r": 0.0,
+    "g": 0.0,
+    "b": 0.0,
+    "a": 0.0
+  },
+  "assets": {},
+  "curves": {},
+  "nodes": [
+    {
+      "id": "win",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.0,
+              "y1": 0.0,
+              "x2": 0.58,
+              "y2": 1.0
+            }
+          },
+          {
+            "at": 0.2,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            }
+          }
+        ],
+        "position": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "point",
+              "x": 960.0,
+              "y": 610.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.0,
+              "y1": 0.0,
+              "x2": 0.58,
+              "y2": 1.0
+            }
+          },
+          {
+            "at": 0.45,
+            "value": {
+              "kind": "point",
+              "x": 960.0,
+              "y": 540.0
+            }
+          }
+        ]
+      },
+      "kind": "html",
+      "markup": "\n<div class=\"win\">\n  <div class=\"bar\">\n    <div class=\"light\" style=\"background: #ff5f57\"></div>\n    <div class=\"light\" style=\"background: #febc2e\"></div>\n    <div class=\"light\" style=\"background: #28c840\"></div>\n    <div class=\"title\">funcut — motion</div>\n  </div>\n  <div class=\"body\">\n    <div class=\"line l1\"><span class=\"p\">~ $</span> funcut motion bake lower-third --crf 18</div>\n    <div class=\"line l2 dim\">→ geneva 1.6.0 · 1920x1080 · 30 fps · alpha</div>\n    <div class=\"line l3\"><span class=\"ok\">✓</span> 180 frames in 6.5 s (27.7 fps)</div>\n    <div class=\"line l4 dim\">browserless · linear light · 10-bit</div>\n  </div>\n</div>\n",
+      "css": "\n.win { position: absolute; left: 160px; top: 250px; width: 1600px;\n  display: flex; flex-direction: column; border-radius: 18px; overflow: hidden;\n  background: #07090d; border: 1px solid rgba(247,249,255,0.14);\n  box-shadow: 0 30px 80px rgba(0,0,0,0.6); }\n.bar { display: flex; flex-direction: row; align-items: center; gap: 9px;\n  padding: 16px 22px; background: #0d1117; border-bottom: 1px solid rgba(247,249,255,0.08); }\n.light { width: 13px; height: 13px; border-radius: 999px; }\n.title { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 15px; letter-spacing: 0.16em; color: #6b7a89; margin-left: 12px; }\n.body { display: flex; flex-direction: column; gap: 12px; padding: 30px 34px 38px 34px; }\n.line { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 26px; color: #d7e2ec; white-space: nowrap; }\n.p { color: #22d3c5; }\n.ok { color: #4ade80; }\n.dim { color: #6b7a89; }\n.l1 { animation: type 0.5s steps(24) 0.15s both; }\n.l2 { animation: type 0.6s steps(30) 0.75s both; }\n.l3 { animation: type 0.5s steps(26) 1.45s both; }\n.l4 { animation: type 0.4s steps(18) 2.1s both; }\n@keyframes type { from { opacity: 0 } to { opacity: 1 } }\n",
+      "width": {
+        "px": 1920.0
+      },
+      "height": {
+        "px": 1080.0
+      }
+    }
+  ],
+  "slots": [
+    {
+      "node": "win",
+      "field": "text",
+      "sample": "funcut — motion",
+      "label": "Window title"
+    }
+  ]
+}

@@ -1,0 +1,94 @@
+{
+  "format": 1,
+  "id": "funcut.ticker.count",
+  "name": "Counting number",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30.0,
+  "duration": 4.0,
+  "background": {
+    "r": 0.0,
+    "g": 0.0,
+    "b": 0.0,
+    "a": 0.0
+  },
+  "assets": {},
+  "curves": {},
+  "nodes": [
+    {
+      "id": "num",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.0,
+              "y1": 0.0,
+              "x2": 0.58,
+              "y2": 1.0
+            }
+          },
+          {
+            "at": 0.2,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            }
+          }
+        ],
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.88
+            },
+            "curve": {
+              "kind": "spring",
+              "stiffness": 260.0,
+              "damping": 15.0,
+              "mass": 1.0
+            }
+          },
+          {
+            "at": 0.6,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "html",
+      "markup": "\n<div class=\"wrap\">\n  <div class=\"num\">67</div>\n  <div class=\"lab\">TOOLS AN AGENT CAN CALL</div>\n  <div class=\"rule\"></div>\n</div>\n",
+      "css": "\n.wrap { position: absolute; inset: 0; display: flex; flex-direction: column;\n  align-items: center; justify-content: center; gap: 8px; }\n.num { font-family: Archivo, Inter, DejaVu Sans; font-size: 260px; font-weight: 900; letter-spacing: -0.05em;\n  line-height: 0.95; background: linear-gradient(96deg, #22d3c5, #f7f9ff 55%, #8b5cf6);\n  background-clip: text; color: rgba(0,0,0,0); }\n.lab { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 20px; letter-spacing: 0.3em; color: #9fb0bf; }\n.rule { width: 260px; height: 3px; border-radius: 2px; background: #22d3c5; margin-top: 18px;\n  transform-origin: left center; animation: grow 1.1s cubic-bezier(0.16,1,0.3,1) 0.35s both; }\n@keyframes grow { from { transform: scaleX(0) } to { transform: scaleX(1) } }\n",
+      "width": {
+        "px": 1920.0
+      },
+      "height": {
+        "px": 1080.0
+      }
+    }
+  ],
+  "slots": [
+    {
+      "node": "num",
+      "field": "text",
+      "sample": "67",
+      "label": "Number"
+    }
+  ]
+}

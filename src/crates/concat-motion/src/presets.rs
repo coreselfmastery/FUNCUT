@@ -471,7 +471,7 @@ pub fn stat_cards() -> Comp {
     built.slots.push(Slot {
         node: "row".into(),
         field: SlotField::Text,
-        sample: "127 SHADER PACKS".into(),
+        sample: "SHADER PACKS".into(),
         label: "Numbers".into(),
     });
     built
@@ -621,7 +621,7 @@ pub fn chapter_chip() -> Comp {
     built.slots.push(Slot {
         node: "chap".into(),
         field: SlotField::Text,
-        sample: "02 / 06 LOWER THIRDS".into(),
+        sample: "LOWER THIRDS".into(),
         label: "Chapter".into(),
     });
     built
@@ -784,7 +784,13 @@ pub fn bar_chart() -> Comp {
     );
     let mut built = comp("funcut.chart.bars", "Bar chart", 1920, 1080, 4.6);
     let node = with_track(
-        html_node("sheet", &markup, &css, Length::Px(1920.0), Length::Px(1080.0)),
+        html_node(
+            "sheet",
+            &markup,
+            &css,
+            Length::Px(1920.0),
+            Length::Px(1080.0),
+        ),
         "opacity",
         Track::new(vec![
             Key::eased(0.0, Value::number(0.0), Curve::EASE_OUT),
@@ -828,9 +834,21 @@ pub fn split_compare() -> Comp {
 </div>
 <div class="wipe"><div class="knob"></div></div>
 "#;
-    let mut built = comp("funcut.compare.split", "Before / after split", 1920, 1080, 4.5);
+    let mut built = comp(
+        "funcut.compare.split",
+        "Before / after split",
+        1920,
+        1080,
+        4.5,
+    );
     let node = with_track(
-        html_node("frame", markup, &css, Length::Px(1920.0), Length::Px(1080.0)),
+        html_node(
+            "frame",
+            markup,
+            &css,
+            Length::Px(1920.0),
+            Length::Px(1080.0),
+        ),
         "scale",
         Track::new(vec![
             Key::eased(0.0, Value::number(1.03), Curve::EASE_OUT),
@@ -903,33 +921,53 @@ pub fn counting_number() -> Comp {
 /// markup engine draws one background layer per box, and a stack of boxes is
 /// also how the motion is kept cheap.
 pub fn mesh_backdrop() -> Comp {
-    let css = format!(
-        r#"
-.base {{ position: absolute; inset: 0; background: linear-gradient(150deg, #06070b, #0a0c14 60%, #06070b); }}
-.g1 {{ position: absolute; inset: 0; background: radial-gradient(circle at 24% 28%, #123a3a, #00000000);
-  animation: drift1 24s ease-in-out infinite; }}
-.g2 {{ position: absolute; inset: 0; background: radial-gradient(circle at 76% 30%, #241a46, #00000000);
-  animation: drift2 30s ease-in-out infinite; }}
-.g3 {{ position: absolute; inset: 0; background: radial-gradient(circle at 52% 86%, #3a2418, #00000000);
-  animation: drift1 27s ease-in-out infinite; }}
-.vlines {{ position: absolute; inset: -96px;
-  background: linear-gradient(90deg, rgba(247,249,255,0.055) 1px, rgba(0,0,0,0) 1px);
-  background-size: 96px 96px; }}
-.hlines {{ position: absolute; inset: -96px;
-  background: linear-gradient(0deg, rgba(247,249,255,0.055) 1px, rgba(0,0,0,0) 1px);
-  background-size: 96px 96px; }}
-.vig {{ position: absolute; inset: 0;
-  background: radial-gradient(ellipse at 50% 50%, rgba(0,0,0,0) 38%, rgba(0,0,0,0.72) 100%); }}
-@keyframes drift1 {{ from {{ transform: translate(0px, 0px) }} 50% {{ transform: translate(70px, 40px) }} to {{ transform: translate(0px, 0px) }} }}
-@keyframes drift2 {{ from {{ transform: translate(0px, 0px) }} 50% {{ transform: translate(-80px, -30px) }} to {{ transform: translate(0px, 0px) }} }}
-@keyframes slide {{ from {{ transform: translate(0px, 0px) }} to {{ transform: translate(96px, 96px) }} }}
-"#
+    let css = r#"
+.base { position: absolute; inset: 0; background: linear-gradient(150deg, #06070b, #0a0c14 60%, #06070b); }
+.g1 { position: absolute; inset: 0; background: radial-gradient(circle at 24% 28%, #123a3a, #00000000);
+  animation: drift1 24s ease-in-out infinite; }
+.g2 { position: absolute; inset: 0; background: radial-gradient(circle at 76% 30%, #241a46, #00000000);
+  animation: drift2 30s ease-in-out infinite; }
+.g3 { position: absolute; inset: 0; background: radial-gradient(circle at 52% 86%, #3a2418, #00000000);
+  animation: drift1 27s ease-in-out infinite; }
+.line { position: absolute; background: rgba(247,249,255,0.06); }
+.vig { position: absolute; inset: 0;
+  background: radial-gradient(ellipse at 50% 50%, rgba(0,0,0,0) 38%, rgba(0,0,0,0.72) 100%); }
+@keyframes drift1 { from { transform: translate(0px, 0px) } 50% { transform: translate(70px, 40px) } to { transform: translate(0px, 0px) } }
+@keyframes drift2 { from { transform: translate(0px, 0px) } 50% { transform: translate(-80px, -30px) } to { transform: translate(0px, 0px) } }
+"#;
+    // The grid is drawn as one-pixel boxes rather than a repeating gradient:
+    // geneva reads gradient colours but not gradient stop positions, and a
+    // hard stop is exactly what a grid line is. Twenty-seven boxes cost less
+    // than the soft band a stopless gradient would draw.
+    let mut grid = String::new();
+    let step = 120.0_f64;
+    let mut x = -step;
+    while x <= 1920.0 + step {
+        grid.push_str(&format!(
+            r#"<div class="line" style="left: {x:.0}px; top: -120px; width: 1px; height: 1320px"></div>"#
+        ));
+        x += step;
+    }
+    let mut y = -step;
+    while y <= 1080.0 + step {
+        grid.push_str(&format!(
+            r#"<div class="line" style="left: -120px; top: {y:.0}px; width: 2160px; height: 1px"></div>"#
+        ));
+        y += step;
+    }
+    let markup = format!(
+        "<div class=\"base\"></div><div class=\"g1\"></div><div class=\"g2\"></div><div class=\"g3\"></div>{grid}<div class=\"vig\"></div>"
     );
-    let markup = r#"<div class="base"></div><div class="g1"></div><div class="g2"></div><div class="g3"></div><div class="vlines"></div><div class="hlines"></div><div class="vig"></div>"#;
     let mut built = comp("funcut.backdrop.mesh", "Mesh backdrop", 1920, 1080, 6.0);
     // Opaque: a backdrop is the picture, not an overlay.
     built.background = Rgba::hex("#06070bff");
-    built.nodes.push(html_node("mesh", markup, &css, Length::Px(1920.0), Length::Px(1080.0)));
+    built.nodes.push(html_node(
+        "mesh",
+        &markup,
+        css,
+        Length::Px(1920.0),
+        Length::Px(1080.0),
+    ));
     built
 }
 
@@ -950,6 +988,41 @@ mod tests {
                 assert!(!comp.needs_markup());
             } else {
                 assert!(comp.needs_markup(), "{} carries markup", preset.id);
+            }
+        }
+    }
+
+    /// A slot that cannot be filled is a trap: it either edits the wrong
+    /// words or nothing at all. Every shipped template is filled here, so an
+    /// agent never discovers this at 2 a.m.
+    #[test]
+    fn every_slot_can_be_filled() {
+        for preset in ALL {
+            let comp = build(preset.id).expect("a preset");
+            for slot in &comp.slots {
+                let value = "A VERY FILLED SLOT";
+                let filled = crate::authoring::apply(
+                    &comp,
+                    &[crate::authoring::Op::SetSlot {
+                        slot: slot.label.clone(),
+                        value: value.into(),
+                    }],
+                )
+                .unwrap_or_else(|error| panic!("{}: {:?}: {error}", preset.id, slot.label));
+                let node = filled.node(&slot.node).expect("the node");
+                match &node.kind {
+                    NodeKind::Html { markup, .. } => assert!(
+                        markup.contains(value),
+                        "{}: the slot {:?} filled nothing: {markup}",
+                        preset.id,
+                        slot.label
+                    ),
+                    NodeKind::Text(text) => assert_eq!(text.text, value),
+                    _ => panic!(
+                        "{}: the slot {:?} is on a node of another kind",
+                        preset.id, slot.label
+                    ),
+                }
             }
         }
     }

@@ -209,7 +209,11 @@ pub fn apply(comp: &Comp, ops: &[Op]) -> Result<Comp, MotionError> {
     let mut next = comp.clone();
     for (index, op) in ops.iter().enumerate() {
         next = one(next, op).map_err(|error| match error {
-            MotionError::Engine { code, message, help } => MotionError::Engine {
+            MotionError::Engine {
+                code,
+                message,
+                help,
+            } => MotionError::Engine {
                 code,
                 message: format!("operation {index}: {message}"),
                 help,
@@ -219,7 +223,9 @@ pub fn apply(comp: &Comp, ops: &[Op]) -> Result<Comp, MotionError> {
     }
     let problems = next.validate();
     if !problems.is_empty() {
-        return Err(MotionError::Invalid { diagnostics: problems });
+        return Err(MotionError::Invalid {
+            diagnostics: problems,
+        });
     }
     Ok(next)
 }
@@ -248,10 +254,16 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
                 .slots
                 .iter()
                 .find(|candidate| {
-                    candidate.label.eq_ignore_ascii_case(slot) || candidate.node.eq_ignore_ascii_case(slot)
+                    candidate.label.eq_ignore_ascii_case(slot)
+                        || candidate.node.eq_ignore_ascii_case(slot)
                 })
                 .map(|candidate| (candidate.node.clone(), candidate.field))
-                .ok_or_else(|| fail(format!("no slot called {slot:?}"), "the comp lists its slots under `slots`"))?;
+                .ok_or_else(|| {
+                    fail(
+                        format!("no slot called {slot:?}"),
+                        "the comp lists its slots under `slots`",
+                    )
+                })?;
             let sample = comp
                 .slots
                 .iter()
@@ -312,7 +324,11 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
             entry.duration = duration.max(0.0);
             Ok(comp)
         }
-        Op::SetTrack { node, property, keys } => {
+        Op::SetTrack {
+            node,
+            property,
+            keys,
+        } => {
             if !documented_property(property) {
                 return Err(fail(
                     format!("{property:?} is not a property this format animates"),
@@ -322,7 +338,10 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
             let mut track = Track::default();
             for (at, value, curve) in keys {
                 let value = if property == "position" {
-                    Value::Point { x: *value, y: *value }
+                    Value::Point {
+                        x: *value,
+                        y: *value,
+                    }
                 } else {
                     Value::Number { value: *value }
                 };
@@ -331,12 +350,18 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
                     None => Key::new(*at, value),
                 });
             }
-            track.keys.sort_by(|a, b| a.at.partial_cmp(&b.at).unwrap_or(std::cmp::Ordering::Equal));
+            track
+                .keys
+                .sort_by(|a, b| a.at.partial_cmp(&b.at).unwrap_or(std::cmp::Ordering::Equal));
             let entry = node_mut(&mut comp, node)?;
             entry.tracks.insert(property.clone(), track);
             Ok(comp)
         }
-        Op::FadeIn { node, seconds, curve } => {
+        Op::FadeIn {
+            node,
+            seconds,
+            curve,
+        } => {
             let span = span_of(&comp, node)?;
             let at = (seconds / span).clamp(0.001, 1.0);
             let entry = node_mut(&mut comp, node)?;
@@ -349,7 +374,12 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
             );
             Ok(comp)
         }
-        Op::SlideTo { node, x, y, seconds } => {
+        Op::SlideTo {
+            node,
+            x,
+            y,
+            seconds,
+        } => {
             let span = span_of(&comp, node)?;
             let at = (seconds / span).clamp(0.001, 1.0);
             let entry = node_mut(&mut comp, node)?;
@@ -357,7 +387,14 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
             entry.tracks.insert(
                 "position".into(),
                 Track::new(vec![
-                    Key::eased(0.0, Value::Point { x: from.x, y: from.y }, Curve::SPRING),
+                    Key::eased(
+                        0.0,
+                        Value::Point {
+                            x: from.x,
+                            y: from.y,
+                        },
+                        Curve::SPRING,
+                    ),
                     Key::new(at, Value::Point { x: *x, y: *y }),
                     Key::new(1.0, Value::Point { x: *x, y: *y }),
                 ]),
@@ -365,7 +402,11 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
             entry.transform.position = Some(Point::new(*x, *y));
             Ok(comp)
         }
-        Op::Pop { node, from, seconds } => {
+        Op::Pop {
+            node,
+            from,
+            seconds,
+        } => {
             let span = span_of(&comp, node)?;
             let at = (seconds / span).clamp(0.001, 1.0);
             let entry = node_mut(&mut comp, node)?;
@@ -385,24 +426,40 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
                 parent: None,
                 start: 0.0,
                 duration: 0.0,
-                transform: Transform { position: Some(Point::new(*x, *y)), ..Transform::default() },
+                transform: Transform {
+                    position: Some(Point::new(*x, *y)),
+                    ..Transform::default()
+                },
                 opacity: 1.0,
                 blend: Blend::Normal,
                 mask: None,
                 effects: Vec::new(),
                 tracks: BTreeMap::new(),
-                kind: NodeKind::Group { children: Vec::new() },
+                kind: NodeKind::Group {
+                    children: Vec::new(),
+                },
             });
             Ok(comp)
         }
-        Op::AddRect { id, width, height, fill, radius, x, y } => {
+        Op::AddRect {
+            id,
+            width,
+            height,
+            fill,
+            radius,
+            x,
+            y,
+        } => {
             push(&mut comp, id)?;
             comp.nodes.push(Node {
                 id: id.clone(),
                 parent: None,
                 start: 0.0,
                 duration: 0.0,
-                transform: Transform { position: Some(Point::new(*x, *y)), ..Transform::default() },
+                transform: Transform {
+                    position: Some(Point::new(*x, *y)),
+                    ..Transform::default()
+                },
                 opacity: 1.0,
                 blend: Blend::Normal,
                 mask: None,
@@ -411,20 +468,33 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
                 kind: NodeKind::Rect {
                     width: Length::Px(*width),
                     height: Length::Px(*height),
-                    fill: (!fill.is_empty()).then(|| Paint::Solid { color: Rgba::hex(fill) }),
+                    fill: (!fill.is_empty()).then(|| Paint::Solid {
+                        color: Rgba::hex(fill),
+                    }),
                     radius: *radius,
                 },
             });
             Ok(comp)
         }
-        Op::AddText { id, text, size, weight, color, x, y } => {
+        Op::AddText {
+            id,
+            text,
+            size,
+            weight,
+            color,
+            x,
+            y,
+        } => {
             push(&mut comp, id)?;
             comp.nodes.push(Node {
                 id: id.clone(),
                 parent: None,
                 start: 0.0,
                 duration: 0.0,
-                transform: Transform { position: Some(Point::new(*x, *y)), ..Transform::default() },
+                transform: Transform {
+                    position: Some(Point::new(*x, *y)),
+                    ..Transform::default()
+                },
                 opacity: 1.0,
                 blend: Blend::Normal,
                 mask: None,
@@ -509,9 +579,31 @@ fn set_text_in(comp: &mut Comp, id: &str, sample: &str, text: &str) -> Result<()
         }
         NodeKind::Html { markup, .. } => {
             // A markup comp's words live in its element tree; the slot's
-            // sample says which run is the one to change.
-            *markup = replace_text_run(markup, sample, text);
-            Ok(())
+            // sample says which words are the ones to change. A run first (it
+            // keeps the emphasis around the words it does not touch), then a
+            // span across inline tags, which is what a headline like
+            // `One <em>tap</em> away.` needs. A sample that is nowhere in the
+            // markup is a broken template: filling some other word would be a
+            // silent, wrong edit, so it is refused instead - and a value
+            // equal to the sample is still a fill, not a failure.
+            let found = try_replace_run(markup, sample, text)
+                .or_else(|| try_replace_span(markup, sample, text));
+            match found {
+                Some(next) => {
+                    *markup = next;
+                    Ok(())
+                }
+                None => Err(MotionError::Engine {
+                    code: None,
+                    message: format!(
+                        "the slot on node {id:?} has the sample {sample:?}, which is not in its markup"
+                    ),
+                    help: Some(
+                        "a slot's sample is the literal text it stands in for; fix the comp's `slots`"
+                            .into(),
+                    ),
+                }),
+            }
         }
         _ => Err(MotionError::Unsupported {
             node: id.into(),
@@ -521,15 +613,10 @@ fn set_text_in(comp: &mut Comp, id: &str, sample: &str, text: &str) -> Result<()
     }
 }
 
-/// Replace a text run in a markup string: the one reading `sample`, or the
-/// last one when there is no such run.
-///
-/// Not a parser: a comp's markup is the preset's own, and the edit an agent
-/// asks for ("make the name Grace Hopper") is always a whole run. Matching by
-/// the run's own words is what keeps a name from landing on the timecode next
-/// to it. A document with no text run is left alone.
-pub fn replace_text_run(markup: &str, sample: &str, value: &str) -> String {
-    let sample = sample.trim();
+/// The text runs of a markup string: `(start, end, words)` for each stretch of
+/// text between one `>` and the next `<`. Not an HTML parser - a comp's markup
+/// is its own, and a run is what a slot is filled by.
+fn text_runs(markup: &str) -> Vec<(usize, usize, &str)> {
     let mut runs: Vec<(usize, usize, &str)> = Vec::new();
     let bytes = markup.as_bytes();
     let mut i = 0;
@@ -542,18 +629,45 @@ pub fn replace_text_run(markup: &str, sample: &str, value: &str) -> String {
             }
             let run = markup[start..end].trim();
             if !run.is_empty() && !run.contains('{') {
-                runs.push((start, end, run));
+                let from = start + markup[start..end].find(run).unwrap_or(0);
+                runs.push((from, from + run.len(), run));
             }
             i = end;
             continue;
         }
         i += 1;
     }
-    let chosen = runs
-        .iter()
-        .find(|(_, _, run)| !sample.is_empty() && *run == sample)
-        .or_else(|| runs.last());
-    match chosen {
+    runs
+}
+
+/// The run reading exactly `sample`, replaced - or `None` when no run does.
+fn try_replace_run(markup: &str, sample: &str, value: &str) -> Option<String> {
+    let sample = sample.trim();
+    if sample.is_empty() {
+        return None;
+    }
+    let (start, end, _) = text_runs(markup)
+        .into_iter()
+        .find(|(_, _, run)| *run == sample)?;
+    let mut out = String::with_capacity(markup.len());
+    out.push_str(&markup[..start]);
+    out.push_str(value);
+    out.push_str(&markup[end..]);
+    Some(out)
+}
+
+/// Replace a text run in a markup string: the one reading `sample`, or the
+/// last one when there is no such run.
+///
+/// Not a parser: a comp's markup is the preset's own, and the edit an agent
+/// asks for ("make the name Grace Hopper") is always a whole run. Matching by
+/// the run's own words is what keeps a name from landing on the timecode next
+/// to it. A document with no text run is left alone.
+pub fn replace_text_run(markup: &str, sample: &str, value: &str) -> String {
+    if let Some(replaced) = try_replace_run(markup, sample, value) {
+        return replaced;
+    }
+    match text_runs(markup).last() {
         Some((start, end, _)) => {
             let mut out = String::with_capacity(markup.len());
             out.push_str(&markup[..*start]);
@@ -565,6 +679,87 @@ pub fn replace_text_run(markup: &str, sample: &str, value: &str) -> String {
     }
 }
 
+/// Replace a span of *visible text* in a markup string, even where it crosses
+/// inline tags: the sample `One tap away.` finds `<div>One <em>tap</em>
+/// away.</div>` and puts `value` in its place, dropping the tags inside the
+/// span (a slot's value carries no markup).
+///
+/// Whitespace is matched loosely - a sample written with single spaces finds
+/// text broken across lines by the author - which is how a template's samples
+/// stay readable. The value is escaped, so filling a slot can never inject
+/// markup into a comp.
+pub fn replace_text_span(markup: &str, sample: &str, value: &str) -> String {
+    try_replace_span(markup, sample, value).unwrap_or_else(|| markup.to_string())
+}
+
+/// [`replace_text_span`], saying whether it found the sample.
+fn try_replace_span(markup: &str, sample: &str, value: &str) -> Option<String> {
+    let sample: Vec<char> = sample
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .collect();
+    if sample.is_empty() {
+        return None;
+    }
+    // Every visible character, with where it lives in the markup.
+    let mut visible: Vec<(char, usize)> = Vec::new();
+    let mut i = 0;
+    let bytes = markup.as_bytes();
+    while i < bytes.len() {
+        match bytes[i] {
+            b'<' => {
+                while i < bytes.len() && bytes[i] != b'>' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            _ => {
+                let ch = markup[i..].chars().next().unwrap_or(' ');
+                for (at, part) in ch.to_string().chars().enumerate() {
+                    visible.push((part, i + at));
+                }
+                i += ch.len_utf8();
+            }
+        }
+    }
+    // Collapse whitespace so runs broken across lines still match.
+    let mut flat: Vec<(char, usize)> = Vec::new();
+    for (ch, at) in &visible {
+        if ch.is_whitespace() {
+            if flat.last().is_some_and(|(last, _)| *last == ' ') {
+                continue;
+            }
+            flat.push((' ', *at));
+        } else {
+            flat.push((*ch, *at));
+        }
+    }
+    let haystack: Vec<char> = flat.iter().map(|(ch, _)| *ch).collect();
+    let start = haystack
+        .windows(sample.len())
+        .position(|window| window == sample.as_slice())?;
+    let from = flat[start].1;
+    let last = start + sample.len() - 1;
+    let to = flat[last].1 + flat[last].0.len_utf8();
+    // Widen to the character's whole utterance, and drop any tag the span
+    // starts or ends inside, so the result is still valid markup.
+    let mut end = to;
+    while end < markup.len() && !markup.is_char_boundary(end) {
+        end += 1;
+    }
+    let escaped = value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+    let mut out = String::with_capacity(markup.len());
+    out.push_str(&markup[..from]);
+    out.push_str(&escaped);
+    out.push_str(&markup[end..]);
+    Some(out)
+}
+
 /// Kept for callers that only want *some* run replaced; see
 /// [`replace_text_run`] for the one that respects a slot's sample.
 #[doc(hidden)]
@@ -574,8 +769,10 @@ pub fn replace_last_text_run(markup: &str, value: &str) -> String {
 
 /// A property name the format animates.
 fn documented_property(name: &str) -> bool {
-    matches!(name, "position" | "scale" | "rotation" | "opacity" | "blur" | "dash")
-        || name.starts_with("param:")
+    matches!(
+        name,
+        "position" | "scale" | "rotation" | "opacity" | "blur" | "dash"
+    ) || name.starts_with("param:")
 }
 
 fn node_mut<'a>(comp: &'a mut Comp, id: &str) -> Result<&'a mut Node, MotionError> {
@@ -583,7 +780,12 @@ fn node_mut<'a>(comp: &'a mut Comp, id: &str) -> Result<&'a mut Node, MotionErro
         .nodes
         .iter()
         .position(|node| node.id == id)
-        .ok_or_else(|| fail(format!("no node called {id:?}"), "list the comp first: motion.get returns its nodes"))?;
+        .ok_or_else(|| {
+            fail(
+                format!("no node called {id:?}"),
+                "list the comp first: motion.get returns its nodes",
+            )
+        })?;
     Ok(&mut comp.nodes[index])
 }
 
@@ -593,7 +795,12 @@ fn span_of(comp: &Comp, id: &str) -> Result<f64, MotionError> {
             let end = node.end(comp.duration);
             (end - node.start).max(0.1)
         })
-        .ok_or_else(|| fail(format!("no node called {id:?}"), "list the comp first: motion.get returns its nodes"))
+        .ok_or_else(|| {
+            fail(
+                format!("no node called {id:?}"),
+                "list the comp first: motion.get returns its nodes",
+            )
+        })
 }
 
 fn push(comp: &mut Comp, id: &str) -> Result<(), MotionError> {
@@ -607,11 +814,18 @@ fn push(comp: &mut Comp, id: &str) -> Result<(), MotionError> {
 }
 
 fn not_text(node: &str) -> MotionError {
-    fail(format!("{node:?} is not a text node"), "only a text node carries words")
+    fail(
+        format!("{node:?} is not a text node"),
+        "only a text node carries words",
+    )
 }
 
 fn fail(message: String, help: impl Into<String>) -> MotionError {
-    MotionError::Engine { code: None, message, help: Some(help.into()) }
+    MotionError::Engine {
+        code: None,
+        message,
+        help: Some(help.into()),
+    }
 }
 
 /// A description of what a node is, for a tool result a model can read back.
@@ -672,7 +886,10 @@ impl CompSummary {
                         NodeKind::Ellipse { .. } => ("ellipse", None),
                         NodeKind::Path { .. } => ("path", None),
                         NodeKind::Text(text) => ("text", Some(first_words(text))),
-                        NodeKind::Html { markup, .. } => ("html", Some(markup.lines().next().unwrap_or_default().trim().to_string())),
+                        NodeKind::Html { markup, .. } => (
+                            "html",
+                            Some(markup.lines().next().unwrap_or_default().trim().to_string()),
+                        ),
                         NodeKind::Image { .. } => ("image", None),
                         NodeKind::Lottie { .. } => ("lottie", None),
                         NodeKind::Composition { .. } => ("composition", None),
@@ -721,12 +938,20 @@ fn first_words(text: &TextNode) -> String {
 
 /// A highlight style for a word: the caption look, in one call.
 pub fn karaoke_highlight(color: &str, weight: u32) -> TextStyle {
-    TextStyle { color: Some(Rgba::hex(color)), fill: None, weight: Some(weight), scale: None }
+    TextStyle {
+        color: Some(Rgba::hex(color)),
+        fill: None,
+        weight: Some(weight),
+        scale: None,
+    }
 }
 
 /// A stroke of `width` pixels in `color`.
 pub fn stroke(color: &str, width: f64) -> Stroke {
-    Stroke { color: Rgba::hex(color), width }
+    Stroke {
+        color: Rgba::hex(color),
+        width,
+    }
 }
 
 #[cfg(test)]
@@ -744,9 +969,18 @@ mod tests {
         let edited = apply(
             &comp,
             &[
-                Op::SetSlot { slot: "Name".into(), value: "Grace Hopper".into() },
-                Op::Move { node: "card".into(), start: 3.5 },
-                Op::Retime { node: "card".into(), duration: 2.5 },
+                Op::SetSlot {
+                    slot: "Name".into(),
+                    value: "Grace Hopper".into(),
+                },
+                Op::Move {
+                    node: "card".into(),
+                    start: 3.5,
+                },
+                Op::Retime {
+                    node: "card".into(),
+                    duration: 2.5,
+                },
             ],
         )
         .expect("the batch applies");
@@ -761,7 +995,10 @@ mod tests {
         let comp = lower_third();
         let edited = apply(
             &comp,
-            &[Op::SetSlot { slot: "Name".into(), value: "Grace Hopper".into() }],
+            &[Op::SetSlot {
+                slot: "Name".into(),
+                value: "Grace Hopper".into(),
+            }],
         )
         .expect("applies");
         let card = edited.node("card").expect("the card");
@@ -777,22 +1014,43 @@ mod tests {
     #[test]
     fn an_unknown_node_names_itself_in_the_error() {
         let comp = lower_third();
-        let error = apply(&comp, &[Op::Move { node: "nope".into(), start: 1.0 }]).expect_err("refused");
+        let error = apply(
+            &comp,
+            &[Op::Move {
+                node: "nope".into(),
+                start: 1.0,
+            }],
+        )
+        .expect_err("refused");
         assert!(error.to_string().contains("nope"), "{error}");
     }
 
     #[test]
     fn an_unknown_slot_is_refused_rather_than_silently_dropped() {
         let comp = lower_third();
-        let error = apply(&comp, &[Op::SetSlot { slot: "Role".into(), value: "x".into() }]).expect_err("refused");
+        let error = apply(
+            &comp,
+            &[Op::SetSlot {
+                slot: "Role".into(),
+                value: "x".into(),
+            }],
+        )
+        .expect_err("refused");
         assert!(error.to_string().contains("Role"), "{error}");
     }
 
     #[test]
     fn a_fade_becomes_an_opacity_track_relative_to_the_span() {
         let comp = lower_third();
-        let edited = apply(&comp, &[Op::FadeIn { node: "card".into(), seconds: 1.5, curve: Curve::EASE_OUT }])
-            .expect("applies");
+        let edited = apply(
+            &comp,
+            &[Op::FadeIn {
+                node: "card".into(),
+                seconds: 1.5,
+                curve: Curve::EASE_OUT,
+            }],
+        )
+        .expect("applies");
         let card = edited.node("card").expect("the card");
         let track = card.tracks.get("opacity").expect("an opacity track");
         assert_eq!(track.sample(1.0).unwrap().as_number(), Some(1.0));
@@ -803,13 +1061,24 @@ mod tests {
     #[test]
     fn slide_to_ends_where_it_was_told() {
         let comp = lower_third();
-        let edited = apply(&comp, &[Op::SlideTo { node: "card".into(), x: 1920.0, y: 400.0, seconds: 0.8 }])
-            .expect("applies");
+        let edited = apply(
+            &comp,
+            &[Op::SlideTo {
+                node: "card".into(),
+                x: 1920.0,
+                y: 400.0,
+                seconds: 0.8,
+            }],
+        )
+        .expect("applies");
         let card = edited.node("card").expect("the card");
         assert_eq!(card.transform.position, Some(Point::new(1920.0, 400.0)));
         assert_eq!(
             card.tracks["position"].sample(1.0).unwrap(),
-            Value::Point { x: 1920.0, y: 400.0 }
+            Value::Point {
+                x: 1920.0,
+                y: 400.0
+            }
         );
     }
 
@@ -819,31 +1088,55 @@ mod tests {
         let mut with_children = apply(
             &comp,
             &[
-                Op::AddGroup { id: "kid".into(), x: 10.0, y: 10.0 },
-                Op::AddGroup { id: "other".into(), x: 20.0, y: 20.0 },
+                Op::AddGroup {
+                    id: "kid".into(),
+                    x: 10.0,
+                    y: 10.0,
+                },
+                Op::AddGroup {
+                    id: "other".into(),
+                    x: 20.0,
+                    y: 20.0,
+                },
             ],
         )
         .expect("applies");
-        let index = with_children.nodes.iter().position(|node| node.id == "kid").expect("the group");
+        let index = with_children
+            .nodes
+            .iter()
+            .position(|node| node.id == "kid")
+            .expect("the group");
         with_children.nodes[index].parent = Some("card".into());
-        let pruned = apply(&with_children, &[Op::Delete { node: "card".into() }]).expect("applies");
+        let pruned = apply(
+            &with_children,
+            &[Op::Delete {
+                node: "card".into(),
+            }],
+        )
+        .expect("applies");
         assert!(pruned.node("card").is_none());
-        assert!(pruned.node("kid").is_none(), "the child went with its parent");
+        assert!(
+            pruned.node("kid").is_none(),
+            "the child went with its parent"
+        );
         assert!(pruned.node("other").is_some(), "an unrelated node stays");
     }
 
     #[test]
     fn a_new_node_with_a_taken_id_is_refused() {
         let comp = lower_third();
-        let error = apply(&comp, &[Op::AddRect {
-            id: "card".into(),
-            width: 10.0,
-            height: 10.0,
-            fill: "#fff".into(),
-            radius: 0.0,
-            x: 0.0,
-            y: 0.0,
-        }])
+        let error = apply(
+            &comp,
+            &[Op::AddRect {
+                id: "card".into(),
+                width: 10.0,
+                height: 10.0,
+                fill: "#fff".into(),
+                radius: 0.0,
+                x: 0.0,
+                y: 0.0,
+            }],
+        )
         .expect_err("refused");
         assert!(error.to_string().contains("already exists"), "{error}");
     }
@@ -853,7 +1146,11 @@ mod tests {
         let comp = lower_third();
         let error = apply(
             &comp,
-            &[Op::SetTrack { node: "card".into(), property: "colour".into(), keys: vec![(0.0, 1.0, None)] }],
+            &[Op::SetTrack {
+                node: "card".into(),
+                property: "colour".into(),
+                keys: vec![(0.0, 1.0, None)],
+            }],
         )
         .expect_err("refused");
         assert!(error.to_string().contains("position"), "{error}");
@@ -874,7 +1171,11 @@ mod tests {
         match &node.kind {
             NodeKind::Text(text) => {
                 assert_eq!(text.words.len(), 2);
-                assert_eq!(text.words[1].end, Some(edited.duration), "the last cue is closed");
+                assert_eq!(
+                    text.words[1].end,
+                    Some(edited.duration),
+                    "the last cue is closed"
+                );
                 assert!(text.text.is_empty());
             }
             other => panic!("expected text, got {other:?}"),
@@ -917,8 +1218,11 @@ mod tests {
 
     #[test]
     fn a_malformed_batch_names_the_shape_it_wanted() {
-        let error = apply_json(&lower_third(), &serde_json::json!({ "ops": [{ "op": "fly" }] }))
-            .expect_err("refused");
+        let error = apply_json(
+            &lower_third(),
+            &serde_json::json!({ "ops": [{ "op": "fly" }] }),
+        )
+        .expect_err("refused");
         assert!(error.to_string().contains("motion operations"), "{error}");
     }
 
@@ -965,16 +1269,52 @@ mod tests {
                 // An open-ended last word is "hold it", so it is closed at the
                 // comp's length here; a `None` in the middle is left open and
                 // the engine holds it until the next word.
-                assert_eq!(text.words[2].end, Some(captured.duration), "the last word holds");
+                assert_eq!(
+                    text.words[2].end,
+                    Some(captured.duration),
+                    "the last word holds"
+                );
             }
             other => panic!("expected words, got {other:?}"),
         }
 
-        let rest: Vec<Op> = ops.into_iter().enumerate().filter(|(i, _)| *i != 1).map(|(_, op)| op).collect();
+        let rest: Vec<Op> = ops
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| *i != 1)
+            .map(|(_, op)| op)
+            .collect();
         let edited = apply(&lower_third(), &rest).expect("the rest applies");
         assert_eq!(edited.node("card").expect("the card").start, 3.5);
         assert!(edited.node("kicker").is_some(), "add-text landed");
         assert!(edited.validate().is_empty());
+    }
+
+    #[test]
+    fn a_sample_across_inline_tags_is_replaced_and_the_value_is_escaped() {
+        // The design case: a slot whose sample has an emphasis inside it.
+        let markup = "<div class=\"ask\">One <em>tap</em> away.</div>";
+        assert_eq!(
+            replace_text_span(
+                markup,
+                "One tap away.",
+                "Twelve beats. None of them a browser."
+            ),
+            "<div class=\"ask\">Twelve beats. None of them a browser.</div>"
+        );
+        // Text broken across lines by the author still matches a flat sample.
+        let multiline = "<p>Make\n  it move.</p>";
+        assert_eq!(
+            replace_text_span(multiline, "Make it move.", "Ship it."),
+            "<p>Ship it.</p>"
+        );
+        // A value is text, never markup: a comp cannot be injected through a slot.
+        assert_eq!(
+            replace_text_span("<p>x</p>", "x", "<b>bold</b> & co"),
+            "<p>&lt;b&gt;bold&lt;/b&gt; &amp; co</p>"
+        );
+        // A sample that is not there leaves the document alone.
+        assert_eq!(replace_text_span("<p>x</p>", "nowhere", "y"), "<p>x</p>");
     }
 
     #[test]
@@ -988,6 +1328,9 @@ mod tests {
             replace_last_text_run(markup, "Grace"),
             "<div><b>Ada</b><i>Engineer</i><s>Grace</s></div>"
         );
-        assert_eq!(replace_text_run("<div class='x'></div>", "", "Grace"), "<div class='x'></div>");
+        assert_eq!(
+            replace_text_run("<div class='x'></div>", "", "Grace"),
+            "<div class='x'></div>"
+        );
     }
 }

@@ -90,7 +90,7 @@
     {
       "node": "chap",
       "field": "text",
-      "sample": "02 / 06 LOWER THIRDS",
+      "sample": "LOWER THIRDS",
       "label": "Chapter"
     }
   ]

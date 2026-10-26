@@ -14,6 +14,7 @@ On the start screen only `Ctrl` + `O`, `Ctrl` + `Q` and `Ctrl` + `W` work. `Esca
 | --- | --- |
 | `Space` | Play / pause |
 | `Home` / `End` | Go to start / end of timeline |
+| `↑` / `↓` | Go to the previous / next cut: the nearest clip start or end on any track |
 | `←` / `→` | Step one frame back / forward |
 | `Shift` + `←` / `→` | Step ten frames back / forward (follows whatever key steps one) |
 

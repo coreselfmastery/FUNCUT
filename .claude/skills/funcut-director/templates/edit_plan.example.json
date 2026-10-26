@@ -91,7 +91,7 @@
     "bgm": { "query": "ambient documentary wonder", "source": "freepd", "trackId": null, "alignTo": "downbeats", "duckDb": -12 },
     "sfxEnabled": true
   },
-  "captions": { "wordSynced": true, "fontSize": 0.055, "fontWeight": 700, "offsetY": 0.32, "emphasisColor": "#7fd8ff", "background": null },
+  "captions": { "syncMode": "segment", "fontSize": 0.055, "fontWeight": 700, "offsetY": 0.32, "emphasisColor": "#7fd8ff", "background": null },
   "grade": { "filter": "concat.teal-orange", "intensityKey": "intensity", "intensity": 0.6 },
   "export": { "output": "/home/user/Videos/sea-salt.mp4", "crf": 20, "codec": "h264", "platform": "shorts" }
 }

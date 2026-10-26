@@ -133,8 +133,10 @@ generic rules (SKILL.md §3); when two rules collide, the niche wins.
 ## Cross-niche constants
 
 9:16 for shorts/reels/tiktok (`timeline_background blur` on 16:9 canvases);
-16–30 s length target; loop endings; word-synced captions 2–4 words; −14
-LUFS export; one filter; MAGICK = CC BY-NC (openmoji is the safe shelf);
+16–30 s length target; loop endings; concise, segment-timed captions (do not
+claim word sync from segment transcripts); record platform loudness goals but
+measure final LUFS/true peak externally; one filter;
+MAGICK = CC BY-NC (openmoji is the safe shelf);
 TTS Kokoro int8 (voice per niche: warm 2/af_bella for history-luxury, crisp
 8/af_river for tech-science, deep 14/am_fenrir or 17/am_onyx for
 horror-motivation).

@@ -4,7 +4,7 @@
   "title": "FUNCUT edit plan",
   "description": "The one-pass plan a director emits after measuring, before cutting. Times are seconds unless a field says otherwise.",
   "type": "object",
-  "required": ["segments", "audio"],
+  "required": ["aspect", "segments", "audio"],
   "properties": {
     "title": { "type": "string", "description": "Working title of the video." },
     "aspect": { "type": "string", "enum": ["16:9", "9:16", "1:1", "4:5"], "description": "Delivery aspect; 9:16 for shorts/reels/tiktok." },
@@ -28,7 +28,9 @@
               "query": { "type": "string", "description": "broll: the openvid_search query. Follow prompts/broll_matching.md." },
               "orientation": { "type": "string", "enum": ["vertical", "horizontal", "square"] },
               "sort": { "type": "string", "enum": ["relevance", "aesthetic", "motion", "temporal", "shortest", "longest", "surprise"] },
-              "clipId": { "type": ["integer", "null"], "description": "Filled after search: the chosen clip's id, never invented." },
+              "clipId": { "type": ["integer", "string", "null"], "description": "A real OpenVid clip id or existing timeline clip id, returned by a tool; never invented." },
+              "mediaId": { "type": "string", "description": "For existing footage: the media-bin id returned by project_get/timeline_read." },
+              "file": { "type": "string", "description": "For a source file not yet represented by a clip or media id: its actual path." },
               "trimIn": { "type": "number", "minimum": 0, "description": "Seconds into the source where the clip starts." },
               "trimOut": { "type": "number", "description": "Seconds into the source where it ends (leave longer than the segment; trim after placing)." },
               "preset": { "type": "string", "description": "textCard/titleCard: one of the 31 text presets, e.g. concat.impact, concat.lower-third, concat.bold-caption." },
@@ -41,7 +43,7 @@
             "properties": {
               "query": { "type": "string", "description": "sounds_search query using a real category: Whoosh, Impact, Riser, Motion, UI, Notification, Keyboard, Digital, Foley, Writing, Ambience, Music." },
               "peakAt": { "type": "number", "description": "The time the sound's PEAK must land on — usually the segment's first frame." },
-              "gainDb": { "type": "number", "default": 0, "description": "-12 to 0; -6 is a typical support level." }
+              "gainDb": { "type": "number", "minimum": -60, "maximum": 0, "default": -6, "description": "An absolute dB target; 0 dB is unity, negative levels attenuate, and -60 dB is the editor's silence floor. Typical SFX support levels are around -12 to -6 dB." }
             }
           },
           "transitionIn": {
@@ -51,7 +53,7 @@
               "seconds": { "type": "number", "default": 0.5, "description": "0.25-1.0; 0 (absent) means a hard cut." }
             }
           },
-          "captions": { "type": ["boolean", "null"], "description": "Word-synced captions over this segment; null = follow the video default." }
+          "captions": { "type": ["boolean", "null"], "description": "Whether captions are included for this segment; timing is segment-level, not word-aligned. Null = follow the video default." }
         }
       }
     },
@@ -75,7 +77,7 @@
             "source": { "type": "string", "enum": ["freepd", "lofi"] },
             "trackId": { "type": ["string", "null"], "description": "Filled after search; never invented." },
             "alignTo": { "type": "string", "enum": ["downbeats", "beats", "none"] },
-            "duckDb": { "type": "number", "default": -12, "description": "Music level under speech, -9 to -15." }
+            "duckDb": { "type": "number", "minimum": -60, "maximum": 0, "default": -12, "description": "Absolute music level under speech in dB; a negative target attenuates from unity. Convert through clip_audio_levels_db; never pass this number directly as the engine's linear volume." }
           }
         },
         "sfxEnabled": { "type": "boolean", "default": true }
@@ -83,9 +85,9 @@
     },
     "captions": {
       "type": "object",
-      "description": "Video-wide caption style; per-segment flags override presence only.",
+      "description": "Video-wide caption style; the current transcription/caption pipeline provides segment timing, not word alignment. Per-segment flags override presence only.",
       "properties": {
-        "wordSynced": { "type": "boolean", "default": true },
+        "syncMode": { "type": "string", "enum": ["segment"], "default": "segment", "description": "Only segment-level timing is supported; do not claim word-level synchronization." },
         "fontSize": { "type": "number", "default": 0.05, "description": "Fraction of frame height; 0.04 engine default, 0.05-0.06 for short-form." },
         "fontWeight": { "type": "integer", "default": 700 },
         "offsetY": { "type": "number", "default": 0.35, "description": "Fraction from center; positive is lower." },

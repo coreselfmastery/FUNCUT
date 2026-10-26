@@ -282,6 +282,71 @@ pub struct TranscribeRequest {
     pub model_id: String,
 }
 
+/// Normalizes a caller's language hint to Whisper's ISO language code.
+/// English-only models always run English and refuse an explicit other
+/// language instead of quietly pretending to honor it.
+fn whisper_language(multilingual: bool, hint: Option<&str>) -> Result<String, String> {
+    let hint = hint.map(str::trim).filter(|hint| !hint.is_empty());
+    if !multilingual {
+        if let Some(hint) = hint {
+            let primary = hint.split(['-', '_']).next().unwrap_or(hint);
+            if !hint.eq_ignore_ascii_case("auto") && !primary.eq_ignore_ascii_case("en") {
+                return Err(format!(
+                    "model is English-only; choose a multilingual Whisper model for `{hint}`"
+                ));
+            }
+        }
+        return Ok("en".to_owned());
+    }
+    let Some(hint) = hint else {
+        return Ok("auto".to_owned());
+    };
+    if hint.eq_ignore_ascii_case("auto") {
+        return Ok("auto".to_owned());
+    }
+    if hint.contains('\0') {
+        return Err("language hint must be an ISO language code, not contain NUL".to_owned());
+    }
+    let code = hint
+        .split(['-', '_'])
+        .next()
+        .unwrap_or(hint)
+        .to_ascii_lowercase();
+    if code.is_empty() || whisper_rs::get_lang_id(&code).is_none() {
+        return Err(format!(
+            "unknown Whisper language hint `{hint}`; use an ISO language code or `auto`"
+        ));
+    }
+    Ok(code)
+}
+
+#[cfg(test)]
+mod language_hint_tests {
+    use super::whisper_language;
+
+    #[test]
+    fn multilingual_models_receive_normalized_language_hints() {
+        assert_eq!(whisper_language(true, None).unwrap(), "auto");
+        assert_eq!(whisper_language(true, Some(" AUTO ")).unwrap(), "auto");
+        assert_eq!(whisper_language(true, Some("fr-FR")).unwrap(), "fr");
+        assert_eq!(whisper_language(true, Some("EN_us")).unwrap(), "en");
+        assert!(whisper_language(true, Some("zz")).is_err());
+        assert!(whisper_language(true, Some("fr\0")).is_err());
+    }
+
+    #[test]
+    fn english_only_models_refuse_hints_they_cannot_honor() {
+        assert_eq!(whisper_language(false, None).unwrap(), "en");
+        assert_eq!(whisper_language(false, Some("en-US")).unwrap(), "en");
+        assert_eq!(whisper_language(false, Some("auto")).unwrap(), "en");
+        assert!(
+            whisper_language(false, Some("fr"))
+                .unwrap_err()
+                .contains("English-only")
+        );
+    }
+}
+
 struct LoadedModel {
     id: String,
     context: WhisperContext,
@@ -398,18 +463,35 @@ impl Transcriber {
         loaded.as_ref().map(|model| model.id.clone())
     }
 
-    /// Transcribes one clip's audio window into caption segments. Blocks
-    /// for the whole run: run it on its own thread. `progress` is told each
-    /// stage as it begins, and in whisper's work each window it starts:
-    /// whisper reads thirty seconds at a time, so `next` is a window on.
-    ///
-    /// Timestamps come back relative to the window: 0 is `source_start`. The
-    /// caller owns the clip, so the map onto the timeline (divide by speed,
-    /// add the clip's start) happens there, next to the numbers it needs.
+    /// Transcribes one clip's audio window into caption segments using
+    /// Whisper's automatic language behavior (English for English-only
+    /// models). Timestamps come back relative to the window: 0 is
+    /// `source_start`; the caller maps them onto its timeline.
     pub fn transcribe(
         &self,
         dirs: &AppDirs,
         request: &TranscribeRequest,
+        progress: impl FnMut(JobStage) + Send + 'static,
+    ) -> Result<Vec<Segment>, String> {
+        self.transcribe_with_language(dirs, request, None, progress)
+    }
+
+    /// Transcribes one clip's audio window into caption segments. Blocks
+    /// for the whole run: run it on its own thread. `language_hint` accepts
+    /// an ISO language code, a BCP-47 tag (primary language is used), or
+    /// `auto`; multilingual models honor it, while English-only models refuse
+    /// an explicit non-English hint. `progress` is told each stage as it
+    /// begins, and in whisper's work each window it starts: whisper reads
+    /// thirty seconds at a time, so `next` is a window on.
+    ///
+    /// Timestamps come back relative to the window: 0 is `source_start`. The
+    /// caller owns the clip, so the map onto the timeline (divide by speed,
+    /// add the clip's start) happens there, next to the numbers it needs.
+    pub fn transcribe_with_language(
+        &self,
+        dirs: &AppDirs,
+        request: &TranscribeRequest,
+        language_hint: Option<&str>,
         mut progress: impl FnMut(JobStage) + Send + 'static,
     ) -> Result<Vec<Segment>, String> {
         let job = self.gate.begin("transcription")?;
@@ -480,16 +562,8 @@ impl Transcriber {
             .unwrap_or(4);
         let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
         params.set_n_threads(threads as i32);
-        // The language is whisper's to hear, when it can hear more than
-        // one: a multilingual model detects it from the first window. An
-        // English-only model asked for "auto" still runs the detection,
-        // over a vocabulary it was never trained on, and "hears" Thai at
-        // one percent - so it is simply told English.
-        params.set_language(Some(if context.is_multilingual() {
-            "auto"
-        } else {
-            "en"
-        }));
+        let language = whisper_language(context.is_multilingual(), language_hint)?;
+        params.set_language(Some(&language));
         params.set_print_special(false);
         params.set_print_progress(false);
         params.set_print_realtime(false);

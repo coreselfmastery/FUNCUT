@@ -46,8 +46,9 @@ is missing there, trust `effects_list`.
 - Vertical 9:16 on a 16:9 canvas: `timeline_background {kind:"blur"}` (or a
   brand color for luxury/finance) — the blurred sides are part of the look,
   keep them neutral.
-- The export pass may add `concat.loudness` (audio) — color has no such
-  auto-pass: what you set is what ships.
+- Export does not measure integrated loudness or true peak. `concat.loudness`
+  is an effect, not a verified master-bus pass; measure the exported mix with
+  an external analyzer when a loudness target matters.
 
 ## Self-check
 

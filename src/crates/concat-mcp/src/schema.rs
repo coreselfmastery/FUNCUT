@@ -298,11 +298,10 @@ fn inline(
     }
 }
 
-/// A small JSON Schema checker: enough of the 2020-12 vocabulary that
-/// schemars writes - types, properties, required, items, enums and
-/// constants, the three combinators, local references - to test that what
-/// a tool's schema accepts is what its Rust type reads, and back.
-#[cfg(test)]
+/// A small JSON Schema checker: enough of the 2020-12 vocabulary used by
+/// the MCP schemas here - types, properties, required, items, array/string
+/// limits, enums and constants, combinators and local references - for
+/// tool round-trip tests and local plan validation.
 pub(crate) fn check(schema: &Value, value: &Value, root: &Value, at: &str) -> Result<(), String> {
     let fail = |why: String| Err(format!("{at}: {why}"));
     let Some(object) = schema.as_object() else {
@@ -331,7 +330,13 @@ pub(crate) fn check(schema: &Value, value: &Value, root: &Value, at: &str) -> Re
             "boolean" => value.is_boolean(),
             "null" => value.is_null(),
             "number" => value.is_number(),
-            "integer" => value.as_i64().is_some() || value.as_u64().is_some(),
+            "integer" => {
+                value.as_i64().is_some()
+                    || value.as_u64().is_some()
+                    || value
+                        .as_f64()
+                        .is_some_and(|number| number.is_finite() && number.fract() == 0.0)
+            }
             _ => true,
         };
         if !kinds.iter().any(|kind| fits(kind)) {
@@ -360,6 +365,30 @@ pub(crate) fn check(schema: &Value, value: &Value, root: &Value, at: &str) -> Re
             return fail(format!("{number} is over {maximum}"));
         }
     }
+    if let Value::String(text) = value {
+        if let Some(minimum) = object.get("minLength").and_then(Value::as_u64)
+            && text.chars().count() < minimum as usize
+        {
+            return fail(format!("string is shorter than {minimum} characters"));
+        }
+        if let Some(maximum) = object.get("maxLength").and_then(Value::as_u64)
+            && text.chars().count() > maximum as usize
+        {
+            return fail(format!("string is longer than {maximum} characters"));
+        }
+    }
+    if let Value::Array(items) = value {
+        if let Some(minimum) = object.get("minItems").and_then(Value::as_u64)
+            && items.len() < minimum as usize
+        {
+            return fail(format!("array has fewer than {minimum} items"));
+        }
+        if let Some(maximum) = object.get("maxItems").and_then(Value::as_u64)
+            && items.len() > maximum as usize
+        {
+            return fail(format!("array has more than {maximum} items"));
+        }
+    }
     if let Value::Object(fields) = value {
         let properties = object.get("properties").and_then(Value::as_object);
         if let Some(Value::Array(required)) = object.get("required") {
@@ -375,12 +404,6 @@ pub(crate) fn check(schema: &Value, value: &Value, root: &Value, at: &str) -> Re
                 None => {
                     if let Some(extra) = object.get("additionalProperties") {
                         check(extra, field, root, &format!("{at}.{name}"))?;
-                    } else if properties.is_some()
-                        && object.get("oneOf").is_none()
-                        && object.get("anyOf").is_none()
-                        && object.get("allOf").is_none()
-                    {
-                        return fail(format!("{name} is not a field the schema knows"));
                     }
                 }
             }
@@ -458,13 +481,10 @@ mod tests {
 
     #[test]
     fn the_tool_list_fits_an_agents_context() {
-        // Every tool's schema sits in the agent's context for the whole
-        // session. Measured at about 162 KB for the sixty-one editing and
-        // library tools, 41 KB of it the whole edit vocabulary under
-        // edit_apply, and 7 KB the analysis and speech jobs; a harness that
-        // defers discovery - Forge, Claude Code - fetches these schemas on
-        // demand rather than holding them, but a tool list that grows past
-        // this is worth a look before it ships.
+        // Every tool's schema may sit in an agent's context for the whole
+        // session. Keep the full list comfortably below the cap; a harness
+        // that defers discovery can fetch individual schemas on demand, but
+        // a tool list that grows past this budget deserves a review.
         let toolbox = crate::tools::Toolbox::new();
         let sizes: Vec<(String, usize)> = toolbox
             .list()
@@ -476,6 +496,68 @@ mod tests {
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }
+    }
+
+    #[test]
+    fn checker_observes_array_bounds_and_additional_properties() {
+        let array_schema = json!({
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 2,
+            "items": { "type": "string" }
+        });
+        assert!(check(&array_schema, &json!([]), &array_schema, "array").is_err());
+        assert!(
+            check(
+                &array_schema,
+                &json!(["a", "b", "c"]),
+                &array_schema,
+                "array"
+            )
+            .is_err()
+        );
+        assert!(check(&array_schema, &json!(["a"]), &array_schema, "array").is_ok());
+
+        let object_schema = json!({
+            "type": "object",
+            "properties": { "known": { "type": "string" } },
+            "additionalProperties": false
+        });
+        assert!(
+            check(
+                &object_schema,
+                &json!({ "unknown": 1 }),
+                &object_schema,
+                "object"
+            )
+            .is_err()
+        );
+        assert!(
+            check(
+                &object_schema,
+                &json!({ "known": "yes" }),
+                &object_schema,
+                "object"
+            )
+            .is_ok()
+        );
+        let open_schema = json!({
+            "type": "object",
+            "properties": { "known": { "type": "string" } }
+        });
+        assert!(
+            check(
+                &open_schema,
+                &json!({ "unknown": 1 }),
+                &open_schema,
+                "object"
+            )
+            .is_ok()
+        );
+
+        let integer_schema = json!({ "type": "integer" });
+        assert!(check(&integer_schema, &json!(3.0), &integer_schema, "integer").is_ok());
+        assert!(check(&integer_schema, &json!(3.5), &integer_schema, "integer").is_err());
     }
 
     #[test]

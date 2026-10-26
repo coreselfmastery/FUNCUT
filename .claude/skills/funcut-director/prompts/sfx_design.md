@@ -37,14 +37,24 @@ peaks exactly at the reveal. ±1 frame; if you must choose, one frame early.
 
 ## Levels (gain staging)
 
-- Speech sits at full scale: VO is the loudest element, always.
-- SFX −8 to −16 dB relative to the VO at the moment they fire (hook hits −8;
-- deep-texture beds −20).
-- BGM under speech: −12 dB (see `prompts/music_and_duck.md`).
-- The one loudness effect the engine has is the `concat.loudness` filter
-  ("Normalize Loudness") — apply on export only, never mid-edit, and never
-  twice. Target −14 LUFS in the plan's export notes; do not stack gain effects
-  on top.
+- Keep VO clearly intelligible and in front; source files can have very
+  different recorded levels, so audition the actual mix rather than assuming
+  equal clip-gain values sound equal.
+- Plan SFX gains as starting points relative to each source's unity: hook hits
+  around −8 dB, supporting SFX around −12 to −16 dB, deep ambience around
+  −20 dB. These are not measured offsets from the VO.
+- `sounds_add` does not accept gain. After adding, get the returned clip id
+  (or read `timeline_read`) and apply the planned value with
+  `clip_audio_levels_db {baseDb: gainDb}`. That tool converts dB relative to
+  source unity (0 dB = unchanged; −60 dB is the editor's silence floor) to
+  the engine's linear multiplier.
+- BGM under speech: use an absolute clip-gain target such as −12 dB; see
+  `prompts/music_and_duck.md`.
+- `concat.loudness` is an effect, not a verified final-mix mastering pass.
+  Export does not report integrated LUFS or true peak. You may record a
+  platform target (for example, −14 LUFS) in the plan, but measure the final
+  file with an external loudness analyzer before claiming it was met; do not
+  treat per-clip normalization as a master-bus guarantee.
 
 ## Search recipe (sounds_search)
 

@@ -695,7 +695,9 @@ pub enum Request {
         /// languages.
         #[serde(default)]
         model: Option<String>,
-        /// The language hint, when the caller knows it.
+        /// Optional Whisper language hint: an ISO language code or BCP-47
+        /// tag (its primary language is used), or `auto`. English-only
+        /// models refuse explicit non-English hints.
         #[serde(default)]
         language: Option<String>,
     },

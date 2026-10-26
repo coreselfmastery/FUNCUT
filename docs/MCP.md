@@ -35,7 +35,9 @@ the sound is, `useFor` lines saying what it is for, and `syncAt`, seconds
 in where its peak lands, for placing it by the moment it is for. The
 first use of a sound downloads it (a few hundred kilobytes at most,
 checked against its SHA-256) and keeps it in the app's cache; every sound
-is CC0, so nothing asks for attribution.
+is CC0, so nothing asks for attribution. `sounds_add` creates a clip at its
+source's unity gain; it does not accept a level. Use the dB-aware
+`clip_audio_levels_db` tool on the returned clip id to set the planned gain.
 ### Background music (FreePD and MobyGratis)
 
 The `bgm` tools search 1,191 whole CC0 music tracks on two shelves and
@@ -93,9 +95,11 @@ carries its JSON result in the status's `output`:
 - `analyze_silence` - the dead air of a recording, `spans` and their
   complement `speech` in seconds, the shape `edit.apply`'s `removeSpans`
   cuts by. Optional thresholdDb (35 default) and minSilenceMs (500).
-- `transcribe` - whisper.cpp's words with their times, as caption segments;
-  the model comes from Settings > Transcriber (`base.en` default, `small`
-  for other languages).
+- `transcribe` - Whisper's timed text segments `{start,end,text}`; this is
+  segment-level timing, not word alignment. The optional language hint is
+  passed to Whisper (ISO code or BCP-47 tag; the primary tag is used).
+  English-only models reject explicit non-English hints; choose a multilingual
+  model such as `small` or `base` for other languages. `base.en` is the default.
 - `tts_generate` - a voiceover spoken to a WAV in an open project's own
   audio folder; `output` is its path and length, ready for `media_import`.
   Voices are the same ids the Settings > Speech page shows (Kokoro 0-52);
@@ -158,13 +162,13 @@ Tools are named for what they do, and their argument schemas are generated from 
 | Area | Tools |
 | --- | --- |
 | Projects | `project_list`, `project_create`, `project_open`, `project_save`, `project_close`, `project_set_video` |
-| Reading | `timeline_read` (compact: lanes, clips in time order, media, ids), `project_get` (everything), `concat_version` |
+| Reading and plans | `timeline_read` (compact: lanes, clips in time order, media, ids), `project_get` (everything), `concat_version`, `plan_validate` (checks a director plan before edits) |
 | Media | `media_probe`, `media_import` |
 | Stock clips | `openvid_status`, `openvid_prepare`, `openvid_search`, `openvid_get`, `openvid_fetch`, `openvid_import` |
 | Sound effects | `sounds_search`, `sounds_add` |
 | Music | `bgm_status`, `bgm_prepare`, `bgm_search`, `bgm_fetch`, `bgm_import` |
 | Stickers | `magick_status`, `magick_prepare`, `magick_search`, `magick_fetch`, `magick_add` |
-| Editing | `clip_add`, `clips_add_sequence`, `clip_trim`, `clips_split`, `clip_cut_spans`, `clips_move`, `clips_remove`, `clip_update`, `clip_transform`, `clip_speed`, `clip_frame`, `track_add` |
+| Editing | `clip_add`, `clips_add_sequence`, `clip_trim`, `clips_split`, `clip_cut_spans`, `clips_move`, `clips_remove`, `clip_update`, `clip_transform`, `clip_speed`, `clip_frame`, `clip_audio_levels_db`, `track_add` |
 | Picture | `clip_mask`, `clip_stabilize`, `timeline_background` |
 | Titles and captions | `title_add`, `captions_add` |
 | Keyframes and effects | `keyframe_set`, `keyframe_clear`, `effects_list`, `effect_layer_add`, `effect_key_set` |
@@ -174,6 +178,18 @@ Tools are named for what they do, and their argument schemas are generated from 
 | Templates | `template_list`, `template_instantiate` |
 | Export | `export_start`, `export_status`, `export_wait` (with progress), `export_cancel` |
 | Looking | `preview_frame` (the composited frame as an image) |
+
+`plan_validate` takes the edit-plan object defined by the Director skill's
+canonical schema and checks its structure, segment continuity, visual
+instructions, and supported audio/caption ranges before any assets are placed.
+It cannot prove creative quality or that a search will return media.
+
+`clip_audio_levels_db` sets base gain and optional volume keyframes in dB
+relative to source unity (`0 dB` = unchanged; `−60 dB` is the editor's silence
+floor), converting to the model's linear gain values. Keyframe `gainDb` values
+are absolute targets relative to unity;
+`clip_update.patch.volume` and `keyframe_set` on `volume` instead take a linear
+multiplier (`1` = unchanged). `sounds_add` has no gain argument.
 
 Edits stay in memory until `project_save`, as in the window. Times are seconds; a keyframe's position is a fraction of its clip (0 to 1); sizes and offsets are fractions of the frame.
 

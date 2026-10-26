@@ -1,6 +1,6 @@
 ---
 name: funcut-director
-description: Direct professional faceless video edits inside FUNCUT (the Concat video editor) through its MCP tools. Use this whenever the user asks to make, edit, cut, caption, score, color-grade, animate, or export a video — including a whole video from just a script or topic — or whenever a Forge run says to act as the video director. Covers the full pipeline: script analysis, TTS voiceover, transcription, silence removal, scene and beat analysis, B-roll from OpenVid, background music, SFX placement, titles, word-synced captions, keyframe motion, color grading, transitions, self-verification with preview_frame, and export. Professional rules only: never leave a visual gap, SFX peaks land on cuts, section changes land on downbeats, verify before claiming done.
+description: Direct professional faceless video edits inside FUNCUT (the Concat video editor) through its MCP tools. Use this whenever the user asks to make, edit, cut, caption, score, color-grade, animate, or export a video — including a whole video from just a script or topic — or whenever a Forge run says to act as the video director. Covers the full pipeline: script analysis, TTS voiceover, transcription, silence removal, scene and beat analysis, B-roll from OpenVid, background music, SFX placement, titles, segment-timed captions, keyframe motion, color grading, transitions, self-verification with preview_frame, and export. Professional rules only: never leave a visual gap, SFX peaks land on cuts, section changes land on downbeats, verify before claiming done.
 ---
 
 # FUNCUT Director
@@ -37,15 +37,22 @@ under `prompts/` — read the one you need when a phase reaches it.
 
 **Phase 1 — Understand the material.** If there is narration to make:
 `tts_generate` (voice, speed; WAV lands in the project, returned in the job's
-status `output`) → `media_import` it. If narration exists as audio/video:
-`transcribe` it. Then `analyze_silence` on the voiceover; `analyze_scenes` on
+status `output`) → `media_import` it. If narration exists as audio/video,
+`transcribe` it with an ISO language hint when known; the default `base.en`
+model is English-only, so choose a multilingual model for non-English. Then
+`analyze_silence` on the voiceover; `analyze_scenes` on
 any footage that will be cut; `analyze_beats` when there is music (or on the
 BGM after it is fetched). `media_probe` anything unfamiliar before you cut it.
 
 **Phase 2 — Tighten the voice.** Feed the silence spans to `clip_cut_spans`
 (remove dead air; `-35` dB threshold, ≥0.5 s spans, ~80 ms padding is the
-speech default). Word timings come from the transcription — the narration is
-the spine; every segment below hangs on it.
+speech default). `transcribe` returns source-file-relative text segments, not
+word-aligned timestamps. If ripple cuts happen after transcription, retime all
+later segment boundaries by the exact removed spans/padding before using them
+on the timeline; never reuse pre-cut timestamps unchanged. If the time map is
+uncertain, do not ripple-cut until it is resolved. Never invent per-word times
+or claim word synchronization unless accurate word timings are independently
+provided and verified.
 
 **Phase 3 — Write the edit plan (ONE reasoning pass).** Emit the JSON plan
 from `templates/edit_plan.schema.json` (example beside it): every segment of
@@ -53,7 +60,15 @@ the timeline gets a visual (B-roll query, or a text/motion card), its SFX with
 the time its PEAK must land on, its transition-in, caption style, and the
 grade. Rules the plan must obey are summarized in section 3; the full
 reasoning guides are `prompts/broll_matching.md`, `prompts/cuts_and_pacing.md`,
-`prompts/music_and_duck.md`, `prompts/niche_playbooks.md`.
+`prompts/music_and_duck.md`, `prompts/niche_playbooks.md`. Call
+`plan_validate` on the completed JSON now; fix every reported error and
+revalidate before searching or editing. This catches schema-level mistakes,
+missing visual instructions, and material segment gaps/overlaps, but does not
+prove creative quality, asset availability, or export success. Then compare
+the plan's `aspect` with `timeline_read`; if they differ, set the canvas with
+`project_set_video` before gathering assets and verify it with another
+`timeline_read`. The validator checks the requested aspect but does not change
+the project canvas or export profile.
 
 **Phase 4 — Gather (parallel if your harness allows).** All `openvid_search`
 calls, all `sounds_search` calls, the `bgm_search` — these are independent;
@@ -69,16 +84,24 @@ transform/keyframe motion (`clip_transform`, `keyframe_set`, or
 `setClipTransform` via `edit_apply`), transitions between sections
 (`effect_layer_add` with a transition package — the 22 real ones and when to
 use each are in `prompts/transitions_guide.md`), SFX (`sounds_add` at the
-computed peak time), BGM with volume keyframes ducked −12 dB under speech,
-captions (`captions_add`, word-synced) and titles (`title_add`). When the
-piece needs design the timeline itself cannot draw — a stat card, a chart
-building on, a logo sting, a subscribe card — build a **motion comp** instead
+computed peak time, then set its planned dB level with `clip_audio_levels_db`;
+`sounds_add` itself has no gain argument), and BGM automation with
+`clip_audio_levels_db` (its base and keyframe targets are absolute dB values,
+not the engine's linear `volume`; 0 dB is unchanged and −60 dB is the editor's
+silence floor). Use `captions_add` for the transcription's
+segment-timed captions; do not call them word-synced. A word-timed motion comp
+is an optional, separate design only when accurate word timestamps are
+provided and frame/audio-verified. Add titles with `title_add`. When the piece
+needs design the timeline itself cannot draw — a stat card, a chart building
+on, a logo sting, a subscribe card — build a **motion comp** instead
 (Phase 5b). Group each logical chunk into one `edit_apply` batch.
 
 **Phase 5b — Motion comps (design). Every finished piece goes through here.**
 A film with no designed type reads as a raw cut, so the floor is at least one
 motion beat per piece — a chapter chip, a wordmark sting, a stat card, or a
-word-timed caption system — and most pieces want one per section. That floor is
+caption system — and most pieces want one per section. Word-timed kinetic
+captions require accurate word timestamps; segment-level ASR output is not
+sufficient. That floor is
 not the ceiling: the layer draws masks, blends, effects, five curve families
 and markup, and a comp authored as a document is how a piece gets a look nothing
 else in the product can copy. Twelve presets ship (lower third, kinetic
@@ -91,8 +114,9 @@ three frames → `bake` at cut size → `bake --encode piece.mp4` → `media_imp
 
 The mechanical reference and the design doctrine are the **`motion` skill**; the
 director's side — where comps belong in an edit, worked plans, keeping the look
-one system — is `prompts/motion_comps.md`. Comp captions beat plain captions: a
-word-timed kinetic caption is the single biggest quality jump in short-form.
+one system — is `prompts/motion_comps.md`. Comp captions can beat plain captions when they are readable and accurately
+synchronized; use verified word timestamps for word-level highlighting, or
+keep the caption timing at the measured transcript-segment level.
 
 **Phase 6 — Grade.** One consistent look per video: pick the filter recipe
 for the niche (`prompts/color_grading.md`) and set its intensity once via
@@ -100,15 +124,18 @@ for the niche (`prompts/color_grading.md`) and set its intensity once via
 
 **Phase 7 — Verify (never skip).** `preview_frame` at the start, the middle,
 and the end. Run the checklist in `prompts/review.md`: every segment has a
-visual, no overlaps or gaps on the timeline (`timeline_read`), captions are
-inside the safe area and readable over the footage, nothing is silent when it
-should not be, the BGM ducks under speech, SFX peaks hit their cuts. Fix and
+visual, no overlaps or gaps on the timeline (`timeline_read`), captions use
+measured segment timing (or independently verified word timing) and are inside
+the safe area/readable over footage, nothing is silent when it should not be,
+the BGM ducks under speech, SFX peaks hit their cuts. Fix and
 re-verify — the checklist is the gate.
 
 **Phase 8 — Export.** `export_start` (crf 20, h264 for platforms) →
 `export_wait` until the job says done → confirm the output file exists in the
 status. Only now may you call the work done. If a platform target was given,
-match its spec from the tables in section 3 (aspect, loudness norms, length).
+match its aspect and duration requirements. A planned loudness target is not
+proof of compliance: measure the exported mix externally if LUFS/true-peak
+limits matter; `export_wait` does not report them.
 
 ## 2. Job and artifact hygiene
 
@@ -128,23 +155,27 @@ match its spec from the tables in section 3 (aspect, loudness norms, length).
   10–16 (explainer, how-to) · energetic 16–24 (tech, finance, motivation) ·
   hype 24+ (gaming, extreme). Short-form retention: a pattern interrupt
   (cut, text pop, SFX, zoom) every 2–4 s; the hook lands inside 3 s.
-- **Voiceover**: 180–200 words per minute (≈1.7 words/s for duration math).
+- **Voiceover**: 180–200 words per minute (≈3.0–3.3 words/s; use about 3.1 for duration estimates).
   Silence spans beyond 0.5 s get cut; keep natural breaths at sentence ends
   (the padding rule).
-- **Music**: duck to −12 dB under speech (−9 tight, −15 relaxed), back up in
-  gaps; align section changes to downbeats when `analyze_beats` gives you a
-  grid; end on a downbeat.
+- **Music**: start with a −4 to −6 dB resting gain and an absolute −12 dB gain
+  target under speech (−9 tight, −15 relaxed); adjust by listening. Convert
+  with `clip_audio_levels_db`, then ride up in gaps; align section changes to
+  downbeats when `analyze_beats` gives you a grid; end on a downbeat.
 - **SFX**: one design sound per cut for energetic pacing, only where they add
   information — the peak (transient) lands ON the cut, not after. Categories
   to search: Whoosh, Impact, Riser, Motion, UI, Notification, Keyboard,
   Digital, Foley, Writing, Ambience, Music.
-- **Captions**: word-synced, 2–4 words on screen at once, centered around
-  65–70% frame height (`offsetY` ≈ 0.35 is the engine default), bold weight
-  (600+), stroke or plate for contrast, key words colored per niche. Never
-  touching the frame edges.
-- **Color**: one filter recipe per video, intensity set once. -14 LUFS is the
-  platform loudness norm; do not add gain effects on top of the loudness
-  filter.
+- **Captions**: the current `transcribe`/`captions_add` workflow is
+  segment-timed, not word-aligned. Keep cues readable (2–4 words where the
+  measured segment permits it), centered around 65–70% frame height
+  (`offsetY` ≈ 0.35 is the engine default), bold (600+), with stroke/plate
+  contrast and no text touching frame edges. Claim word sync only with
+  independently verified word timestamps.
+- **Color and loudness**: use one consistent filter recipe per video. A
+  platform LUFS/true-peak target is a goal only: export does not measure or
+  guarantee final-mix loudness. `concat.loudness` is not a master-bus pass;
+  use an external analyzer on the exported file before claiming compliance.
 - **Transitions**: cuts by default; a named transition only at section
   changes or where meaning demands it (the guide names all 22 and their uses).
 - **MAGICK stickers are CC BY-NC: never in monetized/commercial videos.**

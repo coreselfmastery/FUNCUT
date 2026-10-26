@@ -169,7 +169,7 @@ impl SpeechJob {
         let done = match &self.work {
             Work::Transcribe { request, language } => self
                 .transcriber
-                .transcribe(&self.dirs, request, |_| {})
+                .transcribe_with_language(&self.dirs, request, language.as_deref(), |_| {})
                 .map(|segments| {
                     serde_json::json!({
                         "segments": segments,

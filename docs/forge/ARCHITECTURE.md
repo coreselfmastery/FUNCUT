@@ -5,7 +5,7 @@ One chain, four layers. Everything in this integration serves it:
 ```
 Forge (the harness: reasoning, Model Mesh routing, /workflow parallelism, hooks)
   └─ reads the funcut-director skill (the director's brain: .claude/skills/)
-       └─ calls MCP tools (67 of them, over stdio)
+       └─ calls MCP tools (69 of them, over stdio)
             └─ `concat --mcp window|headless|auto` → the Concat API → the engine
 ```
 
@@ -19,14 +19,14 @@ Forge (the harness: reasoning, Model Mesh routing, /workflow parallelism, hooks)
   agent direct a professional edit instead of randomly calling tools is
   `.claude/skills/funcut-director/SKILL.md` and the playbooks under its
   `prompts/`: never leave a visual gap, SFX peak lands on the cut, section
-  changes on downbeats, captions word-synced at 42 px+, a hook inside 3
-  seconds, verify with `preview_frame` before export.
-- **The tools** are the Concat API over MCP: 67 shipped (projects, media, every
+  changes on downbeats, readable segment-timed captions at 42 px+, a hook
+  inside 3 seconds, verify with `preview_frame` before export.
+- **The tools** are the Concat API over MCP: 69 shipped (projects, media, every
   cut, masks, titles, captions, keyframes, effects, batched atomic edits,
   templates, export, libraries: OpenVid 937k clips, BGM 1,191 tracks, 430 SFX,
-  MAGICK stickers), including the six this integration added — `analyze_scenes`,
-  `analyze_beats`, `analyze_silence`, `analysis_wait`, `transcribe`,
-  `tts_generate` — the agent's senses and voice.
+  MAGICK stickers). The six analysis/speech tools give the agent its senses
+  and voice; `plan_validate` checks director plans before edits and
+  `clip_audio_levels_db` makes audio gain units explicit.
 - **The engine** is FUNCUT itself: the Rust + Slint editor, its window open
   while the agent works through the window's server (`--mcp window`), or
   headless for overnight queues.

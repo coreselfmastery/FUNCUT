@@ -803,7 +803,7 @@
   "start.reportProblemNote": "Što poslati da se može popraviti",
   "start.safeMode": "Concat se jednom zatvorio tijekom pokretanja, pa crta softverski do sljedeće dopune: sporije, ali se otvara. Da sada isprobate grafičku kartu, uključite Crtanje na GPU-u u Postavke > Općenito.",
   "start.searchProjects": "Pretraži projekte",
-  "start.settingsApplyWholeEdit": "Ove postavke vrijede za cijelu montažu i ne mogu se mijenjati kasnije.",
+  "start.settingsApplyWholeEdit": "Okvir, brzinu i pozadinu možete kasnije promijeniti u postavkama projekta.",
   "start.shape": "Oblik",
   "start.showInFolder": "Prikaži u mapi",
   "start.sortName": "Naziv",

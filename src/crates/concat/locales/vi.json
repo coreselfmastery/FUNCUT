@@ -803,7 +803,7 @@
   "start.reportProblemNote": "Cần gửi gì để có thể sửa",
   "start.safeMode": "Concat đã bị đóng một lần khi khởi động nên sẽ vẽ bằng phần mềm cho đến bản cập nhật tiếp theo: chậm hơn, nhưng vẫn mở được. Để dùng thử card đồ họa ngay bây giờ, bật \"Vẽ trên GPU\" trong Cài đặt > Chung.",
   "start.searchProjects": "Tìm dự án",
-  "start.settingsApplyWholeEdit": "Các cài đặt này áp dụng cho toàn bộ bản dựng và không thể thay đổi sau này.",
+  "start.settingsApplyWholeEdit": "Khung hình, tốc độ khung hình và nền có thể đổi sau trong Cài đặt dự án.",
   "start.shape": "Tỷ lệ khung hình",
   "start.showInFolder": "Hiện trong thư mục",
   "start.sortName": "Tên",

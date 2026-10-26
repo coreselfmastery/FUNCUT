@@ -803,7 +803,7 @@
   "start.reportProblemNote": "需要傳送什麼才能修正",
   "start.safeMode": "Concat 曾在啟動時異常關閉一次，因此在下次更新之前它將使用軟體渲染：較慢，但可以開啟。要立即嘗試使用顯示卡，請在 設定 > 一般 中開啟「在 GPU 上繪製」。",
   "start.searchProjects": "搜尋專案",
-  "start.settingsApplyWholeEdit": "這些設定作用於整個剪輯，之後無法更改。",
+  "start.settingsApplyWholeEdit": "畫面、影格速率和背景之後都可以在專案設定中更改。",
   "start.shape": "形狀",
   "start.showInFolder": "在資料夾中顯示",
   "start.sortName": "名稱",

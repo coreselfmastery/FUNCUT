@@ -803,7 +803,7 @@
   "start.reportProblemNote": "Düzəldilməsi üçün nə göndərməli",
   "start.safeMode": "Concat başlayanda bir dəfə bağlandı, ona görə növbəti yeniləməyədək proqram vasitəsilə çəkir: yavaşdır, ama açılır. Qrafika kartını indi sınamaq üçün Tənzimləmələr > Ümumi bölməsində GPU ilə çəkməni yandırın.",
   "start.searchProjects": "Layihələrdə axtar",
-  "start.settingsApplyWholeEdit": "Bu parametrlər bütün montaja aiddir və sonra dəyişdirilə bilməz.",
+  "start.settingsApplyWholeEdit": "Kadr, sürət və fon sonradan Layihə ayarlarında dəyişdirilə bilər.",
   "start.shape": "Forma",
   "start.showInFolder": "Qovluqda göstər",
   "start.sortName": "Ad",

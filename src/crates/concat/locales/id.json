@@ -803,7 +803,7 @@
   "start.reportProblemNote": "Apa yang perlu dikirim agar bisa diperbaiki",
   "start.safeMode": "Concat tertutup sekali saat mulai, jadi ia menggambar dengan perangkat lunak sampai pembaruannya: lebih lambat, tetapi terbuka. Untuk mencoba kartu grafis sekarang, nyalakan Menggambar di GPU di Pengaturan > Umum.",
   "start.searchProjects": "Cari proyek",
-  "start.settingsApplyWholeEdit": "Pengaturan ini berlaku untuk seluruh hasil edit dan tidak dapat diubah nanti.",
+  "start.settingsApplyWholeEdit": "Bingkai, laju, dan latar dapat diubah nanti di Pengaturan proyek.",
   "start.shape": "Bentuk",
   "start.showInFolder": "Tampilkan di folder",
   "start.sortName": "Nama",

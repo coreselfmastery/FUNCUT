@@ -803,7 +803,7 @@
   "start.reportProblemNote": "修正のために送ってほしい情報",
   "start.safeMode": "起動中に Concat が一度終了したため、次のアップデートまでソフトウェアで描画します。遅くなりますが、開くことはできます。今すぐグラフィックカードを試すには、設定 > 一般で「GPU で描画」をオンにしてください。",
   "start.searchProjects": "プロジェクトを検索",
-  "start.settingsApplyWholeEdit": "これらの設定は編集全体に適用され、後から変更できません。",
+  "start.settingsApplyWholeEdit": "フレーム、フレームレート、背景はあとからプロジェクト設定で変更できます。",
   "start.shape": "形",
   "start.showInFolder": "フォルダーで表示",
   "start.sortName": "名前",

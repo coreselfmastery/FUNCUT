@@ -803,7 +803,7 @@
   "start.reportProblemNote": "Wat je moet sturen zodat het opgelost kan worden",
   "start.safeMode": "Concat is een keer gesloten tijdens het opstarten en tekent daarom tot de volgende update in software: langzamer, maar het opent. Probeer de grafische kaart nu via \"Op de GPU tekenen\" in Instellingen > Algemeen.",
   "start.searchProjects": "Projecten zoeken",
-  "start.settingsApplyWholeEdit": "Deze instellingen gelden voor de hele montage en kunnen later niet worden gewijzigd.",
+  "start.settingsApplyWholeEdit": "Het beeld, de framerate en de achtergrond kun je later wijzigen in de projectinstellingen.",
   "start.shape": "Beeldverhouding",
   "start.showInFolder": "Tonen in map",
   "start.sortName": "Naam",

@@ -803,7 +803,7 @@
   "start.reportProblemNote": "Cosa inviare perché si possa correggere",
   "start.safeMode": "Concat si è chiuso una volta all'avvio, quindi disegna via software fino al prossimo aggiornamento: più lento, ma si apre. Per provare subito la scheda grafica, attivare Disegna sulla GPU in Impostazioni > Generale.",
   "start.searchProjects": "Cerca progetti",
-  "start.settingsApplyWholeEdit": "Queste impostazioni valgono per tutto il montaggio e non si possono cambiare in seguito.",
+  "start.settingsApplyWholeEdit": "Il formato, la frequenza e lo sfondo si possono cambiare in seguito nelle impostazioni del progetto.",
   "start.shape": "Forma",
   "start.showInFolder": "Mostra nella cartella",
   "start.sortName": "Nome",

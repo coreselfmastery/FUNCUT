@@ -803,7 +803,7 @@
   "start.reportProblemNote": "מה לשלוח כדי שאפשר יהיה לתקן",
   "start.safeMode": "Concat נסגר פעם אחת בזמן ההפעלה, ולכן הוא מצייר בתוכנה עד העדכון הבא: אטי יותר, אבל נפתח. כדי לנסות את כרטיס המסך כעת, הפעילו את \"ציור על ה-GPU\" בהגדרות > כללי.",
   "start.searchProjects": "חיפוש פרויקטים",
-  "start.settingsApplyWholeEdit": "ההגדרות האלה חלות על כל העריכה ולא ניתן לשנות אותן מאוחר יותר.",
+  "start.settingsApplyWholeEdit": "את המסגרת, הקצב והרקע אפשר לשנות אחר כך בהגדרות הפרויקט.",
   "start.shape": "צורה",
   "start.showInFolder": "הצגה בתיקייה",
   "start.sortName": "שם",

@@ -803,7 +803,7 @@
   "start.reportProblemNote": "Co wysłać, żeby dało się to naprawić",
   "start.safeMode": "Concat zamknął się raz podczas uruchamiania, więc do następnej aktualizacji rysuje programowo: wolniej, ale się otwiera. Aby teraz spróbować karty graficznej, włącz „Rysowanie na GPU” w Ustawienia > Ogólne.",
   "start.searchProjects": "Szukaj projektów",
-  "start.settingsApplyWholeEdit": "Te ustawienia dotyczą całego montażu i nie można ich później zmienić.",
+  "start.settingsApplyWholeEdit": "Kadr, liczbę klatek i tło można później zmienić w ustawieniach projektu.",
   "start.shape": "Format",
   "start.showInFolder": "Pokaż w folderze",
   "start.sortName": "Nazwa",

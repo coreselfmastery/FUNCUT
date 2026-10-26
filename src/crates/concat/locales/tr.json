@@ -803,7 +803,7 @@
   "start.reportProblemNote": "Düzeltilebilmesi için ne gönderilmeli",
   "start.safeMode": "Concat açılırken bir kez kapandı, bu yüzden bir sonraki güncellemeye kadar yazılımla çiziyor: yavaş, ama açılıyor. Ekran kartını şimdi denemek için Ayarlar > Genel'de \"GPU'da çiz\"i açın.",
   "start.searchProjects": "Projelerde ara",
-  "start.settingsApplyWholeEdit": "Bu ayarlar tüm düzenleme için geçerlidir ve sonradan değiştirilemez.",
+  "start.settingsApplyWholeEdit": "Kare, hız ve arka plan daha sonra Proje ayarlarından değiştirilebilir.",
   "start.shape": "Biçim",
   "start.showInFolder": "Klasörde göster",
   "start.sortName": "Ad",

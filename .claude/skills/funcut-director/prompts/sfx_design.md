@@ -15,9 +15,12 @@ weather, crowds) · `Music` (stingers, notes)
 
 ## The peak rule
 
-`sounds_add` takes the time the sound's PEAK must land on. Peaks go ON the
-cut — the frame the new visual appears — never after. A riser must ARRIVE at
-its cut: it starts 1–2 s earlier and its peak is at the boundary. An impact
+`sounds_add` starts the file at `start`. Peaks go ON the cut — the frame
+the new visual appears — never after. The search result's `syncAt` is where
+each sound's peak lands inside its file: place the peak on the cut by
+starting the file `syncAt` seconds before it (`start = cut - syncAt`). A
+riser must ARRIVE at its cut: it starts 1–2 s earlier and its peak is at the
+boundary. An impact
 peaks exactly at the reveal. ±1 frame; if you must choose, one frame early.
 
 ## The design pass (per segment, from the plan)

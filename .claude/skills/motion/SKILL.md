@@ -1,6 +1,6 @@
 ---
 name: motion
-description: Design and render motion graphics inside FUNCUT (the Concat video editor) — titles, lower thirds, kinetic captions, stat cards, charts, quotes, chapters, terminals, before/after splits, logo stings, backdrops, and hand-authored comps with masks, effects, blends and spring curves. Use this whenever a video needs designed type or animated graphics, whenever you are asked to animate text, caption a transcript word by word, build a title package or a showreel, or retime/restyle an existing comp. Covers the design doctrine (hooks, rhythm, contrast, one idea per beat), the comp JSON document down to every node kind, the twelve shipped presets and how to break out of them, the full operation vocabulary (set-slot, set-words, set-track, add-text/add-rect/add-group, spring/bezier/steps/points curves), the `concat-motion-agent` CLI (list, inspect, edit, frame, bake, reel, captions), the Geneva engine's real limits, and the verification loop: inspect, edit in one validated batch, look at three frames, bake at cut size.
+description: Design and render motion graphics inside FUNCUT (the Concat video editor) — titles, lower thirds, kinetic captions, stat cards, charts, quotes, chapters, terminals, before/after splits, logo stings, backdrops, and hand-authored comps with masks, effects, blends and spring curves. Use this whenever a video needs designed type or animated graphics, whenever you are asked to animate text, caption a transcript word by word, build a title package or a showreel, or retime/restyle an existing comp. Covers the design doctrine (hooks, rhythm, contrast, one idea per beat), the comp JSON document down to every node kind, the twelve shipped presets and how to break out of them, the full operation vocabulary (set-slot, set-words, set-track, set-track-points, add-text/add-rect/add-group, spring/bezier/steps/points curves), the `concat-motion-agent` CLI (list, inspect, edit, frame, bake, reel, captions), the Geneva engine's real limits, and the verification loop: inspect, edit in one validated batch, look at three frames, bake at cut size.
 ---
 
 # Motion comps
@@ -46,7 +46,7 @@ them is wrong.
 ## 1. The loop — never skip a step
 
 ```
-brief  →  list / inspect  →  one edit batch  →  frame at 2–3 moments  →  bake  →  place / reel
+brief  →  list / inspect  →  one edit batch  →  frame at 2–3 moments  →  bake  →  place (encode → import → add) / reel
 ```
 
 1. **Brief it first** (§4). Name the idea, the accent, the type pairing, the rhythm. One sentence.
@@ -58,8 +58,11 @@ brief  →  list / inspect  →  one edit batch  →  frame at 2–3 moments  �
    timeline. The error carries the failing operation's index.
 4. **Look at three frames**: mid-entrance, settled, mid-exit. Each frame is 32–47 ms. Three, not thirty.
 5. **Bake** at the size you cut at (`--width/--height`), never 4K "for safety".
-6. **Place** the clip as `kind: "motion"` with `comp`, `hash`, `engine` — or put it in a storyboard and
-   let `reel` do steps 5–6 for every scene at once.
+6. **Place** the baked piece where the edit can use it: `bake --encode piece.mp4` writes the
+   comp as one video file, `media_import` brings it into the project, `clip_add` lays it on a
+   lane. Video codecs carry no alpha, so `--encode` is for full-frame pieces (stats, stings,
+   chapters, backdrops, terminals, compares); a transparent overlay's truth is the PNG sequence
+   in the bake. Or put the whole package in a storyboard and let `reel` do steps 5–6 at once.
 
 ---
 
@@ -74,6 +77,7 @@ concat-motion-agent inspect comps/funcut.lower-third.glass.json
 concat-motion-agent edit comps/lt.json ops.json -o comps/lt2.json
 concat-motion-agent frame comps/lt2.json 1.5 -o still.png --width 960
 concat-motion-agent bake comps/lt2.json cache/lt --width 1280 --height 720
+concat-motion-agent bake comps/lt2.json cache/lt --encode piece.mp4 --crf 18   # one file to place
 concat-motion-agent reel storyboard.json -o reel.mp4            # --plan, --frame 12.4, --cache DIR
 concat-motion-agent captions words.json -o storyboard.json --plate assets/plate.jpg --audio assets/score.wav
 concat-motion-agent help
@@ -85,7 +89,7 @@ concat-motion-agent help
 | `inspect <comp>` | `{ok, comp: CompSummary, hash, problems[]}` — nodes, spans, tracks, words, slots, `needs_markup` |
 | `edit <comp> <ops.json\|-> [-o out]` | `{ok, written, hash, comp}` — the new summary |
 | `frame <comp> <sec> [-o png] [--width N]` | `{ok, at, frame}` |
-| `bake <comp> <dir> [--width --height --fps --opaque]` | `{ok, frames, width, height, fps, alpha, engine, engine_version, hash, dir, seconds, frames_per_second}` |
+| `bake <comp> <dir> [--width --height --fps --opaque] [--encode out.mp4\|webm\|mov] [--crf N]` | `{ok, frames, width, height, fps, alpha, engine, engine_version, hash, dir, seconds, frames_per_second, file?, notes?}` |
 | `captions <words> [-o storyboard] [--words-per-line N] [--max-line S] [--preset ID] [--plate IMG] [--audio FILE]` | `{ok, words, lines, duration, written, text[], storyboard}` |
 | `reel <storyboard> [-o mp4] [--cache DIR] [--frame SECONDS] [--plan]` | `{ok, scenes, duration, layers, assets, warnings, written, seconds, frames_per_second, report}` |
 
@@ -108,7 +112,8 @@ Kebab-case `op` tag, one JSON object each.
 | `set-words` | `node`, `words: [[word, start, end?], …]` | **karaoke captions from a transcript** |
 | `move` | `node`, `start` | when it happens |
 | `retime` | `node`, `duration` (`0` = to the end) | how long it lasts |
-| `set-track` | `node`, `property`, `keys: [[at, value, curve?], …]` | anything precise; `at` is a **fraction of the node's span** |
+| `set-track` | `node`, `property`, `keys: [[at, value, curve?], …]` | anything precise; `at` is a **fraction of the node's span**. For `position` the one value lands on both axes — the diagonal — so a real move uses `set-track-points` |
+| `set-track-points` | `node`, `keys: [[at, x, y, curve?], …]` | a `position` track with the two axes apart, in frame pixels |
 | `fade-in` | `node`, `seconds`, `curve` | the safe entrance (curve is required) |
 | `slide-to` | `node`, `x`, `y`, `seconds` | arrival from an edge, settled on a spring |
 | `pop` | `node`, `from`, `seconds` | chips, badges, numbers arriving |
@@ -224,7 +229,7 @@ The correct split of labour, measured on Geneva 1.6.0:
 
 Hand-authored comps are the fastest way to a look nothing else in the product can copy. `cypher.opener`
 (a masked glow, a gradient-clipped word pulling focus on a `blur` track, a CSS hairline, a `steps()`
-kicker) is ~120 lines of JSON and is in the repository as a template for exactly this.
+kicker) is ~440 lines of pretty-printed JSON and is in the repository as a template for exactly this.
 
 ---
 

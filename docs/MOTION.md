@@ -25,8 +25,9 @@ engine means one look. A machine without the sidecar falls back to `native` for 
 rather than failing to open the project.
 
 Finding the sidecar: `CONCAT_GENEVA_BIN` → the setting → next to the executable → `~/.local/bin` → `PATH`.
-Version `1.6.0` is what this was written against; another **major** version is reported as a risk, never
-silently used. Every bake records the version in its manifest.
+Version `1.6.0` is what this was written against - the Linux installer fetches exactly that one, pinned
+by checksum, into `~/.local/bin`. Another **major** version is reported as a risk by the probe and
+**refused at bake with the reason**, never silently used. Every bake records the version it used.
 
 ---
 
@@ -95,7 +96,8 @@ edit gets a new hash and misses the cache by itself.
 
 Each is an ordinary `Comp` with slots, so it is a template rather than a picture. `presets::build(id)`
 returns one by id, `presets::ALL` is the catalogue, and `dump_presets` writes all twelve out as JSON -
-`examples/comps/` holds that output for six of them.
+`examples/comps/` holds that output for all twelve, plus the two hand-authored `cypher` comps and the
+`showreel-v3` storyboard.
 
 ---
 
@@ -276,6 +278,7 @@ cargo run -p concat-motion --bin concat-motion-agent -- inspect comps/funcut.low
 cargo run -p concat-motion --bin concat-motion-agent -- edit comps/lt.json ops.json -o comps/lt2.json
 cargo run -p concat-motion --bin concat-motion-agent -- frame comps/lt2.json 1.5 -o still.png --width 960
 cargo run -p concat-motion --bin concat-motion-agent -- bake comps/lt2.json cache/lt --width 1280 --height 720
+cargo run -p concat-motion --bin concat-motion-agent -- bake comps/lt2.json cache/lt --encode piece.mp4 --crf 18
 cargo run -p concat-motion --bin concat-motion-agent -- reel storyboard.json -o reel.mp4
 cargo run -p concat-motion --bin concat-motion-agent -- captions words.json -o storyboard.json \
     --plate assets/plate.jpg --audio assets/score.wav
@@ -300,6 +303,8 @@ document. An operation that fails names its index, so a retry is one step, not a
   { "op": "set-track", "node": "card", "property": "scale",
     "keys": [[0, 0.9, { "kind": "spring", "stiffness": 260, "damping": 15, "mass": 1 }],
              [0.6, 1.0, null]] },
+  { "op": "set-track-points", "node": "card",
+    "keys": [[0, 240, 540, null], [0.7, 960, 540, { "kind": "spring", "stiffness": 170, "damping": 26, "mass": 1 }]] },
   { "op": "add-text", "id": "kicker", "text": "CHAPTER 02", "size": 28, "weight": 700,
     "color": "#22d3c5", "x": 240, "y": 140 }
 ] }
@@ -311,6 +316,12 @@ or objects with `text`/`start`/`end`.
 
 `reel` is the whole-sequence verb: a storyboard of scenes (a preset id or a comp file each, with
 operations, a plate and a hold), shared assets, audio beds and a curtain, in one JSON document.
+
+`bake --encode out.mp4` renders the staged timeline once more into one video file the timeline
+plays like any other footage - `.webm` asks for VP9, `.mov` for ProRes 4444, anything else H.264.
+The sidecar's video codecs carry no alpha (only the PNG sequence keeps it), so the reply carries a
+`notes` line saying so on every transparent comp: `--encode` is for full-frame pieces, and an
+overlay's truth stays in the bake.
 
 ```json
 { "width": 1920, "height": 1080, "fps": 30,
@@ -324,9 +335,9 @@ operations, a plate and a hold), shared assets, audio beds and a curtain, in one
   "curtain": { "color": "#05060aff", "open": 0.6, "close": 0.8, "dip": 0.2, "depth": 1.0 } }
 ```
 
-Operations: `set-slot`, `set-text`, `set-words`, `move`, `retime`, `set-track`, `fade-in`, `slide-to`,
-`pop`, `add-group`, `add-rect`, `add-text`, `delete`, `set-blend`, `set-opacity`, `set-duration`,
-`set-background`.
+Operations: `set-slot`, `set-text`, `set-words`, `move`, `retime`, `set-track`, `set-track-points`,
+`fade-in`, `slide-to`, `pop`, `add-group`, `add-rect`, `add-text`, `delete`, `set-blend`,
+`set-opacity`, `set-duration`, `set-background`.
 
 ---
 

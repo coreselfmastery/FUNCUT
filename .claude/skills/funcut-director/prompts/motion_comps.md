@@ -51,7 +51,11 @@ five decisions  →  inspect  →  one sentence of intent  →  one edit batch  
 - **one batch**: all-or-nothing and validated, so a half-built comp cannot reach the timeline.
 - **three frames**, not thirty: mid-entrance, settled, mid-exit.
 - **bake** at the size you cut at.
-- **place** the clip as `kind: "motion"` with `comp`, `hash`, `engine`.
+- **place** it where the edit can use it: `bake --encode piece.mp4` (or `.webm` for VP9,
+  `.mov` for ProRes 4444), then `media_import {path}` and `clip_add {media, start}`. The video
+  codecs carry no alpha — the reply says so as a note on every transparent comp — so `--encode`
+  is for full-frame pieces (stats, stings, chapters, backdrops, terminals, compares); a
+  transparent overlay's truth stays in the bake's PNG sequence.
 
 ---
 
@@ -138,8 +142,10 @@ hand-authored comps, 54.6 s of 1080p30 in 1638 frames, rendered in 121 s on two 
 
 - Three frames per comp: mid-entrance, settled, mid-exit. A comp that is right at 2 s and wrong at
   6 s is a bug you have not seen yet.
-- `needs_markup: true` needs the Geneva sidecar; without it the comp bakes on `native` **without the
-  markup nodes** — read the bake manifest's warnings rather than trusting the picture.
+- `needs_markup: true` needs the Geneva sidecar; without it the bake is **refused with the
+  reason and the install instructions** (native cannot draw markup, so it never pretends to) —
+  install the sidecar rather than trusting any other picture. A comp with no markup bakes on
+  `native` when the sidecar is missing; read the bake manifest's warnings either way.
 - A comp that renders empty is either a transparent background (correct for an overlay) or a node
   whose `start` is later than the frame you looked at.
 - Backdrops are the expensive bake (full-frame gradients). Bake once at cut size and reuse.

@@ -45,6 +45,19 @@ pub const TIMELINE_VERSION: &str = "1.1";
 /// but a different major version is refused with the reason.
 pub const TESTED_VERSION: &str = "1.6.0";
 
+/// Why a version cannot be trusted, when its major is not the one this crate
+/// was written for. Optional fields may arrive within a major; a different
+/// major is a different format, and is never silently baked with.
+fn major_mismatch(version: &str) -> Option<String> {
+    let tested = TESTED_VERSION.split('.').next().unwrap_or_default();
+    let found = version.split('.').next().unwrap_or_default();
+    (tested.is_empty() || found.is_empty() || tested != found).then(|| {
+        format!(
+            "geneva {version} is a different major version than the {TESTED_VERSION} this was written for"
+        )
+    })
+}
+
 /// The environment variable that points at the binary, for a build that brings
 /// its own.
 pub const ENV_BIN: &str = "CONCAT_GENEVA_BIN";
@@ -70,7 +83,6 @@ impl Geneva {
             && let Some(dir) = exe.parent()
         {
             candidates.push(dir.join("geneva"));
-            candidates.push(dir.join("geneyva"));
         }
         if let Some(home) = std::env::var_os("HOME") {
             let home = PathBuf::from(home);
@@ -99,6 +111,11 @@ impl Geneva {
     }
 
     /// The version it reports, e.g. `1.6.0`.
+    ///
+    /// A binary that does not exit cleanly, or that prints nothing reading as
+    /// a version, is a failure to answer rather than a version `""`: a wrong
+    /// executable answering to the sidecar's name would otherwise be
+    /// believed forever.
     pub fn version(&self) -> Result<String, MotionError> {
         let output = Command::new(&self.exe)
             .arg("--version")
@@ -109,19 +126,39 @@ impl Geneva {
                 source: error,
             })?;
         let text = String::from_utf8_lossy(&output.stdout);
-        // "geneva 1.6.0"
-        Ok(text
-            .split_whitespace()
-            .last()
-            .unwrap_or_default()
-            .to_string())
+        // "geneva 1.6.0": the version is the first token that begins as one.
+        let version = text.split_whitespace().find(|token| {
+            token
+                .split('.')
+                .next()
+                .is_some_and(|first| !first.is_empty() && first.chars().all(|c| c.is_ascii_digit()))
+        });
+        match version {
+            Some(version) if output.status.success() => Ok(version.to_string()),
+            _ => Err(MotionError::Engine {
+                code: None,
+                message: format!(
+                    "{} did not report a version (exited with {})",
+                    self.exe.display(),
+                    output.status
+                ),
+                help: Some(
+                    "the sidecar is geneva-render/geneva; check what answers to its name".into(),
+                ),
+            }),
+        }
     }
 
     /// Whether this binary can draw markup comps, and what it is.
+    ///
+    /// A different major version is reported as the risk it is: the probe
+    /// still finds it - a settings page wants to - but a bake is refused
+    /// with the same reason, so a format the crate was not written for is
+    /// never quietly drawn with.
     pub fn probe(&self) -> Probe {
         match self.version() {
             Ok(version) => {
-                let major_ok = TESTED_VERSION.split('.').next() == version.split('.').next();
+                let major_ok = major_mismatch(&version).is_none();
                 Probe {
                     available: true,
                     version: Some(version.clone()),
@@ -129,7 +166,7 @@ impl Geneva {
                         format!("geneva {version} at {}", self.exe.display())
                     } else {
                         format!(
-                            "geneva {version} is a different major version than the {TESTED_VERSION} this was written for; markup comps may be refused"
+                            "geneva {version} is a different major version than the {TESTED_VERSION} this was written for; bakes are refused with the reason"
                         )
                     },
                 }
@@ -178,7 +215,7 @@ impl Geneva {
             };
             assets.insert(
                 id.clone(),
-                json!({ "src": staged_path(asset), "kind": kind }),
+                json!({ "src": staged_path(id, asset), "kind": kind }),
             );
         }
 
@@ -195,7 +232,7 @@ impl Geneva {
             if node.duration > 0.0 {
                 clip.insert("duration".into(), Json::String(seconds(node.duration)));
             }
-            let transform = effective_transform(comp, node);
+            let transform = effective_transform(comp, node, &mut warnings);
             if let Some(transform) = transform {
                 clip.insert("transform".into(), transform);
             }
@@ -293,18 +330,27 @@ impl Geneva {
             path: dir.join("assets"),
             source,
         })?;
-        for asset in comp.assets.values() {
+        for (id, asset) in &comp.assets {
             let from = source_dir.join(&asset.src);
             if !from.is_file() {
                 continue;
             }
-            let to = dir.join(staged_path(asset));
+            let to = dir.join(staged_path(id, asset));
             if to.is_file() {
                 continue;
             }
-            std::fs::copy(&from, &to).map_err(|source| MotionError::Io {
+            // A copy that did not finish must not be believed whole by the
+            // next bake: it lands beside the bake as a `.part` and is
+            // renamed in only when it is complete.
+            let part = to.with_extension("part");
+            std::fs::copy(&from, &part).map_err(|source| MotionError::Io {
                 doing: "copying an asset into the bake".into(),
                 path: from,
+                source,
+            })?;
+            std::fs::rename(&part, &to).map_err(|source| MotionError::Io {
+                doing: "finishing an asset copy".into(),
+                path: to.clone(),
                 source,
             })?;
         }
@@ -416,6 +462,15 @@ impl CompEngine for Geneva {
             });
         }
         let version = self.version()?;
+        if let Some(reason) = major_mismatch(&version) {
+            return Err(MotionError::Engine {
+                code: None,
+                message: reason,
+                help: Some(format!(
+                    "point {ENV_BIN} at a geneva the comp was written for, or reinstall the sidecar"
+                )),
+            });
+        }
         let source_dir = if request.source_dir.as_os_str().is_empty() {
             PathBuf::from(".")
         } else {
@@ -424,6 +479,10 @@ impl CompEngine for Geneva {
         self.stage(comp, &source_dir, request, dir)?;
 
         let frames = dir.join("frames");
+        // A bake counts what the render wrote, so a stale `frames/` left by
+        // an interrupted run must not survive into the count: it is emptied
+        // first.
+        let _ = std::fs::remove_dir_all(&frames);
         std::fs::create_dir_all(&frames).map_err(|source| MotionError::Io {
             doing: "creating".into(),
             path: frames.clone(),
@@ -451,6 +510,16 @@ impl CompEngine for Geneva {
                 .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "png"))
                 .count();
         }
+        if written == 0 {
+            return Err(MotionError::Engine {
+                code: None,
+                message: "the render reported success but wrote no frames".into(),
+                help: Some(
+                    "the bake directory is left as it is; baking into a fresh one answers whether the sidecar is at fault"
+                        .into(),
+                ),
+            });
+        }
         let baked = Baked {
             dir: frames,
             frames: written,
@@ -471,17 +540,27 @@ impl CompEngine for Geneva {
         Ok(baked)
     }
 
-    fn frame(&self, comp: &Comp, at: f64, width: Option<u32>) -> Result<PathBuf, MotionError> {
+    fn frame(
+        &self,
+        comp: &Comp,
+        at: f64,
+        width: Option<u32>,
+        source_dir: &Path,
+    ) -> Result<PathBuf, MotionError> {
         let problems = comp.validate();
         if !problems.is_empty() {
             return Err(MotionError::Invalid {
                 diagnostics: problems,
             });
         }
+        // One scratch directory a call, so two frames asked for one comp do
+        // not write the same file over each other.
+        static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let scratch = std::env::temp_dir().join(format!(
-            "concat-motion-{}-{}",
+            "concat-motion-{}-{}-{}",
             comp.hash(),
-            std::process::id()
+            std::process::id(),
+            CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         std::fs::create_dir_all(&scratch).map_err(|source| MotionError::Io {
             doing: "creating".into(),
@@ -490,14 +569,10 @@ impl CompEngine for Geneva {
         })?;
         let request = BakeRequest {
             width,
+            source_dir: source_dir.to_path_buf(),
             ..BakeRequest::default()
         };
-        let source_dir = if request.source_dir.as_os_str().is_empty() {
-            PathBuf::from(".")
-        } else {
-            request.source_dir.clone()
-        };
-        self.stage(comp, &source_dir, &request, &scratch)?;
+        self.stage(comp, source_dir, &request, &scratch)?;
         let out = scratch.join("frame.png");
         let mut args: Vec<String> = vec![
             "--format".into(),
@@ -518,13 +593,25 @@ impl CompEngine for Geneva {
     }
 }
 
-/// The staged path an asset gets inside a bake directory.
-fn staged_path(asset: &Asset) -> String {
+/// The staged path an asset gets inside a bake directory: the id is kept in
+/// the name, so two assets that merely share a file name cannot overwrite
+/// one another - the same rule the sequence builder stages by.
+fn staged_path(id: &str, asset: &Asset) -> String {
     let name = Path::new(&asset.src)
         .file_name()
         .map(|name| name.to_string_lossy().to_string())
         .unwrap_or_else(|| "asset".to_string());
-    format!("assets/{name}")
+    let safe: String = id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    format!("assets/{safe}.{name}")
 }
 
 /// The Geneva asset kind for an asset, or `None` when it does not read one.
@@ -649,16 +736,17 @@ fn seconds(value: f64) -> String {
     format!("{}s", if trimmed.is_empty() { "0" } else { trimmed })
 }
 
-/// The clip's transform, with animated properties as tracks.
-fn effective_transform(comp: &Comp, node: &Node) -> Option<Json> {
-    let mut warnings = Vec::new();
+/// The clip's transform, with animated properties as tracks. What cannot
+/// be expressed in a geneva timeline is reported through `warnings`, like
+/// every other thing the timeline leaves out.
+fn effective_transform(comp: &Comp, node: &Node, warnings: &mut Vec<String>) -> Option<Json> {
     let base = &node.transform;
     let mut map = serde_json::Map::new();
 
     let position = node
         .tracks
         .get("position")
-        .and_then(|track| keyframes(track, Kind::Point, span_of(comp, node), &mut warnings))
+        .and_then(|track| keyframes(track, Kind::Point, span_of(comp, node), warnings))
         .or_else(|| {
             let point = base.position?;
             let placed = absolute_position(comp, node, point);
@@ -679,7 +767,7 @@ fn effective_transform(comp: &Comp, node: &Node) -> Option<Json> {
     let scale = node
         .tracks
         .get("scale")
-        .and_then(|track| keyframes(track, Kind::Number, span_of(comp, node), &mut warnings))
+        .and_then(|track| keyframes(track, Kind::Number, span_of(comp, node), warnings))
         .unwrap_or_else(|| json!(base.scale));
     if scale != json!(1.0) {
         map.insert("scale".into(), scale);
@@ -687,7 +775,7 @@ fn effective_transform(comp: &Comp, node: &Node) -> Option<Json> {
     let rotation = node
         .tracks
         .get("rotation")
-        .and_then(|track| keyframes(track, Kind::Number, span_of(comp, node), &mut warnings))
+        .and_then(|track| keyframes(track, Kind::Number, span_of(comp, node), warnings))
         .unwrap_or_else(|| json!(base.rotation));
     if rotation != json!(0.0) {
         map.insert("rotation".into(), rotation);
@@ -1355,5 +1443,28 @@ mod tests {
         if let Some(geneva) = found {
             assert!(geneva.exe().is_file());
         }
+    }
+
+    #[test]
+    fn staged_paths_cannot_collide_on_a_shared_file_name() {
+        let a = Asset {
+            src: "img/logo.png".into(),
+            kind: None,
+        };
+        let b = Asset {
+            src: "other/logo.png".into(),
+            kind: None,
+        };
+        // Two assets that merely share a file name stage apart: the id is
+        // kept, so one never renders over the other.
+        assert_ne!(staged_path("left", &a), staged_path("right", &b));
+    }
+
+    #[test]
+    fn a_different_major_is_a_mismatch_and_a_newer_minor_is_not() {
+        assert!(major_mismatch("2.0.0").is_some());
+        assert!(major_mismatch("").is_some());
+        assert!(major_mismatch("1.6.0").is_none());
+        assert!(major_mismatch("1.99.9").is_none());
     }
 }

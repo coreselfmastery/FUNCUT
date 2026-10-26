@@ -30,10 +30,11 @@
 //! - **Project**: a `Motion` clip points at `comps/<hash>.json`. The document
 //!   is content-addressed, so two clips placing the same comp share one bake,
 //!   and an edit changes the hash and misses the cache by itself.
-//! - **Render**: `concat-export` asks for frames `0..N` of a comp, the cache
-//!   answers when it can, and the engine bakes the rest into
-//!   `cache/comps/<hash>-<w>x<h>>@<fps>/`. The export loop never waits on a
-//!   sidecar mid-frame: a bake is a preparation step, not a per-frame call.
+//! - **Render**: `concat-export` asks for a comp's frames, `0001.png`
+//!   upwards, and the cache answers when it can; the engine bakes the rest
+//!   into `cache/comps/<hash>-<w>x<h>>@<fps>/`. The export loop never waits
+//!   on a sidecar mid-frame: a bake is a preparation step, not a per-frame
+//!   call.
 //! - **Preview**: [`engine::CompEngine::frame`] draws one frame at a time for
 //!   the stage - tens of milliseconds, so a scrub is responsive without
 //!   baking.

@@ -16,6 +16,11 @@
 # repository's Releases page before this script (or the website, or
 # anything but your own login) can see it.
 #
+# Beside the app it offers the motion sidecar - Geneva v1.6.0, pinned by
+# checksum - into ~/.local/bin: the editor runs without it (a comp with
+# no markup bakes on the native engine), so its failure is said and
+# never fatal.
+#
 # Needs curl or wget, and one of sha256sum or shasum to check the
 # download. Nothing is installed until the check has passed.
 
@@ -352,6 +357,71 @@ case "$KIND" in
         say "installed: /opt/concat/concat (run it as 'concat')"
         ;;
 esac
+
+# ── the motion sidecar ───────────────────────────────────────
+# Geneva draws a markup comp: the browserless HTML/CSS renderer the
+# motion layer bakes with, one pinned binary. It is offered after the
+# app is installed rather than bundled in it, so a machine that never
+# touches a comp never downloads one - and one that does has it. The
+# editor runs without it (a comp with no markup bakes on the native
+# engine), so every failure here is said and carried on, never fatal.
+if ! command -v geneva >/dev/null 2>&1; then
+    say ""
+    case "$ARCH" in
+        x86_64)
+            GENEVA_URL="https://github.com/geneva-render/geneva/releases/download/v1.6.0/geneva-v1.6.0-x86_64-unknown-linux-gnu.tar.gz"
+            GENEVA_SHA256="c2c9d3b2f82621ba6e7cfd36b36a8a3df9d9ba2b7374d06245248e2fb4120e16"
+            ;;
+        aarch64)
+            GENEVA_URL="https://github.com/geneva-render/geneva/releases/download/v1.6.0/geneva-v1.6.0-aarch64-unknown-linux-gnu.tar.gz"
+            GENEVA_SHA256="8066d4ff388b5f2557678e168bca1e70c49d9624ee61cedad2bfcf0d008f1243"
+            ;;
+    esac
+    say "the motion sidecar: geneva v1.6.0 (~16 MB, checksum-checked)"
+    if fetch "$GENEVA_URL" "$TMP/geneva.tar.gz"; then
+        GENEVA_CHECKED="no"
+        if command -v sha256sum >/dev/null 2>&1; then
+            if printf '%s  %s\n' "$GENEVA_SHA256" "$TMP/geneva.tar.gz" | sha256sum -c - >/dev/null 2>&1; then
+                GENEVA_CHECKED="yes"
+            fi
+        elif command -v shasum >/dev/null 2>&1; then
+            if printf '%s  %s\n' "$GENEVA_SHA256" "$TMP/geneva.tar.gz" | shasum -a 256 -c - >/dev/null 2>&1; then
+                GENEVA_CHECKED="yes"
+            fi
+        else
+            GENEVA_CHECKED="unchecked"
+        fi
+        case "$GENEVA_CHECKED" in
+            yes|unchecked)
+                [ "$GENEVA_CHECKED" = yes ] && say "  checksum ok" || say "  no sha256 tool found - installing unchecked"
+                mkdir -p "$TMP/geneva-out" "$HOME/.local/bin"
+                tar -xzf "$TMP/geneva.tar.gz" -C "$TMP/geneva-out" ||
+                    { say "  could not unpack it - the editor runs without it"; }
+                GENEVA_BIN=$(find "$TMP/geneva-out" -type f -name geneva 2>/dev/null | head -n 1 || true)
+                if [ -n "$GENEVA_BIN" ]; then
+                    cp "$GENEVA_BIN" "$HOME/.local/bin/geneva"
+                    chmod +x "$HOME/.local/bin/geneva"
+                    GENEVA_VERSION=$("$HOME/.local/bin/geneva" --version 2>/dev/null || true)
+                    if [ -n "$GENEVA_VERSION" ]; then
+                        say "  installed: $HOME/.local/bin/geneva ($GENEVA_VERSION)"
+                    else
+                        say "  installed but it did not run here - the editor runs without it"
+                    fi
+                else
+                    say "  the tarball held no binary - the editor runs without it"
+                fi
+                ;;
+            *)
+                say "  checksum mismatch - not installed; the editor runs without it"
+                ;;
+        esac
+    else
+        say "  could not download it - the editor runs without it"
+    fi
+else
+    say ""
+    say "the motion sidecar: geneva is already on PATH - left as it is"
+fi
 
 say ""
 say "Next, on a small machine:"

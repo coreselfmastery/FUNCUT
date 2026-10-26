@@ -87,7 +87,10 @@ pub enum Op {
     ///
     /// The track is written as `(at, value, curve)` triples, `at` a fraction
     /// of the node's span - the shape a model can produce from a sentence
-    /// like "slide in over the first half second and settle".
+    /// like "slide in over the first half second and settle". For
+    /// `position` the one value lands on both axes, so a track written this
+    /// way travels the diagonal; [`Op::SetTrackPoints`] carries the two
+    /// axes apart.
     SetTrack {
         /// The node.
         node: String,
@@ -96,6 +99,17 @@ pub enum Op {
         property: String,
         /// The keys.
         keys: Vec<(f64, f64, Option<Curve>)>,
+    },
+    /// Add or replace a `position` track, the two axes carried apart.
+    ///
+    /// The keys are `(at, x, y, curve)` quadruples, `at` a fraction of the
+    /// node's span and the place in frame pixels, which is the shape a
+    /// sentence like "arc from bottom-left to centre" produces.
+    SetTrackPoints {
+        /// The node.
+        node: String,
+        /// The keys, each `(at, x, y, curve)`.
+        keys: Vec<(f64, f64, f64, Option<Curve>)>,
     },
     /// Fade a node in over the first `seconds` of its span.
     FadeIn {
@@ -250,39 +264,40 @@ pub fn apply_json(comp: &Comp, batch: &serde_json::Value) -> Result<Comp, Motion
 pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
     match op {
         Op::SetSlot { slot, value } => {
-            let target = comp
+            // The matched slot is also the one whose sample is the needle: a
+            // node can carry two slots (a name and a role beside it), and the
+            // first slot on the node would replace the wrong one's words.
+            let (node, field, sample) = comp
                 .slots
                 .iter()
                 .find(|candidate| {
                     candidate.label.eq_ignore_ascii_case(slot)
                         || candidate.node.eq_ignore_ascii_case(slot)
                 })
-                .map(|candidate| (candidate.node.clone(), candidate.field))
+                .map(|candidate| {
+                    (
+                        candidate.node.clone(),
+                        candidate.field,
+                        candidate.sample.clone(),
+                    )
+                })
                 .ok_or_else(|| {
                     fail(
                         format!("no slot called {slot:?}"),
                         "the comp lists its slots under `slots`",
                     )
                 })?;
-            let sample = comp
-                .slots
-                .iter()
-                .find(|candidate| candidate.node == target.0)
-                .map(|candidate| candidate.sample.clone())
-                .unwrap_or_default();
-            match target.1 {
+            match field {
                 SlotField::Text => {
-                    set_text_in(&mut comp, &target.0, &sample, value)?;
-                    Some(())
+                    set_text_in(&mut comp, &node, &sample, value)?;
                 }
                 SlotField::Image => {
-                    let node = node_mut(&mut comp, &target.0)?;
-                    if let NodeKind::Image { asset, .. } = &mut node.kind {
+                    let entry = node_mut(&mut comp, &node)?;
+                    if let NodeKind::Image { asset, .. } = &mut entry.kind {
                         *asset = value.clone();
                     }
-                    Some(())
                 }
-            };
+            }
             Ok(comp)
         }
         Op::SetText { node, text } => {
@@ -290,7 +305,11 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
             Ok(comp)
         }
         Op::SetWords { node, words } => {
-            let span = comp.duration;
+            // Word times are relative to the node, so an open-ended last
+            // word closes at the node's own end, not the comp's - a node
+            // that starts at 2 s in a 6 s comp does not hold its last word
+            // for the whole 6 s.
+            let span = span_of(&comp, node)?;
             let entry = node_mut(&mut comp, node)?;
             if let NodeKind::Text(text) = &mut entry.kind {
                 text.words = words
@@ -355,6 +374,22 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
                 .sort_by(|a, b| a.at.partial_cmp(&b.at).unwrap_or(std::cmp::Ordering::Equal));
             let entry = node_mut(&mut comp, node)?;
             entry.tracks.insert(property.clone(), track);
+            Ok(comp)
+        }
+        Op::SetTrackPoints { node, keys } => {
+            let mut track = Track::default();
+            for (at, x, y, curve) in keys {
+                let value = Value::Point { x: *x, y: *y };
+                track.keys.push(match curve {
+                    Some(curve) => Key::eased(*at, value, curve.clone()),
+                    None => Key::new(*at, value),
+                });
+            }
+            track
+                .keys
+                .sort_by(|a, b| a.at.partial_cmp(&b.at).unwrap_or(std::cmp::Ordering::Equal));
+            let entry = node_mut(&mut comp, node)?;
+            entry.tracks.insert("position".into(), track);
             Ok(comp)
         }
         Op::FadeIn {
@@ -539,6 +574,14 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
             }
             comp.nodes.retain(|entry| !doomed.contains(&entry.id));
             comp.slots.retain(|slot| !doomed.contains(&slot.node));
+            // A group naming a deleted child would fail validation after
+            // the delete had already gone through: the children lists are
+            // pruned with the nodes themselves.
+            for entry in &mut comp.nodes {
+                if let NodeKind::Group { children } = &mut entry.kind {
+                    children.retain(|child| !doomed.contains(child));
+                }
+            }
             Ok(comp)
         }
         Op::SetBlend { node, blend } => {
@@ -641,6 +684,9 @@ fn text_runs(markup: &str) -> Vec<(usize, usize, &str)> {
 }
 
 /// The run reading exactly `sample`, replaced - or `None` when no run does.
+///
+/// The value is escaped the way [`replace_text_span`] escapes one, so
+/// filling a slot can never inject markup through this path either.
 fn try_replace_run(markup: &str, sample: &str, value: &str) -> Option<String> {
     let sample = sample.trim();
     if sample.is_empty() {
@@ -649,9 +695,13 @@ fn try_replace_run(markup: &str, sample: &str, value: &str) -> Option<String> {
     let (start, end, _) = text_runs(markup)
         .into_iter()
         .find(|(_, _, run)| *run == sample)?;
+    let escaped = value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
     let mut out = String::with_capacity(markup.len());
     out.push_str(&markup[..start]);
-    out.push_str(value);
+    out.push_str(&escaped);
     out.push_str(&markup[end..]);
     Some(out)
 }
@@ -1331,6 +1381,160 @@ mod tests {
         assert_eq!(
             replace_text_run("<div class='x'></div>", "", "Grace"),
             "<div class='x'></div>"
+        );
+    }
+
+    #[test]
+    fn a_node_with_two_slots_fills_the_one_asked_for() {
+        let mut comp = lower_third();
+        comp.slots.push(Slot {
+            node: "card".into(),
+            field: SlotField::Text,
+            sample: "Analytical Engine · London, 1843".into(),
+            label: "Role".into(),
+        });
+        let edited = apply(
+            &comp,
+            &[Op::SetSlot {
+                slot: "Role".into(),
+                value: "Countess of Lovelace".into(),
+            }],
+        )
+        .expect("applies");
+        let NodeKind::Html { markup, .. } = &edited.node("card").expect("card").kind else {
+            panic!("markup");
+        };
+        // The role's run changed and the name's did not: the matched slot's
+        // own sample is the needle, not the first one on the node.
+        assert!(markup.contains("Countess of Lovelace"), "{markup}");
+        assert!(markup.contains("Ada Lovelace"), "{markup}");
+        assert!(
+            !markup.contains("Analytical Engine"),
+            "the role run was left alone: {markup}"
+        );
+    }
+
+    #[test]
+    fn an_open_last_word_closes_at_the_nodes_own_end() {
+        let comp = lower_third();
+        let edited = apply(
+            &comp,
+            &[
+                Op::AddText {
+                    id: "line".into(),
+                    text: "words".into(),
+                    size: 40.0,
+                    weight: 700,
+                    color: "#ffffff".into(),
+                    x: 100.0,
+                    y: 100.0,
+                },
+                Op::Move {
+                    node: "line".into(),
+                    start: 2.0,
+                },
+                Op::Retime {
+                    node: "line".into(),
+                    duration: 1.0,
+                },
+                Op::SetWords {
+                    node: "line".into(),
+                    words: vec![("hold".into(), 0.2, None)],
+                },
+            ],
+        )
+        .expect("applies");
+        let NodeKind::Text(text) = &edited.node("line").expect("line").kind else {
+            panic!("text");
+        };
+        // The node runs 1 s of a 6 s comp: the open word closes at 1 s, the
+        // node's own end, and not at the comp's 6 s.
+        assert_eq!(text.words.last().and_then(|word| word.end), Some(1.0));
+    }
+
+    #[test]
+    fn set_track_points_writes_both_axes() {
+        let comp = lower_third();
+        let edited = apply(
+            &comp,
+            &[Op::SetTrackPoints {
+                node: "card".into(),
+                keys: vec![
+                    (0.0, 240.0, 400.0, None),
+                    (1.0, 960.0, 540.0, Some(Curve::EASE_OUT)),
+                ],
+            }],
+        )
+        .expect("applies");
+        let card = edited.node("card").expect("card");
+        let track = card.tracks.get("position").expect("a position track");
+        assert_eq!(
+            track.sample(0.0).unwrap(),
+            Value::Point { x: 240.0, y: 400.0 }
+        );
+        assert_eq!(
+            track.sample(1.0).unwrap(),
+            Value::Point { x: 960.0, y: 540.0 }
+        );
+    }
+
+    #[test]
+    fn deleting_a_child_leaves_no_dangling_id_in_its_group() {
+        let mut comp = lower_third();
+        comp.nodes.push(Node {
+            id: "row".into(),
+            parent: None,
+            start: 0.0,
+            duration: 0.0,
+            transform: Transform::default(),
+            opacity: 1.0,
+            blend: Blend::Normal,
+            mask: None,
+            effects: Vec::new(),
+            tracks: BTreeMap::new(),
+            kind: NodeKind::Group {
+                children: vec!["kicker".into()],
+            },
+        });
+        comp.nodes.push(Node {
+            id: "kicker".into(),
+            parent: Some("row".into()),
+            start: 0.0,
+            duration: 1.0,
+            transform: Transform::default(),
+            opacity: 1.0,
+            blend: Blend::Normal,
+            mask: None,
+            effects: Vec::new(),
+            tracks: BTreeMap::new(),
+            kind: NodeKind::Rect {
+                width: Length::px(10.0),
+                height: Length::px(10.0),
+                fill: None,
+                radius: 0.0,
+            },
+        });
+        let edited = apply(
+            &comp,
+            &[Op::Delete {
+                node: "kicker".into(),
+            }],
+        )
+        .expect("applies");
+        // The group no longer names the deleted child, so the document is
+        // still valid after the delete went through.
+        assert!(edited.validate().is_empty(), "{:?}", edited.validate());
+        let NodeKind::Group { children } = &edited.node("row").expect("row").kind else {
+            panic!("group");
+        };
+        assert!(!children.iter().any(|child| child == "kicker"));
+    }
+
+    #[test]
+    fn a_run_replacement_escapes_the_value_like_a_span_does() {
+        assert_eq!(
+            replace_text_run("<div>Ada</div>", "Ada", "<b>x</b> & co"),
+            "<div>&lt;b&gt;x&lt;/b&gt; &amp; co</div>"
         );
     }
 }

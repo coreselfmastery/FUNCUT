@@ -62,4 +62,4 @@ order; fix; re-check the touched items; then export.
 | Export fails fast | unsupported size/codec combo | check width/height ≤ 8192, h264+HDR → hevc |
 | "not downloaded" error | model not local | surface the Settings instruction to the user |
 | Analysis pip error | python extras missing | surface the pip install hint exactly |
-| SFX feels late | peak placed after the cut | re-place `sounds_add` at the cut, 1 frame early if unsure |
+| SFX feels late | peak placed after the cut | re-place the sound so its peak lands on the cut (`start = cut - syncAt`), 1 frame early if unsure |

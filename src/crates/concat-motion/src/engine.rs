@@ -88,11 +88,16 @@ impl EnginePreference {
     /// run and what the comp is made of.
     ///
     /// A comp of nothing but shapes, images and text does not need the
-    /// sidecar, and a comp with markup does. Asking for an engine that is not
-    /// installed is not an error here: it becomes one at bake time, with the
-    /// comp's id in the message.
+    /// sidecar, so on a machine without one it falls back to the native
+    /// engine - the comps it can draw - rather than failing to open the
+    /// project. A comp with markup does not get that fallback: the native
+    /// engine cannot draw markup, so keeping Geneva makes the bake fail
+    /// loudly with the sidecar's install instructions in the message
+    /// rather than quietly drawing something else. Asking for an engine
+    /// that is not installed is not an error here: it becomes one at bake
+    /// time, with the comp's id in the message.
     pub fn engine_for(&self, comp: &Comp, geneva_available: bool) -> EngineKind {
-        if self.default == EngineKind::Geneva && comp.needs_markup() && !geneva_available {
+        if self.default == EngineKind::Geneva && !geneva_available && !comp.needs_markup() {
             return EngineKind::Native;
         }
         self.default
@@ -208,14 +213,28 @@ pub trait CompEngine {
 
     /// Draw every frame of `comp` into `dir`, and say what was written.
     ///
-    /// The frames are PNGs with alpha, which is the one shape every engine and
-    /// every downstream consumer agrees on: the compositor samples them like
-    /// any other picture, and the encoder writes them as a ProRes 4444 or a
-    /// VP9 sequence when a project wants them out.
+    /// The frames are PNGs with alpha, which is the one shape every engine
+    /// and every downstream consumer agrees on: the compositor samples them
+    /// like any other picture, and the sidecar encodes them to a video file
+    /// when a project wants one. Alpha is the PNG sequence's to keep: the
+    /// sidecar's video codecs - H.264, VP9, ProRes - carry none, which the
+    /// agent CLI's `--encode` says as a note on every transparent comp.
     fn bake(&self, comp: &Comp, request: &BakeRequest, dir: &Path) -> Result<Baked, MotionError>;
 
-    /// Draw one frame at `at` seconds, for the stage's scrub and for a poster.
-    fn frame(&self, comp: &Comp, at: f64, width: Option<u32>) -> Result<PathBuf, MotionError>;
+    /// Draw one frame at `at` seconds, for the stage's scrub and for a
+    /// poster.
+    ///
+    /// `source_dir` is where the comp's asset paths resolve from - the
+    /// folder the comp document lives in - which a frame needs as much as a
+    /// bake does: without it a comp that points at a picture stages nothing
+    /// and frames with a hole where the picture was.
+    fn frame(
+        &self,
+        comp: &Comp,
+        at: f64,
+        width: Option<u32>,
+        source_dir: &Path,
+    ) -> Result<PathBuf, MotionError>;
 }
 
 /// What went wrong.
@@ -345,7 +364,7 @@ mod tests {
     }
 
     #[test]
-    fn a_markup_comp_falls_back_to_native_when_the_sidecar_is_missing() {
+    fn a_markup_comp_stays_with_geneva_when_the_sidecar_is_missing() {
         let comp = comp_with(NodeKind::Html {
             markup: "<div>x</div>".into(),
             css: String::new(),
@@ -354,11 +373,14 @@ mod tests {
         });
         let preference = EnginePreference::default();
         assert_eq!(preference.engine_for(&comp, true), EngineKind::Geneva);
-        assert_eq!(preference.engine_for(&comp, false), EngineKind::Native);
+        // Native cannot draw markup, so the fallback would quietly draw
+        // the wrong thing: the comp stays with Geneva and the bake says
+        // the sidecar is missing, with the install instructions.
+        assert_eq!(preference.engine_for(&comp, false), EngineKind::Geneva);
     }
 
     #[test]
-    fn a_shape_comp_needed_no_markup_engine_either_way() {
+    fn a_shape_comp_falls_back_to_native_when_the_sidecar_is_missing() {
         let comp = comp_with(NodeKind::Rect {
             width: Length::px(10.0),
             height: Length::px(10.0),
@@ -368,7 +390,10 @@ mod tests {
             radius: 0.0,
         });
         let preference = EnginePreference::default();
-        assert_eq!(preference.engine_for(&comp, false), EngineKind::Geneva);
+        assert_eq!(preference.engine_for(&comp, true), EngineKind::Geneva);
+        // A comp the native engine can draw falls back to it when the
+        // sidecar is missing, as the crate docs promise.
+        assert_eq!(preference.engine_for(&comp, false), EngineKind::Native);
     }
 
     #[test]

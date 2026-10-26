@@ -17,6 +17,8 @@
 //! # see one frame (tens of milliseconds) and the whole comp
 //! agent frame edited.json 1.5 -o still.png
 //! agent bake edited.json cache/lower-third
+//! # the same comp as one file the timeline plays: bake, then encode
+//! agent bake edited.json cache/lower-third --encode comp.mp4
 //! # a whole reel: several comps, plates, a curtain, a bed of sound
 //! agent reel storyboard.json -o reel.mp4
 //! ```
@@ -73,7 +75,7 @@ fn usage() -> serde_json::Value {
             "inspect": "agent inspect <comp.json>",
             "edit": "agent edit <comp.json> <ops.json|-> [-o out.json]",
             "frame": "agent frame <comp.json> <seconds> [-o frame.png] [--width N]",
-            "bake": "agent bake <comp.json> <dir> [--width N] [--height N] [--fps N] [--opaque]",
+            "bake": "agent bake <comp.json> <dir> [--width N] [--height N] [--fps N] [--opaque] [--encode out.mp4|webm|mov] [--crf N]",
             "reel": "agent reel <storyboard.json> [-o reel.mp4] [--cache DIR] [--frame SECONDS] [--plan]",
             "captions": "agent captions <words.json> [-o storyboard.json] [--words-per-line N] [--max-line S] [--preset ID] [--plate IMG] [--audio WAV|MP3]"
         },
@@ -86,6 +88,7 @@ fn usage() -> serde_json::Value {
             {"op": "retime", "node": "card", "duration": 2.5},
             {"op": "set-track", "node": "card", "property": "scale",
              "keys": [[0.0, 0.9, {"kind": "spring", "stiffness": 260, "damping": 15, "mass": 1}], [0.6, 1.0, null]]},
+            {"op": "set-track-points", "node": "card", "keys": [[0.0, 240, 540, null], [0.7, 960, 540, {"kind": "spring", "stiffness": 170, "damping": 26, "mass": 1}]]},
             {"op": "fade-in", "node": "card", "seconds": 0.8, "curve": {"kind": "steps", "count": 6, "position": "jump-end"}},
             {"op": "slide-to", "node": "card", "x": 960, "y": 540, "seconds": 0.7},
             {"op": "pop", "node": "card", "from": 0.9, "seconds": 0.5},
@@ -605,13 +608,24 @@ fn frame(args: &[String]) -> Result<serde_json::Value, String> {
 
     let comp = load(comp_path)?;
     let geneva = engine()?;
+    // The comp's assets resolve from its own folder, like a bake's do.
+    let source_dir = Path::new(comp_path)
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
     let produced = geneva
-        .frame(&comp, at, width)
+        .frame(&comp, at, width, &source_dir)
         .map_err(|error| error.to_string())?;
     match out {
         Some(path) => {
             std::fs::copy(&produced, &path)
                 .map_err(|error| format!("{}: {error}", path.display()))?;
+            // The scratch this frame was drawn in is the call's own; the
+            // file the caller asked for is copied out of it and the rest
+            // is not kept.
+            let _ = produced
+                .parent()
+                .and_then(|dir| std::fs::remove_dir_all(dir).ok());
             Ok(json!({ "ok": true, "at": at, "frame": path.display().to_string() }))
         }
         None => Ok(json!({ "ok": true, "at": at, "frame": produced.display().to_string() })),
@@ -640,7 +654,91 @@ fn bake(args: &[String]) -> Result<serde_json::Value, String> {
         .bake(&comp, &request, &dir)
         .map_err(|error| error.to_string())?;
     let seconds = started.elapsed().as_secs_f64();
-    Ok(json!({
+    // `--encode out.mp4`: the timeline the bake staged is rendered once
+    // more with its encode instruction switched to a video codec, straight
+    // to a file the editor's timeline plays like any other footage. The
+    // codec is the extension's: `.webm` asks Geneva for VP9, `.mov` for
+    // ProRes 4444, and anything else for the H.264 every player reads.
+    let mut notes: Vec<String> = Vec::new();
+    let file = match flag(args, "--encode") {
+        Some(target) => {
+            let crf: u8 = flag(args, "--crf")
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(request.crf);
+            let out = PathBuf::from(target);
+            let out = if out.is_absolute() {
+                out
+            } else {
+                std::env::current_dir().unwrap_or_default().join(out)
+            };
+            if let Some(parent) = out.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| format!("{}: {error}", parent.display()))?;
+            }
+            let (container, codec, profile) = match out.extension().and_then(|ext| ext.to_str()) {
+                Some(ext) if ext.eq_ignore_ascii_case("webm") => ("webm", "vp9", None),
+                Some(ext) if ext.eq_ignore_ascii_case("mov") => ("mov", "prores", Some("4444")),
+                _ => ("mp4", "h264", None),
+            };
+            let timeline = dir.join("timeline.json");
+            let text = std::fs::read_to_string(&timeline)
+                .map_err(|error| format!("{}: {error}", timeline.display()))?;
+            let mut document: serde_json::Value = serde_json::from_str(&text)
+                .map_err(|error| format!("{}: {error}", timeline.display()))?;
+            let mut video = serde_json::Map::new();
+            video.insert("codec".to_string(), json!(codec));
+            match profile {
+                // ProRes quality is the profile; a crf is not a thing there.
+                Some(profile) => {
+                    video.insert("profile".to_string(), json!(profile));
+                }
+                None => {
+                    video.insert("crf".to_string(), json!(crf));
+                }
+            }
+            document["output"]["encode"] = json!({
+                "container": container,
+                "video": video,
+            });
+            std::fs::write(
+                &timeline,
+                serde_json::to_string_pretty(&document).map_err(|error| {
+                    format!("the staged timeline could not be written: {error}")
+                })?,
+            )
+            .map_err(|error| format!("{}: {error}", timeline.display()))?;
+            let render: Vec<String> = vec![
+                "--format".into(),
+                "json".into(),
+                "render".into(),
+                "timeline.json".into(),
+                "-o".into(),
+                out.display().to_string(),
+            ];
+            geneva
+                .run_in(&dir, &render)
+                .map_err(|error| error.to_string())?;
+            // A render that says yes and leaves nothing is a bug in the
+            // chain, not a file: the reply says so instead of a path.
+            if !out.is_file() {
+                return Err(format!(
+                    "geneva reported success but {} was not written",
+                    out.display()
+                ));
+            }
+            // The honest note every overlay comp earns: the sidecar's video
+            // codecs are 4:2:0 or 4:4:4 with no alpha channel, and only the
+            // PNG sequence keeps what a transparent background meant.
+            if comp.background.a < 1.0 {
+                notes.push(format!(
+                    "this comp has a transparent background; {codec} cannot carry alpha, so the encoded file is opaque where the comp was not - the PNG sequence in the bake keeps it"
+                ));
+            }
+            Some(out.display().to_string())
+        }
+        None => None,
+    };
+    let mut reply = json!({
         "ok": true,
         "frames": baked.frames,
         "width": baked.width,
@@ -653,7 +751,14 @@ fn bake(args: &[String]) -> Result<serde_json::Value, String> {
         "dir": baked.dir.display().to_string(),
         "seconds": seconds,
         "frames_per_second": baked.frames as f64 / seconds.max(1e-9),
-    }))
+    });
+    if let Some(file) = file {
+        reply["file"] = json!(file);
+    }
+    if !notes.is_empty() {
+        reply["notes"] = json!(notes);
+    }
+    Ok(reply)
 }
 
 /// The value after `name`, when it is present.

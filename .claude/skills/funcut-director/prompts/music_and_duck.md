@@ -23,8 +23,8 @@ late-night, ambient-lofi). Sorts: `relevance`, `shortest`, `longest`,
 
 Rules: the track must survive 50+ listens (you will hear it every export) —
 avoid earworm melodies in the top octave under speech; prefer instrumental
-beds with one idea. `tempo` from the search result is your beat grid source:
-`analyze_beats` on the fetched track for `beatsMs[]`.
+beds with one idea. The beat grid comes from `analyze_beats` on the fetched
+track: `beatsMs[]` and `downbeatsMs`.
 
 ## Beat alignment
 

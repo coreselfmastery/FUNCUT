@@ -12,7 +12,7 @@
 //! a cold start, which is no way to browse.
 //!
 //! So the page's search runs against a **local index**: a single SQLite
-//! file (~470 MB, six hundredths of one percent of the dataset) holding
+//! file (~435 MB, six hundredths of one percent of the dataset) holding
 //! every clip's caption, scores, camera motion, duration and - this is
 //! what makes video fetching cheap - the byte range of each clip's MP4
 //! inside the dataset's data files. The index is downloaded once, with a

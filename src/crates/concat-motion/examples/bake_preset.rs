@@ -73,7 +73,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let started = std::time::Instant::now();
-    let frame = geneva.frame(&comp, comp.duration * 0.4, Some(960))?;
+    // A preset carries no assets, so its folder is wherever this runs from.
+    let frame = geneva.frame(
+        &comp,
+        comp.duration * 0.4,
+        Some(960),
+        std::path::Path::new("."),
+    )?;
     println!(
         "single frame in {:.0} ms: {}",
         started.elapsed().as_millis(),

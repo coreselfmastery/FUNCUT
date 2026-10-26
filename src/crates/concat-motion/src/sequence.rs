@@ -414,7 +414,13 @@ pub fn plan(geneva: &Geneva, sequence: &Sequence) -> Result<Plan, MotionError> {
         }
         for node in &mut comp.nodes {
             if node.duration > 0.0 {
-                node.duration = node.duration.min(comp.duration - node.start);
+                // A hold that ends before a node begins leaves the node a
+                // zero span: never negative, which validate would read as
+                // running backwards and fail the whole reel for. A node of
+                // zero duration runs to the comp's end, which a hold that
+                // ends before it begins simply means it draws nothing
+                // inside the held window.
+                node.duration = (node.duration.min(comp.duration - node.start)).max(0.0);
             }
         }
         let problems = comp.validate();
@@ -955,5 +961,20 @@ mod tests {
             json!("h264")
         );
         assert_eq!(plan.document["output"]["background"], json!("#05060aff"));
+    }
+
+    #[test]
+    fn a_hold_shorter_than_a_late_node_leaves_a_valid_scene() {
+        let mut comp = presets::build("funcut.chapter.chip").expect("a preset");
+        // Every node begins after the hold ends: the clamp leaves each a
+        // zero span rather than a negative one, and the reel still plans.
+        for node in &mut comp.nodes {
+            node.start = comp.duration + 1.0;
+            node.duration = 2.0;
+        }
+        let mut scene = Scene::new(comp);
+        scene.hold = Some(0.5);
+        let planned = plan(&geneva(), &reel(vec![scene]));
+        assert!(planned.is_ok(), "{:?}", planned.err());
     }
 }

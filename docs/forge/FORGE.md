@@ -36,9 +36,9 @@ credit_mode = "strict"   # free + subscription models only
 daily_budget_usd = 1.0   # and a cap, if you want a second belt
 ```
 
-The Forge pane's Settings page (Settings > Forge) can also hold keys: they are
-injected into the spawned agent's environment when you press Start, so the
-pane works even without `forge auth`.
+The Forge page itself can also hold keys: they are injected into the spawned
+agent's environment when you press Start, so the pane works even without
+`forge auth`.
 
 ## 3. Connect Forge to FUNCUT
 
@@ -95,7 +95,7 @@ Ask for a whole faceless video, end to end — the skill drives the pipeline:
 forge run "Using the funcut-director skill, make a 30-second faceless video about why the sea is salty: script from the hook rules, Kokoro voice 8 narration, dead-air removed, B-roll from OpenVid, one SFX per cut on the beat, word-synced bold captions, teal-orange grade, verify with preview_frame, then export."
 ```
 
-Or do it from the editor: the **Forge** tab (12th) — paste the script, pick a
+Or do it from the editor: the **Forge** page (page 12, beside Stickers) — paste the script, pick a
 niche preset, voice and music mood, press **Start Forge**. Every line the agent
 prints streams into the pane; the edits land on the open project's timeline,
 undoable, while you watch. `funcut-director` finds tools through Forge's
@@ -137,7 +137,8 @@ home (or `CONCAT_MCP_ROOTS`), never touching the window's open projects.
 
 ## 8. What the agent can call (67 tools)
 
-Everything in `docs/MCP.md`, plus the six new ones: `analyze_scenes`
+Everything in `docs/MCP.md` — 67 tools, including the six this integration
+added: `analyze_scenes`
 (PySceneDetect cut points), `analyze_beats` (librosa BPM/beat grid),
 `analyze_silence` (dead-air spans), `analysis_wait` (job results inline),
 `transcribe` (whisper words with times), `tts_generate` (Kokoro/Pocket/

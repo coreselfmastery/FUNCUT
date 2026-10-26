@@ -86,8 +86,8 @@ captions, stat cards, bar chart, counting number, wordmark sting, pull quote,
 chapter chip, subscribe card, terminal, split compare, backdrop) — **edit them,
 never ship them as they arrive**: real copy, retimed to the cut, one element
 deleted. The loop is `inspect` → five decisions → one validated `edit` batch →
-three frames → `bake` at cut size → place the `kind: "motion"` clip, or one
-`reel storyboard.json` for a whole package.
+three frames → `bake` at cut size → `bake --encode piece.mp4` → `media_import` →
+`clip_add` on the timeline, or one `reel storyboard.json` for a whole package.
 
 The mechanical reference and the design doctrine are the **`motion` skill**; the
 director's side — where comps belong in an edit, worked plans, keeping the look

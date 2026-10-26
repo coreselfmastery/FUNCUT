@@ -120,6 +120,7 @@ and per-platform export presets in the niche playbooks.
 ## 4. What FUNCUT already has (the baseline, from the code)
 
 Verified by reading this fork's source (`main` @ `010032b`): 61 MCP tools
+(67 since the analysis and speech tools landed)
 (projects, reading, media, every cut operation, masks/stabilization, titles,
 word-synced captions, keyframes, effect layers, batched atomic edits,
 templates, export with progress, `preview_frame`), the OpenVid library

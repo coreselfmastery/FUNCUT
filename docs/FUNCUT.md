@@ -49,7 +49,11 @@ The quickest way, from a checkout of this repository:
 
 That downloads the newest published release for your architecture - an
 AppImage it drops into `~/.local/bin`, no root, no packages - and checks it
-against the release's checksum first. Other shapes:
+against the release's checksum first. Beside the app it also fetches the
+motion sidecar (Geneva v1.6.0, ~16 MB, checksum-checked, into
+`~/.local/bin`) that markup motion comps bake with - best effort: the
+editor runs without it, and a comp with no markup bakes on the native
+engine. Other shapes:
 
 ```sh
 ./install-linux.sh --deb      # through apt, asks for sudo
@@ -61,7 +65,7 @@ The script looks for a release **on this fork first**, and falls back to
 Concat's own releases when the fork has none yet. The fallback is a working
 editor, but it is not this one: upstream carries none of FUNCUT's own work -
 no OpenVid, sticker or sound shelves, no Forge page, 42 MCP tools instead of
-61 - so if the fork has a published release, that is the one you want. (A
+67 - so if the fork has a published release, that is the one you want. (A
 release the workflows build starts as a draft, and a draft is invisible to
 this script; see the note below.) No checkout handy? Run it straight off the
 repository:

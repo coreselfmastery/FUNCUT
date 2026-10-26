@@ -25,8 +25,8 @@ tools need the Python extras installed (`scenedetect`, `opencv-headless`,
 `concat_version` · `project_list` · `project_create {location,name,video?}` ·
 `project_open {path}` · `project_save` · `project_close {path,save}` ·
 `project_set_video` · `project_get {path}` · `timeline_read {path}` ·
-`media_probe {path}` · `media_import {path,file}` · `catalogue` (the
-effect/filter/transition/audio packages) · `effects_list {kind}`
+`media_probe {path}` · `media_import {path,file}` · `effects_list {kind}` (the
+effect/filter/transition/audio packages)
 
 - One API session per folder: open before editing; a project the window has
   open cannot be opened headless (and vice versa).
@@ -85,9 +85,10 @@ surprise`) · `bgm_status/prepare/search/fetch/import` (FreePD 1,025 CC0
 tracks; MobyGratis/OpenLo-Fi 166; sorts `relevance|shortest|longest|surprise`) ·
 `sounds_search/add` (430 CC0 sounds; categories: Whoosh, Impact, Riser,
 Motion, UI, Notification, Keyboard, Digital, Foley, Writing, Ambience, Music;
-`sounds_add` takes the time the peak should land on) · `magick_status/prepare/
-search/get/fetch/add` (shelves: `magick` 145k AI pictures **CC BY-NC — never in
-monetized work**, and `openmoji` 4,565 emoji CC-BY 4.0)
+`sounds_add` starts the file at `start`; the search result's `syncAt` says
+where its peak lands) · `magick_status/prepare/search/fetch/add` (shelves:
+`magick` 145k AI pictures **CC BY-NC — never in monetized work**, and
+`openmoji` 4,565 emoji CC-BY 4.0)
 
 - `prepare` warms a library's index (OpenVid's is ~435 MB — check
   `openvid_status` first; it reports `missing|downloading|ready|failed`).

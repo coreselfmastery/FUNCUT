@@ -65,14 +65,18 @@ pub enum Curve {
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum StepPosition {
-    /// Jump at the end of each step (CSS `jump-end`, the default).
+    /// Hold each step's value and jump at the interval's end (CSS
+    /// `jump-end`, the default): `steps(4)` at `t = 0.01` is still 0.
     #[default]
     JumpEnd,
-    /// Jump at the start of each step.
+    /// Jump at the interval's start (CSS `jump-start`): `steps(4)` at
+    /// `t = 0.01` is already 1/4.
     JumpStart,
-    /// Jump at the start, and hold the last step at 1.
+    /// No jump at either end (CSS `jump-none`): `n - 1` rises between 0
+    /// and 1, so the first interval holds 0 and the last lands on 1.
     JumpNone,
-    /// Jump at both ends: first step starts at 0 and the last ends at 1.
+    /// A jump at 0 and at 1 (CSS `jump-both`): `n + 1` rises of
+    /// `1 / (n + 1)` each, so the value starts above 0 and ends at 1.
     JumpBoth,
 }
 
@@ -214,13 +218,25 @@ pub fn bezier_y_at_x(x1: f64, y1: f64, x2: f64, y2: f64, x: f64) -> f64 {
 }
 
 /// A CSS `steps()` at `t`.
+///
+/// The four positions are the CSS ones, spelled the CSS way, because the
+/// name is what Geneva is handed and the bake must agree with
+/// [`Curve::apply`] sample for sample: a jump at an interval's *end* holds
+/// then rises on the boundary (`floor`), a jump at its *start* rises the
+/// moment the interval begins (`ceil`).
 fn steps(t: f64, count: u32, position: StepPosition) -> f64 {
     let n = count.max(1) as f64;
     match position {
-        StepPosition::JumpEnd => (t * n).ceil() / n,
-        StepPosition::JumpStart => (t * n).floor() / n,
-        StepPosition::JumpNone => ((t * n).ceil() - 1.0).clamp(0.0, n - 1.0) / (n - 1.0).max(1.0),
-        StepPosition::JumpBoth => ((t * n).ceil() + 0.0).clamp(0.0, n) / n,
+        // CSS `jump-end`, the default: hold, then jump on the boundary.
+        StepPosition::JumpEnd => (t * n).floor() / n,
+        // CSS `jump-start`: the rise leads the interval.
+        StepPosition::JumpStart => (t * n).ceil() / n,
+        // CSS `jump-none`: n - 1 interior rises of 1 / (n - 1), none at
+        // the ends; n = 1 degenerates to the constant 0, as before.
+        StepPosition::JumpNone => (t * n).floor().clamp(0.0, n - 1.0) / (n - 1.0).max(1.0),
+        // CSS `jump-both`: n + 1 rises of 1 / (n + 1), the first at 0 and
+        // the last at 1.
+        StepPosition::JumpBoth => ((t * n).floor() + 1.0) / (n + 1.0),
     }
 }
 
@@ -345,15 +361,41 @@ mod tests {
             count: 4,
             position: StepPosition::JumpEnd,
         };
-        assert!((s.apply(0.01) - 0.25).abs() < 1e-12);
-        assert!((s.apply(0.26) - 0.5).abs() < 1e-12);
+        // jump-end holds each step's value and rises on the boundary:
+        // a t of 0.01 is still 0, 0.26 has just stepped to 1/4.
+        assert!(s.apply(0.01).abs() < 1e-12);
+        assert!((s.apply(0.26) - 0.25).abs() < 1e-12);
+        assert!((s.apply(0.51) - 0.5).abs() < 1e-12);
         assert!((s.apply(1.0) - 1.0).abs() < 1e-12);
         let start = Curve::Steps {
             count: 4,
             position: StepPosition::JumpStart,
         };
-        assert!(start.apply(0.01).abs() < 1e-12);
-        assert!((start.apply(0.26) - 0.25).abs() < 1e-12);
+        // jump-start leads the interval: 0.01 is already the first step.
+        assert!((start.apply(0.01) - 0.25).abs() < 1e-12);
+        assert!((start.apply(0.26) - 0.5).abs() < 1e-12);
+        assert!((start.apply(1.0) - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn jump_none_and_jump_both_match_css() {
+        let none = Curve::Steps {
+            count: 4,
+            position: StepPosition::JumpNone,
+        };
+        // No rise at either end: 0 into the first interval, 1 at the last,
+        // and three interior steps of a third each.
+        assert!(none.apply(0.0).abs() < 1e-12);
+        assert!((none.apply(0.26) - 1.0 / 3.0).abs() < 1e-12);
+        assert!((none.apply(1.0) - 1.0).abs() < 1e-12);
+        let both = Curve::Steps {
+            count: 4,
+            position: StepPosition::JumpBoth,
+        };
+        // A rise at 0 and at 1: five rises of a fifth, starting above 0.
+        assert!((both.apply(0.0) - 0.2).abs() < 1e-12);
+        assert!((both.apply(0.26) - 0.4).abs() < 1e-12);
+        assert!((both.apply(1.0) - 1.0).abs() < 1e-12);
     }
 
     #[test]

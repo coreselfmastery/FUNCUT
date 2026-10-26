@@ -143,12 +143,17 @@ impl Rgba {
     }
 
     /// A colour from `#rrggbb` or `#rrggbbaa`. Anything else is opaque white,
-    /// because a comp must render even when a hand-written document is wrong.
+    /// because a comp must render even when a hand-written document is wrong -
+    /// including a document whose six or eight bytes are not characters a
+    /// colour could be read from, which this reads as bytes rather than
+    /// slicing as text so it cannot panic on one.
     pub fn hex(text: &str) -> Rgba {
         let hex = text.trim_start_matches('#');
         let byte = |at: usize| {
-            u8::from_str_radix(&hex[at..at + 2], 16)
-                .ok()
+            hex.as_bytes()
+                .get(at..at + 2)
+                .and_then(|pair| std::str::from_utf8(pair).ok())
+                .and_then(|pair| u8::from_str_radix(pair, 16).ok())
                 .map(|b| b as f64 / 255.0)
         };
         match hex.len() {
@@ -1189,5 +1194,24 @@ mod tests {
     fn an_open_ended_node_runs_to_the_end_of_the_comp() {
         let comp = rect_comp();
         assert_eq!(comp.nodes[0].end(7.0), 7.0);
+    }
+
+    #[test]
+    fn hex_reads_bytes_not_characters_and_never_panics() {
+        // Six bytes that are not six characters a colour could be read from:
+        // opaque white, the documented answer for anything else - and no
+        // panic on a boundary that is not a character's edge.
+        assert_eq!(Rgba::hex("#日本"), Rgba::new(1.0, 1.0, 1.0, 1.0));
+        assert_eq!(Rgba::hex("#日"), Rgba::new(1.0, 1.0, 1.0, 1.0));
+        assert_eq!(Rgba::hex("#zzzzzz"), Rgba::new(1.0, 1.0, 1.0, 1.0));
+        assert_eq!(
+            Rgba::hex("#22d3c5"),
+            Rgba::new(
+                0x22 as f64 / 255.0,
+                0xd3 as f64 / 255.0,
+                0xc5 as f64 / 255.0,
+                1.0
+            )
+        );
     }
 }

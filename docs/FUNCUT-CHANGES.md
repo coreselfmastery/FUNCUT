@@ -342,7 +342,8 @@ line points at.
 
 The rest of the fork's work was verification, and it is worth saying what
 that means concretely. The full engine test suites were run against every
-change: `concat-media` (125 tests), `concat-project` (174), `concat-host`
+change (the counts are that moment's; the library features added more
+after): `concat-media` (125 tests), `concat-project` (174), `concat-host`
 (111), `concat-export` (39), plus clippy and rustfmt clean across all
 touched crates, and the locales inventory in sync for all 26 languages.
 The three HDR/HLG tests that fail in that local run fail on the untouched

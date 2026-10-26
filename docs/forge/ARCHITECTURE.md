@@ -21,10 +21,10 @@ Forge (the harness: reasoning, Model Mesh routing, /workflow parallelism, hooks)
   `prompts/`: never leave a visual gap, SFX peak lands on the cut, section
   changes on downbeats, captions word-synced at 42 px+, a hook inside 3
   seconds, verify with `preview_frame` before export.
-- **The tools** are the Concat API over MCP: 61 shipped (projects, media, every
+- **The tools** are the Concat API over MCP: 67 shipped (projects, media, every
   cut, masks, titles, captions, keyframes, effects, batched atomic edits,
   templates, export, libraries: OpenVid 937k clips, BGM 1,191 tracks, 430 SFX,
-  MAGICK stickers) plus the six this integration adds — `analyze_scenes`,
+  MAGICK stickers), including the six this integration added — `analyze_scenes`,
   `analyze_beats`, `analyze_silence`, `analysis_wait`, `transcribe`,
   `tts_generate` — the agent's senses and voice.
 - **The engine** is FUNCUT itself: the Rust + Slint editor, its window open
@@ -79,8 +79,8 @@ harness can use them.
 The UI is a director's chair, not a wizard:
 
 - **Script box** — paste or write the script; this is the source of truth.
-- **Voice** — TTS voice + speaking rate for the narration the agent will
-  generate, or "no narration".
+- **Voice** — one of five Kokoro voices for the narration the agent will
+  generate (af_bella, af_river, am_adam, am_fenrir, am_onyx).
 - **Style** — a niche preset (history, tech, luxury, motivation, finance,
   science, horror, fitness, gaming, how-to) that sets the look: caption style,
   color grade, pacing, BGM mood, SFX set, B-roll query recipes.
@@ -95,7 +95,7 @@ The UI is a director's chair, not a wizard:
 The pane never edits your project itself; the agent does, through the window's
 server, so every change lands on the timeline with full undo.
 
-## Provider keys (new, Settings page 8)
+## Provider keys (new, on the Forge page)
 
 Keys for Groq, Gemini, OpenRouter, Mistral, Cerebras, SambaNova, NVIDIA NIM
 and friends are stored in `settings.json` (mode 0600, the same file that
@@ -125,8 +125,8 @@ or three free provider keys instead of paying for one.
 
 ## What is deliberately not here
 
-- **Geneva motion cards** — later, after Forge is proven, exactly as the plan
-  sequenced it.
+- **Geneva motion cards** — shipped since, as the plan sequenced: see
+  [docs/MOTION.md](../MOTION.md) and the `motion` skill.
 - **Generative video APIs** (Kling/Runway/Veo) — optional and last-resort by
   design; stock search is free and instant.
 - **A built-in LLM client** — the harness owns reasoning and provider

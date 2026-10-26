@@ -164,7 +164,7 @@ Tools are named for what they do, and their argument schemas are generated from 
 | Sound effects | `sounds_search`, `sounds_add` |
 | Music | `bgm_status`, `bgm_prepare`, `bgm_search`, `bgm_fetch`, `bgm_import` |
 | Stickers | `magick_status`, `magick_prepare`, `magick_search`, `magick_fetch`, `magick_add` |
-| Editing | `clip_add`, `clips_add_sequence`, `clip_trim`, `clips_split`, `clips_move`, `clips_remove`, `clip_update`, `clip_transform`, `clip_speed`, `clip_frame`, `track_add` |
+| Editing | `clip_add`, `clips_add_sequence`, `clip_trim`, `clips_split`, `clip_cut_spans`, `clips_move`, `clips_remove`, `clip_update`, `clip_transform`, `clip_speed`, `clip_frame`, `track_add` |
 | Picture | `clip_mask`, `clip_stabilize`, `timeline_background` |
 | Titles and captions | `title_add`, `captions_add` |
 | Keyframes and effects | `keyframe_set`, `keyframe_clear`, `effects_list`, `effect_layer_add`, `effect_key_set` |

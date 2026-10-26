@@ -777,26 +777,54 @@ pub fn automatic_check(dirs: &AppDirs) -> AutoAction {
 /// anonymous sixty-requests-an-hour ceiling a Version-page check can
 /// otherwise hit; it is sent to GitHub only, and only when present.
 fn get_text(url: &str) -> Result<String, String> {
-    let agent = crate::net::agent(
+    // The fork's own rule holds here: a token the environment carries is
+    // attached, because the fork's releases live beside its private
+    // mirrors when they do; upstream's fetch carries no token and never
+    // did. The request is dressed through net::get's own door, so the
+    // proxy and the failure reasons apply to it as to every download.
+    let user_agent = format!("Concat/{}", Version::current());
+    let token = std::env::var("GITHUB_TOKEN")
+        .or_else(|_| std::env::var("GH_TOKEN"))
+        .ok();
+    let response = crate::net::get(
+        url,
         std::time::Duration::from_secs(20),
         std::time::Duration::from_secs(30),
-    );
-    let mut request = agent
-        .get(url)
-        .set("User-Agent", &format!("Concat/{}", Version::current()))
-        .set("Accept", "application/vnd.github+json");
-    if let Ok(token) = std::env::var("GITHUB_TOKEN").or_else(|_| std::env::var("GH_TOKEN")) {
-        request = request.set("Authorization", &format!("Bearer {token}"));
-    }
-    let response = request.call().map_err(|error| match error {
-        ureq::Error::Status(code, response) => {
-            let body = response.into_string().unwrap_or_default();
-            let said = serde_json::from_str::<serde_json::Value>(&body)
-                .map(|value| github_message(&value))
-                .unwrap_or_else(|_| body.chars().take(200).collect());
-            format!("{url} answered {code}: {said}")
+        crate::net::Trust::Shipped,
+        &|request| {
+            let mut request = request
+                .set("User-Agent", &user_agent)
+                .set("Accept", "application/vnd.github+json");
+            if let Some(token) = &token {
+                request = request.set("Authorization", &format!("Bearer {token}"));
+            }
+            request
+        },
+    )
+    .map_err(|failure| {
+        let crate::net::Failure {
+            error,
+            cause,
+            proxy,
+        } = *failure;
+        match error {
+            ureq::Error::Status(code, response) => {
+                let body = response.into_string().unwrap_or_default();
+                let said = serde_json::from_str::<serde_json::Value>(&body)
+                    .map(|value| github_message(&value))
+                    .unwrap_or_else(|_| body.chars().take(200).collect());
+                format!("{url} answered {code}: {said}")
+            }
+            other => {
+                let through = proxy
+                    .map(|proxy| format!(" (through the proxy {proxy})"))
+                    .unwrap_or_default();
+                format!(
+                    "{url} did not answer: {}{through}: {other}",
+                    cause.describe()
+                )
+            }
         }
-        other => format!("{url} did not answer: {other}"),
     })?;
     response
         .into_string()

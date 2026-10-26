@@ -628,7 +628,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "preview_frame",
             title: "Preview a frame",
-            description: "Renders the true composited frame at `time` seconds on an open project's timeline and returns it as an image to look at - titles, effects and transforms included. Without `width` and `height` it fits within 1280 pixels; give both for another size (8192 at most). With `output` (a .png path) it is written there instead.",
+            description: "Renders the true composited frame at `time` seconds on an open project's timeline and returns it as an image to look at - titles, effects and transforms included. Without `width` and `height` it fits within 1280 pixels, a file as much as an inline picture; give both for another size (8192 at most). With `output` (a .png path) the picture is written there instead.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -918,12 +918,13 @@ fn plan_validate_schema() -> Option<Value> {
                     "segments": {
                         "type": "array",
                         "minItems": 1,
+                        "maxItems": 500,
                         "items": {
                             "type": "object",
                             "required": ["start", "end", "visual"],
                             "properties": {
                                 "start": { "type": "number", "minimum": 0 },
-                                "end": { "type": "number" },
+                                "end": { "type": "number", "minimum": 0 },
                                 "visual": {
                                     "type": "object",
                                     "required": ["type"],
@@ -1029,9 +1030,28 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
     match tool.action {
         Action::Method { method, reply } => {
             let result = backend.call(request(method, arguments)?)?;
-            Ok(Outcome::json(match reply {
+            let shown = match reply {
                 Reply::Raw => result,
                 Reply::Summary => summary::view(&result),
+            };
+            // A reply that is a bare array - the projects, the clips, the
+            // stickers, the packages, the templates - has no object for
+            // structuredContent to be, and the tools that return one were
+            // the only ones a structured client read nothing from. Each
+            // lands under the name a person would give its entries.
+            Ok(Outcome::json(match shown {
+                Value::Array(items) => {
+                    let key = match method {
+                        "project.list" => "projects",
+                        "openvid.get" | "openvid.fetch" => "clips",
+                        "magick.get" | "magick.fetch" => "stickers",
+                        "catalogue.list" => "packages",
+                        "template.list" => "templates",
+                        _ => "result",
+                    };
+                    json!({ key: items })
+                }
+                whole => whole,
             }))
         }
         Action::Command { op } => {
@@ -1210,7 +1230,6 @@ fn audio_levels_db(mut arguments: Value) -> Result<Request, ApiError> {
         "patch": { "volume": base_gain },
     }));
 
-    let mut seen = Vec::with_capacity(keyframes.len());
     for (index, keyframe) in keyframes.into_iter().enumerate() {
         let Some(values) = keyframe.as_object() else {
             return Err(invalid(&format!("keyframes[{index}] must be an object")));
@@ -1236,12 +1255,9 @@ fn audio_levels_db(mut arguments: Value) -> Result<Request, ApiError> {
                 "unknown field `{unknown}` in keyframes[{index}]"
             )));
         }
-        if seen.iter().any(|prior: &f64| (prior - at).abs() <= 0.002) {
-            return Err(invalid(&format!(
-                "keyframes[{index}] duplicates another key position"
-            )));
-        }
-        seen.push(at);
+        // A key at (nearly) the same position as one before it is a
+        // replace, not a refusal - the same rule `keyframe_set` applies,
+        // so re-sending a duck curve never errors on its own keys.
         let target_gain = gain_from_db(target_db);
         let mut command = json!({
             "op": "setClipKey",
@@ -1253,9 +1269,16 @@ fn audio_levels_db(mut arguments: Value) -> Result<Request, ApiError> {
         if let Some(ease) = ease {
             let valid = ease.as_array().is_some_and(|points| {
                 points.len() == 4
-                    && points
-                        .iter()
-                        .all(|point| point.as_f64().is_some_and(|number| number.is_finite()))
+                    && points.iter().enumerate().all(|(place, point)| {
+                        point.as_f64().is_some_and(|number| {
+                            number.is_finite()
+                                // The two x coordinates are times, not
+                                // values: a CSS timing function keeps them
+                                // in 0-1, and the engine's solver assumes
+                                // they are.
+                                && (place != 0 && place != 1 || (0.0..=1.0).contains(&number))
+                        })
+                    })
             });
             if !valid {
                 return Err(invalid(&format!(
@@ -1449,9 +1472,13 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
                     .ok_or_else(|| {
                         format!("segments[{index}].transitionIn.seconds must be finite")
                     })?;
-                if !(0.0..=2.0).contains(&seconds) {
+                // The range the schema doc promises: 0.25-1.0, with 0
+                // (or absent) a hard cut. The two agree because an agent
+                // reads the doc and a validator that contradicts it is a
+                // loop of confusing refusals.
+                if seconds != 0.0 && !(0.25..=1.0).contains(&seconds) {
                     return Err(format!(
-                        "segments[{index}].transitionIn.seconds must be between 0 and 2"
+                        "segments[{index}].transitionIn.seconds must be 0.25-1.0 (0 for a hard cut)"
                     ));
                 }
             }
@@ -1524,9 +1551,41 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
             }
         }
     }
+    if let Some(speed) = object
+        .get("audio")
+        .and_then(|audio| audio.get("voiceover"))
+        .and_then(|voice| voice.get("speed"))
+    {
+        let speed = speed
+            .as_f64()
+            .filter(|value| value.is_finite())
+            .ok_or_else(|| "audio.voiceover.speed must be finite".to_owned())?;
+        if !(0.5..=2.0).contains(&speed) {
+            return Err("audio.voiceover.speed must be between 0.5 and 2.0".to_owned());
+        }
+    }
     match object.get("export") {
         None => warnings.push("export settings are not specified; the plan alone does not guarantee an export profile".to_owned()),
-        Some(Value::Object(_)) => {}
+        Some(Value::Object(export)) => {
+            // What the export tools themselves will refuse later, said
+            // here while the plan is still a plan.
+            if let Some(crf) = export.get("crf") {
+                let crf = crf
+                    .as_f64()
+                    .filter(|value| value.is_finite())
+                    .ok_or_else(|| "export.crf must be a number".to_owned())?;
+                if !(0.0..=51.0).contains(&crf) {
+                    return Err("export.crf must be between 0 and 51".to_owned());
+                }
+            }
+            if let Some(codec) = export.get("codec").and_then(Value::as_str)
+                && !matches!(codec, "h264" | "hevc" | "av1")
+            {
+                return Err(format!(
+                    "export.codec {codec:?} is not one of h264, hevc, av1"
+                ));
+            }
+        }
         Some(_) => return Err("export must be an object when supplied".to_owned()),
     }
     Ok(json!({
@@ -1600,7 +1659,7 @@ fn export_wait(
             ));
         }
         if Instant::now() >= until {
-            current["note"] = json!("still running: call export_wait again, or export_status");
+            current["note"] = json!("still running: call this tool again, or export_status");
             return Ok(Outcome::json(current));
         }
         std::thread::sleep(POLL);
@@ -1609,14 +1668,19 @@ fn export_wait(
 
 /// `preview_frame`: the picture as an image, or the file written.
 fn preview(mut arguments: Value, backend: &mut dyn Backend) -> Result<Outcome, ApiError> {
-    let wants_file = arguments
-        .get("output")
-        .is_some_and(|output| !output.is_null());
+    let given_width = arguments
+        .get("width")
+        .filter(|value| !value.is_null())
+        .cloned();
+    let given_height = arguments.get("height").filter(|v| !v.is_null()).cloned();
     let sized = ["width", "height"]
         .iter()
         .all(|key| arguments.get(*key).is_some_and(|value| !value.is_null()));
-    if !wants_file && !sized {
-        // The timeline's own frame, fitted within PREVIEW_SIDE.
+    if !sized {
+        // The timeline's own frame, fitted within PREVIEW_SIDE - for a
+        // file as much as an inline picture: a 4K PNG is bytes an agent
+        // never asked for, and one dimension given alone used to be
+        // silently overwritten by the fit.
         let path = arguments.get("path").cloned().unwrap_or(Value::Null);
         let view = backend.call(request("project.get", json!({ "path": path }))?)?;
         let width = view
@@ -1637,6 +1701,13 @@ fn preview(mut arguments: Value, backend: &mut dyn Backend) -> Result<Outcome, A
                 "height".to_owned(),
                 json!(((height * scale).round() as u32).max(1)),
             );
+        }
+        // What the caller named outright wins over the fit.
+        if let (Some(fields), Some(width)) = (arguments.as_object_mut(), given_width) {
+            fields.insert("width".to_owned(), width);
+        }
+        if let (Some(fields), Some(height)) = (arguments.as_object_mut(), given_height) {
+            fields.insert("height".to_owned(), height);
         }
     }
     let time = arguments.get("time").cloned().unwrap_or(Value::Null);
@@ -2054,16 +2125,19 @@ mod tests {
             }))
             .is_err()
         );
-        assert!(
-            audio_levels_db(json!({
-                "path": "/p", "clipId": "c1", "baseDb": -4.0,
-                "keyframes": [
-                    { "at": 0.5, "gainDb": -12.0 },
-                    { "at": 0.501, "gainDb": -8.0 }
-                ]
-            }))
-            .is_err()
-        );
+        // Two keys a hair apart are a replace, not a refusal - the rule
+        // `keyframe_set` applies, so re-sending a duck curve never errors
+        // on its own keys; the second key wins in the same batch.
+        let replaced = audio_levels_db(json!({
+            "path": "/p", "clipId": "c1", "baseDb": -4.0,
+            "keyframes": [
+                { "at": 0.5, "gainDb": -12.0 },
+                { "at": 0.501, "gainDb": -8.0 }
+            ]
+        }))
+        .expect("a hair apart is a replace");
+        let whole = serde_json::to_value(replaced).expect("JSON");
+        assert_eq!(whole["command"]["op"], "batch");
         assert!(
             audio_levels_db(json!({
                 "path": "/p", "clipId": "c1", "baseDb": -4.0,

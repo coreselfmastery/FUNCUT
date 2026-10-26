@@ -183,7 +183,15 @@ impl Headless {
     /// An API made by the caller - a test's, over a scratch folder.
     pub fn with_api(mut api: Api) -> Headless {
         let roots: Vec<PathBuf> = std::env::var_os("CONCAT_MCP_ROOTS")
-            .map(|roots| std::env::split_paths(&roots).collect())
+            .map(|roots| {
+                // An empty component - CONCAT_MCP_ROOTS="" or ":" - is not
+                // a root; left in, it passed the emptiness check and then
+                // matched every path there is, turning "confine writes"
+                // into "confine nothing".
+                std::env::split_paths(&roots)
+                    .filter(|root| !root.as_os_str().is_empty())
+                    .collect::<Vec<PathBuf>>()
+            })
             .filter(|roots: &Vec<PathBuf>| !roots.is_empty())
             .unwrap_or_else(concat_server::home_root);
         api.add_capability("mcp");

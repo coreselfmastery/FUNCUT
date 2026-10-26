@@ -496,6 +496,36 @@ fn an_agent_measures_media_and_is_refused_honestly() {
 }
 
 #[test]
+fn every_reply_is_structured_even_the_lists() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let mut agent = Agent::spawn(scratch.path(), "headless", &[]);
+
+    // The list tools whose replies are bare arrays used to be the only
+    // ones a structured client read nothing from: no object, no
+    // structuredContent. Each lands under a name now, starting with the
+    // one that needs no library: the projects list.
+    let listed = agent.tool("project_list", json!({}));
+    let projects = listed["structuredContent"]["projects"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    // A scratch home has no projects; the array is there, and named.
+    assert!(projects.is_empty());
+
+    // And the effect catalogue - a bigger array, under its own name.
+    let effects = agent.tool("effects_list", json!({}));
+    assert!(
+        effects["structuredContent"]["packages"]
+            .as_array()
+            .is_some_and(|packages| !packages.is_empty()),
+        "{}",
+        effects
+    );
+
+    agent.end();
+}
+
+#[test]
 fn an_agent_lists_models_and_is_refused_a_download_it_cannot_mean() {
     let scratch = tempfile::tempdir().expect("scratch");
     let home = scratch.path().to_path_buf();

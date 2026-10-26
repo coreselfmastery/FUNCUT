@@ -53,6 +53,30 @@ impl Api {
         min_scene_len: Option<f64>,
     ) -> Result<Started, ApiError> {
         readable(path)?;
+        // Bounded here, before a job is booked: a negative threshold or
+        // an unknown detector used to become a Python traceback a caller
+        // waited a job to read.
+        if let Some(threshold) = threshold
+            && (!threshold.is_finite() || !(0.0..=100.0).contains(&threshold))
+        {
+            return Err(ApiError::invalid(
+                "threshold must be a finite number between 0 and 100",
+            ));
+        }
+        if let Some(detector) = detector.as_deref()
+            && !matches!(detector, "adaptive" | "content" | "threshold")
+        {
+            return Err(ApiError::invalid(
+                "detector must be adaptive, content, or threshold",
+            ));
+        }
+        if let Some(min_scene_len) = min_scene_len
+            && (!min_scene_len.is_finite() || min_scene_len < 0.0)
+        {
+            return Err(ApiError::invalid(
+                "minSceneLen must be a finite number, zero or more",
+            ));
+        }
         let mut args = vec!["--input".to_owned(), path.to_owned()];
         if let Some(threshold) = threshold {
             args.push("--threshold".to_owned());
@@ -86,6 +110,18 @@ impl Api {
         min_silence_ms: Option<i64>,
     ) -> Result<Started, ApiError> {
         readable(path)?;
+        if let Some(threshold_db) = threshold_db
+            && (!threshold_db.is_finite() || !(0.0..=100.0).contains(&threshold_db))
+        {
+            return Err(ApiError::invalid(
+                "thresholdDb must be a finite number between 0 and 100",
+            ));
+        }
+        if let Some(min_silence_ms) = min_silence_ms
+            && min_silence_ms < 0
+        {
+            return Err(ApiError::invalid("minSilenceMs must be zero or more"));
+        }
         let mut args = vec!["--input".to_owned(), path.to_owned()];
         if let Some(threshold_db) = threshold_db {
             args.push("--threshold-db".to_owned());

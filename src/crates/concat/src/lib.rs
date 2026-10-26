@@ -1735,8 +1735,8 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     app.global::<Focus>()
         .on_release(|| Shell::with(|_, app| app.invoke_blur()));
     editor.on_shortcut(move |action: SharedString| match action.as_str() {
-        "import" | "export" | "settings" | "zoom-in" | "zoom-out" | "start" | "end" | "snap"
-        | "magnetic" | "pan" | "preview-axis" => {
+        "import" | "export" | "settings" | "zoom-in" | "zoom-out" | "start" | "end"
+        | "prev-edit" | "next-edit" | "snap" | "magnetic" | "pan" | "preview-axis" => {
             Shell::with(|_, app| app.invoke_app_menu_selected(action.clone()));
         }
         _ => Shell::with(|shell, app| {
@@ -1858,7 +1858,8 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
                 // menu's own handler, so the key and the row cannot come
                 // apart — the same door on_shortcut keeps open.
                 "save" | "undo" | "redo" | "import" | "export" | "settings" | "zoom-in"
-                | "zoom-out" | "start" | "end" | "snap" | "pan" | "preview-axis" | "delete" => {
+                | "zoom-out" | "start" | "end" | "prev-edit" | "next-edit" | "snap" | "pan"
+                | "preview-axis" | "delete" => {
                     app.invoke_app_menu_selected(SharedString::from(action));
                 }
                 // The rest: the editor's own table, the way the phone's
@@ -2379,6 +2380,11 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
                             state.pause();
                             let end = state.duration();
                             state.seek(end);
+                        }
+                        edit @ ("prev-edit" | "next-edit") => {
+                            state.pause();
+                            let at = state.edit_point(edit == "next-edit");
+                            state.seek(at);
                         }
                         "delete" => state.delete_selected(),
                         // The selected clips, as the tray's button splits, or

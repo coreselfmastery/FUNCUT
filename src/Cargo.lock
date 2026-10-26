@@ -1271,6 +1271,7 @@ version = "0.2.8"
 dependencies = [
  "concat-core",
  "concat-effects",
+ "concat-vision",
  "half",
  "log",
  "pollster",

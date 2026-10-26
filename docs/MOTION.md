@@ -220,6 +220,52 @@ made **relative to the line** — so the same comp keeps its motion wherever it 
 
 ---
 
+## Authoring by hand: what the presets cannot say
+
+Twelve presets are a vocabulary; a film is a sentence. Every preset in `presets.rs` is written as a
+document literal, and so is anything a designer or an agent writes: the JSON *is* the authoring
+surface, masks, effects, blends, gradients, dash and all five curve families included.
+
+`src/crates/concat-motion/examples/comps/cypher.opener.json` and `cypher.spectrum.json` are the two
+worked examples, and between them they exercise the whole model:
+
+| In `cypher.opener` | In `cypher.spectrum` |
+| --- | --- |
+| an ellipse with a **feathered elliptical mask** and the unclamped `add` blend — a glow, not a disc | a `radial-gradient` light leak in markup, `difference`-blended over the plate |
+| gradient-clipped type pulling focus on a `blur` **track** | a violet disc, `add`, masked and turning |
+| a spring on `scale`, a bezier on `opacity`, `steps(8)` on the kicker, a `points` ramp on nothing else | a rounded mask on a slab, a `blur` track on type, `screen` blend |
+| a CSS hairline grown by `@keyframes` inside markup | a markup card with `backdrop-filter`, a gradient-clipped heading and a growing bar |
+
+Measured bake: `cypher.spectrum` is 162 frames of 1080p in 23 s on two cores (7 fps); the opener is
+~10 s for 132 frames. Both are slotted into `examples/reel.rs`'s shape by a storyboard: seventeen
+scenes, twelve presets plus the two hand-authored comps, 54.6 s, 1638 frames at 1080p30 rendered in
+121 s on two cores (13.6 fps end to end).
+
+### What Geneva 1.6.0 does and does not draw
+
+Found by rendering, not by reading the docs — each one is now either handled in the mapper or written
+in `.claude/skills/motion/SKILL.md` so an author does not walk into it:
+
+| Ask | Result | What `concat-motion` does |
+| --- | --- | --- |
+| a gradient in a **shape's** `fill` | `E103`, fatal to the whole document | averages the stops to one colour and **warns**, naming the node |
+| a gradient in markup, or a text node's `fill` | drawn exactly | passes it through |
+| a `shadow` **effect** on a clip | not drawn (native-only) | warns, names the node |
+| a CSS `box-shadow` inside markup | drawn, on an inner element | — |
+| `box-shadow: inset` | `W450`, skipped | — |
+| a `box-shadow` on the clip's outermost element | drawn as the **clip's** rectangle | put it one element deeper |
+| a keyframe on the clip's outermost element | `E442`, refused | `sequence` animates only transform and opacity there |
+| a `path` node | warned, dropped (native-only) | warns, names the node |
+| `conic-gradient` | draws nothing | use a linear or a radial gradient |
+| `radial-gradient(62% 74% at …)` | draws nothing | `radial-gradient(circle at 50% 60%, …)` works |
+| a key time with >9 decimals | `E103` | times are written to **milliseconds** |
+
+The last row was a real bug: a track key at a fraction of a node's span divides into seventeen digits,
+and one such key made the render refuse the whole timeline. `seconds()` now writes three decimals,
+which is finer than any frame the renderer draws, and a test holds it there.
+
+---
+
 ## The agent door: `agent`, one binary, JSON in and out
 
 Every verb prints exactly one JSON document and exits non-zero on failure.

@@ -1,0 +1,581 @@
+{
+ "format": 1,
+ "id": "cypher.spectrum",
+ "name": "Spectrum \u2014 masks, effects, blends",
+ "width": 1920,
+ "height": 1080,
+ "fps": 30.0,
+ "duration": 5.4,
+ "background": {
+  "r": 0.0,
+  "g": 0.0,
+  "b": 0.0,
+  "a": 0.0
+ },
+ "assets": {},
+ "curves": {},
+ "nodes": [
+  {
+   "id": "leak",
+   "start": 0.0,
+   "duration": 0.0,
+   "transform": {
+    "scale": 1.0,
+    "rotation": 0.0
+   },
+   "opacity": 1.0,
+   "blend": "difference",
+   "tracks": {
+    "opacity": [
+     {
+      "at": 0.0,
+      "value": {
+       "kind": "number",
+       "value": 0.0
+      },
+      "curve": {
+       "kind": "bezier",
+       "x1": 0.16,
+       "y1": 1.0,
+       "x2": 0.3,
+       "y2": 1.0
+      }
+     },
+     {
+      "at": 0.34,
+      "value": {
+       "kind": "number",
+       "value": 0.5
+      }
+     },
+     {
+      "at": 0.82,
+      "value": {
+       "kind": "number",
+       "value": 0.36
+      }
+     }
+    ]
+   },
+   "kind": "html",
+   "width": {
+    "px": 1920.0
+   },
+   "height": {
+    "px": 1080.0
+   },
+   "markup": "<div class=\"leak\"></div>",
+   "css": ".leak{position:absolute;left:-160px;top:640px;width:2240px;height:820px;background:radial-gradient(circle at 50% 62%,rgba(34,211,197,0.55),rgba(34,211,197,0.12) 52%,rgba(34,211,197,0) 78%);}"
+  },
+  {
+   "id": "halo",
+   "start": 0.0,
+   "duration": 0.0,
+   "transform": {
+    "scale": 1.0,
+    "rotation": 0.0,
+    "position": {
+     "x": 470.0,
+     "y": 690.0
+    }
+   },
+   "opacity": 1.0,
+   "blend": "add",
+   "mask": {
+    "shape": "ellipse",
+    "feather": 90.0
+   },
+   "tracks": {
+    "scale": [
+     {
+      "at": 0.0,
+      "value": {
+       "kind": "number",
+       "value": 0.76
+      },
+      "curve": {
+       "kind": "spring",
+       "stiffness": 220.0,
+       "damping": 16.0,
+       "mass": 1.0
+      }
+     },
+     {
+      "at": 0.5,
+      "value": {
+       "kind": "number",
+       "value": 1.0
+      }
+     }
+    ],
+    "rotation": [
+     {
+      "at": 0.0,
+      "value": {
+       "kind": "number",
+       "value": 0.0
+      },
+      "curve": {
+       "kind": "linear"
+      }
+     },
+     {
+      "at": 1.0,
+      "value": {
+       "kind": "number",
+       "value": 28.0
+      }
+     }
+    ],
+    "blur": [
+     {
+      "at": 0.0,
+      "value": {
+       "kind": "number",
+       "value": 4.0
+      },
+      "curve": {
+       "kind": "points",
+       "stops": [
+        [
+         0.0,
+         0.0
+        ],
+        [
+         0.4,
+         1.0
+        ],
+        [
+         1.0,
+         1.0
+        ]
+       ]
+      }
+     },
+     {
+      "at": 0.55,
+      "value": {
+       "kind": "number",
+       "value": 26.0
+      }
+     },
+     {
+      "at": 1.0,
+      "value": {
+       "kind": "number",
+       "value": 8.0
+      }
+     }
+    ]
+   },
+   "kind": "ellipse",
+   "width": {
+    "px": 560.0
+   },
+   "height": {
+    "px": 560.0
+   },
+   "fill": {
+    "kind": "solid",
+    "color": {
+     "r": 0.48627450980392156,
+     "g": 0.3607843137254902,
+     "b": 1.0,
+     "a": 0.7
+    }
+   }
+  },
+  {
+   "id": "slab",
+   "start": 0.0,
+   "duration": 0.0,
+   "transform": {
+    "scale": 1.0,
+    "rotation": 0.0,
+    "position": {
+     "x": 1300.0,
+     "y": 740.0
+    }
+   },
+   "opacity": 1.0,
+   "blend": "normal",
+   "mask": {
+    "shape": "rect",
+    "radius": 30.0,
+    "feather": 2.0
+   },
+   "effects": [
+    {
+     "kind": "shadow",
+     "x": 0.0,
+     "y": 34.0,
+     "blur": 80.0,
+     "color": {
+      "r": 0.0,
+      "g": 0.0,
+      "b": 0.0,
+      "a": 0.62
+     }
+    }
+   ],
+   "tracks": {
+    "opacity": [
+     {
+      "at": 0.16,
+      "value": {
+       "kind": "number",
+       "value": 0.0
+      },
+      "curve": {
+       "kind": "bezier",
+       "x1": 0.16,
+       "y1": 1.0,
+       "x2": 0.3,
+       "y2": 1.0
+      }
+     },
+     {
+      "at": 0.4,
+      "value": {
+       "kind": "number",
+       "value": 1.0
+      }
+     }
+    ],
+    "position": [
+     {
+      "at": 0.16,
+      "value": {
+       "kind": "point",
+       "x": 1300.0,
+       "y": 810.0
+      },
+      "curve": {
+       "kind": "bezier",
+       "x1": 0.16,
+       "y1": 1.0,
+       "x2": 0.3,
+       "y2": 1.0
+      }
+     },
+     {
+      "at": 0.5,
+      "value": {
+       "kind": "point",
+       "x": 1300.0,
+       "y": 740.0
+      }
+     }
+    ],
+    "scale": [
+     {
+      "at": 0.16,
+      "value": {
+       "kind": "number",
+       "value": 0.88
+      },
+      "curve": {
+       "kind": "spring",
+       "stiffness": 240.0,
+       "damping": 15.0,
+       "mass": 1.0
+      }
+     },
+     {
+      "at": 0.52,
+      "value": {
+       "kind": "number",
+       "value": 1.0
+      }
+     }
+    ]
+   },
+   "kind": "rect",
+   "width": {
+    "px": 620.0
+   },
+   "height": {
+    "px": 250.0
+   },
+   "radius": 30.0,
+   "fill": {
+    "kind": "solid",
+    "color": {
+     "r": 0.07058823529411765,
+     "g": 0.09019607843137255,
+     "b": 0.16470588235294117,
+     "a": 0.9
+    }
+   }
+  },
+  {
+   "id": "lens",
+   "start": 0.0,
+   "duration": 0.0,
+   "transform": {
+    "scale": 1.0,
+    "rotation": 0.0,
+    "position": {
+     "x": 1300.0,
+     "y": 740.0
+    }
+   },
+   "opacity": 1.0,
+   "blend": "screen",
+   "tracks": {
+    "blur": [
+     {
+      "at": 0.2,
+      "value": {
+       "kind": "number",
+       "value": 28.0
+      },
+      "curve": {
+       "kind": "points",
+       "stops": [
+        [
+         0.0,
+         0.0
+        ],
+        [
+         0.55,
+         1.0
+        ],
+        [
+         1.0,
+         1.0
+        ]
+       ]
+      }
+     },
+     {
+      "at": 0.58,
+      "value": {
+       "kind": "number",
+       "value": 0.0
+      }
+     },
+     {
+      "at": 0.92,
+      "value": {
+       "kind": "number",
+       "value": 0.0
+      },
+      "curve": {
+       "kind": "bezier",
+       "x1": 0.5,
+       "y1": 0.0,
+       "x2": 0.9,
+       "y2": 0.3
+      }
+     },
+     {
+      "at": 1.0,
+      "value": {
+       "kind": "number",
+       "value": 10.0
+      }
+     }
+    ],
+    "opacity": [
+     {
+      "at": 0.2,
+      "value": {
+       "kind": "number",
+       "value": 0.0
+      },
+      "curve": {
+       "kind": "bezier",
+       "x1": 0.16,
+       "y1": 1.0,
+       "x2": 0.3,
+       "y2": 1.0
+      }
+     },
+     {
+      "at": 0.46,
+      "value": {
+       "kind": "number",
+       "value": 0.95
+      }
+     }
+    ]
+   },
+   "kind": "text",
+   "text": "FOCUS",
+   "font": "Archivo",
+   "size": 84.0,
+   "weight": 200,
+   "letter_spacing": 26.0,
+   "align": "center",
+   "color": {
+    "r": 1.0,
+    "g": 1.0,
+    "b": 1.0,
+    "a": 0.94
+   }
+  },
+  {
+   "id": "ring",
+   "start": 0.0,
+   "duration": 0.0,
+   "transform": {
+    "scale": 1.0,
+    "rotation": 0.0,
+    "position": {
+     "x": 1520.0,
+     "y": 300.0
+    }
+   },
+   "opacity": 1.0,
+   "blend": "normal",
+   "tracks": {
+    "rotation": [
+     {
+      "at": 0.0,
+      "value": {
+       "kind": "number",
+       "value": -30.0
+      },
+      "curve": {
+       "kind": "bezier",
+       "x1": 0.16,
+       "y1": 1.0,
+       "x2": 0.3,
+       "y2": 1.0
+      }
+     },
+     {
+      "at": 1.0,
+      "value": {
+       "kind": "number",
+       "value": 300.0
+      }
+     }
+    ],
+    "opacity": [
+     {
+      "at": 0.06,
+      "value": {
+       "kind": "number",
+       "value": 0.0
+      },
+      "curve": {
+       "kind": "bezier",
+       "x1": 0.16,
+       "y1": 1.0,
+       "x2": 0.3,
+       "y2": 1.0
+      }
+     },
+     {
+      "at": 0.3,
+      "value": {
+       "kind": "number",
+       "value": 0.9
+      }
+     }
+    ],
+    "scale": [
+     {
+      "at": 0.06,
+      "value": {
+       "kind": "number",
+       "value": 0.86
+      },
+      "curve": {
+       "kind": "spring",
+       "stiffness": 240.0,
+       "damping": 14.0,
+       "mass": 1.0
+      }
+     },
+     {
+      "at": 0.4,
+      "value": {
+       "kind": "number",
+       "value": 1.0
+      }
+     }
+    ]
+   },
+   "kind": "html",
+   "width": {
+    "px": 380.0
+   },
+   "height": {
+    "px": 380.0
+   },
+   "markup": "<div class=\"ring\"><div class=\"hub\"></div></div>",
+   "css": ".ring{width:380px;height:380px;border-radius:190px;background:linear-gradient(142deg,#ffb43a,rgba(255,180,58,0.04) 62%,rgba(255,180,58,0.55));display:flex;align-items:center;justify-content:center;}.hub{width:322px;height:322px;border-radius:161px;background:#07080d;box-shadow:inset 0 0 70px rgba(255,180,58,0.18);}"
+  },
+  {
+   "id": "card",
+   "start": 0.0,
+   "duration": 0.0,
+   "transform": {
+    "scale": 1.0,
+    "rotation": 0.0
+   },
+   "opacity": 1.0,
+   "blend": "normal",
+   "tracks": {
+    "opacity": [
+     {
+      "at": 0.36,
+      "value": {
+       "kind": "number",
+       "value": 0.0
+      },
+      "curve": {
+       "kind": "bezier",
+       "x1": 0.16,
+       "y1": 1.0,
+       "x2": 0.3,
+       "y2": 1.0
+      }
+     },
+     {
+      "at": 0.58,
+      "value": {
+       "kind": "number",
+       "value": 1.0
+      }
+     }
+    ],
+    "scale": [
+     {
+      "at": 0.36,
+      "value": {
+       "kind": "number",
+       "value": 0.94
+      },
+      "curve": {
+       "kind": "spring",
+       "stiffness": 240.0,
+       "damping": 15.0,
+       "mass": 1.0
+      }
+     },
+     {
+      "at": 0.66,
+      "value": {
+       "kind": "number",
+       "value": 1.0
+      }
+     }
+    ]
+   },
+   "kind": "html",
+   "width": {
+    "px": 1920.0
+   },
+   "height": {
+    "px": 1080.0
+   },
+   "markup": "<div class=\"card\"><div class=\"row\"><span class=\"dot\"></span><span class=\"mono\">NODE / HTML</span></div><div class=\"big\">markup, drawn<br/>without a browser</div><div class=\"bar\"></div></div>",
+   "css": ".card{position:absolute;left:110px;top:186px;width:610px;padding:26px 30px;box-sizing:border-box;border-radius:24px;border:1px solid rgba(255,255,255,0.14);background:rgba(10,13,22,0.55);backdrop-filter:blur(18px);display:flex;flex-direction:column;gap:12px;}.row{display:flex;align-items:center;gap:10px;}.dot{width:8px;height:8px;border-radius:4px;background:#22d3c5;box-shadow:0 0 14px rgba(34,211,197,0.9);}.mono{font-family:'JetBrains Mono',monospace;font-size:13px;letter-spacing:0.22em;color:rgba(34,211,197,0.95);}.big{font-family:'Space Grotesk',sans-serif;font-size:34px;font-weight:600;line-height:1.16;background:linear-gradient(92deg,#ffffff,#ffd9a0 60%,#ffb43a);-webkit-background-clip:text;background-clip:text;color:transparent;}.bar{width:0;height:2px;background:#ffb43a;animation:grow 0.9s cubic-bezier(0.16,1,0.3,1) 0.35s both;}@keyframes grow{from{width:0px}to{width:210px}}"
+  }
+ ],
+ "slots": []
+}

@@ -641,7 +641,10 @@ fn time(value: f64) -> f64 {
 
 /// A time as a Geneva value: seconds with at most three decimals.
 fn seconds(value: f64) -> String {
-    let text = format!("{value:.3}");
+    // Geneva refuses a key at a time with more than nine decimals (E103), and
+    // a floating-point division reaches seventeen: three decimals is
+    // milliseconds, which is finer than any frame the renderer draws.
+    let text = format!("{:.3}", value.max(0.0));
     let trimmed = text.trim_end_matches('0').trim_end_matches('.');
     format!("{}s", if trimmed.is_empty() { "0" } else { trimmed })
 }
@@ -725,6 +728,55 @@ fn absolute_position(comp: &Comp, node: &Node, point: crate::comp::Point) -> (f6
     (x, y)
 }
 
+/// A shape's fill, as Geneva takes it: one colour.
+///
+/// Geneva's `shape` source fills with a colour, not a gradient, and a
+/// `linear-gradient()` string there is a hard `E103` that kills the whole
+/// bake. A comp is still allowed to ask for one - the native engine draws it -
+/// so the gradient is averaged to a solid and the node is named in the
+/// warnings, rather than the frame quietly failing. A design-grade gradient
+/// belongs on an `html` node, where CSS draws it exactly.
+fn shape_fill(node: &Node, fill: Option<&Paint>, warnings: &mut Vec<String>) -> String {
+    match fill {
+        None => "#ffffffff".into(),
+        Some(Paint::Solid { color }) => color.to_hex(),
+        Some(Paint::Gradient { stops, .. }) => {
+            let solid = average_color(stops);
+            warnings.push(format!(
+                "node {:?}: Geneva fills a shape with one colour, so its gradient is \
+                 approximated by {} - put the gradient on an html node to draw it exactly",
+                node.id,
+                solid.to_hex()
+            ));
+            solid.to_hex()
+        }
+    }
+}
+
+/// The colour a gradient reads as at a glance: the alpha-weighted mean of its
+/// stops.
+fn average_color(stops: &[(f64, Rgba)]) -> Rgba {
+    let mut weight = 0.0;
+    let (mut r, mut g, mut b, mut a) = (0.0, 0.0, 0.0, 0.0);
+    for (_, color) in stops {
+        let w = color.a.max(0.0);
+        r += color.r * w;
+        g += color.g * w;
+        b += color.b * w;
+        a += color.a;
+        weight += w;
+    }
+    if weight <= 0.0 {
+        return Rgba::new(0.0, 0.0, 0.0, 0.0);
+    }
+    Rgba::new(
+        r / weight,
+        g / weight,
+        b / weight,
+        (a / stops.len().max(1) as f64).clamp(0.0, 1.0),
+    )
+}
+
 /// What a node draws, as a Geneva source; `None` when this engine cannot.
 fn source_of(comp: &Comp, node: &Node, warnings: &mut Vec<String>) -> Option<Json> {
     match &node.kind {
@@ -747,7 +799,7 @@ fn source_of(comp: &Comp, node: &Node, warnings: &mut Vec<String>) -> Option<Jso
             "shape": "rect",
             "width": length(*width),
             "height": length(*height),
-            "fill": fill.as_ref().map(paint).unwrap_or_else(|| "#ffffffff".into()),
+            "fill": shape_fill(node, fill.as_ref(), warnings),
             "radius": radius,
         })),
         NodeKind::Ellipse {
@@ -759,7 +811,7 @@ fn source_of(comp: &Comp, node: &Node, warnings: &mut Vec<String>) -> Option<Jso
             "shape": "ellipse",
             "width": length(*width),
             "height": length(*height),
-            "fill": fill.as_ref().map(paint).unwrap_or_else(|| "#ffffffff".into()),
+            "fill": shape_fill(node, fill.as_ref(), warnings),
         })),
         NodeKind::Path { commands, dash, .. } => {
             // Geneva draws rectangles and ellipses, not paths. Being explicit
@@ -1189,6 +1241,15 @@ mod tests {
     }
 
     #[test]
+    fn a_time_is_written_to_milliseconds_and_never_more() {
+        // A key at a fraction of a span divides into seventeen digits, and
+        // geneva refuses a time with more than nine decimals (E103).
+        assert_eq!(seconds(1.1 / 6.0), "0.183s");
+        assert_eq!(seconds(0.18333333333333335), "0.183s");
+        assert_eq!(seconds(-0.5), "0s");
+    }
+
+    #[test]
     fn a_path_is_reported_rather_than_dropped_silently() {
         let mut comp = text_comp();
         comp.nodes[0].kind = NodeKind::Path {
@@ -1203,6 +1264,67 @@ mod tests {
         let (document, warnings) = geneva.timeline(&comp, &BakeRequest::default());
         assert!(warnings.iter().any(|w| w.contains("path")), "{warnings:?}");
         assert!(document["layers"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_gradient_on_a_shape_becomes_one_colour_and_says_so() {
+        // Geneva fills a shape with a colour: a gradient string there is a
+        // fatal E103 for the whole document, so the mapper averages it and
+        // reports the node instead of losing the bake.
+        let mut comp = text_comp();
+        comp.nodes[0].kind = NodeKind::Ellipse {
+            width: crate::comp::Length::px(640.0),
+            height: crate::comp::Length::px(640.0),
+            fill: Some(Paint::Gradient {
+                stops: vec![
+                    (0.0, Rgba::new(1.0, 0.6, 0.13, 1.0)),
+                    (1.0, Rgba::new(1.0, 0.2, 0.3, 1.0)),
+                ],
+                angle: 118.0,
+                from: 0.0,
+                to: 1.0,
+            }),
+        };
+        let geneva = Geneva::at("/nonexistent/geneva");
+        let (document, warnings) = geneva.timeline(&comp, &BakeRequest::default());
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("gradient") && w.contains("\"caption\"")),
+            "{warnings:?}"
+        );
+        let fill = document["layers"][0]["clips"][0]["source"]["fill"]
+            .as_str()
+            .unwrap();
+        assert!(fill.starts_with("#"), "{fill}");
+        assert_eq!(fill.len(), 9, "{fill}");
+        assert!(!fill.contains("gradient"), "{fill}");
+    }
+
+    /// The two hand-authored comps shipped as worked examples are a promise to
+    /// the next author: they must parse, validate, and map onto a timeline
+    /// with nothing skipped that they rely on.
+    #[test]
+    fn the_authored_examples_are_valid_and_map_cleanly() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/comps");
+        for name in ["cypher.opener.json", "cypher.spectrum.json"] {
+            let text = std::fs::read_to_string(dir.join(name)).expect("the example is there");
+            let comp: Comp = serde_json::from_str(&text).expect("the example parses");
+            let problems = comp.validate();
+            assert!(problems.is_empty(), "{name}: {problems:?}");
+            let (document, warnings) =
+                Geneva::at("geneva").timeline(&comp, &BakeRequest::default());
+            let layers = document["layers"].as_array().expect("layers");
+            assert!(layers.len() >= 5, "{name}: {} layers", layers.len());
+            // The spectrum's slab asks for a native-only shadow; everything
+            // else these comps rely on is drawn by geneva.
+            for warning in &warnings {
+                assert!(
+                    warning.contains("drop shadow"),
+                    "{name}: unexpected warning {warning:?}"
+                );
+            }
+        }
     }
 
     #[test]

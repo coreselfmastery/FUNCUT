@@ -315,8 +315,13 @@ impl Plan {
     }
 
     /// Render the whole sequence to `out`, from a render directory.
+    ///
+    /// The engine runs with the render directory as its own, so a relative
+    /// `out` would land inside it: the file is named in full before it is
+    /// asked for, and the answer's `written` is the path the caller meant.
     pub fn render(&self, geneva: &Geneva, dir: &Path, out: &Path) -> Result<Json, MotionError> {
         self.write(dir)?;
+        let out = absolute(out);
         let args: Vec<String> = vec![
             "--format".into(),
             "json".into(),
@@ -338,6 +343,7 @@ impl Plan {
         out: &Path,
     ) -> Result<Json, MotionError> {
         self.write(dir)?;
+        let out = absolute(out);
         let args: Vec<String> = vec![
             "--format".into(),
             "json".into(),
@@ -350,6 +356,17 @@ impl Plan {
         ];
         geneva.run_in(dir, &args)
     }
+}
+
+/// A path as the caller meant it: an engine that runs in a render directory
+/// would otherwise resolve a relative output inside that directory.
+fn absolute(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        return path.to_path_buf();
+    }
+    std::env::current_dir()
+        .map(|cwd| cwd.join(path))
+        .unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// Lay a sequence out as one Geneva timeline.

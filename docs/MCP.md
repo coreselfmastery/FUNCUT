@@ -45,9 +45,11 @@ fetch only what is used. FreePD is the Internet Archive's mirror of Kevin
 MacLeod's CC0 library (~1,000 tracks, grouped as freepd.com grouped them:
 upbeat, epic, comedy, scoring, world…); Lo-Fi is Moby's MobyGratis
 instrumentals as the OpenLo-Fi pack (166 tracks, 10 categories). Nothing
-is bundled: `bgm_prepare` fetches both shelves' catalogs once (a few MB,
+is bundled: `bgm_prepare` fetches the shelves' catalogs once (a few MB,
 plus a one-time measuring of the Lo-Fi pack's zip, a few seconds; poll
-`bgm_status` until both are `ready`), and a track's audio arrives only
+`bgm_status` until the shelf you read is `ready` - an optional `source`
+narrows the prepare to one shelf, and a search that names no shelf simply
+searches whichever shelves are ready), and a track's audio arrives only
 when it is picked - FreePD as its own file, a Lo-Fi track as **one ranged
 read of exactly that track's span out of the pack's 554 MB zip**, never
 the whole zip. A typical run: `bgm_search` with words and a length

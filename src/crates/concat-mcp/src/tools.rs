@@ -348,7 +348,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "bgm_prepare",
             "Load the music library",
-            "Starts both shelves' one-time catalog fetches and returns at once; poll `bgm_status` until both are \"ready\". The FreePD list is the Archive item's own file listing (~1 MB) and the Lo-Fi list is the pack's manifest, beside which every track's place and length in the pack's 554 MB zip is measured once with one small ranged read a track (the `percent` you watch). Nothing else downloads anything: every other `bgm` tool refuses until the shelf it reads is ready.",
+            "Starts the shelves' one-time catalog fetches and returns at once; poll `bgm_status` until the shelf you read is \"ready\". Optional `source` (\"freepd\" or \"lofi\") narrows it to one shelf - worth it when the other is down. The FreePD list is the Archive item's own file listing (~1 MB) and the Lo-Fi list is the pack's manifest, beside which every track's place and length in the pack's 554 MB zip is measured once with one small ranged read a track (the `percent` you watch). Nothing else downloads anything: every other `bgm` tool refuses until the shelf it reads is ready.",
             "bgm.prepare",
             Raw,
         )

@@ -548,8 +548,8 @@ impl Api {
                 self.sounds_add(&path, &id, start, track)?,
             )),
             Request::BgmStatus => Ok(Reply::Bgm(self.bgm_state())),
-            Request::BgmPrepare => {
-                self.bgm_prepare();
+            Request::BgmPrepare { source } => {
+                self.bgm_prepare(source.as_deref())?;
                 Ok(Reply::Bgm(self.bgm_state()))
             }
             Request::BgmSearch {
@@ -1254,12 +1254,12 @@ impl Api {
         match self.library().status() {
             openvid::Status::Ready => Ok(()),
             openvid::Status::Downloading(percent) => Err(ApiError::failed(format!(
-                "the OpenVid index is still downloading ({percent}%); ask openvid.status \
-                 until it is ready"
+                "the OpenVid index is still downloading ({percent}%); poll openvid_status \
+                 (openvid.status) until it is ready"
             ))),
             openvid::Status::Missing => Err(ApiError::failed(
-                "the OpenVid index is not on this machine yet; call openvid.prepare once, \
-                 then ask openvid.status until it is ready"
+                "the OpenVid index is not on this machine yet; call openvid_prepare once, \
+                 then poll openvid_status until it is ready"
                     .to_owned(),
             )),
             openvid::Status::Failed(error) => Err(ApiError::failed(format!(
@@ -1323,10 +1323,23 @@ impl Api {
     /// Lo-Fi census after them takes seconds; a caller should not wait
     /// for them. Their progress is what `bgm.status` reports; a second
     /// call while they run is a no-op, and the window's own page starting
-    /// one is the same download.
-    pub fn bgm_prepare(&self) {
+    /// one is the same download. A `source` narrows the ask to that one
+    /// shelf, so a caller that only wants Lo-Fi never pays for FreePD's
+    /// Archive round trip.
+    pub fn bgm_prepare(&self, source: Option<&str>) -> Result<(), ApiError> {
+        let sources = match source.map(str::to_ascii_lowercase).as_deref() {
+            None => vec![bgm_library::Source::FreePd, bgm_library::Source::Lofi],
+            Some("freepd") => vec![bgm_library::Source::FreePd],
+            Some("lofi") => vec![bgm_library::Source::Lofi],
+            Some(other) => {
+                return Err(ApiError::new(
+                    ErrorCode::Invalid,
+                    format!("unknown source {other:?} - freepd or lofi"),
+                ));
+            }
+        };
         let library = self.music();
-        for source in [bgm_library::Source::FreePd, bgm_library::Source::Lofi] {
+        for source in sources {
             if matches!(
                 library.status(source),
                 bgm_library::Status::Ready | bgm_library::Status::Loading(_)
@@ -1345,6 +1358,7 @@ impl Api {
                 let _ = library.prepare(source, &cancel);
             });
         }
+        Ok(())
     }
 
     /// [`Request::BgmSearch`]: the filters as the request carries them,
@@ -1462,8 +1476,10 @@ impl Api {
             };
             // The title plus the id: unique for as long as the track is in
             // the catalog, and the same track imported twice is the same
-            // file, copied over itself.
-            let name = format!("{}-{}.mp3", clean_name(&found.title), &id[id.len() - 6..]);
+            // file, copied over itself. The tail is read through `get`, so
+            // a shorter or multi-byte id can never panic the slice.
+            let tail = id.get(id.len().saturating_sub(6)..).unwrap_or(id.as_str());
+            let name = format!("{}-{tail}.mp3", clean_name(&found.title));
             let into = folder.join(&name);
             std::fs::copy(&cached, &into).map_err(|error| {
                 ApiError::failed(format!("could not copy into the project: {error}"))

@@ -463,34 +463,66 @@ impl Library {
     }
 
     /// Searches both shelves - or one, when the query names it - by the
-    /// words, the category and the length the caller set. A shelf that is
-    /// not ready refuses the search with words that say how to make it
-    /// ready, rather than quietly searching half a library; a search that
-    /// names neither shelf needs both.
+    /// words, the category and the length the caller set. A query that
+    /// names a shelf needs that shelf ready and refuses with words that
+    /// say how to make it so. A query that names neither searches
+    /// whichever shelves are ready and refuses only when none are: one
+    /// shelf down - the Archive has its days - must not make the whole
+    /// library unusable, the same way the sticker library degrades.
     pub fn search(&self, query: &Query) -> Result<Found, String> {
+        let ready = |source: Source| self.shelf(source).catalog().is_some();
         let sources = match query.source {
-            Some(source) => vec![source],
-            None => vec![Source::FreePd, Source::Lofi],
+            Some(source) => {
+                if !ready(source) {
+                    return Err(self.not_ready(source));
+                }
+                vec![source]
+            }
+            None => {
+                if !(ready(Source::FreePd) || ready(Source::Lofi)) {
+                    // Neither shelf is usable: name the one further from
+                    // ready - the Lo-Fi census is the part worth watching.
+                    let source = if matches!(self.shelf(Source::Lofi).status(), Status::Loading(_))
+                    {
+                        Source::Lofi
+                    } else {
+                        Source::FreePd
+                    };
+                    return Err(self.not_ready(source));
+                }
+                [Source::FreePd, Source::Lofi]
+                    .into_iter()
+                    .filter(|source| ready(*source))
+                    .collect()
+            }
         };
         let mut pool: Vec<Track> = Vec::new();
         for source in sources {
-            let shelf = self.shelf(source);
-            let Some(catalog) = shelf.catalog() else {
-                return Err(match shelf.status() {
-                    Status::Loading(_) => format!(
-                        "the {} list is still loading; poll bgm_status until it is ready",
-                        source.name()
-                    ),
-                    _ => format!(
-                        "the {} list is not on this machine yet; call bgm_prepare once, \
-                         then poll bgm_status until it is ready",
-                        source.name()
-                    ),
-                });
-            };
-            pool.extend(catalog.iter().cloned());
+            if let Some(catalog) = self.shelf(source).catalog() {
+                pool.extend(catalog.iter().cloned());
+            }
         }
         search(&pool, query)
+    }
+
+    /// The refusal for a shelf that is not ready, in words that say how
+    /// far it is and what brings it: the one sentence a headless caller
+    /// reads instead of a Settings page.
+    fn not_ready(&self, source: Source) -> String {
+        match self.shelf(source).status() {
+            Status::Loading(percent) => format!(
+                "the {} list is still loading ({percent}%); poll bgm_status until it is ready",
+                source.name()
+            ),
+            Status::Failed(error) => {
+                format!("the {} list is unusable: {error}", source.name())
+            }
+            _ => format!(
+                "the {} list is not on this machine yet; call bgm_prepare once, then poll \
+                 bgm_status until it is ready",
+                source.name()
+            ),
+        }
     }
 
     /// Where a track is, if its bytes are on this machine.
@@ -1563,6 +1595,81 @@ mod tests {
             bytes: 1000,
             file: format!("{}.mp3", title.to_lowercase().replace(' ', "-")),
         }
+    }
+
+    /// One shelf down must not make the whole library unusable: a search
+    /// that names neither shelf searches whichever are ready, and refuses
+    /// only when none are. A search that names a shelf still needs it.
+    #[test]
+    fn a_search_degrades_to_the_shelves_that_are_ready() {
+        let dir = scratch("degrade");
+        let library = Library {
+            dirs: dirs_at(&dir),
+            freepd: Shelf::new(),
+            lofi: Shelf::new(),
+            turns: Mutex::new(HashMap::new()),
+        };
+        // FreePD failed - the Archive has its days; Lo-Fi is ready.
+        library
+            .freepd
+            .lands(Held::Failed("the Archive did not answer".to_owned()));
+        library.lofi.lands(Held::Ready(Arc::new(vec![track(
+            Source::Lofi,
+            "Rain Off The Neon Signs",
+            "Moby (MobyGratis)",
+            "late-night",
+            118.0,
+        )])));
+
+        // A query that names neither shelf searches what is ready.
+        let found = library
+            .search(&Query {
+                text: Some("rain".to_owned()),
+                limit: 10,
+                ..Query::default()
+            })
+            .expect("the ready shelf is searched");
+        assert_eq!(found.total, 1);
+        assert_eq!(found.tracks[0].source, Source::Lofi);
+
+        // A query that names the failed shelf is refused with its error.
+        let error = library
+            .search(&Query {
+                text: Some("rain".to_owned()),
+                limit: 10,
+                source: Some(Source::FreePd),
+                ..Query::default()
+            })
+            .expect_err("the named shelf is not usable");
+        assert!(error.contains("unusable"), "{error}");
+        assert!(error.contains("the Archive did not answer"), "{error}");
+
+        // A query that names the ready shelf works as before.
+        let found = library
+            .search(&Query {
+                text: Some("rain".to_owned()),
+                limit: 10,
+                source: Some(Source::Lofi),
+                ..Query::default()
+            })
+            .expect("the named shelf is ready");
+        assert_eq!(found.total, 1);
+
+        // And with neither shelf usable, the refusal names a shelf and
+        // its remedy.
+        library.freepd.lands(Held::Missing);
+        library
+            .lofi
+            .lands(Held::Failed("the Hub did not answer".to_owned()));
+        let error = library
+            .search(&Query {
+                text: Some("rain".to_owned()),
+                limit: 10,
+                ..Query::default()
+            })
+            .expect_err("no shelf is usable");
+        assert!(error.contains("bgm_prepare"), "{error}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The words are ANDed and prefix-matched over the title, the artist

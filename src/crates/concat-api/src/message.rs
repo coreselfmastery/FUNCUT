@@ -356,9 +356,15 @@ pub enum Request {
     /// returns at once; `bgm.status` reports how far they have got. The
     /// lists are a few MB and are kept, so a second call on a warm machine
     /// does nothing; every other `bgm` method refuses until the shelf it
-    /// reads is ready, with words that say so.
+    /// reads is ready, with words that say so. `source` narrows the
+    /// prepare to one shelf - worth it when the other is down and only
+    /// one is wanted.
     #[serde(rename = "bgm.prepare")]
-    BgmPrepare,
+    BgmPrepare {
+        /// One shelf only: "freepd" or "lofi"; both when absent.
+        #[serde(default)]
+        source: Option<String>,
+    },
 
     /// Searches the background-music library - 1,191 whole CC0 tracks
     /// across both shelves, with titles, artists, categories and lengths -

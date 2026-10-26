@@ -22,7 +22,7 @@
       "transform": {
         "position": {
           "x": 960.0,
-          "y": 860.0
+          "y": 900.0
         },
         "scale": 1.0,
         "rotation": 0.0
@@ -97,7 +97,7 @@
         "weight": 800
       },
       "font": "Archivo, Inter, DejaVu Sans",
-      "size": 96.0,
+      "size": 88.0,
       "weight": 800,
       "italic": false,
       "letter_spacing": -2.0,

@@ -368,7 +368,7 @@ pub fn kinetic_caption() -> Comp {
             scale: None,
         }),
         font: DISPLAY.into(),
-        size: 96.0,
+        size: 88.0,
         weight: 800,
         italic: false,
         letter_spacing: -2.0,
@@ -394,7 +394,7 @@ pub fn kinetic_caption() -> Comp {
         start: 0.0,
         duration: 0.0,
         transform: Transform {
-            position: Some(crate::comp::Point::new(960.0, 860.0)),
+            position: Some(crate::comp::Point::new(960.0, 900.0)),
             ..Transform::default()
         },
         opacity: 1.0,

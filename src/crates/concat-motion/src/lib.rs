@@ -62,6 +62,7 @@
 //! ```
 
 pub mod authoring;
+pub mod captions;
 pub mod comp;
 pub mod curve;
 pub mod engine;

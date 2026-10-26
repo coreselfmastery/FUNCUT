@@ -630,6 +630,15 @@ fn ease(curve: &Curve) -> Json {
     }
 }
 
+/// A time as a number the timeline accepts: seconds, rounded to milliseconds.
+///
+/// Word times come from a transcript and from arithmetic on one; a value like
+/// `0.08000000000000002` is refused for its decimal places, and a millisecond
+/// is already finer than any frame.
+fn time(value: f64) -> f64 {
+    (value * 1000.0).round() / 1000.0
+}
+
 /// A time as a Geneva value: seconds with at most three decimals.
 fn seconds(value: f64) -> String {
     let text = format!("{value:.3}");
@@ -828,11 +837,13 @@ fn text_source(text: &TextNode, span: f64) -> Json {
                     .map(|(i, word)| {
                         let last = i + 1 == text.words.len();
                         match word.end {
-                            Some(end) => json!([word.text, word.start, end]),
-                            None if last => {
-                                json!([word.text, word.start, span.max(word.start + 0.1)])
-                            }
-                            None => json!([word.text, word.start]),
+                            Some(end) => json!([word.text, time(word.start), time(end)]),
+                            None if last => json!([
+                                word.text,
+                                time(word.start),
+                                time(span.max(word.start + 0.1))
+                            ]),
+                            None => json!([word.text, time(word.start)]),
                         }
                     })
                     .collect(),

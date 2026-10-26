@@ -45,6 +45,7 @@ fn main() {
         "frame" => frame(&args),
         "bake" => bake(&args),
         "reel" => reel(&args),
+        "captions" => captions(&args),
         "help" | "--help" | "-h" => Ok(usage()),
         other => Err(format!("no verb called {other:?}")),
     };
@@ -73,7 +74,8 @@ fn usage() -> serde_json::Value {
             "edit": "agent edit <comp.json> <ops.json|-> [-o out.json]",
             "frame": "agent frame <comp.json> <seconds> [-o frame.png] [--width N]",
             "bake": "agent bake <comp.json> <dir> [--width N] [--height N] [--fps N] [--opaque]",
-            "reel": "agent reel <storyboard.json> [-o reel.mp4] [--cache DIR] [--frame SECONDS] [--plan]"
+            "reel": "agent reel <storyboard.json> [-o reel.mp4] [--cache DIR] [--frame SECONDS] [--plan]",
+            "captions": "agent captions <words.json> [-o storyboard.json] [--words-per-line N] [--max-line S] [--preset ID] [--plate IMG] [--audio WAV|MP3]"
         },
         "ops": [
             {"op": "set-slot", "slot": "Name", "value": "Grace Hopper"},
@@ -332,6 +334,176 @@ fn reel(args: &[String]) -> Result<serde_json::Value, String> {
     value["frames_per_second"] = json!(planned.duration * board.fps / seconds.max(1e-9));
     value["report"] = report;
     Ok(value)
+}
+
+/// `agent captions <words.json> [-o storyboard.json] [...]`
+///
+/// A transcript in, a storyboard out: the words are broken into caption lines
+/// (sentence ends, silences, word count and length all break a line), each line
+/// becomes one caption comp, and the result is the same storyboard `reel`
+/// renders. Two commands between a transcript and a finished caption video.
+///
+/// The transcript is a list of words with times, in any of the shapes a
+/// recogniser gives: `[["Make", 0.2, 0.55], ...]`, a `{"words": [...]}`
+/// wrapper, or objects `{"text": "Make", "start": 0.2, "end": 0.55}`.
+fn captions(args: &[String]) -> Result<serde_json::Value, String> {
+    let path = args.first().ok_or("captions needs a transcript file")?;
+    let out = flag(args, "-o").map(PathBuf::from);
+    let text = std::fs::read_to_string(path).map_err(|error| format!("{path}: {error}"))?;
+    let document: serde_json::Value =
+        serde_json::from_str(&text).map_err(|error| format!("{path}: {error}"))?;
+    let words = read_words(&document).map_err(|error| format!("{path}: {error}"))?;
+
+    let mut caps = concat_motion::captions::Captions::default();
+    if let Some(count) = flag(args, "--words-per-line").and_then(|value| value.parse().ok()) {
+        caps.words_per_line = count;
+    }
+    if let Some(line) = flag(args, "--max-line").and_then(|value| value.parse().ok()) {
+        caps.max_line = line;
+    }
+    if let Some(id) = flag(args, "--preset") {
+        caps.comp = id;
+    }
+    let plate = flag(args, "--plate");
+    let audio = flag(args, "--audio");
+
+    let lines = concat_motion::captions::lay_out(&words, &caps);
+    let mut sequence = concat_motion::captions::sequence(&words, &caps, 1920, 1080, 30.0);
+    if let Some(plate) = &plate {
+        sequence.asset(
+            "plate",
+            Asset {
+                src: plate.clone(),
+                kind: None,
+            },
+        );
+        for scene in &mut sequence.scenes {
+            scene.plate = Some(concat_motion::sequence::Plate {
+                asset: "plate".into(),
+                zoom: 0.04,
+            });
+        }
+    }
+    if let Some(audio) = &audio {
+        sequence.asset(
+            "score",
+            Asset {
+                src: audio.clone(),
+                kind: None,
+            },
+        );
+        sequence.bed(concat_motion::sequence::AudioBed {
+            asset: "score".into(),
+            gain_db: -3.0,
+            fade_in: 0.3,
+            fade_out: 1.0,
+        });
+    }
+
+    // The storyboard the `reel` verb eats, written from the same sequence.
+    let scenes: Vec<serde_json::Value> = sequence
+        .scenes
+        .iter()
+        .map(|scene| {
+            json!({
+                "preset": scene.comp.id,
+                "at": scene.at,
+                "hold": scene.hold,
+                "plate": scene.plate.as_ref().map(|plate| plate.asset.clone()),
+                "zoom": scene.plate.as_ref().map(|plate| plate.zoom),
+                "ops": scene.ops,
+            })
+        })
+        .collect();
+    let mut assets = serde_json::Map::new();
+    for (id, asset) in &sequence.assets {
+        assets.insert(id.clone(), json!(asset.src));
+    }
+    let storyboard = json!({
+        "width": sequence.width,
+        "height": sequence.height,
+        "fps": sequence.fps,
+        "assets": assets,
+        "scenes": scenes,
+        "audio": sequence.audio.iter().map(|bed| json!({
+            "asset": bed.asset, "gain_db": bed.gain_db,
+            "fade_in": bed.fade_in, "fade_out": bed.fade_out
+        })).collect::<Vec<_>>(),
+    });
+
+    if let Some(path) = &out {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            std::fs::create_dir_all(parent)
+                .map_err(|error| format!("{}: {error}", parent.display()))?;
+        }
+        let text = serde_json::to_string_pretty(&storyboard).map_err(|error| error.to_string())?;
+        std::fs::write(path, text).map_err(|error| format!("{}: {error}", path.display()))?;
+    }
+
+    Ok(json!({
+        "ok": true,
+        "words": words.len(),
+        "lines": lines.len(),
+        "duration": sequence.duration(),
+        "written": out.map(|path| path.display().to_string()),
+        "text": lines.iter().map(|line| line.text.clone()).collect::<Vec<_>>(),
+        "storyboard": storyboard,
+    }))
+}
+
+/// Read a transcript in any of the shapes a recogniser gives.
+fn read_words(document: &serde_json::Value) -> Result<Vec<concat_motion::captions::Word>, String> {
+    use concat_motion::captions::Word;
+    let list = match document {
+        serde_json::Value::Array(list) => list,
+        serde_json::Value::Object(map) => match map.get("words") {
+            Some(serde_json::Value::Array(list)) => list,
+            _ => return Err("an object transcript needs a `words` array".into()),
+        },
+        _ => return Err("a transcript is an array of words or {\"words\": [...]}".into()),
+    };
+    let mut words = Vec::with_capacity(list.len());
+    for (index, entry) in list.iter().enumerate() {
+        let word = match entry {
+            serde_json::Value::Array(parts) => {
+                let text = parts
+                    .first()
+                    .and_then(|value| value.as_str())
+                    .ok_or_else(|| format!("word {index}: the first field is its text"))?;
+                let start = parts
+                    .get(1)
+                    .and_then(|value| value.as_f64())
+                    .ok_or_else(|| format!("word {index}: the second field is its start time"))?;
+                let end = parts
+                    .get(2)
+                    .and_then(|value| value.as_f64())
+                    .unwrap_or(start + 0.25);
+                Word::new(text, start, end)
+            }
+            serde_json::Value::Object(fields) => {
+                let text = fields
+                    .get("text")
+                    .or_else(|| fields.get("word"))
+                    .and_then(|value| value.as_str())
+                    .ok_or_else(|| format!("word {index}: it needs a `text`"))?;
+                let start = fields
+                    .get("start")
+                    .and_then(|value| value.as_f64())
+                    .ok_or_else(|| format!("word {index}: it needs a `start`"))?;
+                let end = fields
+                    .get("end")
+                    .and_then(|value| value.as_f64())
+                    .unwrap_or(start + 0.25);
+                Word::new(text, start, end)
+            }
+            _ => return Err(format!("word {index} is neither a triple nor an object")),
+        };
+        words.push(word);
+    }
+    Ok(words)
 }
 
 fn list() -> Result<serde_json::Value, String> {

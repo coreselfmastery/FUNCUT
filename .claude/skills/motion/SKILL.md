@@ -1,6 +1,6 @@
 ---
 name: motion
-description: Author, inspect and bake motion graphics comps inside FUNCUT (the Concat video editor) — lower thirds, kinetic captions, stat cards, charts, logo stings, subscribe cards, backdrops, before/after splits. Use this whenever a video needs designed type or animated graphics, whenever you are asked to animate text, make captions word-by-word, build a title or stat reveal, or retime/restyle an existing comp. Covers the comp JSON document, the twelve shipped presets, the full operation vocabulary (set-slot, set-words, set-track, spring/bezier/steps curves), the `concat-motion-agent` CLI (list, inspect, edit, frame, bake), and the verification loop: inspect, edit in one validated batch, look at three frames, bake at cut size.
+description: Author, inspect and bake motion graphics comps inside FUNCUT (the Concat video editor) — lower thirds, kinetic captions, stat cards, charts, logo stings, subscribe cards, backdrops, before/after splits. Use this whenever a video needs designed type or animated graphics, whenever you are asked to animate text, make captions word-by-word, build a title or stat reveal, or retime/restyle an existing comp. Covers the comp JSON document, the twelve shipped presets, the full operation vocabulary (set-slot, set-words, set-track, spring/bezier/steps curves), the `concat-motion-agent` CLI (list, inspect, edit, frame, bake, reel, captions), and the verification loop: inspect, edit in one validated batch, look at three frames, bake at cut size. Also covers turning a transcript into word-timed captions and rendering several comps as one reel.
 ---
 
 # Motion comps
@@ -48,6 +48,7 @@ concat-motion-agent edit comps/lt.json ops.json -o comps/lt2.json
 concat-motion-agent frame comps/lt2.json 1.5 -o still.png --width 960
 concat-motion-agent bake comps/lt2.json cache/lt --width 1280 --height 720
 concat-motion-agent reel storyboard.json -o reel.mp4
+concat-motion-agent captions words.json -o storyboard.json --plate assets/plate.jpg --audio assets/score.wav
 concat-motion-agent help
 ```
 
@@ -58,6 +59,7 @@ concat-motion-agent help
 | `edit <comp> <ops.json\|- > [-o out]` | `{ok, written, hash, comp}` — the new summary |
 | `frame <comp> <sec> [-o png] [--width N]` | `{ok, at, frame}` |
 | `bake <comp> <dir> [--width --height --fps --opaque]` | `{ok, frames, width, height, fps, alpha, engine, engine_version, hash, dir, seconds, frames_per_second}` |
+| `captions <words> [-o storyboard] [--words-per-line N] [--max-line S] [--preset ID] [--plate IMG] [--audio FILE]` | `{ok, words, lines, duration, written, text[], storyboard}` |
 | `reel <storyboard> [-o mp4] [--cache DIR] [--frame SECONDS] [--plan]` | `{ok, scenes, duration, layers, assets, warnings, written, seconds, frames_per_second, report}` |
 
 `ops.json` is `{"ops":[…]}` or a bare array; `-` reads stdin. In-repo:
@@ -212,6 +214,20 @@ The measured example is `examples/reel.rs`: thirteen scenes, twelve presets, 45.
 ---
 
 ## 7. Caption workflow (the highest-value move)
+
+**Two commands do it now:**
+
+```sh
+concat-motion-agent captions transcript.json -o storyboard.json \
+    --plate assets/plate.jpg --audio assets/score.wav
+concat-motion-agent reel storyboard.json -o captions.mp4
+```
+
+`captions` breaks the words into lines by sentence end, silence, word count (5) and length (3.6 s),
+gives each line its own comp with **relative** word times, and writes the storyboard `reel` renders.
+Look at `text[]` in its answer before rendering — if a line reads badly, change `--words-per-line`.
+
+By hand, the same thing:
 
 ```
 1. transcribe → words with start/end

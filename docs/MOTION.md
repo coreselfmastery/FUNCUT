@@ -189,6 +189,37 @@ Measured here: **1365 frames of 1080p30 in 111 s (12.2 fps, 7.0 MB at crf 18)** 
 
 ---
 
+## Captions: a transcript is the input, not the design
+
+`captions.rs` is the shortest path from a recogniser's word list to finished kinetic captions, and it is
+the one thing an external motion engine cannot do for FUNCUT — FUNCUT holds the transcript.
+
+```rust
+use concat_motion::captions::{self, Captions, Word};
+
+let words = vec![Word::new("Every", 0.20, 0.55), Word::new("cut", 0.55, 0.85)];
+let lines = captions::lay_out(&words, &Captions::default());          // the line breaks, decided
+let reel = captions::sequence(&words, &Captions::default(), 1920, 1080, 30.0);  // ready to render
+```
+
+The line breaker is the whole value:
+
+| Rule | Why |
+| --- | --- |
+| a line ends at a **sentence end** (`.` `!` `?` `…` `:` `;`) | breaking mid-clause reads wrong |
+| …or at `words_per_line` (default **5**) | six is the most a phone reads at once |
+| …or at `max_line` seconds (default **3.6**) | longer than that is not a caption |
+| …or at a silence of `gap` seconds (default **0.6**) | a pause is a natural break |
+| a line starts `lead` (0.08 s) early and holds `tail` (0.28 s) after | the words sit *inside* the line |
+| no line is shorter than `min_line` (0.9 s) | a clipped word is unreadable |
+| two lines never overlap | a caption is never on screen twice |
+| a word longer than a line keeps its own line | cutting a word is worse than holding it |
+
+Each line becomes **one comp of the caption preset**, placed where it is spoken, with its word times
+made **relative to the line** — so the same comp keeps its motion wherever it lands.
+
+---
+
 ## The agent door: `agent`, one binary, JSON in and out
 
 Every verb prints exactly one JSON document and exits non-zero on failure.
@@ -200,6 +231,8 @@ cargo run -p concat-motion --bin concat-motion-agent -- edit comps/lt.json ops.j
 cargo run -p concat-motion --bin concat-motion-agent -- frame comps/lt2.json 1.5 -o still.png --width 960
 cargo run -p concat-motion --bin concat-motion-agent -- bake comps/lt2.json cache/lt --width 1280 --height 720
 cargo run -p concat-motion --bin concat-motion-agent -- reel storyboard.json -o reel.mp4
+cargo run -p concat-motion --bin concat-motion-agent -- captions words.json -o storyboard.json \
+    --plate assets/plate.jpg --audio assets/score.wav
 ```
 
 `inspect` returns the comp summary a model needs: nodes with their kinds, spans, tracks and first
@@ -225,6 +258,10 @@ document. An operation that fails names its index, so a retry is one step, not a
     "color": "#22d3c5", "x": 240, "y": 140 }
 ] }
 ```
+
+Two commands get from a transcript to a finished caption video: `captions` breaks the words into lines and
+writes the storyboard, `reel` renders it. The transcript is `[["Make", 0.2, 0.55], …]`, a `{"words": […]}` wrapper,
+or objects with `text`/`start`/`end`.
 
 `reel` is the whole-sequence verb: a storyboard of scenes (a preset id or a comp file each, with
 operations, a plate and a hold), shared assets, audio beds and a curtain, in one JSON document.

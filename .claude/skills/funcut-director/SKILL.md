@@ -75,15 +75,24 @@ piece needs design the timeline itself cannot draw — a stat card, a chart
 building on, a logo sting, a subscribe card — build a **motion comp** instead
 (Phase 5b). Group each logical chunk into one `edit_apply` batch.
 
-**Phase 5b — Motion comps (design).** Where a title is not enough, reach for
-the motion layer: `inspect` a preset, one validated `edit` batch, look at three
-frames, `bake` at cut size, place the `kind: "motion"` clip. Twelve presets
-ship (lower third, kinetic captions, stat cards, bar chart, counting number,
-wordmark sting, pull quote, chapter chip, subscribe card, terminal, split
-compare, backdrop). The mechanical reference is the **`motion` skill**; the
-director's side — where comps belong in an edit, worked plans, verification —
-is `prompts/motion_comps.md`. Comp captions beat plain captions: a word-timed
-kinetic caption is the single biggest quality jump in short-form.
+**Phase 5b — Motion comps (design). Every finished piece goes through here.**
+A film with no designed type reads as a raw cut, so the floor is at least one
+motion beat per piece — a chapter chip, a wordmark sting, a stat card, or a
+word-timed caption system — and most pieces want one per section. That floor is
+not the ceiling: the layer draws masks, blends, effects, five curve families
+and markup, and a comp authored as a document is how a piece gets a look nothing
+else in the product can copy. Twelve presets ship (lower third, kinetic
+captions, stat cards, bar chart, counting number, wordmark sting, pull quote,
+chapter chip, subscribe card, terminal, split compare, backdrop) — **edit them,
+never ship them as they arrive**: real copy, retimed to the cut, one element
+deleted. The loop is `inspect` → five decisions → one validated `edit` batch →
+three frames → `bake` at cut size → place the `kind: "motion"` clip, or one
+`reel storyboard.json` for a whole package.
+
+The mechanical reference and the design doctrine are the **`motion` skill**; the
+director's side — where comps belong in an edit, worked plans, keeping the look
+one system — is `prompts/motion_comps.md`. Comp captions beat plain captions: a
+word-timed kinetic caption is the single biggest quality jump in short-form.
 
 **Phase 6 — Grade.** One consistent look per video: pick the filter recipe
 for the niche (`prompts/color_grading.md`) and set its intensity once via

@@ -110,6 +110,95 @@ mod tests {
         }
     }
 
+    /// The two placement semantics, pinned. A ripple insert slots a clip
+    /// into a packed lane by shifting the lane's remainder right (#129);
+    /// a plain add never moves a thing that is already placed - the clip
+    /// takes the nearest gap that fits, which is what every audio drop
+    /// and every API placement needs, so a sound over the middle of the
+    /// picture cannot desync the edit.
+    #[test]
+    fn a_ripple_insert_shifts_the_lane_and_a_plain_add_never_moves_a_clip() {
+        let (mut editor, media_id, _) = fixture();
+        let track_id = editor.project().active().tracks[0].id.clone();
+        // A packed lane beside the fixture's 0-10: 10-20, 20-30.
+        let placed = lane(&mut editor, &media_id, &track_id, &[10.0, 20.0]);
+        let at = |editor: &Editor, id: &str| {
+            editor
+                .project()
+                .active()
+                .clips
+                .iter()
+                .find(|clip| clip.id == id)
+                .unwrap()
+                .start
+        };
+
+        // Ripple: a drop at 5 - inside the fixture's clip - lands after
+        // it and everything at or after 10 moves right by the clip's
+        // ten seconds.
+        editor
+            .apply(Command::AddClip {
+                media_id: media_id.clone(),
+                track_id: track_id.clone(),
+                start: 5.0,
+                ripple: true,
+            })
+            .expect("adds");
+        assert_eq!(at(&editor, &placed[0]), 20.0, "the clip at 10 moves to 20");
+        assert_eq!(at(&editor, &placed[1]), 30.0, "the clip at 20 moves to 30");
+
+        // Plain: a drop at 22 - inside the last clip - takes the nearest
+        // gap that fits, after everything at 40, and not one placed clip
+        // has moved.
+        editor
+            .apply(Command::AddClip {
+                media_id: media_id.clone(),
+                track_id: track_id.clone(),
+                start: 22.0,
+                ripple: false,
+            })
+            .expect("adds");
+        assert_eq!(at(&editor, &placed[0]), 20.0);
+        assert_eq!(at(&editor, &placed[1]), 30.0);
+        let last = editor
+            .project()
+            .active()
+            .clips
+            .iter()
+            .map(|clip| clip.start)
+            .fold(0.0, f64::max);
+        assert_eq!(last, 40.0, "the plain add lands in the gap after all");
+
+        // Plain into open space: a drop at 55, past everything, lands
+        // exactly there - free is free - and still moves nothing.
+        let mut starts_before: Vec<f64> = editor
+            .project()
+            .active()
+            .clips
+            .iter()
+            .map(|clip| clip.start)
+            .collect();
+        starts_before.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        editor
+            .apply(Command::AddClip {
+                media_id: media_id.clone(),
+                track_id: track_id.clone(),
+                start: 55.0,
+                ripple: false,
+            })
+            .expect("adds");
+        let mut starts_after: Vec<f64> = editor
+            .project()
+            .active()
+            .clips
+            .iter()
+            .map(|clip| clip.start)
+            .collect();
+        starts_after.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        assert_eq!(&starts_after[..starts_before.len()], &starts_before[..]);
+        assert_eq!(*starts_after.last().unwrap(), 55.0);
+    }
+
     /// Over JSON a null crop takes the crop off, as the patch documents:
     /// without `double_option` serde read null as "leave it", so no caller
     /// on the far side of the API could ever remove a crop.

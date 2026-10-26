@@ -660,6 +660,55 @@ fn video(width: u32, height: u32, rate_num: i64, rate_den: i64) -> VideoSettings
 
 // ── the tests ──
 
+/// The export's length is the TIMELINE's length: mute and the eye-off
+/// flag change what the span holds, never the span itself - the same
+/// rule every editor's sequence follows. The 127-second tail an agent's
+/// edit once grew was never this rule breaking; it was placement
+/// rippling the lane's remainder right, clip by overlapping drop (pinned
+/// next to `ripple_room_for` now). Pinned here so the two stay apart:
+/// a muted sound lane past the last picture keeps the file's length.
+#[test]
+fn a_muted_sound_lane_keeps_the_timelines_length() {
+    let scratch = Scratch::new("tail");
+    let sources = Sources::make(scratch.path());
+    let mut studio = Studio::new(scratch.path(), "Tail", video(WIDTH, HEIGHT, 30, 1));
+
+    // Three seconds of silent picture, and a wav that runs six, on a
+    // lane of its own above it.
+    let silent = studio.import(&sources.silent);
+    studio.apply(Command::AddClipAtFirstFree {
+        media_id: silent,
+        start: 0.0,
+        above: false,
+    });
+    let wav = studio.import(&sources.wav);
+    let sound_track = studio
+        .apply(Command::AddTrack { bottom: false })
+        .expect("a new track has an id");
+    studio.apply(Command::AddClip {
+        media_id: wav,
+        track_id: sound_track.clone(),
+        start: 0.0,
+        ripple: false,
+    });
+
+    // Unmuted, the sound carries the file to its own end.
+    let exported = studio.export("sound past the picture");
+    exported.expect_length(6.0);
+    exported.expect_sound(6.0);
+
+    // Muted, the sound is gone from the mix but its span still holds:
+    // six seconds, three of picture and three of silence.
+    studio.apply(Command::SetTrackFlag {
+        track_id: sound_track,
+        flag: TrackFlag::Muted,
+        value: true,
+    });
+    let exported = studio.export("muted sound keeps the span");
+    exported.expect_length(6.0);
+    exported.expect_no_sound();
+}
+
 /// Issue #112: a 60 fps export froze at three-quarters of its length and
 /// held one frame under the rest of the sound. Every rate a person can
 /// pick renders every frame, with the picture and the sound both reaching

@@ -4068,11 +4068,16 @@ impl Studio {
                 ripple: true,
             })
         } else {
+            // An audio file never ripples the lane it lands on, for the
+            // same reason a sound card does not: a sound is layered over
+            // the picture, not spliced into it, and shifting the lane's
+            // whole remainder desynced everything aligned on the other
+            // lanes. It takes the nearest gap that fits instead.
             self.apply(Command::AddClip {
                 media_id: plan.media.clone(),
                 track_id,
                 start: f64::from(plan.start),
-                ripple: true,
+                ripple: plan.kind != ClipKind::Audio,
             })
         };
         if let Some(id) = created {

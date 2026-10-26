@@ -19,6 +19,9 @@ concat-host.workspace = true
 # turn it on.
 concat-speech = { workspace = true, optional = true }
 serde = { version = "1", features = ["derive"] }
+# Autosave warnings after applied edits: a save that cannot write says so
+# in the log rather than failing an edit that already happened.
+log = { version = "0.4", features = ["std"] }
 serde_json.workspace = true
 # The frame method hands back a PNG: the one picture format every
 # caller reads and that keeps the compositor's pixels exact.

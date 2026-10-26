@@ -474,11 +474,21 @@ impl Api {
                 Ok(Reply::Done(Done {}))
             }
             Request::ProjectSetVideo { path, video } => {
-                view(self.session_mut(&path)?.set_video(video).map_err(refused)?)
+                let set = view(self.session_mut(&path)?.set_video(video).map_err(refused)?);
+                self.autosave(&path);
+                set
             }
             Request::EditApply { path, command } => view(self.apply(&path, *command)?),
-            Request::EditUndo { path } => view(self.session_mut(&path)?.undo()),
-            Request::EditRedo { path } => view(self.session_mut(&path)?.redo()),
+            Request::EditUndo { path } => {
+                let undone = view(self.session_mut(&path)?.undo());
+                self.autosave(&path);
+                undone
+            }
+            Request::EditRedo { path } => {
+                let redone = view(self.session_mut(&path)?.redo());
+                self.autosave(&path);
+                redone
+            }
             Request::MediaProbe { path } => {
                 Ok(Reply::Media(media::probe(&path).map_err(ApiError::failed)?))
             }
@@ -830,7 +840,25 @@ impl Api {
 
     /// [`Request::EditApply`].
     pub fn apply(&mut self, path: &str, command: Command) -> Result<EditorView, ApiError> {
-        self.session_mut(path)?.apply(command).map_err(refused)
+        let view = self.session_mut(path)?.apply(command).map_err(refused)?;
+        self.autosave(path);
+        Ok(view)
+    }
+
+    /// The window autosaves; a caller through the API had to remember
+    /// `project.save`, and a crash - or an agent that never called it -
+    /// orphaned every edit and imported file since the last one: the
+    /// media sat in the folder with no document naming it. A save after
+    /// every applied batch is cheap (the writer is ticketed and skips
+    /// superseded snapshots) and is the honest state for a reopen.
+    /// Best-effort by design: the edit already happened, so a save that
+    /// cannot write is a log line, not a failure handed back.
+    fn autosave(&mut self, path: &str) {
+        if let Ok(session) = self.session_mut(path)
+            && let Err(error) = session.save(None)
+        {
+            log::warn!("could not autosave {path}: {error}");
+        }
     }
 
     /// [`Request::MediaImport`]: the probe and the add, as one.
@@ -2496,6 +2524,42 @@ mod tests {
             video: None,
         }));
         scratch.path().join(name).to_string_lossy().into_owned()
+    }
+
+    /// An edit applied through the API survives a close that never saved:
+    /// the autosave after every applied batch is what stands between an
+    /// agent's edit and a crash, and what keeps an imported file from
+    /// sitting in the folder with no document naming it.
+    #[test]
+    fn an_applied_edit_survives_a_close_that_never_saved() {
+        let (mut api, scratch, _events) = api();
+        let path = project(&mut api, &scratch, "Autosaved");
+        let added = view(ok(api.dispatch(Request::EditApply {
+            path: path.clone(),
+            command: Box::new(Command::AddMedia {
+                item: still("/nowhere/still.png"),
+            }),
+        })));
+        let media_id = added.created_id.expect("minted");
+        ok(api.dispatch(Request::EditApply {
+            path: path.clone(),
+            command: Box::new(Command::AddClipAtFirstFree {
+                media_id,
+                start: 2.0,
+                above: false,
+            }),
+        }));
+        ok(api.dispatch(Request::ProjectClose {
+            path: path.clone(),
+            save: false,
+        }));
+        let reopened = view(ok(api.dispatch(Request::ProjectOpen { path })));
+        assert_eq!(
+            reopened.project.active().clips.len(),
+            1,
+            "the placed clip is on disk, not only in the session that was dropped"
+        );
+        assert_eq!(reopened.project.active().clips[0].start, 2.0);
     }
 
     #[test]

@@ -597,13 +597,20 @@ impl Studio {
             }
         };
         // Onto the timeline: the monitor and the speakers go back to it.
+        // A sound never ripples the lane it lands on: a drop over the
+        // middle of a packed lane takes the nearest gap, never splitting
+        // the lane and shifting its whole remainder right - which was a
+        // desync between the picture and everything beat-aligned on the
+        // other lanes, and a phantom tail once the shifted-out video
+        // stopped. Placement is `nearest_free_start`, the same as every
+        // drop that names no lane.
         self.close_source();
         let created = match track_id {
             Some(track_id) => self.apply(Command::AddClip {
                 media_id,
                 track_id,
                 start,
-                ripple: true,
+                ripple: false,
             }),
             None => self.apply(Command::AddClipAtFirstFree {
                 media_id,

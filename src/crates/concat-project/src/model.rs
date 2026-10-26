@@ -68,12 +68,17 @@ pub enum ClipKind {
     /// media behind it; what it is and how it is painted lives in
     /// [`Clip::shape`], and it is placed and scaled like a still.
     Shape,
+    /// A motion comp: a nested scene graph baked to an RGBA frame sequence
+    /// and composited like a picture. No media behind it; the document it
+    /// shows lives in [`Clip::motion`], and the frames come from
+    /// `concat-motion`'s cache.
+    Motion,
 }
 
 impl ClipKind {
     /// True for the kinds that put pixels on screen.
     pub fn is_visual(self) -> bool {
-        matches!(self, ClipKind::Video | ClipKind::Image)
+        matches!(self, ClipKind::Video | ClipKind::Image | ClipKind::Motion)
     }
 }
 
@@ -1880,6 +1885,13 @@ pub struct Clip {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(deserialize_with = "wire::maybe")]
     pub shape: Option<ShapeStyle>,
+    /// The comp, when this is a motion clip: which document, which engine, and
+    /// which resolution it is baked at. The document itself is a file in the
+    /// project's `comps/` folder, addressed by content hash, so two clips
+    /// showing the same comp share one bake.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "wire::maybe")]
+    pub motion: Option<MotionClip>,
     /// What fills the frame behind this clip's picture, over the
     /// timeline's [`Timeline::background`]: None follows the timeline's,
     /// and `Some(Background::None)` is black under a timeline that has one.
@@ -1892,6 +1904,48 @@ pub struct Clip {
     /// newer or a different build round-trips through this one intact.
     #[serde(flatten, default, skip_serializing_if = "Map::is_empty")]
     pub extra: Map<String, Value>,
+}
+
+/// The comp a motion clip shows; see [`ClipKind::Motion`].
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MotionClip {
+    /// The comp's id, as the document in `comps/` names itself.
+    pub comp: String,
+    /// The document's content hash, which is also its cache key. A comp whose
+    /// text was edited gets a new file and a new hash, so a bake is never
+    /// stale and never has to be invalidated by hand.
+    pub hash: String,
+    /// The engine that bakes it: `geneva` (the default), `native`, or
+    /// `lottie`. Recorded per clip rather than per project so one comp can be
+    /// markup while the next is a Lottie import.
+    #[serde(default = "MotionClip::default_engine")]
+    pub engine: String,
+    /// The bake resolution's width. Zero bakes at the comp's own width.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub width: u32,
+    /// The bake resolution's height. Zero bakes at the comp's own height.
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub height: u32,
+}
+
+impl MotionClip {
+    /// Geneva: the engine a comp is authored for, and the one that draws
+    /// markup. A project that wants the shipped compositor instead says
+    /// `native` on the clip.
+    pub fn default_engine() -> String {
+        "geneva".to_string()
+    }
+
+    /// Whether the bake is already at this clip's resolution.
+    pub fn bakes_at(&self, width: u32, height: u32) -> bool {
+        (self.width == 0 || self.width == width) && (self.height == 0 || self.height == height)
+    }
+}
+
+fn is_zero_u32(value: &u32) -> bool {
+    *value == 0
 }
 
 /// One property's keys, as `(at, value, ease)` over `0..=1` of an old
@@ -1986,6 +2040,7 @@ impl Clip {
             enhanced: None,
             text: None,
             shape: None,
+            motion: None,
             background: None,
             extra: Map::new(),
         }

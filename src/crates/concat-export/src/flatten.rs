@@ -11,7 +11,10 @@
 //!
 //! Text clips are deliberately not flattened here. Titles rasterise
 //! separately and rejoin the exporter as plain image clips; see
-//! `ExportRequest`'s caller.
+//! `ExportRequest`'s caller. Motion comps are the same story with a frame
+//! sequence behind them instead of one still: they bake through
+//! `concat-motion` and rejoin as pictures, so the exporter never learns what
+//! a keyframe is.
 
 use std::path::Path;
 
@@ -50,8 +53,13 @@ pub fn flatten_timeline_in(
         .iter()
         .filter_map(|clip| {
             // Titles and shapes rasterise separately and rejoin as stills;
-            // see concat-host's titles.
-            if matches!(clip.kind, ModelClipKind::Text | ModelClipKind::Shape) {
+            // see concat-host's titles. A motion comp is baked to a frame
+            // sequence by the same caller, for the same reason: a comp is a
+            // document, not a file the exporter could read.
+            if matches!(
+                clip.kind,
+                ModelClipKind::Text | ModelClipKind::Shape | ModelClipKind::Motion
+            ) {
                 return None;
             }
             let index = timeline
@@ -84,7 +92,10 @@ pub fn flatten_timeline_in(
                 ModelClipKind::Image => ClipKind::Image,
                 // Handled above; unreachable spelled as a skip so a new
                 // kind fails soft.
-                ModelClipKind::Text | ModelClipKind::Layer | ModelClipKind::Shape => return None,
+                ModelClipKind::Text
+                | ModelClipKind::Layer
+                | ModelClipKind::Shape
+                | ModelClipKind::Motion => return None,
             };
             Some(ExportClip {
                 path: media.path.clone(),

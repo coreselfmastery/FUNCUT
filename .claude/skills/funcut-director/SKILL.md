@@ -70,8 +70,20 @@ transform/keyframe motion (`clip_transform`, `keyframe_set`, or
 (`effect_layer_add` with a transition package — the 22 real ones and when to
 use each are in `prompts/transitions_guide.md`), SFX (`sounds_add` at the
 computed peak time), BGM with volume keyframes ducked −12 dB under speech,
-captions (`captions_add`, word-synced) and titles (`title_add`). Group each
-logical chunk into one `edit_apply` batch.
+captions (`captions_add`, word-synced) and titles (`title_add`). When the
+piece needs design the timeline itself cannot draw — a stat card, a chart
+building on, a logo sting, a subscribe card — build a **motion comp** instead
+(Phase 5b). Group each logical chunk into one `edit_apply` batch.
+
+**Phase 5b — Motion comps (design).** Where a title is not enough, reach for
+the motion layer: `inspect` a preset, one validated `edit` batch, look at three
+frames, `bake` at cut size, place the `kind: "motion"` clip. Twelve presets
+ship (lower third, kinetic captions, stat cards, bar chart, counting number,
+wordmark sting, pull quote, chapter chip, subscribe card, terminal, split
+compare, backdrop). The mechanical reference is the **`motion` skill**; the
+director's side — where comps belong in an edit, worked plans, verification —
+is `prompts/motion_comps.md`. Comp captions beat plain captions: a word-timed
+kinetic caption is the single biggest quality jump in short-form.
 
 **Phase 6 — Grade.** One consistent look per video: pick the filter recipe
 for the niche (`prompts/color_grading.md`) and set its intensity once via
@@ -160,6 +172,7 @@ match its spec from the tables in section 3 (aspect, loudness norms, length).
 | `prompts/cuts_and_pacing.md` | cut types, J/L feel, pacing by genre, silence removal parameters |
 | `prompts/transitions_guide.md` | which of the 22 transitions, and when a plain cut wins |
 | `prompts/sfx_design.md` | sound design pass: categories, sync peaks, levels |
+| `prompts/motion_comps.md` | designing graphics: which comp, worked plans, keeping the look one system |
 | `prompts/music_and_duck.md` | BGM choice, beat alignment, ducking keyframes |
 | `prompts/text_animation.md` | titles, captions, kinetic text, emphasis |
 | `prompts/color_grading.md` | the filter recipes per niche, intensity |

@@ -1,0 +1,97 @@
+{
+  "format": 1,
+  "id": "funcut.chapter.chip",
+  "name": "Chapter chip",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30.0,
+  "duration": 5.0,
+  "background": {
+    "r": 0.0,
+    "g": 0.0,
+    "b": 0.0,
+    "a": 0.0
+  },
+  "assets": {},
+  "curves": {},
+  "nodes": [
+    {
+      "id": "chap",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.0,
+              "y1": 0.0,
+              "x2": 0.58,
+              "y2": 1.0
+            }
+          },
+          {
+            "at": 0.3,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            }
+          }
+        ],
+        "position": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "point",
+              "x": 960.0,
+              "y": 500.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.0,
+              "y1": 0.0,
+              "x2": 0.58,
+              "y2": 1.0
+            }
+          },
+          {
+            "at": 0.5,
+            "value": {
+              "kind": "point",
+              "x": 960.0,
+              "y": 540.0
+            }
+          }
+        ]
+      },
+      "kind": "html",
+      "markup": "\n<div class=\"chap\">\n  <div class=\"num\">02 / 06</div>\n  <div class=\"lab\">LOWER THIRDS</div>\n  <div class=\"ul\"></div>\n</div>\n",
+      "css": "\n.chap { position: absolute; left: 120px; top: 96px; display: flex; flex-direction: column; gap: 10px; }\n.num { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 17px; letter-spacing: 0.3em; color: rgba(34,211,197,0.95); }\n.lab { font-family: Archivo, Inter, DejaVu Sans; font-size: 30px; font-weight: 600; color: rgba(247,249,255,0.9); }\n.ul { width: 0px; height: 2px; background: #22d3c5; animation: ul 1s cubic-bezier(0.16,1,0.3,1) 0.4s both; }\n@keyframes ul { from { width: 0px } to { width: 210px } }\n",
+      "width": {
+        "px": 1920.0
+      },
+      "height": {
+        "px": 1080.0
+      }
+    }
+  ],
+  "slots": [
+    {
+      "node": "chap",
+      "field": "text",
+      "sample": "02 / 06 LOWER THIRDS",
+      "label": "Chapter"
+    }
+  ]
+}

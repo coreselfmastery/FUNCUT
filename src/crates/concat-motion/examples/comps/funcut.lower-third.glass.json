@@ -1,0 +1,96 @@
+{
+  "format": 1,
+  "id": "funcut.lower-third.glass",
+  "name": "Glass lower third",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30.0,
+  "duration": 6.0,
+  "background": {
+    "r": 0.0,
+    "g": 0.0,
+    "b": 0.0,
+    "a": 0.0
+  },
+  "assets": {},
+  "curves": {},
+  "nodes": [
+    {
+      "id": "card",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.0,
+              "y1": 0.0,
+              "x2": 0.58,
+              "y2": 1.0
+            }
+          },
+          {
+            "at": 0.35,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            }
+          }
+        ],
+        "position": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "point",
+              "x": 260.0,
+              "y": 540.0
+            },
+            "curve": {
+              "kind": "spring",
+              "stiffness": 170.0,
+              "damping": 26.0,
+              "mass": 1.0
+            }
+          },
+          {
+            "at": 1.0,
+            "value": {
+              "kind": "point",
+              "x": 960.0,
+              "y": 540.0
+            }
+          }
+        ]
+      },
+      "kind": "html",
+      "markup": "\n<div class=\"card\">\n  <div class=\"avatar\"></div>\n  <div class=\"body\">\n    <div class=\"name\">Ada Lovelace</div>\n    <div class=\"role\">Analytical Engine · London, 1843</div>\n  </div>\n  <div class=\"right\">\n    <div class=\"live\"><div class=\"dot\"></div><div class=\"livetxt\">LIVE</div></div>\n    <div class=\"livetxt\">00:04:12:08</div>\n  </div>\n  <div class=\"bar\"></div>\n</div>\n",
+      "css": "\n.card {\n  position: absolute; left: 120px; top: 740px;\n  display: flex; flex-direction: row; align-items: center; gap: 26px;\n  padding: 30px 40px 34px 40px; border-radius: 22px;\n  background: linear-gradient(120deg, rgba(11,16,22,0.82), rgba(28,18,44,0.78));\n  border: 1px solid rgba(247,249,255,0.14);\n  backdrop-filter: blur(18px) saturate(1.25);\n  box-shadow: 0 26px 60px rgba(0,0,0,0.55);\n}\n.avatar { width: 78px; height: 78px; border-radius: 18px;\n  background: linear-gradient(140deg, #22d3c5, #8b5cf6 62%, #fb7185); }\n.body { display: flex; flex-direction: column; gap: 8px; }\n.name { font-family: Inter, DejaVu Sans; font-size: 58px; font-weight: 800; letter-spacing: -0.02em; color: #f7f9ff; }\n.role { font-family: Inter, DejaVu Sans; font-size: 26px; color: #9fb0bf; }\n.right { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; margin-left: 34px; }\n.live { display: flex; flex-direction: row; align-items: center; gap: 9px;\n  padding: 8px 16px; border-radius: 999px;\n  background: rgba(251,113,133,0.16); border: 1px solid rgba(251,113,133,0.5); }\n.dot { width: 9px; height: 9px; border-radius: 999px; background: #fb7185;\n  animation: blink 1.4s steps(1) infinite; }\n.livetxt { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 17px; font-weight: 600; letter-spacing: 0.2em; color: #ffd9de; }\n.bar { position: absolute; left: 40px; right: 40px; bottom: 16px; height: 4px; border-radius: 2px;\n  background: linear-gradient(90deg, #22d3c5, #8b5cf6, #ffc247);\n  transform-origin: left center; animation: bar 2.2s cubic-bezier(0.16,1,0.3,1) 0.35s both; }\n@keyframes bar { from { transform: scaleX(0) } to { transform: scaleX(1) } }\n@keyframes blink { from { opacity: 1 } 50% { opacity: 0.15 } to { opacity: 1 } }\n",
+      "width": {
+        "px": 1920.0
+      },
+      "height": {
+        "px": 1080.0
+      }
+    }
+  ],
+  "slots": [
+    {
+      "node": "card",
+      "field": "text",
+      "sample": "Ada Lovelace",
+      "label": "Name"
+    }
+  ]
+}

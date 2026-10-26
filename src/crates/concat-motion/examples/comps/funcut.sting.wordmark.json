@@ -1,0 +1,95 @@
+{
+  "format": 1,
+  "id": "funcut.sting.wordmark",
+  "name": "Wordmark sting",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30.0,
+  "duration": 3.5,
+  "background": {
+    "r": 0.0,
+    "g": 0.0,
+    "b": 0.0,
+    "a": 0.0
+  },
+  "assets": {},
+  "curves": {},
+  "nodes": [
+    {
+      "id": "mark",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.0,
+              "y1": 0.0,
+              "x2": 0.58,
+              "y2": 1.0
+            }
+          },
+          {
+            "at": 0.3,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            }
+          }
+        ],
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 1.12
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.0,
+              "y1": 0.0,
+              "x2": 0.58,
+              "y2": 1.0
+            }
+          },
+          {
+            "at": 0.6,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "html",
+      "markup": "\n<div class=\"stack\">\n  <div class=\"mark\">FUNCUT</div>\n  <div class=\"rule\"></div>\n  <div class=\"sub\">MOTION</div>\n</div>\n",
+      "css": "\n.stack { position: absolute; inset: 0; display: flex; flex-direction: column;\n  align-items: center; justify-content: center; }\n.mark { font-family: Archivo, Inter, DejaVu Sans; font-size: 200px; font-weight: 900; letter-spacing: -0.045em;\n  background: linear-gradient(96deg, #22d3c5, #f7f9ff 34%, #8b5cf6 72%, #ffc247);\n  background-clip: text; color: rgba(0,0,0,0); }\n.rule { width: 0px; height: 3px; border-radius: 2px; margin: 24px 0 20px 0;\n  background: linear-gradient(90deg, #22d3c5, #8b5cf6);\n  animation: grow 1s cubic-bezier(0.16,1,0.3,1) 0.5s both; }\n.sub { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 20px; letter-spacing: 0.42em; color: #f7f9ff; }\n@keyframes grow { from { width: 0px } to { width: 620px } }\n",
+      "width": {
+        "px": 1920.0
+      },
+      "height": {
+        "px": 1080.0
+      }
+    }
+  ],
+  "slots": [
+    {
+      "node": "mark",
+      "field": "text",
+      "sample": "FUNCUT",
+      "label": "Wordmark"
+    }
+  ]
+}

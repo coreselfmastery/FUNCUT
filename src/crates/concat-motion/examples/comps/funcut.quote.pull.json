@@ -1,0 +1,95 @@
+{
+  "format": 1,
+  "id": "funcut.quote.pull",
+  "name": "Pull quote",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30.0,
+  "duration": 6.0,
+  "background": {
+    "r": 0.0,
+    "g": 0.0,
+    "b": 0.0,
+    "a": 0.0
+  },
+  "assets": {},
+  "curves": {},
+  "nodes": [
+    {
+      "id": "sheet",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.42,
+              "y1": 0.0,
+              "x2": 0.58,
+              "y2": 1.0
+            }
+          },
+          {
+            "at": 0.4,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            }
+          }
+        ],
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.97
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.0,
+              "y1": 0.0,
+              "x2": 0.58,
+              "y2": 1.0
+            }
+          },
+          {
+            "at": 0.5,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "html",
+      "markup": "\n<div class=\"sheet\">\n  <div class=\"marks\">&ldquo;</div>\n  <div class=\"q\">The last ten percent of a picture is the part people remember.</div>\n  <div class=\"a\">— FUNCUT, MOTION NOTES</div>\n</div>\n",
+      "css": "\n.sheet { position: absolute; left: 180px; width: 1560px; top: 300px;\n  display: flex; flex-direction: column; gap: 26px; padding: 44px 48px 48px 48px;\n  border-radius: 26px; background: linear-gradient(150deg, rgba(9,12,20,0.82), rgba(20,14,32,0.74));\n  border: 1px solid rgba(247,249,255,0.12); backdrop-filter: blur(20px) saturate(1.2);\n  box-shadow: 0 30px 70px rgba(0,0,0,0.55); }\n.q { font-family: Archivo, Inter, DejaVu Sans; font-size: 66px; font-weight: 700; line-height: 1.14;\n  letter-spacing: -0.02em; color: #f7f9ff; }\n.a { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 19px; letter-spacing: 0.22em; color: #22d3c5; }\n.marks { font-family: Archivo, Inter, DejaVu Sans; font-size: 96px; font-weight: 900; color: rgba(34,211,197,0.55); line-height: 1; }\n",
+      "width": {
+        "px": 1920.0
+      },
+      "height": {
+        "px": 1080.0
+      }
+    }
+  ],
+  "slots": [
+    {
+      "node": "sheet",
+      "field": "text",
+      "sample": "The last ten percent of a picture is the part people remember.",
+      "label": "Quote"
+    }
+  ]
+}

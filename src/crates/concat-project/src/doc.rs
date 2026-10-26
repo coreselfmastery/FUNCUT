@@ -262,7 +262,9 @@ fn settle_clip(
         return None;
     }
     match clip.kind {
-        ClipKind::Text | ClipKind::Layer | ClipKind::Shape => clip.media_id.clear(),
+        ClipKind::Text | ClipKind::Layer | ClipKind::Shape | ClipKind::Motion => {
+            clip.media_id.clear();
+        }
         ClipKind::Video | ClipKind::Audio | ClipKind::Image => {
             if !media.iter().any(|item| item.id == clip.media_id) {
                 return None;
@@ -274,6 +276,12 @@ fn settle_clip(
     }
     if clip.kind != ClipKind::Shape {
         clip.shape = None;
+    }
+    // A comp travels with its clip: a `motion` payload on any other kind is a
+    // document someone edited by hand, and keeping it would make the clip
+    // claim two contents.
+    if clip.kind != ClipKind::Motion {
+        clip.motion = None;
     }
     Some(clip.tidy())
 }

@@ -1,0 +1,142 @@
+{
+  "format": 1,
+  "id": "funcut.caption.kinetic",
+  "name": "Kinetic caption",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30.0,
+  "duration": 4.0,
+  "background": {
+    "r": 0.0,
+    "g": 0.0,
+    "b": 0.0,
+    "a": 0.0
+  },
+  "assets": {},
+  "curves": {},
+  "nodes": [
+    {
+      "id": "caption",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 860.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.0,
+              "y1": 0.0,
+              "x2": 0.58,
+              "y2": 1.0
+            }
+          },
+          {
+            "at": 0.12,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "text",
+      "text": "",
+      "words": [
+        {
+          "text": "Make",
+          "start": 0.0,
+          "end": 0.45
+        },
+        {
+          "text": "it",
+          "start": 0.45,
+          "end": 0.85
+        },
+        {
+          "text": "move.",
+          "start": 0.85,
+          "end": 1.6
+        },
+        {
+          "text": "Make",
+          "start": 1.6,
+          "end": 2.0
+        },
+        {
+          "text": "it",
+          "start": 2.0,
+          "end": 2.4
+        },
+        {
+          "text": "yours.",
+          "start": 2.4
+        }
+      ],
+      "highlight": {
+        "color": {
+          "r": 0.13333333333333333,
+          "g": 0.8274509803921568,
+          "b": 0.7725490196078432,
+          "a": 1.0
+        },
+        "weight": 800
+      },
+      "font": "Archivo, Inter, DejaVu Sans",
+      "size": 96.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": -2.0,
+      "line_height": 1.15,
+      "align": "center",
+      "max_width": 1500.0,
+      "padding": 16.0,
+      "background": {
+        "r": 0.0196078431372549,
+        "g": 0.023529411764705882,
+        "b": 0.0392156862745098,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9686274509803922,
+        "g": 0.9764705882352941,
+        "b": 1.0,
+        "a": 1.0
+      },
+      "shadow": {
+        "x": 0.0,
+        "y": 6.0,
+        "blur": 24.0,
+        "color": {
+          "r": 0.0,
+          "g": 0.0,
+          "b": 0.0,
+          "a": 0.6
+        }
+      }
+    }
+  ],
+  "slots": [
+    {
+      "node": "caption",
+      "field": "text",
+      "sample": "Make it move. Make it yours.",
+      "label": "Transcript line"
+    }
+  ]
+}

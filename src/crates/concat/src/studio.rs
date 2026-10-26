@@ -1182,6 +1182,9 @@ fn kind_of(clip: &Clip) -> ClipKind {
         model::ClipKind::Text => ClipKind::Text,
         model::ClipKind::Layer => ClipKind::Filter,
         model::ClipKind::Shape => ClipKind::Shape,
+        // A comp is a picture on the timeline, so it wears the picture's
+        // chip until the window can bake one and wants a chip of its own.
+        model::ClipKind::Motion => ClipKind::Image,
     }
 }
 
@@ -2649,7 +2652,9 @@ impl Studio {
                     .iter()
                     .filter(|clip| clip.track_id == lane.id)
                     .map(|clip| match clip.kind {
-                        model::ClipKind::Video | model::ClipKind::Image => LANE_LARGE,
+                        model::ClipKind::Video
+                        | model::ClipKind::Image
+                        | model::ClipKind::Motion => LANE_LARGE,
                         model::ClipKind::Audio => LANE_MEDIUM,
                         // A title is its name strip alone; a layer has no
                         // picture at all; a shape's name says what it is.

@@ -2306,6 +2306,7 @@ mod tests {
                 item: copy,
                 source_start: Some(0.0),
                 enhanced: false,
+                offset: 0.0,
             })
             .expect("replaces");
         assert!(outcome.applied);
@@ -2339,6 +2340,7 @@ mod tests {
                 item: copy.clone(),
                 source_start: None,
                 enhanced: false,
+                offset: 0.0,
             })
             .expect("replaces");
         assert!(outcome.applied);
@@ -2364,6 +2366,7 @@ mod tests {
                 item: copy.clone(),
                 source_start: None,
                 enhanced: false,
+                offset: 0.0,
             })
             .expect("no-op");
         assert!(!again.applied);
@@ -2379,6 +2382,7 @@ mod tests {
                 },
                 source_start: None,
                 enhanced: false,
+                offset: 0.0,
             })
             .expect("no-op");
         assert!(!nobody.applied);
@@ -2412,6 +2416,7 @@ mod tests {
                     item: bad,
                     source_start: None,
                     enhanced: false,
+                    offset: 0.0,
                 })
                 .is_err()
         );
@@ -6138,6 +6143,7 @@ mod tests {
                 item: item("/a-enhanced.mp4"),
                 source_start: None,
                 enhanced: true,
+                offset: 0.0,
             })
             .expect("replaces")
             .created_id
@@ -6174,12 +6180,58 @@ mod tests {
         editor.undo();
         assert_eq!(shown(&editor).media_id, original, "one undo step");
 
+        // A copy of a span: it starts 4 s into the original, so the clip's
+        // in-point is 4 s less in it, and switching moves it back and forth
+        // with the same moment on screen.
+        // The head trimmed 6 s in, so the in-point is past the copy's start.
+        editor
+            .apply(Command::TrimClip {
+                clip_id: clip.clone(),
+                edge: crate::commands::TrimEdge::Start,
+                delta: 6.0,
+                ripple: false,
+            })
+            .expect("trims");
+        editor
+            .apply(Command::SetClipEnhanced {
+                clip_id: clip.clone(),
+                on: false,
+            })
+            .expect("off");
+        let original_start = shown(&editor).source_start;
+        assert!(original_start >= 4.0, "{original_start}");
+        editor
+            .apply(Command::ReplaceClipMedia {
+                clip_id: clip.clone(),
+                item: item("/a-span.mp4"),
+                source_start: Some(original_start - 4.0),
+                enhanced: true,
+                offset: 4.0,
+            })
+            .expect("replaces");
+        assert_eq!(shown(&editor).source_start, original_start - 4.0);
+        editor
+            .apply(Command::SetClipEnhanced {
+                clip_id: clip.clone(),
+                on: false,
+            })
+            .expect("off");
+        assert_eq!(shown(&editor).source_start, original_start);
+        editor
+            .apply(Command::SetClipEnhanced {
+                clip_id: clip.clone(),
+                on: true,
+            })
+            .expect("on");
+        assert_eq!(shown(&editor).source_start, original_start - 4.0);
+
         editor
             .apply(Command::ReplaceClipMedia {
                 clip_id: clip.clone(),
                 item: item("/a-reversed.mp4"),
                 source_start: None,
                 enhanced: false,
+                offset: 0.0,
             })
             .expect("replaces");
         assert_eq!(shown(&editor).enhanced, None);

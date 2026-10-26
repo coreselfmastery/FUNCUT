@@ -554,14 +554,21 @@ pub fn plan(geneva: &Geneva, sequence: &Sequence) -> Result<Plan, MotionError> {
     if let Some(curtain) = sequence.curtain
         && sequence.scenes.len() > 1
     {
-        let mut marks: Vec<(f64, f64)> = vec![(0.0, 1.0), (curtain.open.min(duration / 4.0), 0.0)];
+        // Both fades are held to a quarter of the reel, as the dips are held
+        // to an eighth: a fade that outlasts a short reel would otherwise
+        // land its far key at or before zero, where the dedup below takes it
+        // for the reel's opening key - and a reel that opens clear has lost
+        // the fade up it was promised.
+        let open = curtain.open.min(duration / 4.0);
+        let close = curtain.close.min(duration / 4.0);
+        let mut marks: Vec<(f64, f64)> = vec![(0.0, 1.0), (open, 0.0)];
         for end in &scene_ends[..scene_ends.len() - 1] {
             let dip = curtain.dip.min(duration / 8.0);
             marks.push(((end - dip).max(0.0), 0.0));
             marks.push((*end, curtain.depth));
             marks.push((end + dip, 0.0));
         }
-        marks.push(((duration - curtain.close).max(0.0), 0.0));
+        marks.push((duration - close, 0.0));
         marks.push((duration, 1.0));
         marks.sort_by(|a, b| a.0.total_cmp(&b.0));
         // A dip that lands on top of the previous one is a longer dip, not a
@@ -943,6 +950,42 @@ mod tests {
                 .iter()
                 .any(|layer| layer["id"] == json!("curtain"))
         );
+    }
+
+    /// A reel shorter than the curtain's fades still opens on the fade up it
+    /// was promised: a close key pushed to zero must not take the opening
+    /// key's place.
+    #[test]
+    fn a_reel_shorter_than_the_curtains_fades_still_opens_opaque() {
+        let plan = plan(
+            &geneva(),
+            &reel(vec![
+                Scene::new(presets::build("funcut.chapter.chip").expect("a preset")).holding(0.3),
+                Scene::new(presets::build("funcut.sting.wordmark").expect("a preset")).holding(0.3),
+            ]),
+        )
+        .expect("plans");
+        assert!(plan.duration < 1.0, "{}", plan.duration);
+        let curtain = layers(&plan)
+            .into_iter()
+            .find(|layer| layer["id"] == json!("curtain"))
+            .expect("a curtain");
+        let keys = curtain["clips"][0]["opacity"]["keyframes"]
+            .as_array()
+            .cloned()
+            .expect("keys");
+        // Opaque at the top, and the fade up runs from there rather than
+        // starting already clear.
+        assert_eq!(keys[0][1], json!(1.0), "{keys:?}");
+        assert_eq!(
+            parse_seconds(keys[0][0].as_str().unwrap_or("0s")).unwrap_or(-1.0),
+            0.0,
+            "{keys:?}"
+        );
+        let second = parse_seconds(keys[1][0].as_str().unwrap_or("0s")).unwrap_or(-1.0);
+        assert!(second > 0.0, "the clear key comes after the top: {keys:?}");
+        // And the close fades down into opacity, not up from clear.
+        assert_eq!(keys.last().unwrap()[1], json!(1.0), "{keys:?}");
     }
 
     #[test]

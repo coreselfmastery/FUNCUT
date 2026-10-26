@@ -210,11 +210,31 @@ pub fn lay_out(words: &[Word], caps: &Captions) -> Vec<Line> {
     flush(&mut group, &mut lines);
 
     // Two lines that would overlap are pushed apart rather than stacked: a
-    // caption is never on screen twice.
+    // caption is never on screen twice. A pushed line keeps two things.
+    // Its words are re-anchored to where the line landed - they keep their
+    // spoken times, and the ones already spoken are lit the moment it
+    // appears - because left relative to where the line *would* have
+    // started, every word of a pushed line would fire one push late. And
+    // its hold shrinks to end where it naturally ends, so the delay the
+    // push handed it is not handed on: with the hold left at its natural
+    // length each line ends one push later than the one before, and line
+    // by line the captions drift ever further behind the speech they are
+    // timed to. A line pushed past its natural end - speech the screen
+    // could not keep up with - still holds `min_line`, because a caption
+    // that flashes is not a caption either.
     for index in 1..lines.len() {
         let previous_end = lines[index - 1].at + lines[index - 1].hold;
         if lines[index].at < previous_end {
-            lines[index].at = previous_end;
+            let natural_at = lines[index].at;
+            let natural_end = natural_at + lines[index].hold;
+            let push = previous_end - natural_at;
+            let line = &mut lines[index];
+            line.at = previous_end;
+            line.hold = round((natural_end - previous_end).max(caps.min_line));
+            for word in &mut line.words {
+                word.start = round((word.start - push).max(0.0));
+                word.end = round((word.end - push).max(word.start));
+            }
         }
     }
     lines
@@ -384,6 +404,79 @@ mod tests {
         let lines = lay_out(&transcript, &caps);
         assert_eq!(lines[0].words.len(), 1);
         assert!(lines[0].hold >= 5.0, "the long word is held, not clipped");
+    }
+
+    /// Continuous speech pushes line after line (each line's tail and the
+    /// next's lead overlap), and the pushes must not become a drift: a
+    /// pushed line ends where it naturally ends and its words keep their
+    /// spoken times, so the most a caption ever trails its first word is
+    /// the one tail-and-lead the screen owes the line before it - not one
+    /// more per line, which line by line would leave the speech behind.
+    #[test]
+    fn pushed_lines_stay_timed_to_their_speech() {
+        // Twelve words of continuous speech, three a second.
+        let mut transcript = Vec::new();
+        let mut t = 0.0;
+        for _ in 0..12 {
+            transcript.push(("word", t, t + 0.30));
+            t += 0.32;
+        }
+        let transcript = words(&transcript);
+        let caps = Captions::default();
+        let lines = lay_out(&transcript, &caps);
+        assert!(lines.len() >= 3, "the transcript is broken into lines");
+
+        let ceiling = caps.tail + caps.lead;
+        let mut spoken = 0.0;
+        let mut lags: Vec<f64> = Vec::new();
+        for line in &lines {
+            // Where the line's first word is spoken, and where the placed
+            // comp will actually fire it.
+            let fires = line.at + line.words[0].start;
+            let lag = fires - spoken;
+            assert!(
+                lag <= ceiling + 1e-9,
+                "a word fires {lag:.2}s behind its speech, past one tail and lead"
+            );
+            lags.push(lag);
+            spoken += 0.32 * line.words.len() as f64;
+        }
+        // The first push owes the line before it a tail and a lead; every
+        // push after that owes no more than the first did. A lag that grew
+        // line over line would be the drift.
+        assert!(
+            lags[lags.len() - 1] <= lags[1] + 1e-9,
+            "the lag grows line over line ({:?}): drift",
+            lags
+        );
+        // And no line ever starts before the one before it ends.
+        for pair in lines.windows(2) {
+            assert!(pair[1].at >= pair[0].at + pair[0].hold - 1e-9);
+        }
+    }
+
+    /// The words a pushed line has already missed are lit when it appears,
+    /// not replayed from its own start.
+    #[test]
+    fn words_already_spoken_before_a_pushed_line_are_lit_on_arrival() {
+        let transcript = words(&[
+            ("a", 0.0, 0.05),
+            ("b", 0.06, 0.1),
+            ("c", 0.11, 0.15),
+            ("d", 0.16, 0.2),
+        ]);
+        let caps = Captions {
+            words_per_line: 2,
+            min_line: 0.9,
+            ..Captions::default()
+        };
+        let lines = lay_out(&transcript, &caps);
+        // The second line is pushed to where the first ends, which is past
+        // both its words: they arrive already said.
+        let second = &lines[1];
+        assert!(second.at > 0.2, "the line is pushed past its words");
+        assert_eq!(second.words[0].start, 0.0);
+        assert_eq!(second.words[1].start, 0.0);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # Motion comps — the design layer, in a director's plan
 
-Read this when the edit needs **design**, not just footage: a lower third, word-timed captions, a stat
+Read this when the edit needs **design**, not just footage: a lower third, a caption comp, a stat
 card, a chart building on, a logo sting, a subscribe card, a backdrop, a before/after split. Design is
 what makes a cut feel authored; footage, grades and transitions cannot fake it.
 
@@ -66,7 +66,7 @@ five decisions  →  inspect  →  one sentence of intent  →  one edit batch  
 | hook (first 2 s) | the wordmark sting, or one number popping on a downbeat |
 | chapters | one chip per section, landing on the downbeat (`analysis.beats`) |
 | talking head | lower third after the first full sentence — never on the cut |
-| B-roll | kinetic captions at the bottom third, one comp per 4–7 words |
+| B-roll | a segment-timed caption comp in the bottom third; use measured cue intervals, not estimated word times |
 | data | chart bars or a counting number, one figure per shot, revealed not dumped |
 | CTA / outro | subscribe card, held long enough to read twice |
 
@@ -77,21 +77,31 @@ stagger (60–120 ms) across all of them so they read as one system.
 
 ## 4. Three worked plans
 
-### 4a. Transcript → word-timed captions
+### 4a. Transcript → captions (segment timing by default)
+
+`transcribe` returns `{start,end,text}` segments, not individual word start/end
+times. For the default workflow, use each measured cue interval with
+`captions_add`, or build one static/phrase-level comp over that same interval.
+Do not split a cue into estimated word times and call it word-synced.
+
+For genuinely word-highlighted motion comps, proceed only when accurate
+per-word timestamps are available from a separate aligner or are manually
+measured and verified against the audio:
 
 ```
-1. transcribe → words with start/end
+1. obtain and check word-level {word,start,end} data against the source audio
 2. inspect funcut.caption.kinetic → node "caption", slot "Transcript line"
-3. one comp clip per 4–7 words, or per sentence:
+3. one comp clip per readable phrase:
    {"op":"set-words","node":"caption","words":[[w,s,e], …]}
    - two-element [word, start] holds until the next word
    - a null end on the last word holds to the end of the comp
-4. frame at the middle of the longest word — the highlight must be on it
+4. frame at actual word boundaries; verify the highlight follows the audio
 5. bake, place bottom third, 10% margin, clear of faces
 ```
 
-2.5–3.5 words/second reads; past 4 it does not. Cue-level transcripts: split each cue evenly by
-character count — never invent timings that drift from the audio.
+2.5–3.5 words/second is a comfortable reading pace; past 4 is difficult.
+When only cue-level timing exists, preserve the cue's measured interval rather
+than distributing fabricated per-word timestamps.
 
 ### 4b. A lower third over an interview
 

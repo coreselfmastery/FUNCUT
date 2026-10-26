@@ -76,6 +76,10 @@ pub enum Action {
     ExportWait,
     /// `updateClip` with only a mask.
     Mask,
+    /// Apply base gain and optional automation in decibels.
+    AudioLevelsDb,
+    /// Validate the director's edit plan without changing a project.
+    PlanValidate,
     /// `preview.frame`, as an image.
     PreviewFrame,
 }
@@ -221,6 +225,24 @@ pub fn catalogue() -> Vec<Tool> {
             destructive: false,
             idempotent: true,
             action: Action::TimelineRead,
+        },
+        Tool {
+            name: "plan_validate",
+            title: "Validate an edit plan",
+            description: "Checks a director plan's canonical schema and cross-field constraints before edits. Read-only; cannot assess creative quality or asset availability.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::PlanValidate,
+        },
+        Tool {
+            name: "clip_audio_levels_db",
+            title: "Set clip audio levels in dB",
+            description: "Sets base gain and optional automation in dB relative to source unity (0 dB = unchanged; −60 dB = silence floor; range −60 to +24). Converts to linear multipliers. Keyframe `gainDb` targets are absolute to unity; `baseDb` applies outside keyed regions. `replaceAutomation: true` clears existing volume keys in the same undoable batch.",
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+            action: Action::AudioLevelsDb,
         },
         method(
             "project_get",
@@ -460,7 +482,7 @@ pub fn catalogue() -> Vec<Tool> {
         command(
             "clip_update",
             "Change a clip",
-            "Changes only the fields given in `patch`: volume (gain, 1 is unchanged, may exceed 1), fadeIn/fadeOut (seconds), opacity (0-1), muted, flipH/flipV, blend, crop (fractions off each edge, null to remove), videoEffects and filters (the whole chain: a list of {id, params}; ids from `effects_list`), transitionIn ({id, duration} on the cut into the clip, null to remove), text (a title's style, null to remove), mask (see `clip_mask`), background (the clip's own background, null to follow the timeline's) and audioStream.",
+            "Changes only the fields given in `patch`: volume (linear gain multiplier, 1 is unchanged, may exceed 1; not dB—use `clip_audio_levels_db` for decibel levels), fadeIn/fadeOut (seconds), opacity (0-1), muted, flipH/flipV, blend, crop (fractions off each edge, null to remove), videoEffects and filters (the whole chain: a list of {id, params}; ids from `effects_list`), transitionIn ({id, duration} on the cut into the clip, null to remove), text (a title's style, null to remove), mask (see `clip_mask`), background (the clip's own background, null to follow the timeline's) and audioStream.",
             "updateClip",
         ),
         Tool {
@@ -520,7 +542,7 @@ pub fn catalogue() -> Vec<Tool> {
         command(
             "keyframe_set",
             "Set a keyframe",
-            "Animates a clip: puts a key on `property` (scale, offsetX, offsetY, rotation, opacity, volume, or a mask's maskX, maskY, maskWidth, maskHeight, maskRotation, maskRoundness, maskFeather) at `at`, a fraction of the clip's length from 0 (its start) to 1 (its end), holding `value` in the property's own units - the number the inspector shows. A key already within a hair of `at` is replaced. `ease` is how the value is approached: [x1, y1, x2, y2] like a CSS cubic-bezier, linear when absent.",
+            "Animates a clip: puts a key on `property` (scale, offsetX, offsetY, rotation, opacity, volume, or a mask's maskX, maskY, maskWidth, maskHeight, maskRotation, maskRoundness, maskFeather) at `at`, a fraction of the clip's length from 0 (its start) to 1 (its end). `value` uses the property's stored units; notably `volume` is a linear gain multiplier (1 = unchanged), not dB. Use `clip_audio_levels_db` for absolute dB levels. A key already within a hair of `at` is replaced. `ease` is how the value is approached: [x1, y1, x2, y2] like a CSS cubic-bezier, linear when absent.",
             "setClipKey",
         ),
         command(
@@ -636,7 +658,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "transcribe",
             "Transcribe a recording",
-            "Hears a media file on a job with whisper.cpp: the words as caption segments with their times, for word-synced captions and timing every cut. Wait with analysis_wait; the result is the status's `output`. The model comes from Settings > Transcriber (`base.en` default, `small` for other languages); the reply names it when it is missing.",
+            "Transcribes a media file on a job; output timed segments (`{start,end,text}`), not word alignment. `language` is a Whisper hint (ISO code/BCP-47); use a multilingual model for non-English (`base.en` default is English-only). Wait with analysis_wait; the result is in status.output.",
             "speech.transcribe",
             Raw,
         ),
@@ -788,6 +810,8 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
         Action::Command { op } => schemas.command(op),
         Action::Version => schemas.method("version"),
         Action::TimelineRead => schemas.method("project.get"),
+        Action::PlanValidate => plan_validate_schema(),
+        Action::AudioLevelsDb => audio_levels_schema(schemas),
         Action::ExportWait => {
             let mut schema = schemas.method("export.status")?;
             schema["properties"]["timeoutSeconds"] = json!({
@@ -857,6 +881,112 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
     }
 }
 
+/// The full director schema used at runtime to validate a plan.
+fn canonical_plan_schema() -> Option<Value> {
+    serde_json::from_str(include_str!(
+        "../../../../.claude/skills/funcut-director/templates/edit_plan.schema.json"
+    ))
+    .ok()
+}
+
+/// The compact MCP input schema. The full canonical schema is also checked
+/// at runtime; this keeps a 7 KB plan template out of every client's tool list.
+fn plan_validate_schema() -> Option<Value> {
+    Some(json!({
+        "type": "object",
+        "properties": {
+            "plan": {
+                "type": "object",
+                "description": "A director plan following the canonical edit_plan.schema.json, validated fully at runtime.",
+                "required": ["aspect", "segments", "audio"],
+                "properties": {
+                    "aspect": { "type": "string", "enum": ["16:9", "9:16", "1:1", "4:5"] },
+                    "segments": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "required": ["start", "end", "visual"],
+                            "properties": {
+                                "start": { "type": "number", "minimum": 0 },
+                                "end": { "type": "number" },
+                                "visual": {
+                                    "type": "object",
+                                    "required": ["type"],
+                                    "properties": {
+                                        "type": { "type": "string", "enum": ["broll", "textCard", "titleCard", "existing"] }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "audio": { "type": "object" }
+                }
+            }
+        },
+        "required": ["plan"],
+        "additionalProperties": false,
+    }))
+}
+
+/// The dB-aware audio-level tool's inputs. Its values are converted before
+/// they become the project model's linear-gain numbers.
+fn audio_levels_schema(schemas: &Schemas) -> Option<Value> {
+    let path = schemas
+        .method("project.get")?
+        .pointer("/properties/path")?
+        .clone();
+    let clip_id = schemas
+        .command("updateClip")?
+        .pointer("/properties/clipId")?
+        .clone();
+    let ease = schemas
+        .command("setClipKey")?
+        .pointer("/properties/ease")?
+        .clone();
+    let decibels = json!({
+        "type": "number",
+        "minimum": -60,
+        "maximum": 24,
+        "description": "Gain in dB relative to source unity: 0 dB is unchanged, −60 dB is the editor's silence floor, negative values attenuate, and positive values boost.",
+    });
+    Some(json!({
+        "type": "object",
+        "properties": {
+            "path": path,
+            "clipId": clip_id,
+            "baseDb": {
+                "type": "number",
+                "minimum": -60,
+                "maximum": 24,
+                "description": "The clip's base gain in dB relative to source unity; this is the value the engine uses outside keyed regions.",
+            },
+            "replaceAutomation": {
+                "type": "boolean",
+                "default": false,
+                "description": "Clear existing volume keys before applying the supplied keys.",
+            },
+            "keyframes": {
+                "type": "array",
+                "maxItems": 500,
+                "description": "Optional absolute dB gain targets relative to source unity at clip-relative positions; keyframe values are converted to linear multipliers.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "at": { "type": "number", "minimum": 0, "maximum": 1 },
+                        "gainDb": decibels,
+                        "ease": ease,
+                    },
+                    "required": ["at", "gainDb"],
+                    "additionalProperties": false,
+                },
+            },
+        },
+        "required": ["path", "clipId", "baseDb"],
+        "additionalProperties": false,
+    }))
+}
+
 /// A request from a method's arguments.
 fn request(method: &str, mut arguments: Value) -> Result<Request, ApiError> {
     let Some(fields) = arguments.as_object_mut() else {
@@ -907,6 +1037,11 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
             let result = backend.call(captions(arguments)?)?;
             Ok(Outcome::json(summary::view(&result)))
         }
+        Action::AudioLevelsDb => {
+            let result = backend.call(audio_levels_db(arguments)?)?;
+            Ok(Outcome::json(summary::view(&result)))
+        }
+        Action::PlanValidate => Ok(Outcome::json(validate_plan_tool(arguments)?)),
         Action::ExportWait => export_wait(arguments, backend, context.cancelled, context.progress),
         Action::PreviewFrame => preview(arguments, backend),
         Action::Mask => {
@@ -1004,6 +1139,389 @@ fn captions(mut arguments: Value) -> Result<Request, ApiError> {
         "edit.apply",
         json!({ "path": path, "command": { "op": "batch", "commands": commands } }),
     )
+}
+
+/// `clip_audio_levels_db`: converts absolute dB targets to the clip model's
+/// linear base gain and absolute volume-key values in one undoable batch.
+fn audio_levels_db(mut arguments: Value) -> Result<Request, ApiError> {
+    let invalid = |why: &str| ApiError::invalid(format!("invalid arguments: {why}"));
+    let fields = arguments
+        .as_object_mut()
+        .ok_or_else(|| invalid("the arguments are an object"))?;
+    let path = fields
+        .remove("path")
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .filter(|path| !path.trim().is_empty())
+        .ok_or_else(|| invalid("`path` is required and must be a non-empty string"))?;
+    let clip_id = fields
+        .remove("clipId")
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .filter(|id| !id.trim().is_empty())
+        .ok_or_else(|| invalid("`clipId` is required and must be a non-empty string"))?;
+    let base_db = fields
+        .remove("baseDb")
+        .and_then(|value| value.as_f64())
+        .filter(|value| value.is_finite() && (-60.0..=24.0).contains(value))
+        .ok_or_else(|| invalid("`baseDb` must be between -60 and +24 dB"))?;
+    let replace_automation = match fields.remove("replaceAutomation") {
+        None => false,
+        Some(Value::Bool(value)) => value,
+        Some(_) => return Err(invalid("`replaceAutomation` must be a boolean")),
+    };
+    let keyframes = match fields.remove("keyframes") {
+        None => Vec::new(),
+        Some(Value::Array(values)) if values.len() <= 500 => values,
+        Some(Value::Array(_)) => {
+            return Err(invalid("`keyframes` may contain at most 500 entries"));
+        }
+        Some(_) => return Err(invalid("`keyframes` must be a list")),
+    };
+    if let Some(unknown) = fields.keys().next() {
+        return Err(invalid(&format!("unknown field `{unknown}`")));
+    }
+
+    let base_gain = gain_from_db(base_db);
+
+    let mut commands = Vec::with_capacity(keyframes.len() + 2);
+    if replace_automation {
+        commands.push(json!({
+            "op": "clearClipKeys",
+            "clipId": clip_id,
+            "property": "volume",
+        }));
+    }
+    commands.push(json!({
+        "op": "updateClip",
+        "clipId": clip_id,
+        "patch": { "volume": base_gain },
+    }));
+
+    let mut seen = Vec::with_capacity(keyframes.len());
+    for (index, keyframe) in keyframes.into_iter().enumerate() {
+        let Some(values) = keyframe.as_object() else {
+            return Err(invalid(&format!("keyframes[{index}] must be an object")));
+        };
+        let mut values = values.clone();
+        let at = values
+            .remove("at")
+            .and_then(|value| value.as_f64())
+            .filter(|value| value.is_finite() && (0.0..=1.0).contains(value))
+            .ok_or_else(|| invalid(&format!("keyframes[{index}].at must be between 0 and 1")))?;
+        let target_db = values
+            .remove("gainDb")
+            .and_then(|value| value.as_f64())
+            .filter(|value| value.is_finite() && (-60.0..=24.0).contains(value))
+            .ok_or_else(|| {
+                invalid(&format!(
+                    "keyframes[{index}].gainDb must be between -60 and +24 dB"
+                ))
+            })?;
+        let ease = values.remove("ease");
+        if let Some(unknown) = values.keys().next() {
+            return Err(invalid(&format!(
+                "unknown field `{unknown}` in keyframes[{index}]"
+            )));
+        }
+        if seen.iter().any(|prior: &f64| (prior - at).abs() <= 0.002) {
+            return Err(invalid(&format!(
+                "keyframes[{index}] duplicates another key position"
+            )));
+        }
+        seen.push(at);
+        let target_gain = gain_from_db(target_db);
+        let mut command = json!({
+            "op": "setClipKey",
+            "clipId": clip_id,
+            "property": "volume",
+            "at": at,
+            "value": target_gain,
+        });
+        if let Some(ease) = ease {
+            let valid = ease.as_array().is_some_and(|points| {
+                points.len() == 4
+                    && points
+                        .iter()
+                        .all(|point| point.as_f64().is_some_and(|number| number.is_finite()))
+            });
+            if !valid {
+                return Err(invalid(&format!(
+                    "keyframes[{index}].ease must contain four finite cubic-bezier numbers"
+                )));
+            }
+            command["ease"] = ease;
+        }
+        commands.push(command);
+    }
+
+    let command = if commands.len() == 1 {
+        commands.pop().expect("one command")
+    } else {
+        json!({ "op": "batch", "commands": commands })
+    };
+    request("edit.apply", json!({ "path": path, "command": command }))
+}
+
+/// Linear gain multiplier for dB relative to unity, matching the editor fader.
+fn gain_from_db(decibels: f64) -> f64 {
+    if decibels <= -60.0 {
+        0.0
+    } else {
+        10.0_f64.powf(decibels / 20.0)
+    }
+}
+
+/// `plan_validate`: validate the director's plan before tool-driven edits.
+fn validate_plan_tool(mut arguments: Value) -> Result<Value, ApiError> {
+    let invalid = |why: &str| ApiError::invalid(format!("invalid arguments: {why}"));
+    let fields = arguments
+        .as_object_mut()
+        .ok_or_else(|| invalid("the arguments are an object"))?;
+    let plan = fields
+        .remove("plan")
+        .ok_or_else(|| invalid("`plan` is required"))?;
+    if let Some(unknown) = fields.keys().next() {
+        return Err(invalid(&format!("unknown field `{unknown}`")));
+    }
+    let schema = canonical_plan_schema()
+        .ok_or_else(|| invalid("the canonical edit-plan schema could not be loaded"))?;
+    crate::schema::check(&schema, &plan, &schema, "plan").map_err(|message| invalid(&message))?;
+    let result = validate_edit_plan(&plan).map_err(ApiError::invalid)?;
+    Ok(result)
+}
+
+/// An actual id-shaped reference, without claiming that a live project or
+/// media library contains it.
+fn valid_identifier(value: &Value) -> bool {
+    match value {
+        Value::String(id) => !id.trim().is_empty(),
+        Value::Number(id) => {
+            id.as_i64().is_some_and(|id| id > 0) || id.as_u64().is_some_and(|id| id > 0)
+        }
+        _ => false,
+    }
+}
+
+/// Cross-field checks JSON Schema cannot express: actual timeline continuity,
+/// usable visual references, and realistic audio/caption values.
+fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
+    let object = plan
+        .as_object()
+        .ok_or_else(|| "plan must be a JSON object".to_owned())?;
+    let aspect = object
+        .get("aspect")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "aspect is required (16:9, 9:16, 1:1, or 4:5)".to_owned())?;
+    if !["16:9", "9:16", "1:1", "4:5"].contains(&aspect) {
+        return Err(format!("aspect `{aspect}` is not supported"));
+    }
+    if !object.get("audio").is_some_and(Value::is_object) {
+        return Err("audio must be an object".to_owned());
+    }
+    let segments = object
+        .get("segments")
+        .and_then(Value::as_array)
+        .filter(|segments| !segments.is_empty() && segments.len() <= 500)
+        .ok_or_else(|| "segments must be a non-empty array with at most 500 entries".to_owned())?;
+    let mut warnings = Vec::<String>::new();
+    let mut previous_end: Option<f64> = None;
+    let mut runtime = 0.0_f64;
+    for (index, segment) in segments.iter().enumerate() {
+        let segment = segment
+            .as_object()
+            .ok_or_else(|| format!("segments[{index}] must be an object"))?;
+        let number = |key: &str| {
+            segment
+                .get(key)
+                .and_then(Value::as_f64)
+                .filter(|value| value.is_finite())
+                .ok_or_else(|| format!("segments[{index}].{key} must be a finite number"))
+        };
+        let start = number("start")?;
+        let end = number("end")?;
+        if start < 0.0 || end <= start {
+            return Err(format!(
+                "segments[{index}] must have start >= 0 and end > start"
+            ));
+        }
+        if index == 0 && start > 0.05 {
+            return Err(format!(
+                "segments[0] starts at {start:.3}s; the plan must start at 0s (or within 50 ms)"
+            ));
+        }
+        if let Some(previous_end) = previous_end {
+            let delta = start - previous_end;
+            if delta > 0.05 {
+                return Err(format!("gap of {delta:.3}s before segments[{index}]"));
+            }
+            if delta < -0.05 {
+                return Err(format!(
+                    "overlap of {:.3}s before segments[{index}]",
+                    -delta
+                ));
+            }
+            if delta.abs() > 0.001 {
+                warnings.push(format!(
+                    "segments[{index}] differs from the previous boundary by {delta:.3}s"
+                ));
+            }
+        }
+        let visual = segment
+            .get("visual")
+            .and_then(Value::as_object)
+            .ok_or_else(|| format!("segments[{index}].visual must be an object"))?;
+        let kind = visual
+            .get("type")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("segments[{index}].visual.type is required"))?;
+        match kind {
+            "broll" => {
+                let query = visual
+                    .get("query")
+                    .and_then(Value::as_str)
+                    .is_some_and(|q| !q.trim().is_empty());
+                let id = visual.get("clipId").is_some_and(valid_identifier);
+                if !query && !id {
+                    return Err(format!(
+                        "segments[{index}] B-roll needs a search query or a non-empty clipId"
+                    ));
+                }
+            }
+            "existing" => {
+                let media = visual
+                    .get("mediaId")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| !id.trim().is_empty());
+                let clip = visual.get("clipId").is_some_and(valid_identifier);
+                let file = visual
+                    .get("file")
+                    .and_then(Value::as_str)
+                    .is_some_and(|path| !path.trim().is_empty());
+                if !media && !clip && !file {
+                    return Err(format!(
+                        "segments[{index}] existing footage needs mediaId, clipId, or file"
+                    ));
+                }
+            }
+            "textCard" | "titleCard" => {
+                if visual
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .is_none_or(|text| text.trim().is_empty())
+                {
+                    return Err(format!("segments[{index}] {kind} needs non-empty text"));
+                }
+            }
+            other => {
+                return Err(format!(
+                    "segments[{index}].visual.type `{other}` is unsupported"
+                ));
+            }
+        }
+        if let Some(transition) = segment.get("transitionIn").filter(|value| !value.is_null()) {
+            let transition = transition.as_object().ok_or_else(|| {
+                format!("segments[{index}].transitionIn must be an object or null")
+            })?;
+            if transition
+                .get("effect")
+                .and_then(Value::as_str)
+                .is_none_or(|effect| effect.trim().is_empty())
+            {
+                return Err(format!("segments[{index}].transitionIn.effect is required"));
+            }
+            if let Some(seconds) = transition.get("seconds") {
+                let seconds = seconds
+                    .as_f64()
+                    .filter(|value| value.is_finite())
+                    .ok_or_else(|| {
+                        format!("segments[{index}].transitionIn.seconds must be finite")
+                    })?;
+                if !(0.0..=2.0).contains(&seconds) {
+                    return Err(format!(
+                        "segments[{index}].transitionIn.seconds must be between 0 and 2"
+                    ));
+                }
+            }
+        }
+        if let Some(sfx) = segment.get("sfx").filter(|value| !value.is_null()) {
+            let sfx = sfx
+                .as_object()
+                .ok_or_else(|| format!("segments[{index}].sfx must be an object or null"))?;
+            if sfx
+                .get("query")
+                .and_then(Value::as_str)
+                .is_none_or(|query| query.trim().is_empty())
+            {
+                return Err(format!("segments[{index}].sfx.query is required"));
+            }
+            if let Some(peak) = sfx.get("peakAt") {
+                let peak = peak
+                    .as_f64()
+                    .filter(|value| value.is_finite())
+                    .ok_or_else(|| format!("segments[{index}].sfx.peakAt must be finite"))?;
+                if peak < 0.0 || peak > end + 0.05 {
+                    return Err(format!(
+                        "segments[{index}].sfx.peakAt is outside the planned runtime"
+                    ));
+                }
+            }
+            if let Some(gain) = sfx.get("gainDb") {
+                let gain = gain
+                    .as_f64()
+                    .filter(|value| value.is_finite())
+                    .ok_or_else(|| format!("segments[{index}].sfx.gainDb must be finite"))?;
+                if !(-60.0..=0.0).contains(&gain) {
+                    return Err(format!(
+                        "segments[{index}].sfx.gainDb must be between -60 and 0 dB"
+                    ));
+                }
+            }
+        }
+        previous_end = Some(end);
+        runtime = end;
+    }
+    if let Some(captions) = object.get("captions") {
+        let captions = captions
+            .as_object()
+            .ok_or_else(|| "captions must be an object".to_owned())?;
+        if captions.contains_key("wordSynced") {
+            return Err("word alignment is unsupported: the current transcription/caption tools provide segment timing only; remove `wordSynced` and use captions.syncMode = `segment`".to_owned());
+        }
+        if let Some(mode) = captions.get("syncMode")
+            && mode.as_str() != Some("segment")
+        {
+            return Err("captions.syncMode must be `segment`; word alignment is not provided by the current transcription/caption tools".to_owned());
+        }
+    }
+    if let Some(bgm) = object
+        .get("audio")
+        .and_then(|audio| audio.get("bgm"))
+        .filter(|value| !value.is_null())
+    {
+        let bgm = bgm
+            .as_object()
+            .ok_or_else(|| "audio.bgm must be an object or null".to_owned())?;
+        if let Some(duck) = bgm.get("duckDb") {
+            let duck = duck
+                .as_f64()
+                .filter(|value| value.is_finite())
+                .ok_or_else(|| "audio.bgm.duckDb must be finite".to_owned())?;
+            if !(-60.0..=0.0).contains(&duck) {
+                return Err("audio.bgm.duckDb must be between -60 and 0 dB".to_owned());
+            }
+        }
+    }
+    match object.get("export") {
+        None => warnings.push("export settings are not specified; the plan alone does not guarantee an export profile".to_owned()),
+        Some(Value::Object(_)) => {}
+        Some(_) => return Err("export must be an object when supplied".to_owned()),
+    }
+    Ok(json!({
+        "valid": true,
+        "aspect": aspect,
+        "segmentCount": segments.len(),
+        "runtimeSeconds": runtime,
+        "warnings": warnings,
+    }))
 }
 
 /// `export_wait`: the job's status once it has ended, or when the time is
@@ -1145,6 +1663,17 @@ mod tests {
             ("project_save", json!({ "path": "/tmp/Cut" })),
             ("project_close", json!({ "path": "/tmp/Cut", "save": true })),
             ("timeline_read", json!({ "path": "/tmp/Cut" })),
+            (
+                "plan_validate",
+                json!({ "plan": {
+                    "aspect": "9:16",
+                    "audio": {},
+                    "segments": [
+                        { "start": 0.0, "end": 2.0, "visual": { "type": "broll", "query": "ocean waves aerial" } },
+                        { "start": 2.0, "end": 4.0, "visual": { "type": "textCard", "text": "THE SALT STAYS" } }
+                    ]
+                } }),
+            ),
             ("project_get", json!({ "path": "/tmp/Cut" })),
             (
                 "project_set_video",
@@ -1227,6 +1756,19 @@ mod tests {
             (
                 "clip_update",
                 json!({ "path": "/tmp/Cut", "clipId": "c1", "patch": { "volume": 0.5, "crop": null, "transitionIn": { "id": "cross-fade", "duration": 0.5 }, "videoEffects": [{ "id": "concat.warm", "params": { "amount": 0.4 } }] } }),
+            ),
+            (
+                "clip_audio_levels_db",
+                json!({
+                    "path": "/tmp/Cut",
+                    "clipId": "c1",
+                    "baseDb": -4.0,
+                    "replaceAutomation": true,
+                    "keyframes": [
+                        { "at": 0.0, "gainDb": -12.0, "ease": [0.25, 0.1, 0.25, 1.0] },
+                        { "at": 0.8, "gainDb": -4.0 }
+                    ]
+                }),
             ),
             (
                 "clip_transform",
@@ -1339,6 +1881,16 @@ mod tests {
         names.sort_unstable();
         names.dedup();
         assert_eq!(names.len(), listed.len(), "unique names");
+        let ordered_names: Vec<&str> = listed
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect();
+        let timeline = ordered_names
+            .iter()
+            .position(|name| *name == "timeline_read")
+            .expect("timeline_read is listed");
+        assert_eq!(ordered_names[timeline + 1], "plan_validate");
+        assert_eq!(ordered_names[timeline + 2], "clip_audio_levels_db");
         for tool in &listed {
             let name = tool["name"].as_str().expect("named");
             assert!(
@@ -1369,6 +1921,11 @@ mod tests {
                 Action::Version => request("version", sample.clone()),
                 Action::TimelineRead => request("project.get", sample.clone()),
                 Action::Captions => captions(sample.clone()),
+                Action::AudioLevelsDb => audio_levels_db(sample.clone()),
+                Action::PlanValidate => {
+                    validate_plan_tool(sample.clone()).expect("valid plan sample");
+                    continue;
+                }
                 Action::ExportWait => {
                     let mut sample = sample.clone();
                     sample
@@ -1440,6 +1997,103 @@ mod tests {
         assert_eq!(
             *seen.borrow(),
             vec![(50.0, 100.0), (60.0, 100.0), (99.9, 100.0), (100.0, 100.0)]
+        );
+    }
+
+    #[test]
+    fn decibel_audio_tool_converts_absolute_targets_to_linear_key_values() {
+        let request = audio_levels_db(json!({
+            "path": "/p",
+            "clipId": "c1",
+            "baseDb": -4.0,
+            "replaceAutomation": true,
+            "keyframes": [{ "at": 0.5, "gainDb": -12.0 }]
+        }))
+        .expect("valid dB levels");
+        let request = serde_json::to_value(request).expect("serializes");
+        let commands = request.pointer("/command/commands").expect("batch");
+        let base = commands[1]["patch"]["volume"].as_f64().expect("base gain");
+        let duck = commands[2]["value"].as_f64().expect("relative key gain");
+        assert!((base - 10.0_f64.powf(-4.0 / 20.0)).abs() < 1e-12);
+        assert!((duck - 10.0_f64.powf(-12.0 / 20.0)).abs() < 1e-12);
+        assert_eq!(commands[0]["op"], "clearClipKeys");
+        assert_eq!(commands[2]["property"], "volume");
+    }
+
+    #[test]
+    fn d_b_audio_levels_accept_absolute_automation_and_reject_invalid_ranges() {
+        assert!(
+            audio_levels_db(json!({
+                "path": "/p", "clipId": "c1", "baseDb": -60.0,
+                "keyframes": [{ "at": 0.5, "gainDb": -12.0 }]
+            }))
+            .is_ok()
+        );
+        assert!(
+            audio_levels_db(json!({
+                "path": "/p", "clipId": "c1", "baseDb": 25.0
+            }))
+            .is_err()
+        );
+        assert!(
+            audio_levels_db(json!({
+                "path": "/p", "clipId": "c1", "baseDb": -4.0,
+                "keyframes": [
+                    { "at": 0.5, "gainDb": -12.0 },
+                    { "at": 0.501, "gainDb": -8.0 }
+                ]
+            }))
+            .is_err()
+        );
+        assert!(
+            audio_levels_db(json!({
+                "path": "/p", "clipId": "c1", "baseDb": -4.0,
+                "keyframes": [{ "at": 0.5, "gainDb": -12.0, "ease": [0.2, 0.3] }]
+            }))
+            .is_err()
+        );
+        assert_eq!(
+            gain_from_db(-60.0),
+            0.0,
+            "-60 dB is the editor's silence floor"
+        );
+        assert!((gain_from_db(-59.99) - 10.0_f64.powf(-59.99 / 20.0)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn director_example_fits_the_tool_schema_and_validates() {
+        let schema = plan_validate_schema().expect("canonical plan schema");
+        let plan: Value = serde_json::from_str(include_str!(
+            "../../../../.claude/skills/funcut-director/templates/edit_plan.example.json"
+        ))
+        .expect("valid example JSON");
+        let arguments = json!({ "plan": plan });
+        crate::schema::check(&schema, &arguments, &schema, "plan_validate")
+            .expect("example fits tool schema");
+        let result = validate_plan_tool(arguments).expect("example passes validation");
+        assert_eq!(result["valid"], true);
+        assert_eq!(result["segmentCount"], 5);
+        assert_eq!(result["runtimeSeconds"], 24.0);
+    }
+
+    #[test]
+    fn plan_validator_rejects_gaps_and_unsupported_word_sync() {
+        let base = json!({
+            "aspect": "9:16",
+            "audio": {},
+            "segments": [
+                { "start": 0.0, "end": 2.0, "visual": { "type": "broll", "query": "ocean" } },
+                { "start": 2.2, "end": 4.0, "visual": { "type": "textCard", "text": "SALT" } }
+            ]
+        });
+        assert!(validate_edit_plan(&base).unwrap_err().contains("gap"));
+        let mut no_gap = base;
+        no_gap["segments"][1]["start"] = json!(2.0);
+        no_gap["captions"] = json!({ "wordSynced": true });
+        assert!(
+            validate_edit_plan(&no_gap)
+                .unwrap_err()
+                .contains("word alignment")
         );
     }
 

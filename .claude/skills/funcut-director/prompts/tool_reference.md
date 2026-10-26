@@ -25,13 +25,17 @@ tools need the Python extras installed (`scenedetect`, `opencv-headless`,
 `concat_version` · `project_list` · `project_create {location,name,video?}` ·
 `project_open {path}` · `project_save` · `project_close {path,save}` ·
 `project_set_video` · `project_get {path}` · `timeline_read {path}` ·
-`media_probe {path}` · `media_import {path,file}` · `effects_list {kind}` (the
-effect/filter/transition/audio packages)
+`plan_validate {plan}` · `media_probe {path}` · `media_import {path,file}` ·
+`effects_list {kind}` (the effect/filter/transition/audio packages)
 
 - One API session per folder: open before editing; a project the window has
   open cannot be opened headless (and vice versa).
 - `timeline_read` is the compact view (lanes, clips in time order, ids, media)
   — use it for gap/overlap checks. `project_get` is everything.
+- `plan_validate {plan}` checks the director plan against its canonical schema,
+  timeline continuity, visual references, and supported audio/caption ranges.
+  Run it before asset gathering/editing; fix errors and revalidate. It cannot
+  verify asset availability or creative quality.
 - `media_probe` before cutting anything unfamiliar: duration, streams, frame
   size, rate, codecs. Units: seconds and frames-per-second as floats.
 - The project `path` in every edit tool is the folder `project_open` took.
@@ -54,6 +58,20 @@ effect/filter/transition/audio packages)
 - Engine minimums: a clip is at least 1/60 s; scale 0.05–8; offsets ±3
   frame-fractions; stretch 0.1–10; preview/export max side 8192 px.
 
+## Audio gain units
+
+- `clip_audio_levels_db {path,clipId,baseDb,keyframes?,replaceAutomation?}`
+  sets the clip's base gain and optional volume keys in dB relative to source
+  unity (`0 dB` = unchanged; `−60 dB` is the editor's silence floor;
+  negative attenuates; positive boosts), converting to the engine's linear
+  multipliers. Each keyframe is `{at,gainDb,ease?}`;
+  `gainDb` is an absolute target relative to unity, and `at` is 0–1 of the
+  clip. `baseDb` is used outside keyed regions. `replaceAutomation: true`
+  clears existing volume keys in the same undoable batch.
+- `clip_update.patch.volume` and `keyframe_set` on `volume` are linear gain
+  multipliers (`1` = unchanged), not dB. `sounds_add` cannot set gain; use
+  the created clip id with `clip_audio_levels_db` after adding it.
+
 ## Picture and motion
 
 `clip_transform` · `keyframe_set` · `keyframe_clear` · `clip_mask` ·
@@ -63,16 +81,18 @@ effect/filter/transition/audio packages)
 - `keyframe_set` animates `scale`, `offsetX`, `offsetY`, `rotation`, `opacity`,
   `volume`, and the mask fields (`maskX/maskY/maskWidth/maskHeight/
   maskRotation/maskRoundness/maskFeather`). `at` is a 0–1 fraction of the
-  clip; `ease` is a CSS cubic-bezier `[x1,y1,x2,y2]`.
+  clip; `ease` is a CSS cubic-bezier `[x1,y1,x2,y2]`. `volume` key values are
+  linear gain multipliers, not dB; use `clip_audio_levels_db` for dB targets.
 - `effect_layer_add` is how a transition or effect package goes on a clip;
   `effect_key_set` sets a package parameter (`concat.warm`'s is `temperature`,
-  Kelvin 3000–6000, default 4600 — `effects_list`/`catalogue` give you every
-  package's parameter table at runtime; never hardcode what you can read).
+  Kelvin 3000–6000, default 4600 — `effects_list` gives you each package's
+  parameter table at runtime; never hardcode what you can read).
 - Masks: shapes `linear, mirror, circle, rectangle, heart, star`.
 - `timeline_background`: `none` | `blur {amount 0–1}` | `color {#rrggbb}` |
   `image {mediaId}` — vertical videos on a 16:9 canvas want `blur`.
-- `captions_add` places word-synced captions; `title_add` paints styled titles
-  (see `prompts/text_animation.md` for the 31 presets and the style fields:
+- `captions_add` places segment-timed captions from explicit `{start,end,text}`
+  intervals; it does not align words. `title_add` paints styled titles (see
+  `prompts/text_animation.md` for the 31 presets and the style fields:
   `fontSize` is a FRACTION OF FRAME HEIGHT — 0.04 engine default, 0.05–0.06
   short-form; `offsetY` 0.35 ≈ lower third).
 

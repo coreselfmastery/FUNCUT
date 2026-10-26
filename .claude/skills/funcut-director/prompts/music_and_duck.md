@@ -39,30 +39,37 @@ track: `beatsMs[]` and `downbeatsMs`.
 5. End on a downbeat: let the last chord/beat ring 0.5–1 s after the final
    word.
 
-## Ducking (the one automation you hand-keyframe)
+## Ducking (dB-aware clip automation)
 
-Music under speech: `keyframe_set {property:"volume"}` on the BGM clip's
-audio:
+Use `clip_audio_levels_db` on the BGM clip after `bgm_import` (get its actual
+`clipId` from the import result or `timeline_read`). `keyframe_set` and
+`clip_update.patch.volume` use linear gain multipliers, not dB; do not pass
+`duckDb` to those fields. `clip_audio_levels_db` converts the plan's absolute
+dB levels to the engine's linear values in one undoable batch.
 
-- Speaking starts: ease volume to `duckDb` (−12 default; −9 tight/motivation,
-  −15 calm/history) over ~300 ms (`ease [0.25,0.1,0.25,1]`).
-- A narration gap ≥ 1.5 s: ease back up to −4 dB over ~500 ms — the bed
-  breathes between sentences (the silence pass left those breaths in — use
-  them).
-- Hook and payoff: music at FULL for the first 1–2 s (before the first word)
-  and the last phrase — the intro swell and outro ring are the emotional
-  bookends.
+- Set `baseDb` to the bed's resting level (typically −4 to −6 dB).
+- Supply absolute `gainDb` targets: speaking starts at `duckDb` (−12 default;
+  −9 tight/motivation, −15 calm/history); a narration gap ≥1.5 s returns to
+  the resting level. Use `ease [0.25,0.1,0.25,1]` at the boundaries.
+- Keep music at the resting level for the first 1–2 s before the first word
+  and the last phrase when the edit calls for an intro swell/outro ring.
+- Use `replaceAutomation: true` only when replacing the full existing volume
+  curve; it clears old volume keys before writing the new curve. Targets are
+  absolute dB levels, not offsets from `baseDb`.
 
-Compute the keyframe `at` values as fractions of the BGM clip's length
-(`at` is 0–1 of the clip), from the word timings.
+Compute `at` as a 0–1 fraction of the BGM clip's length. Use measured
+transcript-segment times or other accurate sync data; the current `transcribe`
+tool does not supply per-word timings.
 
 ## Levels
 
-- BGM full: −4 to −6 dB; ducked: −12 dB (relative, under speech).
+- BGM resting: −4 to −6 dB; ducked: typically −12 dB absolute clip level (adjust by ear against the narration).
 - Bed changes when the WORLD changes (an ambience-style track) or never (a
   through-score). Pick one approach per video.
-- Export loudness norm −14 LUFS via the `concat.loudness` filter at export
-  only (see `prompts/sfx_design.md`).
+- If the platform specifies a loudness target (for example, −14 LUFS), record
+  it as a goal, not a verified result: export does not measure integrated
+  LUFS/true peak, and `concat.loudness` is not a master-bus guarantee. Measure
+  the final exported mix externally before claiming compliance.
 
 ## Self-check
 

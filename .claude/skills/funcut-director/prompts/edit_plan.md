@@ -2,7 +2,9 @@
 
 One reasoning pass, one JSON object, per `templates/edit_plan.schema.json`
 (a complete worked example sits beside it). The plan is your contract: you
-execute what you wrote, and the review checks it.
+execute what you wrote, and the review checks it. After drafting, call
+`plan_validate` with the complete object and fix errors before gathering
+assets; it validates structure and timeline continuity, not creative quality.
 
 ## Fill order
 
@@ -18,7 +20,9 @@ execute what you wrote, and the review checks it.
    plain cut (`null`). The 22 transitions and their uses:
    `prompts/transitions_guide.md`.
 5. **Audio beds** — voiceover block mirrors the TTS you already made; bgm
-   query per `prompts/music_and_duck.md` with `alignTo` and `duckDb`.
+   query per `prompts/music_and_duck.md` with `alignTo` and absolute `duckDb`
+   gain targets. `sounds_add` has no gain field: apply each planned SFX dB
+   value to its actual clip id with `clip_audio_levels_db`.
 6. **Captions + grade** — style per niche (`prompts/niche_playbooks.md`,
    `prompts/color_grading.md`), ONE filter for the whole video.
 7. **Export block** — `output` path, crf 20, codec h264, platform if told.
@@ -30,7 +34,8 @@ execute what you wrote, and the review checks it.
   settles) and let `trimOut` overshoot — `clip_trim` lands the exact edge
   after placing.
 - **J-cut feel:** the visual for segment N+1 enters 100–200 ms before its
-  narration starts. Compute: `visualStart = segment.start - 0.15`.
+  narration starts. Compute: `visualStart = max(0, segment.start - 0.15)` so
+  the first shot never starts before the timeline.
 - **Peaks on cuts:** `sfx.peakAt = segment.start` (± 1 frame). If the SFX is
   a riser, it must ARRIVE at the cut: `peakAt = segment.start`, started
   1–2 s earlier — sounds support the cut, they never follow it.
@@ -44,8 +49,9 @@ execute what you wrote, and the review checks it.
   within 20 s (no visible reuse).
 - [ ] Every query is concrete: noun + action/setting + shot feel ("aerial
   canyon river sunrise"), not a mood word alone.
-- [ ] Captions ≤ 4 words on screen per beat; style fields set; safe area
-  respected (offsetY 0.30–0.40, fontSize 0.04–0.06).
+- [ ] Captions use measured segment timing (the default transcription output
+  is not word-aligned); keep text concise where cue duration permits, with
+  style fields and safe area set (offsetY 0.30–0.40, fontSize 0.04–0.06).
 - [ ] One filter; intensity within `effects_list`'s stated min/max.
 - [ ] Export platform matches the brief's aspect (9:16 for shorts/reels/
   tiktok, 16:9 otherwise) and the segment spans sum to the runtime ±10%.

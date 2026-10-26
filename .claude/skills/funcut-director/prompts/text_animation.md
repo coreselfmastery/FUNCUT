@@ -1,7 +1,7 @@
 # Text animation: titles, captions, kinetic type
 
 Type is a first-class visual in faceless video — often THE visual. The engine
-gives you 31 text presets (`title_add`), word-synced captions
+gives you 31 text presets (`title_add`), segment-timed captions
 (`captions_add`), full style control (fontFamily, fontSize as a fraction of
 frame height, fontWeight 100–900, color, strokeWidth/strokeColor, shadow,
 background plate with radius, align, opacity), and keyframes for motion.
@@ -19,9 +19,12 @@ handwritten/marker/scribble for history & how-to · mystery/stencil for
 horror · candy/cartoon/friendly for family content · lower-third for
 documentary-style nameplates.
 
-## Captions (word-synced)
+## Captions (segment-timed)
 
-`captions_add` syncs to the transcription. Defaults worth overriding:
+`transcribe` returns timed text segments, not per-word timings. `captions_add`
+places those intervals as title clips; it does not perform word alignment.
+Use one cue per measured segment unless accurate word timestamps are supplied
+and independently verified. Defaults worth overriding:
 
 - `fontSize`: 0.04 of frame height is the engine default — use **0.05–0.06
   for 9:16** (42 px+ rule at 1080-wide equivalences).
@@ -29,8 +32,10 @@ documentary-style nameplates.
   contrast over busy footage; `offsetY` 0.30–0.35 (keep the lowest line's
   top above the platform UI zone — bottom ~15 % of a 9:16 frame is burned
   by TikTok/Shorts/Reels chrome).
-- 2–4 words on screen at a time: group by the plan segments, never by
-  sentence.
+- Keep cues concise (about 2–4 words where the measured segment allows it).
+  Do not subdivide a longer ASR segment into synthetic word timings and call
+  the result word-synced; use a real alignment source or preserve the segment
+  interval.
 - Emphasis: ONE key word per segment in the niche's accent color (the plan's
   `emphasisColor`); two colored words in a row means neither is emphasized.
 
@@ -69,7 +74,7 @@ every time it appears in a script.
 ## Self-check
 
 - [ ] One font family per video (presets from one style family).
-- [ ] Captions: 2–4 words, 42 px+, stroke or plate, safe area respected.
+- [ ] Captions: readable short cues, measured segment timing (or verified word timing), 42 px+, stroke/plate, safe area respected.
 - [ ] Every text card has ONE entrance motion + its SFX, ≤ 250 ms.
 - [ ] One emphasized word per segment max; accent color consistent.
 - [ ] Numbers that matter got their own card.

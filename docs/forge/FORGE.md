@@ -92,7 +92,7 @@ also has `forge import claude` for skills you already have there.) Verify:
 Ask for a whole faceless video, end to end — the skill drives the pipeline:
 
 ```bash
-forge run "Using the funcut-director skill, make a 30-second faceless video about why the sea is salty: script from the hook rules, Kokoro voice 8 narration, dead-air removed, B-roll from OpenVid, one SFX per cut on the beat, word-synced bold captions, teal-orange grade, verify with preview_frame, then export."
+forge run "Using the funcut-director skill, make a 30-second faceless video about why the sea is salty: script from the hook rules, Kokoro voice 8 narration, dead-air removed, B-roll from OpenVid, one SFX per cut on the beat, readable segment-timed bold captions, teal-orange grade, verify with preview_frame, then export."
 ```
 
 Or do it from the editor: the **Forge** page (page 12, beside Stickers) — paste the script, pick a
@@ -135,11 +135,13 @@ home (or `CONCAT_MCP_ROOTS`), never touching the window's open projects.
 | Agent "done" but the video looks wrong | The skill's review checklist exists for this: run `preview_frame` at start/middle/end, check gaps and overlaps, fix, re-verify. Never accept "done" without an export that `export_wait` says succeeded |
 | Low memory with big projects | Close other apps; keep proxy scrubbing on; use headless for overnight; prefer Kokoro int8 over Chatterbox |
 
-## 8. What the agent can call (67 tools)
+## 8. What the agent can call (69 tools)
 
-Everything in `docs/MCP.md` — 67 tools, including the six this integration
-added: `analyze_scenes`
-(PySceneDetect cut points), `analyze_beats` (librosa BPM/beat grid),
-`analyze_silence` (dead-air spans), `analysis_wait` (job results inline),
-`transcribe` (whisper words with times), `tts_generate` (Kokoro/Pocket/
-Chatterbox narration WAV, imported straight into the project).
+Everything in `docs/MCP.md` — 69 tools, including six analysis/speech tools:
+`analyze_scenes` (PySceneDetect cut points), `analyze_beats` (librosa BPM/beat
+grid), `analyze_silence` (dead-air spans), `analysis_wait` (job results
+inline), `transcribe` (Whisper text segments with start/end times, not
+word-aligned), and `tts_generate` (Kokoro/Pocket/Chatterbox narration WAV,
+imported straight into the project). The director workflow also has
+`plan_validate` and `clip_audio_levels_db` for pre-edit checks and unit-safe
+volume automation.

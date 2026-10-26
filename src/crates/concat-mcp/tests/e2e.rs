@@ -156,6 +156,8 @@ fn an_agent_edits_previews_and_exports_a_project_headless() {
         "title_add",
         "preview_frame",
         "export_wait",
+        "plan_validate",
+        "clip_audio_levels_db",
     ] {
         let tool = tools
             .iter()
@@ -163,6 +165,22 @@ fn an_agent_edits_previews_and_exports_a_project_headless() {
             .unwrap_or_else(|| panic!("no {name}"));
         assert_eq!(tool["inputSchema"]["type"], "object");
     }
+    let validated = agent.tool(
+        "plan_validate",
+        json!({
+            "plan": {
+                "aspect": "9:16",
+                "audio": {},
+                "segments": [{
+                    "start": 0.0,
+                    "end": 2.0,
+                    "visual": { "type": "broll", "query": "sunlit ocean" }
+                }]
+            }
+        }),
+    );
+    assert_eq!(validated["structuredContent"]["valid"], true);
+    assert_eq!(validated["structuredContent"]["segmentCount"], 1);
 
     let version = agent.tool("concat_version", json!({}));
     assert_eq!(version["structuredContent"]["mcp"]["mode"], "headless");

@@ -1301,6 +1301,25 @@ mod tests {
         assert!(!fill.contains("gradient"), "{fill}");
     }
 
+    /// The mapper is the whole contract between a comp and the engine: a
+    /// preset that needs something geneva does not draw would bake with a
+    /// hole in it and no one would notice until the cut screen.
+    #[test]
+    fn every_preset_maps_onto_a_timeline_with_nothing_skipped() {
+        for preset in crate::presets::ALL {
+            let comp = crate::presets::build(preset.id).expect("a preset");
+            let (document, warnings) =
+                Geneva::at("geneva").timeline(&comp, &BakeRequest::default());
+            assert!(warnings.is_empty(), "{}: {warnings:?}", preset.id);
+            assert_eq!(
+                document["layers"].as_array().map(|l| l.len()),
+                Some(1),
+                "{}: one layer per preset",
+                preset.id
+            );
+        }
+    }
+
     /// The two hand-authored comps shipped as worked examples are a promise to
     /// the next author: they must parse, validate, and map onto a timeline
     /// with nothing skipped that they rely on.

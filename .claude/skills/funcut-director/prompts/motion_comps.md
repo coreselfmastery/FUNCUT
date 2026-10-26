@@ -10,25 +10,39 @@ edit: when to reach for them, what to say, and how to check.
 
 ---
 
-## 1. Reach for comps in this order
+## 1. Reach for comps in this order — and know you may go further
 
 1. **A library preset that is already close.** Twelve exist; filling a slot is three fields and the
-   result will look designed.
+   result will look designed. **Edit it anyway** — its copy, its timing, one element removed.
 2. **A preset plus operations** — retime it, re-word it, slide it, re-colour it, delete what this edit
-   does not need.
-3. **Author from primitives** (`add-group`, `add-rect`, `add-text`, `set-track`) only when nothing is
-   close. Hand-built shapes look hand-built; prefer markup.
+   does not need, `pop` what should arrive with weight.
+3. **A comp you author as a document** — every node kind, mask with feather and invert, blur and
+   shadow effects, nine blend modes, gradients, dash draw-on, five curve families. The presets were
+   written this way; two worked examples ship in `src/crates/concat-motion/examples/comps/`
+   (`cypher.opener`, `cypher.spectrum`). This is the option that gives a film a look nothing else in
+   the product can copy.
+4. **Primitives** (`add-group`, `add-rect`, `add-text`, `set-track`) for a kicker, a rule, a label —
+   small things, not a whole design.
 
 Never rebuild in primitives what a preset already does. Never place a full-frame opaque backdrop over
-footage unless you mean to replace the picture.
+footage unless you mean to replace the picture. **Never ship the first idea** — see §2's five
+decisions.
 
 ---
 
 ## 2. The loop
 
 ```
-inspect  →  one sentence of intent  →  one edit batch  →  three frames  →  bake at cut size  →  place
+five decisions  →  inspect  →  one sentence of intent  →  one edit batch  →  three frames  →  bake at cut size  →  place
 ```
+
+**Five decisions, before the first operation** (the whole of `motion` §4):
+
+1. **The idea** — one sentence the piece proves. *"Here are the twelve presets"* is not one.
+2. **One accent colour**, present in every scene, over under ~10% of the frame.
+3. **Two faces** — one display (700–900, tight), one workhorse (300–500, open). Never three.
+4. **A rhythm map** — the scene lengths written out before any JSON, and no four in a row the same.
+5. **An exit** for everything that arrives, or a cut that knows about it.
 
 - **inspect** first, always — node ids and slot labels come from the document, not from memory. Every
   operation that names a missing node or slot is refused, and says which.
@@ -100,7 +114,27 @@ character count — never invent timings that drift from the audio.
 
 ---
 
-## 5. Verification
+## 5. A reel is an argument, not a playlist
+
+When the deliverable is a title package, a showreel or an explainer, plan it at the **sequence** level
+and render it in one pass (`concat-motion-agent reel storyboard.json -o reel.mp4`, or
+`sequence::Sequence` in Rust):
+
+- **cold open** in the first 1.5 s: a word, a number, or a movement that promises something;
+- **three chapters**, each opened by the same chip on a downbeat — repetition is what makes a package
+  read as one system;
+- **one near-static beat** in five, so the movement has something to be movement against;
+- **one idea per scene**: a scene that shows a card, a chart and a caption is three scenes fighting;
+- **the same curve family and stagger** across repeated elements (60–120 ms), and a *different* family
+  for the thing that must feel unlike them;
+- **an ending that lands**, then silence: the last frame should be the one you would freeze.
+
+Measured reference: `examples/comps/showreel-v3.json` — seventeen scenes, twelve presets plus the two
+hand-authored comps, 54.6 s of 1080p30 in 1638 frames, rendered in 121 s on two cores. Copy its shape.
+
+---
+
+## 6. Verification
 
 - Three frames per comp: mid-entrance, settled, mid-exit. A comp that is right at 2 s and wrong at
   6 s is a bug you have not seen yet.
@@ -109,3 +143,10 @@ character count — never invent timings that drift from the audio.
 - A comp that renders empty is either a transparent background (correct for an overlay) or a node
   whose `start` is later than the frame you looked at.
 - Backdrops are the expensive bake (full-frame gradients). Bake once at cut size and reuse.
+- Geneva skips rather than fakes: a gradient in a shape's `fill` becomes one colour with a warning, a
+  `path` node and a `shadow` effect are native-only, `conic-gradient` draws nothing. Gradients, radial
+  light, glass and gradient-clipped type belong in **markup**; masks and soft light belong on **shapes**.
+- The mapping is tested: every preset maps onto a Geneva timeline with zero warnings, so a warning in a
+  bake is about *your* comp, not the library.
+- Determinism: the same frames rendered twice are byte-identical. If two renders differ, something in
+  the comp is reading time or randomness it should not.

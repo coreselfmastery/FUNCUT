@@ -223,9 +223,11 @@ impl Source {
 /// about what a filter means.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Query {
-    /// Words to find in captions. Terms are ANDed and match prefixes:
-    /// `ocean sunset` finds captions holding both a word starting "ocean"
-    /// and one starting "sunset", ranked by relevance.
+    /// Words to find in captions. Stop words are dropped; surviving terms
+    /// are ANDed and match prefixes: `ocean sunset` finds captions holding
+    /// both a word starting "ocean" and one starting "sunset", ranked by
+    /// relevance. If that finds nothing, the library retries once with the
+    /// terms ORed and widened by the concept lexicon in `fts_relaxed`.
     pub text: Option<String>,
     /// Aesthetic score at least this.
     pub min_aesthetic: Option<f64>,
@@ -572,6 +574,17 @@ impl Library {
     /// bound is a parameter, never interpolated: the words a person types
     /// are data to the search, not SQL.
     pub fn search(&self, query: &Query) -> Result<Found, String> {
+        self.search_attempt(query, false)
+    }
+
+    /// The same search, knowing whether this is the second attempt. A
+    /// caption search that found nothing on its exact terms is asked once
+    /// more with those terms ORed together and widened by the visual-concept
+    /// lexicon below: FTS5 alone cannot guess that "burnout" is a shot of
+    /// someone exhausted at a desk at night. BM25 rank still puts exact
+    /// matches first, so relaxing only ever adds candidates - the agent
+    /// still looks at them with `stock_contact_sheet` before choosing.
+    fn search_attempt(&self, query: &Query, relaxed: bool) -> Result<Found, String> {
         self.open_index()?;
 
         // A shape filter asks something the index does not publish - a
@@ -602,7 +615,13 @@ impl Library {
         let words = query
             .text
             .as_deref()
-            .map(fts_words)
+            .map(|text| {
+                if relaxed {
+                    fts_relaxed(text)
+                } else {
+                    fts_words(text)
+                }
+            })
             .filter(|words| !words.is_empty());
         let mut where_parts: Vec<String> = Vec::new();
         let mut binds: Vec<Bind> = Vec::new();
@@ -686,6 +705,13 @@ impl Library {
             )
             .map_err(|error| format!("the OpenVid index would not search: {error}"))?
             as u64;
+
+        // Nothing matched the exact phrasing. One relaxed pass, never two:
+        // with OR terms and concept expansions, BM25 still orders the
+        // page so the closest captions come first.
+        if total == 0 && !relaxed && words.is_some() {
+            return self.search_attempt(query, true);
+        }
 
         let order = match (query.sort, words.is_some()) {
             (Sort::Relevance, true) => " ORDER BY clips_fts.rank",
@@ -1351,22 +1377,113 @@ fn ranged_with(
 /// the caption carries them. Punctuation is a separator, as the tokenizer
 /// itself reads it, so `City(night)!` is two words and never one strange
 /// one. Empty in, empty out.
-fn fts_words(raw: &str) -> String {
-    let mut words = String::new();
-    for token in raw
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|token| !token.is_empty())
-        .take(12)
-    {
+/// Words that carry no picture. Requiring "on", "a" and "the" in a caption
+/// made a phrase like "rain on a window" match almost nothing even though
+/// the library has hundreds of rainy windows.
+const STOP_WORDS: &[&str] = &[
+    "a", "an", "the", "and", "or", "of", "in", "on", "at", "to", "for", "with", "is", "are", "was",
+    "were", "be", "it", "its", "this", "that", "from", "by", "as", "into", "about", "over",
+    "under", "very", "some",
+];
+
+/// Abstract ideas a director searches for, mapped to concrete things a
+/// caption is likely to say. This is a small, inspectable lexicon - not a
+/// claimed embedding - and it is only consulted after an exact search
+/// returned nothing. Words here are deliberately concrete and mildly
+/// specific: broad terms like "water" would match half the library.
+const CONCEPTS: &[(&str, &[&str])] = &[
+    (
+        "burnout",
+        &["exhausted", "tired", "overworked", "headache", "sleeping"],
+    ),
+    ("stress", &["anxious", "worried", "tense", "headache"]),
+    (
+        "focus",
+        &["concentrating", "studying", "reading", "writing"],
+    ),
+    (
+        "innovation",
+        &["invention", "lightbulb", "laboratory", "prototype"],
+    ),
+    ("growth", &["growing", "seedling", "sprout", "rising"]),
+    ("money", &["cash", "coins", "banknotes", "counting"]),
+    (
+        "success",
+        &["winner", "celebrating", "trophy", "achievement"],
+    ),
+    ("failure", &["broken", "falling", "crash", "mistake"]),
+    ("future", &["futuristic", "robot", "hologram", "neon"]),
+    (
+        "technology",
+        &["circuit", "computer", "server", "microchip"],
+    ),
+    ("nature", &["forest", "mountains", "river", "wildlife"]),
+    ("city", &["skyline", "street", "skyscraper", "traffic"]),
+    ("ocean", &["sea", "waves", "beach", "coast"]),
+    ("rain", &["raindrops", "wet", "storm", "window"]),
+    ("night", &["dark", "moon", "stars", "evening"]),
+    ("travel", &["airplane", "roadtrip", "luggage", "map"]),
+    ("health", &["exercise", "running", "yoga", "doctor"]),
+    ("food", &["cooking", "kitchen", "meal", "chef"]),
+    ("lonely", &["alone", "solitude", "empty", "silhouette"]),
+    ("freedom", &["open", "flying", "horizon", "running"]),
+    ("danger", &["fire", "warning", "storm", "cliff"]),
+    ("speed", &["racing", "fast", "motion", "rushing"]),
+    ("calm", &["peaceful", "meditation", "still", "sunrise"]),
+];
+
+/// The caption terms worth matching, cleaned, de-duplicated and bounded.
+fn fts_terms(raw: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for token in raw.split(|c: char| !c.is_alphanumeric()) {
         let clean = token.to_lowercase();
-        if !words.is_empty() {
-            words.push(' ');
+        if clean.len() < 2
+            || STOP_WORDS.contains(&clean.as_str())
+            || clean.chars().all(|c| c.is_ascii_digit())
+            || out.contains(&clean)
+        {
+            continue;
         }
-        words.push('"');
-        words.push_str(&clean);
-        words.push_str("\"*");
+        out.push(clean);
+        if out.len() >= 12 {
+            break;
+        }
     }
-    words
+    out
+}
+
+fn quoted(terms: &[String]) -> Vec<String> {
+    terms.iter().map(|term| format!("\"{term}\"*")).collect()
+}
+
+/// Exact search: every surviving term must match, as a prefix.
+fn fts_words(raw: &str) -> String {
+    quoted(&fts_terms(raw)).join(" ")
+}
+
+/// Relaxed search: any term may match, widened by the concept lexicon.
+/// Parenthesised so a filter's "AND" cannot accidentally bind to one arm.
+fn fts_relaxed(raw: &str) -> String {
+    let terms = fts_terms(raw);
+    let mut alternatives = quoted(&terms);
+    for (concept, visuals) in CONCEPTS {
+        if terms
+            .iter()
+            .any(|term| term == concept || term.starts_with(*concept))
+        {
+            for visual in *visuals {
+                if alternatives.len() >= 10 {
+                    break;
+                }
+                alternatives.push(format!("\"{visual}\"*"));
+            }
+        }
+    }
+    if alternatives.is_empty() {
+        String::new()
+    } else {
+        format!("({})", alternatives.join(" OR "))
+    }
 }
 
 /// The SQL a shape is asked of a search, and the shelves - as the numbers
@@ -1515,6 +1632,33 @@ fn fixed(bytes: &[u8]) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A caption search must not require the little words a person types.
+    /// "rain on a window" used to become four mandatory prefix terms and
+    /// matched almost nothing in a 937k-clip library.
+    #[test]
+    fn caption_terms_drop_stop_words_and_duplicates() {
+        assert_eq!(fts_words("Rain on a window"), "\"rain\"* \"window\"*");
+        assert_eq!(fts_words("ocean ocean WAVES"), "\"ocean\"* \"waves\"*");
+        assert_eq!(fts_words("a 42 the"), "");
+    }
+
+    /// When the exact phrasing matches nothing, the retry ORs the terms
+    /// and adds concrete visual words for an abstract concept - this is
+    /// what lets "burnout" find the shot of someone exhausted at a desk.
+    #[test]
+    fn relaxed_query_widens_concepts() {
+        let relaxed = fts_relaxed("burnout at night");
+        assert!(relaxed.starts_with('(') && relaxed.ends_with(')'));
+        assert!(relaxed.contains("\"exhausted\"*"));
+        assert!(relaxed.contains("\"moon\"*"));
+        assert!(relaxed.contains("\"burnout\"* OR"));
+        assert!(
+            relaxed.len() < 400,
+            "the retry stays a small FTS expression"
+        );
+        assert_eq!(fts_relaxed("a the"), "");
+    }
 
     /// A `tkhd` box, version 0, with the width and height given. The
     /// layout is the one the MP4 specification writes: creation and

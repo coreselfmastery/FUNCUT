@@ -174,11 +174,15 @@ pub enum Request {
     OpenvidPrepare,
 
     /// Searches the OpenVid stock library - 937,957 stock clips with
-    /// captions and quality scores - and returns the best matches with
-    /// everything an agent needs to pick one without seeing it: the
-    /// caption, the scores, the camera motion, the duration, the fetch
-    /// cost in bytes. Every filter is optional; a search with none of them
-    /// set is the library as it comes, which is also what `sort` is for.
+    /// captions and quality scores - and returns the best matches with the
+    /// caption, the scores, the camera motion, the duration and the fetch
+    /// cost in bytes. Stop words are dropped; when an exact AND match
+    /// returns nothing, the search retries once with OR terms and a small
+    /// visual-concept lexicon, BM25 ranking exact matches first. Caption
+    /// text is not a visual embedding: use `stock_contact_sheet` to LOOK at
+    /// candidates before importing them. Every filter is optional; a
+    /// search with none set is the library as it comes, which is also what
+    /// `sort` is for.
     #[serde(rename = "openvid.search")]
     OpenvidSearch {
         /// Words to find in captions. ANDed and prefix-matched:

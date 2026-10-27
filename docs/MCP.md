@@ -19,6 +19,16 @@ shelf's 720p/1080p landscape footage - nothing vertical has been measured
 in it, and an honest vertical search returns nothing rather than
 everything.
 
+Caption search is SQLite FTS5 BM25, not a visual embedding. It now drops
+stop words and de-duplicates terms (`"rain on a window"` is `rain window`,
+not four mandatory prefixes), and when an exact AND search returns **zero**
+rows it retries once with the terms ORed and widened by a small,
+inspectable concept lexicon (`burnout` → `exhausted`, `tired`, `moon`, …).
+BM25 still puts exact matches first. This raises recall but does not make
+the index semantic: always call `stock_contact_sheet` and look at real
+frames before importing. See `docs/STOCK_LICENSING.md` — OpenVid is a
+research dataset, not rights-cleared stock.
+
 ### Sound effects
 
 The `sounds` tools search the built-in CC0 sound library this repository

@@ -255,7 +255,7 @@ impl MonitorPane {
             // beat later (the studio's `scrub_beat`). With proxies off in
             // Settings it plays the files at every quality, a proxy left
             // from before included.
-            proxy: studio.prefs.proxies
+            proxy: studio.prefs.proxies()
                 && (studio.playing
                     || studio.source.as_ref().is_some_and(|source| source.playing)
                     || (studio.prefs.proxies_on_scrub() && studio.scrubbing()))

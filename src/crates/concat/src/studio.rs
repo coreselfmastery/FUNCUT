@@ -3486,10 +3486,11 @@ impl Studio {
             return;
         };
         let project_path = session.path().to_owned();
-        // With proxies on in Settings, a file larger than HD gets a proxy
-        // for playback and the filmstrips, written once on the scheduler's
-        // proxy lane; see concat_host::proxy. Asked once per file per
-        // project. Off, the default, nothing is written.
+        // With proxies on - the default on a desk, and off only where
+        // Settings said so or on a phone - a file larger than HD gets a
+        // proxy for playback and the filmstrips, written once on the
+        // scheduler's proxy lane; see concat_host::proxy. Asked once per
+        // file per project. Off, nothing is written.
         type Unproxied = (
             String,
             String,
@@ -3502,7 +3503,7 @@ impl Studio {
             .project()
             .media
             .iter()
-            .filter(|_| self.prefs.proxies)
+            .filter(|_| self.prefs.proxies())
             .filter(|item| item.kind == model::MediaKind::Video && !item.placeholder)
             .filter(|item| !self.proxied.contains(&item.id))
             .filter_map(|item| {
@@ -11736,10 +11737,10 @@ impl Studio {
             self.revision,
             self.on_start,
             self.art_pending.len() + self.posters_pending.len(),
-            // Proxies switched on in Settings are seen to at once; so is
+            // Proxies switched off in Settings are missed at once; so is
             // a switch of the codec they are written in, which is as
             // fresh a copy as the switch that turned them on.
-            self.prefs.proxies,
+            self.prefs.proxies(),
             self.prefs.proxy_codec(),
         );
         if self.art_stamp == Some(stamp) {

@@ -62,12 +62,14 @@ pub struct Preferences {
     /// a clip can be dropped at the playhead beyond everything else.
     pub playhead_stops_at_end: bool,
     /// Proxies: a file larger than HD gets a smaller copy written in the
-    /// background, and playback at Half and Quarter reads that copy. Off
-    /// by default, as in CapCut: a proxy is a full re-encode of every large
-    /// file, on the CPU of a phone or through a hardware encoder a laptop
-    /// may not take (an HDR one opened NVENC first), and the person who
-    /// wants one for smoother playback turns it on in Settings.
-    pub proxies: bool,
+    /// background, and playback at Half and Quarter reads that copy.
+    /// `None` is on - the working copy is what keeps a big edit following
+    /// the pointer, and the one who would rather not spend the background
+    /// re-encode turns it off in Settings - except on a phone, whose CPU
+    /// a copy of every large file would hold for minutes on end (an HDR
+    /// one opened NVENC first, where the hardware takes it). Read through
+    /// [`Preferences::proxies`].
+    pub proxies: Option<bool>,
     /// Whether a scrub of the playhead reads the proxies too - the drag
     /// of a ruler, a clip's edge under trim-follow, the phone's lanes -
     /// rather than only playback doing so. `None` is on: whoever has
@@ -192,6 +194,14 @@ impl Default for VoiceoverPrefs {
 }
 
 impl Preferences {
+    /// Whether large files get proxies; see `proxies`. On unless the sheet
+    /// was told otherwise; a phone that never said is off, its CPU being
+    /// the one machine a copy of every large file would hold for minutes
+    /// on end.
+    pub fn proxies(&self) -> bool {
+        self.proxies.unwrap_or(!crate::platform::phone())
+    }
+
     /// Whether a scrub of the playhead reads the proxies; see
     /// `proxy_scrub`. On unless the sheet was told otherwise.
     pub fn proxies_on_scrub(&self) -> bool {

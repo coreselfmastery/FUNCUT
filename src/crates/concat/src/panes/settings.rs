@@ -325,7 +325,7 @@ impl SettingsPane {
                 studio.seek(at);
             }
             SettingsMsg::ProxiesChanged(on) => {
-                studio.prefs.proxies = on;
+                studio.prefs.proxies = Some(on);
                 studio.prefs.save(&studio.host.dirs);
                 // On, the media already in the project gets its proxies
                 // straight away (refresh_art's stamp holds the switch);
@@ -886,7 +886,7 @@ impl SettingsPane {
                 .position(|level| *level == log::max_level())
                 .unwrap_or(2) as i32,
             playhead_stops: self.playhead_stops,
-            proxies: studio.prefs.proxies,
+            proxies: studio.prefs.proxies(),
             proxy_scrub: studio.prefs.proxies_on_scrub(),
             proxy_codec: studio.prefs.proxy_codec().index() as i32,
             gpu: !studio.prefs.draws_in_software(),

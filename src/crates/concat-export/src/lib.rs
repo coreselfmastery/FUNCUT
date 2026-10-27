@@ -2723,8 +2723,6 @@ mod tests {
         );
     }
 
-    use super::*;
-
     fn clip(kind: &str, track: usize, start: f64, duration: f64, source_start: f64) -> ExportClip {
         let kind_of = match kind {
             "audio" => ClipKind::Audio,

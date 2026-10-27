@@ -668,7 +668,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "transcribe",
             "Transcribe a recording",
-            "Transcribes a media file on a job; output timed segments (`{start,end,text}`), not word alignment. `language` is a Whisper hint (ISO code/BCP-47); use a multilingual model for non-English (`base.en` default is English-only). Wait with analysis_wait; the result is in status.output.",
+            "Transcribes a media file on a job; output timed segments (`{start,end,text}`), each carrying its `words` as measured `{text,start,end}` triples from whisper's token timestamps - the word times `captions_animate` needs (never estimate words from segment times). `language` is a Whisper hint (ISO code/BCP-47); use a multilingual model for non-English (`base.en` default is English-only). Wait with analysis_wait; the result is in status.output.",
             "speech.transcribe",
             Raw,
         ),

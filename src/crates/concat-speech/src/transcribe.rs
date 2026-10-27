@@ -262,6 +262,24 @@ pub struct Segment {
     pub end: f64,
     /// What was said.
     pub text: String,
+    /// The same words, measured one by one: whisper's token timestamps
+    /// grouped into words, clamped to the segment's own span. This is
+    /// what `captions_animate` needs - segment times with per-word
+    /// estimates interpolated from them are not timing.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub words: Vec<Word>,
+}
+
+/// One word, measured from the tokens it was made of.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Word {
+    /// Seconds from the window's start.
+    pub start: f64,
+    /// Seconds from the window's start.
+    pub end: f64,
+    /// The word itself, without the leading space that began it.
+    pub text: String,
 }
 
 /// What to transcribe.
@@ -570,6 +588,11 @@ impl Transcriber {
         params.set_print_realtime(false);
         params.set_print_timestamps(false);
         params.set_suppress_blank(true);
+        // Token-level timestamps: the words this run measures are what
+        // `captions_animate` needs, and they cost one flag - whisper
+        // fills each token's t0/t1 from the same attention that timed
+        // the segments.
+        params.set_token_timestamps(true);
         // The raw hooks, not `set_abort_callback_safe`. whisper-rs 0.16's
         // safe one hands whisper a pointer to a boxed trait object with a
         // trampoline typed for the closure itself, so whisper reads the
@@ -619,7 +642,11 @@ impl Transcriber {
                 let start = segment.start_timestamp() as f64 / 100.0;
                 let end = segment.end_timestamp() as f64 / 100.0;
                 let text = segment.to_str_lossy().ok()?.trim().to_owned();
-                keep_segment(start, end, text)
+                let words = words_of(&segment, start, end);
+                keep_segment(start, end, text).map(|mut segment| {
+                    segment.words = words;
+                    segment
+                })
             })
             .collect())
     }
@@ -642,7 +669,86 @@ fn keep_segment(start: f64, end: f64, text: String) -> Option<Segment> {
     if text.is_empty() || (text.starts_with('[') && text.ends_with(']')) {
         return None;
     }
-    (end > start).then_some(Segment { start, end, text })
+    (end > start).then_some(Segment {
+        start,
+        end,
+        text,
+        words: Vec::new(),
+    })
+}
+
+/// Groups a segment's tokens into measured words.
+///
+/// A whisper token that begins a word begins with a space (the tokenizer's
+/// own convention), so a space-led token closes the word in progress and
+/// opens the next; every other token appends to the word in progress. A
+/// word runs from its first token's t0 to its last token's t1, both clamped
+/// to the segment - a token whose attention wandered outside its segment is
+/// a timing glitch, not a caption that starts before its own sentence.
+/// whisper's own stage-direction tokens (`[_TT_...]` and friends) decode
+/// bracketed and are skipped on sight.
+fn words_of(segment: &whisper_rs::WhisperSegment<'_>, start: f64, end: f64) -> Vec<Word> {
+    let mut tokens = Vec::new();
+    for index in 0..segment.n_tokens() {
+        let Some(token) = segment.get_token(index) else {
+            continue;
+        };
+        let text = token
+            .to_str_lossy()
+            .unwrap_or_default()
+            .trim_matches('\u{fffd}')
+            .to_owned();
+        let data = token.token_data();
+        tokens.push((text, data.t0, data.t1));
+    }
+    group_words(&tokens, start, end)
+}
+
+/// The grouping itself, on `(text, t0, t1)` in centiseconds - the part a
+/// test can run without a model behind it.
+fn group_words(tokens: &[(String, i64, i64)], start: f64, end: f64) -> Vec<Word> {
+    let mut words = Vec::new();
+    let mut current: Option<(String, f64, f64)> = None;
+    for (text, t0, t1) in tokens {
+        // Stage directions arrive space-led too (" [BLANK_AUDIO]"), so the
+        // bracket check reads the trimmed text.
+        let stage = text.trim();
+        if stage.is_empty() || (stage.starts_with('[') && stage.ends_with(']')) {
+            continue;
+        }
+        let t0 = (*t0 as f64 / 100.0).clamp(start, end);
+        let t1 = (*t1 as f64 / 100.0).clamp(start, end);
+        let opens_word = text.starts_with(' ') || current.is_none();
+        if let Some((closed, word_start, word_end)) = current.take_if(|_| opens_word) {
+            push_word(&mut words, closed, word_start, word_end);
+        }
+        if let Some((word, _, word_end)) = current.as_mut() {
+            word.push_str(text);
+            *word_end = t1;
+        } else {
+            let word = text.trim_start();
+            if !word.is_empty() {
+                current = Some((word.to_owned(), t0, t1));
+            }
+        }
+    }
+    if let Some((text, word_start, word_end)) = current.take() {
+        push_word(&mut words, text, word_start, word_end);
+    }
+    words
+}
+
+/// Closes one word, dropping the empty ones a run of skipped tokens can
+/// leave behind.
+fn push_word(words: &mut Vec<Word>, text: String, start: f64, end: f64) {
+    let text = text.trim();
+    if !text.is_empty() && end > start {
+        words.push(Word {
+            start,
+            end,
+            text: text.to_owned(),
+        });
+    }
 }
 
 #[cfg(test)]
@@ -658,6 +764,42 @@ mod tests {
         assert!(keep_segment(2.5, 2.5, "degenerate".to_owned()).is_none());
         assert!(keep_segment(3.0, 4.0, "[BLANK_AUDIO]".to_owned()).is_none());
         assert!(keep_segment(3.0, 4.0, String::new()).is_none());
+    }
+
+    /// Words as whisper really emits them: space-led tokens that open
+    /// words, piece tokens that continue them, stage directions skipped,
+    /// times clamped to the segment's own span.
+    #[test]
+    fn tokens_group_into_measured_words() {
+        let tokens = vec![
+            (" Hello".to_owned(), 0, 30),
+            (" wor".to_owned(), 30, 62),
+            ("ld".to_owned(), 62, 90),
+            ("[_TT_700]".to_owned(), 90, 120),
+            (" 5".to_owned(), 120, 150),
+            (" fall".to_owned(), 150, 200),
+            ("acies".to_owned(), 200, 250),
+            (" [BLANK_AUDIO]".to_owned(), 250, 280),
+        ];
+        let words = group_words(&tokens, 0.0, 2.8);
+        let text = |word: &Word| word.text.clone();
+        assert_eq!(
+            words.iter().map(text).collect::<Vec<_>>(),
+            vec!["Hello", "world", "5", "fallacies"]
+        );
+        assert_eq!(words[0].start, 0.0);
+        assert_eq!(words[0].end, 0.3);
+        assert_eq!(words[1].start, 0.3);
+        assert_eq!(words[1].end, 0.9);
+        assert_eq!(words[3].start, 1.5);
+        assert_eq!(words[3].end, 2.5);
+        // A token whose attention ran past its segment clamps to it: a
+        // caption never ends after the sentence it belongs to.
+        let runaway = vec![(" out".to_owned(), 250, 9999)];
+        let words = group_words(&runaway, 2.5, 2.8);
+        assert_eq!(words[0].end, 2.8);
+        // Nothing kept but stage directions: no words, no panic.
+        assert!(group_words(&[("[_TT_150]".to_owned(), 0, 150)], 0.0, 1.5).is_empty());
     }
 
     #[test]

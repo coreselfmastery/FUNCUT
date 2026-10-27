@@ -43,8 +43,10 @@ reaches it.
 `tts_generate` (voice, speed; WAV lands in the project, returned in the job's
 status `output`) → `media_import` it. If narration exists as audio/video,
 `transcribe` it with an ISO language hint when known; the default `base.en`
-model is English-only, so choose a multilingual model for non-English. Then
-`analyze_silence` on the voiceover; `analyze_scenes` on
+model is English-only, so choose a multilingual model for non-English. Each
+segment returns with its `words` — MEASURED `{text,start,end}` triples from
+whisper's token timestamps; cache them, they are what `captions_animate`
+takes. Then `analyze_silence` on the voiceover; `analyze_scenes` on
 any footage that will be cut; `analyze_beats` when there is music (or on the
 BGM after it is fetched). `media_probe` anything unfamiliar before you cut it.
 
@@ -55,9 +57,9 @@ tools will not apply for you:** `analyze_silence` reports spans WITH a
 each side yourself before cutting, so natural breaths survive at sentence
 ends. `transcribe` returns source-file-relative segments; if ripple cuts
 happen after transcription, retime all later segment boundaries by the exact
-removed spans before using them on the timeline. Never invent per-word times
-from segment times — word timing that is claimed but wrong is worse than
-segment timing that is honest.
+removed spans before using them on the timeline. Word times are the transcript's
+measured `words`, never estimates interpolated from segment times — timing
+that is claimed but wrong is worse than timing that is honest.
 
 **Phase 3 — Write the edit plan (ONE reasoning pass).** Emit the JSON plan
 from `templates/edit_plan.schema.json` (example beside it). The plan declares
@@ -139,8 +141,9 @@ LUFS/true-peak limits matter; `export_wait` does not report them.
 - Analysis results come back as JSON in the wait reply's `output` field
   (scenes: `{start,end}` seconds; beats: `{bpm, beatsMs[], onsetsMs[]}`;
   silence: `{spans[{start,end}], paddingMs}`; transcription:
-  `{segments[{start,end,text}]}`). Cache them in your working notes; do not
-  re-analyze the same file twice.
+  `{segments[{start,end,text,words[{text,start,end}]}]}` — the `words` are
+  measured, and are the only word timing you may use). Cache them in your
+  working notes; do not re-analyze the same file twice.
 - **Keep the journal** (`prompts/memory.md`): after every `edit_apply` batch
   append one line to `memory.md` in the project — what entered or left,
   where, with what SFX/comp/grade. Before every placement phase, re-read the

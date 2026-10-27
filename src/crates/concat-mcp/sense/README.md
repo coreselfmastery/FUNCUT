@@ -43,6 +43,7 @@ Diagnostics go to stderr, so stdout stays parseable.
 | `sheet` | Decode frames into one labelled PNG contact sheet; measure each tile. |
 | `critique` | Six-axis craft score + concrete revisions, from the sheet + brief. |
 | `rank` | Semantically rank stock candidates against the creative brief. |
+| `overlay` | Composite a baked RGBA PNG sequence over a plate video (or a solid colour) into an H.264 clip, honouring alpha at the compositing step. |
 | `vlm` | `status` / `setup` for the local vision model. |
 | `selftest` | Generate a synthetic PNG, decode it, measure it — no fixtures, no ffmpeg. |
 
@@ -96,3 +97,17 @@ OpenVid clips themselves come from a research dataset assembled from
 Pixabay/Pexels/WebVid/CelebV and are **not** a blanket commercial licence.
 `OpenvidClip.source` and `caption` are returned to the agent so it can make
 an informed decision; see `docs/STOCK_LICENSING.md`.
+
+
+## Why `overlay` exists
+
+The motion sidecar's encoded videos are opaque. VP9-with-alpha and ProRes
+4444 were tested and came back with every alpha byte at 255; FFmpeg's WebM
+muxer does not reliably write `AlphaMode` (a `yuva420p` encode round-tripped
+as `yuv420p`). Rather than ship a feature that silently discards
+transparency, `overlay` composites the RGBA PNG bake over the *actual*
+footage using ffmpeg's `overlay` filter, with `setpts` for the start offset
+and an `enable` window for the comp's duration. The output is an ordinary
+H.264 clip that the existing `media_import` / `clip_add` path understands.
+The original alpha sequence is left untouched, so one bake can be
+re-composited over many plates.

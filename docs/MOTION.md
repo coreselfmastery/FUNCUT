@@ -127,8 +127,8 @@ A single frame is **32–47 ms**, which is what makes a scrub responsive. Backdr
 case (full-frame radial gradients); bake them once, at the size you need, and reuse.
 
 **Alpha is PNG only.** Geneva documents its transparent output for the PNG image sequence; ProRes 4444
-and VP9 came back opaque in testing, so a comp bakes to PNG and the encoder turns it into whatever the
-project wants (ProRes 4444 and VP9-with-alpha are the export-side work).
+and VP9 came back opaque in testing, so a comp bakes to PNG. Use `motion_overlay` to composite those
+RGBA frames over the actual shot; see "Where alpha actually lands" below.
 
 ---
 
@@ -361,9 +361,29 @@ real bar heights arrive as one rewrite that keeps the preset's stylesheet and ri
 The comp file lives in the project's `comps/` folder, named by its hash, so two clips placing the same
 comp share one bake. `MotionClip::bakes_at(w, h)` is the cache-resolution test.
 
-**Still to come** (nothing here is faked): resolving a motion clip to its baked sequence in
-`concat-export`, the `motion.*` MCP tools (an API method each), the Lottie engine, the native engine's
-`CompEngine` impl, and the alpha/intermediate export targets.
+**Where alpha actually lands.** The sidecar's H.264/VP9/ProRes encoders write opaque video, and
+FFmpeg's WebM muxer does not reliably emit VP9 `AlphaMode` (verified: `yuva420p` input round-tripped as
+`yuv420p` with every alpha byte at 255). Claiming an "alpha video" would be a lie. The MCP tool
+`motion_overlay` is the honest path: it takes the baked RGBA PNG sequence (`frames` or `hash` +
+`project`) and composites it over the **real footage** (`plate`) at `at` seconds with ffmpeg's
+`overlay` filter, honouring the comp's transparency at the one step where it matters. The result is an
+ordinary H.264 clip that `media_import` + `clip_add` place on the timeline above (or instead of) the
+plate. Without a plate it composites over a solid colour, which is what `--encode` already did but
+with the alpha handled correctly. The RGBA sequence itself is never modified, so the same bake can be
+re-composited over a different shot.
+
+Try:
+
+```
+motion_bake  {project, preset, width, height}      -> dir, hash
+motion_overlay {project, hash, plate: "<b-roll.mp4>", at: 1.2, fps: 30}
+media_import / clip_add  -> the composited clip
+```
+
+**Still to come** (nothing here is faked): resolving a `Motion` clip directly to its baked sequence in
+`concat-export` (today no edit command creates `ClipKind::Motion`, so comps reach the timeline as
+media clips), the `motion.*` API methods, the Lottie engine, and the native engine's `CompEngine`
+impl.
 
 ---
 

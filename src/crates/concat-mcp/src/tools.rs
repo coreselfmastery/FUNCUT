@@ -102,6 +102,8 @@ pub enum Action {
     LocalVlm,
     /// Read or write the project's persisted creative brief.
     CreativeBrief,
+    /// Composite a transparent motion bake over real footage.
+    MotionOverlay,
 }
 
 /// How a reply is shown to the agent.
@@ -733,7 +735,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "motion_bake",
             title: "Bake a motion comp",
-            description: "Bakes a motion comp - `preset` or `comp`, edited by an optional `ops` batch (set-slot, set-text, set-words, set-track, slide-to, pop, fade-in, add-text, ...) - into PNG frames under the project's cache/comps/, content-addressed by the comp's hash, and with `encode: true` writes one video file under motion/ ready for media_import and clip_add (`name` picks its file name; .webm is VP9, .mov ProRes 4444, otherwise H.264 - none carry alpha, which the PNG sequence keeps). Optional width/height (bake at the cut's size, never 4K for safety), fps, crf (0-51).",
+            description: "Bakes a motion comp - `preset` or `comp`, edited by an optional `ops` batch (set-slot, set-text, set-words, set-track, slide-to, pop, fade-in, add-text, ...) - into PNG frames under the project's cache/comps/, content-addressed by the comp's hash, and with `encode: true` writes one video file under motion/ ready for media_import and clip_add (`name` picks its file name; .webm is VP9, .mov ProRes 4444, otherwise H.264 - none carry alpha, which the PNG sequence keeps). For a transparent comp, take `dir` and `hash` from this reply to motion_overlay, which composites the RGBA frames over your real footage with the alpha honoured. Optional width/height (bake at the cut's size, never 4K for safety), fps, crf (0-51).",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -783,6 +785,15 @@ pub fn catalogue() -> Vec<Tool> {
             destructive: false,
             idempotent: true,
             action: Action::CraftCritique,
+        },
+        Tool {
+            name: "motion_overlay",
+            title: "Composite motion over footage",
+            description: "Fixes the opaque-caption-reel problem. Takes a baked RGBA PNG sequence (`frames`, or `hash` + `project` to find it) and composites it OVER real footage (`plate`, a video path) at `at` seconds, honouring the comp's transparency, and writes an ordinary H.264 clip ready for media_import and clip_add. Without a plate it composites over a solid `background` at the given width/height. The sidecar's video codecs cannot carry alpha and FFmpeg's WebM muxer does not reliably write VP9 AlphaMode, so this is the honest alpha path: transparency is honoured at the compositing step, not faked in an encoder. Optional: fps (30), width, height, at (0), crf (18), background, x, y, out (defaults to <project>/motion/overlay.mp4).",
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            action: Action::MotionOverlay,
         },
         Tool {
             name: "local_vlm",
@@ -957,7 +968,8 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
         | Action::StockSheet
         | Action::CraftCritique
         | Action::LocalVlm
-        | Action::CreativeBrief => sense_schema(tool.name),
+        | Action::CreativeBrief
+        | Action::MotionOverlay => sense_schema(tool.name),
         Action::Mask => {
             let update = schemas.command("updateClip")?;
             let mut mask = schemas.def("ClipMask")?;
@@ -1069,6 +1081,22 @@ fn sense_schema(name: &str) -> Option<Value> {
             "project": string("Project folder holding creative-brief.json."),
             "autoSetup": { "type": "boolean", "default": false, "description": "Fetch and start the local vision model on first use." },
             "profile": string("mini, image or minicpm."),
+        }),
+        "motion_overlay" => json!({
+            "frames": string("The bake's frames/ directory holding 0001.png upwards."),
+            "hash": string("A motion_bake hash; used with `project` to find the frames dir."),
+            "project": string("Project folder; also the default home for the output file."),
+            "plate": string("A video file to composite the motion over (the real B-roll)."),
+            "out": string("Output .mp4 path; defaults to <project>/motion/overlay.mp4."),
+            "fps": { "type": "number", "minimum": 1, "maximum": 120, "default": 30 },
+            "at": { "type": "number", "minimum": 0, "description": "Seconds into the plate where the comp appears." },
+            "width": { "type": "integer", "minimum": 2, "maximum": 8192 },
+            "height": { "type": "integer", "minimum": 2, "maximum": 8192 },
+            "crf": { "type": "integer", "minimum": 0, "maximum": 51, "default": 18 },
+            "background": string("Colour when there is no plate, e.g. black or 101018."),
+            "x": string("Overlay x expression; default (W-w)/2."),
+            "y": string("Overlay y expression; default (H-h)/2."),
+            "autoSetup": { "type": "boolean", "default": true },
         }),
         "local_vlm" => json!({
             "action": { "type": "string", "enum": ["status", "setup"], "default": "status" },
@@ -1496,6 +1524,7 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         Action::CraftCritique => crate::sense::craft_critique(arguments),
         Action::LocalVlm => crate::sense::local_vlm(arguments),
         Action::CreativeBrief => crate::sense::creative_brief(arguments),
+        Action::MotionOverlay => crate::sense::motion_overlay(arguments),
         Action::Mask => {
             let result = backend.call(mask(arguments)?)?;
             Ok(Outcome::json(summary::view(&result)))
@@ -2784,6 +2813,10 @@ mod tests {
                 "craft_critique",
                 json!({ "sheet": { "craft": { "samples": 8 } } }),
             ),
+            (
+                "motion_overlay",
+                json!({ "project": "/tmp/Cut", "hash": "abc123", "plate": "/tmp/plate.mp4" }),
+            ),
             ("local_vlm", json!({ "action": "status" })),
             (
                 "creative_brief",
@@ -2882,7 +2915,8 @@ mod tests {
                 | Action::StockSheet
                 | Action::CraftCritique
                 | Action::LocalVlm
-                | Action::CreativeBrief => continue,
+                | Action::CreativeBrief
+                | Action::MotionOverlay => continue,
             };
             let built = built.unwrap_or_else(|error| panic!("{name}: {error}"));
             // Back again: the request as the API writes it fits the API's

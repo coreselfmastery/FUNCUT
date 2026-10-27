@@ -166,6 +166,13 @@ return MCP `type: image` content blocks, so the model can actually look:
   design, sound), notes and concrete tool-level revisions. Uses a local
   vision model when available, otherwise says `engine: "heuristic"` and
   grades measurements honestly.
+- `motion_overlay` - composite a baked RGBA PNG sequence (`frames`, or
+  `hash` + `project`) over real footage (`plate`) at `at` seconds, honouring
+  the comp's transparency, and return an H.264 clip ready for
+  `media_import` + `clip_add`. This is the honest alpha path: the sidecar's
+  video codecs and FFmpeg's WebM muxer do not reliably carry alpha, so the
+  transparency is honoured at the compositing step instead of faked in an
+  encoder. Without a plate it composites over a solid `background`.
 - `local_vlm` - `status` or first-use `setup` of a tiny local vision critic.
   `profile: "mini"` fetches SmolVLM2-500M-Video-Instruct Q8_0 + projector
   (~546 MB, 0.5B params, CPU-only, 4 GB laptop is enough) and a pinned

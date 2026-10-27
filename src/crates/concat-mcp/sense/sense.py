@@ -917,6 +917,119 @@ def rank(spec):
         return base
 
 
+def _probe_size(ffprobe, path):
+    rc, out, _ = _run([
+        ffprobe, "-v", "error", "-select_streams", "v:0",
+        "-show_entries", "stream=width,height", "-of", "csv=p=0:s=x", path,
+    ], 20)
+    try:
+        w, h = out.decode().strip().split("x")[:2]
+        return int(w), int(h)
+    except Exception:
+        return None
+
+
+def overlay(spec):
+    """Composite an RGBA PNG bake over real footage (or a colour plate).
+
+    This is the honest answer to the alpha problem: the app's sidecar
+    encoders write opaque video, and FFmpeg's WebM muxer in the wild often
+    drops VP9's AlphaMode. Rather than pretend, we honour the comp's
+    transparency at the compositing step and hand back an opaque, correct
+    piece of footage that plays anywhere. The original RGBA sequence is
+    left untouched.
+    """
+    import glob
+    ff, fp = _tools(spec)
+    frames_dir = spec.get("frames") or spec.get("dir")
+    out = spec.get("out")
+    if not frames_dir or not out:
+        return {"ok": False, "error": "overlay needs `frames` (the bake's frames/ dir) and `out`"}
+    names = sorted(glob.glob(os.path.join(frames_dir, "[0-9][0-9][0-9][0-9].png")))
+    if not names:
+        return {"ok": False, "error": f"no 0001.png-style frames in {frames_dir}"}
+    fps = max(1.0, min(120.0, float(spec.get("fps", 30))))
+    count = len(names)
+    duration = count / fps
+    at = max(0.0, float(spec.get("at", 0.0)))
+    crf = int(spec.get("crf", 18))
+    plate = spec.get("plate")
+    width = int(spec.get("width", 0) or 0)
+    height = int(spec.get("height", 0) or 0)
+    if plate:
+        if not (width and height):
+            size = _probe_size(fp, plate)
+            if not size:
+                return {"ok": False, "error": f"could not read the plate's frame size: {plate}"}
+            width, height = size
+        plate_duration = probe_duration(fp, plate)
+    else:
+        if not (width and height):
+            return {"ok": False, "error": "without a `plate`, give `width` and `height`"}
+        plate_duration = at + duration
+    width = max(2, width // 2 * 2)
+    height = max(2, height // 2 * 2)
+    pattern = os.path.join(frames_dir, "%04d.png")
+    shift = f"setpts=PTS+{at:.4f}/TB," if at > 0 else ""
+    ov = (
+        f"[1:v]{shift}scale={width}:{height}:force_original_aspect_ratio=decrease,"
+        f"format=rgba,setsar=1[ov]"
+    )
+    place = (
+        f"x={spec.get('x', '(W-w)/2')}:y={spec.get('y', '(H-h)/2')}:"
+        f"enable='between(t,{at:.4f},{at + duration:.4f})'"
+    )
+    if plate:
+        fc = (
+            f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
+            f"crop={width}:{height},setsar=1[base];{ov};"
+            f"[base][ov]overlay={place}[v]"
+        )
+        cmd = [
+            ff, "-v", "error", "-i", plate, "-framerate", f"{fps:.6f}",
+            "-start_number", "1", "-i", pattern,
+            "-filter_complex", fc, "-map", "[v]", "-map", "0:a?",
+        ]
+        if plate_duration > 0:
+            cmd += ["-t", f"{plate_duration:.4f}"]
+        cmd += ["-c:a", "aac", "-b:a", "192k"]
+    else:
+        colour = str(spec.get("background", "black")).lstrip("#")
+        colour = "0x" + colour if all(c in "0123456789abcdefABCDEF" for c in colour) else colour
+        fc = f"{ov};[0:v][ov]overlay={place}:shortest=1[v]"
+        cmd = [
+            ff, "-v", "error", "-f", "lavfi",
+            "-i", f"color=c={colour}:s={width}x{height}:r={fps:.6f}:d={at + duration:.4f}",
+            "-framerate", f"{fps:.6f}", "-start_number", "1", "-i", pattern,
+            "-filter_complex", fc, "-map", "[v]",
+        ]
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    cmd += [
+        "-c:v", "libx264", "-preset", "medium", "-crf", str(crf),
+        "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-y", out,
+    ]
+    rc, _, err = _run(cmd, 900)
+    if rc != 0:
+        return {"ok": False, "error": (err.decode("utf-8", "replace") or "ffmpeg failed")[-1200:]}
+    return {
+        "ok": True,
+        "file": out,
+        "frames": count,
+        "fps": fps,
+        "duration": round(duration, 3),
+        "width": width,
+        "height": height,
+        "plate": plate,
+        "note": (
+            "The RGBA bake was composited over the plate, so the comp's transparency "
+            "was honoured and the result is an opaque H.264 clip ready for media_import "
+            "and clip_add. The alpha sequence itself is untouched. VP9/prores alpha "
+            "targets are deliberately not claimed: FFmpeg's WebM muxer does not reliably "
+            "write AlphaMode, which is why this path exists."
+        ),
+    }
+
+
 def vlm_command(spec):
     if local_vlm is None:
         return {"ok": False, "error": "vlm.py missing from sense runtime"}
@@ -937,7 +1050,7 @@ def vlm_command(spec):
 def main():
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["sheet", "critique", "rank", "vlm", "selftest"])
+    ap.add_argument("cmd", choices=["sheet", "critique", "rank", "overlay", "vlm", "selftest"])
     ap.add_argument("--spec", default="{}")
     args = ap.parse_args()
     try:
@@ -950,6 +1063,8 @@ def main():
             out = critique(spec)
         elif args.cmd == "rank":
             out = rank(spec)
+        elif args.cmd == "overlay":
+            out = overlay(spec)
         elif args.cmd == "vlm":
             out = vlm_command(spec)
         else:

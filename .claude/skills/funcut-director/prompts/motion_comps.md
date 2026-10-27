@@ -60,11 +60,17 @@ five decisions  →  inspect  →  one sentence of intent  →  one edit batch  
 - **one batch**: all-or-nothing and validated, so a half-built comp cannot reach the timeline.
 - **three frames**, not thirty: mid-entrance, settled, mid-exit.
 - **bake** at the size you cut at.
-- **place** it where the edit can use it: `bake --encode piece.mp4` (or `.webm` for VP9,
-  `.mov` for ProRes 4444), then `media_import {path}` and `clip_add {media, start}`. The video
-  codecs carry no alpha — the reply says so as a note on every transparent comp — so `--encode`
-  is for full-frame pieces (stats, stings, chapters, backdrops, terminals, compares); a
-  transparent overlay's truth stays in the bake's PNG sequence.
+- **place** it where the edit can use it. For a FULL-FRAME comp (stats, stings, chapters,
+  backdrops, terminals, compares): `motion_bake {encode: true}`, then `media_import` +
+  `clip_add`. For a TRANSPARENT overlay (lower thirds, kinetic captions, wordmarks) do **not**
+  ship an opaque reel that covers the footage. Take `dir` and `hash` from `motion_bake` and call
+  `motion_overlay {project, hash, plate: "<the b-roll clip's media file>", at: 1.2, fps: 30}` —
+  it composites the RGBA PNG sequence over the real shot with the alpha honoured, then
+  `media_import` + `clip_add` the H.264 result. The codecs themselves carry no alpha (VP9/WebM
+  `AlphaMode` is not reliable), so compositing is where transparency is honoured. The bake's
+  PNG sequence is untouched, so one comp can be re-composited over several plates.
+  `captions_animate`'s output is a full-frame caption reel by default — route it through
+  `motion_overlay` too when captions must sit over your footage.
 
 ---
 

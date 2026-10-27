@@ -134,9 +134,13 @@ number, percentage, comparison or process is a `funcut.ticker.count`,
 `funcut.chart.bars`, `funcut.stats.triptych` or `funcut.compare.split` —
 never a plain text card. Edit every comp: real copy, retimed to its cut, one
 element of the preset deleted. The loop is inspect → one validated `ops`
-batch → three `motion_frame`s → `motion_bake {encode: true}` at the cut's
-size → `media_import` → `clip_add`. Full doctrine: `prompts/motion_comps.md`
-and the `motion` skill.
+batch → three `motion_frame`s → `motion_bake` at the cut's size →
+**`motion_overlay` for any transparent comp** (lower thirds, kinetic
+captions: composite the RGBA bake over the real B-roll with `plate` + `at`,
+so the overlay does not cover the shot) or `motion_bake {encode: true}` for a
+full-frame piece → `media_import` → `clip_add`. An encoded caption reel is
+opaque; never lay one over footage you still want to see. Full doctrine:
+`prompts/motion_comps.md` and the `motion` skill.
 
 **Phase 6 — Grade (required).** One consistent look per video. Either ONE
 effect layer spanning the whole runtime — `effect_layer_add {start: 0,

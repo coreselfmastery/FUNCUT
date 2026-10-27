@@ -492,6 +492,86 @@ pub fn craft_critique(arguments: Value) -> Result<Outcome, ApiError> {
     Ok(Outcome::json(result))
 }
 
+/// `motion_overlay`: composite a transparent RGBA bake over real footage.
+///
+/// The motion sidecar's video codecs write opaque frames, and FFmpeg's WebM
+/// muxer does not reliably write VP9's AlphaMode - so an "alpha video" would
+/// be a lie. This honours the comp's transparency where it matters (at the
+/// compositing step) and returns an ordinary H.264 clip the timeline already
+/// knows how to blend, crop and cut.
+pub fn motion_overlay(arguments: Value) -> Result<Outcome, ApiError> {
+    let fields = arguments
+        .as_object()
+        .cloned()
+        .ok_or_else(|| invalid("the arguments are an object"))?;
+    let mut frames = fields
+        .get("frames")
+        .or_else(|| fields.get("dir"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    if frames.is_none() {
+        // A bake's hash is enough: find its frames under the project cache.
+        if let (Some(project), Some(hash)) = (
+            fields.get("project").and_then(Value::as_str),
+            fields.get("hash").and_then(Value::as_str),
+        ) {
+            let cache = std::path::Path::new(project).join("cache").join("comps");
+            if let Ok(entries) = fs::read_dir(&cache) {
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    if !name.starts_with(hash) {
+                        continue;
+                    }
+                    let candidate = entry.path().join("frames");
+                    if candidate.is_dir() {
+                        frames = Some(candidate.display().to_string());
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    let frames = frames.ok_or_else(|| {
+        invalid("give `frames` (the bake's frames/ directory) or `hash` + `project`")
+    })?;
+    let out = fields
+        .get("out")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .or_else(|| {
+            fields
+                .get("project")
+                .and_then(Value::as_str)
+                .map(|project| {
+                    std::path::Path::new(project)
+                        .join("motion")
+                        .join("overlay.mp4")
+                        .display()
+                        .to_string()
+                })
+        })
+        .ok_or_else(|| invalid("give `out` (a .mp4 path) or `project`"))?;
+    let mut spec = json!({
+        "frames": frames,
+        "out": out,
+        "fps": number(&fields, "fps", 30.0),
+        "at": number(&fields, "at", 0.0),
+        "crf": number(&fields, "crf", 18.0),
+        "autoSetup": fields.get("autoSetup").and_then(Value::as_bool).unwrap_or(true),
+    });
+    for key in ["plate", "width", "height", "background", "x", "y"] {
+        if let Some(value) = fields.get(key) {
+            spec[key] = value.clone();
+        }
+    }
+    let mut result = run("overlay", &spec, Duration::from_secs(900))?;
+    result["hint"] = json!(
+        "Import this file with media_import, then clip_add it on the lane above the plate. \
+         The original RGBA PNG sequence is untouched; re-run with a different plate or `at` to reposition."
+    );
+    Ok(Outcome::json(result))
+}
+
 /// `local_vlm`: status or first-use setup of the sub-1B local critic.
 pub fn local_vlm(arguments: Value) -> Result<Outcome, ApiError> {
     let fields = arguments

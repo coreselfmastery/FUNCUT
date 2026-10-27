@@ -184,6 +184,11 @@ return MCP `type: image` content blocks, so the model can actually look:
   `craft-history.json` and the reply reports `pass`, `previousOverall`,
   `delta`, `improved` and a `trend`, so the render -> inspect -> revise
   loop can be measured across turns instead of remembered.
+- `suggest_cuts` - beat-aligned cut points from the soundtrack with
+  **no Python extras**. Decodes audio with ffmpeg, estimates BPM from an
+  energy-onset function and returns `cutTimes` spread across the whole
+  piece plus an `energy` curve. Unlike `analyze_beats` (librosa), this
+  works on a bare headless install. Optional `cuts`, `minGap`, `bpm`.
 - `measure_loudness` - FFmpeg's EBU R128 meter on an exported file:
   integrated LUFS, true peak dBTP, loudness range, the error against the
   platform target (`targetLufs`, default −14; −23 for broadcast), and

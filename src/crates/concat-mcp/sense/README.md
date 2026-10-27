@@ -45,6 +45,7 @@ Diagnostics go to stderr, so stdout stays parseable.
 | `rank` | Semantically rank stock candidates against the creative brief. |
 | `overlay` | Composite a baked RGBA PNG sequence over a plate video (or a solid colour) into an H.264 clip, honouring alpha at the compositing step. |
 | `loudness` | EBU R128 integrated LUFS, true peak dBTP and loudness range of a media file, checked against a platform target. |
+| `rhythm` | BPM, energy-onset curve and beat-aligned cut times spread across the whole piece, with no Python extras. |
 | `vlm` | `status` / `setup` for the local vision model. |
 | `selftest` | Generate a synthetic PNG, decode it, measure it — no fixtures, no ffmpeg. |
 
@@ -135,3 +136,16 @@ returns `pass`, `previousOverall`, `delta`, `improved` and a `trend`
 sentence. An agent in a later turn can therefore see whether its revision
 actually helped. `delta <= 0` means "undo or rethink", not "try again with
 a nicer prompt".
+
+
+## Rhythm without librosa
+
+`analyze_beats` needs the optional Python analysis extras. `suggest_cuts`
+(and `sense.py rhythm`) works with ffmpeg alone: decode 8 kHz mono PCM,
+take the positive short-time energy derivative as an onset function,
+autocorrelate it over 60–200 BPM, then pick the strongest onset in each
+time bucket so the cuts cover the WHOLE piece rather than clustering in
+one loud chorus. On a synthetic 120 BPM kick track it reports 120.0 BPM
+and returns ten cut times spread from 0.45 s to 7.45 s. It is an honest
+approximation, not a claim of librosa-grade tracking — and the tool
+explicitly tells the agent to keep a few cuts off the pulse.

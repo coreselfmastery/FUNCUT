@@ -73,7 +73,12 @@ segment returns with its `words` — MEASURED `{text,start,end}` triples from
 whisper's token timestamps; cache them, they are what `captions_animate`
 takes. Then `analyze_silence` on the voiceover; `analyze_scenes` on
 any footage that will be cut; `analyze_beats` when there is music (or on the
-BGM after it is fetched). `media_probe` anything unfamiliar before you cut it.
+BGM after it is fetched). On a machine without the Python analysis extras,
+`suggest_cuts {path}` gives a BPM estimate and beat-aligned `cutTimes` with
+ffmpeg alone — use them as section boundaries in the plan. `media_probe`
+anything unfamiliar before you cut it. **A cut on every beat is a
+slideshow with a metronome:** keep a few cuts deliberately off the pulse,
+and never place more cuts than the story needs.
 
 **Phase 2 — Tighten the voice.** Feed the silence spans to `clip_cut_spans`
 (remove dead air; `-35` dB threshold, ≥0.5 s spans). **The padding rule the

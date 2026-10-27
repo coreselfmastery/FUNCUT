@@ -110,6 +110,8 @@ pub enum Action {
     MotionOverlay,
     /// Measure an exported mix's integrated LUFS and true peak.
     MeasureLoudness,
+    /// Beat-aligned cut times from the soundtrack, no Python extras.
+    SuggestCuts,
     /// `project.get`, read for every place two clips share a lane.
     CollisionCheck,
     /// `openvid.search` once per query, one reply.
@@ -815,6 +817,15 @@ pub fn catalogue() -> Vec<Tool> {
             action: Action::CraftCritique,
         },
         Tool {
+            name: "suggest_cuts",
+            title: "Find the musical cut points",
+            description: "Cut on energy, not on a fixed grid. Decodes the soundtrack with ffmpeg (NO librosa/python extras needed, unlike analyze_beats), estimates BPM from the energy-onset function, and returns beat-aligned cutTimes spread across the WHOLE piece plus an energy curve. Optional: path (music or voiceover file), cuts (12 default, 64 max), minGap seconds (0.35), bpm (a hint when the estimate is wrong), autoSetup. Use the times as section boundaries in plan_validate; keep a few cuts deliberately off-beat for surprise. Honest approximation, not librosa-grade beat tracking.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::SuggestCuts,
+        },
+        Tool {
             name: "measure_loudness",
             title: "Measure the mix",
             description: "PROVE loudness compliance instead of guessing. Runs FFmpeg's EBU R128 meter on `path` (an exported movie or any media with audio) and returns integrated LUFS, true peak dBTP, loudness range LU, the error against the platform target, whether the target was met, and specific mix notes. export_wait reports no loudness, so this is the headless way to check. `targetLufs` is -14 by default (short-form platforms; -23 is broadcast EBU R128) and `targetTruePeakDbtp` is -1. Fix with clip_audio_levels_db and measure again.",
@@ -1048,7 +1059,8 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
         | Action::LocalVlm
         | Action::CreativeBrief
         | Action::MotionOverlay
-        | Action::MeasureLoudness => sense_schema(tool.name),
+        | Action::MeasureLoudness
+        | Action::SuggestCuts => sense_schema(tool.name),
         Action::Mask => {
             let update = schemas.command("updateClip")?;
             let mut mask = schemas.def("ClipMask")?;
@@ -1164,6 +1176,14 @@ fn sense_schema(name: &str) -> Option<Value> {
             "project": string("Project folder holding creative-brief.json."),
             "autoSetup": { "type": "boolean", "default": false, "description": "Fetch and start the local vision model on first use." },
             "profile": string("mini, image or minicpm."),
+        }),
+        "suggest_cuts" => json!({
+            "path": string("Media file whose audio carries the rhythm (music or voiceover)." ),
+            "cuts": { "type": "integer", "minimum": 1, "maximum": 64, "default": 12 },
+            "minGap": { "type": "number", "minimum": 0.05, "maximum": 10, "default": 0.35 },
+            "bpm": { "type": "number", "minimum": 30, "maximum": 300, "description": "Optional BPM hint when the estimate is wrong." },
+            "ffmpeg": string("An explicit ffmpeg binary; the sense layer bootstraps one when absent."),
+            "autoSetup": { "type": "boolean", "default": true },
         }),
         "measure_loudness" => json!({
             "path": string("The media file with an audio stream to measure."),
@@ -1616,6 +1636,7 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         Action::CreativeBrief => crate::sense::creative_brief(arguments),
         Action::MotionOverlay => crate::sense::motion_overlay(arguments),
         Action::MeasureLoudness => crate::sense::measure_loudness(arguments),
+        Action::SuggestCuts => crate::sense::suggest_cuts(arguments),
         Action::CollisionCheck => {
             let result = backend.call(request("project.get", arguments)?)?;
             Ok(collision_report(summary::view(&result)))
@@ -3016,6 +3037,10 @@ mod tests {
                 "motion_overlay",
                 json!({ "project": "/tmp/Cut", "hash": "abc123", "plate": "/tmp/plate.mp4" }),
             ),
+            (
+                "suggest_cuts",
+                json!({ "path": "/tmp/music.wav", "cuts": 8 }),
+            ),
             ("measure_loudness", json!({ "path": "/tmp/render.mp4" })),
             ("local_vlm", json!({ "action": "status" })),
             (
@@ -3122,7 +3147,8 @@ mod tests {
                 | Action::LocalVlm
                 | Action::CreativeBrief
                 | Action::MotionOverlay
-                | Action::MeasureLoudness => continue,
+                | Action::MeasureLoudness
+                | Action::SuggestCuts => continue,
                 Action::CollisionCheck => request("project.get", sample.clone()),
                 Action::OpenvidSearchBatch => {
                     // One `openvid.search` per query: the first query's

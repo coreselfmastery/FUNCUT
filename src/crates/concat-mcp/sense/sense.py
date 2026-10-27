@@ -408,6 +408,104 @@ def loudness(ff, path, target_lufs=-14.0, target_peak=-1.0):
     return out
 
 
+def rhythm(ff, path, cuts=12, min_gap=0.35, bpm_hint=None):
+    """Beat grid and suggested cut times from the soundtrack, pure stdlib.
+
+    analyze_beats already exists but needs librosa/OpenCV Python extras.
+    This is the no-install path: decode mono PCM with ffmpeg, take the
+    positive short-time energy derivative as an onset function, find the
+    dominant pulse by autocorrelation, then place the requested number of
+    cuts on strong onsets that are at least `min_gap` apart. It is an
+    honest approximation, not a claim of librosa-grade beat tracking.
+    """
+    rate = 8000
+    cmd = [ff, "-v", "error", "-i", path, "-vn", "-ac", "1", "-ar", str(rate),
+           "-f", "s16le", "-acodec", "pcm_s16le", "-"]
+    rc, out, _ = _run(cmd, 120)
+    n = len(out) // 2
+    if rc != 0 or n < rate // 2:
+        return None
+    vals = struct.unpack("<%dh" % n, out[: n * 2])
+    hop, win = 400, 800  # 50 ms hop, 100 ms window at 8 kHz
+    energies = []
+    for start in range(0, n - win, hop):
+        block = vals[start : start + win]
+        # RMS with a DC-free approximation; a kick reads as a sharp rise.
+        mean = sum(block) / win
+        energies.append(math.sqrt(sum((v - mean) ** 2 for v in block) / win) / 32768.0)
+    if len(energies) < 8:
+        return None
+    peak = max(energies) or 1e-9
+    energies = [e / peak for e in energies]
+    onset = [max(0.0, energies[i] - energies[i - 1]) for i in range(len(energies))]
+    mean = sum(onset) / len(onset)
+    var = sum((v - mean) ** 2 for v in onset) / len(onset)
+    threshold = mean + 0.6 * math.sqrt(var)
+
+    # Autocorrelation over 60-200 BPM -> lag 6..40 frames of 50 ms.
+    def pulse_at(lag):
+        return sum(onset[i] * onset[i - lag] for i in range(lag, len(onset)))
+    best_lag, best_score = 0, -1.0
+    for lag in range(6, min(41, len(onset) // 3)):
+        score = pulse_at(lag)
+        if score > best_score:
+            best_lag, best_score = lag, score
+    if bpm_hint:
+        try:
+            lag = round(60.0 / float(bpm_hint) / (hop / rate))
+            if 3 <= lag < len(onset) // 3:
+                best_lag = lag
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
+    bpm = round(60.0 / (best_lag * hop / rate), 1) if best_lag else None
+
+    # Local maxima of the onset function, strongest first.
+    candidates = []
+    for i in range(1, len(onset) - 1):
+        if onset[i] >= onset[i - 1] and onset[i] > onset[i + 1] and onset[i] > threshold:
+            candidates.append((onset[i], i * hop / rate))
+    duration = n / rate
+    # Spread the cuts over the WHOLE piece. Picking the globally strongest
+    # onsets first clustered every cut into one loud chorus and left the
+    # opening untouched - the opposite of what an editor needs.
+    wanted = max(1, min(64, int(cuts)))
+    span = duration / wanted
+    chosen: list[float] = []
+    for bucket in range(wanted):
+        lo, hi = bucket * span, (bucket + 1) * span
+        pool = [(strength, at) for strength, at in candidates if lo <= at < hi]
+        if not pool:
+            continue
+        strength, at = max(pool, key=lambda pair: pair[0])
+        if all(abs(at - other) >= min_gap for other in chosen):
+            chosen.append(at)
+    if len(chosen) < wanted // 2:
+        for strength, at in sorted(candidates, key=lambda pair: -pair[0]):
+            if all(abs(at - other) >= min_gap for other in chosen):
+                chosen.append(at)
+            if len(chosen) >= wanted:
+                break
+    chosen.sort()
+    out = {
+        "bpm": bpm,
+        "bpmSource": "autocorrelation of the energy-onset function (50 ms hops)",
+        "durationSeconds": round(duration, 2),
+        "onsetCount": len(candidates),
+        "cutTimes": [round(t, 3) for t in chosen],
+        "energy": [round(e, 3) for e in energies[:: max(1, len(energies) // 96)]],
+        "minGapSeconds": min_gap,
+    }
+    notes = []
+    if not chosen:
+        notes.append("No clear onsets found; the track may be ambient. Cut on narrative beats instead of a grid.")
+    elif len(chosen) < max(1, int(cuts)) // 2:
+        notes.append(f"Only {len(chosen)} strong onsets; do not invent the rest. Fewer, meaningful cuts beat filler cuts.")
+    if bpm:
+        notes.append(f"Estimated {bpm} BPM. Align section changes and entrances to this pulse, but keep some cuts off-beat for surprise.")
+    out["notes"] = notes
+    return out
+
+
 def audio_envelope(ff, path, buckets=48):
     """Low-rate mono PCM energy envelope; works without scipy/numpy."""
     rate = 8000
@@ -1129,7 +1227,7 @@ def vlm_command(spec):
 def main():
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["sheet", "critique", "rank", "overlay", "loudness", "vlm", "selftest"])
+    ap.add_argument("cmd", choices=["sheet", "critique", "rank", "overlay", "loudness", "rhythm", "vlm", "selftest"])
     ap.add_argument("--spec", default="{}")
     args = ap.parse_args()
     try:
@@ -1148,6 +1246,12 @@ def main():
             ff, _ = _tools(spec)
             result = loudness(ff, spec.get("path", ""), float(spec.get("targetLufs", -14.0)), float(spec.get("targetTruePeakDbtp", -1.0)))
             out = result or {"ok": False, "error": "no loudness measurement (is there an audio stream?)"}
+            if result:
+                out["ok"] = True
+        elif args.cmd == "rhythm":
+            ff, _ = _tools(spec)
+            result = rhythm(ff, spec.get("path", ""), int(spec.get("cuts", 12)), float(spec.get("minGap", 0.35)), spec.get("bpm"))
+            out = result or {"ok": False, "error": "no audio to analyse"}
             if result:
                 out["ok"] = True
         elif args.cmd == "vlm":

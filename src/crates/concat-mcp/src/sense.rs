@@ -551,6 +551,38 @@ fn record_craft_pass(project: &str, result: &mut Value) {
     }
 }
 
+/// `suggest_cuts`: beat-aligned cut times from the soundtrack, with no
+/// Python extras. `analyze_beats` needs librosa; this works with ffmpeg
+/// alone, so a headless agent on a small machine can still cut on energy.
+pub fn suggest_cuts(arguments: Value) -> Result<Outcome, ApiError> {
+    let fields = arguments
+        .as_object()
+        .cloned()
+        .ok_or_else(|| invalid("the arguments are an object"))?;
+    let path = fields
+        .get("path")
+        .and_then(Value::as_str)
+        .filter(|p| !p.trim().is_empty())
+        .ok_or_else(|| invalid("`path` is the media file (music or voiceover) to analyse"))?;
+    let mut spec = json!({
+        "path": path,
+        "cuts": number(&fields, "cuts", 12.0),
+        "minGap": number(&fields, "minGap", 0.35),
+        "autoSetup": fields.get("autoSetup").and_then(Value::as_bool).unwrap_or(true),
+    });
+    if let Some(bpm) = fields.get("bpm") {
+        spec["bpm"] = bpm.clone();
+    }
+    if let Some(ff) = fields.get("ffmpeg") {
+        spec["ffmpeg"] = ff.clone();
+    }
+    let mut result = run("rhythm", &spec, Duration::from_secs(240))?;
+    result["hint"] = json!(
+        "These are energy onsets, not a finished edit. Use them for section changes and entrances,          keep a few cuts deliberately OFF the pulse, and never place more cuts than the story needs.          Feed the times into plan_validate as section boundaries."
+    );
+    Ok(Outcome::json(result))
+}
+
 /// `measure_loudness`: the exported mix's ACTUAL integrated LUFS and true
 /// peak, not the plan's target. `export_wait` reports no loudness, so this
 /// is the only headless way to prove a platform target was met.

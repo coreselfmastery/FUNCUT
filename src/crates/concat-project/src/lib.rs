@@ -4260,6 +4260,81 @@ mod tests {
     }
 
     #[test]
+    fn a_style_saying_text_reads_as_the_words() {
+        // Everything else in the interface calls the words `text` -
+        // `timeline_read` shows `text`, a caption entry carries a `text` -
+        // and a style written that way used to read as an empty title
+        // that reported itself placed.
+        let mut editor = Editor::new();
+        let command: Command = serde_json::from_value(json!({
+            "op": "addTextClip", "trackId": null, "start": 1.0, "above": true,
+            "style": { "text": "Hello", "fontSize": 0.08 }
+        }))
+        .expect("reads");
+        let clip_id = editor
+            .apply(command)
+            .expect("adds")
+            .created_id
+            .expect("id");
+        let clip = editor.project().active().clip(&clip_id).expect("exists");
+        assert_eq!(clip.name, "Hello", "the name follows the words");
+        let style = clip.text.as_ref().expect("styled");
+        assert_eq!(style.content, "Hello");
+        assert!((style.font_size - 0.08).abs() < 1e-9, "the rest of the style reads too");
+    }
+
+    #[test]
+    fn a_title_with_no_words_is_refused() {
+        let mut editor = Editor::new();
+        // Blank words at placement: nothing to draw, nothing to name.
+        let refused = editor
+            .apply(Command::AddTextClip {
+                above: true,
+                track_id: None,
+                start: 0.0,
+                style: Some(TextStyle {
+                    content: "   ".to_owned(),
+                    ..TextStyle::default()
+                }),
+                duration: None,
+                offset_y: None,
+            })
+            .expect_err("refused");
+        assert!(matches!(refused, crate::CommandError::NoWords));
+        // And a patch that would empty an existing title's words is
+        // refused before anything it carries lands, so the volume that
+        // shared the patch is not left half-applied behind the refusal.
+        let made = editor
+            .apply(Command::AddTextClip {
+                above: true,
+                track_id: None,
+                start: 0.0,
+                style: Some(TextStyle::default()),
+                duration: None,
+                offset_y: None,
+            })
+            .expect("adds")
+            .created_id
+            .expect("id");
+        let before = editor.project().clone();
+        let refused = editor
+            .apply(Command::UpdateClip {
+                clip_id: made,
+                patch: ClipPatch {
+                    volume: Some(0.25),
+                    text: Some(Some(TextStyle {
+                        content: String::new(),
+                        ..TextStyle::default()
+                    })),
+                    ..Default::default()
+                },
+            })
+            .expect_err("refused");
+        assert!(matches!(refused, crate::CommandError::NoWords));
+        assert_eq!(editor.project(), &before, "the volume did not land either");
+    }
+
+    #[test]
     fn a_caption_lands_above_the_highest_occupied_lane() {
         let mut editor = Editor::new();
         let media_id = editor

@@ -137,6 +137,12 @@ pub(super) fn apply(
             above,
         } => {
             let style = style.unwrap_or_default();
+            // A style whose words are gone is nothing placed: the clip would
+            // render blank while reporting itself made, which is how a
+            // misspelled style field used to read (see TextStyle::content).
+            if style.content.trim().is_empty() {
+                return Err(CommandError::NoWords);
+            }
             let duration = duration
                 .unwrap_or(DEFAULT_TEXT_DURATION)
                 .max(MIN_CLIP_DURATION);

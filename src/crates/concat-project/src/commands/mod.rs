@@ -941,6 +941,12 @@ pub enum CommandError {
     /// one stored would poison every duration and key that touched it.
     #[error("A number in that edit is not finite.")]
     NotANumber,
+    /// [`Command::AddTextClip`], or an `updateClip` patching its `text`,
+    /// carried a style whose words are empty or whitespace. A title with
+    /// no words renders nothing yet reports itself placed; refused is
+    /// louder than silently blank.
+    #[error("That title has no words in it.")]
+    NoWords,
 }
 
 /// Mints ids. Owned by the editor so restored projects advance it past every

@@ -16,6 +16,14 @@ pub(super) fn apply(
 ) -> Result<Outcome, CommandError> {
     match command {
         Command::UpdateClip { clip_id, patch } => {
+            // A style patch whose words are gone is refused before anything
+            // lands, so the fields that precede it in the patch are not
+            // left half-applied by the refusal (see NoWords).
+            if let Some(Some(style)) = &patch.text
+                && style.content.trim().is_empty()
+            {
+                return Err(CommandError::NoWords);
+            }
             let timeline = project.active_mut();
             let Some(clip) = timeline.clip_mut(&clip_id) else {
                 return Ok(Outcome::default());

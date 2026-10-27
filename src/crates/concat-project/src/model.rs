@@ -1468,7 +1468,12 @@ impl Default for ShapeStyle {
 #[serde(rename_all = "camelCase", default)]
 pub struct TextStyle {
     /// The words themselves, newlines included. The clip's display name is
-    /// snapshotted from the first non-empty line.
+    /// snapshotted from the first non-empty line. Also reads `text`, the
+    /// name the rest of the interface gives the words: `timeline_read`
+    /// shows them as `text`, a caption entry carries a `text`, and an
+    /// agent writing `style: {"text": ...}` was silently handed an empty
+    /// title for it. Writing is always `content`.
+    #[serde(alias = "text")]
     pub content: String,
     /// CSS-style family name, quotes included where the name needs them,
     /// e.g. `"Cabinet Grotesk"`. May name a [`CustomFont`] the user added.

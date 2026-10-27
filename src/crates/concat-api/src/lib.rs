@@ -35,7 +35,7 @@ pub mod rpc;
 #[cfg(feature = "speech")]
 mod speech;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -43,7 +43,7 @@ use std::thread::JoinHandle;
 use base64::Engine as _;
 use concat_effects::Catalogue;
 use concat_effects::manifest::Kind;
-use concat_export::{ExportClip, ExportRequest};
+use concat_export::{ExportClip, ExportRequest, engine_range};
 pub use concat_host::AppDirs;
 use concat_host::bgm::{self as bgm_library, Query as BgmQuery, Sort as BgmSort};
 use concat_host::cutout::{self, AnalyseRequest, Cutouts};
@@ -58,7 +58,7 @@ use concat_host::templates::{self, SlotFill};
 use concat_host::{ProjectInfo, Session, Titles, lock, media, projects};
 use concat_project::Command;
 use concat_project::commands::TrimEdge;
-use concat_project::model::VideoSettings;
+use concat_project::model::{MediaKind, VideoSettings};
 
 pub use message::{
     API_VERSION, ApiError, BgmFound, BgmImport, BgmState, BgmTrack, Dirs, Done, ErrorCode, Event,
@@ -809,6 +809,13 @@ impl Api {
         let _ = projects::remember(&self.dirs.config, &info);
         let view = session.view();
         self.sessions.insert(key_of(&info.path), session);
+        // The project's media is seen to at once, the way a window's
+        // open sees to it: the copies already written are adopted into
+        // the pool, the videos larger than HD without one get theirs
+        // queued, and the copies of media the project no longer holds
+        // go.
+        self.ensure_proxies(&info.path);
+        self.sweep_stale_proxies(&info.path);
         Ok(view)
     }
 
@@ -842,6 +849,10 @@ impl Api {
     pub fn apply(&mut self, path: &str, command: Command) -> Result<EditorView, ApiError> {
         let view = self.session_mut(path)?.apply(command).map_err(refused)?;
         self.autosave(path);
+        // The edit may have brought media in - an import, an overlay, a
+        // template's fills - and media is the one thing whose working
+        // copy is worth having before anything reads it.
+        self.ensure_proxies(path);
         Ok(view)
     }
 
@@ -865,6 +876,69 @@ impl Api {
     pub fn import(&mut self, path: &str, file: &str) -> Result<EditorView, ApiError> {
         let item = media::probe(file).map_err(ApiError::failed)?.to_new_media();
         self.apply(path, Command::AddMedia { item })
+    }
+
+    /// Sees to it that every video in an open project larger than HD
+    /// has a proxy, and that the ones already written are what the
+    /// reader pool reads: the same `concat_host::proxy::ensure` the
+    /// window's art pass asks, for the editor without a window. An
+    /// agent's import gets its working copy the moment it lands -
+    /// written once, on the scheduler's proxy lane, while the edit goes
+    /// on - and the frames small enough for a copy to serve whole come
+    /// back from it; see [`Api::pixels`]. The codec is the default,
+    /// H.264: the choice in Settings is the window's, and a caller here
+    /// has none. Asking is idempotent - a file that has its copy, or is
+    /// writing one, is a stat away - so `apply` may ask after every
+    /// command, the way the window's art pass asks after every message.
+    fn ensure_proxies(&self, path: &str) {
+        let Ok(session) = self.session(path) else {
+            return;
+        };
+        let project = Path::new(session.path());
+        for item in session.project().media.iter() {
+            if item.kind != MediaKind::Video || item.placeholder {
+                continue;
+            }
+            let (Some(width), Some(height)) = (item.width, item.height) else {
+                continue;
+            };
+            concat_host::proxy::ensure(
+                project,
+                &item.path,
+                width,
+                height,
+                item.color_range.map(engine_range),
+                item.color_space.is_hdr(),
+                concat_host::proxy::ProxyCodec::default(),
+            );
+        }
+    }
+
+    /// Removes the proxies under an open project of media it no longer
+    /// holds, or holds read as a range it no longer is: the same sweep a
+    /// window makes when a project opens, for the editor without one -
+    /// nothing else sweeps this folder. A copy being written is left for
+    /// its writer.
+    fn sweep_stale_proxies(&self, path: &str) {
+        let Ok(session) = self.session(path) else {
+            return;
+        };
+        let project = Path::new(session.path());
+        let keep: HashSet<PathBuf> = session
+            .project()
+            .media
+            .iter()
+            .filter_map(|item| {
+                concat_host::proxy::path_for(
+                    project,
+                    &item.path,
+                    item.color_range.map(engine_range),
+                    item.color_space.is_hdr(),
+                    concat_host::proxy::ProxyCodec::default(),
+                )
+            })
+            .collect();
+        concat_host::proxy::sweep(project, &keep);
     }
 
     // ── the OpenVid stock library ─────────────────────────────────────────
@@ -2560,6 +2634,85 @@ mod tests {
             "the placed clip is on disk, not only in the session that was dropped"
         );
         assert_eq!(reopened.project.active().clips[0].start, 2.0);
+    }
+
+    /// A `width` by `height` video of plain frames, where a test needs a
+    /// file the probe reads back with the size it was written at.
+    fn video_at(scratch: &tempfile::TempDir, name: &str, width: u32, height: u32) -> String {
+        use concat_media::{EncodeOptions, Encoder, FrameSink, VideoCodec};
+        let path = scratch.path().join(name);
+        let mut encoder = Encoder::create(
+            &path,
+            width,
+            height,
+            concat_core::time::FrameRate::THIRTY,
+            &EncodeOptions {
+                codec: VideoCodec::H264,
+                preset: "ultrafast".to_owned(),
+                ..EncodeOptions::default()
+            },
+        )
+        .expect("encodes");
+        let frame = concat_core::frame::Frame::from_rgba(
+            width,
+            height,
+            vec![64u8; (width as usize) * (height as usize) * 4],
+        )
+        .expect("a frame");
+        for _ in 0..6 {
+            encoder.write_frame(&frame).expect("writes");
+        }
+        encoder.finish().expect("finishes");
+        path.to_string_lossy().into_owned()
+    }
+
+    /// An agent's import gets its proxy without a window to ask for one:
+    /// the copy is written on the proxy lane and adopted into the pool
+    /// the frames are read through, while a video at HD or under - the
+    /// size every proxy is beneath - never gets one. A project reopened
+    /// finds the copy again and sweeps nothing it holds.
+    #[test]
+    fn an_agents_import_gets_its_proxy() {
+        let (mut api, scratch, _events) = api();
+        let path = project(&mut api, &scratch, "Proxied");
+        let big = video_at(&scratch, "big.mp4", 2560, 1440);
+        let small = video_at(&scratch, "small.mp4", 1280, 720);
+        ok(api.dispatch(Request::MediaImport {
+            path: path.clone(),
+            file: big.clone(),
+        }));
+        ok(api.dispatch(Request::MediaImport {
+            path: path.clone(),
+            file: small.clone(),
+        }));
+        // The write is a job nobody waits on; the lanes drain before the
+        // copy is there to be found.
+        concat_host::scheduler().drain();
+        let project_dir = Path::new(&path);
+        assert!(
+            concat_host::proxy::existing(project_dir, &big, None).is_some(),
+            "the larger file's working copy was written"
+        );
+        assert!(
+            concat_host::proxy::existing(project_dir, &small, None).is_none(),
+            "a file at HD or under never gets one"
+        );
+        assert!(
+            concat_host::scheduler()
+                .pool()
+                .proxy_of(Path::new(&big))
+                .is_some(),
+            "the copy is what the pool reads for the file"
+        );
+        ok(api.dispatch(Request::ProjectClose {
+            path: path.clone(),
+            save: false,
+        }));
+        ok(api.dispatch(Request::ProjectOpen { path: path.clone() }));
+        assert!(
+            concat_host::proxy::existing(Path::new(&path), &big, None).is_some(),
+            "the copy survived the reopen, and was not swept as stale"
+        );
     }
 
     #[test]

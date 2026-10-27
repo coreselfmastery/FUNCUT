@@ -1081,12 +1081,12 @@ mod tests {
         let error = apply(
             &comp,
             &[Op::SetSlot {
-                slot: "Role".into(),
+                slot: "Nickname".into(),
                 value: "x".into(),
             }],
         )
         .expect_err("refused");
-        assert!(error.to_string().contains("Role"), "{error}");
+        assert!(error.to_string().contains("Nickname"), "{error}");
     }
 
     #[test]

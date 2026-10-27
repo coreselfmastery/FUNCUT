@@ -237,70 +237,76 @@ const SANS: &str = "Inter, DejaVu Sans";
 const MONO: &str = "JetBrains Mono, DejaVu Sans Mono, monospace";
 const DISPLAY: &str = "Archivo, Inter, DejaVu Sans";
 
+// ------------------------------------------------------- the library's look
+//
+// One design system, so a video cut from several presets reads as one hand:
+// warm paper ink on a flat near-black plate, hairline borders, and a single
+// editorial gold accent. No glass blur, no drop-shadow pyramids, no gradient
+// text, no rainbow - the things that date an overlay the year after it
+// shipped. Motion is staggered reveals and rules that draw; a spring only
+// where something is placed, once per comp.
+const INK: &str = "#f4f1ea";
+const MUTED: &str = "#9a978e";
+const ACCENT: &str = "#d9a441";
+
 // ----------------------------------------------------------------- presets
 
-/// A glass lower third: avatar, name, role, a live badge and a growing bar.
+/// An editorial lower third: an accent bar that wipes down, a kicker, a
+/// name, a role. The interview overlay, not the streamer's - no avatar
+/// block, no LIVE badge, no glass blur: those read as a template the
+/// moment they read at all.
 pub fn lower_third() -> Comp {
     let css = format!(
         r#"
 .card {{
-  position: absolute; left: 120px; top: 740px;
-  display: flex; flex-direction: row; align-items: center; gap: 26px;
-  padding: 30px 40px 34px 40px; border-radius: 22px;
-  background: linear-gradient(120deg, rgba(11,16,22,0.82), rgba(28,18,44,0.78));
-  border: 1px solid rgba(247,249,255,0.14);
-  backdrop-filter: blur(18px) saturate(1.25);
-  box-shadow: 0 26px 60px rgba(0,0,0,0.55);
+  position: absolute; left: 120px; top: 776px;
+  display: flex; flex-direction: row; align-items: stretch;
+  background: rgba(12,13,16,0.92);
+  border: 1px solid rgba(244,241,234,0.12); border-radius: 14px;
+  box-shadow: 0 10px 28px rgba(0,0,0,0.35);
+  overflow: hidden;
 }}
-.avatar {{ width: 78px; height: 78px; border-radius: 18px;
-  background: linear-gradient(140deg, #22d3c5, #8b5cf6 62%, #fb7185); }}
-.body {{ display: flex; flex-direction: column; gap: 8px; }}
-.name {{ font-family: {SANS}; font-size: 58px; font-weight: 800; letter-spacing: -0.02em; color: #f7f9ff; }}
-.role {{ font-family: {SANS}; font-size: 26px; color: #9fb0bf; }}
-.right {{ display: flex; flex-direction: column; align-items: flex-end; gap: 10px; margin-left: 34px; }}
-.live {{ display: flex; flex-direction: row; align-items: center; gap: 9px;
-  padding: 8px 16px; border-radius: 999px;
-  background: rgba(251,113,133,0.16); border: 1px solid rgba(251,113,133,0.5); }}
-.dot {{ width: 9px; height: 9px; border-radius: 999px; background: #fb7185;
-  animation: blink 1.4s steps(1) infinite; }}
-.livetxt {{ font-family: {MONO}; font-size: 17px; font-weight: 600; letter-spacing: 0.2em; color: #ffd9de; }}
-.bar {{ position: absolute; left: 40px; right: 40px; bottom: 16px; height: 4px; border-radius: 2px;
-  background: linear-gradient(90deg, #22d3c5, #8b5cf6, #ffc247);
-  transform-origin: left center; animation: bar 2.2s cubic-bezier(0.16,1,0.3,1) 0.35s both; }}
-@keyframes bar {{ from {{ transform: scaleX(0) }} to {{ transform: scaleX(1) }} }}
-@keyframes blink {{ from {{ opacity: 1 }} 50% {{ opacity: 0.15 }} to {{ opacity: 1 }} }}
+.bar {{ width: 7px; background: {ACCENT}; transform-origin: top center;
+  animation: wipe 0.55s cubic-bezier(0.16,1,0.3,1) 0.05s both; }}
+.body {{ display: flex; flex-direction: column; justify-content: center;
+  gap: 7px; padding: 26px 44px 28px 30px; }}
+.kicker {{ font-family: {MONO}; font-size: 15px; font-weight: 600;
+  letter-spacing: 0.28em; color: {ACCENT};
+  animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.18s both; }}
+.name {{ font-family: {DISPLAY}; font-size: 52px; font-weight: 800;
+  letter-spacing: -0.02em; color: {INK}; line-height: 1;
+  animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.26s both; }}
+.role {{ font-family: {SANS}; font-size: 23px; font-weight: 400;
+  color: {MUTED}; line-height: 1;
+  animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.34s both; }}
+@keyframes wipe {{ from {{ transform: scaleY(0) }} to {{ transform: scaleY(1) }} }}
+@keyframes rise {{ from {{ opacity: 0; transform: translateY(10px) }} to {{ opacity: 1; transform: translateY(0) }} }}
 "#
     );
     let markup = r#"
 <div class="card">
-  <div class="avatar"></div>
+  <div class="bar"></div>
   <div class="body">
+    <div class="kicker">WHY MONEY COMPOUNDS</div>
     <div class="name">Ada Lovelace</div>
     <div class="role">Analytical Engine · London, 1843</div>
   </div>
-  <div class="right">
-    <div class="live"><div class="dot"></div><div class="livetxt">LIVE</div></div>
-    <div class="livetxt">00:04:12:08</div>
-  </div>
-  <div class="bar"></div>
 </div>
 "#;
     let mut built = comp(
         "funcut.lower-third.glass",
-        "Glass lower third",
+        "Editorial lower third",
         1920,
         1080,
         6.0,
     );
-    // Slide in from the left, spring-settled, on a node that covers the comp.
+    // One settle: the card arrives 14px low and rises - placed, not bounced.
     let node = with_track(
         html_node("card", markup, &css, Length::Px(1920.0), Length::Px(1080.0)),
         "position",
         Track::new(vec![
-            // The clip's position places the box's centre: the frame's middle,
-            // less a card's width, is off the left edge.
-            Key::eased(0.0, Value::Point { x: 260.0, y: 540.0 }, Curve::SPRING),
-            Key::new(1.0, Value::Point { x: 960.0, y: 540.0 }),
+            Key::eased(0.0, Value::Point { x: 960.0, y: 554.0 }, Curve::EASE_OUT),
+            Key::new(0.45, Value::Point { x: 960.0, y: 540.0 }),
         ]),
     );
     built.nodes.push(with_track(
@@ -308,7 +314,7 @@ pub fn lower_third() -> Comp {
         "opacity",
         Track::new(vec![
             Key::eased(0.0, Value::number(0.0), Curve::EASE_OUT),
-            Key::new(0.35, Value::number(1.0)),
+            Key::new(0.3, Value::number(1.0)),
         ]),
     ));
     built.slots.push(Slot {
@@ -316,6 +322,18 @@ pub fn lower_third() -> Comp {
         field: SlotField::Text,
         sample: "Ada Lovelace".into(),
         label: "Name".into(),
+    });
+    built.slots.push(Slot {
+        node: "card".into(),
+        field: SlotField::Text,
+        sample: "Analytical Engine · London, 1843".into(),
+        label: "Role".into(),
+    });
+    built.slots.push(Slot {
+        node: "card".into(),
+        field: SlotField::Text,
+        sample: "WHY MONEY COMPOUNDS".into(),
+        label: "Kicker".into(),
     });
     built
 }
@@ -362,7 +380,7 @@ pub fn kinetic_caption() -> Comp {
         text: String::new(),
         words,
         highlight: Some(TextStyle {
-            color: Some(Rgba::hex("#22d3c5")),
+            color: Some(Rgba::hex(ACCENT)),
             fill: None,
             weight: Some(800),
             scale: None,
@@ -378,7 +396,7 @@ pub fn kinetic_caption() -> Comp {
         padding: 16.0,
         background: Rgba::hex("#05060a00"),
         radius: 0.0,
-        color: Rgba::hex("#f7f9ff"),
+        color: Rgba::hex(INK),
         fill: None,
         outline: None,
         shadow: Some(crate::comp::Shadow {
@@ -421,33 +439,37 @@ pub fn kinetic_caption() -> Comp {
     built
 }
 
-/// Three stat cards that pop in on a stagger and grow their bars.
+/// Three stat cards that rise on a stagger, each with an accent top
+/// hairline and one bar. Flat plates: the numbers carry it.
 pub fn stat_cards() -> Comp {
     let css = format!(
         r#"
 .row {{ position: absolute; left: 132px; width: 1656px; top: 360px;
   display: flex; flex-direction: row; gap: 28px; }}
 .card {{ flex: 1; display: flex; flex-direction: column; gap: 10px;
-  padding: 34px 34px 38px 34px; border-radius: 22px;
-  background: linear-gradient(150deg, rgba(10,14,20,0.78), rgba(24,16,38,0.68));
-  border: 1px solid rgba(247,249,255,0.13);
-  backdrop-filter: blur(16px) saturate(1.2); box-shadow: 0 24px 60px rgba(0,0,0,0.5); }}
-.num {{ font-family: {DISPLAY}; font-size: 104px; font-weight: 900; letter-spacing: -0.04em; color: #f7f9ff; line-height: 1; }}
-.lab {{ font-family: {MONO}; font-size: 17px; letter-spacing: 0.24em; color: #9fb0bf; }}
-.track {{ height: 6px; border-radius: 3px; background: rgba(247,249,255,0.12); margin-top: 14px; }}
-.fill {{ height: 6px; border-radius: 3px; transform-origin: left center;
-  animation: widen 1.1s cubic-bezier(0.16,1,0.3,1) 0.45s both; }}
+  padding: 36px 36px 40px 36px; border-radius: 14px;
+  background: rgba(12,13,16,0.92); border: 1px solid rgba(244,241,234,0.10);
+  border-top: 3px solid {ACCENT};
+  animation: rise 0.55s cubic-bezier(0.16,1,0.3,1) both; }}
+.card:nth-child(2) {{ animation-delay: 0.12s; }}
+.card:nth-child(3) {{ animation-delay: 0.24s; }}
+.num {{ font-family: {DISPLAY}; font-size: 108px; font-weight: 800; letter-spacing: -0.04em; color: {INK}; line-height: 1; }}
+.lab {{ font-family: {MONO}; font-size: 16px; letter-spacing: 0.24em; color: {MUTED}; }}
+.track {{ height: 4px; border-radius: 2px; background: rgba(244,241,234,0.10); margin-top: 16px; }}
+.fill {{ height: 4px; border-radius: 2px; background: {ACCENT}; transform-origin: left center;
+  animation: widen 1.0s cubic-bezier(0.16,1,0.3,1) 0.5s both; }}
 @keyframes widen {{ from {{ transform: scaleX(0) }} to {{ transform: scaleX(1) }} }}
+@keyframes rise {{ from {{ opacity: 0; transform: translateY(14px) }} to {{ opacity: 1; transform: translateY(0) }} }}
 "#
     );
     let markup = r#"
 <div class="row">
   <div class="card"><div class="num">127</div><div class="lab">SHADER PACKS</div>
-    <div class="track"><div class="fill" style="width: 88%; background: #22d3c5"></div></div></div>
+    <div class="track"><div class="fill" style="width: 88%"></div></div></div>
   <div class="card"><div class="num">67</div><div class="lab">MCP TOOLS</div>
-    <div class="track"><div class="fill" style="width: 46%; background: #8b5cf6"></div></div></div>
+    <div class="track"><div class="fill" style="width: 46%"></div></div></div>
   <div class="card"><div class="num">10-BIT</div><div class="lab">LINEAR LIGHT</div>
-    <div class="track"><div class="fill" style="width: 72%; background: #ffc247"></div></div></div>
+    <div class="track"><div class="fill" style="width: 72%"></div></div></div>
 </div>
 "#;
     let mut built = comp("funcut.stats.triptych", "Stat cards", 1920, 1080, 5.0);
@@ -477,25 +499,26 @@ pub fn stat_cards() -> Comp {
     built
 }
 
-/// A wordmark with a rule that draws under it.
+/// A wordmark with a rule that draws under it: solid ink and one accent
+/// full stop - the gradient-text version was the template smell.
 pub fn wordmark_sting() -> Comp {
     let css = format!(
         r#"
 .stack {{ position: absolute; inset: 0; display: flex; flex-direction: column;
   align-items: center; justify-content: center; }}
-.mark {{ font-family: {DISPLAY}; font-size: 200px; font-weight: 900; letter-spacing: -0.045em;
-  background: linear-gradient(96deg, #22d3c5, #f7f9ff 34%, #8b5cf6 72%, #ffc247);
-  background-clip: text; color: rgba(0,0,0,0); }}
-.rule {{ width: 0px; height: 3px; border-radius: 2px; margin: 24px 0 20px 0;
-  background: linear-gradient(90deg, #22d3c5, #8b5cf6);
-  animation: grow 1s cubic-bezier(0.16,1,0.3,1) 0.5s both; }}
-.sub {{ font-family: {MONO}; font-size: 20px; letter-spacing: 0.42em; color: #f7f9ff; }}
+.mark {{ font-family: {DISPLAY}; font-size: 190px; font-weight: 900; letter-spacing: -0.045em;
+  color: {INK}; }}
+.mark em {{ font-style: normal; color: {ACCENT}; }}
+.rule {{ width: 0px; height: 3px; border-radius: 2px; margin: 26px 0 22px 0;
+  background: {ACCENT};
+  animation: grow 0.9s cubic-bezier(0.16,1,0.3,1) 0.45s both; }}
+.sub {{ font-family: {MONO}; font-size: 20px; letter-spacing: 0.42em; color: {MUTED}; }}
 @keyframes grow {{ from {{ width: 0px }} to {{ width: 620px }} }}
 "#
     );
     let markup = r#"
 <div class="stack">
-  <div class="mark">FUNCUT</div>
+  <div class="mark">FUNCUT<em>.</em></div>
   <div class="rule"></div>
   <div class="sub">MOTION</div>
 </div>
@@ -532,14 +555,14 @@ pub fn pull_quote() -> Comp {
     let css = format!(
         r#"
 .sheet {{ position: absolute; left: 180px; width: 1560px; top: 300px;
-  display: flex; flex-direction: column; gap: 26px; padding: 44px 48px 48px 48px;
-  border-radius: 26px; background: linear-gradient(150deg, rgba(9,12,20,0.82), rgba(20,14,32,0.74));
-  border: 1px solid rgba(247,249,255,0.12); backdrop-filter: blur(20px) saturate(1.2);
-  box-shadow: 0 30px 70px rgba(0,0,0,0.55); }}
+  display: flex; flex-direction: column; gap: 24px; padding: 44px 48px 48px 48px;
+  border-radius: 16px; background: rgba(12,13,16,0.92);
+  border: 1px solid rgba(244,241,234,0.10); border-left: 4px solid {ACCENT};
+  box-shadow: 0 12px 32px rgba(0,0,0,0.35); }}
 .q {{ font-family: {DISPLAY}; font-size: 66px; font-weight: 700; line-height: 1.14;
-  letter-spacing: -0.02em; color: #f7f9ff; }}
-.a {{ font-family: {MONO}; font-size: 19px; letter-spacing: 0.22em; color: #22d3c5; }}
-.marks {{ font-family: {DISPLAY}; font-size: 96px; font-weight: 900; color: rgba(34,211,197,0.55); line-height: 1; }}
+  letter-spacing: -0.02em; color: {INK}; }}
+.a {{ font-family: {MONO}; font-size: 18px; letter-spacing: 0.22em; color: {MUTED}; }}
+.marks {{ font-family: {DISPLAY}; font-size: 96px; font-weight: 900; color: {ACCENT}; line-height: 1; }}
 "#
     );
     let markup = r#"
@@ -582,15 +605,18 @@ pub fn pull_quote() -> Comp {
     built
 }
 
-/// A chapter chip: a number, a label and a rule.
+/// A chapter chip: a number, a label and a rule - the label carries it,
+/// so the label is display-size and the number is quiet gold mono.
 pub fn chapter_chip() -> Comp {
     let css = format!(
         r#"
-.chap {{ position: absolute; left: 120px; top: 96px; display: flex; flex-direction: column; gap: 10px; }}
-.num {{ font-family: {MONO}; font-size: 17px; letter-spacing: 0.3em; color: rgba(34,211,197,0.95); }}
-.lab {{ font-family: {DISPLAY}; font-size: 30px; font-weight: 600; color: rgba(247,249,255,0.9); }}
-.ul {{ width: 0px; height: 2px; background: #22d3c5; animation: ul 1s cubic-bezier(0.16,1,0.3,1) 0.4s both; }}
-@keyframes ul {{ from {{ width: 0px }} to {{ width: 210px }} }}
+.chap {{ position: absolute; left: 120px; top: 88px; display: flex; flex-direction: column; gap: 12px; }}
+.num {{ font-family: {MONO}; font-size: 17px; letter-spacing: 0.3em; color: {ACCENT};
+  text-shadow: 0 2px 10px rgba(0,0,0,0.5); }}
+.lab {{ font-family: {DISPLAY}; font-size: 46px; font-weight: 800; letter-spacing: -0.015em; color: {INK};
+  text-shadow: 0 2px 14px rgba(0,0,0,0.55); }}
+.ul {{ width: 0px; height: 3px; background: {ACCENT}; animation: ul 0.8s cubic-bezier(0.16,1,0.3,1) 0.4s both; }}
+@keyframes ul {{ from {{ width: 0px }} to {{ width: 260px }} }}
 "#
     );
     let markup = r#"
@@ -627,28 +653,32 @@ pub fn chapter_chip() -> Comp {
     built
 }
 
-/// A subscribe card: the button that pulses, the line that asks.
+/// A subscribe card: typographic - a big ask, one accent word with a rule
+/// that draws under it, an outlined button that settles once. No glow, no
+/// pulse: the ask is the design.
 pub fn subscribe_card() -> Comp {
     let css = format!(
         r#"
 .wrap {{ position: absolute; inset: 0; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 30px; }}
-.ask {{ font-family: {DISPLAY}; font-size: 84px; font-weight: 900; letter-spacing: -0.035em;
-  color: #f7f9ff; }}
-.ask em {{ font-style: normal; color: #ff2d55; }}
+  align-items: center; justify-content: center; gap: 34px; }}
+.ask {{ font-family: {DISPLAY}; font-size: 88px; font-weight: 800; letter-spacing: -0.035em;
+  color: {INK}; }}
+.ask em {{ font-style: normal; color: {ACCENT}; }}
+.ul {{ width: 260px; height: 5px; border-radius: 3px; background: {ACCENT}; transform-origin: left center;
+  animation: draw 0.7s cubic-bezier(0.16,1,0.3,1) 0.55s both; }}
 .btn {{ display: flex; flex-direction: row; align-items: center; gap: 14px;
-  padding: 20px 38px; border-radius: 999px; background: #ff2d55;
-  box-shadow: 0 18px 50px rgba(255,45,85,0.45);
-  animation: breathe 2.4s ease-in-out infinite; }}
-.dot {{ width: 12px; height: 12px; border-radius: 999px; background: #ffffff; }}
-.txt {{ font-family: {MONO}; font-size: 22px; font-weight: 700; letter-spacing: 0.2em; color: #ffffff; }}
-.sub {{ font-family: {MONO}; font-size: 17px; letter-spacing: 0.24em; color: #9fb0bf; }}
-@keyframes breathe {{ from {{ transform: scale(1) }} 50% {{ transform: scale(1.055) }} to {{ transform: scale(1) }} }}
+  padding: 18px 36px; border-radius: 999px; background: rgba(12,13,16,0.92);
+  border: 1.5px solid {ACCENT}; }}
+.dot {{ width: 10px; height: 10px; border-radius: 999px; background: {ACCENT}; }}
+.txt {{ font-family: {MONO}; font-size: 21px; font-weight: 700; letter-spacing: 0.2em; color: {INK}; }}
+.sub {{ font-family: {MONO}; font-size: 16px; letter-spacing: 0.24em; color: {MUTED}; }}
+@keyframes draw {{ from {{ transform: scaleX(0) }} to {{ transform: scaleX(1) }} }}
 "#
     );
     let markup = r#"
 <div class="wrap">
   <div class="ask">One <em>tap</em> away.</div>
+  <div class="ul"></div>
   <div class="btn"><div class="dot"></div><div class="txt">SUBSCRIBE</div></div>
   <div class="sub">NEW EPISODE EVERY FRIDAY</div>
 </div>
@@ -695,7 +725,7 @@ pub fn terminal_reveal() -> Comp {
 .title {{ font-family: {MONO}; font-size: 15px; letter-spacing: 0.16em; color: #6b7a89; margin-left: 12px; }}
 .body {{ display: flex; flex-direction: column; gap: 12px; padding: 30px 34px 38px 34px; }}
 .line {{ font-family: {MONO}; font-size: 26px; color: #d7e2ec; white-space: nowrap; }}
-.p {{ color: #22d3c5; }}
+.p {{ color: {ACCENT}; }}
 .ok {{ color: #4ade80; }}
 .dim {{ color: #6b7a89; }}
 .l1 {{ animation: type 0.5s steps(24) 0.15s both; }}
@@ -748,13 +778,14 @@ pub fn terminal_reveal() -> Comp {
     built
 }
 
-/// A bar chart that builds on: four bars, a baseline, and labels.
+/// A bar chart that builds on: four bars, a baseline, and labels. One
+/// accent at falling weights - the eye ranks the bars without a legend.
 pub fn bar_chart() -> Comp {
     let bars = [
-        ("Linear light", 96.0, "#22d3c5", "0.20"),
-        ("Alpha PNG", 74.0, "#8b5cf6", "0.32"),
-        ("Spring keys", 58.0, "#ffc247", "0.44"),
-        ("Lottie", 41.0, "#fb7185", "0.56"),
+        ("Linear light", 96.0, ACCENT, "0.20"),
+        ("Alpha PNG", 74.0, "rgba(217,164,65,0.68)", "0.32"),
+        ("Spring keys", 58.0, "rgba(217,164,65,0.46)", "0.44"),
+        ("Lottie", 41.0, "rgba(217,164,65,0.28)", "0.56"),
     ];
     let mut columns = String::new();
     for (label, pct, colour, delay) in bars {
@@ -767,14 +798,14 @@ pub fn bar_chart() -> Comp {
 .sheet {{ position: absolute; left: 160px; width: 1600px; top: 180px; height: 720px;
   display: flex; flex-direction: column; gap: 18px; }}
 .head {{ display: flex; flex-direction: row; align-items: baseline; gap: 16px; }}
-.t {{ font-family: {DISPLAY}; font-size: 46px; font-weight: 800; color: #f7f9ff; }}
-.s {{ font-family: {MONO}; font-size: 16px; letter-spacing: 0.22em; color: #9fb0bf; }}
+.t {{ font-family: {DISPLAY}; font-size: 46px; font-weight: 800; color: {INK}; }}
+.s {{ font-family: {MONO}; font-size: 16px; letter-spacing: 0.22em; color: {MUTED}; }}
 .plot {{ position: relative; flex: 1; display: flex; flex-direction: row; align-items: flex-end;
-  gap: 56px; padding: 0 20px; border-bottom: 2px solid rgba(247,249,255,0.16); }}
+  gap: 56px; padding: 0 20px; border-bottom: 2px solid rgba(244,241,234,0.16); }}
 .col {{ flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; }}
 .bar {{ width: 100%; border-radius: 10px 10px 0 0; transform-origin: bottom center;
   animation: rise 1s cubic-bezier(0.16,1,0.3,1) both; }}
-.lab {{ font-family: {MONO}; font-size: 17px; letter-spacing: 0.12em; color: #9fb0bf;
+.lab {{ font-family: {MONO}; font-size: 17px; letter-spacing: 0.12em; color: {MUTED};
   padding-top: 14px; }}
 @keyframes rise {{ from {{ transform: scaleY(0) }} to {{ transform: scaleY(1) }} }}
 "#
@@ -812,18 +843,18 @@ pub fn split_compare() -> Comp {
     let css = format!(
         r#"
 .frame {{ position: absolute; left: 160px; width: 1600px; top: 200px; height: 680px;
-  border-radius: 22px; overflow: hidden; display: flex; flex-direction: row; }}
+  border-radius: 14px; overflow: hidden; display: flex; flex-direction: row; }}
 .side {{ flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }}
-.before {{ background: linear-gradient(150deg, #241a16, #3a2320); }}
-.after {{ background: linear-gradient(150deg, #0d2a2a, #14343a); }}
+.before {{ background: linear-gradient(150deg, #1c1a17, #26221d); }}
+.after {{ background: linear-gradient(150deg, #241d10, #2e2412); }}
 .tag {{ font-family: {MONO}; font-size: 18px; letter-spacing: 0.3em; }}
-.tag.b {{ color: #e7a795; }}
-.tag.a {{ color: #7fe3d6; }}
-.big {{ font-family: {DISPLAY}; font-size: 58px; font-weight: 800; color: #f7f9ff; letter-spacing: -0.02em; }}
-.wipe {{ position: absolute; left: 50%; top: 200px; width: 4px; height: 680px; background: #f7f9ff;
-  box-shadow: 0 0 30px rgba(247,249,255,0.6); animation: wipe 1.4s cubic-bezier(0.16,1,0.3,1) 0.3s both; }}
+.tag.b {{ color: {MUTED}; }}
+.tag.a {{ color: {ACCENT}; }}
+.big {{ font-family: {DISPLAY}; font-size: 58px; font-weight: 800; color: {INK}; letter-spacing: -0.02em; }}
+.wipe {{ position: absolute; left: 50%; top: 200px; width: 4px; height: 680px; background: {ACCENT};
+  animation: wipe 1.4s cubic-bezier(0.16,1,0.3,1) 0.3s both; }}
 .knob {{ position: absolute; left: 50%; top: 520px; width: 54px; height: 54px; border-radius: 999px;
-  background: #f7f9ff; margin-left: -27px; }}
+  background: {INK}; margin-left: -27px; }}
 @keyframes wipe {{ from {{ left: 12%; opacity: 0 }} to {{ left: 50%; opacity: 1 }} }}
 "#
     );
@@ -865,18 +896,19 @@ pub fn split_compare() -> Comp {
     built
 }
 
-/// A number that counts up, with its label and a rule.
+/// A number that counts up, with its label and a rule. Solid ink - the
+/// number is the picture, and gradient text was the tell of a template.
 pub fn counting_number() -> Comp {
     let css = format!(
         r#"
 .wrap {{ position: absolute; inset: 0; display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 8px; }}
-.num {{ font-family: {DISPLAY}; font-size: 260px; font-weight: 900; letter-spacing: -0.05em;
-  line-height: 0.95; background: linear-gradient(96deg, #22d3c5, #f7f9ff 55%, #8b5cf6);
-  background-clip: text; color: rgba(0,0,0,0); }}
-.lab {{ font-family: {MONO}; font-size: 20px; letter-spacing: 0.3em; color: #9fb0bf; }}
-.rule {{ width: 260px; height: 3px; border-radius: 2px; background: #22d3c5; margin-top: 18px;
-  transform-origin: left center; animation: grow 1.1s cubic-bezier(0.16,1,0.3,1) 0.35s both; }}
+.num {{ font-family: {DISPLAY}; font-size: 270px; font-weight: 800; letter-spacing: -0.05em;
+  line-height: 0.95; color: {INK}; text-shadow: 0 4px 24px rgba(0,0,0,0.5); }}
+.lab {{ font-family: {MONO}; font-size: 20px; letter-spacing: 0.3em; color: {MUTED};
+  text-shadow: 0 2px 10px rgba(0,0,0,0.5); }}
+.rule {{ width: 260px; height: 3px; border-radius: 2px; background: {ACCENT}; margin-top: 18px;
+  transform-origin: left center; animation: grow 1.0s cubic-bezier(0.16,1,0.3,1) 0.35s both; }}
 @keyframes grow {{ from {{ transform: scaleX(0) }} to {{ transform: scaleX(1) }} }}
 "#
     );
@@ -922,14 +954,14 @@ pub fn counting_number() -> Comp {
 /// also how the motion is kept cheap.
 pub fn mesh_backdrop() -> Comp {
     let css = r#"
-.base { position: absolute; inset: 0; background: linear-gradient(150deg, #06070b, #0a0c14 60%, #06070b); }
-.g1 { position: absolute; inset: 0; background: radial-gradient(circle at 24% 28%, #123a3a, #00000000);
+.base { position: absolute; inset: 0; background: linear-gradient(150deg, #0a0a0c, #0e0d0b 60%, #0a0a0c); }
+.g1 { position: absolute; inset: 0; background: radial-gradient(circle at 24% 28%, #2e2410, #00000000);
   animation: drift1 24s ease-in-out infinite; }
-.g2 { position: absolute; inset: 0; background: radial-gradient(circle at 76% 30%, #241a46, #00000000);
+.g2 { position: absolute; inset: 0; background: radial-gradient(circle at 76% 30%, #1a1c22, #00000000);
   animation: drift2 30s ease-in-out infinite; }
-.g3 { position: absolute; inset: 0; background: radial-gradient(circle at 52% 86%, #3a2418, #00000000);
+.g3 { position: absolute; inset: 0; background: radial-gradient(circle at 52% 86%, #241c0e, #00000000);
   animation: drift1 27s ease-in-out infinite; }
-.line { position: absolute; background: rgba(247,249,255,0.06); }
+.line { position: absolute; background: rgba(244,241,234,0.05); }
 .vig { position: absolute; inset: 0;
   background: radial-gradient(ellipse at 50% 50%, rgba(0,0,0,0) 38%, rgba(0,0,0,0.72) 100%); }
 @keyframes drift1 { from { transform: translate(0px, 0px) } 50% { transform: translate(70px, 40px) } to { transform: translate(0px, 0px) } }

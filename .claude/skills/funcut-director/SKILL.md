@@ -58,8 +58,15 @@ with `action: "status"` (and `setup` once on a low-end machine) so the later
 critic can actually see.
 
 **Phase 1 — Understand the material.** If there is narration to make:
-`tts_generate` (voice, speed; WAV lands in the project, returned in the job's
-status `output`) → `media_import` it. If narration exists as audio/video,
+`tts_generate` with a `delivery` matched to the brief's `emotionalArc` —
+`urgent` for the hook, `calm`/`awed` for the reveal, `authoritative` or
+`conversational` for the CTA. Delivery sets BOTH speaking rate and the
+breath between sentences, so the read has an arc instead of one flat pace;
+`speed` and `pauses` (0–1) override the preset when a line needs it. For a
+long script, generate one WAV per emotional section with its own delivery
+and butt them together — a single monotone take is the most common reason
+a faceless video sounds cheap. The WAV lands in the project, returned in
+the job's status `output` → `media_import` it. If narration exists as audio/video,
 `transcribe` it with an ISO language hint when known; the default `base.en`
 model is English-only, so choose a multilingual model for non-English. Each
 segment returns with its `words` — MEASURED `{text,start,end}` triples from

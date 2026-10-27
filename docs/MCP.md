@@ -116,6 +116,11 @@ carries its JSON result in the status's `output`:
   audio folder; `output` is its path and length, ready for `media_import`.
   Voices are the same ids the Settings > Speech page shows (Kokoro 0-52);
   a missing model is one `models_download` away, window or no window.
+  `delivery` (neutral, conversational, urgent, excited, calm, awed,
+  somber, authoritative) sets rate AND sentence-breath for a paced read;
+  `speed` / `pauses` (0–1) override it, and `steps` (1–50) is Pocket's
+  quality dial. These are the two dials the shipped voices actually honour —
+  it is pacing, not a claimed emotion embedding.
 - `models_list` - every voice (tts) and transcriber (whisper) model this
   build knows, with sizes and which are on disk; the ids are what
   `models_download` takes.

@@ -705,9 +705,19 @@ impl Api {
                 voice,
                 speed,
                 model,
-            } => Ok(Reply::Started(
-                self.speech_generate(&project, &text, voice, speed, model)?,
-            )),
+                delivery,
+                pauses,
+                steps,
+            } => Ok(Reply::Started(self.speech_generate(
+                &project,
+                &text,
+                voice,
+                speed,
+                model,
+                delivery.as_deref(),
+                pauses,
+                steps,
+            )?)),
             #[cfg(not(feature = "speech"))]
             Request::SpeechGenerate { .. } => Err(ApiError::new(
                 ErrorCode::Refused,

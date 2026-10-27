@@ -713,7 +713,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "tts_generate",
             "Speak a voiceover",
-            "Speaks `text` with a `voice` as a WAV in an open project's own audio folder - a voiceover in one call, ready for media_import. Wait with analysis_wait; the status's `output` is the WAV's path and length. Voices are the Settings > Speech ids (Kokoro 0-52); a missing model is fetched headless with models_download.",
+            "Speaks `text` with a `voice` as a WAV in an open project's own audio folder - a voiceover in one call, ready for media_import. Wait with analysis_wait; the status's `output` is the WAV's path and length. Voices are the Settings > Speech ids (Kokoro 0-52); a missing model is fetched headless with models_download. DELIVERY: give `delivery` (neutral, conversational, urgent, excited, calm, awed, somber, authoritative) to set a director's pacing - rate AND the breath between sentences - instead of a flat read; `speed` overrides its rate and `pauses` (0-1) overrides its breath. `steps` (1-50) is Pocket's quality dial. Match the delivery to the emotionalArc: urgent for the hook, calm or awed for the reveal, authoritative or warm for the CTA.",
             "speech.generate",
             Raw,
         ),

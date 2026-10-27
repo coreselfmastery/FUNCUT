@@ -64,6 +64,7 @@ impl Api {
 
     /// [`crate::Request::SpeechGenerate`]: a WAV of the words, in the
     /// project's own audio folder, on a job of its own.
+    #[allow(clippy::too_many_arguments)]
     pub fn speech_generate(
         &mut self,
         project: &str,
@@ -71,6 +72,9 @@ impl Api {
         voice: i32,
         speed: Option<f64>,
         model: Option<String>,
+        delivery: Option<&str>,
+        pauses: Option<f64>,
+        steps: Option<i32>,
     ) -> Result<Started, ApiError> {
         self.session(project)?;
         self.writable(project)?;
@@ -91,14 +95,38 @@ impl Api {
                 "speed must be a finite number",
             ));
         }
+        if pauses.is_some_and(|value| !value.is_finite() || !(0.0..=1.0).contains(&value)) {
+            return Err(ApiError::new(
+                ErrorCode::Invalid,
+                "pauses must be a finite number from 0 to 1",
+            ));
+        }
+        if steps.is_some_and(|value| !(1..=50).contains(&value)) {
+            return Err(ApiError::new(
+                ErrorCode::Invalid,
+                "steps must be between 1 and 50",
+            ));
+        }
+        let (delivery_speed, delivery_pauses) = match delivery {
+            Some(name) => delivery_preset(name).ok_or_else(|| {
+                ApiError::new(
+                    ErrorCode::Invalid,
+                    format!(
+                        "unknown delivery {name:?}; choose from neutral, conversational, \
+                         urgent, excited, calm, awed, somber, authoritative"
+                    ),
+                )
+            })?,
+            None => (1.0_f32, None),
+        };
         let request = concat_speech::tts::SpeakRequest {
             model_id: model.unwrap_or_else(|| DEFAULT_SPEECH.to_owned()),
             voice,
             reference: None,
             text: text.to_owned(),
-            speed: speed.unwrap_or(1.0) as f32,
-            pauses: None,
-            steps: None,
+            speed: speed.map_or(delivery_speed, |value| value as f32),
+            pauses: pauses.map(|value| value as f32).or(delivery_pauses),
+            steps,
             project: project.to_owned(),
         };
         self.begin_speech(project, Work::Generate { request })
@@ -295,5 +323,62 @@ impl SpeechJob {
             }
         };
         (self.events)(event);
+    }
+}
+
+/// The delivery presets: a speaking rate and a sentence-breath scale.
+/// These are the two dials the shipped TTS families actually honour, so a
+/// director can name a feeling without pretending the engine has an
+/// emotion embedding. Explicit `speed` / `pauses` always win over these.
+///
+/// Rate is a multiplier on the voice's natural pace; breath is sherpa's
+/// 0..1 silence scale (0.2 is the engine's own).
+fn delivery_preset(name: &str) -> Option<(f32, Option<f32>)> {
+    let name = name.trim().to_ascii_lowercase();
+    Some(match name.as_str() {
+        "neutral" => (1.0, None),
+        "conversational" => (1.04, Some(0.22)),
+        "urgent" => (1.14, Some(0.05)),
+        "excited" => (1.12, Some(0.12)),
+        "calm" => (0.92, Some(0.42)),
+        "awed" => (0.95, Some(0.35)),
+        "somber" => (0.88, Some(0.5)),
+        "authoritative" => (0.96, Some(0.28)),
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::delivery_preset;
+
+    #[test]
+    fn delivery_names_a_pacing_not_a_fake_emotion() {
+        assert_eq!(delivery_preset("neutral"), Some((1.0, None)));
+        let (urgent_speed, urgent_breath) = delivery_preset("URGENT").expect("urgent");
+        let (calm_speed, calm_breath) = delivery_preset(" calm ").expect("calm");
+        assert!(urgent_speed > 1.1 && calm_speed < 1.0);
+        assert!(urgent_breath.expect("urgent breath") < calm_breath.expect("calm breath"));
+        assert_eq!(delivery_preset("melodramatic"), None);
+    }
+
+    #[test]
+    fn every_delivery_stays_in_the_engine_range() {
+        for name in [
+            "neutral",
+            "conversational",
+            "urgent",
+            "excited",
+            "calm",
+            "awed",
+            "somber",
+            "authoritative",
+        ] {
+            let (speed, breath) = delivery_preset(name).unwrap_or_else(|| panic!("{name}"));
+            assert!((0.7..=1.3).contains(&speed), "{name} speed {speed}");
+            if let Some(p) = breath {
+                assert!((0.0..=1.0).contains(&p), "{name} breath {p}");
+            }
+        }
     }
 }

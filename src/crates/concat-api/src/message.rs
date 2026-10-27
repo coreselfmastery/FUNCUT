@@ -730,6 +730,21 @@ pub enum Request {
         /// The voice model, "kokoro-int8-multi-lang-v1_0" when absent.
         #[serde(default)]
         model: Option<String>,
+        /// Delivery / emotional style. One of neutral, conversational,
+        /// urgent, excited, calm, awed, somber, authoritative. Each sets a
+        /// speaking rate and a breath length between sentences; an explicit
+        /// `speed` or `pauses` wins over the preset. Absent reads naturally.
+        #[serde(default)]
+        delivery: Option<String>,
+        /// Breath between sentences as sherpa scales it: 0 runs sentences
+        /// together, 1 is a long pause, 0.2 is the engine's own. Overrides
+        /// `delivery`. Kokoro and Pocket honour it.
+        #[serde(default)]
+        pauses: Option<f64>,
+        /// Pocket's flow-matching steps: more is a cleaner voice and a
+        /// longer wait, 5 is the engine's own. Ignored by other families.
+        #[serde(default)]
+        steps: Option<i32>,
     },
     /// The speech and transcriber models this build knows, with which are
     /// on disk. The ids are what `models.download` takes.

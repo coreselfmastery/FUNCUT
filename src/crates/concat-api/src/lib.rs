@@ -2102,7 +2102,10 @@ impl Api {
     }
 
     /// [`Request::PreviewFrame`] with an output: the paused monitor's true
-    /// frame, to a file.
+    /// frame, to a file. A frame asked for small - a thumbnail, a page
+    /// of an edit - is read through the proxies where the media has
+    /// them, whole, the same picture from the smaller file; a frame at
+    /// the timeline's own size stays on the originals.
     pub fn frame(
         &mut self,
         path: &str,
@@ -2120,7 +2123,8 @@ impl Api {
         })
     }
 
-    /// [`Request::PreviewFrame`] without one: the same frame, inline.
+    /// [`Request::PreviewFrame`] without one: the same frame, inline,
+    /// small frames included in the proxies' service.
     pub fn picture(
         &mut self,
         path: &str,
@@ -2151,6 +2155,15 @@ impl Api {
         let (width, height) = checked_size(width, height)?;
         let mut clips = session.flattened_clips();
         clips.extend(self.title_clips(session, width, height));
+        // A frame asked for small is read through the proxies where the
+        // media has them: every copy is at least 960 along its long
+        // side, so a frame no longer than that is served whole - the
+        // same picture, from the smaller file, which is what a caller
+        // paging through an edit wants. A frame at the timeline's own
+        // size stays on the originals: the paused monitor's frame is
+        // the true one, and a proxy drawn at full size is a blur.
+        let proxy =
+            size.is_some_and(|(width, height)| concat_host::proxy::serves_frame(width, height));
         let pixels = self
             .monitor
             .frame(
@@ -2161,7 +2174,7 @@ impl Api {
                     width,
                     height,
                     moving: false,
-                    proxy: false,
+                    proxy,
                     color_space: session.video().color_space,
                 },
             )

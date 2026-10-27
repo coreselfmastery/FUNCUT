@@ -8,7 +8,8 @@
 //! A 4K file decodes at a few frames a second on a laptop without
 //! hardware decode; its quarter-size copy decodes at dozens. So a file
 //! larger than HD gets one, written on the scheduler's proxy lane - one
-//! at a time, on two threads, so the machine stays usable meanwhile - and
+//! at a time, or two on a machine with workers to spare, each on two
+//! threads, so the machine stays usable meanwhile - and
 //! adopted into the reader pool as the file's stand-in. A request that
 //! asks for the proxy reads it; the paused monitor and the export never
 //! do, and see the original. The copy is named after the file's path,
@@ -102,6 +103,17 @@ pub fn size_for(width: u32, height: u32) -> (u32, u32) {
     let scale = f64::from(target) / f64::from(long);
     let side = |px: u32| (((f64::from(px) * scale).round() as u32) & !1).max(2);
     (side(width), side(height))
+}
+
+/// Whether a frame `width` by `height` is small enough that every proxy
+/// can serve it whole: a proxy's long side is at least
+/// [`SHORTEST_LONG_SIDE`] - a file smaller than that never gets one - so
+/// a frame no longer than this reads each clip's working copy without
+/// upscaling it. The same picture, from the smaller file: what a caller
+/// paging through an edit wants to read fast, and what the API's small
+/// preview frames are served from where the media has its copy.
+pub fn serves_frame(width: u32, height: u32) -> bool {
+    width.max(height) <= SHORTEST_LONG_SIDE
 }
 
 /// Where the proxy of `media` lives under `project`: named by the file's
@@ -452,6 +464,18 @@ mod tests {
         let (w, h) = size_for(3841, 2161);
         assert!(w % 2 == 0 && h % 2 == 0);
         assert_eq!(size_for(1, 1), (2, 2));
+    }
+
+    /// A frame no longer than a proxy's floor is served whole by every
+    /// copy there is; a frame at the timeline's own size is not, and
+    /// stays on the originals.
+    #[test]
+    fn a_frame_no_longer_than_a_proxy_is_served_whole() {
+        assert!(serves_frame(960, 540));
+        assert!(serves_frame(540, 960), "a tall frame keeps the service");
+        assert!(serves_frame(480, 270));
+        assert!(!serves_frame(1920, 1080));
+        assert!(!serves_frame(1080, 1920));
     }
 
     /// A proxy written from a file larger than HD is a quarter of it, is

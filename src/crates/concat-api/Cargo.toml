@@ -41,7 +41,7 @@ speech = ["dep:concat-speech"]
 
 [dev-dependencies]
 tempfile = "3"
-# The proxy test writes a video larger than HD, the way concat_host's own
+# The proxy test writes a full-HD video, the way concat_host's own
 # proxy tests do: the one honest way to see the working copy written.
 concat-media.workspace = true
 

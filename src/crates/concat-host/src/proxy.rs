@@ -7,7 +7,7 @@
 //!
 //! A 4K file decodes at a few frames a second on a laptop without
 //! hardware decode; its quarter-size copy decodes at dozens. So a file
-//! larger than HD gets one, written on the scheduler's proxy lane - one
+//! as large as HD gets one, written on the scheduler's proxy lane - one
 //! at a time, or two on a machine with workers to spare, each on two
 //! threads, so the machine stays usable meanwhile - and
 //! adopted into the reader pool as the file's stand-in. A request that
@@ -30,9 +30,12 @@ use concat_core::frame::Signal;
 use concat_media::decode::{DecodeOptions, Decoder, FrameSource};
 use concat_media::{ColorRange, EncodeOptions, Encoder, FrameSink, Priority, RateMode, VideoCodec};
 
-/// A file with more pixels than this gets a proxy: anything larger than
-/// full HD.
-const PIXELS_WITHOUT_PROXY: u64 = 1920 * 1080;
+/// A file with at least this many pixels gets a proxy: full HD and
+/// anything larger. Full HD included - the most common frame there is
+/// is exactly the size a working copy pays for itself at: an agent's
+/// preview, at 960 on the long side, reads the copy instead of the
+/// original, and so does Half-quality playback.
+const PIXELS_PROXIED_FROM: u64 = 1920 * 1080;
 /// The proxy's long side is the original's divided by this, and never
 /// shorter than [`SHORTEST_LONG_SIDE`].
 const DIVISOR: u32 = 4;
@@ -90,7 +93,7 @@ impl ProxyCodec {
 
 /// Whether a `width` by `height` file is worth a proxy.
 pub fn wanted(width: u32, height: u32) -> bool {
-    u64::from(width) * u64::from(height) > PIXELS_WITHOUT_PROXY
+    u64::from(width) * u64::from(height) >= PIXELS_PROXIED_FROM
 }
 
 /// The proxy's size for a `width` by `height` original: the long side a
@@ -443,8 +446,12 @@ mod tests {
     }
 
     #[test]
-    fn only_files_larger_than_hd_get_a_proxy() {
-        assert!(!wanted(1920, 1080));
+    fn full_hd_files_get_a_proxy_too() {
+        // Full HD itself: the most common frame there is reads its
+        // quarter-size copy at Half and Quarter, and an agent's 960-side
+        // preview comes from it. Below HD, the original is already light.
+        assert!(wanted(1920, 1080));
+        assert!(wanted(1080, 1920));
         assert!(!wanted(1280, 720));
         assert!(wanted(3840, 2160));
         assert!(wanted(2560, 1440));
@@ -478,7 +485,7 @@ mod tests {
         assert!(!serves_frame(1080, 1920));
     }
 
-    /// A proxy written from a file larger than HD is a quarter of it, is
+    /// A proxy written from a file as large as HD is a quarter of it, is
     /// adopted by the pool, and serves a moving request while the paused
     /// one still reads the original.
     #[test]

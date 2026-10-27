@@ -811,7 +811,7 @@ impl Api {
         self.sessions.insert(key_of(&info.path), session);
         // The project's media is seen to at once, the way a window's
         // open sees to it: the copies already written are adopted into
-        // the pool, the videos larger than HD without one get theirs
+        // the pool, the videos as large as HD without one get theirs
         // queued, and the copies of media the project no longer holds
         // go.
         self.ensure_proxies(&info.path);
@@ -878,7 +878,7 @@ impl Api {
         self.apply(path, Command::AddMedia { item })
     }
 
-    /// Sees to it that every video in an open project larger than HD
+    /// Sees to it that every video in an open project as large as HD
     /// has a proxy, and that the ones already written are what the
     /// reader pool reads: the same `concat_host::proxy::ensure` the
     /// window's art pass asks, for the editor without a window. An
@@ -2681,8 +2681,8 @@ mod tests {
 
     /// An agent's import gets its proxy without a window to ask for one:
     /// the copy is written on the proxy lane and adopted into the pool
-    /// the frames are read through, while a video at HD or under - the
-    /// size every proxy is beneath - never gets one. A project reopened
+    /// the frames are read through, while a video below HD - under the
+    /// size a proxy starts at - never gets one. A project reopened
     /// finds the copy again and sweeps nothing it holds.
     #[test]
     fn an_agents_import_gets_its_proxy() {
@@ -2708,7 +2708,7 @@ mod tests {
         );
         assert!(
             concat_host::proxy::existing(project_dir, &small, None).is_none(),
-            "a file at HD or under never gets one"
+            "a file below HD never gets one"
         );
         assert!(
             concat_host::scheduler()

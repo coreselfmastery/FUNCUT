@@ -61,7 +61,7 @@ pub struct Preferences {
     /// it is put. Off by default: a click past the last clip lands there, so
     /// a clip can be dropped at the playhead beyond everything else.
     pub playhead_stops_at_end: bool,
-    /// Proxies: a file larger than HD gets a smaller copy written in the
+    /// Proxies: a file as large as HD gets a smaller copy written in the
     /// background, and playback at Half and Quarter reads that copy.
     /// `None` is on - the working copy is what keeps a big edit following
     /// the pointer, and the one who would rather not spend the background

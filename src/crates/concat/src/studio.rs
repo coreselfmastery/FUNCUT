@@ -3487,7 +3487,7 @@ impl Studio {
         };
         let project_path = session.path().to_owned();
         // With proxies on - the default on a desk, and off only where
-        // Settings said so or on a phone - a file larger than HD gets a
+        // Settings said so or on a phone - a file as large as HD gets a
         // proxy for playback and the filmstrips, written once on the
         // scheduler's proxy lane; see concat_host::proxy. Asked once per
         // file per project. Off, nothing is written.

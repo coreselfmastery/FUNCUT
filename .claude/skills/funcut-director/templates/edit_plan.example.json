@@ -1,17 +1,46 @@
 {
+  "creativeBrief": {
+    "audience": "curious 16-24 year olds who like \"wait, really?\" science facts",
+    "platform": "tiktok / shorts, 9:16, often watched with sound off",
+    "goal": "make them tell one person that the sea is made of mountains",
+    "thesis": "the ocean's salt is the accumulated leftovers of eroded rock, not something the sea was born with",
+    "curiosityGap": "why is every drop of sea water a mountain that already dissolved?",
+    "payoff": "rain dissolves rock, rivers carry the ions down, and the sea keeps the salt when water evaporates",
+    "emotionalArc": [
+      "disbelief",
+      "curiosity",
+      "dawning understanding",
+      "delight"
+    ],
+    "referenceStyle": "Kurzgesagt scale shifts and restrained palette; Veritasium reveal structure",
+    "tone": "bright, conspiratorial, precise",
+    "avoid": "generic beaker stock footage, lens flares, floating question marks"
+  },
   "title": "Why the Sea Is Salty",
   "aspect": "9:16",
   "mode": "reel",
   "niche": "science",
   "sections": [
-    { "role": "hook", "start": 0.0, "end": 4.0 },
-    { "role": "body", "start": 4.0, "end": 18.6 },
-    { "role": "cta", "start": 18.6, "end": 24.0 }
+    {
+      "role": "hook",
+      "start": 0.0,
+      "end": 3.0
+    },
+    {
+      "role": "body",
+      "start": 3.0,
+      "end": 18.6
+    },
+    {
+      "role": "cta",
+      "start": 18.6,
+      "end": 24.0
+    }
   ],
   "segments": [
     {
       "start": 0.0,
-      "end": 4.0,
+      "end": 3.0,
       "spoken": "Every drop of ocean you've ever tasted was a mountain first.",
       "visual": {
         "type": "broll",
@@ -23,14 +52,23 @@
         "fit": "fill"
       },
       "cutType": "hard",
-      "in": { "anim": "punch", "seconds": 0.15 },
-      "out": { "anim": "none" },
-      "sfx": { "query": "Riser swell into impact", "peakAt": 0.0, "gainDb": -8 },
+      "in": {
+        "anim": "punch",
+        "seconds": 0.15
+      },
+      "out": {
+        "anim": "none"
+      },
+      "sfx": {
+        "query": "Riser swell into impact",
+        "peakAt": 0.0,
+        "gainDb": -8
+      },
       "transitionIn": null,
       "captions": true
     },
     {
-      "start": 4.0,
+      "start": 3.0,
       "end": 9.0,
       "spoken": "Rain falls on rock, dissolves its minerals, and rivers carry that salt to the sea.",
       "visual": {
@@ -43,10 +81,22 @@
         "fit": "fill"
       },
       "cutType": "match",
-      "in": { "anim": "dissolve", "seconds": 0.3 },
-      "out": { "anim": "none" },
-      "sfx": { "query": "Water flowing river ambience", "peakAt": 4.4, "gainDb": -12 },
-      "transitionIn": { "effect": "concat.dissolve", "seconds": 0.5 },
+      "in": {
+        "anim": "dissolve",
+        "seconds": 0.3
+      },
+      "out": {
+        "anim": "none"
+      },
+      "sfx": {
+        "query": "Water flowing river ambience",
+        "peakAt": 4.4,
+        "gainDb": -12
+      },
+      "transitionIn": {
+        "effect": "concat.dissolve",
+        "seconds": 0.5
+      },
       "captions": true
     },
     {
@@ -63,10 +113,22 @@
         "fit": "fill"
       },
       "cutType": "beat",
-      "in": { "anim": "pop", "seconds": 0.15 },
-      "out": { "anim": "none" },
-      "sfx": { "query": "Whoosh soft motion", "peakAt": 9.2, "gainDb": -14 },
-      "transitionIn": { "effect": "concat.light-leak-flash", "seconds": 0.4 },
+      "in": {
+        "anim": "pop",
+        "seconds": 0.15
+      },
+      "out": {
+        "anim": "none"
+      },
+      "sfx": {
+        "query": "Whoosh soft motion",
+        "peakAt": 9.2,
+        "gainDb": -14
+      },
+      "transitionIn": {
+        "effect": "concat.light-leak-flash",
+        "seconds": 0.4
+      },
       "captions": true
     },
     {
@@ -80,19 +142,43 @@
         "motion": "punch-zoom"
       },
       "cutType": "smash",
-      "in": { "anim": "punch", "seconds": 0.2 },
-      "out": { "anim": "fade", "seconds": 0.3 },
+      "in": {
+        "anim": "punch",
+        "seconds": 0.2
+      },
+      "out": {
+        "anim": "fade",
+        "seconds": 0.3
+      },
       "comp": {
         "preset": "funcut.ticker.count",
         "ops": [
-          { "op": "set-slot", "slot": "text", "text": "4,000,000,000" },
-          { "op": "set-slot", "slot": "label", "text": "YEARS OF RAIN" },
-          { "op": "retime", "seconds": 3.5 }
+          {
+            "op": "set-slot",
+            "slot": "text",
+            "text": "4,000,000,000"
+          },
+          {
+            "op": "set-slot",
+            "slot": "label",
+            "text": "YEARS OF RAIN"
+          },
+          {
+            "op": "retime",
+            "seconds": 3.5
+          }
         ],
         "hold": 3.5
       },
-      "sfx": { "query": "Impact deep boom", "peakAt": 14.6, "gainDb": -10 },
-      "transitionIn": { "effect": "concat.glitch-transition", "seconds": 0.3 },
+      "sfx": {
+        "query": "Impact deep boom",
+        "peakAt": 14.6,
+        "gainDb": -10
+      },
+      "transitionIn": {
+        "effect": "concat.glitch-transition",
+        "seconds": 0.3
+      },
       "captions": false
     },
     {
@@ -109,27 +195,76 @@
         "fit": "fill"
       },
       "cutType": "j",
-      "in": { "anim": "slide", "seconds": 0.25 },
-      "out": { "anim": "fade", "seconds": 0.4 },
+      "in": {
+        "anim": "slide",
+        "seconds": 0.25
+      },
+      "out": {
+        "anim": "fade",
+        "seconds": 0.4
+      },
       "comp": {
         "preset": "funcut.cta.subscribe",
         "ops": [
-          { "op": "set-slot", "slot": "text", "text": "One fact a day" },
-          { "op": "set-slot", "slot": "promise", "text": "The sea is full of them" }
+          {
+            "op": "set-slot",
+            "slot": "text",
+            "text": "One fact a day"
+          },
+          {
+            "op": "set-slot",
+            "slot": "promise",
+            "text": "The sea is full of them"
+          }
         ],
         "hold": 4.0
       },
-      "sfx": { "query": "Ocean waves ambience", "peakAt": 19.0, "gainDb": -14 },
-      "transitionIn": { "effect": "concat.dissolve", "seconds": 0.6 },
+      "sfx": {
+        "query": "Ocean waves ambience",
+        "peakAt": 19.0,
+        "gainDb": -14
+      },
+      "transitionIn": {
+        "effect": "concat.dissolve",
+        "seconds": 0.6
+      },
       "captions": true
     }
   ],
   "audio": {
-    "voiceover": { "source": "tts", "voice": 8, "speed": 1.0, "model": "kokoro-int8-multi-lang-v1_0" },
-    "bgm": { "query": "ambient documentary wonder", "source": "lofi", "trackId": null, "alignTo": "downbeats", "duckDb": -12 },
+    "voiceover": {
+      "source": "tts",
+      "voice": 8,
+      "speed": 1.0,
+      "model": "kokoro-int8-multi-lang-v1_0"
+    },
+    "bgm": {
+      "query": "ambient documentary wonder",
+      "source": "lofi",
+      "trackId": null,
+      "alignTo": "downbeats",
+      "duckDb": -12
+    },
     "sfxEnabled": true
   },
-  "captions": { "syncMode": "segment", "fontSize": 0.055, "fontWeight": 700, "offsetY": 0.32, "emphasisColor": "#7fd8ff", "background": null },
-  "grade": { "filter": "concat.teal-orange", "intensityKey": "amount", "intensity": 65, "apply": "layer" },
-  "export": { "output": "/home/user/Videos/sea-salt.mp4", "crf": 20, "codec": "h264", "platform": "shorts" }
+  "captions": {
+    "syncMode": "segment",
+    "fontSize": 0.055,
+    "fontWeight": 700,
+    "offsetY": 0.32,
+    "emphasisColor": "#7fd8ff",
+    "background": null
+  },
+  "grade": {
+    "filter": "concat.teal-orange",
+    "intensityKey": "amount",
+    "intensity": 65,
+    "apply": "layer"
+  },
+  "export": {
+    "output": "/home/user/Videos/sea-salt.mp4",
+    "crf": 20,
+    "codec": "h264",
+    "platform": "shorts"
+  }
 }

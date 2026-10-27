@@ -119,10 +119,12 @@ and per-platform export presets in the niche playbooks.
 
 ## 4. What FUNCUT already has (the baseline, from the code)
 
-Verified by reading this fork's current source: 69 MCP tools (projects,
+Verified by reading this fork's current source: a large MCP tool catalogue (projects,
 reading, media, every cut operation, masks/stabilization, titles,
 segment-timed captions, keyframes, effect layers, batched atomic edits,
-templates, export with progress, `preview_frame`), the OpenVid library
+templates, export with progress, `preview_frame`, and now the sense tools
+`watch_render` / `stock_contact_sheet` / `craft_critique` / `creative_brief`
+/ `local_vlm`), the OpenVid library
 (937,957 clips), BGM (1,191 tracks), SFX (430 CC0 sounds, 12 categories),
 MAGICK stickers (145,193, CC BY-NC), 127 effect packages (57 filters, 25 audio,
 23 effects, 22 transitions), 31 text presets, Kokoro/Pocket/Chatterbox voices,

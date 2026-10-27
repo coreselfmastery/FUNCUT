@@ -549,6 +549,108 @@
           "default": "Inter, DejaVu Sans"
         }
       }
+    },
+    "creativeBrief": {
+      "type": "object",
+      "description": "The WHY of the piece. A plan without this is structurally valid but creatively unready: plan_validate reports creativeReady=false and lists blockers. Set it with creative_brief before planning.",
+      "properties": {
+        "audience": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Who this is for, specifically enough to choose shots for. Not 'everyone' - name the person, their problem and what they already believe."
+        },
+        "platform": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Where it plays (tiktok, reels, shorts, youtube, ...). Determines hook length, safe margins and pacing."
+        },
+        "goal": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What the viewer should think, feel or do after the last frame."
+        },
+        "thesis": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The one sentence the whole video argues or reveals. Every shot serves it."
+        },
+        "curiosityGap": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The question opened in the first 1-2 seconds. It must be answerable by the payoff."
+        },
+        "payoff": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What resolves the curiosityGap. If this is weak, no amount of motion will save the edit."
+        },
+        "emotionalArc": {
+          "description": "Three or more emotional beats in order. Either an array of strings (e.g. ['unease','wonder','relief']) or one string separated by '->' or commas.",
+          "oneOf": [
+            {
+              "type": "array",
+              "minItems": 3,
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "string",
+              "minLength": 3
+            }
+          ]
+        },
+        "referenceStyle": {
+          "type": "string",
+          "minLength": 1,
+          "description": "A director/editor/show whose rhythm and taste this cut borrows from, and what exactly to borrow."
+        },
+        "tone": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Voice and attitude: e.g. dry, urgent, awed, conspiratorial."
+        },
+        "brandKit": {
+          "description": "Colours, fonts, logo/end-card rules. Object or a short string.",
+          "oneOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "constraints": {
+          "description": "Hard limits: runtime, footage you must use, claims you cannot make.",
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "string"
+            }
+          ]
+        },
+        "avoid": {
+          "description": "Clichés and stock shots to refuse (e.g. generic handshake, lens flare, waving flag).",
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "minProperties": 7
     }
   }
 }

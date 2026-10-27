@@ -132,12 +132,12 @@ home (or `CONCAT_MCP_ROOTS`), never touching the window's open projects.
 | A tool call times out | This repo's `.forge/mcp.toml` sets `call_timeout_secs = 900`; if you declared the server yourself, raise yours (default 60) |
 | `transcribe` says a model is not downloaded | Settings > Transcriber, download `base.en` (fast, English) or `small` (multilingual) |
 | `tts_generate` says a model is not downloaded | Settings > Speech, download Kokoro int8 (the 4 GB-laptop choice) |
-| Agent "done" but the video looks wrong | The skill's review checklist exists for this: run `preview_frame` at start/middle/end, check gaps and overlaps, fix, re-verify. Never accept "done" without an export that `export_wait` says succeeded |
+| Agent "done" but the video looks wrong | The skill's quality loop is mandatory: `watch_render` (whole cut as one image) -> `craft_critique` (six craft scores) -> revise at least once -> `watch_render` again -> `watch_render {path}` on the exported file. `plan_validate` must also say `creativeReady: true`. Never accept "done" without an export `export_wait` says succeeded AND a measured score >= 7 |
 | Low memory with big projects | Close other apps; keep proxy scrubbing on; use headless for overnight; prefer Kokoro int8 over Chatterbox |
 
-## 8. What the agent can call (69 tools)
+## 8. What the agent can call (the full MCP catalogue)
 
-Everything in `docs/MCP.md` — 69 tools, including six analysis/speech tools:
+Everything in `docs/MCP.md` — the projects, media, cuts, captions, effects, motion, export and analysis tools, plus the five **sense** tools (`creative_brief`, `stock_contact_sheet`, `watch_render`, `craft_critique`, `local_vlm`) that let the agent see and score its own work. Six analysis/speech tools:
 `analyze_scenes` (PySceneDetect cut points), `analyze_beats` (librosa BPM/beat
 grid), `analyze_silence` (dead-air spans), `analysis_wait` (job results
 inline), `transcribe` (Whisper text segments with start/end times, not
@@ -145,3 +145,16 @@ word-aligned), and `tts_generate` (Kokoro/Pocket/Chatterbox narration WAV,
 imported straight into the project). The director workflow also has
 `plan_validate` and `clip_audio_levels_db` for pre-edit checks and unit-safe
 volume automation.
+
+
+## 9. The local vision critic (optional, no system install)
+
+`craft_critique` always works: without a model it returns measured,
+explicitly-labelled pixel/audio scores (`engine: "heuristic"`). To add taste,
+call `local_vlm {action:"setup"}` once. It downloads a 0.5B
+SmolVLM2-500M-Video-Instruct Q8_0 model + projector (~546 MB) and a pinned
+llama.cpp CPU server into the app's own data folder, then serves on
+127.0.0.1:8099. Works on a 4 GB laptop; nothing is installed system-wide.
+If you already run Ollama or LM Studio with a vision model, set
+`FUNCUT_VLM_ENDPOINT` instead and skip the download. The heavier
+`profile: "minicpm"` (~2.2 GB) reads dense text and charts better.

@@ -249,7 +249,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "plan_validate",
             title: "Validate an edit plan",
-            description: "Checks a director plan's canonical schema and cross-field constraints before edits. Read-only; cannot assess creative quality or asset availability.",
+            description: "Checks a director plan's canonical schema, cross-field constraints AND its creative readiness before edits. Returns valid (structure), creativeReady (craft gate), creativeBlockers (what to fix), craftScore 0-10, warnings and notes. A plan with no creativeBrief, no emotionalArc, a hook over 3 s, repeated visuals, no designed comp, or a run of plain hard cuts is valid but NOT creativeReady - fix the blockers and validate again. Read-only; asset availability and the final render still need stock_contact_sheet, watch_render and craft_critique.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -1149,7 +1149,29 @@ fn plan_validate_schema() -> Option<Value> {
                             }
                         }
                     },
-                    "audio": { "type": "object" }
+                    "audio": { "type": "object" },
+                    "creativeBrief": {
+                        "type": "object",
+                        "description": "The WHY of the piece. Without it plan_validate returns creativeReady=false with blockers. audience, platform, goal, thesis, curiosityGap, payoff, emotionalArc (3+ beats), referenceStyle, tone, brandKit, constraints, avoid.",
+                        "properties": {
+                            "audience": { "type": "string" },
+                            "platform": { "type": "string" },
+                            "goal": { "type": "string" },
+                            "thesis": { "type": "string" },
+                            "curiosityGap": { "type": "string" },
+                            "payoff": { "type": "string" },
+                            "emotionalArc": { "oneOf": [
+                                { "type": "array", "minItems": 3, "items": { "type": "string" } },
+                                { "type": "string" }
+                            ] },
+                            "referenceStyle": { "type": "string" },
+                            "tone": { "type": "string" },
+                            "durationSeconds": { "type": "number" },
+                            "brandKit": {},
+                            "constraints": {},
+                            "avoid": {}
+                        }
+                    }
                 }
             }
         },
@@ -2177,13 +2199,196 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
         }
         Some(_) => return Err("export must be an object when supplied".to_owned()),
     }
+    let creative = creative_gate(plan, segments, runtime, &warnings);
     Ok(json!({
         "valid": true,
         "aspect": aspect,
         "segmentCount": segments.len(),
         "runtimeSeconds": runtime,
         "warnings": warnings,
+        "creativeReady": creative["ready"],
+        "creativeBlockers": creative["blockers"],
+        "craftScore": creative["score"],
+        "creativeNotes": creative["notes"],
+        "next": "If creativeReady is false, call creative_brief, fix the blockers, and validate again. Structure is not craft.",
     }))
+}
+
+/// The creative gate. Structural validity is not the same thing as a good
+/// edit: a plan can have perfect continuity and still have no point of view,
+/// no emotional arc and sixteen near-identical stock shots. These are the
+/// checks that turn the director's "warnings" into something an agent cannot
+/// quietly ignore.
+fn creative_gate(object: &Value, segments: &[Value], runtime: f64, warnings: &[String]) -> Value {
+    let mut blockers: Vec<String> = Vec::new();
+    let mut notes: Vec<String> = Vec::new();
+    let mut score = 10.0_f64;
+
+    let core = [
+        ("audience", "who is this for"),
+        ("platform", "where it plays"),
+        ("goal", "what the viewer should do or feel"),
+        ("thesis", "the one sentence the cut argues"),
+        ("curiosityGap", "the question opened in the first seconds"),
+        ("payoff", "what answers that question"),
+        ("emotionalArc", "three or more beats in order"),
+    ];
+    let brief = object.get("creativeBrief");
+    match brief {
+        None => {
+            blockers.push(
+                "no creativeBrief: call creative_brief and set audience, platform, goal, thesis, curiosityGap, payoff and emotionalArc before planning".to_owned(),
+            );
+            score -= 3.0;
+        }
+        Some(Value::Object(fields)) => {
+            for (key, why) in &core {
+                if fields
+                    .get(*key)
+                    .filter(|v| {
+                        !v.is_null() && !matches!(v, Value::String(s) if s.trim().is_empty())
+                    })
+                    .is_none()
+                {
+                    blockers.push(format!("creativeBrief.{key} is missing ({why})"));
+                    score -= 0.5;
+                }
+            }
+            if let Some(Value::Array(arc)) = fields.get("emotionalArc") {
+                if arc.len() < 3 {
+                    blockers.push(
+                        "creativeBrief.emotionalArc needs at least three distinct beats".to_owned(),
+                    );
+                } else {
+                    let unique: std::collections::BTreeSet<&str> =
+                        arc.iter().filter_map(Value::as_str).collect();
+                    if unique.len() < 3 {
+                        notes.push(
+                            "emotionalArc repeats itself; every beat should feel different"
+                                .to_owned(),
+                        );
+                        score -= 0.5;
+                    }
+                }
+            }
+            if fields.get("referenceStyle").is_none() {
+                notes.push(
+                    "no referenceStyle: name a director or editor whose rhythm you are borrowing"
+                        .to_owned(),
+                );
+            }
+        }
+        Some(_) => blockers.push("creativeBrief must be an object".to_owned()),
+    }
+
+    // Sections must take the viewer somewhere, not just exist.
+    let sections = object
+        .get("sections")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let roles: Vec<&str> = sections
+        .iter()
+        .filter_map(|s| s.get("role").and_then(Value::as_str))
+        .collect();
+    if !roles.contains(&"hook") {
+        blockers.push("the first section must be a hook".to_owned());
+        score -= 1.0;
+    }
+    if runtime > 12.0 && !roles.iter().any(|r| matches!(*r, "cta" | "outro")) {
+        blockers.push(
+            "a piece over 12 s needs a cta or outro section: the payoff has to land somewhere"
+                .to_owned(),
+        );
+        score -= 0.5;
+    }
+    if let Some(first) = sections.first() {
+        let end = first.get("end").and_then(Value::as_f64).unwrap_or(0.0);
+        if end > 4.0 {
+            blockers.push(format!(
+                "the hook runs to {end:.1}s; open the curiosity gap inside 3 s"
+            ));
+            score -= 0.5;
+        }
+    }
+
+    // Visual variety: repeated references are the slideshow signature.
+    let visual_key = |segment: &Value| -> String {
+        let v = &segment["visual"];
+        for key in ["query", "path", "asset", "name", "src"] {
+            if let Some(s) = v.get(key).and_then(Value::as_str) {
+                return s.trim().to_ascii_lowercase();
+            }
+        }
+        v.get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_ascii_lowercase()
+    };
+    let keys: Vec<String> = segments.iter().map(visual_key).collect();
+    let distinct = keys.iter().collect::<std::collections::BTreeSet<_>>().len();
+    if segments.len() >= 4 && distinct * 2 < segments.len() {
+        blockers.push(format!(
+            "only {distinct} distinct visuals across {} segments: this is a slideshow, not an edit; use stock_contact_sheet to find different shots",
+            segments.len()
+        ));
+        score -= 1.5;
+    }
+    let mut run = 1usize;
+    let mut longest = 1usize;
+    for pair in keys.windows(2) {
+        if pair[0] == pair[1] {
+            run += 1;
+            longest = longest.max(run);
+        } else {
+            run = 1;
+        }
+    }
+    if longest >= 3 {
+        blockers.push(format!("{longest} consecutive segments use the same visual reference; vary shot size, angle or source"));
+        score -= 1.0;
+    }
+    let designed = segments
+        .iter()
+        .filter(|s| {
+            s.get("comp")
+                .is_some_and(|c| c.as_object().is_some_and(|o| !o.is_empty()))
+                || s.get("text").is_some_and(|t| !t.is_null())
+        })
+        .count();
+    if runtime > 15.0 && designed == 0 {
+        blockers.push(
+            "no designed comp or text card anywhere: the cut has no visual authorship".to_owned(),
+        );
+        score -= 1.0;
+    }
+    if object.get("captions").is_none() && object.get("text").is_none() {
+        notes.push(
+            "no caption plan: call transcribe and captions_animate with measured word times"
+                .to_owned(),
+        );
+    }
+
+    // Escalate the warnings a director would actually refuse to ship.
+    for warning in warnings {
+        let escalate = warning.contains("hard cuts in a row")
+            || warning.contains("have no entrance")
+            || warning.contains("static entrances")
+            || warning.contains("designed comp(s)")
+            || warning.contains("same sound twice");
+        if escalate {
+            score -= 0.4;
+            if warning.contains("hard cuts in a row") || warning.contains("have no entrance") {
+                blockers.push(format!("craft: {warning}"));
+            }
+        }
+    }
+    let score = score.clamp(0.0, 10.0).round() * 10.0 / 10.0;
+    let ready = blockers.is_empty();
+    if ready {
+        notes.push("creative gate passed; still run watch_render and craft_critique after the first export".to_owned());
+    }
+    json!({ "ready": ready, "blockers": blockers, "notes": notes, "score": score })
 }
 
 /// `export_wait`: the job's status once it has ended, or when the time is

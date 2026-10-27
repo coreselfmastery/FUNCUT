@@ -129,7 +129,8 @@ vocabulary the `concat-motion-agent` CLI speaks):
   animated properties, slots, validation problems; an optional `ops` batch
   is applied first, so an edit can be checked before it bakes.
 - `motion_frame` - one frame of a comp at a time in seconds, drawn in tens
-  of milliseconds and written under the project's `motion/`.
+  of milliseconds, returned as an **inline image** (and also written under
+  the project's `motion/`). Look at it before baking.
 - `motion_bake` - a comp (preset or file, optionally edited by `ops`)
   baked to PNG frames under `cache/comps/`, and with `encode: true`
   written as one video under `motion/` ready for `media_import` and
@@ -139,6 +140,44 @@ vocabulary the `concat-motion-agent` CLI speaks):
   video: lines by the caption rules, each line a kinetic comp, baked and
   encoded in one call. This is the word-synced caption path; the
   timeline's own `captions_add` stays segment-timed.
+
+## Perception and the creative loop (five more tools)
+
+An agent that gets a PNG *path* back cannot see the picture. These tools
+return MCP `type: image` content blocks, so the model can actually look:
+
+- `creative_brief` - read/write `creative-brief.json` in the project:
+  audience, platform, goal, thesis, curiosityGap, payoff, emotionalArc,
+  referenceStyle, tone, brandKit, constraints, avoid. Returns a
+  `directorPrompt` and the list of missing core fields. `plan_validate`
+  now reports `creativeReady`, `creativeBlockers`, `craftScore` and
+  `creativeNotes` in addition to `valid`; a plan with no brief, a hook over
+  3 s, repeated visuals or no designed comp is **not** creativeReady.
+- `stock_contact_sheet` - decode a real frame of each B-roll candidate
+  (`query`, `ids` or local `paths`) into one labelled contact sheet image,
+  with per-candidate pixel metrics and an energy-centroid `cropHint` for
+  off-centre subjects. `rank: true` re-ranks candidates against the brief
+  with the local vision model and suggests better queries.
+- `watch_render` - sample the open timeline (via `preview.frame`, no ffmpeg
+  CLI needed) or a rendered movie, and return the whole cut as ONE image
+  plus measured facts: black frames, letterbox bars, flat and duplicate
+  shots, static transitions, an audio energy envelope.
+- `craft_critique` - six 0-10 scores (hook, story, rhythm, shotChoice,
+  design, sound), notes and concrete tool-level revisions. Uses a local
+  vision model when available, otherwise says `engine: "heuristic"` and
+  grades measurements honestly.
+- `local_vlm` - `status` or first-use `setup` of a tiny local vision critic.
+  `profile: "mini"` fetches SmolVLM2-500M-Video-Instruct Q8_0 + projector
+  (~546 MB, 0.5B params, CPU-only, 4 GB laptop is enough) and a pinned
+  llama.cpp server into the app data dir; no system install, no pip. Set
+  `FUNCUT_VLM_ENDPOINT` to reuse an existing Ollama / LM Studio / llama.cpp
+  server. `profile: "minicpm"` is ~2.2 GB and reads dense text better.
+
+The intended loop: `creative_brief` -> `plan_validate` (creativeReady true)
+-> `stock_contact_sheet` -> build -> `watch_render` -> `craft_critique` ->
+revise -> `watch_render` again -> export -> `watch_render {path}` on the
+file that shipped. See `src/crates/concat-mcp/sense/README.md` and the
+director skill's `prompts/quality_loop.md`.
 
 The first three need a Python 3 with the extras named in the analysis
 folder's `requirements.txt` (scenedetect, OpenCV headless, librosa) - a

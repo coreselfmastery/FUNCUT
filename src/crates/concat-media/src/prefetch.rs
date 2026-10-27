@@ -64,11 +64,19 @@ impl Priority {
     ];
 
     /// Whether a job of this priority is background work: what the
-    /// reserved worker never takes, and what runs one at a time for a
-    /// proxy.
+    /// reserved worker never takes, and what runs as few at a time as
+    /// the proxies' own allowance says for a proxy.
     fn background(self) -> bool {
         matches!(self, Priority::Artwork | Priority::Proxy)
     }
+}
+
+/// How many proxies may write at once: one, or two where four workers
+/// or more can spare them - a batch import's copies then land half as
+/// far apart - and never more, the reserve still keeping a worker
+/// clear of them all.
+fn proxy_slots(workers: usize) -> usize {
+    usize::from(workers >= 4) + 1
 }
 
 /// Which way the transport is going.
@@ -133,7 +141,7 @@ struct Queue {
     lanes: [VecDeque<Job>; Priority::ALL.len()],
     /// Background jobs running now; see [`Priority::background`].
     background_running: usize,
-    /// Proxy jobs running now: at most one.
+    /// Proxy jobs running now: as many as [`proxy_slots`] allows.
     proxy_running: usize,
     /// Jobs of any priority running now.
     running: usize,
@@ -150,15 +158,15 @@ struct Lane {
 
 impl Lane {
     /// The most urgent job a worker may take now, honouring the reserve:
-    /// background work never takes the last free worker, and a proxy runs
-    /// alone among proxies.
+    /// background work never takes the last free worker, and the proxies
+    /// run no more together than [`proxy_slots`] says.
     fn take(&self, queue: &mut Queue) -> Option<(Priority, Job)> {
         let reserve = if self.workers > 1 { 1 } else { 0 };
         for priority in Priority::ALL {
             if priority.background() && queue.background_running + reserve >= self.workers {
                 continue;
             }
-            if priority == Priority::Proxy && queue.proxy_running > 0 {
+            if priority == Priority::Proxy && queue.proxy_running >= proxy_slots(self.workers) {
                 continue;
             }
             if let Some(job) = queue.lanes[priority as usize].pop_front() {
@@ -562,6 +570,35 @@ mod tests {
         }
         prefetcher.drain();
         assert_eq!(most.load(Ordering::SeqCst), 1, "artwork ran one at a time");
+    }
+
+    /// Two proxies may write at once where four workers can spare them,
+    /// and one where two workers cannot: the reserve holds a worker
+    /// clear either way.
+    #[test]
+    fn proxies_write_two_at_once_where_the_workers_are() {
+        for (workers, together) in [(2, 1), (4, 2)] {
+            let pool = Arc::new(ReaderPool::new(1024, 1));
+            let prefetcher = Prefetcher::new(pool, workers);
+            let running = Arc::new(AtomicUsize::new(0));
+            let most = Arc::new(AtomicUsize::new(0));
+            for _ in 0..6 {
+                let running = Arc::clone(&running);
+                let most = Arc::clone(&most);
+                prefetcher.submit(Priority::Proxy, move || {
+                    let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+                    most.fetch_max(now, Ordering::SeqCst);
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                    running.fetch_sub(1, Ordering::SeqCst);
+                });
+            }
+            prefetcher.drain();
+            assert_eq!(
+                most.load(Ordering::SeqCst),
+                together,
+                "{workers} workers ran {together} proxies at once"
+            );
+        }
     }
 
     /// A cursor that turns round keeps what is now ahead of it and lets

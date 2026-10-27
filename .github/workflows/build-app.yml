@@ -262,7 +262,7 @@ jobs:
         working-directory: src
         run: |
           set -o pipefail
-          cargo build --profile app -p concat --target ${{ matrix.target }} 2>&1 | tee build.log
+          cargo build --profile app -p concat -p concat-motion --target ${{ matrix.target }} 2>&1 | tee build.log
 
       - name: Build log to the summary (failure only)
         if: failure()
@@ -323,6 +323,9 @@ jobs:
           cp "src/target/${{ matrix.target }}/app/concat" "stage/$name/concat"
           cp geneva "stage/$name/geneva"
           chmod +x "stage/$name/geneva"
+          # The motion CLI agents and shell scripts call: same folder, same
+          # libraries, one more door into the engine (see docs/MOTION.md).
+          cp "src/target/${{ matrix.target }}/app/concat-motion-agent" "stage/$name/concat-motion-agent"
           cp -a ffmpeg-dev/lib/*.so* "stage/$name/lib/"
           cp -a "$ORT_DIR"/lib/libonnxruntime.so* "stage/$name/lib/"
           # whisper's shared libraries and its CPU modules, one per x86_64
@@ -469,6 +472,8 @@ jobs:
           mkdir -p "$STAGE/pkg"
           printf '#!/bin/sh\nexec /opt/concat/concat "$@"\n' > "$STAGE/pkg/concat"
           chmod +x "$STAGE/pkg/concat"
+          printf '#!/bin/sh\nexec /opt/concat/concat-motion-agent "$@"\n' > "$STAGE/pkg/concat-motion-agent"
+          chmod +x "$STAGE/pkg/concat-motion-agent"
           sed 's|^Exec=concat|Exec=/opt/concat/concat %U|' "$STAGE/concat.desktop" > "$STAGE/pkg/concat.desktop"
 
           scripts/ci/fetch.sh "nfpm-$( [ "${{ matrix.arch }}" = x86_64 ] && echo x86_64 || echo arm64 )" nfpm.tar.gz
@@ -489,6 +494,7 @@ jobs:
           cp "$STAGE/concat" "$appdir/usr/bin/concat"
           cp "$STAGE/geneva" "$appdir/usr/bin/geneva"
           chmod +x "$appdir/usr/bin/geneva"
+          cp "$STAGE/concat-motion-agent" "$appdir/usr/bin/concat-motion-agent"
           cp -a "$STAGE/lib" "$appdir/usr/bin/lib"
           # The X11 keyboard library the window opens by name at start, the
           # core library under it, and the xcb extension under that: a machine

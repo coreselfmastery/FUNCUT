@@ -14,12 +14,18 @@ stage=${CONCAT_STAGE:?CONCAT_STAGE must point at the staged folder}
 
 package() {
   install -Dm755 "$stage/concat" "$pkgdir/opt/concat/concat"
+  install -Dm755 "$stage/geneva" "$pkgdir/opt/concat/geneva"
+  install -Dm755 "$stage/concat-motion-agent" "$pkgdir/opt/concat/concat-motion-agent"
   install -d "$pkgdir/opt/concat/lib"
   cp -a "$stage"/lib/. "$pkgdir/opt/concat/lib/"
 
   install -d "$pkgdir/usr/bin"
   printf '#!/bin/sh\nexec /opt/concat/concat "$@"\n' > "$pkgdir/usr/bin/concat"
   chmod 755 "$pkgdir/usr/bin/concat"
+  printf '#!/bin/sh\nexec /opt/concat/concat-motion-agent "$@"\n' > "$pkgdir/usr/bin/concat-motion-agent"
+  chmod 755 "$pkgdir/usr/bin/concat-motion-agent"
+  # The motion sidecar beside the executable, where Geneva::discover looks.
+  ln -s /opt/concat/geneva "$pkgdir/usr/bin/geneva"
   install -Dm644 "$stage/concat.desktop" "$pkgdir/usr/share/applications/concat.desktop"
   sed -i 's|^Exec=concat|Exec=/opt/concat/concat %U|' "$pkgdir/usr/share/applications/concat.desktop"
   install -Dm644 "$stage/concat.png" "$pkgdir/usr/share/icons/hicolor/256x256/apps/concat.png"

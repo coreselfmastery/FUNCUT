@@ -275,6 +275,11 @@ which is finer than any frame the renderer draws, and a test holds it there.
 
 Every verb prints exactly one JSON document and exits non-zero on failure.
 
+The binary ships as `concat-motion-agent` in the Linux .deb and .rpm (on the
+path, beside `concat`) and inside the AppImage (`--appimage-extract` reaches
+it); an MCP agent reaches the same engine through the `motion_*` tools and
+never needs it. From a source checkout it is:
+
 ```sh
 cargo run -p concat-motion --bin concat-motion-agent -- list
 cargo run -p concat-motion --bin concat-motion-agent -- inspect comps/funcut.lower-third.glass.json

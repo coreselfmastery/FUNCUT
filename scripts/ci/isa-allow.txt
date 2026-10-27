@@ -69,3 +69,14 @@ libonnxruntime.so*             any
 # the count shown, without the `~`, so the next library compiled for
 # Haswell fails the build.
 concat                         -     -     ~1000  -          -
+
+# The motion CLI, built from the same tree with no GPU, no Skia and no
+# static ONNX Runtime: the compiler-made BMI count is the only column
+# that could tell, and the same provisional limit as the window's binary
+# covers it until the first CI run prints its real count.
+concat-motion-agent            -     -     ~1000  -          -
+
+# The motion sidecar, a prebuilt third-party binary staged beside the
+# editor: its kernels are its own business, picked by asking the CPU at
+# run time the way FFmpeg's are, so the vector classes are not limited.
+geneva                         any

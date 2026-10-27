@@ -37,10 +37,18 @@ contents:
     dst: /opt/concat/geneva
     file_info:
       mode: 0755
+  - src: concat-motion-agent
+    dst: /opt/concat/concat-motion-agent
+    file_info:
+      mode: 0755
   - src: lib/*
     dst: /opt/concat/lib/
   - src: pkg/concat
     dst: /usr/bin/concat
+    file_info:
+      mode: 0755
+  - src: pkg/concat-motion-agent
+    dst: /usr/bin/concat-motion-agent
     file_info:
       mode: 0755
   - src: pkg/concat.desktop

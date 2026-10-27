@@ -25,6 +25,9 @@ engine means one look. A machine without the sidecar falls back to `native` for 
 rather than failing to open the project.
 
 Finding the sidecar: `CONCAT_GENEVA_BIN` → the setting → next to the executable → `~/.local/bin` → `PATH`.
+The Linux `.deb`, `.rpm` and AppImage ship the pinned v1.6.0 binary next to the executable, so a
+package install needs **no separate geneva install**; `install-linux.sh` still fetches it for source
+and tarball installs. `motion_presets` reports whether the engine was found on this machine.
 Version `1.6.0` is what this was written against - the Linux installer fetches exactly that one, pinned
 by checksum, into `~/.local/bin`. Another **major** version is reported as a risk by the probe and
 **refused at bake with the reason**, never silently used. Every bake records the version it used.

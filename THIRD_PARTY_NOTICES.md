@@ -315,3 +315,41 @@ Vorbis q5 from the dataset's 24-bit WAV masters with no re-gain and no
 trimming, so the dataset's loudness tiers and sync-point metadata survive
 the conversion (the manifest carries each sound's `syncAt`). The
 manifest's `source` line on every one of them points back at the dataset.
+
+
+## The motion sidecar (Geneva)
+
+`motion_bake`, `motion_frame` and the sequence tools use **Geneva**
+(https://github.com/geneva-render/geneva), a browserless HTML/CSS
+renderer distributed under the **MIT licence**. The Linux `.deb`, `.rpm`
+and AppImage built by `build-app.yml` carry the unmodified pinned v1.6.0
+binary beside the Concat executable (which is where
+`Geneva::discover` looks first), checksum-checked against the same
+SHA-256 digests `install-linux.sh` uses. Source installs and tarball
+users get it from `install-linux.sh` instead. Concat's own sources are
+AGPL-3.0-or-later; Geneva is a separate executable invoked as a process,
+not linked into Concat.
+
+## Tools fetched at runtime by the sense layer (not redistributed here)
+
+The MCP sense tools (`watch_render`, `stock_contact_sheet`,
+`motion_overlay`, `craft_critique`, `local_vlm`) can fetch optional
+binaries and models into the user's own application-data directory on
+first use. None of these files are committed to or redistributed by this
+repository:
+
+- **FFmpeg static build** from https://johnvansickle.com/ffmpeg/ (Linux
+  x86_64/arm64), used only when there is no `ffmpeg` on `PATH` and a
+  rendered movie must be decoded. These builds are **GPL-3.0** because
+  they include x264 and other GPL components. Set `FUNCUT_FFMPEG` to a
+  system FFmpeg to avoid the download entirely.
+- **llama.cpp** `llama-server` from
+  https://github.com/ggml-org/llama.cpp (MIT), pinned to release
+  `b11930`.
+- **SmolVLM2-500M-Video-Instruct** and **SmolVLM-500M-Instruct**
+  GGUF conversions from `ggml-org` on Hugging Face (Apache-2.0), and
+  **MiniCPM-V 2** from `openbmb` (Apache-2.0).
+
+Users who redistribute a build containing these runtime-fetched files
+must satisfy those components' own licences. See
+`src/crates/concat-mcp/sense/README.md`.

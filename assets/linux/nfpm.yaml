@@ -31,6 +31,12 @@ contents:
     dst: /opt/concat/concat
     file_info:
       mode: 0755
+  # The motion sidecar, found by Geneva::discover beside the executable.
+  # Without it a packaged install could not bake motion comps at all.
+  - src: geneva
+    dst: /opt/concat/geneva
+    file_info:
+      mode: 0755
   - src: lib/*
     dst: /opt/concat/lib/
   - src: pkg/concat

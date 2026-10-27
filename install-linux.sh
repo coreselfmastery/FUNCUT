@@ -360,11 +360,12 @@ esac
 
 # ── the motion sidecar ───────────────────────────────────────
 # Geneva draws a markup comp: the browserless HTML/CSS renderer the
-# motion layer bakes with, one pinned binary. It is offered after the
-# app is installed rather than bundled in it, so a machine that never
-# touches a comp never downloads one - and one that does has it. The
-# editor runs without it (a comp with no markup bakes on the native
-# engine), so every failure here is said and carried on, never fatal.
+# motion layer bakes with, one pinned binary. The Linux .deb/.rpm/
+# AppImage built by CI already bundle it beside the executable; this
+# branch covers source and tarball installs, where a machine that never
+# touches a comp need never download one. The editor runs without it
+# (a comp with no markup bakes on the native engine), so every failure
+# here is said and carried on, never fatal.
 if ! command -v geneva >/dev/null 2>&1; then
     say ""
     case "$ARCH" in

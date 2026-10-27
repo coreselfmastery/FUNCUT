@@ -278,6 +278,39 @@ jobs:
           fi
 
       # ── Package: Linux ─────────────────────────────────────────────────
+      # The motion sidecar. install-linux.sh used to be the ONLY thing that
+      # fetched geneva, so a .deb / .rpm / AppImage install had no motion
+      # engine and motion_bake failed until the user ran an extra installer.
+      # Geneva::discover looks beside the executable first, so ship the
+      # pinned, checksum-checked binary there. The two digests are the same
+      # ones install-linux.sh checks (verified 2026-10-27).
+      - name: Geneva motion sidecar (Linux)
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.arch }}" in
+            x86_64)
+              arch="x86_64-unknown-linux-gnu"
+              sha="c2c9d3b2f82621ba6e7cfd36b36a8a3df9d9ba2b7374d06245248e2fb4120e16"
+              ;;
+            aarch64)
+              arch="aarch64-unknown-linux-gnu"
+              sha="8066d4ff388b5f2557678e168bca1e70c49d9624ee61cedad2bfcf0d008f1243"
+              ;;
+            *) echo "no geneva build for ${{ matrix.arch }}" >&2; exit 1 ;;
+          esac
+          url="https://github.com/geneva-render/geneva/releases/download/v1.6.0/geneva-v1.6.0-$arch.tar.gz"
+          curl -fsSL --retry 3 --max-time 180 "$url" -o geneva.tar.gz
+          printf '%s  %s\n' "$sha" geneva.tar.gz | sha256sum -c -
+          mkdir -p geneva-out
+          tar -xzf geneva.tar.gz -C geneva-out
+          bin=$(find geneva-out -type f -name geneva | head -n 1)
+          test -n "$bin"
+          cp "$bin" geneva
+          chmod +x geneva
+          ./geneva --version
+
       # The binary, the FFmpeg runtime libraries it loads from lib/ beside
       # it (the rpath above), a desktop entry and an icon, in one folder.
       - name: Stage (Linux)
@@ -288,6 +321,8 @@ jobs:
           name="Concat-${VERSION}-linux-${{ matrix.arch }}"
           mkdir -p "stage/$name/lib"
           cp "src/target/${{ matrix.target }}/app/concat" "stage/$name/concat"
+          cp geneva "stage/$name/geneva"
+          chmod +x "stage/$name/geneva"
           cp -a ffmpeg-dev/lib/*.so* "stage/$name/lib/"
           cp -a "$ORT_DIR"/lib/libonnxruntime.so* "stage/$name/lib/"
           # whisper's shared libraries and its CPU modules, one per x86_64
@@ -452,6 +487,8 @@ jobs:
           rm -rf "$appdir"
           mkdir -p "$appdir/usr/bin" "$appdir/usr/share/icons/hicolor/256x256/apps" "$appdir/usr/share/applications"
           cp "$STAGE/concat" "$appdir/usr/bin/concat"
+          cp "$STAGE/geneva" "$appdir/usr/bin/geneva"
+          chmod +x "$appdir/usr/bin/geneva"
           cp -a "$STAGE/lib" "$appdir/usr/bin/lib"
           # The X11 keyboard library the window opens by name at start, the
           # core library under it, and the xcb extension under that: a machine

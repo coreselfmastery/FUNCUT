@@ -494,7 +494,37 @@ pub fn stat_cards() -> Comp {
         node: "row".into(),
         field: SlotField::Text,
         sample: "SHADER PACKS".into(),
-        label: "Numbers".into(),
+        label: "Label 1".into(),
+    });
+    built.slots.push(Slot {
+        node: "row".into(),
+        field: SlotField::Text,
+        sample: "127".into(),
+        label: "Number 1".into(),
+    });
+    built.slots.push(Slot {
+        node: "row".into(),
+        field: SlotField::Text,
+        sample: "67".into(),
+        label: "Number 2".into(),
+    });
+    built.slots.push(Slot {
+        node: "row".into(),
+        field: SlotField::Text,
+        sample: "MCP TOOLS".into(),
+        label: "Label 2".into(),
+    });
+    built.slots.push(Slot {
+        node: "row".into(),
+        field: SlotField::Text,
+        sample: "10-BIT".into(),
+        label: "Number 3".into(),
+    });
+    built.slots.push(Slot {
+        node: "row".into(),
+        field: SlotField::Text,
+        sample: "LINEAR LIGHT".into(),
+        label: "Label 3".into(),
     });
     built
 }
@@ -546,6 +576,12 @@ pub fn wordmark_sting() -> Comp {
         field: SlotField::Text,
         sample: "FUNCUT".into(),
         label: "Wordmark".into(),
+    });
+    built.slots.push(Slot {
+        node: "mark".into(),
+        field: SlotField::Text,
+        sample: "MOTION".into(),
+        label: "Subline".into(),
     });
     built
 }
@@ -602,6 +638,12 @@ pub fn pull_quote() -> Comp {
         sample: "The last ten percent of a picture is the part people remember.".into(),
         label: "Quote".into(),
     });
+    built.slots.push(Slot {
+        node: "sheet".into(),
+        field: SlotField::Text,
+        sample: "FUNCUT, MOTION NOTES".into(),
+        label: "Attribution".into(),
+    });
     built
 }
 
@@ -649,6 +691,12 @@ pub fn chapter_chip() -> Comp {
         field: SlotField::Text,
         sample: "LOWER THIRDS".into(),
         label: "Chapter".into(),
+    });
+    built.slots.push(Slot {
+        node: "chap".into(),
+        field: SlotField::Text,
+        sample: "02 / 06".into(),
+        label: "Number".into(),
     });
     built
 }
@@ -706,6 +754,18 @@ pub fn subscribe_card() -> Comp {
         field: SlotField::Text,
         sample: "One tap away.".into(),
         label: "Headline".into(),
+    });
+    built.slots.push(Slot {
+        node: "card".into(),
+        field: SlotField::Text,
+        sample: "NEW EPISODE EVERY FRIDAY".into(),
+        label: "Subline".into(),
+    });
+    built.slots.push(Slot {
+        node: "card".into(),
+        field: SlotField::Text,
+        sample: "SUBSCRIBE".into(),
+        label: "Button".into(),
     });
     built
 }
@@ -893,6 +953,24 @@ pub fn split_compare() -> Comp {
         sample: "graded + motion".into(),
         label: "After label".into(),
     });
+    built.slots.push(Slot {
+        node: "frame".into(),
+        field: SlotField::Text,
+        sample: "raw cut".into(),
+        label: "Before text".into(),
+    });
+    built.slots.push(Slot {
+        node: "frame".into(),
+        field: SlotField::Text,
+        sample: "BEFORE".into(),
+        label: "Before tag".into(),
+    });
+    built.slots.push(Slot {
+        node: "frame".into(),
+        field: SlotField::Text,
+        sample: "AFTER".into(),
+        label: "After tag".into(),
+    });
     built
 }
 
@@ -942,6 +1020,12 @@ pub fn counting_number() -> Comp {
         field: SlotField::Text,
         sample: "67".into(),
         label: "Number".into(),
+    });
+    built.slots.push(Slot {
+        node: "num".into(),
+        field: SlotField::Text,
+        sample: "TOOLS AN AGENT CAN CALL".into(),
+        label: "Label".into(),
     });
     built
 }

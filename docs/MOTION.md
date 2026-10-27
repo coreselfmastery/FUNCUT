@@ -335,9 +335,18 @@ overlay's truth stays in the bake.
   "curtain": { "color": "#05060aff", "open": 0.6, "close": 0.8, "dip": 0.2, "depth": 1.0 } }
 ```
 
-Operations: `set-slot`, `set-text`, `set-words`, `move`, `retime`, `set-track`, `set-track-points`,
+Operations: `set-slot`, `set-text`, `set-words`, `set-markup`, `move`, `retime`, `set-track`, `set-track-points`,
 `fade-in`, `slide-to`, `pop`, `add-group`, `add-rect`, `add-text`, `delete`, `set-blend`,
 `set-opacity`, `set-duration`, `set-background`.
+
+`set-markup` hands a markup node whole new HTML - the op a data-driven comp needs, where the words
+alone cannot say it. The chart preset, for instance, ships its bar labels as slots for a ranking, and
+real bar heights arrive as one rewrite that keeps the preset's stylesheet and rise animation:
+
+```json
+{ "op": "set-markup", "node": "sheet",
+  "markup": "<div class=\"sheet\"><div class=\"head\">…</div><div class=\"plot\"><div class=\"col\"><div class=\"bar\" style=\"height: 26%\"></div><div class=\"lab\">YOU $180K</div></div>…</div></div>" }
+```
 
 ---
 

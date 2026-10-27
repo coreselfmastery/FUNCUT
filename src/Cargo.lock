@@ -1132,8 +1132,10 @@ dependencies = [
  "concat-effects",
  "concat-export",
  "concat-host",
+ "concat-media",
  "concat-project",
  "concat-speech",
+ "log",
  "png 0.17.16",
  "schemars",
  "serde",
@@ -1222,6 +1224,7 @@ name = "concat-mcp"
 version = "0.2.8"
 dependencies = [
  "concat-api",
+ "concat-motion",
  "concat-server",
  "serde_json",
  "tempfile",

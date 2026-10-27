@@ -840,12 +840,20 @@ pub fn terminal_reveal() -> Comp {
 
 /// A bar chart that builds on: four bars, a baseline, and labels. One
 /// accent at falling weights - the eye ranks the bars without a legend.
+///
+/// The words are slots - the title, the subline, every bar's label - so a
+/// ranking fills in without touching markup. The heights are the design's
+/// own falling rhythm, which is right whenever the story is a ranking; a
+/// chart whose bars must carry real data ("you put in $180k, time put in
+/// the rest") rewrites the columns with
+/// [`Op::SetMarkup`](crate::authoring::Op::SetMarkup), keeping this
+/// stylesheet and its rise animation.
 pub fn bar_chart() -> Comp {
     let bars = [
-        ("Linear light", 96.0, ACCENT, "0.20"),
-        ("Alpha PNG", 74.0, "rgba(217,164,65,0.68)", "0.32"),
-        ("Spring keys", 58.0, "rgba(217,164,65,0.46)", "0.44"),
-        ("Lottie", 41.0, "rgba(217,164,65,0.28)", "0.56"),
+        ("Q1", 96.0, ACCENT, "0.20"),
+        ("Q2", 74.0, "rgba(217,164,65,0.68)", "0.32"),
+        ("Q3", 58.0, "rgba(217,164,65,0.46)", "0.44"),
+        ("Q4", 41.0, "rgba(217,164,65,0.28)", "0.56"),
     ];
     let mut columns = String::new();
     for (label, pct, colour, delay) in bars {
@@ -871,7 +879,7 @@ pub fn bar_chart() -> Comp {
 "#
     );
     let markup = format!(
-        r#"<div class="sheet"><div class="head"><div class="t">What the motion layer adds</div><div class="s">% EFFECT, CS</div></div><div class="plot">{columns}</div></div>"#
+        r#"<div class="sheet"><div class="head"><div class="t">Where the money went</div><div class="s">SHARE OF TOTAL, %</div></div><div class="plot">{columns}</div></div>"#
     );
     let mut built = comp("funcut.chart.bars", "Bar chart", 1920, 1080, 4.6);
     let node = with_track(
@@ -892,9 +900,23 @@ pub fn bar_chart() -> Comp {
     built.slots.push(Slot {
         node: "sheet".into(),
         field: SlotField::Text,
-        sample: "What the motion layer adds".into(),
+        sample: "Where the money went".into(),
         label: "Chart title".into(),
     });
+    built.slots.push(Slot {
+        node: "sheet".into(),
+        field: SlotField::Text,
+        sample: "SHARE OF TOTAL, %".into(),
+        label: "Chart subline".into(),
+    });
+    for (index, (label, _, _, _)) in bars.iter().enumerate() {
+        built.slots.push(Slot {
+            node: "sheet".into(),
+            field: SlotField::Text,
+            sample: (*label).into(),
+            label: format!("Bar {} label", index + 1).into(),
+        });
+    }
     built
 }
 

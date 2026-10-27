@@ -69,6 +69,20 @@ pub enum Op {
         /// `(word, start, end)` in seconds; `None` holds until the next word.
         words: Vec<(String, f64, Option<f64>)>,
     },
+    /// Replace a markup node's HTML wholesale.
+    ///
+    /// The op a data-driven comp needs, where the words alone cannot say
+    /// it: a chart whose bars carry real heights, a table with real rows.
+    /// The stylesheet is the preset's and survives the rewrite, so the
+    /// design language does too; a slot whose sample the new markup no
+    /// longer carries goes quiet, and filling it then is the error that
+    /// says so.
+    SetMarkup {
+        /// The node.
+        node: String,
+        /// The markup.
+        markup: String,
+    },
     /// When a node starts, and how long it runs (`0` runs to the end).
     Move {
         /// The node.
@@ -289,7 +303,7 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
                 })?;
             match field {
                 SlotField::Text => {
-                    set_text_in(&mut comp, &node, &sample, value)?;
+                    set_text_in(&mut comp, &node, slot, &sample, value)?;
                 }
                 SlotField::Image => {
                     let entry = node_mut(&mut comp, &node)?;
@@ -303,6 +317,22 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
         Op::SetText { node, text } => {
             set_text(&mut comp, node, text)?;
             Ok(comp)
+        }
+        Op::SetMarkup { node, markup } => {
+            let entry = node_mut(&mut comp, node)?;
+            if markup.trim().is_empty() {
+                return Err(fail(
+                    format!("{node:?} would draw nothing"),
+                    "set-markup replaces the words a node draws, not the node; delete it if it should go",
+                ));
+            }
+            match &mut entry.kind {
+                NodeKind::Html { markup: drawn, .. } => {
+                    *drawn = markup.clone();
+                    Ok(comp)
+                }
+                _ => Err(not_markup(node)),
+            }
         }
         Op::SetWords { node, words } => {
             // Word times are relative to the node, so an open-ended last
@@ -605,14 +635,16 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
 
 /// Turn words into a [`TextNode`]'s text, keeping its style.
 fn set_text(comp: &mut Comp, id: &str, text: &str) -> Result<(), MotionError> {
-    set_text_in(comp, id, "", text)
+    set_text_in(comp, id, "set-text", "", text)
 }
 
 /// The same, but in a markup node it replaces the run that reads `sample`.
 ///
 /// A slot's sample is the words the preset drew there, so it is also the
 /// needle: "Ada Lovelace" finds the name and not the timecode beside it.
-fn set_text_in(comp: &mut Comp, id: &str, sample: &str, text: &str) -> Result<(), MotionError> {
+/// `what` is who was filling - a slot's label, or the op - so the refusal
+/// names the ask and not only the needle.
+fn set_text_in(comp: &mut Comp, id: &str, what: &str, sample: &str, text: &str) -> Result<(), MotionError> {
     let entry = node_mut(comp, id)?;
     match &mut entry.kind {
         NodeKind::Text(node) => {
@@ -639,7 +671,7 @@ fn set_text_in(comp: &mut Comp, id: &str, sample: &str, text: &str) -> Result<()
                 None => Err(MotionError::Engine {
                     code: None,
                     message: format!(
-                        "the slot on node {id:?} has the sample {sample:?}, which is not in its markup"
+                        "the slot {what} on node {id:?} has the sample {sample:?}, which is not in its markup"
                     ),
                     help: Some(
                         "a slot's sample is the literal text it stands in for; fix the comp's `slots`"
@@ -870,6 +902,13 @@ fn not_text(node: &str) -> MotionError {
     )
 }
 
+fn not_markup(node: &str) -> MotionError {
+    fail(
+        format!("{node:?} is not a markup node"),
+        "set-markup rewrites the HTML a markup node draws; a text node takes set-text",
+    )
+}
+
 fn fail(message: String, help: impl Into<String>) -> MotionError {
     MotionError::Engine {
         code: None,
@@ -1087,6 +1126,81 @@ mod tests {
         )
         .expect_err("refused");
         assert!(error.to_string().contains("Nickname"), "{error}");
+    }
+
+    #[test]
+    fn set_markup_hands_a_markup_node_whole_new_html() {
+        let comp = presets::build("funcut.chart.bars").expect("a preset");
+        // The rewrite carries the chart title's own sample forward, the way a
+        // data-driven rewrite keeps the words it did not come to change.
+        let rewritten = r#"<div class="sheet"><div class="head"><div class="t">Where the money went</div><div class="s">AFTER 30 YEARS</div></div><div class="plot"><div class="col"><div class="bar" style="height: 26%; background: #22d3c5"></div><div class="lab">YOU $180K</div></div></div></div>"#;
+        let edited = apply(
+            &comp,
+            &[Op::SetMarkup {
+                node: "sheet".into(),
+                markup: rewritten.into(),
+            }],
+        )
+        .expect("the rewrite applies");
+        let sheet = edited.node("sheet").expect("the sheet");
+        match &sheet.kind {
+            NodeKind::Html { markup, .. } => assert!(markup.contains("YOU $180K"), "{markup}"),
+            other => panic!("expected markup, got {other:?}"),
+        }
+        // A slot whose sample survived the rewrite still fills: the batch is
+        // a rewrite, not a lobotomy.
+        let edited = apply(
+            &edited,
+            &[Op::SetSlot {
+                slot: "Chart title".into(),
+                value: "Who put it there".into(),
+            }],
+        )
+        .expect("the surviving slot fills");
+        let sheet = edited.node("sheet").expect("the sheet");
+        match &sheet.kind {
+            NodeKind::Html { markup, .. } => {
+                assert!(markup.contains("Who put it there"), "{markup}")
+            }
+            other => panic!("expected markup, got {other:?}"),
+        }
+        // The bar labels' samples are gone from the new markup; filling one
+        // is the error that says so, rather than a fill of whatever words
+        // happen to be left.
+        let error = apply(
+            &edited,
+            &[Op::SetSlot {
+                slot: "Bar 1 label".into(),
+                value: "Q1".into(),
+            }],
+        )
+        .expect_err("the sample is gone");
+        assert!(error.to_string().contains("Bar 1 label"), "{error}");
+    }
+
+    #[test]
+    fn set_markup_is_refused_off_a_markup_node_and_when_it_says_nothing() {
+        let caption = presets::build("funcut.caption.kinetic").expect("a preset");
+        let error = apply(
+            &caption,
+            &[Op::SetMarkup {
+                // The caption preset's node is a text node, not markup.
+                node: "caption".into(),
+                markup: "<div>no</div>".into(),
+            }],
+        )
+        .expect_err("refused");
+        assert!(error.to_string().contains("caption"), "{error}");
+        let comp = lower_third();
+        let error = apply(
+            &comp,
+            &[Op::SetMarkup {
+                node: "card".into(),
+                markup: "   ".into(),
+            }],
+        )
+        .expect_err("refused");
+        assert!(error.to_string().contains("nothing"), "{error}");
     }
 
     #[test]

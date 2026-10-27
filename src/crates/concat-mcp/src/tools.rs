@@ -972,9 +972,25 @@ fn plan_validate_schema() -> Option<Value> {
             "plan": {
                 "type": "object",
                 "description": "A director plan following the canonical edit_plan.schema.json, validated fully at runtime.",
-                "required": ["aspect", "segments", "audio"],
+                "required": ["aspect", "mode", "sections", "segments", "audio", "grade"],
                 "properties": {
                     "aspect": { "type": "string", "enum": ["16:9", "9:16", "1:1", "4:5"] },
+                    "mode": { "type": "string", "enum": ["reel", "longform"] },
+                    "sections": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "required": ["role", "start", "end"],
+                            "properties": {
+                                "role": { "type": "string", "enum": ["hook", "intro", "body", "chapter", "rehook", "cta", "outro"] }
+                            }
+                        }
+                    },
+                    "grade": {
+                        "type": "object",
+                        "required": ["filter", "intensityKey", "intensity"]
+                    },
                     "segments": {
                         "type": "array",
                         "minItems": 1,
@@ -1599,6 +1615,13 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
     let mut warnings = Vec::<String>::new();
     let mut previous_end: Option<f64> = None;
     let mut runtime = 0.0_f64;
+    // What the structure checks below need, gathered on the way past.
+    let mut boundaries = Vec::<f64>::new();
+    let mut cut_types = Vec::<&str>::new();
+    let mut static_entrances = 0_usize;
+    let mut missing_entrances = 0_usize;
+    let mut comps = 0_usize;
+    let mut sfx_uses = Vec::<(&str, f64)>::new();
     for (index, segment) in segments.iter().enumerate() {
         let segment = segment
             .as_object()
@@ -1730,6 +1753,8 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
                 .is_none_or(|query| query.trim().is_empty())
             {
                 return Err(format!("segments[{index}].sfx.query is required"));
+            } else if let Some(query) = sfx.get("query").and_then(Value::as_str) {
+                sfx_uses.push((query, start));
             }
             if let Some(peak) = sfx.get("peakAt") {
                 let peak = peak
@@ -1754,8 +1779,188 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
                 }
             }
         }
+        // Structure gathering: the floors in SKILL.md §3, checked below.
+        boundaries.push(start);
+        cut_types.push(segment.get("cutType").and_then(Value::as_str).unwrap_or(""));
+        match segment.get("in").filter(|value| !value.is_null()) {
+            Some(entrance) => {
+                if entrance.get("anim") == Some(&Value::String("static".to_owned())) {
+                    static_entrances += 1;
+                }
+            }
+            None => missing_entrances += 1,
+        }
+        if segment
+            .get("comp")
+            .is_some_and(|comp| !comp.is_null() && comp.as_object().is_some_and(|c| !c.is_empty()))
+        {
+            comps += 1;
+        }
         previous_end = Some(end);
         runtime = end;
+    }
+
+    // The director checks: mode, sections, cut variety, entrances, comp
+    // density, SFX spacing. Cross-field laws the schema cannot say.
+    if let Some(mode) = object.get("mode").and_then(Value::as_str) {
+        if mode == "reel" && runtime > 62.0 {
+            return Err(format!(
+                "a reel is retention engineering under a minute: {runtime:.1}s is longform, change the mode"
+            ));
+        }
+        if mode == "reel" && runtime > 60.0 {
+            warnings.push(format!(
+                "{runtime:.1}s is past the 60 s reel edge; some platforms will file it as longform"
+            ));
+        }
+        if mode == "longform" && runtime > 90.0 {
+            let has_rehook = object
+                .get("sections")
+                .and_then(Value::as_array)
+                .is_some_and(|sections| {
+                    sections.iter().any(|section| {
+                        section.get("role").and_then(Value::as_str) == Some("rehook")
+                    })
+                });
+            if !has_rehook {
+                warnings.push(
+                    "longform past 90 s with no rehook section: the 50-60% retention dip goes uncaught"
+                        .to_owned(),
+                );
+            }
+        }
+    }
+    if let Some(sections) = object.get("sections").and_then(Value::as_array) {
+        if sections.is_empty() {
+            return Err("sections, when supplied, must not be empty".to_owned());
+        }
+        let rank = |role: &str| match role {
+            "hook" => 0,
+            "intro" => 1,
+            "body" | "chapter" => 2,
+            "rehook" => 3,
+            "cta" => 4,
+            _ => 5, // outro
+        };
+        let mut previous: Option<(&str, f64, f64)> = None;
+        for (index, section) in sections.iter().enumerate() {
+            let section = section
+                .as_object()
+                .ok_or_else(|| format!("sections[{index}] must be an object"))?;
+            let role = section
+                .get("role")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("sections[{index}].role is required"))?;
+            let start = section
+                .get("start")
+                .and_then(Value::as_f64)
+                .filter(|value| value.is_finite())
+                .ok_or_else(|| format!("sections[{index}].start must be finite"))?;
+            let end = section
+                .get("end")
+                .and_then(Value::as_f64)
+                .filter(|value| value.is_finite())
+                .ok_or_else(|| format!("sections[{index}].end must be finite"))?;
+            if end <= start {
+                return Err(format!("sections[{index}] must have end > start"));
+            }
+            if index == 0 {
+                if role != "hook" {
+                    return Err(format!(
+                        "sections[0] is the {role}; a piece starts with its hook"
+                    ));
+                }
+                if start > 0.05 {
+                    return Err(format!(
+                        "sections[0] starts at {start:.3}s; the hook starts the plan"
+                    ));
+                }
+            }
+            if let Some((previous_role, _, previous_end)) = previous {
+                if start - previous_end > 0.05 {
+                    return Err(format!(
+                        "gap of {:.3}s before sections[{index}]",
+                        start - previous_end
+                    ));
+                }
+                if start - previous_end < -0.05 {
+                    return Err(format!(
+                        "overlap of {:.3}s before sections[{index}]",
+                        previous_end - start
+                    ));
+                }
+                if rank(role) < rank(previous_role) {
+                    return Err(format!(
+                        "sections[{index}] is a {role} after a {previous_role}; the order is hook, intro, body/chapters, rehook, cta, outro"
+                    ));
+                }
+            }
+            // A section change is a cut: it should land on a segment
+            // boundary, not mid-shot.
+            if index > 0
+                && !boundaries
+                    .iter()
+                    .any(|boundary| (boundary - start).abs() <= 0.05)
+            {
+                warnings.push(format!(
+                    "sections[{index}] ({role}) starts at {start:.3}s, mid-segment; section changes land on cuts"
+                ));
+            }
+            if role == "hook" && end > 4.0 {
+                warnings.push(format!(
+                    "the hook section runs to {end:.1}s; the hook should land inside 3 s"
+                ));
+            }
+            previous = Some((role, start, end));
+        }
+        if let Some((_, _, last_end)) = previous
+            && (last_end - runtime).abs() > 0.05
+        {
+            return Err(format!(
+                "sections end at {last_end:.3}s but the plan runs to {runtime:.3}s; sections cover the whole piece"
+            ));
+        }
+    }
+    // A run of plain hard cuts is a slideshow, whatever the schema allows.
+    let mut hard_run = 0_usize;
+    let mut longest_hard_run = 0_usize;
+    for cut in &cut_types {
+        if *cut == "hard" {
+            hard_run += 1;
+            longest_hard_run = longest_hard_run.max(hard_run);
+        } else {
+            hard_run = 0;
+        }
+    }
+    if longest_hard_run >= 6 {
+        warnings.push(format!(
+            "{longest_hard_run} hard cuts in a row; the catalog has twelve cut types - a run of hards is a slideshow"
+        ));
+    }
+    if missing_entrances > 0 {
+        warnings.push(format!(
+            "{missing_entrances} segment(s) have no entrance; floor M: every clip enters on purpose (pop, slide, punch, dissolve - or static, once)"
+        ));
+    }
+    if static_entrances > 1 {
+        warnings.push(format!(
+            "{static_entrances} static entrances; static is deliberate, at most one per piece"
+        ));
+    }
+    let comp_floor = ((runtime / 15.0).ceil() as usize).max(1);
+    if comps < comp_floor {
+        warnings.push(format!(
+            "{comps} designed comp(s) for {runtime:.0}s; the floor is one per section and one per 15 s ({comp_floor} here)"
+        ));
+    }
+    for (left, (left_query, left_at)) in sfx_uses.iter().enumerate() {
+        for (right_query, right_at) in sfx_uses.iter().skip(left + 1) {
+            if left_query == right_query && (right_at - left_at).abs() < 30.0 {
+                warnings.push(format!(
+                    "sound `{left_query}` is used at {left_at:.1}s and {right_at:.1}s; never the same sound twice within 30 s"
+                ));
+            }
+        }
     }
     if let Some(captions) = object.get("captions") {
         let captions = captions
@@ -1993,7 +2198,13 @@ mod tests {
                 "plan_validate",
                 json!({ "plan": {
                     "aspect": "9:16",
+                    "mode": "reel",
                     "audio": {},
+                    "grade": { "filter": "concat.teal-orange", "intensityKey": "amount", "intensity": 65 },
+                    "sections": [
+                        { "role": "hook", "start": 0.0, "end": 2.0 },
+                        { "role": "body", "start": 2.0, "end": 4.0 }
+                    ],
                     "segments": [
                         { "start": 0.0, "end": 2.0, "visual": { "type": "broll", "query": "ocean waves aerial" } },
                         { "start": 2.0, "end": 4.0, "visual": { "type": "textCard", "text": "THE SALT STAYS" } }
@@ -2461,6 +2672,123 @@ mod tests {
             validate_edit_plan(&no_gap)
                 .unwrap_err()
                 .contains("captions_animate")
+        );
+    }
+
+    /// A director plan's structure is checked, not just its timing: the
+    /// hook leads, sections cover the runtime in order, a reel stays a
+    /// reel, and the creative floors speak up as warnings while the plan
+    /// is still a plan.
+    #[test]
+    fn the_plan_validator_directs() {
+        let cut = |start: f64, end: f64, cut_type: &str, entrance: bool| {
+            json!({
+                "start": start,
+                "end": end,
+                "visual": { "type": "broll", "query": "ocean" },
+                "cutType": cut_type,
+                "in": if entrance { json!({ "anim": "pop", "seconds": 0.15 }) } else { Value::Null },
+            })
+        };
+        let base = json!({
+            "aspect": "9:16",
+            "mode": "reel",
+            "audio": {},
+            "grade": { "filter": "concat.teal-orange", "intensityKey": "amount", "intensity": 65 },
+            "sections": [
+                { "role": "hook", "start": 0.0, "end": 2.0 },
+                { "role": "body", "start": 2.0, "end": 8.0 },
+                { "role": "cta", "start": 8.0, "end": 10.0 }
+            ],
+            "segments": [
+                cut(0.0, 2.0, "hard", true),
+                cut(2.0, 3.5, "hard", true),
+                cut(3.5, 5.0, "hard", true),
+                cut(5.0, 6.5, "hard", true),
+                cut(6.5, 8.0, "hard", true),
+                cut(8.0, 10.0, "hard", true)
+            ]
+        });
+        let result = validate_edit_plan(&base).expect("a valid plan");
+        let warnings = result["warnings"].as_array().expect("warnings");
+        assert!(
+            warnings.iter().any(|warning| warning
+                .as_str()
+                .is_some_and(|text| text.contains("hard cuts in a row"))),
+            "six hards is a slideshow: {warnings:?}"
+        );
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.as_str().is_some_and(|text| text.contains("comp"))),
+            "no designed comps anywhere: {warnings:?}"
+        );
+
+        // A reel that is not a reel is refused outright.
+        let mut long = base.clone();
+        long["segments"] = json!([cut(0.0, 70.0, "beat", true)]);
+        long["sections"] = json!([{ "role": "hook", "start": 0.0, "end": 70.0 }]);
+        assert!(validate_edit_plan(&long).unwrap_err().contains("longform"));
+
+        // Sections must start with the hook and cover the runtime, in
+        // order, without slipping off the cuts.
+        let mut starts_with_body = base.clone();
+        starts_with_body["sections"] = json!([
+            { "role": "body", "start": 0.0, "end": 10.0 }
+        ]);
+        assert!(
+            validate_edit_plan(&starts_with_body)
+                .unwrap_err()
+                .contains("hook")
+        );
+        let mut short_cover = base.clone();
+        short_cover["sections"] = json!([
+            { "role": "hook", "start": 0.0, "end": 2.0 },
+            { "role": "body", "start": 2.0, "end": 6.0 }
+        ]);
+        assert!(
+            validate_edit_plan(&short_cover)
+                .unwrap_err()
+                .contains("cover the whole piece")
+        );
+        let mut off_the_cut = base.clone();
+        off_the_cut["sections"] = json!([
+            { "role": "hook", "start": 0.0, "end": 2.5 },
+            { "role": "body", "start": 2.5, "end": 8.0 },
+            { "role": "cta", "start": 8.0, "end": 10.0 }
+        ]);
+        let result = validate_edit_plan(&off_the_cut).expect("contiguous but off the cut");
+        assert!(
+            result["warnings"]
+                .as_array()
+                .expect("warnings")
+                .iter()
+                .any(|warning| warning
+                    .as_str()
+                    .is_some_and(|text| text.contains("mid-segment"))),
+            "a section change off the cut is named: {result}"
+        );
+
+        // The same sound twice inside 30 s, and a static entrance twice,
+        // are warnings - the anti-repetition laws have a voice.
+        let mut repetitive = base.clone();
+        repetitive["segments"][0]["sfx"] =
+            json!({ "query": "Impact deep boom", "peakAt": 0.0, "gainDb": -8.0 });
+        repetitive["segments"][3]["sfx"] =
+            json!({ "query": "Impact deep boom", "peakAt": 6.0, "gainDb": -8.0 });
+        repetitive["segments"][1]["in"] = json!({ "anim": "static" });
+        repetitive["segments"][2]["in"] = json!({ "anim": "static" });
+        let result = validate_edit_plan(&repetitive).expect("warnings, not refusals");
+        let warnings = result["warnings"].as_array().expect("warnings");
+        assert!(warnings.iter().any(|warning| {
+            warning
+                .as_str()
+                .is_some_and(|text| text.contains("Impact deep boom"))
+        }));
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.as_str().is_some_and(|text| text.contains("static")))
         );
     }
 

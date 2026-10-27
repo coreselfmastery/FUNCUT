@@ -1,59 +1,300 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "funcut-director/edit-plan/v1",
+  "$id": "funcut-director/edit-plan/v2",
   "title": "FUNCUT edit plan",
   "description": "The one-pass plan a director emits after measuring, before cutting. Times are seconds unless a field says otherwise.",
   "type": "object",
-  "required": ["aspect", "segments", "audio"],
+  "required": [
+    "aspect",
+    "mode",
+    "sections",
+    "segments",
+    "audio",
+    "grade"
+  ],
   "properties": {
-    "title": { "type": "string", "description": "Working title of the video." },
-    "aspect": { "type": "string", "enum": ["16:9", "9:16", "1:1", "4:5"], "description": "Delivery aspect; 9:16 for shorts/reels/tiktok." },
-    "niche": { "type": "string", "description": "The niche playbook in use, e.g. history, tech, luxury, motivation, finance, science, horror, fitness, gaming, howto." },
+    "title": {
+      "type": "string",
+      "description": "Working title of the video."
+    },
+    "aspect": {
+      "type": "string",
+      "enum": [
+        "16:9",
+        "9:16",
+        "1:1",
+        "4:5"
+      ],
+      "description": "Delivery aspect; 9:16 for shorts/reels/tiktok."
+    },
+    "niche": {
+      "type": "string",
+      "description": "The niche playbook in use, e.g. history, tech, luxury, motivation, finance, science, horror, fitness, gaming, howto."
+    },
     "segments": {
       "type": "array",
       "minItems": 1,
       "description": "The timeline, in order. Segment i covers [start, end); gaps or overlaps are plan errors.",
       "items": {
         "type": "object",
-        "required": ["start", "end", "visual"],
+        "required": [
+          "start",
+          "end",
+          "visual"
+        ],
         "properties": {
-          "start": { "type": "number", "minimum": 0 },
-          "end": { "type": "number", "minimum": 0, "description": "Must be greater than start." },
-          "spoken": { "type": "string", "description": "The narration words this segment covers (for caption grouping)." },
+          "start": {
+            "type": "number",
+            "minimum": 0
+          },
+          "end": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Must be greater than start."
+          },
+          "spoken": {
+            "type": "string",
+            "description": "The narration words this segment covers (for caption grouping)."
+          },
           "visual": {
             "type": "object",
-            "required": ["type"],
+            "required": [
+              "type"
+            ],
             "properties": {
-              "type": { "type": "string", "enum": ["broll", "textCard", "titleCard", "existing"], "description": "broll = OpenVid clip; textCard/titleCard = styled text over background (fallbacks); existing = footage already imported." },
-              "query": { "type": "string", "description": "broll: the openvid_search query. Follow prompts/broll_matching.md." },
-              "orientation": { "type": "string", "enum": ["vertical", "horizontal", "square"] },
-              "sort": { "type": "string", "enum": ["relevance", "aesthetic", "motion", "temporal", "shortest", "longest", "surprise"] },
-              "clipId": { "type": ["integer", "string", "null"], "description": "A real OpenVid clip id or existing timeline clip id, returned by a tool; never invented." },
-              "mediaId": { "type": "string", "description": "For existing footage: the media-bin id returned by project_get/timeline_read." },
-              "file": { "type": "string", "description": "For a source file not yet represented by a clip or media id: its actual path." },
-              "trimIn": { "type": "number", "minimum": 0, "description": "Seconds into the source where the clip starts." },
-              "trimOut": { "type": "number", "description": "Seconds into the source where it ends (leave longer than the segment; trim after placing)." },
-              "preset": { "type": "string", "description": "textCard/titleCard: one of the 31 text presets, e.g. concat.impact, concat.lower-third, concat.bold-caption." },
-              "text": { "type": "string", "description": "textCard/titleCard: the words on screen." },
-              "motion": { "type": "string", "enum": ["ken-burns-in", "ken-burns-out", "slide-left", "slide-right", "parallax-up", "punch-zoom", "static"], "description": "Keyframe recipe from prompts/keyframes_motion.md." }
+              "type": {
+                "type": "string",
+                "enum": [
+                  "broll",
+                  "textCard",
+                  "titleCard",
+                  "existing"
+                ],
+                "description": "broll = OpenVid clip; textCard/titleCard = styled text over background (fallbacks); existing = footage already imported."
+              },
+              "query": {
+                "type": "string",
+                "description": "broll: the openvid_search query. Follow prompts/broll_matching.md."
+              },
+              "sort": {
+                "type": "string",
+                "enum": [
+                  "relevance",
+                  "aesthetic",
+                  "motion",
+                  "temporal",
+                  "shortest",
+                  "longest",
+                  "surprise"
+                ]
+              },
+              "clipId": {
+                "type": [
+                  "integer",
+                  "string",
+                  "null"
+                ],
+                "description": "A real OpenVid clip id or existing timeline clip id, returned by a tool; never invented."
+              },
+              "mediaId": {
+                "type": "string",
+                "description": "For existing footage: the media-bin id returned by project_get/timeline_read."
+              },
+              "file": {
+                "type": "string",
+                "description": "For a source file not yet represented by a clip or media id: its actual path."
+              },
+              "trimIn": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Seconds into the source where the clip starts."
+              },
+              "trimOut": {
+                "type": "number",
+                "description": "Seconds into the source where it ends (leave longer than the segment; trim after placing)."
+              },
+              "preset": {
+                "type": "string",
+                "description": "textCard/titleCard: one of the 31 text presets, e.g. concat.impact, concat.lower-third, concat.bold-caption."
+              },
+              "text": {
+                "type": "string",
+                "description": "textCard/titleCard: the words on screen."
+              },
+              "motion": {
+                "type": "string",
+                "enum": [
+                  "ken-burns-in",
+                  "ken-burns-out",
+                  "slide-left",
+                  "slide-right",
+                  "parallax-up",
+                  "punch-zoom",
+                  "static"
+                ],
+                "description": "Keyframe recipe from prompts/keyframes_motion.md."
+              },
+              "fit": {
+                "type": "string",
+                "enum": [
+                  "fill",
+                  "blurPlate"
+                ],
+                "description": "fill = clip_frame framing 'fill' (cover + crop; the default on every aspect mismatch - OpenVid is landscape-only, so 9:16 canvases fill from landscape sources). blurPlate = timeline_background blur as a deliberate style. A letterboxed frame at review is a defect."
+              }
             }
           },
           "sfx": {
-            "type": ["object", "null"],
+            "type": [
+              "object",
+              "null"
+            ],
             "properties": {
-              "query": { "type": "string", "description": "sounds_search query using a real category: Whoosh, Impact, Riser, Motion, UI, Notification, Keyboard, Digital, Foley, Writing, Ambience, Music." },
-              "peakAt": { "type": "number", "description": "The time the sound's PEAK must land on — usually the segment's first frame." },
-              "gainDb": { "type": "number", "minimum": -60, "maximum": 0, "default": -6, "description": "An absolute dB target; 0 dB is unity, negative levels attenuate, and -60 dB is the editor's silence floor. Typical SFX support levels are around -12 to -6 dB." }
+              "query": {
+                "type": "string",
+                "description": "sounds_search query using a real category: Whoosh, Impact, Riser, Motion, UI, Notification, Keyboard, Digital, Foley, Writing, Ambience, Music."
+              },
+              "peakAt": {
+                "type": "number",
+                "description": "The time the sound's PEAK must land on — usually the segment's first frame."
+              },
+              "gainDb": {
+                "type": "number",
+                "minimum": -60,
+                "maximum": 0,
+                "default": -6,
+                "description": "An absolute dB target; 0 dB is unity, negative levels attenuate, and -60 dB is the editor's silence floor. Typical SFX support levels are around -12 to -6 dB."
+              }
             }
           },
           "transitionIn": {
-            "type": ["object", "null"],
+            "type": [
+              "object",
+              "null"
+            ],
             "properties": {
-              "effect": { "type": "string", "description": "One of the 22 transition ids, e.g. concat.dissolve, concat.whip-pan, concat.glitch-transition." },
-              "seconds": { "type": "number", "default": 0.5, "description": "0.25-1.0; 0 (absent) means a hard cut." }
+              "effect": {
+                "type": "string",
+                "description": "One of the 22 transition ids, e.g. concat.dissolve, concat.whip-pan, concat.glitch-transition."
+              },
+              "seconds": {
+                "type": "number",
+                "default": 0.5,
+                "description": "0.25-1.0; 0 (absent) means a hard cut."
+              }
             }
           },
-          "captions": { "type": ["boolean", "null"], "description": "Whether captions are included for this segment; timing is segment-level, not word-aligned. Null = follow the video default." }
+          "captions": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether captions are included for this segment; timing is segment-level, not word-aligned. Null = follow the video default."
+          },
+          "cutType": {
+            "type": "string",
+            "enum": [
+              "hard",
+              "match",
+              "jump",
+              "smash",
+              "j",
+              "l",
+              "whip",
+              "montage",
+              "action",
+              "beat",
+              "flash",
+              "speed"
+            ],
+            "description": "How this segment begins; the twelve-cut vocabulary in prompts/cuts_and_pacing.md. A run of six hards is a pacing smell."
+          },
+          "in": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The entrance; hard floor M: every clip enters on purpose.",
+            "properties": {
+              "anim": {
+                "type": "string",
+                "enum": [
+                  "pop",
+                  "slide",
+                  "punch",
+                  "dissolve",
+                  "whip",
+                  "static"
+                ],
+                "description": "static = deliberate, at most one per piece."
+              },
+              "seconds": {
+                "type": "number",
+                "minimum": 0.08,
+                "maximum": 0.6
+              }
+            }
+          },
+          "out": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The exit or hand-off; section boundaries exit, interiors hand off.",
+            "properties": {
+              "anim": {
+                "type": "string",
+                "enum": [
+                  "fade",
+                  "slide",
+                  "dissolve",
+                  "none"
+                ]
+              },
+              "seconds": {
+                "type": "number",
+                "minimum": 0.08,
+                "maximum": 0.6
+              }
+            }
+          },
+          "comp": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The designed beat on this segment (motion_bake / captions_animate). Density floor: one per section, one per 15 s.",
+            "properties": {
+              "preset": {
+                "type": "string",
+                "enum": [
+                  "funcut.lower-third.glass",
+                  "funcut.caption.kinetic",
+                  "funcut.stats.triptych",
+                  "funcut.sting.wordmark",
+                  "funcut.quote.pull",
+                  "funcut.chapter.chip",
+                  "funcut.cta.subscribe",
+                  "funcut.code.terminal",
+                  "funcut.chart.bars",
+                  "funcut.compare.split",
+                  "funcut.ticker.count",
+                  "funcut.backdrop.mesh"
+                ]
+              },
+              "ops": {
+                "type": "array",
+                "description": "Authoring operations: set-slot, set-text, set-words, retime, pop, fade-in, ...",
+                "items": {
+                  "type": "object"
+                }
+              },
+              "hold": {
+                "type": "number",
+                "description": "Seconds the comp holds on screen."
+              }
+            }
+          }
         }
       }
     },
@@ -62,54 +303,251 @@
       "description": "The audio beds.",
       "properties": {
         "voiceover": {
-          "type": ["object", "null"],
+          "type": [
+            "object",
+            "null"
+          ],
           "properties": {
-            "source": { "type": "string", "enum": ["tts", "file"], "description": "tts = tts_generate made it; file = user-provided." },
-            "voice": { "type": "integer", "description": "TTS voice id (Kokoro 0-52; e.g. 2 af_bella, 8 af_river, 11 am_adam)." },
-            "speed": { "type": "number", "default": 1.0 },
-            "model": { "type": "string", "default": "kokoro-int8-multi-lang-v1_0" }
+            "source": {
+              "type": "string",
+              "enum": [
+                "tts",
+                "file"
+              ],
+              "description": "tts = tts_generate made it; file = user-provided."
+            },
+            "voice": {
+              "type": "integer",
+              "description": "TTS voice id (Kokoro 0-52; e.g. 2 af_bella, 8 af_river, 11 am_adam)."
+            },
+            "speed": {
+              "type": "number",
+              "default": 1.0
+            },
+            "model": {
+              "type": "string",
+              "default": "kokoro-int8-multi-lang-v1_0"
+            }
           }
         },
         "bgm": {
-          "type": ["object", "null"],
+          "type": [
+            "object",
+            "null"
+          ],
           "properties": {
-            "query": { "type": "string", "description": "bgm_search query (mood words: 'epic tension', 'chillhop', 'upbeat')" },
-            "source": { "type": "string", "enum": ["freepd", "lofi"] },
-            "trackId": { "type": ["string", "null"], "description": "Filled after search; never invented." },
-            "alignTo": { "type": "string", "enum": ["downbeats", "beats", "none"] },
-            "duckDb": { "type": "number", "minimum": -60, "maximum": 0, "default": -12, "description": "Absolute music level under speech in dB; a negative target attenuates from unity. Convert through clip_audio_levels_db; never pass this number directly as the engine's linear volume." }
+            "query": {
+              "type": "string",
+              "description": "bgm_search query (mood words: 'epic tension', 'chillhop', 'upbeat')"
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "freepd",
+                "lofi"
+              ]
+            },
+            "trackId": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Filled after search; never invented."
+            },
+            "alignTo": {
+              "type": "string",
+              "enum": [
+                "downbeats",
+                "beats",
+                "none"
+              ]
+            },
+            "duckDb": {
+              "type": "number",
+              "minimum": -60,
+              "maximum": 0,
+              "default": -12,
+              "description": "Absolute music level under speech in dB; a negative target attenuates from unity. Convert through clip_audio_levels_db; never pass this number directly as the engine's linear volume."
+            }
           }
         },
-        "sfxEnabled": { "type": "boolean", "default": true }
+        "sfxEnabled": {
+          "type": "boolean",
+          "default": true
+        }
       }
     },
     "captions": {
       "type": "object",
       "description": "Video-wide caption style; the current transcription/caption pipeline provides segment timing, not word alignment. Per-segment flags override presence only.",
       "properties": {
-        "syncMode": { "type": "string", "enum": ["segment"], "default": "segment", "description": "Only segment-level timing is supported; do not claim word-level synchronization." },
-        "fontSize": { "type": "number", "default": 0.05, "description": "Fraction of frame height; 0.04 engine default, 0.05-0.06 for short-form." },
-        "fontWeight": { "type": "integer", "default": 700 },
-        "offsetY": { "type": "number", "default": 0.35, "description": "Fraction from center; positive is lower." },
-        "emphasisColor": { "type": "string", "description": "#rrggbb for key words." },
-        "background": { "type": ["string", "null"], "description": "Optional plate '#rrggbb[aa]' for readability; null = no plate." }
+        "syncMode": {
+          "type": "string",
+          "enum": [
+            "segment"
+          ],
+          "default": "segment",
+          "description": "Only segment-level timing is supported; do not claim word-level synchronization."
+        },
+        "fontSize": {
+          "type": "number",
+          "default": 0.05,
+          "description": "Fraction of frame height; 0.04 engine default, 0.05-0.06 for short-form."
+        },
+        "fontWeight": {
+          "type": "integer",
+          "default": 700
+        },
+        "offsetY": {
+          "type": "number",
+          "default": 0.35,
+          "description": "Fraction from center; positive is lower."
+        },
+        "emphasisColor": {
+          "type": "string",
+          "description": "#rrggbb for key words."
+        },
+        "background": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Optional plate '#rrggbb[aa]' for readability; null = no plate."
+        }
       }
     },
     "grade": {
-      "type": ["object", "null"],
+      "type": "object",
+      "description": "Required. A video with no grade is a rough cut.",
       "properties": {
-        "filter": { "type": "string", "description": "One of the 57 filter ids, e.g. concat.teal-orange, concat.noir, concat.warm." },
-        "intensityKey": { "type": "string", "description": "The package's intensity param key from effects_list, e.g. 'temperature'." },
-        "intensity": { "type": "number", "description": "Value within the param's min/max from effects_list." }
-      }
+        "filter": {
+          "type": "string",
+          "description": "One of the 57 filter ids, e.g. concat.teal-orange, concat.noir, concat.warm."
+        },
+        "intensityKey": {
+          "type": "string",
+          "description": "The package's own intensity param key from effects_list (concat.teal-orange -> 'amount' 0-100; concat.warm/cool -> 'temperature' in K)."
+        },
+        "intensity": {
+          "type": "number",
+          "description": "Value within the param's min/max from effects_list."
+        },
+        "apply": {
+          "type": "string",
+          "enum": [
+            "layer",
+            "perClip"
+          ],
+          "default": "layer",
+          "description": "layer = ONE effect_layer_add {start: 0, duration: <runtime>} with duration WRITTEN (absent defaults to 5 s - the trap); perClip = the same videoEffects chain on every clip."
+        }
+      },
+      "required": [
+        "filter",
+        "intensityKey",
+        "intensity"
+      ]
     },
     "export": {
       "type": "object",
       "properties": {
-        "output": { "type": "string", "description": "The .mp4 path to write." },
-        "crf": { "type": "integer", "default": 20 },
-        "codec": { "type": "string", "enum": ["h264", "hevc", "av1"], "default": "h264" },
-        "platform": { "type": "string", "description": "youtube, shorts, reels, tiktok — sets loudness/length expectations only." }
+        "output": {
+          "type": "string",
+          "description": "The .mp4 path to write."
+        },
+        "crf": {
+          "type": "integer",
+          "default": 20
+        },
+        "codec": {
+          "type": "string",
+          "enum": [
+            "h264",
+            "hevc",
+            "av1"
+          ],
+          "default": "h264"
+        },
+        "platform": {
+          "type": "string",
+          "description": "youtube, shorts, reels, tiktok — sets loudness/length expectations only."
+        }
+      }
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "reel",
+        "longform"
+      ],
+      "description": "reel = retention engineering (<= 60 s, hook in 3 s, loop or single CTA, interrupts every 2-4 s); longform = an argument with chapters (> 60 s, hook -> title -> chapters -> re-hook at the 50-60% dip -> outro CTA). See prompts/reels_vs_longform.md."
+    },
+    "sections": {
+      "type": "array",
+      "description": "The piece's structure, by role. Reel: hook + body + cta. Longform: hook + intro + body(chapters) + cta + outro. Boundaries align to segments.",
+      "items": {
+        "type": "object",
+        "required": [
+          "role",
+          "start",
+          "end"
+        ],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "hook",
+              "intro",
+              "body",
+              "chapter",
+              "rehook",
+              "cta",
+              "outro"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "description": "Chapters' names become chapter chips."
+          },
+          "start": {
+            "type": "number",
+            "minimum": 0
+          },
+          "end": {
+            "type": "number",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "maxSegmentSeconds": {
+      "type": "number",
+      "default": 4.0,
+      "description": "Hard floor P: no visual segment runs past this (4.0 energetic niches, 6.0 calm)."
+    },
+    "text": {
+      "type": "object",
+      "description": "The one text system: tokens fixed here, zones in prompts/text_animation.md.",
+      "properties": {
+        "ink": {
+          "type": "string",
+          "description": "#rrggbb - white over dark/busy footage, near-black over bright."
+        },
+        "accent": {
+          "type": "string",
+          "description": "#rrggbb - ONE accent per video: active caption words, chapter bars, stat numbers."
+        },
+        "plate": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "#rrggbb[aa] contrast layer, or null."
+        },
+        "fontStack": {
+          "type": "string",
+          "default": "Inter, DejaVu Sans"
+        }
       }
     }
   }

@@ -1,73 +1,75 @@
 # Cuts and pacing
 
-The cut is the sentence of video. Pacing is set by the SCRIPT'S energy and
-the niche's playbook, not by vibes — measure it: cuts per minute = segments
-per minute from your plan.
+The cut is the sentence; pacing is the paragraph. A piece that only
+hard-cuts is a slideshow, and a piece that cuts on every frame is a strobe.
+This is the vocabulary between them.
 
-## Pacing targets (cuts/minute)
+## The twelve cut types (the plan's `cutType`)
 
-| Register | cpm | Niches |
+| Cut | What it is | Use it for |
 | --- | --- | --- |
-| Calm | 6–10 | history, documentary, horror build-ups |
-| Standard | 10–16 | explainer, how-to, science |
-| Energetic | 16–24 | tech, finance, motivation, fitness |
-| Hype | 24–40 | gaming, extreme, meme-adjacent |
+| `hard` | the plain cut | the default; most cuts, everywhere |
+| `match` | cut on the same shape/color/action | invisible flow between subjects; the pro signature |
+| `jump` | deliberate same-subject displacement | time passing, unease, "then vs now" |
+| `smash` | hard cut against sound: silence→impact or soft→loud | the claim lands; the number hits |
+| `j` | audio of the next scene leads its picture | conversations, reveals — the word before the visual |
+| `l` | audio of the current scene plays over the next | exits, moving on |
+| `whip` | transition-packet cut (`concat.whip-pan`) | fast list rhythm, reels on the beat |
+| `montage` | rapid sequence of very short clips | escalation, accumulation, "and again and again" |
+| `action` | cut mid-movement, land on the completion | any physical motion; sport, process |
+| `beat` | cut exactly on a downbeat (`analyze_beats`) | music-driven sections, reels |
+| `flash` | 1-frame white/flash frame between clips | glitch energy, tech error beats — sparingly |
+| `speed` | speed-ramp through the cut (`setClipSpeedCurve`) | dramatic emphasis: slow into the moment, whip out |
 
-Short-form retention adds a hard rule regardless of register: **a pattern
-interrupt every 2–4 s** — a cut, a text pop, an SFX hit, a punch zoom, a
-camera move. Two consecutive interrupts of the SAME kind feel like flicker;
-alternate cut → text → zoom → SFX. 20–40 cpm in pure short-form is normal.
+`montage` is not reserved for the finale any more than a period is
+reserved for the last sentence — one montage per 20 s is fine in
+energetic pieces. In the plan, each segment names its cut; a run of six
+`hard`s in a row is a pacing smell to fix at review.
 
-## The cut types and when each is right
+## Pacing curves
 
-- **Hard cut (default).** Same place/continuity continuing → nothing fancy.
-- **Match cut.** Shape, motion or idea carries across the cut (a turning
-  wheel → a turning planet). The strongest cut in a faceless edit; plan one
-  per video minimum in the escalation beats.
-- **Jump cut.** Time compression inside one subject. In stock-B-roll work its
-  equivalent is: same subject, tighter shot.
-- **Smash cut.** Loud/quiet or fast/slow juxtaposition — the horror sting,
-  the joke landing. Needs both sides planned (loud riser into near-silence).
-- **J / L feel.** AUDIO crosses the cut, picture changes at the word: the
-  next segment's SFX or narration enters up to 150–200 ms before its visual.
-  In this engine: `sounds_add` the next beat's SFX peaked at the boundary
-  while the previous clip still shows, and let `clip_trim` land the visual on
-  the word. The L feel (audio lingers) comes from `detachAudio`-style
-  overlaps via raw `edit_apply` when you truly need it — rare in faceless
-  stock edits.
-- **Montage.** 3–6 clips × 0.4–0.8 s over one rising sentence — use
-  `clips_add_sequence` then trim each. Reserved for escalation 2 or the
-  payoff.
+Cuts per minute by register — and the curve WITHIN a piece:
 
-## Silence removal (the spine pass)
+- calm 6–10 (documentary, history)
+- standard 10–16 (explainer, how-to)
+- energetic 16–24 (tech, finance, motivation)
+- hype 24+ (gaming, extreme)
 
-`analyze_silence` → `clip_cut_spans` on the voiceover, then the plan segments
-inherit the tightened timeline:
+Longform breathes on a curve: hook at the top of your register → body a
+notch calmer → re-hook spike at the 50–60% dip → outro settles. A flat
+cpm across eight minutes is monotone even when the number is "right".
 
-- threshold −35 dB (−40 for noisy rooms, −30 if the VO is a hot whisper),
-- spans ≥ 0.5 s (0.35 s in hype pacing),
-- padding ≈ 80 ms at each edge (keeps the plosive, kills the dead air).
+## The 4-second law
 
-After the cut, re-listen via the transcript timings: sentence-final gaps
-should be short but PRESENT (that is the breath the ducking rises into);
-mid-sentence gaps should be gone. If the VO now races, reduce rather than
-delete: `clip_speed` at 1.05–1.1 on the filler is calmer than cutting a
-breath the TTS needed.
+No visual segment exceeds **4.0 s** (energetic niches) or **6.0 s**
+(calml), enforced by the plan validator. This is the "stock footage
+doesn't change" complaint as a number: a 9-second aerial is nine seconds
+of the viewer's attention walking out. Within one long clip you can also
+CUT INTO IT — place the same source as two clips with different trims and
+different framings (that counts as two segments and two shots; the reuse
+law is about consecutive identical treatments, and the same source used
+at 0:10 and 2:40 is fine).
 
-## Ordering discipline
+## J-cut feel inside contiguous segments
 
-- Cut TO the word, not after it: the visual for a new idea enters ON (or
-  100–200 ms before) its first word — late visuals read as lag.
-- A 1-frame late SFX is invisible; a 10-frame late visual is amateur hour.
-  When in doubt, trim visuals 1 frame early, never late.
-- End on purpose: the last frame holds 0.5–1 s longer than feels natural
-  before the loop point — it is the thumbnail and the loop's breathing room.
+The plan's segments are contiguous — the validator rejects gaps. The
+J-cut *feel* is created inside the placement: lead the visual 100–200 ms
+before the narration's word by trimming the clip's start earlier — never
+by leaving gaps between segments.
 
-## Self-check
+## Silence removal parameters
 
-- [ ] cpm matches the register table (count plan segments × 60 / runtime).
-- [ ] No still visual > 4 s without an interrupt (zoom, SFX, text pop).
-- [ ] No two interrupts of the same kind back to back.
-- [ ] At least one match cut or smash cut in escalations.
-- [ ] Silence pass kept breaths at sentence ends; no mid-word cuts.
-- [ ] Every visual enters on or before its word.
+`analyze_silence` defaults: `-35` dB threshold, ≥0.5 s spans, and a
+`paddingMs` that is REPORTED, NOT APPLIED. Shrink each span by ~80 ms per
+side yourself before `clip_cut_spans` — the breath at a sentence end is
+performance, not dead air. When in doubt cut less: a tight video that
+breathes beats a suffocated one.
+
+## The self-audit at review
+
+Count the cuts (`timeline_read`: clip count on the picture lane, minus
+1). cuts/minute = count × 60 / runtime. It should land in your register
+band, and the variety of `cutType`s used should be ≥ 4 across a piece.
+Then ask: did any single cut surprise me? If nothing did, the edit is
+smooth and forgettable — add one `smash` or `speed` where the script
+makes its biggest claim.

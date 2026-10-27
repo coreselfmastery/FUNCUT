@@ -1,59 +1,83 @@
 # Color grading
 
-One look per video, chosen from the niche playbook, set once. The engine's
-57 filters ARE the grade — apply via `effect_layer_add`, tune via
-`effect_key_set` (each package's parameter key/min/max/default comes from
-`effects_list` at runtime — read it, don't recall it). Never stack two color
-filters on one clip; never change the look mid-video.
+One look per video, applied to the whole runtime, proven on frames. A video
+with no grade is a rough cut; "the footage looked fine" is what a rough cut
+always says about itself.
 
-## The palette recipes (niche → filter)
+## How a grade is actually applied (the 5-second trap)
 
-| Niche | Filter | Intensity notes |
+There are exactly two correct ways, and one broken one.
+
+**Whole-video layer — the default.** One effect layer spanning the entire
+runtime:
+
+```json
+effect_layer_add { "path": "...", "start": 0.0,
+  "duration": 128.0,   // ← the WHOLE runtime, WRITTEN OUT
+  "effectId": "concat.teal-orange", "name": "The look" }
+```
+
+**`duration` is the trap**: when it is absent the layer lives **5 seconds**
+— the default — and grades five seconds of a two-minute video before
+stopping. Write the number. Take it from `timeline_read`'s total, not from
+the script's estimate.
+
+**Per-clip chain — when footage sources vary.** The same `videoEffects`
+list on every clip, as one `edit_apply` batch:
+
+```json
+clip_update { "path": "...", "clipId": "c7",
+  "patch": { "videoEffects": [ { "id": "concat.teal-orange", "params": { "amount": 70 } } ] } }
+```
+
+**Broken:** `effect_layer_add` on the first clip with no duration, or
+different looks on different sections "for variety". One video, one look.
+
+## The intensity key is the package's own
+
+`effects_list` names each package's parameters and ranges. The commonly
+used recipes:
+
+| Package | Key | Range | Default |
+| --- | --- | --- | --- |
+| `concat.teal-orange` | `amount` | 0–100 | 70 |
+| `concat.warm` | `temperature` | 3000–6000 K | 4600 |
+| `concat.cool` | `temperature` | 3000–6000 K | — |
+| film-look packages | see `effects_list` | | |
+
+A key the package does not have is silently ignored — set `intensity` on
+`concat.teal-orange` and nothing happens. Check the key in `effects_list`
+before writing the plan.
+
+## Recipes by niche
+
+| Niche | Recipe | Notes |
 | --- | --- | --- |
-| History | `concat.super-8` or `concat.noir` (b/w period) or `concat.polaroid` (photo-archive) | light touch — texture over tint |
-| Tech | `concat.cool` + `concat.vaporwave` only for retro beats | cool blues, low warmth |
-| Luxury | `concat.teal-orange` at moderate, or `concat.warm` candlelight (3000–4200 K range of its `temperature` param) | rich, never neon |
-| Motivation | `concat.warm` (sunrise) or teal-orange (gym grit) | mid-high contrast |
-| Finance | `concat.cool`, `concat.bleach-bypass` for crash/crisis beats | desaturated = serious |
-| Science | `concat.teal-orange` or neutral + `concat.warm` for nature beats | clean, one accent hue |
-| Horror | desaturate via `concat.mono`-adjacent grades + `concat.vhs` found-footage beats | low saturation, crushed blacks |
-| Fitness | `concat.bleach-bypass` or high-intensity warm | sweat-and-chrome |
-| Gaming | `concat.vaporwave`, `concat.cyberpunk`, `concat.vhs` CRT beats | neon allowed here |
-| How-to | `concat.warm` low or none — clarity first | the object's real color is the content |
+| Finance | `concat.teal-orange` amount 60–75, or cool steel look | numbers pop against cool shadows; keep skin warm |
+| Tech | `concat.cool` ~5600 K or a clean contrast look | clinical, not blue-mud |
+| Motivation | warm, lifted contrast | golden-hour adjacent |
+| Documentary | gentle `concat.warm` ~4800 K | honesty over style |
+| History | sepia-adjacent warm, slight fade | era, not costume |
+| Gaming/vlog | punchy contrast + saturation | the footage's own energy, disciplined |
+| True crime | desaturated, cool, crushed blacks | dread, not darkness |
+| Luxury | low-sat, warm highlights | restraint reads as price |
+| Education | neutral + slight warmth | nothing between the viewer and the idea |
+| Fitness | high contrast, saturated | sweat should gleam |
 
-The full filter shelf also includes: mono, warm, cool, noir, vhs, polaroid,
-super-8, vaporwave, cyberpunk, teal-orange, bleach-bypass — plus
-non-color "looks" you should NOT use as a grade (glitch effects, fisheye…).
-`effects_list {kind:"filter"}` is the runtime source of truth; if a name here
-is missing there, trust `effects_list`.
+Accent with texture only when the niche earns it: film-grain and halation
+packages at low intensity for history/luxury/motivation; never in tech or
+education.
 
-## How to apply
+## Aspect and fit (the grade's neighbor — do it in the same pass)
 
-1. `effects_list {kind:"filter"}` → confirm the id + its parameter key
-   (e.g. `concat.warm` → `temperature`, 3000–6000 K, default 4600).
-2. `effect_layer_add` on the FIRST clip; record the layer/effect id.
-3. `effect_key_set` the intensity once. For clips added later, replicate the
-   SAME filter + SAME intensity — consistency beats perfection.
-4. A/B check: `preview_frame` at a mid-segment before and after — the grade
-   should be legible at thumbnail size, not subtle at 10 %.
+Vertical 9:16 delivery with landscape footage: `timeline_background
+{kind: "blur"}` is the deliberate style choice; `clip_frame {framing:
+"fill"}` on every clip is the default (cover and crop). A letterboxed or
+pillarboxed frame at review is a defect to fix, not a look.
 
-## Grade discipline
+## Prove it
 
-- Skin-ish subjects (even stock hands/faces): teal-orange and warm are safe;
-   heavy mono/bleach only on objects and landscapes.
-- Grain/texture filters (super-8, vhs, polaroid) are PERIOD signals — use on
-   archive material, not the whole modern explainer.
-- Vertical 9:16 on a 16:9 canvas: `timeline_background {kind:"blur"}` (or a
-  brand color for luxury/finance) — the blurred sides are part of the look,
-  keep them neutral.
-- Export does not measure integrated loudness or true peak. `concat.loudness`
-  is an effect, not a verified master-bus pass; measure the exported mix with
-  an external analyzer when a loudness target matters.
-
-## Self-check
-
-- [ ] Exactly one color filter; same id and intensity on every clip.
-- [ ] Chosen from the niche playbook, not vibes.
-- [ ] `preview_frame` confirms legibility at small size.
-- [ ] Period textures only on period material.
-- [ ] Backgrounds (blur plates) stay neutral.
+Two `preview_frame`s, at 25% and 75% of runtime, comparing against the
+ungraded intent: the same recipe, the same strength, both frames. A grade
+that shows at 0:30 but is gone by 1:30 is the 5-second trap; a grade that
+changes character mid-video is two recipes fighting.

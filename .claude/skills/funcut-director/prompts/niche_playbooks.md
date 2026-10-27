@@ -57,17 +57,38 @@ generic rules (SKILL.md §3); when two rules collide, the niche wins.
   need motivation. You need this instead").
 
 ## Finance / money
-- **Look:** `cool`/`bleach-bypass`; text clean/impact, green/red accents
-  (#26a69a/#ef5350 family); numbers ALWAYS get their own card.
-- **Sound:** tight pulse; Notification dings on stats; Keyboard on
-  spreadsheet beats.
-- **Pacing:** energetic, 16–24 cpm, 30–60 s.
-- **Queries:** "stock chart close-up", "coins stacking macro", "printing
-  press money", "skyline financial district", "port containers aerial".
+- **Look:** `teal-orange` amount 60–75 or `cool` steel; ONE accent — teal
+  #22D3C5 or amber #FFC247 — on numbers, active caption words, chapter
+  bars; ink white over plates. EVERY number, percentage, comparison or
+  process is a motion comp: `funcut.ticker.count` (the number counts),
+  `funcut.chart.bars` (the comparison builds), `funcut.stats.triptych`
+  (three stats land staggered), `funcut.compare.split` (before/after
+  wipes) — never a plain text card.
+- **Sound:** the data family — `data-countup-*` on tickers,
+  `data-bar-grow`/`data-chart-reveal` on charts, `money-coin-drop`/
+  `money-register`/`money-card-tap` on money moments, `whoosh-*` on
+  punches, `impact-*` on claims. Notification dings are a cliché — use
+  the data family.
+- **Pacing:** energetic, 16–24 cpm. REEL: 20–30 cpm, punch zoom every
+  3–6 s, 30–60 s. LONGFORM: 90–150 s, hook 20+ cpm → body 14–18 →
+  re-hook spike at 50–60% → outro 10.
+- **Structure (longform):** cold-open promise → title sting → 3–5 named
+  chapters, each a `funcut.chapter.chip` on a downbeat, opened by an
+  open loop, closed by a transition + its SFX → mid re-hook →
+  `funcut.cta.subscribe` outro with one action + one promise.
+- **Queries (climb the ladder: wide → medium → close → detail):**
+  "financial district aerial" → "trading floor" → "candlestick chart
+  close-up" → "coin stacking macro" → "card terminal tap close-up" →
+  "printing press money" → "port containers aerial". One new noun per
+  segment; no noun twice within 30 s.
+- **Captions:** reel — word-timed kinetic (`captions_animate`) with the
+  accent on the active word. Longform — segment-timed, support not star.
 - **Hooks:** the reframe ("Your salary is priced like milk. Here's the
   difference") · the trap ("This fee eats $47,000 of your retirement —
   quietly") · the scale ("$1 at 22 is $17 at 62. The math nobody shows
-  you").
+  you") · the receipt ("I tracked every dollar for 90 days") · the
+  contrarian ("82% of day traders lose — here's the part they don't
+  print").
 
 ## Science / nature
 - **Look:** clean — `teal-orange` light or none; captions bold-clean
@@ -132,11 +153,16 @@ generic rules (SKILL.md §3); when two rules collide, the niche wins.
 
 ## Cross-niche constants
 
-9:16 for shorts/reels/tiktok (`timeline_background blur` on 16:9 canvases);
-16–30 s length target; loop endings; concise, segment-timed captions (do not
-claim word sync from segment transcripts); record platform loudness goals but
-measure final LUFS/true peak externally; one filter;
-MAGICK = CC BY-NC (openmoji is the safe shelf);
-TTS Kokoro int8 (voice per niche: warm 2/af_bella for history-luxury, crisp
+The mode decides the shape (see `reels_vs_longform.md`): REEL — 9:16,
+16–60 s, loop ending, word-timed kinetic captions, one accent, 2–4
+transitions per 30 s; LONGFORM — 16:9 or 9:16, 90–180 s, hook → title →
+chapters → re-hook → outro, segment captions, chapter comps. Every clip
+`clip_frame {framing: "fill"}` on 9:16 (OpenVid holds no vertical
+footage — search landscape, crop to cover). Grade the WHOLE runtime
+(`effect_layer_add {start: 0, duration: <runtime>}` — duration written,
+the default is 5 s). One accent, one text system, entrances and exits on
+every element. MAGICK = CC BY-NC (openmoji is the safe shelf). TTS
+Kokoro int8 (voice per niche: warm 2/af_bella for history-luxury, crisp
 8/af_river for tech-science, deep 14/am_fenrir or 17/am_onyx for
-horror-motivation).
+horror-motivation-finance). Record platform loudness goals but measure
+final LUFS/true peak externally.

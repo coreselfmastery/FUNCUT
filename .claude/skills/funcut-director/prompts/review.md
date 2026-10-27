@@ -1,65 +1,52 @@
-# Review: the gate before export
+# Review (Phase 7): verify by thirds
 
-Nothing exports until this passes AFTER THE LAST EDIT. Work the checklist in
-order; fix; re-check the touched items; then export.
+Three frames was verification theater for a 2-minute video. The gate is
+now: **preview_frame at the start, middle and end of EACH THIRD** of the
+runtime — 9 frames for a 2-minute piece (inside the 5-calls/minute
+budget), each one checked against this list.
 
-## 1. Structure (no tools needed)
+## The checklist
 
-- [ ] Runtime within ±10 % of the brief; plan segments all executed.
-- [ ] Cuts/min matches the niche playbook; an interrupt every 2–4 s in
-  short-form.
-- [ ] Hook is inside the first 3 s; the payoff loops the hook's image or word.
+For each frame, answer:
 
-## 2. Timeline integrity (timeline_read)
+1. **Fit** — the picture covers the canvas (no letterbox, no pillarbox,
+   no 512² clip floating in a 1080×1920 frame).
+2. **Text** — captions inside the safe area, in their zone, no collision
+   with titles/lower thirds/comps, contrast readable against the actual
+   footage behind it.
+3. **Grade** — present, the same recipe and strength as the last check
+   point (a grade gone at 75% is the 5-second layer trap).
+4. **Design** — a comp or a designed beat is on screen or just past (the
+   density floor: one per section, one per 15 s).
+5. **Motion** — the frame's clips entered on purpose (this frame should
+   be mid-life of a clip that animated in, not a static hold).
 
-- [ ] No unintended gaps: every `start` equals the previous `end`.
-- [ ] No overlaps on the same track; the BGM/SFX tracks sit where planned.
-- [ ] Every segment's visual exists (no placeholder, no missing media).
-- [ ] VO total length matches the tightened transcript (silence pass done).
+Then, once, over the whole piece:
 
-## 3. Look (preview_frame — start / middle / end, ≤5 calls/minute budget)
+6. **Continuity** — `timeline_read`: no gaps, no unplanned overlaps,
+   every segment has a visual, every transition is on an adjacent
+   same-lane cut (an orphaned transition plays as a cut — find them).
+7. **Cuts** — count them: clips × 60 / runtime lands in the register
+   band; ≥ 4 distinct cut types across the piece.
+8. **Variety** — no clip id twice within 60 s (journal check), no B-roll
+   noun repeated within 30 s of plan (plan check), shot scales climb
+   within sections.
+9. **Sound** — SFX peaks on their cuts (spot-check 3 by the journal), no
+   id twice within 30 s, BGM ducks under speech (−12 dB absolute), ends
+   on a downbeat.
+10. **Captions honest** — segment-timed called segment-timed;
+    word-timed built from measured words.
+11. **Memory** — say what the first, middle and last thirds contain, in
+    one sentence each, FROM THE JOURNAL. If you cannot, the journal has
+    fallen behind and the edit has gone unwitnessed.
+12. **The look** — one grade, one accent, one text system, from first
+    frame to last.
 
-- [ ] First frame: hook visual + title present, grade visible, not black.
-- [ ] Middle frame: B-roll + captions composed inside the safe area;
-  captions readable against the actual footage (stroke/plate working).
-- [ ] Last frame: payoff card or loop frame held; grade consistent.
-- [ ] One filter, same intensity everywhere (spot-check two frames).
+## Definition of done
 
-## 4. Audio (from the plan's numbers)
-
-- [ ] BGM present, ducked −12 dB under every spoken segment, riding up in
-  ≥1.5 s gaps.
-- [ ] SFX peaks on their cuts (spot-check the hook and one section change).
-- [ ] No SFX louder than the VO at its moment (−8 dB hook max).
-- [ ] Sections land on downbeats or speech won the conflict (±300 ms).
-
-## 5. Rights and hygiene
-
-- [ ] MAGICK stickers absent from monetized work (openmoji is the safe shelf).
-- [ ] No invented ids anywhere in what was placed (all came from tool results).
-- [ ] Music from FreePD/MobyGratis (both cleared for this use).
-
-## 6. Export and the definition of done
-
-- [ ] `export_start` with the plan's output/crf/codec (h264 crf 20 default;
-  platform aspect honored: 9:16 for shorts/reels/tiktok).
-- [ ] `export_wait` until `state: done` — THEN check the status's output path
-  is reported. **"Done" means the file was written, not that you feel
-  finished.** If the job failed, read the error, fix the cause (not the
-  symptom), re-verify the touched checklist items, and export again — max 3
-  attempts, then report the failure honestly.
-- [ ] Report to the user: the output path, runtime, cuts/min, the look and
-  voice used, and anything you could not do (missing library results,
-  fallbacks used). An honest gap report is professional; a hidden one is not.
-
-## Failure quick reference
-
-| Symptom | First suspect | Fix |
-| --- | --- | --- |
-| Black frame in preview | segment without a visual / background none | give it a visual; `timeline_background blur` |
-| Captions unreadable | no stroke/plate over busy footage | strokeWidth or background plate; darken offset |
-| Audio missing in export | VO clip muted / detached track | re-check clip volume keys; re-attach |
-| Export fails fast | unsupported size/codec combo | check width/height ≤ 8192, h264+HDR → hevc |
-| "not downloaded" error | model not local | surface the Settings instruction to the user |
-| Analysis pip error | python extras missing | surface the pip install hint exactly |
-| SFX feels late | peak placed after the cut | re-place the sound so its peak lands on the cut (`start = cut - syncAt`), 1 frame early if unsure |
+- All 12 above pass AFTER the last edit (a fix invalidates the previous
+  pass — re-run the thirds you touched).
+- `export_wait` reports the file written, with the size.
+- The journal's recap is written and the plan is archived in the project.
+- Only now does the word "done" exist. If a platform target was given,
+  the aspect/duration/loudness promises were measured, not assumed.

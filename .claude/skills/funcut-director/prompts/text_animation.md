@@ -1,80 +1,86 @@
-# Text animation: titles, captions, kinetic type
+# Text, titles and captions
 
-Type is a first-class visual in faceless video — often THE visual. The engine
-gives you 31 text presets (`title_add`), segment-timed captions
-(`captions_add`), full style control (fontFamily, fontSize as a fraction of
-frame height, fontWeight 100–900, color, strokeWidth/strokeColor, shadow,
-background plate with radius, align, opacity), and keyframes for motion.
+Text is a system, not a decoration: four zones, one palette, every
+element moving with intent.
 
-## The 31 presets (text-presets; `title_add` styles)
+## The zones (one occupant at a time)
 
-atomic, blackletter, block, bold-caption, candy, cartoon, clean, code, comic,
-diner, editorial, fashion, friendly, hairline, handwritten, hebrew, impact,
-japanese, lower-third, marker, mission, mystery, notes, pixel, poster,
-retro, scribble, stencil, tech, western, zoo (+ default).
-
-Preset-choosing per niche: impact/bold-caption/poster for short-form hooks ·
-tech/code/pixel for tech & gaming · editorial/fashion/hairline for luxury ·
-handwritten/marker/scribble for history & how-to · mystery/stencil for
-horror · candy/cartoon/friendly for family content · lower-third for
-documentary-style nameplates.
-
-## Captions (segment-timed)
-
-`transcribe` returns timed text segments, not per-word timings. `captions_add`
-places those intervals as title clips; it does not perform word alignment.
-Use one cue per measured segment unless accurate word timestamps are supplied
-and independently verified. Defaults worth overriding:
-
-- `fontSize`: 0.04 of frame height is the engine default — use **0.05–0.06
-  for 9:16** (42 px+ rule at 1080-wide equivalences).
-- `fontWeight`: 600 default → **700–800 short-form**; stroke or plate for
-  contrast over busy footage; `offsetY` 0.30–0.35 (keep the lowest line's
-  top above the platform UI zone — bottom ~15 % of a 9:16 frame is burned
-  by TikTok/Shorts/Reels chrome).
-- Keep cues concise (about 2–4 words where the measured segment allows it).
-  Do not subdivide a longer ASR segment into synthetic word timings and call
-  the result word-synced; use a real alignment source or preserve the segment
-  interval.
-- Emphasis: ONE key word per segment in the niche's accent color (the plan's
-  `emphasisColor`); two colored words in a row means neither is emphasized.
-
-## Kinetic type patterns (keyframes on text clips)
-
-Text arrives MOVING or it arrives dead. Recipes (properties via
-`keyframe_set`; `at` = fraction of the clip, `ease` = cubic-bezier):
-
-| Pattern | Keys | Feel |
+| Zone | Where | What lives there |
 | --- | --- | --- |
-| Pop-in | scale 0.9→1.0 + opacity 0→1 over 150 ms, `ease [0.2,1.4,0.4,1]` (overshoot) | UI/punch, best friend of `Impact` SFX |
-| Slide-in | offsetX ±0.08→0 + opacity, 200–250 ms, `ease-out` [0.16,1,0.3,1] | list steps, lower thirds |
-| Rise | offsetY 0.04→0 + opacity, 250 ms | editorial, quiet emphasis |
-| Tracking expand | scale 1.0→1.06 over the WHOLE clip, linear | luxury poster, title cards |
-| Blur-free depth | opacity 0→1 in 80 ms then scale 1.0→1.03 over the card | (no blur keyframe exists — use fast opacity + slow scale) |
-| Exit | mirror the entrance at `at` 0.9–1.0, 150 ms | only for cards that hand off |
+| Caption band | ~70–80% of frame height, centered | captions (`captions_add` or the kinetic comps) |
+| Upper third | top 33%, centered or left | section titles, chapter words, hooks |
+| Lower third | bottom 33%, anchored LEFT | lower thirds (names, roles, sources) |
+| Center | the middle | stat cards, chapter chips, big claims — the comp layer's home |
 
-Never animate BOTH scale and offset and rotation on one card — one axis of
-motion + opacity is the professional dose.
+Two text elements in one zone at the same moment is a collision — check
+at review with `preview_frame` at the busiest frame. On 9:16, keep 10%
+clear at the top (platform chrome: username, follow button) and 12% at
+the bottom (caption bar, buttons); the caption band sits INSIDE that,
+not over it.
 
-## Title cards (title_add)
+## The palette (fixed in the plan)
 
-- Hook title (0–3 s): 3–7 words, impact-class preset, pop-in on the SFX,
-  positioned upper-third (`offsetY` ≈ −0.25) to keep captions clean.
-- Section plates: lower-third preset, slide-in, hold 2–3 s.
-- Payoff/CTA card: poster-class, full center, punch zoom, matches the hook's
-  family (same preset family, same accent color — bookends).
+Four tokens, chosen once:
 
-## Numbers and stats
+- **ink** — the text color: white (#F7F9FF) over dark or busy footage,
+  near-black (#0A0C10) over bright footage. Pick by looking at the actual
+  frames, not by habit.
+- **accent** — ONE color per video, from the niche palette (finance:
+  #22D3C5 teal or #FFC247 amber; tech: a single electric hue). The accent
+  appears in captions' active word, chapter chips' bars, stat numbers —
+  one accent, everywhere, is what makes it a system.
+- **plate** — the contrast layer under text over busy footage: ink at
+  60–80% alpha, or a blurred scrim (`backdrop-filter` in the motion
+  comps), radius 12–22 px, padding 16–28 px.
+- **background** — the timeline's own background or the comp's backdrop;
+  text never floats over unmanaged footage without a plate.
 
-Numbers get their own card ALWAYS when they matter: number huge (fontSize
-0.10–0.14), unit/label small beneath, Impact or Riser SFX peaked on the pop.
-"4,000,000,000 YEARS" as a textCard with a punch zoom beats narration alone
-every time it appears in a script.
+Contrast is checked against the FRAME at the busiest moment — 4.5:1
+minimum for body-size text. `preview_frame` is the check.
 
-## Self-check
+## Captions
 
-- [ ] One font family per video (presets from one style family).
-- [ ] Captions: readable short cues, measured segment timing (or verified word timing), 42 px+, stroke/plate, safe area respected.
-- [ ] Every text card has ONE entrance motion + its SFX, ≤ 250 ms.
-- [ ] One emphasized word per segment max; accent color consistent.
-- [ ] Numbers that matter got their own card.
+Two honest kinds:
+
+1. **Segment-timed** (`captions_add`): the transcription's own segments.
+   2–4 words a cue where the segment permits, bold 600+, stroke or plate
+   contrast, `offsetY` ≈ 0.35, never touching edges. Never call them
+   word-synced.
+2. **Word-timed kinetic** (`captions_animate`): measured [text, start,
+   end] words — each line a kinetic comp, active word highlighted,
+   baked to one video, imported and placed at the voiceover's start.
+   This is the short-form standard. Whisper SEGMENTS with per-word
+   estimates are not timing; only measured word times are.
+
+## Entrances and exits (every element)
+
+Nothing just appears. Nothing just vanishes.
+
+- Titles: rise 12–24 px + fade 250–400 ms in (`cubic-bezier(0.16,1,0.3,1)`
+  feel — `keyframe_set` with an out-quart), fade 200–300 ms out.
+- Lower thirds: slide from left 240–480 ms with a settle, exit slide-back
+  300 ms. Built as the `funcut.lower-third.glass` comp with REAL copy and
+  the fake timecode deleted — never the timeline's 2016 lime-plate
+  preset.
+- Captions: per-line fade/pop 120–180 ms (the kinetic comp does this
+  itself).
+- Stat cards/charts: count or grow with their `data-*` sound.
+
+## The modern lower third (what "2016" means and how to leave it)
+
+2016 is: a solid lime bar, slide-in, weight 600, "Name — Title", drop
+shadow, gone. 2025 is: a glass plate (`backdrop-filter: blur`) or a
+scrim bar, 800-weight name over 400-weight role, one accent underline
+3–6% of frame wide, a spring settle not a linear slide, an exit, and the
+whole thing built as a motion comp so it moves as one object. Build it
+with `motion_bake` on `funcut.lower-third.glass`, edit the slots, delete
+the badge you do not need.
+
+## Kinetic text rules
+
+- One emphasis device per piece: active-word color, OR scale pop, OR
+  chip plate — not all three on every word.
+- The accent color is the highlight; the ink is everything else. A
+  highlight that changes color per word is a rainbow, not a system.
+- Line breaks at meaning: never break "5.2%" or a hyphenated pair.
+- Uppercase for 1–3 word HOOKS only; sentence case for reading text.

@@ -170,7 +170,16 @@ fn an_agent_edits_previews_and_exports_a_project_headless() {
         json!({
             "plan": {
                 "aspect": "9:16",
+                "mode": "reel",
                 "audio": {},
+                "grade": {
+                    "filter": "concat.teal-orange",
+                    "intensityKey": "amount",
+                    "intensity": 65
+                },
+                "sections": [
+                    { "role": "hook", "start": 0.0, "end": 2.0 }
+                ],
                 "segments": [{
                     "start": 0.0,
                     "end": 2.0,

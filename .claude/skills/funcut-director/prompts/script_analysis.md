@@ -1,73 +1,67 @@
 # Script analysis
 
-Turn a topic (or a rough script) into narration that survives the first three
-seconds. You are writing for a VOICE, not a page.
+Topic in, script out — with the structure the edit will hang on decided
+HERE, in the words, before a single clip is searched.
 
-## Duration math first
+## Duration math
 
-- 180–200 words per minute → **words ≈ seconds × 3.1**. A 30 s video is
-  ~90–95 words; 60 s ≈ 190 words; 90 s ≈ 285.
-- Short-form sweet spots (from 2.4M-TikTok research): **16–30 s earns the best
-  median views**. Defaults: explainer 30 s, story/POV 30–65 s, listicle 45 s.
-- Hook budget: the first sentence must land inside 3 s (~9 words), because
-  the scroll decision is made around 1.7 s.
+180–200 words per minute (≈3.0–3.3 words/s; 3.1 for estimates). A 60 s
+reel is ~110 written words; a 2-minute explainer ~370. Write to the
+number, then read it aloud once (mentally, at least) and cut 10% —
+everyone writes long.
 
-## Hook patterns (pick one, make it concrete)
+## Hooks (the first 3 seconds)
 
-1. **Bold claim** — "The ocean is a mountain, dissolved."
-2. **Myth break** — "Everything you know about X is backwards, and 3 numbers prove it."
-3. **Stakes** — "This mistake costs creators their channel."
-4. **Question with a wrong guess** — "Why do all airports look the same? It's not laziness."
-5. **List tease** — "Three foods your grandmother trusted that science just confirmed."
-6. **POV drop** — "You're standing on the salt of a mountain that eroded before animals existed."
+The scroll decision happens by ~1.7 s. One of these shapes, one sentence:
 
-Rules: name a concrete noun in the first five words; numbers beat adjectives
-("4 billion years" not "a very long time"); no greeting, no "in this video".
+1. **Bold claim**: "Your bank is legally allowed to lend the same dollar
+   nine times."
+2. **Myth break**: "Everything you know about compound interest is
+   backwards."
+3. **Stakes**: "This one number decides whether you retire at 55 or 75."
+4. **Wrong-guess question**: "What costs more: rent, or the interest on
+   it?"
+5. **The receipt**: "I tracked every dollar for 90 days. Here's what
+   broke."
+6. **List tease**: "Three fees you're paying right now — number two is
+   the one nobody catches."
+7. **POV drop**: "You just lost $4,300 to a sentence in a contract."
+8. **Contrarian stat**: "82% of day traders lose money. Here's the part
+   they don't print."
 
-## Beat sheet (short-form, 30 s)
+The hook is also a VISICAL decision: it names the first clip, the first
+comp, and the first SFX. Write the hook's visual beside the hook itself.
 
-| Beat | Span | Job |
-| --- | --- | --- |
-| Hook | 0–3 s | One sentence, one image, one SFX |
-| Setup | 3–8 s | The one fact/frame the hook needs to make sense |
-| Escalation 1 | 8–15 s | The strongest proof, a number, a comparison |
-| Escalation 2 | 15–22 s | The twist, the scale-up, the "and then" |
-| Payoff + loop | 22–30 s | Close the loop the hook opened; one-line CTA that reuses a hook word |
+## Beat sheets by mode
 
-Longer videos repeat escalations (each 6–8 s, harder proof each time), one
-pattern interrupt every 2–4 s of runtime (see `cuts_and_pacing.md`).
+**Reel (≤ 60 s):** hook (0–3 s) → escalation 1 → escalation 2 →
+[escalation 3] → payoff → loop/CTA (last 5–8 s). Each escalation raises
+stakes or reframes; a pattern interrupt every 2–4 s is planned AT THE
+SCRIPT STAGE (each escalation ends with something the edit can punch:
+a number, a twist word, a hard stop).
 
-## Write for TTS
+**Longform (> 60 s):** cold-open promise (0–3 s) → intro/title beat
+(3–8 s) → 3–5 chapters, each 20–40 s with an open loop ("but the third
+fee is the one that got me") → payoff chapter → mid re-hook at the
+50–60% dip → outro CTA. Chapters are named here — the names become the
+chapter chips.
 
-- Short sentences. One idea each. Full stops are your pacing tool — the
-  silence-removal pass keeps sentence-final breaths.
-- Spell out numbers and units ("four billion" not "4B"); expand every
-  abbreviation; no URLs, no hashtags in narration.
-- Punctuation is stage direction: a comma = small pause, an em dash = beat,
-  "..." = deliberate hang. Avoid ALL-CAPS (TTS shouts unpredictably) — put
-  emphasis in word choice, not formatting.
-- Read-aloud test: every sentence under ~12 words, mouth-friendly words, no
-  tongue-twisters where the beat is tight.
+## CTAs
 
-## Segmenting for the plan
+- Soft (mid): one line, no ask, a value promise.
+- Real (outro): one action + one promise. "Subscribe — next week: the
+  same trick hiding in your grocery bill." Not "like, comment,
+  subscribe, and ring the bell" (three asks = zero asks).
 
-After `transcribe` you have `{segments:[{start,end,text}]}`. Group them into
-plan segments at natural beats (sentence ends), 2–5 s each: a segment is the
-smallest unit that gets ONE visual. If a sentence runs past 5 s, split its
-visual into two moves (e.g. Ken Burns into punch zoom) rather than letting one
-clip sit static.
+## Write for the edit
 
-## Loop endings
-
-The last line should hand back to the first image/idea ("So the next time you
-taste the sea, taste the mountain"). Loops raise rewatch rate; a CTA earns its
-2 s only if the loop is intact ("Follow for one fact like this a day" —
-'fact' echoes the hook's register).
-
-## Checklist before you lock the script
-
-- [ ] Hook is one sentence, ≤9 words, lands in ≤3 s, has a concrete noun.
-- [ ] Runtime matches the brief (words ≈ seconds × 3.1), ±10%.
-- [ ] Every escalation is either a number, a name, or a comparison.
-- [ ] Reads aloud without stumbling; no abbreviations or numerals.
-- [ ] Last line loops to the opening image; CTA ≤ one short sentence.
+- Numbers get their own sentence: "Fifty-eight percent." A number the
+  edit can comp is a number that lands.
+- Short sentences at the cuts: the edit breathes where the sentence
+  ends.
+- One idea per sentence, one escalation per beat. If a sentence needs a
+  comma to survive, it is two sentences.
+- Say the thing: "This is the part where they get you" beats passive
+  voice every time it is honest.
+- The last line of a reel loops: it should make the first frame make
+  MORE sense the second time.

@@ -59,9 +59,14 @@ rule: surface the pip hint.
 - `timeline_read` is the compact view (lanes, clips in time order, ids, media)
   — use it for gap/overlap checks. `project_get` is everything.
 - `plan_validate {plan}` checks the director plan against its canonical schema,
-  timeline continuity, visual references, and supported audio/caption ranges.
+  timeline continuity, visual references, supported audio/caption ranges, AND
+  the structure: `mode` (a 70 s "reel" is refused), `sections` (hook first,
+  ordered roles, covering the runtime, boundaries on cuts), cut variety (a run
+  of six hards is named), entrances (floor M), comp density (one per 15 s) and
+  SFX spacing (no id twice within 30 s). Errors refuse the plan; warnings are
+  the director's conscience — read them, then fix the plan, not the wording.
   Run it before asset gathering/editing; fix errors and revalidate. It cannot
-  verify asset availability or creative quality.
+  verify asset availability.
 - `media_probe` before cutting anything unfamiliar: duration, streams, frame
   size, rate, codecs. Units: seconds and frames-per-second as floats.
 - The project `path` in every edit tool is the folder `project_open` took.

@@ -1,77 +1,73 @@
-# SFX design
+# Sound design (SFX)
 
-Sound effects are punctuation. One per cut for energetic pacing, only where
-they add information — an SFX on every single cut in a calm edit is noise.
+Sound is half the edit and the first thing an amateur edit skips. The
+rules are short because the discipline is short: variety, placement,
+restraint.
 
-## The vocabulary (12 real categories)
+## The anti-repetition law
 
-`Whoosh` (transitions, camera moves) · `Impact` (hits, reveals, text pops) ·
-`Riser` (build into a cut) · `Motion` (slides, ticks, mechanical) · `UI`
-(clicks, pops — great for text cards) · `Notification` (dings, alerts —
-finance/tech) · `Keyboard` (typing montages, how-to) · `Digital` (glitches,
-data — tech) · `Foley` (real-world: doors, steps, paper — history, how-to) ·
-`Writing` (pens, markers — history, listicles) · `Ambience` (beds: rooms,
-weather, crowds) · `Music` (stingers, notes)
+**Never the same sound id twice within 30 s.** Rotate at least 3 ids per
+role, and alternate soft and hard variants (a `whoosh-swish-2` followed
+by `whoosh-swish-2` is a loop; a swish followed by an impact is a
+conversation). The journal (`memory.md`) is how you check — it lists
+every SFX id with its time.
 
-## The peak rule
+## The semantic map (the library's own families)
 
-`sounds_add` starts the file at `start`. Peaks go ON the cut — the frame
-the new visual appears — never after. The search result's `syncAt` is where
-each sound's peak lands inside its file: place the peak on the cut by
-starting the file `syncAt` seconds before it (`start = cut - syncAt`). A
-riser must ARRIVE at its cut: it starts 1–2 s earlier and its peak is at the
-boundary. An impact
-peaks exactly at the reveal. ±1 frame; if you must choose, one frame early.
+The sound library is categorized semantically — use the categories as
+intent, not as a bucket:
 
-## The design pass (per segment, from the plan)
-
-| Segment type | Sound |
+| The motion on screen | Search |
 | --- | --- |
-| Hook (0–3 s) | Riser→Impact combo into the first cut, −8 dB |
-| B-roll cut, calm | Soft Whoosh −16 dB or nothing |
-| B-roll cut, energetic | Whoosh or Motion tick −12 dB |
-| Text card pop | UI click or Impact −10 dB, peaked at the pop |
-| Number reveal | Impact −8 dB |
-| Section transition | Whoosh peaked on the transition |
-| Ambience | One bed per WORLD (ocean, city, archive) at −20 to −24 dB, cut when the world changes |
+| A number counting up (stat card, ticker) | `data-countup-short/medium/long` |
+| A chart building, bars growing | `data-bar-grow`, `data-chart-reveal` |
+| A tick, a meter, data tension | `data-tick` |
+| Coins, cash, register, payment | `money-coin-drop`, `money-coins-pour`, `money-register`, `money-card-tap`, `money-notes` |
+| A zoom, a slide, camera move | `whoosh-swish-1..6`, `whoosh-*` |
+| A claim landing, a card appearing | `impact-*` (soft and metal variants) |
+| UI beats, notifications | `ui-*`, `notification-*` |
+| Typing, writing, working | `keyboard-*`, `writing-*` |
+| Room, place, mood under a section | `ambience-*` |
+| Build-ups into a reveal | risers (`impact` + `whoosh` layered) |
 
-## Levels (gain staging)
+Queries are ANDed and prefix-matched: **two or three words, no sentences**
+— "coin drop", not "coins dropping onto a wooden table in slow motion".
 
-- Keep VO clearly intelligible and in front; source files can have very
-  different recorded levels, so audition the actual mix rather than assuming
-  equal clip-gain values sound equal.
-- Plan SFX gains as starting points relative to each source's unity: hook hits
-  around −8 dB, supporting SFX around −12 to −16 dB, deep ambience around
-  −20 dB. These are not measured offsets from the VO.
-- `sounds_add` does not accept gain. After adding, get the returned clip id
-  (or read `timeline_read`) and apply the planned value with
-  `clip_audio_levels_db {baseDb: gainDb}`. That tool converts dB relative to
-  source unity (0 dB = unchanged; −60 dB is the editor's silence floor) to
-  the engine's linear multiplier.
-- BGM under speech: use an absolute clip-gain target such as −12 dB; see
-  `prompts/music_and_duck.md`.
-- `concat.loudness` is an effect, not a verified final-mix mastering pass.
-  Export does not report integrated LUFS or true peak. You may record a
-  platform target (for example, −14 LUFS) in the plan, but measure the final
-  file with an external loudness analyzer before claiming it was met; do not
-  treat per-clip normalization as a master-bus guarantee.
+## Placement: the peak, not the start
 
-## Search recipe (sounds_search)
+The transient lands ON the cut, not after it. `sounds_add` places the
+clip's START at the time you give — so give `peakAt − lead`, where lead
+is the sound's attack (~80–150 ms; a riser's whole body leads its drop).
+The plan carries `sfx.peakAt` per hit; do the subtraction at placement,
+then set the level with `clip_audio_levels_db`.
 
-Category first, then the object: "Whoosh fast", "Impact boom deep", "Riser
-tension", "Keyboard mechanical", "Foley paper rustle", "Ambience ocean
-waves". Keep queries two or three words — the 430-sound library is small
-enough that "Riser" alone is already browsable. If a search misses, go
-CATEGORY-only and pick by name from the results rather than inventing sound
-ids.
+## Levels
 
-## Rules
+| Role | dB |
+| --- | --- |
+| Whooshes, motion ticks | −10 to −14 |
+| Impacts on claims | −6 to −10 |
+| UI/notification beats | −14 to −18 |
+| Ambience under a section | −18 to −24 |
+| Counter/chart sounds with their comp | −10 to −12 |
 
-1. Never two SFX at the same instant (a whoosh AND an impact ON the same cut
-   → pick one, or offset the whoosh to peak 100 ms earlier).
-2. Every transition has its sound; every text pop can have one; every cut
-   does not NEED one.
-3. Ambience beds are worlds, not wall-to-wall muzak: cut them when the scene's
-   world changes.
-4. If a planned SFX is missing from the library, drop it — silence is a
-   choice, a wrong SFX is a mistake.
+(`clip_audio_levels_db` is absolute: 0 dB unchanged, −60 the floor.)
+
+## Density
+
+- Energetic pacing: one design sound per cut, only where they add
+  information — a sound on every single cut of a 30-cut minute is noise,
+  and the viewer stops hearing all of them.
+- Calm pacing: section changes and key moments only.
+- Every transition gets its pair (whip → whoosh; dissolve → soft swell;
+  glitch → digital hit).
+- The re-hook and the outro card each get one signature sound the piece
+  has not used yet.
+
+## What "robotic" means and how it stops
+
+Robotic SFX is three failures: the same id back to back, every sound at
+the same level, every hit exactly on the grid with no musicality. The
+fixes are the three laws above — rotate ids, vary levels ±2 dB around
+the table, and let a few cuts land dry (no sound) so the next one is
+heard.

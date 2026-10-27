@@ -1,67 +1,59 @@
-# Keyframes and motion
+# Keyframes and motion (the entrance/exit grammar)
 
-Static stock footage is dead weight; the Ken Burns family of moves is what
-makes 4 still-ish clips feel directed. All of this is `keyframe_set` /
-`clip_transform` / `setClipTransform` via `edit_apply`.
+Every clip enters on purpose and leaves on purpose. "Raw in, raw out" is
+the single biggest tell of a template edit — this file is the cure.
 
 ## The grammar
 
-- Properties: `scale` (0.05–8, 1 = native), `offsetX`/`offsetY`
-  (frame-fractions, ±3), `rotation` (degrees), `opacity` (0–1), `volume`,
-  and the mask fields. `at` is a **0–1 fraction of the clip** — convert
-  times: `at = (t - clipStart) / clipLength`.
-- `ease` is a CSS cubic-bezier `[x1,y1,x2,y2]`. The working set:
-  - linear `[0,0,1,1]` — machine moves, tracked overlays
-  - ease-out `[0.16,1,0.3,1]` — things ARRIVING (entrances)
-  - ease-in `[0.7,0,0.84,0]` — things LEAVING (exits)
-  - smooth in-out `[0.25,0.1,0.25,1]` — long drifts (Ken Burns)
-  - overshoot `[0.2,1.4,0.4,1]` — pops and punch-ins
-- Two keys minimum: the property's start (at 0) and end (at 1 or mid).
-  `keyframe_clear` removes one; `clearClipKeys` (via edit_apply) all.
-
-## The recipes (motion field values in the plan)
-
-| Motion | Keys (start → end) | Clip length | Use |
+| Move | Duration | Curve | Via |
 | --- | --- | --- | --- |
-| `ken-burns-in` | scale 1.0 → 1.08, ease in-out, 0→1 | 3–6 s | default for calm/expository |
-| `ken-burns-out` | scale 1.08 → 1.0 | 3–6 s | reveals, settling |
-| `parallax-up` | offsetY 0.02 → −0.02 + scale 1.04→1.0 | 3–6 s | vertical-feel depth on widescreen |
-| `slide-left` | offsetX 0.06 → 0 (ease-out, 0→0.3), then hold | any | B-roll entrances on cuts |
-| `slide-right` | mirror | any | variety |
-| `punch-zoom` | scale 1.0 → 1.12 → 1.0, overshoot ease, 0→0.12→1 | 1.5–3 s | beats, numbers, comedy |
-| `static` | none (or scale 1.02 drift) | ≤ 3 s | between two moving shots — stillness is rhythm |
+| Pop in | 120–180 ms | spring (stiffness 260, damping 15) | `keyframe_set scale 0.92 → 1.0` |
+| Punch zoom | ~150 ms | sharp out-ease | `keyframe_set scale 1.0 → 1.08` on the claim word |
+| Slide in | 200–250 ms | `cubic-bezier(0.16, 1, 0.3, 1)` | `keyframe_set offsetX/offsetY` |
+| Dissolve | 200–300 ms | out-ease | `clip_update {fadeIn}` |
+| Ken Burns drift | the clip's whole life | linear or gentle ease | two `keyframe_set` keys: scale 1.0→1.06, offset a few % |
+| Exit fade/slide | 200–300 ms | in-ease | `clip_update {fadeOut}` or a late key |
+| Speed ramp | through the cut | the curve's own | `edit_apply setClipSpeedCurve` |
 
-Rules of dose: ONE motion type per segment; the HOOK and the PAYOFF get the
-strongest moves; a video of all punch-zooms is a slideshow on energy drinks.
-Cut motion when the clip itself moves (`camera: zoom_in`) — don't double-move.
+Rules of the grammar:
 
-## Speed and time (raw edit_apply commands)
+- **One move a clip.** A clip that pops AND slides AND zooms is a
+  screensaver. The move serves the word being said.
+- **Stagger a family**: three stat cards pop 80 ms apart; two-line titles
+  rise 60 ms apart. Nothing professional lands simultaneously.
+- **Ken Burns is a floor, not a move**: a slow 4–8% drift keeps a long
+  clip alive but is not an entrance. Add the entrance anyway.
+- A deliberate `static` exists — one per piece at most, for effect, and
+  you should be able to say why.
 
-- `setClipSpeedCurve` — eased speed ramp: e.g. speed 1.0 → 0.4 across a
-  reveal (the "wait for it" beat), then back. Ramps ≤ 1.5× change read best.
-- `freezeFrame` — hold the exact frame at a time (the dramatic stop),
-  typically 0.3–0.8 s, pair with an Impact SFX.
-- `setClipSpeed` straight — 1.05–1.1 tightens a slow VO clip; ≤ 0.0625 is
-  a freeze in spirit.
+## Punch zooms (short-form's signature)
 
-## Mask motion (the pro touch)
+On the emphasized word: `keyframe_set {clipId, property: "scale", keys
+at the word's time: 1.0 → 1.06–1.1 → settle}`. In a reel, one punch
+every 3–6 s, each with its tick/SFX. Never two punches the same size
+back to back — vary 1.05/1.10.
 
-Keyframe `maskWidth`/`maskHeight`/`maskX` on a `rectangle` or `linear` mask
-over a text card for a wipe-in reveal (120–200 ms), or animate `maskFeather`
-0.3 → 0.05 to sharpen a reveal. Shapes: linear, mirror, circle, rectangle,
-heart, star. One masked reveal per video is plenty.
+## Parallax (depth on stock footage)
 
-## The 4 GB-laptop reality
+Two B-roll layers of the same scene family, back one scaled 1.1 and
+blurred slightly, front one drifting opposite: 4 keys total, a poor
+man's 2.5D. Use for calm sections; it reads as craft instantly.
 
-Every keyframe is free (params, not renders) — but heavy stacks of effects +
-keyframes make exports longer. Keep per-clip stacks ≤ 2 effects (grade +
-transition) and prefer transform moves over effect-driven motion when both
-would do.
+## Per-clip vs per-property
 
-## Self-check
+`keyframe_set` animates one property of one clip (`scale`, `offsetX`,
+`offsetY`, `rotation`, `opacity`, `volume`, mask shapes). A full
+entrance (slide + fade) is two `keyframe_set`s in one `edit_apply`
+batch, timed to land together. The comp layer (`motion_bake`) is for
+everything that is more than a property — text, cards, charts,
+backdrops.
 
-- [ ] Every B-roll segment carries a motion field (or a deliberate `static`).
-- [ ] Motions alternate; no two identical moves adjacent.
-- [ ] Easings match direction (out for entrances, in for exits).
-- [ ] Speed ramps used at most twice; freeze frames at most once.
-- [ ] `at` values computed from clip-relative time, re-checked after trims.
+## What the floors demand
+
+- Hard floor M: every clip has an entrance; exits or hand-offs on
+  section boundaries.
+- Hard floor F: `clip_frame {framing: "fill"}` comes BEFORE the
+  keyframes (a zoom on an unfitted clip zooms the letterbox too).
+- Keyed properties interpolate in the frame's own coordinates; offsets
+  are frame fractions (±3 max), scale 0.05–8 — the engine clamps, but a
+  plan that needs the clamp is a plan that mis-measured.

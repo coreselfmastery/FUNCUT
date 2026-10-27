@@ -1,82 +1,75 @@
 # B-roll matching
 
-B-roll is meaning, not decoration. The rule: **match the visual MEANING of the
-narration**, not its keywords. "Dissolved" over a shot of sugar in water beats
-any stock clip tagged "ocean".
+Stock footage is the floor of the edit, not the ceiling. This is how the
+floor stays interesting: every segment a new subject, every clip fitted
+to the frame, nothing reused until it has been forgotten.
 
-## Query engineering (openvid_search)
+## Queries: one new noun per segment
 
-Concrete noun + action or setting + shot feel, in that order:
+Write the whole query list in the plan BEFORE searching. Then apply the
+two laws:
 
-- ✅ "aerial canyon river sunrise" · ✅ "close-up hands typing mechanical
-  keyboard" · ✅ "slow motion waves crashing cliff"
-- ❌ "success" · ❌ "beautiful nature 4k" · ❌ "business growth"
+1. **No noun repeats within 30 s of plan time.** "stock market" at 0:12
+   means "trading floor" at 0:18 is fine (different noun) but "stock
+   market" again at 0:26 is not.
+2. **Concrete beats abstract.** "money" is weak; "coins stacking",
+   "counting bills", "card tapping at a terminal" are strong. A query a
+   camera operator could film is a query that will find footage.
 
-OpenVid indexes captions in plain descriptive English. Use the dataset's own
-vocabulary: things, actions, places, weather, time of day. Prefer
-`orientation` to match delivery (`vertical` for 9:16) and use the sorts
-honestly: `aesthetic` for the hook and payoff (the frames people screenshot),
-`relevance` for explanation, `motion` when the narration is about speed or
-change, `temporal` for steady handheld feel.
+Score what comes back: does the caption actually describe the clip
+(OpenVid captions are the dataset's own alt-text and can be wrong — when
+a top result feels off, check it with a `preview_frame` after import),
+does the aesthetic score clear the shelf's average, is the motion right
+for the pacing (static drone shots in a hype piece)?
 
-## Scoring the results
+## Aspect and fit (this is not optional)
 
-Each clip carries `aesthetic` (0–6), `motion`, `temporal` (stability 0–1),
-`camera`, `seconds`, `bytes`. Pick per segment:
+**OpenVid has no vertical footage.** Never search `orientation:
+"vertical"` — the result is always empty. For a 9:16 canvas:
 
-1. **Meaning** (non-negotiable): the caption must describe what the narration
-   is really about at that moment.
-2. **Aesthetic ≥ 4** for hook/payoff segments, ≥ 3 elsewhere.
-3. **Motion fit**: narration calm → `temporal` high, `motion` low; energetic
-   → `motion` high. Never cut a shaky handheld clip into a calm VO without
-   `clip_stabilize`.
-4. **Length**: `seconds` ≥ 1.5× the segment (trim after placing).
-5. **Cost**: `bytes` — on a metered connection prefer the smaller of two
-   equal candidates.
+1. Search without orientation; prefer 1080p/720p landscape sources (the
+   512×512 shelf upscales badly to 1080×1920 — a 3.75× blow-up looks like
+   it sounds).
+2. `clip_frame {framing: "fill"}` EVERY clip — cover the canvas, crop the
+   overhang. This is the default, not the fallback.
+3. `timeline_background {kind: "blur"}` is a deliberate style choice
+   (soft letterbox), not a substitute for step 2.
 
-## Variety and reuse rules
+A letterboxed or pillarboxed frame at review is a defect. So is a clip
+playing at 512² in the middle of a 1080×1920 canvas.
 
-- No clip id repeats within a 20 s window.
-- Vary shot type across adjacent segments: wide → close → detail → wide.
-  Two aerials back to back read as one long boring shot.
-- Vary camera motion: follow a `zoom_in` with a `static` or `pan_left`,
-  not another zoom.
-- For a full faceless video you need ~1 clip per 2.5–4 s of runtime — a
-  30 s video is 8–12 clips, so run one search per plan segment (they are
-  independent — fan the searches out in parallel).
+## Shot-scale ladders
 
-## The fallback ladder (never a gap, never a stall)
+Within a section, climb: **wide → medium → close → detail**. A section
+that is all wides is a screensaver; all closes is claustrophobic. Plan
+the ladder per section (the query list implies it: "city skyline" →
+"office floor" → "hands on keyboard" → "close-up of candlestick chart").
 
-1. **Re-query** once, more concretely (drop the shot feel, keep the subject:
-   "canyon river" instead of "aerial canyon river sunrise").
-2. **Abstract to the metaphor**: the narration's concept as a physical scene
-   ("dissolved" → "sugar stirring in water close-up").
-3. **`textCard`**: the segment's 2–5 key words on a clean background (a
-   `timeline_background` blur or color), one of the 31 text presets, with
-   motion from `prompts/keyframes_motion.md`. Numbers and names ARE great
-   text cards.
-4. **`titleCard`** for section breaks when 2–3 fail.
+## The fallback ladder
 
-A black frame or a stalled search is a director failure; a text card with a
-punch zoom is a style choice.
+A thin search is a fact, not a failure. In order:
 
-## Niche query recipes
+1. Simplify: drop one word ("aerial city skyline dusk" → "city skyline").
+2. Synonym the subject ("stock market crash" → "falling chart" / "trading
+   floor panic").
+3. Go one abstraction up ("VW Beetle" → "classic car").
+4. Change the *kind* of visual: a `motion_comp` stat card or chart IS a
+   legitimate visual for a claim segment — often the better one.
+5. A text card (`title_add`, styled, animated) is the last resort — and
+   must follow the text zones, not just sit somewhere.
 
-History: "ancient ruins", "old map parchment close-up", "candlelit archive
-documents", "marble statue slow pan", "battlefield wide landscape" ·
-Tech: "circuit board macro", "server room lights", "code on screen close-up",
-"robot arm assembly", "city aerial night" · Luxury: "gold texture macro",
-"watch mechanism close-up", "private jet interior", "yacht aerial",
-"champagne pour slow motion" · Finance: "stock chart close-up", "coins
-stacking macro", "printing press money", "skyline financial district" ·
-Science: "microscope slide macro", "space nebula", "laboratory pipette",
-"ocean underwater wide" · Motivation: "runner sunrise road", "climber summit
-reach", "boxer heavy bag sweat", "storm clouds timelapse" · Horror:
-"dark forest night", "abandoned corridor flashlight", "fog street lamp",
-"crows on branch" · Fitness: "gym barbell plates", "meal prep overhead",
-"treadmill close-up feet", "jump rope shadow" · Gaming: "arcade neon",
-"esports arena crowd", "controller hands glow", "pixel graphics" ·
-How-to: the actual object being worked on, hands, overhead desk shots.
+Never invent a clip id. Never leave a segment without a visual.
 
-More per niche in `prompts/niche_playbooks.md`; MAGICK stickers are CC BY-NC —
-only the `openmoji` shelf is safe for monetized work.
+## Reuse
+
+- Reel: a clip id once, total.
+- Longform: once per 60 s, never twice in one section; the same SOURCE at
+  different trims/framings counts as different shots but still needs the
+  60 s gap to read as intentional.
+
+## The pacing tie-in
+
+One clip per segment, ~1 clip per 2.5–4 s of runtime at energetic pacing
+(the 4-second law is the cap). `openvid_search` with `minSeconds` /
+`maxSeconds` near your segment lengths wastes less footage; trim to the
+word, lead the visual 100–200 ms.

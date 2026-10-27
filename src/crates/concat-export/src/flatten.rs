@@ -11,10 +11,11 @@
 //!
 //! Text clips are deliberately not flattened here. Titles rasterise
 //! separately and rejoin the exporter as plain image clips; see
-//! `ExportRequest`'s caller. Motion comps are the same story with a frame
-//! sequence behind them instead of one still: they bake through
-//! `concat-motion` and rejoin as pictures, so the exporter never learns what
-//! a keyframe is.
+//! `ExportRequest`'s caller. A motion comp resolves to the ENCODED bake in
+//! the project's `motion/` folder when one exists (see
+//! [`motion_encoded`]); without one it is skipped with a warning rather
+//! than silently disappearing, since the exporter cannot read a PNG frame
+//! sequence on its own.
 
 use std::path::Path;
 
@@ -24,6 +25,55 @@ use concat_project::model::{
 
 use crate::chains::audio_filter_chain;
 use crate::{ClipKind, ExportBackdrop, ExportClip, ExportKey, TransitionSpec};
+
+/// The encoded bake a motion clip can actually export. The comp's hash is
+/// the cache key and the leading part of `motion_bake`'s output filename,
+/// so matching the stem is enough; `.mp4` is preferred to the other video
+/// extensions when several bakes of one comp are lying around.
+fn motion_encoded(
+    project_dir: Option<&Path>,
+    motion: &concat_project::model::MotionClip,
+) -> Option<String> {
+    let dir = project_dir?.join("motion");
+    let key = motion
+        .hash
+        .trim_end_matches(".json")
+        .trim()
+        .to_ascii_lowercase();
+    if key.is_empty() {
+        return None;
+    }
+    let entries = std::fs::read_dir(dir).ok()?;
+    let mut matches: Vec<(u8, u64, String)> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let extension = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let priority = match extension.as_str() {
+            "mp4" | "m4v" => 0,
+            "webm" => 1,
+            "mov" => 2,
+            "mkv" => 3,
+            _ => continue,
+        };
+        let stem = path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        if stem.starts_with(&key) || stem.contains(&key) {
+            let size = entry.metadata().map(|meta| meta.len()).unwrap_or(0);
+            matches.push((priority, size, path.to_string_lossy().into_owned()));
+        }
+    }
+    matches.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)).then(a.2.cmp(&b.2)));
+    matches.into_iter().next().map(|(_, _, path)| path)
+}
 
 /// Flattens one timeline of `project` for the exporter - the active one
 /// when `timeline_id` is `None`. Text clips are excluded (they rasterise
@@ -53,13 +103,9 @@ pub fn flatten_timeline_in(
         .iter()
         .filter_map(|clip| {
             // Titles and shapes rasterise separately and rejoin as stills;
-            // see concat-host's titles. A motion comp is baked to a frame
-            // sequence by the same caller, for the same reason: a comp is a
-            // document, not a file the exporter could read.
-            if matches!(
-                clip.kind,
-                ModelClipKind::Text | ModelClipKind::Shape | ModelClipKind::Motion
-            ) {
+            // see concat-host's titles. A motion comp has its own branch
+            // below: it resolves to an encoded bake when there is one.
+            if matches!(clip.kind, ModelClipKind::Text | ModelClipKind::Shape) {
                 return None;
             }
             let index = timeline
@@ -81,6 +127,56 @@ pub fn flatten_timeline_in(
                     opacity: clip.opacity,
                     has_audio: Some(false),
                     ..ExportClip::blank(ClipKind::Layer, clip.start, clip.duration, index)
+                });
+            }
+
+            // A motion comp: the document is not a file the exporter can
+            // decode, but `motion_bake {encode:true}` (or the motion agent)
+            // writes an ordinary video under `motion/` named by the comp's
+            // hash. Find it and rejoin as a video clip. If only the RGBA
+            // PNG sequence exists, say so loudly: silently dropping the
+            // comp from an export is the defect this fixes.
+            if clip.kind == ModelClipKind::Motion {
+                let encoded = clip
+                    .motion
+                    .as_ref()
+                    .and_then(|motion| motion_encoded(project_dir, motion));
+                let Some(encoded) = encoded else {
+                    log::warn!(
+                        "motion clip {} has no encoded bake under motion/ - it is skipped by the export. \
+                         Run motion_bake with encode:true, or motion_overlay to composite the RGBA frames over footage.",
+                        clip.id
+                    );
+                    return None;
+                };
+                return Some(ExportClip {
+                    path: encoded,
+                    hidden: !track.visible,
+                    muted: true,
+                    volume: 0.0,
+                    fade_in: clip.fade_in,
+                    fade_out: clip.fade_out,
+                    animation: export_keys(clip),
+                    flip_h: clip.flip_h,
+                    flip_v: clip.flip_v,
+                    blend: clip.blend.clone(),
+                    effects: clip.video_effects.clone(),
+                    scale: export_base(clip, KeyProperty::Scale),
+                    offset_x: export_base(clip, KeyProperty::OffsetX),
+                    offset_y: export_base(clip, KeyProperty::OffsetY),
+                    rotation: export_base(clip, KeyProperty::Rotation),
+                    stretch_x: clip.stretch_x,
+                    stretch_y: clip.stretch_y,
+                    opacity: export_base(clip, KeyProperty::Opacity),
+                    transition: clip.transition_in.as_ref().map(|transition| {
+                        TransitionSpec {
+                            kind: transition.id.clone(),
+                            duration: transition.duration,
+                            params: transition.params.clone(),
+                        }
+                    }),
+                    has_audio: Some(false),
+                    ..ExportClip::blank(ClipKind::Video, clip.start, clip.duration, index)
                 });
             }
 
@@ -447,6 +543,34 @@ mod tests {
             .expect("adds title");
         let flat = flatten_timeline(editor.project(), None);
         assert_eq!(flat.len(), 1, "the text clip does not flatten");
+    }
+
+    #[test]
+    fn motion_encoded_finds_the_bake_and_prefers_mp4() {
+        let dir = std::env::temp_dir().join(format!("concat-motion-export-{}", std::process::id()));
+        let motion_dir = dir.join("motion");
+        std::fs::create_dir_all(&motion_dir).expect("creates");
+        let hash = "0123456789abcdef";
+        for name in ["0123456789abcdef.webm", "0123456789abcdef.mp4", "other.mov"] {
+            std::fs::write(motion_dir.join(name), b"video").expect("writes");
+        }
+        std::fs::write(motion_dir.join("unrelated.txt"), b"not video").expect("writes");
+        let motion = concat_project::model::MotionClip {
+            comp: "funcut.lower-third.glass".to_owned(),
+            hash: format!("{hash}.json"),
+            engine: "geneva".to_owned(),
+            width: 0,
+            height: 0,
+        };
+        let found = motion_encoded(Some(&dir), &motion).expect("finds the bake");
+        assert!(found.ends_with(".mp4"), "found {found}");
+        assert!(motion_encoded(None, &motion).is_none());
+        let missing = concat_project::model::MotionClip {
+            hash: "deadbeef".to_owned(),
+            ..motion
+        };
+        assert!(motion_encoded(Some(&dir), &missing).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

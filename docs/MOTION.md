@@ -388,10 +388,19 @@ motion_overlay {project, hash, plate: "<b-roll.mp4>", at: 1.2, fps: 30}
 media_import / clip_add  -> the composited clip
 ```
 
-**Still to come** (nothing here is faked): resolving a `Motion` clip directly to its baked sequence in
-`concat-export` (today no edit command creates `ClipKind::Motion`, so comps reach the timeline as
-media clips), the `motion.*` API methods, the Lottie engine, and the native engine's `CompEngine`
-impl.
+**`ClipKind::Motion` in an export.** `concat-export/src/flatten.rs` now resolves a motion clip to
+the **encoded** bake in the project's `motion/` folder (matched by the comp's content hash, `.mp4`
+preferred), and rejoins it as an ordinary video clip with the clip's keys, blend, effects and
+transition carried through. If only the RGBA PNG sequence exists there is no file the exporter can
+decode, so it logs a warning naming the clip and tells you to run `motion_bake {encode:true}` or
+`motion_overlay` rather than silently dropping the comp from the render. Unit-tested in
+`flatten.rs`. Note that no edit command currently creates `ClipKind::Motion` clips, so in normal
+use comps still reach the timeline as media clips; this closes the gap for hand-authored documents
+and the motion agent's output.
+
+**Still to come** (nothing here is faked): a native PNG-sequence decoder inside the exporter (which
+would let a transparent bake export without an intermediate encode), the `motion.*` API methods, the
+Lottie engine, and the native engine's `CompEngine` impl.
 
 ---
 

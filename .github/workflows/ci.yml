@@ -177,8 +177,15 @@ jobs:
       # that way, at concat-speech, behind what looked like an infra
       # failure (exit code 143) that kept the last lints from ever being
       # named.
+      #
+      # The forty minutes this once allowed covers a warm cache: the
+      # crates that build C++ (whisper, ort, skia) plus the window crate's
+      # Slint codegen, one job wide, ran past it on a cold cache and a
+      # slow shared runner - timed out with the lints never named, the
+      # same shape as the memory kill the -j 1 was for. The budget is a
+      # warm run's time plus the cold path's build.
       - run: cargo clippy --workspace --all-targets -j 1 -- -D warnings
-        timeout-minutes: 40
+        timeout-minutes: 75
         working-directory: src
         env:
           CARGO_PROFILE_DEV_DEBUG: "0"

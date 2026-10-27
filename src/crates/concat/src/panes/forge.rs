@@ -237,19 +237,22 @@ impl ForgePane {
             .copied()
             .unwrap_or(NICHES[0]);
         let mood = MOODS.get(mood.max(0) as usize).copied().unwrap_or(MOODS[0]);
-        let prompt = format!(
-            "Use the funcut-director skill. Make a short faceless video for this script, \
-             end to end: the {niche} playbook, {voice} narration (a Kokoro voice), music \
-             for the mood '{mood}', word-synced captions, one consistent grade, the \
-             silence removed from the voiceover, verify with preview_frame, then export.\n\
-             \n\
-             The script:\n\
-             {script}"
-        );
+        let prompt = director_run_prompt(&script, voice, niche, mood, studio);
         self.kill = Arc::new(AtomicBool::new(false));
         let kill = Arc::clone(&self.kill);
         let mut command = Command::new("forge");
-        command.arg("run").arg(prompt);
+        command.arg("run");
+        // Forge's default router optimises for cost. A creative director
+        // needs the model the user chose, which is usually a vision-capable
+        // one: the quality loop below returns images. Both spellings are
+        // accepted so a setting made for the harness works unchanged.
+        let model = std::env::var("FUNCUT_FORGE_MODEL")
+            .or_else(|_| std::env::var("FORGE_MODEL"))
+            .unwrap_or_default();
+        if !model.trim().is_empty() {
+            command.arg("--model").arg(model.trim());
+        }
+        command.arg(prompt);
         // The provider keys the page keeps are handed to the harness as
         // its environment, in each provider's own spelling, so the free
         // tiers work without leaving the editor. Keys stacked in the
@@ -336,6 +339,95 @@ fn read_the_run(mut child: Child, kill: Arc<AtomicBool>) {
             studio.handle(Msg::Forge(ForgeMsg::Ended(code.unwrap_or(-1))));
         });
     });
+}
+
+/// The one prompt the pane sends. It used to be a single sentence of
+/// instructions ("verify with preview_frame, then export") with no creative
+/// intent and no way for the agent to judge its own work. Now it carries the
+/// project's persisted creative brief and demands a measured
+/// render -> inspect -> revise loop before the run may claim success.
+///
+/// A model that cannot see images cannot do the second half, which is why
+/// `FUNCUT_FORGE_MODEL` should name a vision-capable model.
+fn director_run_prompt(
+    script: &str,
+    voice: &str,
+    niche: &str,
+    mood: &str,
+    studio: &Studio,
+) -> String {
+    let mut brief = String::new();
+    if let Some(session) = studio.session.as_ref() {
+        let path = std::path::Path::new(session.path()).join("creative-brief.json");
+        let saved = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
+        if let Some(value) = saved {
+            let get = |key: &str| {
+                value
+                    .get(key)
+                    .map(|field| field.to_string())
+                    .unwrap_or_else(|| "(unset)".to_owned())
+            };
+            brief = format!(
+                "PERSISTED CREATIVE BRIEF (authoritative; update it with creative_brief if the script changed it):\n\
+                     audience={audience}\nplatform={platform}\ngoal={goal}\nthesis={thesis}\n\
+                     curiosityGap={gap}\npayoff={payoff}\nemotionalArc={arc}\n\
+                     referenceStyle={reference}\ntone={tone}\navoid={avoid}\n\n",
+                audience = get("audience"),
+                platform = get("platform"),
+                goal = get("goal"),
+                thesis = get("thesis"),
+                gap = get("curiosityGap"),
+                payoff = get("payoff"),
+                arc = get("emotionalArc"),
+                reference = get("referenceStyle"),
+                tone = get("tone"),
+                avoid = get("avoid"),
+            );
+        }
+    }
+    if brief.is_empty() {
+        brief = "NO CREATIVE BRIEF IS SAVED. Your FIRST tool call must be creative_brief \
+                 {action:\"set\"} with audience, platform, goal, thesis, curiosityGap, \
+                 payoff, emotionalArc (3+ distinct beats) and referenceStyle. Invent a \
+                 sharp angle from the script; do not proceed without one.\n\n"
+            .to_owned();
+    }
+    let critic = if std::env::var("FUNCUT_VLM_ENDPOINT").is_ok() {
+        "A local vision critic is configured. Prefer craft_critique with autoSetup:true \
+         so a model, not a heuristic, grades the frames.\n"
+    } else {
+        "If no local vision critic is running, call local_vlm {action:\"setup\"} once \
+         (0.5B, ~546 MB, CPU-only, no system install) so craft_critique can see the \
+         frames rather than only measure pixels.\n"
+    };
+    format!(
+        "Use the funcut-director skill and follow its phases IN ORDER. You are directing a \
+         video, not assembling clips.\n\n{brief}\
+         PRODUCTION CHOICES: the {niche} playbook, {voice} narration (a Kokoro voice), \
+         music for the mood '{mood}', measured word-synced captions, ONE consistent grade, \
+         and silence removed from the voiceover.\n\n\
+         MANDATORY QUALITY LOOP (do not skip, do not just describe it):\n\
+         1. plan_validate must return BOTH valid:true AND creativeReady:true. Fix every \
+            creativeBlockers entry before cutting. A score below 7 means rewrite the plan.\n\
+         2. Never choose B-roll from caption text. Call stock_contact_sheet with rank:true \
+            and LOOK at the returned image; use cropHint when fitting square or landscape \
+            clips into a vertical frame.\n\
+         3. motion_frame returns an inline image - check legibility, contrast and safe \
+            margins before every motion_bake.\n\
+         4. After the edit, call watch_render (the WHOLE cut as one contact sheet image) \
+            then craft_critique. {critic}\
+         5. Act on at least one revision from craft_critique and call watch_render AGAIN. \
+            Compare the two sheets and their craft numbers. Repeat until the overall score \
+            is >= 7, with no black frames, letterbox bars or long static runs.\n\
+         6. Export, then call watch_render {{path: <the exported file>, audio:true}} and \
+            craft_critique one final time. Report the honest score and what you changed; \
+            never claim success on an unmeasured render.\n\n\
+         A file PATH to a PNG is not a picture you can see. Only the inline image content \
+         blocks from these tools are. If a tool returns an image, look at it.\n\n\
+         THE SCRIPT:\n{script}"
+    )
 }
 
 /// Whether the harness is wired to Concat and the skill is where it

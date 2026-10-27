@@ -147,7 +147,30 @@ imported straight into the project). The director workflow also has
 volume automation.
 
 
-## 9. The local vision critic (optional, no system install)
+## 9. Picking the director model
+
+The pane used to call `forge run` with no `--model`, so Forge's cheapest
+capable router chose the model. That is wrong for this job: the mandatory
+quality loop returns **images**, and a text-only model cannot see a contact
+sheet. Set a vision-capable model before a serious run:
+
+```sh
+export FUNCUT_FORGE_MODEL="your-vision-capable-model-id"
+```
+
+`FORGE_MODEL` is accepted as an alias. When neither is set, the pane keeps
+Forge's default routing and says nothing about it — check that your model can
+see images before trusting a `craft_critique` result.
+
+The run prompt itself now carries the project's persisted creative brief
+(`creative-brief.json`), demands `plan_validate` return `creativeReady: true`,
+requires `stock_contact_sheet` before choosing B-roll, and requires
+`watch_render` → `craft_critique` → revise → `watch_render` → export →
+`watch_render {path}` with an honest final score. If no brief is saved, the
+first instruction is to write one.
+
+
+## 10. The local vision critic (optional, no system install)
 
 `craft_critique` always works: without a model it returns measured,
 explicitly-labelled pixel/audio scores (`engine: "heuristic"`). To add taste,

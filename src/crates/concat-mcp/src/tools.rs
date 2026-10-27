@@ -2633,10 +2633,11 @@ fn preview(mut arguments: Value, backend: &mut dyn Backend) -> Result<Outcome, A
 /// so a collision is a document written by hand or damaged; named,
 /// so it can be unwound with the placing tools.
 fn collision_report(view: Value) -> Outcome {
+    use std::collections::BTreeMap;
     /// How far two spans may run into each other and still count as
     /// touching, as the engine's own placement sees it.
     const TOUCH: f64 = 1e-6;
-    let mut by_lane: Map<String, Vec<Value>> = Map::new();
+    let mut by_lane: BTreeMap<String, Vec<Value>> = BTreeMap::new();
     for clip in view
         .pointer("/timeline/clips")
         .and_then(Value::as_array)
@@ -3242,7 +3243,7 @@ mod tests {
         assert_eq!(searches[1]["query"], "city skyline");
         assert_eq!(searches[1]["total"], 2);
         let calls = backend.0.borrow();
-        assert!(calls.len() == 2, "one call a query");
+        assert_eq!(calls.len(), 2, "one call a query");
         assert_eq!(calls[0]["method"], "openvid.search");
         assert_eq!(calls[0]["query"], "ocean sunset");
         assert_eq!(calls[0]["limit"], 5, "the shared filters ride along");

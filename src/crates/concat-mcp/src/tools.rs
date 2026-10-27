@@ -801,7 +801,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "stock_contact_sheet",
             title: "Look at B-roll candidates",
-            description: "SEE stock footage before choosing it. Give a `query` (openvid_search's words), `ids` from openvid_search, or local `paths`; each candidate's real first frame is decoded into one labelled contact sheet returned as an inline image, with per-candidate pixel metrics and a cropHint for off-centre subjects. With `rank: true` a local vision model re-ranks the candidates against `brief` (or the project's creative_brief) and suggests better queries. Never choose B-roll from captions alone again. Optional: limit (8 default, 12 max), minAesthetic, minMotion, orientation, source, sort, cols, tileWidth, out.",
+            description: "SEE stock footage before choosing it. Give a `query` (openvid_search's words), `ids` from openvid_search, or local `paths`; each candidate's real first frame is decoded into one labelled contact sheet returned as an inline image, with per-candidate pixel metrics, a cropHint and a ready-to-use reframeHint.clipTransform offset pair for the target aspect. With `rank: true` a local vision model re-ranks the candidates against `brief` (or the project's creative_brief) and suggests better queries. Never choose B-roll from captions alone again. Optional: limit (8 default, 12 max), minAesthetic, minMotion, orientation, source, sort, cols, tileWidth, out.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -1166,6 +1166,7 @@ fn sense_schema(name: &str) -> Option<Value> {
             "source": string("pixabay, pexels, celebv or other."),
             "sort": string("relevance, aesthetic, motion, temporal, shortest, longest or surprise."),
             "out": string("Also write the contact sheet PNG here."),
+            "aspect": { "type": "string", "enum": ["9:16", "16:9", "1:1", "4:5"], "default": "9:16", "description": "Target frame; used to turn each cropHint into ready-to-use clip_transform offsets (reframeHint)." },
             "autoSetup": { "type": "boolean", "default": true },
             "profile": string("mini, image or minicpm."),
         }),

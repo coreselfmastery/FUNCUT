@@ -170,9 +170,11 @@ return MCP `type: image` content blocks, so the model can actually look:
   3 s, repeated visuals or no designed comp is **not** creativeReady.
 - `stock_contact_sheet` - decode a real frame of each B-roll candidate
   (`query`, `ids` or local `paths`) into one labelled contact sheet image,
-  with per-candidate pixel metrics and an energy-centroid `cropHint` for
-  off-centre subjects. `rank: true` re-ranks candidates against the brief
-  with the local vision model and suggests better queries.
+  with per-candidate pixel metrics, an energy-centroid `cropHint` and a
+  `reframeHint.clipTransform` pair of `offsetX`/`offsetY` values ready to
+  pass to `clip_transform` for the target `aspect` (9:16 by default).
+  `rank: true` re-ranks candidates against the brief with the local vision
+  model and suggests better queries.
 - `watch_render` - sample the open timeline (via `preview.frame`, no ffmpeg
   CLI needed) or a rendered movie, and return the whole cut as ONE image
   plus measured facts: black frames, letterbox bars, flat and duplicate

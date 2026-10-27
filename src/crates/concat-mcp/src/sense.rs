@@ -311,6 +311,28 @@ pub fn watch_render(arguments: Value, backend: &mut dyn Backend) -> Result<Outco
     Ok(image_outcome(&result, &caption))
 }
 
+/// The clip_transform offset that brings an off-centre subject into a
+/// filled frame. `cropHint` is an energy centroid in -1..1; OpenVid's
+/// Pixabay/Pexels/CelebV shelves are square, so filling a vertical frame
+/// scales the source to the frame HEIGHT and the overflow is
+/// (frameH - frameW) / 2 on each side. Offsets are frame-width/height
+/// fractions, clamped so a bad hint cannot throw the clip off-screen.
+fn reframe_offset(aspect: &str, hint_x: f64, hint_y: f64) -> (f64, f64) {
+    let (aw, ah) = match aspect {
+        "16:9" => (16.0_f64, 9.0),
+        "1:1" => (1.0, 1.0),
+        "4:5" => (4.0, 5.0),
+        _ => (9.0, 16.0),
+    };
+    let (ox_factor, oy_factor) = if ah > aw {
+        (ah / (2.0 * aw), 0.12)
+    } else {
+        (0.12, aw / (2.0 * ah))
+    };
+    let round = |v: f64| (v.clamp(-0.45, 0.45) * 100.0).round() / 100.0;
+    (round(-hint_x * ox_factor), round(-hint_y * oy_factor))
+}
+
 /// `stock_contact_sheet`: actually LOOK at candidate B-roll before choosing
 /// it, with an energy-centroid crop hint for each and optional semantic
 /// ranking against the creative brief.
@@ -446,6 +468,34 @@ pub fn stock_contact_sheet(
     }
     if !errors.is_empty() {
         sheet["fetchErrors"] = json!(errors);
+    }
+    // cropHint is an energy centroid in -1..1. Turn it into the exact
+    // clip_transform offsets a vertical cut needs, so an agent does not
+    // have to derive the geometry (and so it stops centre-cropping every
+    // square OpenVid clip). Pixabay/Pexels/CelebV sources are 512x512;
+    // filling a 9:16 frame scales them to the frame height, so the
+    // horizontal overflow is (frameH - frameW)/2 on each side.
+    let aspect = fields
+        .get("aspect")
+        .and_then(Value::as_str)
+        .unwrap_or("9:16");
+    if let Some(tiles) = sheet.get_mut("tiles").and_then(Value::as_array_mut) {
+        for tile in tiles.iter_mut() {
+            let hint = tile
+                .pointer("/cropHint/x")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            let hint_y = tile
+                .pointer("/cropHint/y")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            let (offset_x, offset_y) = reframe_offset(aspect, hint, hint_y);
+            tile["reframeHint"] = json!({
+                "aspect": aspect,
+                "clipTransform": { "offsetX": offset_x, "offsetY": offset_y },
+                "use": "After clip_frame {framing:'fill'}, call clip_transform with these offsets on the clip, or keyframe_set to follow the subject.",
+            });
+        }
     }
     if fields.get("rank").and_then(Value::as_bool).unwrap_or(false) {
         let brief = fields
@@ -882,6 +932,19 @@ mod tests {
         .expect("valid json");
         assert_eq!(saved.len(), 3);
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reframe_offset_follows_the_subject() {
+        // A subject left of centre (hint -0.5) needs the image moved RIGHT.
+        let (x, _) = reframe_offset("9:16", -0.5, 0.0);
+        assert!((0.0..=0.45).contains(&x) && x > 0.0, "x = {x}");
+        let (x2, _) = reframe_offset("9:16", 0.5, 0.0);
+        assert!((-0.45..0.0).contains(&x2), "x2 = {x2}");
+        assert_eq!(reframe_offset("9:16", 0.0, 0.0), (0.0, 0.0));
+        assert_eq!(reframe_offset("9:16", 99.0, 0.0).0, -0.45);
+        let (_, y) = reframe_offset("16:9", 0.0, -0.5);
+        assert!(y > 0.0, "y = {y}");
     }
 
     #[test]

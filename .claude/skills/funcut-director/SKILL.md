@@ -117,8 +117,10 @@ invent a clip id, never leave a gap. **Never choose B-roll from caption text
 alone.** Call `stock_contact_sheet {query, rank: true, brief}` and actually
 look at the returned image; use its `ranking`, reject dark/letterboxed/generic
 tiles, and follow its `queries` suggestions when the candidates are weak.
-Use each chosen tile's `cropHint` to offset the crop with `clip_transform`
-instead of blindly centre-cropping a square clip into 9:16. **The variety law
+Pass `aspect` to `stock_contact_sheet` and use each chosen tile's
+`reframeHint.clipTransform` offsets directly with `clip_transform` after
+`clip_frame {framing:'fill'}` — this is a computed crop, not a blind
+centre-crop of a square clip into 9:16. **The variety law
 applies at search time:** every segment's query names a NEW subject — write
 the query list, then delete any query whose noun you have already used within
 the last 30 seconds of plan.

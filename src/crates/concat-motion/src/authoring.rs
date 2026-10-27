@@ -644,7 +644,13 @@ fn set_text(comp: &mut Comp, id: &str, text: &str) -> Result<(), MotionError> {
 /// needle: "Ada Lovelace" finds the name and not the timecode beside it.
 /// `what` is who was filling - a slot's label, or the op - so the refusal
 /// names the ask and not only the needle.
-fn set_text_in(comp: &mut Comp, id: &str, what: &str, sample: &str, text: &str) -> Result<(), MotionError> {
+fn set_text_in(
+    comp: &mut Comp,
+    id: &str,
+    what: &str,
+    sample: &str,
+    text: &str,
+) -> Result<(), MotionError> {
     let entry = node_mut(comp, id)?;
     match &mut entry.kind {
         NodeKind::Text(node) => {

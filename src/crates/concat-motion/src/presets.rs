@@ -914,7 +914,7 @@ pub fn bar_chart() -> Comp {
             node: "sheet".into(),
             field: SlotField::Text,
             sample: (*label).into(),
-            label: format!("Bar {} label", index + 1).into(),
+            label: format!("Bar {} label", index + 1),
         });
     }
     built

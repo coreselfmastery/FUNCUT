@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use concat_api::ApiError;
 use serde_json::{Map, Value, json};
@@ -493,8 +493,62 @@ pub fn craft_critique(arguments: Value) -> Result<Outcome, ApiError> {
     if let Some(png) = fields.get("pngB64").and_then(Value::as_str) {
         spec["pngB64"] = json!(png);
     }
-    let result = run("critique", &spec, Duration::from_secs(240))?;
+    let mut result = run("critique", &spec, Duration::from_secs(240))?;
+    if let Some(project) = fields.get("project").and_then(Value::as_str) {
+        record_craft_pass(project, &mut result);
+    }
     Ok(Outcome::json(result))
+}
+
+/// Append one critique pass to the project's craft journal and annotate the
+/// reply with how it compares to the previous pass. Keeping this in the
+/// project - not in a chat transcript - is what makes a multi-turn
+/// render -> inspect -> revise loop measurable.
+fn record_craft_pass(project: &str, result: &mut Value) {
+    let path = std::path::Path::new(project).join("craft-history.json");
+    let mut history: Vec<Value> = fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Vec<Value>>(&text).ok())
+        .unwrap_or_default();
+    let previous = history
+        .last()
+        .and_then(|entry| entry.get("overall").and_then(Value::as_f64));
+    let overall = result.get("overall").and_then(Value::as_f64);
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    history.push(json!({
+        "at": seconds,
+        "engine": result.get("engine").cloned().unwrap_or(Value::Null),
+        "overall": overall,
+        "scores": result.get("scores").cloned().unwrap_or(Value::Null),
+        "notes": result.get("notes").cloned().unwrap_or(Value::Null),
+        "revisions": result.get("revisions").cloned().unwrap_or(Value::Null),
+    }));
+    if history.len() > 20 {
+        history.drain(..history.len() - 20);
+    }
+    if let Ok(text) = serde_json::to_string_pretty(&history) {
+        let _ = fs::write(&path, text);
+    }
+    result["pass"] = json!(history.len());
+    result["historyFile"] = json!(path.display().to_string());
+    if let (Some(now), Some(before)) = (overall, previous) {
+        let delta = ((now - before) * 10.0).round() / 10.0;
+        result["previousOverall"] = json!(before);
+        result["delta"] = json!(delta);
+        result["improved"] = json!(delta > 0.0);
+        result["trend"] = json!(if delta > 0.3 {
+            "better than the last pass"
+        } else if delta < -0.3 {
+            "worse than the last pass - undo or rethink this revision"
+        } else {
+            "no measurable change - the revision did not affect the frames"
+        });
+    } else {
+        result["trend"] = json!("first measured pass; revise and critique again to compare");
+    }
 }
 
 /// `measure_loudness`: the exported mix's ACTUAL integrated LUFS and true
@@ -752,4 +806,55 @@ pub fn creative_brief(arguments: Value) -> Result<Outcome, ApiError> {
         "directorPrompt": director_prompt(&brief),
         "hint": "Pass directorPrompt to the Forge pane, then call craft_critique after the first render.",
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn craft_journal_tracks_improvement_and_regression() {
+        let dir = std::env::temp_dir().join(format!("concat-craft-test-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let project = dir.to_string_lossy().into_owned();
+
+        let mut first = json!({ "engine": "heuristic", "overall": 5.5, "scores": {}, "notes": [], "revisions": [] });
+        record_craft_pass(&project, &mut first);
+        assert_eq!(first["pass"], 1);
+        assert!(
+            first["trend"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("first")
+        );
+
+        let mut second = json!({ "engine": "local-vlm", "overall": 7.2, "scores": {}, "notes": [], "revisions": [] });
+        record_craft_pass(&project, &mut second);
+        assert_eq!(second["pass"], 2);
+        assert_eq!(second["delta"], 1.7);
+        assert_eq!(second["improved"], true);
+
+        let mut third = json!({ "engine": "local-vlm", "overall": 6.0, "scores": {}, "notes": [], "revisions": [] });
+        record_craft_pass(&project, &mut third);
+        assert_eq!(third["improved"], false);
+        assert!(
+            third["trend"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("worse")
+        );
+
+        let saved: Vec<Value> = serde_json::from_str(
+            &fs::read_to_string(dir.join("craft-history.json")).expect("the journal is written"),
+        )
+        .expect("valid json");
+        assert_eq!(saved.len(), 3);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn base64_round_trips_a_png_header() {
+        let png = b"\x89PNG\r\n\x1a\n\x00\x01\xff";
+        assert_eq!(base64(png), "iVBORw0KGgoAAf8=");
+    }
 }

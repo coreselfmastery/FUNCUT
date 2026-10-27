@@ -808,7 +808,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "craft_critique",
             title: "Score the cut",
-            description: "The final creative director. Takes the `sheet` JSON returned by watch_render (or a raw `pngB64`) and a `brief`, and returns six honest 0-10 scores - hook, story, rhythm, shotChoice, design, sound - plus specific notes and a short list of concrete revisions naming the tools to call. Uses a local sub-1B vision model when one is running (see local_vlm); otherwise it says so and returns an explicitly-labelled pixel/measurement-based score. Optional: project (loads its creative_brief), autoSetup (fetch the local model on first use), profile.",
+            description: "The final creative director. Takes the `sheet` JSON returned by watch_render (or a raw `pngB64`) and a `brief`, and returns six honest 0-10 scores - hook, story, rhythm, shotChoice, design, sound - plus specific notes and a short list of concrete revisions naming the tools to call. Uses a local sub-1B vision model when one is running (see local_vlm); otherwise it says so and returns an explicitly-labelled pixel/measurement-based score. With `project` it also persists every pass to craft-history.json and returns pass, previousOverall, delta, improved and a trend sentence - so a later turn can prove the revision made the cut better rather than just claiming it. Call it after EVERY watch_render. Optional: autoSetup (fetch the local model on first use), profile.",
             read_only: true,
             destructive: false,
             idempotent: true,

@@ -125,3 +125,13 @@ loudness, so a plan's target used to be the only number anyone had —
 which is not proof of compliance. `craft_critique`'s `sound` score now
 uses the real measurement, and `measure_loudness` gives a headless
 check on any exported file.
+
+
+## The revision journal
+
+`craft_critique` with a `project` writes `<project>/craft-history.json`
+(last 20 passes: engine, overall, the six scores, notes and revisions) and
+returns `pass`, `previousOverall`, `delta`, `improved` and a `trend`
+sentence. An agent in a later turn can therefore see whether its revision
+actually helped. `delta <= 0` means "undo or rethink", not "try again with
+a nicer prompt".

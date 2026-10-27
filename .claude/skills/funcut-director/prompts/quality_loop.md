@@ -86,9 +86,14 @@ Pick the highest-leverage revision, not the easiest one. Typical fixes:
 | dead soundtrack | `sounds_search`, `bgm_search`, `clip_audio_levels_db` |
 | no point of view | `creative_brief {action:"set"}` then re-plan |
 
-Call `watch_render` again with the same `samples` and compare the two
-sheets and their `craft` numbers. Only claim improvement when a number or
-the image actually changed.
+Call `watch_render` again with the same `samples`, then
+`craft_critique {sheet, brief, project}`. Because `project` is given, every
+pass is written to `craft-history.json` and the reply carries `pass`,
+`previousOverall`, `delta`, `improved` and a `trend` sentence. Read them:
+`delta <= 0` means your revision did not help (or hurt) - undo it or pick a
+different one. Only claim improvement when `improved` is true and the image
+actually changed. A run that never improves across two passes must stop and
+report the honest score, not loop forever.
 
 ## 5. Be honest in the report
 

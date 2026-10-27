@@ -180,7 +180,10 @@ return MCP `type: image` content blocks, so the model can actually look:
 - `craft_critique` - six 0-10 scores (hook, story, rhythm, shotChoice,
   design, sound), notes and concrete tool-level revisions. Uses a local
   vision model when available, otherwise says `engine: "heuristic"` and
-  grades measurements honestly.
+  grades measurements honestly. With `project`, each pass is journaled to
+  `craft-history.json` and the reply reports `pass`, `previousOverall`,
+  `delta`, `improved` and a `trend`, so the render -> inspect -> revise
+  loop can be measured across turns instead of remembered.
 - `measure_loudness` - FFmpeg's EBU R128 meter on an exported file:
   integrated LUFS, true peak dBTP, loudness range, the error against the
   platform target (`targetLufs`, default −14; −23 for broadcast), and

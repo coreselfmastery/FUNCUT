@@ -4271,16 +4271,15 @@ mod tests {
             "style": { "text": "Hello", "fontSize": 0.08 }
         }))
         .expect("reads");
-        let clip_id = editor
-            .apply(command)
-            .expect("adds")
-            .created_id
-            .expect("id");
+        let clip_id = editor.apply(command).expect("adds").created_id.expect("id");
         let clip = editor.project().active().clip(&clip_id).expect("exists");
         assert_eq!(clip.name, "Hello", "the name follows the words");
         let style = clip.text.as_ref().expect("styled");
         assert_eq!(style.content, "Hello");
-        assert!((style.font_size - 0.08).abs() < 1e-9, "the rest of the style reads too");
+        assert!(
+            (style.font_size - 0.08).abs() < 1e-9,
+            "the rest of the style reads too"
+        );
     }
 
     #[test]

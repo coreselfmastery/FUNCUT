@@ -222,6 +222,11 @@ pub fn watch_render(arguments: Value, backend: &mut dyn Backend) -> Result<Outco
     if let Some(path) = fields.get("out").and_then(Value::as_str) {
         spec["out"] = json!(path);
     }
+    for key in ["targetLufs", "targetTruePeakDbtp"] {
+        if let Some(value) = fields.get(key) {
+            spec[key] = value.clone();
+        }
+    }
 
     let caption;
     if let Some(file) = fields.get("path").and_then(Value::as_str) {
@@ -489,6 +494,35 @@ pub fn craft_critique(arguments: Value) -> Result<Outcome, ApiError> {
         spec["pngB64"] = json!(png);
     }
     let result = run("critique", &spec, Duration::from_secs(240))?;
+    Ok(Outcome::json(result))
+}
+
+/// `measure_loudness`: the exported mix's ACTUAL integrated LUFS and true
+/// peak, not the plan's target. `export_wait` reports no loudness, so this
+/// is the only headless way to prove a platform target was met.
+pub fn measure_loudness(arguments: Value) -> Result<Outcome, ApiError> {
+    let fields = arguments
+        .as_object()
+        .cloned()
+        .ok_or_else(|| invalid("the arguments are an object"))?;
+    let path = fields
+        .get("path")
+        .and_then(Value::as_str)
+        .filter(|p| !p.trim().is_empty())
+        .ok_or_else(|| invalid("`path` is the media file to measure"))?;
+    let mut spec = json!({
+        "path": path,
+        "targetLufs": number(&fields, "targetLufs", -14.0),
+        "targetTruePeakDbtp": number(&fields, "targetTruePeakDbtp", -1.0),
+        "autoSetup": fields.get("autoSetup").and_then(Value::as_bool).unwrap_or(true),
+    });
+    if let Some(ff) = fields.get("ffmpeg") {
+        spec["ffmpeg"] = ff.clone();
+    }
+    let mut result = run("loudness", &spec, Duration::from_secs(300))?;
+    result["hint"] = json!(
+        "Short-form platforms sit near -14 LUFS integrated with a true peak under -1 dBTP;          broadcast EBU R128 is -23 LUFS. A plan's target is a wish - this is the measurement.          Fix with clip_audio_levels_db and measure again; never claim compliance from a plan."
+    );
     Ok(Outcome::json(result))
 }
 

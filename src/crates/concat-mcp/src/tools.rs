@@ -108,6 +108,8 @@ pub enum Action {
     CreativeBrief,
     /// Composite a transparent motion bake over real footage.
     MotionOverlay,
+    /// Measure an exported mix's integrated LUFS and true peak.
+    MeasureLoudness,
     /// `project.get`, read for every place two clips share a lane.
     CollisionCheck,
     /// `openvid.search` once per query, one reply.
@@ -813,6 +815,15 @@ pub fn catalogue() -> Vec<Tool> {
             action: Action::CraftCritique,
         },
         Tool {
+            name: "measure_loudness",
+            title: "Measure the mix",
+            description: "PROVE loudness compliance instead of guessing. Runs FFmpeg's EBU R128 meter on `path` (an exported movie or any media with audio) and returns integrated LUFS, true peak dBTP, loudness range LU, the error against the platform target, whether the target was met, and specific mix notes. export_wait reports no loudness, so this is the headless way to check. `targetLufs` is -14 by default (short-form platforms; -23 is broadcast EBU R128) and `targetTruePeakDbtp` is -1. Fix with clip_audio_levels_db and measure again.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::MeasureLoudness,
+        },
+        Tool {
             name: "motion_overlay",
             title: "Composite motion over footage",
             description: "Fixes the opaque-caption-reel problem. Takes a baked RGBA PNG sequence (`frames`, or `hash` + `project` to find it) and composites it OVER real footage (`plate`, a video path) at `at` seconds, honouring the comp's transparency, and writes an ordinary H.264 clip ready for media_import and clip_add. Without a plate it composites over a solid `background` at the given width/height. The sidecar's video codecs cannot carry alpha and FFmpeg's WebM muxer does not reliably write VP9 AlphaMode, so this is the honest alpha path: transparency is honoured at the compositing step, not faked in an encoder. Optional: fps (30), width, height, at (0), crf (18), background, x, y, out (defaults to <project>/motion/overlay.mp4).",
@@ -1036,7 +1047,8 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
         | Action::CraftCritique
         | Action::LocalVlm
         | Action::CreativeBrief
-        | Action::MotionOverlay => sense_schema(tool.name),
+        | Action::MotionOverlay
+        | Action::MeasureLoudness => sense_schema(tool.name),
         Action::Mask => {
             let update = schemas.command("updateClip")?;
             let mut mask = schemas.def("ClipMask")?;
@@ -1120,7 +1132,9 @@ fn sense_schema(name: &str) -> Option<Value> {
             "cols": count(1, 6, 4, "Contact-sheet columns."),
             "tileWidth": count(64, 480, 320, "Width of each sampled frame."),
             "tileHeight": count(48, 360, 180, "Height of each sampled frame."),
-            "audio": { "type": "boolean", "default": true, "description": "Measure the soundtrack's energy envelope (movie files only)." },
+            "audio": { "type": "boolean", "default": true, "description": "Measure the soundtrack's energy envelope AND integrated LUFS / true peak (movie files only)." },
+            "targetLufs": { "type": "number", "default": -14, "minimum": -70, "maximum": 0, "description": "Platform loudness target in LUFS; -14 short-form, -23 broadcast." },
+            "targetTruePeakDbtp": { "type": "number", "default": -1, "minimum": -20, "maximum": 6 },
             "out": string("Also write the contact sheet PNG here."),
             "autoSetup": { "type": "boolean", "default": true, "description": "Bootstrap a static ffmpeg if no decoder is on this machine." },
         }),
@@ -1150,6 +1164,13 @@ fn sense_schema(name: &str) -> Option<Value> {
             "project": string("Project folder holding creative-brief.json."),
             "autoSetup": { "type": "boolean", "default": false, "description": "Fetch and start the local vision model on first use." },
             "profile": string("mini, image or minicpm."),
+        }),
+        "measure_loudness" => json!({
+            "path": string("The media file with an audio stream to measure."),
+            "targetLufs": { "type": "number", "default": -14, "minimum": -70, "maximum": 0 },
+            "targetTruePeakDbtp": { "type": "number", "default": -1, "minimum": -20, "maximum": 6 },
+            "ffmpeg": string("An explicit ffmpeg binary; the sense layer bootstraps one when absent."),
+            "autoSetup": { "type": "boolean", "default": true },
         }),
         "motion_overlay" => json!({
             "frames": string("The bake's frames/ directory holding 0001.png upwards."),
@@ -1594,6 +1615,7 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         Action::LocalVlm => crate::sense::local_vlm(arguments),
         Action::CreativeBrief => crate::sense::creative_brief(arguments),
         Action::MotionOverlay => crate::sense::motion_overlay(arguments),
+        Action::MeasureLoudness => crate::sense::measure_loudness(arguments),
         Action::CollisionCheck => {
             let result = backend.call(request("project.get", arguments)?)?;
             Ok(collision_report(summary::view(&result)))
@@ -2645,7 +2667,10 @@ fn collision_report(view: Value) -> Outcome {
         .flatten()
     {
         if let Some(lane) = clip.get("track").and_then(Value::as_str) {
-            by_lane.entry(lane.to_owned()).or_default().push(clip.clone());
+            by_lane
+                .entry(lane.to_owned())
+                .or_default()
+                .push(clip.clone());
         }
     }
     let mut collisions: Vec<Value> = Vec::new();
@@ -2664,9 +2689,7 @@ fn collision_report(view: Value) -> Outcome {
                 let other_end = other["end"].as_f64().unwrap_or(0.0);
                 // As the engine's `covers` sees it: sharing more than
                 // an edge.
-                if one_start < other_end - TOUCH
-                    && other_start < one_end - TOUCH
-                {
+                if one_start < other_end - TOUCH && other_start < one_end - TOUCH {
                     collisions.push(json!({
                         "trackId": lane.clone(),
                         "clips": Value::Array(vec![one.clone(), other.clone()]),
@@ -2690,10 +2713,7 @@ fn collision_report(view: Value) -> Outcome {
 /// run a row of `openvid_search` round trips; the index it reads is one,
 /// so a library that is not prepared fails the whole call as a single
 /// search would, not per query.
-fn openvid_search_batch(
-    arguments: Value,
-    backend: &mut dyn Backend,
-) -> Result<Outcome, ApiError> {
+fn openvid_search_batch(arguments: Value, backend: &mut dyn Backend) -> Result<Outcome, ApiError> {
     let invalid = |why: &str| ApiError::invalid(format!("invalid arguments: {why}"));
     let mut shared = match arguments {
         Value::Object(fields) => fields,
@@ -2996,6 +3016,7 @@ mod tests {
                 "motion_overlay",
                 json!({ "project": "/tmp/Cut", "hash": "abc123", "plate": "/tmp/plate.mp4" }),
             ),
+            ("measure_loudness", json!({ "path": "/tmp/render.mp4" })),
             ("local_vlm", json!({ "action": "status" })),
             (
                 "creative_brief",
@@ -3100,7 +3121,8 @@ mod tests {
                 | Action::CraftCritique
                 | Action::LocalVlm
                 | Action::CreativeBrief
-                | Action::MotionOverlay => continue,
+                | Action::MotionOverlay
+                | Action::MeasureLoudness => continue,
                 Action::CollisionCheck => request("project.get", sample.clone()),
                 Action::OpenvidSearchBatch => {
                     // One `openvid.search` per query: the first query's
@@ -3202,11 +3224,16 @@ mod tests {
     }
 
     /// A backend whose calls are answered in order, and remembered.
-    struct Answers(std::cell::RefCell<Vec<Value>>, std::collections::VecDeque<Value>);
+    struct Answers(
+        std::cell::RefCell<Vec<Value>>,
+        std::collections::VecDeque<Value>,
+    );
 
     impl Backend for Answers {
         fn call(&mut self, request: Request) -> Result<Value, ApiError> {
-            self.0.borrow_mut().push(serde_json::to_value(&request).expect("writes"));
+            self.0
+                .borrow_mut()
+                .push(serde_json::to_value(&request).expect("writes"));
             let answer = self.1.pop_front().expect("an answer");
             Ok(answer)
         }
@@ -3248,7 +3275,10 @@ mod tests {
         assert_eq!(calls[0]["query"], "ocean sunset");
         assert_eq!(calls[0]["limit"], 5, "the shared filters ride along");
         assert_eq!(calls[1]["query"], "city skyline");
-        assert!(calls[0].get("queries").is_none(), "the list is not forwarded");
+        assert!(
+            calls[0].get("queries").is_none(),
+            "the list is not forwarded"
+        );
     }
 
     /// A key the schema does not name is refused at the door, not dropped

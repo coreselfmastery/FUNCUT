@@ -181,6 +181,12 @@ return MCP `type: image` content blocks, so the model can actually look:
   design, sound), notes and concrete tool-level revisions. Uses a local
   vision model when available, otherwise says `engine: "heuristic"` and
   grades measurements honestly.
+- `measure_loudness` - FFmpeg's EBU R128 meter on an exported file:
+  integrated LUFS, true peak dBTP, loudness range, the error against the
+  platform target (`targetLufs`, default −14; −23 for broadcast), and
+  specific mix notes. `watch_render {path, audio:true}` reports the same
+  figures alongside the contact sheet. `export_wait` reports no loudness,
+  so this is the only way to **prove** a target was met.
 - `motion_overlay` - composite a baked RGBA PNG sequence (`frames`, or
   `hash` + `project`) over real footage (`plate`) at `at` seconds, honouring
   the comp's transparency, and return an H.264 clip ready for

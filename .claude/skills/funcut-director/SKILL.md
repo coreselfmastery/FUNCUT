@@ -183,8 +183,11 @@ file's score is >= 7, with no black frames, bars or long static runs in the
 contact sheet, may you call the work done. Say the honest score in your
 report; never claim success on an unmeasured render. If a platform target was
 given, match its aspect and duration requirements. A planned loudness target
-is not proof of compliance: measure the exported mix externally if
-LUFS/true-peak limits matter; `export_wait` does not report them.
+is not proof of compliance: call `measure_loudness {path, targetLufs}`
+(or `watch_render {path, audio:true}`) on the exported file. `export_wait`
+reports no loudness. Short-form targets about −14 LUFS integrated with a
+true peak under −1 dBTP; fix with `clip_audio_levels_db` and measure
+again. Never claim LUFS compliance from the plan alone.
 
 ## 2. Job and artifact hygiene
 

@@ -297,7 +297,10 @@ fn frame_of(project: &Path) -> Option<(u32, u32)> {
     let manifest = std::fs::read_to_string(project.join("concat.json")).ok()?;
     let document: Value = serde_json::from_str(&manifest).ok()?;
     let video = document.get("video")?;
-    Some((video.get("width")?.as_u64()? as u32, video.get("height")?.as_u64()? as u32))
+    Some((
+        video.get("width")?.as_u64()? as u32,
+        video.get("height")?.as_u64()? as u32,
+    ))
 }
 
 /// `motion_bake`: a comp - a preset or a file, edited by `ops` - baked to

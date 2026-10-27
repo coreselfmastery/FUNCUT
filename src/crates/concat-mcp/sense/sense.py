@@ -354,6 +354,60 @@ def extract_frame(ff, path, at, w, h):
     return bytes(out[:want]), None
 
 
+def loudness(ff, path, target_lufs=-14.0, target_peak=-1.0):
+    """Measure the exported mix with FFmpeg's EBU R128 / true-peak meter.
+
+    A plan's loudness target is a wish; this is the measurement. Short-form
+    platforms sit near -14 LUFS integrated with a true peak under -1 dBTP;
+    broadcast EBU R128 is -23 LUFS. The caller picks `targetLufs`.
+    """
+    cmd = [
+        ff, "-hide_banner", "-nostats", "-i", path,
+        "-filter_complex", "ebur128=peak=true:framelog=quiet",
+        "-f", "null", "-",
+    ]
+    rc, _, err = _run(cmd, 240)
+    text = err.decode("utf-8", "replace")
+    # Only the final Summary block carries the integrated figures. Reading
+    # the last occurrence matters: the per-frame lines were silenced, but
+    # older FFmpeg builds ignore framelog and print I: on every frame.
+    summary = text[text.rfind("Summary:"):] if "Summary:" in text else text
+    def grab(pattern):
+        m = re.findall(pattern, summary)
+        try:
+            return float(m[-1])
+        except (ValueError, IndexError):
+            return None
+    integrated = grab(r"I:\s*(-?[\d.]+)\s*LUFS")
+    lra = grab(r"LRA:\s*(-?[\d.]+)\s*LU")
+    true_peak = grab(r"Peak:\s*(-?[\d.]+)\s*dBFS")
+    if integrated is None:
+        return None
+    out = {
+        "integratedLufs": integrated,
+        "truePeakDbtp": true_peak,
+        "loudnessRangeLu": lra,
+        "targetLufs": target_lufs,
+        "targetTruePeakDbtp": target_peak,
+        "lufsError": round(integrated - target_lufs, 2),
+    }
+    notes = []
+    if abs(out["lufsError"]) > 3.0:
+        notes.append(
+            f"Integrated loudness is {integrated:.1f} LUFS, {abs(out['lufsError']):.1f} LU "
+            f"from the {target_lufs:.0f} LUFS platform target; normalise the mix before export."
+        )
+    if true_peak is not None and true_peak > target_peak:
+        notes.append(f"True peak {true_peak:.1f} dBTP exceeds the {target_peak:.0f} dBTP ceiling; add a limiter.")
+    if lra is not None and lra > 12.0:
+        notes.append(f"Loudness range {lra:.1f} LU is very wide; quiet lines will be hard to hear on a phone.")
+    out["notes"] = notes
+    out["platformTargetMet"] = abs(out["lufsError"]) <= 3.0 and (
+        true_peak is None or true_peak <= target_peak
+    )
+    return out
+
+
 def audio_envelope(ff, path, buckets=48):
     """Low-rate mono PCM energy envelope; works without scipy/numpy."""
     rate = 8000
@@ -625,6 +679,16 @@ def build_sheet(spec):
                 notes.append(f"{int(audio['silenceFraction'] * 100)}% of the soundtrack is near-silence. Fix the mix or add a music bed.")
             if audio["dynamicRange"] < 0.25:
                 notes.append("Soundtrack energy is flat. Use beat-aligned cuts or ducking under the voice.")
+            measured = loudness(
+                ff, spec["path"],
+                float(spec.get("targetLufs", -14.0)),
+                float(spec.get("targetTruePeakDbtp", -1.0)),
+            )
+            if measured:
+                audio["loudness"] = measured
+                notes.extend(measured.get("notes") or [])
+            else:
+                notes.append("Integrated loudness could not be measured; do not claim LUFS or true-peak compliance.")
 
     craft = {
         "samples": len(metas),
@@ -682,9 +746,18 @@ def heuristic(brief, sheet):
     shot = 7.4 - 4.0 * black_pen - 2.5 * bar_pen - 2.5 * flat_pen - 1.5 * dup_pen
     design = 6.1 - 2.2 * flat_pen - 1.2 * dup_pen + 0.8 * min(1.0, c.get("meanCutEnergy", 0))
     sound = 6.6
+    loud = (audio or {}).get("loudness") or {}
     if audio:
         sound -= 2.5 * max(0.0, audio.get("silenceFraction", 0) - 0.12)
         sound -= 1.5 * max(0.0, 0.4 - audio.get("dynamicRange", 0.4))
+        if loud:
+            sound -= min(2.5, abs(loud.get("lufsError", 0.0)) / 3.0)
+            if not loud.get("platformTargetMet", True):
+                sound -= 0.5
+            if (loud.get("loudnessRangeLu") or 0) > 12.0:
+                sound -= 0.5
+        else:
+            sound = min(sound, 5.5)  # unmeasured loudness is not "compliant"
     else:
         sound = 5.5  # unmeasured, not "good"
 
@@ -711,6 +784,11 @@ def heuristic(brief, sheet):
         revisions.append("CALL set_creative_brief with audience, platform, emotionalArc, curiosityGap and payoff, then re-plan.")
     if not audio:
         revisions.append("CALL watch_render with audio:true to measure the soundtrack instead of guessing.")
+    elif loud and not loud.get("platformTargetMet", True):
+        revisions.append(
+            f"Mix is {loud.get('integratedLufs')} LUFS (target {loud.get('targetLufs')}); "
+            "normalise with clip_audio_levels_db and re-check watch_render before export."
+        )
     if not revisions:
         revisions.append("CALL watch_render again after the next revision and compare craft scores.")
     return {
@@ -738,7 +816,8 @@ Judge the edit the way a demanding human editor would. Be harsh and specific. Sc
 - rhythm: do the cuts have pace and variation rather than a slideshow?
 - shotChoice: are the images meaningful, varied, well-framed, free of black frames and letterbox bars?
 - design: do graphics/captions/motion add meaning rather than decorate randomly?
-- sound: based on the reported audio envelope, is the mix likely to support the story?
+- sound: based on the audio envelope AND the measured integrated LUFS / true
+  peak / loudness range, does the mix support the story and meet the platform target?
 
 Return ONLY a JSON object, no markdown, with exactly these keys:
 {{"scores":{{"hook":N,"story":N,"rhythm":N,"shotChoice":N,"design":N,"sound":N}},
@@ -1050,7 +1129,7 @@ def vlm_command(spec):
 def main():
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["sheet", "critique", "rank", "overlay", "vlm", "selftest"])
+    ap.add_argument("cmd", choices=["sheet", "critique", "rank", "overlay", "loudness", "vlm", "selftest"])
     ap.add_argument("--spec", default="{}")
     args = ap.parse_args()
     try:
@@ -1065,6 +1144,12 @@ def main():
             out = rank(spec)
         elif args.cmd == "overlay":
             out = overlay(spec)
+        elif args.cmd == "loudness":
+            ff, _ = _tools(spec)
+            result = loudness(ff, spec.get("path", ""), float(spec.get("targetLufs", -14.0)), float(spec.get("targetTruePeakDbtp", -1.0)))
+            out = result or {"ok": False, "error": "no loudness measurement (is there an audio stream?)"}
+            if result:
+                out["ok"] = True
         elif args.cmd == "vlm":
             out = vlm_command(spec)
         else:

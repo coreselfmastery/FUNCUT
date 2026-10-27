@@ -44,6 +44,7 @@ Diagnostics go to stderr, so stdout stays parseable.
 | `critique` | Six-axis craft score + concrete revisions, from the sheet + brief. |
 | `rank` | Semantically rank stock candidates against the creative brief. |
 | `overlay` | Composite a baked RGBA PNG sequence over a plate video (or a solid colour) into an H.264 clip, honouring alpha at the compositing step. |
+| `loudness` | EBU R128 integrated LUFS, true peak dBTP and loudness range of a media file, checked against a platform target. |
 | `vlm` | `status` / `setup` for the local vision model. |
 | `selftest` | Generate a synthetic PNG, decode it, measure it — no fixtures, no ffmpeg. |
 
@@ -111,3 +112,16 @@ and an `enable` window for the comp's duration. The output is an ordinary
 H.264 clip that the existing `media_import` / `clip_add` path understands.
 The original alpha sequence is left untouched, so one bake can be
 re-composited over many plates.
+
+
+## Loudness is measured, not promised
+
+`watch_render {path, audio:true}` and the `measure_loudness` tool run
+FFmpeg's `ebur128` meter and report **integrated LUFS, true peak dBTP and
+loudness range LU**, the error against the target, and whether the target
+was met. Short-form platforms sit near −14 LUFS with a true peak below
+−1 dBTP; broadcast EBU R128 is −23 LUFS. `export_wait` reports no
+loudness, so a plan's target used to be the only number anyone had —
+which is not proof of compliance. `craft_critique`'s `sound` score now
+uses the real measurement, and `measure_loudness` gives a headless
+check on any exported file.

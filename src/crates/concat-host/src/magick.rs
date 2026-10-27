@@ -13,7 +13,11 @@
 //! release asset of this repository, checked against a digest baked into
 //! the build, and parsed into memory once. The 3,000 rows the index
 //! itself marks not-safe-for-work are left out at parse; the shelf that
-//! remains is 145,193 pictures.
+//! remains is 145,193 pictures. The pictures carry OneOverZero's own
+//! CC BY-NC 4.0 licence: fine in personal and non-commercial video,
+//! never in monetized work (see THIRD_PARTY_NOTICES and docs/MAGICK.md);
+//! OpenMoji, the other shelf, is CC-BY 4.0 and the one a commercial
+//! edit reaches for.
 //!
 //! *OpenMoji* is the OpenMoji project's colour set (hfg-gmuend, CC-BY
 //! 4.0): 4,565 emoji at 618x618, each a palette PNG whose `tRNS` carries

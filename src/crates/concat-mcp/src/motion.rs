@@ -290,6 +290,16 @@ pub fn frame(arguments: Value) -> Result<Outcome, ApiError> {
     })
 }
 
+/// The project's frame, from its document: the `video` a `concat.json`
+/// manifest holds, when one can be read. None keeps the comp's own size
+/// - the 1920x1080 canvas every comp is authored on.
+fn frame_of(project: &Path) -> Option<(u32, u32)> {
+    let manifest = std::fs::read_to_string(project.join("concat.json")).ok()?;
+    let document: Value = serde_json::from_str(&manifest).ok()?;
+    let video = document.get("video")?;
+    Some((video.get("width")?.as_u64()? as u32, video.get("height")?.as_u64()? as u32))
+}
+
 /// `motion_bake`: a comp - a preset or a file, edited by `ops` - baked to
 /// PNG frames in the project's cache and, when `encode` is set, written as
 /// one video file under `motion/` ready for `media_import`.
@@ -328,6 +338,13 @@ pub fn bake(arguments: Value) -> Result<Outcome, ApiError> {
         .and_then(Value::as_u64)
         .map(|value| value.clamp(0, 51) as u8)
         .unwrap_or(18);
+    // A bake that names no size lands at the project's own frame, read
+    // from its document: the comps are authored on a 1920x1080 canvas,
+    // which used to be the fallback, and a vertical project baked
+    // horizontal. A document that cannot be read keeps the comp's size.
+    let frame = frame_of(&project);
+    let width = width.or(frame.map(|(width, _)| width));
+    let height = height.or(frame.map(|(_, height)| height));
 
     // The comp lands in the project, content-addressed: two bakes of the
     // same comp share one file, and an edit is a new hash by itself.

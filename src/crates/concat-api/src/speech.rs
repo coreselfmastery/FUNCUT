@@ -79,7 +79,10 @@ impl Api {
         if concat_speech::tts::voice_family(voice).is_none() {
             return Err(ApiError::new(
                 ErrorCode::Invalid,
-                format!("unknown voice {voice} - the Settings > Speech ids, Kokoro 0-52"),
+                format!(
+                    "unknown voice {voice} - a Kokoro voice is numbered 0-52; \
+                     the `models_list` reply says which voice models are on disk"
+                ),
             ));
         }
         if speed.is_some_and(|value| !value.is_finite()) {

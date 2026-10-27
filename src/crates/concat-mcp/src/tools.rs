@@ -25,8 +25,12 @@ use crate::schema::Schemas;
 use crate::summary;
 
 /// The longest preview side handed back when the agent names no size: a
-/// frame an agent can look at without a 4K PNG in its context.
-const PREVIEW_SIDE: f64 = 1280.0;
+/// frame an agent can look at without a 4K PNG in its context - and the
+/// long side every proxy serves whole, so the default preview reads
+/// each clip's working copy where it has one instead of decoding the
+/// originals, which is the pause between one frame and the next. Name
+/// `width` and `height` to see bigger.
+const PREVIEW_SIDE: f64 = 960.0;
 /// How often a wait asks how an export stands.
 const POLL: Duration = Duration::from_millis(250);
 /// How long `export_wait` waits when told nothing, and at most.
@@ -104,6 +108,10 @@ pub enum Action {
     CreativeBrief,
     /// Composite a transparent motion bake over real footage.
     MotionOverlay,
+    /// `project.get`, read for every place two clips share a lane.
+    CollisionCheck,
+    /// `openvid.search` once per query, one reply.
+    OpenvidSearchBatch,
 }
 
 /// How a reply is shown to the agent.
@@ -226,7 +234,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "project_save",
             "Save a project",
-            "Writes an open project's document to its folder; edits are only in memory until this is called. `name` renames the project as it saves.",
+            "Writes an open project's document to its folder; `name` renames the project as it saves. Edits autosave as they happen (the document is written after every applied edit), so this is rarely needed - a save now is for renaming or tidiness, not for keeping work.",
             "project.save",
             Raw,
         )
@@ -234,7 +242,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "project_close",
             "Close a project",
-            "Closes an open project. With `save: true` it is saved first; otherwise unsaved edits are dropped.",
+            "Closes an open project. Edits autosave as they happen, so nothing is lost either way; `save: true` writes the document once more before it goes.",
             "project.close",
             Raw,
         )
@@ -265,6 +273,15 @@ pub fn catalogue() -> Vec<Tool> {
             destructive: true,
             idempotent: true,
             action: Action::AudioLevelsDb,
+        },
+        Tool {
+            name: "collision_check",
+            title: "Check for clips sharing a lane",
+            description: "Reads an open project's active timeline and reports every place two clips share one lane: each collision's `trackId`, the two clips' ids, starts, durations and ends, and the span they fight over (`from`, `to`). The placing tools never make one - a clip that would land on another lands at the nearest free start, and a move that cannot land does not move - so a collision here means a document written by hand or damaged; `timeline_read` and the placing tools are how one is unwound. `clean` is true when no lane is shared. Read-only.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::CollisionCheck,
         },
         method(
             "project_get",
@@ -321,10 +338,19 @@ pub fn catalogue() -> Vec<Tool> {
             Raw,
         )
         .reading(),
+        Tool {
+            name: "openvid_search_batch",
+            title: "Search stock clips, several queries at once",
+            description: "The `openvid_search` search run once per entry of `queries` - two or three words each, a noun a camera could film, never a sentence - in one call, every entry with the same optional floors and filters: `minAesthetic`/`minMotion`/`maxMotion`/`minTemporal`, `minSeconds`/`maxSeconds`/`minFps`, `camera`, `source`, `orientation`, `sort`, `limit` (per query, default 20) and `offset`. The reply's `searches` carry one entry per query - its `query`, `total` and `clips` - in the order given; the tool fails as `openvid_search` would (the OpenVid index must be prepared first). Shop a whole plan's B-roll in one round trip, then look before choosing with `stock_contact_sheet`.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::OpenvidSearchBatch,
+        },
         method(
             "openvid_get",
             "Read clips in full",
-            "Everything about up to 20 clips by id, as `openvid_search` gave the ids: the full caption, every score, and `dims` - the frame size read from the clip's own MP4 header, measured on this first ask (one or two small network reads a clip, remembered after). Use it to check a candidate before committing to the fetch.",
+            "Everything about up to 20 clips by id, as `openvid_search` gave the ids: the full caption, every score, and `dims` - the frame size read from the clip's own MP4 header, measured on this first ask (one or two small network reads a clip, remembered after). Use it to check a candidate before committing to the fetch; captions and scores are words, not pictures - `stock_contact_sheet` (its `ids` name these same clips) is how a clip is SEEN before it is fetched.",
             "openvid.get",
             Raw,
         )
@@ -461,13 +487,13 @@ pub fn catalogue() -> Vec<Tool> {
         command(
             "clip_add",
             "Place a clip",
-            "Places a clip of a media item (`mediaId`, from the bin) on a lane (`trackId`, from `timeline_read`) starting at `start` seconds. Its length is the media's (5 s for a still). `ripple: true` pushes later clips on that lane right instead of overlapping them. The new clip's id is `createdId`.",
+            "Places a clip of a media item (`mediaId`, from the bin) on a lane (`trackId`, from `timeline_read`) starting at `start` seconds - or, where another clip already sits, at the nearest free start, which the reply's summary carries. Its length is the media's (5 s for a still). `ripple: true` pushes later clips on that lane right instead of finding a gap. The new clip's id is `createdId`.",
             "addClip",
         ),
         command(
             "clips_add_sequence",
             "Place clips end to end",
-            "Lays several media items (`mediaIds`, from the bin, in order) end to end starting at `start` seconds, each its media's length (5 s for a still), in one undoable step. With no `trackId` they go on the lowest lane free for the whole run; on a named lane, `ripple: true` makes room as a drop does. `createdId` is the last clip's id; `timeline_read` lists the rest.",
+            "Lays several media items (`mediaIds`, from the bin, in order) end to end starting at `start` seconds, each its media's length (5 s for a still), in one undoable step. With no `trackId` they go on the lowest lane free for the whole run; on a named lane, `ripple: true` makes room as a drop does while the plain form lands the run at the nearest gap that holds it. `createdId` is the last clip's id; `timeline_read` lists the rest, and `collision_check` confirms no lane was shared.",
             "addClipsInSequence",
         ),
         command(
@@ -491,7 +517,7 @@ pub fn catalogue() -> Vec<Tool> {
         command(
             "clips_move",
             "Move clips",
-            "Moves clips in one undoable step: each to a new `start` (seconds, at least 0) and `trackId`. Unknown ids are skipped.",
+            "Moves clips in one undoable step: each to a new `start` (seconds, at least 0) and `trackId`. A move that would land the group on clips that stay put lands it instead at the nearest free place, the whole group keeping its shape; a move whose own clips would cover each other does not happen and the reply says nothing was applied. Unknown ids are skipped.",
             "moveClips",
         ),
         command(
@@ -735,7 +761,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "motion_bake",
             title: "Bake a motion comp",
-            description: "Bakes a motion comp - `preset` or `comp`, edited by an optional `ops` batch (set-slot, set-text, set-words, set-track, slide-to, pop, fade-in, add-text, ...) - into PNG frames under the project's cache/comps/, content-addressed by the comp's hash, and with `encode: true` writes one video file under motion/ ready for media_import and clip_add (`name` picks its file name; .webm is VP9, .mov ProRes 4444, otherwise H.264 - none carry alpha, which the PNG sequence keeps). For a transparent comp, take `dir` and `hash` from this reply to motion_overlay, which composites the RGBA frames over your real footage with the alpha honoured. Optional width/height (bake at the cut's size, never 4K for safety), fps, crf (0-51).",
+            description: "Bakes a motion comp - `preset` or `comp`, edited by an optional `ops` batch (set-slot, set-text, set-words, set-track, slide-to, pop, fade-in, add-text, ...) - into PNG frames under the project's cache/comps/, content-addressed by the comp's hash, and with `encode: true` writes one video file under motion/ ready for media_import and clip_add (`name` picks its file name; .webm is VP9, .mov ProRes 4444, otherwise H.264 - none carry alpha, which the PNG sequence keeps). For a transparent comp, take `dir` and `hash` from this reply to motion_overlay, which composites the RGBA frames over your real footage with the alpha honoured. Optional width/height - the project's own frame, read from its document, when absent, so a vertical project bakes vertical; never above 4K for safety - fps, crf (0-51).",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -920,11 +946,23 @@ impl Toolbox {
 
     /// Runs the tool `name`; `None` when there is no such tool.
     pub fn call(&self, name: &str, arguments: Value, context: Context<'_>) -> Option<Outcome> {
-        let (tool, _) = self.find(name)?;
+        let (tool, schema) = self.find(name)?;
         let arguments = match arguments {
             Value::Null => Value::Object(Map::new()),
             other => other,
         };
+        // The schema the tool was listed with is the contract both sides
+        // were shown, and it is checked before anything runs: a key it
+        // does not name is a misspelling - `style.text` where the words
+        // go, `trackId` on a command that takes `track` - that the
+        // request layer would otherwise read as silently absent, and a
+        // refusal that names it is one round trip instead of an edit
+        // that lands half-read.
+        if let Err(why) = crate::schema::check(schema, &arguments, schema, name) {
+            return Some(Outcome::error(&ApiError::invalid(format!(
+                "invalid arguments: {why}"
+            ))));
+        }
         Some(match run(tool, arguments, context) {
             Ok(outcome) => outcome,
             Err(error) => Outcome::error(&error),
@@ -959,6 +997,35 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
             Some(schema)
         }
         Action::PreviewFrame => schemas.method("preview.frame"),
+        Action::CollisionCheck => schemas.method("project.get"),
+        Action::OpenvidSearchBatch => {
+            // The same shape `openvid_search` takes, one query a list of
+            // them: the properties are cut from the API's own schema so
+            // the floors and filters cannot drift from it.
+            let search = schemas.method("openvid.search")?;
+            let mut properties = search
+                .get("properties")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            properties.remove("query");
+            properties.insert(
+                "queries".to_owned(),
+                json!({
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 8,
+                    "items": { "type": "string", "minLength": 1 },
+                    "description": "The searches to run, one `openvid_search` query each: two or three words, a noun a camera could film.",
+                }),
+            );
+            Some(json!({
+                "type": "object",
+                "properties": properties,
+                "required": ["queries"],
+                "additionalProperties": false,
+            }))
+        }
         Action::MotionPresets
         | Action::MotionInspect
         | Action::MotionFrame
@@ -983,6 +1050,7 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
                     "mask": mask,
                 },
                 "required": ["path", "clipId", "mask"],
+                "additionalProperties": false,
             }))
         }
         Action::Captions => {
@@ -1022,6 +1090,7 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
                     },
                 },
                 "required": ["path", "captions"],
+                "additionalProperties": false,
             }))
         }
     }
@@ -1525,6 +1594,11 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         Action::LocalVlm => crate::sense::local_vlm(arguments),
         Action::CreativeBrief => crate::sense::creative_brief(arguments),
         Action::MotionOverlay => crate::sense::motion_overlay(arguments),
+        Action::CollisionCheck => {
+            let result = backend.call(request("project.get", arguments)?)?;
+            Ok(collision_report(summary::view(&result)))
+        }
+        Action::OpenvidSearchBatch => openvid_search_batch(arguments, backend),
         Action::Mask => {
             let result = backend.call(mask(arguments)?)?;
             Ok(Outcome::json(summary::view(&result)))
@@ -2553,6 +2627,110 @@ fn preview(mut arguments: Value, backend: &mut dyn Backend) -> Result<Outcome, A
     })
 }
 
+/// `collision_check`: every place two clips share a lane, read from the
+/// same summary `timeline_read` shows. The placement engine never
+/// makes one - `nearest_free_start` and `resolve_moves` see to that -
+/// so a collision is a document written by hand or damaged; named,
+/// so it can be unwound with the placing tools.
+fn collision_report(view: Value) -> Outcome {
+    /// How far two spans may run into each other and still count as
+    /// touching, as the engine's own placement sees it.
+    const TOUCH: f64 = 1e-6;
+    let mut by_lane: Map<String, Vec<Value>> = Map::new();
+    for clip in view
+        .pointer("/timeline/clips")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(lane) = clip.get("track").and_then(Value::as_str) {
+            by_lane.entry(lane.to_owned()).or_default().push(clip.clone());
+        }
+    }
+    let mut collisions: Vec<Value> = Vec::new();
+    for (lane, mut clips) in by_lane {
+        clips.sort_by(|left, right| {
+            let start = |clip: &Value| clip["start"].as_f64().unwrap_or(0.0);
+            start(left).total_cmp(&start(right))
+        });
+        // Every pair, not only neighbours: a lane may hold a clip
+        // running over two others with room for one between them.
+        for (index, one) in clips.iter().enumerate() {
+            let one_start = one["start"].as_f64().unwrap_or(0.0);
+            let one_end = one["end"].as_f64().unwrap_or(0.0);
+            for other in clips.iter().skip(index + 1) {
+                let other_start = other["start"].as_f64().unwrap_or(0.0);
+                let other_end = other["end"].as_f64().unwrap_or(0.0);
+                // As the engine's `covers` sees it: sharing more than
+                // an edge.
+                if one_start < other_end - TOUCH
+                    && other_start < one_end - TOUCH
+                {
+                    collisions.push(json!({
+                        "trackId": lane.clone(),
+                        "clips": Value::Array(vec![one.clone(), other.clone()]),
+                        "from": other_start,
+                        "to": one_end.min(other_end),
+                    }));
+                }
+            }
+        }
+    }
+    let clean = collisions.is_empty();
+    Outcome::json(json!({
+        "count": collisions.len(),
+        "clean": clean,
+        "collisions": collisions,
+    }))
+}
+
+/// `openvid_search_batch`: the same search, once per query, in one call.
+/// An agent shopping a plan's B-roll runs one of these where it used to
+/// run a row of `openvid_search` round trips; the index it reads is one,
+/// so a library that is not prepared fails the whole call as a single
+/// search would, not per query.
+fn openvid_search_batch(
+    arguments: Value,
+    backend: &mut dyn Backend,
+) -> Result<Outcome, ApiError> {
+    let invalid = |why: &str| ApiError::invalid(format!("invalid arguments: {why}"));
+    let mut shared = match arguments {
+        Value::Object(fields) => fields,
+        _ => return Err(invalid("the arguments are an object")),
+    };
+    let queries = match shared.remove("queries") {
+        Some(queries) => queries,
+        None => return Err(invalid("`queries` is required")),
+    };
+    let Some(queries) = queries.as_array() else {
+        return Err(invalid("`queries` is a list of queries"));
+    };
+    if queries.is_empty() {
+        return Err(invalid("`queries` may not be empty"));
+    }
+    if queries.len() > 8 {
+        return Err(invalid("`queries` is at most 8 searches"));
+    }
+    if queries.iter().any(|query| query.as_str().is_none()) {
+        return Err(invalid("every entry of `queries` is a query's words"));
+    }
+    let queries: Vec<Value> = queries.clone();
+    let mut searches = Vec::with_capacity(queries.len());
+    for query in queries {
+        shared.insert("query".to_owned(), query.clone());
+        let found = backend.call(request("openvid.search", Value::Object(shared.clone()))?)?;
+        searches.push(json!({
+            "query": query,
+            "total": found.get("total").cloned().unwrap_or(Value::Null),
+            "clips": found
+                .get("clips")
+                .cloned()
+                .unwrap_or_else(|| Value::Array(Vec::new())),
+        }));
+    }
+    Ok(Outcome::json(json!({ "searches": searches })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2822,6 +3000,11 @@ mod tests {
                 "creative_brief",
                 json!({ "path": "/tmp/Cut", "action": "get" }),
             ),
+            ("collision_check", json!({ "path": "/tmp/Cut" })),
+            (
+                "openvid_search_batch",
+                json!({ "queries": ["ocean sunset", "city skyline"], "limit": 5 }),
+            ),
         ]
     }
 
@@ -2917,6 +3100,23 @@ mod tests {
                 | Action::LocalVlm
                 | Action::CreativeBrief
                 | Action::MotionOverlay => continue,
+                Action::CollisionCheck => request("project.get", sample.clone()),
+                Action::OpenvidSearchBatch => {
+                    // One `openvid.search` per query: the first query's
+                    // request stands for the batch, which builds exactly
+                    // that call for each entry.
+                    let mut sample = sample.clone();
+                    if let Some(fields) = sample.as_object_mut() {
+                        let query = fields
+                            .get("queries")
+                            .and_then(Value::as_array)
+                            .and_then(|queries| queries.first().cloned())
+                            .unwrap_or(Value::Null);
+                        fields.remove("queries");
+                        fields.insert("query".to_owned(), query);
+                    }
+                    request("openvid.search", sample)
+                }
             };
             let built = built.unwrap_or_else(|error| panic!("{name}: {error}"));
             // Back again: the request as the API writes it fits the API's
@@ -2944,6 +3144,134 @@ mod tests {
         fn describe(&self) -> Value {
             json!({ "mode": "test" })
         }
+    }
+
+    /// A timeline where two clips share a lane reads as the collision it
+    /// is, touching does not count, and a lane of its own never does.
+    #[test]
+    fn collision_check_names_the_lane_two_clips_share() {
+        let view = json!({
+            "project": { "name": "P", "width": 1920, "height": 1080, "fps": 30.0 },
+            "timeline": {
+                "id": "tl1", "name": "One", "duration": 10.0,
+                "tracks": [{ "id": "t1", "index": 0 }, { "id": "t2", "index": 1 }],
+                "clips": [
+                    { "id": "c1", "kind": "video", "track": "t1", "start": 0.0, "duration": 5.0, "end": 5.0 },
+                    { "id": "c2", "kind": "video", "track": "t1", "start": 4.0, "duration": 4.0, "end": 8.0 },
+                    { "id": "c3", "kind": "video", "track": "t1", "start": 8.0, "duration": 2.0, "end": 10.0 },
+                    { "id": "c4", "kind": "text", "track": "t2", "start": 1.0, "duration": 2.0, "end": 3.0 },
+                ],
+            },
+            "media": [],
+        });
+        let outcome = collision_report(view);
+        assert!(!outcome.is_error);
+        let reply = outcome.structured.expect("structured");
+        assert_eq!(reply["count"], 1);
+        assert_eq!(reply["clean"], false);
+        let collisions = reply["collisions"].as_array().expect("collisions");
+        assert_eq!(collisions.len(), 1);
+        let collision = &collisions[0];
+        assert_eq!(collision["trackId"], "t1");
+        assert_eq!(collision["from"], 4.0);
+        assert_eq!(collision["to"], 5.0);
+        let ids: Vec<&str> = collision["clips"]
+            .as_array()
+            .expect("two clips")
+            .iter()
+            .filter_map(|clip| clip["id"].as_str())
+            .collect();
+        assert_eq!(ids, ["c1", "c2"], "c3 only touches, c4 has its own lane");
+    }
+
+    /// A clean timeline reads as clean.
+    #[test]
+    fn a_timeline_without_shared_lanes_reads_clean() {
+        let view = json!({
+            "timeline": { "clips": [
+                { "id": "c1", "kind": "video", "track": "t1", "start": 0.0, "duration": 5.0, "end": 5.0 },
+                { "id": "c2", "kind": "video", "track": "t1", "start": 5.0, "duration": 2.0, "end": 7.0 },
+            ] },
+        });
+        let outcome = collision_report(view);
+        let reply = outcome.structured.expect("structured");
+        assert_eq!(reply["clean"], true);
+        assert_eq!(reply["count"], 0);
+        assert_eq!(reply["collisions"].as_array().map(Vec::len), Some(0));
+    }
+
+    /// A backend whose calls are answered in order, and remembered.
+    struct Answers(std::cell::RefCell<Vec<Value>>, std::collections::VecDeque<Value>);
+
+    impl Backend for Answers {
+        fn call(&mut self, request: Request) -> Result<Value, ApiError> {
+            self.0.borrow_mut().push(serde_json::to_value(&request).expect("writes"));
+            let answer = self.1.pop_front().expect("an answer");
+            Ok(answer)
+        }
+
+        fn describe(&self) -> Value {
+            json!({ "mode": "test" })
+        }
+    }
+
+    /// The batch runs one `openvid.search` per query, carrying the shared
+    /// filters, and the reply keeps the queries apart.
+    #[test]
+    fn openvid_search_batch_runs_one_search_per_query() {
+        let mut backend = Answers(
+            std::cell::RefCell::new(Vec::new()),
+            [
+                json!({ "clips": [{ "id": 1 }], "total": 1 }),
+                json!({ "clips": [{ "id": 2 }, { "id": 3 }], "total": 2 }),
+            ]
+            .into(),
+        );
+        let outcome = openvid_search_batch(
+            json!({ "queries": ["ocean sunset", "city skyline"], "limit": 5 }),
+            &mut backend,
+        )
+        .expect("searches");
+        assert!(!outcome.is_error);
+        let reply = outcome.structured.expect("structured");
+        let searches = reply["searches"].as_array().expect("searches");
+        assert_eq!(searches.len(), 2);
+        assert_eq!(searches[0]["query"], "ocean sunset");
+        assert_eq!(searches[0]["total"], 1);
+        assert_eq!(searches[0]["clips"].as_array().map(Vec::len), Some(1));
+        assert_eq!(searches[1]["query"], "city skyline");
+        assert_eq!(searches[1]["total"], 2);
+        let calls = backend.0.borrow();
+        assert!(calls.len() == 2, "one call a query");
+        assert_eq!(calls[0]["method"], "openvid.search");
+        assert_eq!(calls[0]["query"], "ocean sunset");
+        assert_eq!(calls[0]["limit"], 5, "the shared filters ride along");
+        assert_eq!(calls[1]["query"], "city skyline");
+        assert!(calls[0].get("queries").is_none(), "the list is not forwarded");
+    }
+
+    /// A key the schema does not name is refused at the door, not dropped
+    /// on the way to a half-read edit.
+    #[test]
+    fn a_misspelled_argument_is_refused_rather_than_dropped() {
+        let toolbox = Toolbox::new();
+        let mut backend = Statuses(std::collections::VecDeque::new());
+        let cancelled = AtomicBool::new(false);
+        let outcome = toolbox
+            .call(
+                "title_add",
+                json!({ "path": "/tmp/Cut", "start": 1.0, "style2": { "text": "Hello" } }),
+                Context {
+                    backend: &mut backend,
+                    cancelled: &cancelled,
+                    progress: None,
+                },
+            )
+            .expect("the tool exists");
+        assert!(outcome.is_error, "the misspelling is refused");
+        let text = outcome.content[0]["text"].as_str().expect("says why");
+        assert!(text.contains("style2"), "names the key: {text}");
+        assert!(backend.0.is_empty(), "nothing reached the backend");
     }
 
     /// An export that mixes sound and muxes it reports the stages the

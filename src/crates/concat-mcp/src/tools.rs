@@ -810,7 +810,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "craft_critique",
             title: "Score the cut",
-            description: "The final creative director. Takes the `sheet` JSON returned by watch_render (or a raw `pngB64`) and a `brief`, and returns six honest 0-10 scores - hook, story, rhythm, shotChoice, design, sound - plus specific notes and a short list of concrete revisions naming the tools to call. Uses a local sub-1B vision model when one is running (see local_vlm); otherwise it says so and returns an explicitly-labelled pixel/measurement-based score. With `project` it also persists every pass to craft-history.json and returns pass, previousOverall, delta, improved and a trend sentence - so a later turn can prove the revision made the cut better rather than just claiming it. Call it after EVERY watch_render. Optional: autoSetup (fetch the local model on first use), profile.",
+            description: "The measured creative critic. Takes the `sheet` JSON returned by watch_render (or a raw `pngB64`) and a `brief`, and returns six honest 0-10 scores - hook, story, rhythm, shotChoice, design, sound - plus notes and concrete revisions. Baseline is REAL pixel/audio measurement (engine 'heuristic', confidence 0.45). With the bundled 0.5B local model it adds bounded visible-defect flags (engine 'local-vlm-flags', confidence 0.58, at most 1 point per axis: black frames, letterbox bars, readable text) - it CANNOT judge taste. Set FUNCUT_VLM_ENDPOINT to a stronger vision model to get full six-axis VLM scoring (engine 'local-vlm'). With `project` it journals every pass to craft-history.json and returns pass, previousOverall, delta, improved and trend. Call it after EVERY watch_render. Optional: autoSetup, profile.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -846,7 +846,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "local_vlm",
             title: "Local vision critic",
-            description: "Status or first-use setup of the tiny local vision model that grades edits. `action: \"status\"` reports whether a local Ollama / LM Studio / llama.cpp vision endpoint is reachable. `action: \"setup\"` downloads, once and into the app's own data folder (no system install, no pip), the 0.5B SmolVLM2-500M-Video-Instruct Q8_0 model + projector (~546 MB) and a pinned llama.cpp CPU server binary, then starts it on 127.0.0.1. `profile` is mini (default, every PC), image, or minicpm (~2.2 GB). Set FUNCUT_VLM_ENDPOINT to reuse an existing server and skip the download.",
+            description: "Status or first-use setup of the tiny local vision model that FLAGS visible defects (it does not grade taste). `action: \"status\"` reports whether a local Ollama / LM Studio / llama.cpp vision endpoint is reachable. `action: \"setup\"` downloads, once and into the app's own data folder (no system install, no pip), the 0.5B SmolVLM2-500M-Video-Instruct Q8_0 model + projector (~546 MB) and a pinned llama.cpp CPU server binary, then starts it on 127.0.0.1. `profile` is mini (default, every PC), image, or minicpm (~2.2 GB). Set FUNCUT_VLM_ENDPOINT to reuse an existing server and skip the download.",
             read_only: false,
             destructive: false,
             idempotent: true,

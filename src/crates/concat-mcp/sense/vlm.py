@@ -160,6 +160,10 @@ def _asset_name():
 def _download(url: str, dest: Path, label: str, progress=None):
     if dest.exists() and dest.stat().st_size > 1_000_000:
         return dest
+    # data_dir() is a pure path helper, so the very first download on a
+    # fresh machine has NO parent directory yet. Every caller used to rely
+    # on some earlier download having created it (or failed outright).
+    dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".part")
     tmp.unlink(missing_ok=True)
     try:
@@ -283,8 +287,14 @@ def health(base: str = None):
         return False
 
 
-def ask(prompt: str, images=None, endpoint=None, model=None, timeout=90.0, max_tokens=600):
-    """Send images + prompt to a local OpenAI-compatible vision endpoint."""
+def ask(prompt: str, images=None, endpoint=None, model=None, timeout=90.0,
+        max_tokens=600, json_schema=None, temperature=0.2):
+    """Send images + prompt to a local OpenAI-compatible vision endpoint.
+
+    `json_schema` asks llama.cpp's server for grammar-constrained JSON. Not
+    every OpenAI-compatible server accepts it, so a 400 with a schema set
+    retries once without it rather than losing the whole critique.
+    """
     ep = endpoint or detect()
     if not ep:
         raise RuntimeError("no local vision endpoint")
@@ -303,20 +313,37 @@ def ask(prompt: str, images=None, endpoint=None, model=None, timeout=90.0, max_t
             "format": "json",
         }
         url = base + "/api/chat"
+        if json_schema:
+            payload["format"] = json_schema
     else:
         payload = {
             "model": chosen, "stream": False, "max_tokens": max_tokens,
-            "temperature": 0.2,
+            "temperature": temperature,
             "messages": [{"role": "user", "content": content}],
         }
         url = base + "/v1/chat/completions"
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json", "User-Agent": "concat-editor-vlm/1.0"},
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        d = json.loads(resp.read().decode("utf-8", "replace"))
+        if json_schema:
+            payload["json_schema"] = json_schema
+            payload["response_format"] = {"type": "json_object", "schema": json_schema}
+
+    def send(body):
+        req = urllib.request.Request(
+            url, data=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json", "User-Agent": "concat-editor-vlm/1.0"},
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8", "replace"))
+
+    try:
+        d = send(payload)
+    except urllib.error.HTTPError as exc:
+        if exc.code not in (400, 404, 422) or not json_schema:
+            raise
+        payload.pop("json_schema", None)
+        payload.pop("response_format", None)
+        if ep.get("type") == "ollama":
+            payload["format"] = "json"
+        d = send(payload)
     if ep.get("type") == "ollama":
         return d.get("message", {}).get("content", "")
     return d["choices"][0]["message"]["content"]

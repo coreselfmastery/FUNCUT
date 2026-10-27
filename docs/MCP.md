@@ -180,7 +180,12 @@ return MCP `type: image` content blocks, so the model can actually look:
 - `craft_critique` - six 0-10 scores (hook, story, rhythm, shotChoice,
   design, sound), notes and concrete tool-level revisions. Uses a local
   vision model when available, otherwise says `engine: "heuristic"` and
-  grades measurements honestly. With `project`, each pass is journaled to
+  grades measurements honestly. **The bundled 0.5B model only flags visible
+  defects** (`engine: "local-vlm-flags"`, at most 1 point per axis); it was
+  tested end-to-end and cannot judge taste. Full six-axis model scoring
+  needs `FUNCUT_VLM_ENDPOINT` pointing at a stronger vision server. Every
+  model response is schema-validated and degenerate answers fall back to the
+  measured score. With `project`, each pass is journaled to
   `craft-history.json` and the reply reports `pass`, `previousOverall`,
   `delta`, `improved` and a `trend`, so the render -> inspect -> revise
   loop can be measured across turns instead of remembered.
@@ -207,7 +212,10 @@ return MCP `type: image` content blocks, so the model can actually look:
   (~546 MB, 0.5B params, CPU-only, 4 GB laptop is enough) and a pinned
   llama.cpp server into the app data dir; no system install, no pip. Set
   `FUNCUT_VLM_ENDPOINT` to reuse an existing Ollama / LM Studio / llama.cpp
-  server. `profile: "minicpm"` is ~2.2 GB and reads dense text better.
+  server — that also unlocks full six-axis scoring, because a 0.5B model
+  cannot grade craft. `profile: "minicpm"` is ~2.2 GB and reads dense text
+  better. `vlm.py ask` supports grammar-constrained JSON and retries once
+  without the schema on servers that reject it.
 
 The intended loop: `creative_brief` -> `plan_validate` (creativeReady true)
 -> `stock_contact_sheet` -> build -> `watch_render` -> `craft_critique` ->

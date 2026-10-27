@@ -64,6 +64,20 @@ perceptual `hash`, and `craft` aggregates plus plain-English `notes`.
 `cropHint` is the frame's energy centroid — a real answer to "where should a
 9:16 crop sit?" instead of always taking the centre column.
 
+### Honest capability of the bundled 0.5B critic
+
+Tested end-to-end on 2026-10-27 with the real
+`SmolVLM2-500M-Video-Instruct-Q8_0` model and llama.cpp `b11930`: setup,
+health, image inference and grammar-constrained JSON all work. But given a
+long six-axis critique prompt the model **hallucinated an entire film from a
+plain blue frame** and returned nested string "scores". It cannot grade
+craft. `craft_critique` therefore uses it only as a bounded **visible-defect
+flag detector** (`engine: "local-vlm-flags"`, confidence 0.58, at most
+±1.0 per axis, with strict schema validation and degenerate-answer
+rejection). Full six-axis scoring (`engine: "local-vlm"`) happens only when
+`FUNCUT_VLM_ENDPOINT` names a stronger user-supplied model. `rank` got the
+same short-prompt/schema treatment and falls back cleanly.
+
 ## The local VLM (`vlm.py`)
 
 `vlm.py` is the "1B model for every PC, no install" path. It downloads, on

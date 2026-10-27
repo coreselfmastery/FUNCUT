@@ -900,29 +900,95 @@ def heuristic(brief, sheet):
     }
 
 
-VLM_PROMPT = """You are the final creative director for a short-form video edit. You are looking at a contact sheet of frames sampled from the current cut, in timeline order, each labelled with its sample number and timestamp.
+# A 0.5B vision model CANNOT judge taste: in an end-to-end test it
+# hallucinated a whole film from a plain blue frame and returned scores
+# that were all zero. It CAN, with grammar-constrained JSON, flag a few
+# visible defects. So the bundled model is a bounded FLAG detector, never
+# the critic; only a user-supplied stronger endpoint gets the full prompt.
+STRONG_VLM_PROMPT = """You are a demanding video editor. The image is a contact sheet of frames from a short video, in timeline order, each labelled with a number and timestamp.
 
-CREATIVE BRIEF (JSON):
-{brief}
+CREATIVE BRIEF: {brief}
+MEASURED FACTS (real pixel/audio measurements): {facts}
 
-MEASURED PIXEL/AUDIO FACTS (JSON, these are real measurements, not opinions):
-{facts}
+Score each axis 0-10 (0 unwatchable, 5 generic, 8 good, 10 excellent):
+hook, story, rhythm, shotChoice, design, sound.
+Judge only what the frames and the measurements support. Be harsh.
+Reply with a JSON object containing integer "hook","story","rhythm","shotChoice","design","sound" (0-10), a short "verdict", up to 4 "notes" citing frame numbers, and up to 4 "revisions" naming concrete editing tools. No markdown."""
 
-Judge the edit the way a demanding human editor would. Be harsh and specific. Score each axis 0-10 (0 = unwatchable, 5 = competent but generic, 8 = genuinely good, 10 = excellent):
-- hook: do the first 1-2 frames create curiosity or emotion?
-- story: is there a visible progression / emotional arc / payoff?
-- rhythm: do the cuts have pace and variation rather than a slideshow?
-- shotChoice: are the images meaningful, varied, well-framed, free of black frames and letterbox bars?
-- design: do graphics/captions/motion add meaning rather than decorate randomly?
-- sound: based on the audio envelope AND the measured integrated LUFS / true
-  peak / loudness range, does the mix support the story and meet the platform target?
+FLAG_PROMPT = """Look at this frame/contact sheet from a video. Describe only what you can actually SEE in one short sentence; do NOT invent people, objects or a story. Then answer three yes/no questions about the image: are any parts nearly black or empty; are there black letterbox/pillarbox bars; is there readable text/captions on screen."""
 
-Return ONLY a JSON object, no markdown, with exactly these keys:
-{{"scores":{{"hook":N,"story":N,"rhythm":N,"shotChoice":N,"design":N,"sound":N}},
-"notes":["3-5 short observations citing specific frame numbers"],
-"revisions":["2-4 concrete edit actions, each naming a tool such as trim_clip, openvid_search, set_entrance, clip_transform, add_captions, set_creative_brief, watch_render"],
-"verdict":"one sentence"}}
-"""
+SCORE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "hook": {"type": "integer", "minimum": 0, "maximum": 10},
+        "story": {"type": "integer", "minimum": 0, "maximum": 10},
+        "rhythm": {"type": "integer", "minimum": 0, "maximum": 10},
+        "shotChoice": {"type": "integer", "minimum": 0, "maximum": 10},
+        "design": {"type": "integer", "minimum": 0, "maximum": 10},
+        "sound": {"type": "integer", "minimum": 0, "maximum": 10},
+        "verdict": {"type": "string"},
+        "notes": {"type": "array", "items": {"type": "string"}},
+        "revisions": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["hook", "story", "rhythm", "shotChoice", "design", "sound"],
+}
+
+FLAG_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "description": {"type": "string"},
+        "blackFrames": {"type": "boolean"},
+        "bars": {"type": "boolean"},
+        "readableText": {"type": "boolean"},
+    },
+    "required": ["description", "blackFrames", "bars", "readableText"],
+}
+
+
+def _parse_model_json(text, schema_name):
+    """Extract one JSON object and validate its shape before trusting it."""
+    if not text or not text.strip():
+        raise ValueError(f"empty {schema_name} response")
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```[a-zA-Z]*\s*", "", cleaned)
+        cleaned = cleaned.rstrip("`").strip()
+    match = re.search(r"\{[\s\S]*\}", cleaned)
+    if not match:
+        raise ValueError(f"no JSON object in {schema_name} response")
+    parsed = json.loads(match.group(0))
+    if not isinstance(parsed, dict):
+        raise ValueError(f"{schema_name} response is not an object")
+    return parsed
+
+
+def _flag_adjustments(flags, base_scores):
+    """Bounded, explainable nudges from visible defects only (max +/-1.0
+    total per axis, however many flags fire). A tiny model produces false
+    positives, so it can never swing the score by more than one point."""
+    adjusted = dict(base_scores)
+    reasons = []
+
+    def nudge(axis, amount, why):
+        original = base_scores[axis]
+        wanted = max(0.0, min(10.0, adjusted[axis] + amount))
+        capped = max(original - 1.0, min(original + 1.0, wanted))
+        adjusted[axis] = round(capped, 2)
+        reasons.append(f"{axis} {capped - original:+.2f}: {why}")
+
+    if flags.get("blackFrames") is True:
+        nudge("hook", -0.8, "the tiny vision model sees near-black/empty frames")
+        nudge("shotChoice", -0.6, "empty frames are a blocking framing defect")
+    if flags.get("bars") is True:
+        nudge("shotChoice", -0.8, "the tiny vision model sees letterbox/pillarbox bars")
+    if flags.get("readableText") is True:
+        nudge("design", 0.4, "on-screen text is visible")
+    description = str(flags.get("description") or "").lower()
+    if any(word in description for word in ("black", "empty", "blank", "dark")):
+        nudge("hook", -0.3, "description also mentions dark or empty imagery")
+    if any(word in description for word in ("caption", "text", "title")):
+        nudge("design", 0.2, "description mentions on-screen type")
+    return adjusted, reasons
 
 
 def critique(spec):
@@ -960,55 +1026,109 @@ def critique(spec):
         except Exception as exc:
             base["notes"].append(f"Auto VLM setup failed ({type(exc).__name__}: {exc}); using measured-pixel critique.")
     if not ep:
-        base["notes"].append("No local vision model running. Run vlm_setup once for semantic review; using measured-pixel critique.")
+        base["notes"].append("No local vision model running. Run local_vlm setup once for semantic review; using measured-pixel critique.")
         return {**base, "ok": True}
 
-    prompt = VLM_PROMPT.format(
-        brief=json.dumps(brief, ensure_ascii=False)[:2000],
-        facts=json.dumps(facts, ensure_ascii=False)[:6000],
-    )
+    # An explicitly configured endpoint is assumed capable; the bundled
+    # 0.5B model is not. FUNCUT_VLM_STRONG=1 overrides for experimentation.
+    strong = bool(os.environ.get("FUNCUT_VLM_ENDPOINT")) or os.environ.get("FUNCUT_VLM_STRONG") == "1"
+
+    if strong:
+        prompt = STRONG_VLM_PROMPT.format(
+            brief=json.dumps(brief, ensure_ascii=False)[:1200],
+            facts=json.dumps(facts, ensure_ascii=False)[:3000],
+        )
+        try:
+            text = local_vlm.ask(prompt, [png_b64], endpoint=ep, json_schema=SCORE_SCHEMA, max_tokens=500)
+            parsed = _parse_model_json(text, "score")
+            raw = {axis: parsed.get(axis) for axis in AXES}
+            if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in raw.values()):
+                raise ValueError("not every axis got a numeric score")
+            scores = {axis: _clamp(raw[axis]) for axis in AXES}
+            distinct = len(set(round(v, 1) for v in scores.values()))
+            if distinct < 3 or all(v == 0 for v in scores.values()) or all(v == 10 for v in scores.values()):
+                raise ValueError("degenerate scores (a tiny model repeating one value)")
+            blended = {a: round(0.7 * scores[a] + 0.3 * base["scores"][a], 1) for a in AXES}
+            return {
+                "ok": True,
+                "engine": "local-vlm",
+                "model": ep.get("model", "local-vlm"),
+                "scores": blended,
+                "rawScores": {k: round(v, 1) for k, v in scores.items()},
+                "overall": round(sum(blended.values()) / len(blended), 1),
+                "confidence": 0.78,
+                "verdict": str(parsed.get("verdict", ""))[:300],
+                "notes": list(parsed.get("notes") or [])[:6] + base["notes"][:3],
+                "revisions": list(parsed.get("revisions") or [])[:6] or base["revisions"],
+                "measured": base["scores"],
+            }
+        except Exception as exc:
+            base["notes"].append(
+                f"Full VLM critique failed ({type(exc).__name__}: {exc}); "
+                "falling back to the bounded flag detector."
+            )
+
+    # Bundled 0.5B path: it flags visible defects, it does NOT grade craft.
     try:
-        text = local_vlm.ask(prompt, [png_b64], endpoint=ep)
-        match = re.search(r"\{[\s\S]*\}", text)
-        if not match:
-            raise ValueError("model returned no JSON object")
-        parsed = json.loads(match.group(0))
-        scores = {a: _clamp((parsed.get("scores") or {}).get(a, base["scores"][a])) for a in AXES}
-        # Blend: the model judges craft, the pixels keep it honest.
-        blended = {a: round(0.78 * scores[a] + 0.22 * base["scores"][a], 1) for a in AXES}
+        text = local_vlm.ask(FLAG_PROMPT, [png_b64], endpoint=ep, json_schema=FLAG_SCHEMA, max_tokens=180)
+        flags = _parse_model_json(text, "flag")
+        if not all(isinstance(flags.get(k), bool) for k in ("blackFrames", "bars", "readableText")):
+            raise ValueError("flag response is missing boolean fields")
+        adjusted, reasons = _flag_adjustments(flags, base["scores"])
+        revisions = list(base["revisions"])
+        if flags.get("blackFrames"):
+            revisions.insert(0, "CALL trim_clip on the near-black/empty frames the vision model saw.")
+        if flags.get("bars"):
+            revisions.insert(0, "CALL clip_transform to reframe the letterboxed shots the vision model saw.")
         return {
             "ok": True,
-            "engine": "local-vlm",
+            "engine": "local-vlm-flags",
             "model": ep.get("model", "local-vlm"),
-            "scores": blended,
-            "rawScores": {k: round(v, 1) for k, v in scores.items()},
-            "overall": round(sum(blended.values()) / len(blended), 1),
-            "confidence": 0.8,
-            "verdict": str(parsed.get("verdict", ""))[:300],
-            "notes": list(parsed.get("notes") or [])[:8] + base["notes"][:3],
-            "revisions": list(parsed.get("revisions") or [])[:8] or base["revisions"],
+            "scores": {k: round(v, 1) for k, v in adjusted.items()},
+            "overall": round(sum(adjusted.values()) / len(adjusted), 1),
+            "confidence": 0.58,
+            "verdict": "Measured pixel/audio score with BOUNDED visible-defect flags from a 0.5B vision model.",
+            "notes": [
+                "A 0.5B model cannot judge taste: it only flags black frames, bars and visible text. "
+                "The score is still carried by real measurements, adjusted by at most 1 point per axis.",
+                "Its free-text description is unverified and may be wrong; check the contact sheet yourself.",
+            ] + reasons + base["notes"][:6],
+            "observations": {
+                "description": str(flags.get("description", ""))[:240],
+                "blackFrames": flags["blackFrames"],
+                "bars": flags["bars"],
+                "readableText": flags["readableText"],
+            },
+            "revisions": revisions[:8],
             "measured": base["scores"],
         }
     except Exception as exc:
-        base["notes"].append(f"Local VLM critique failed ({type(exc).__name__}: {exc}); using measured-pixel critique.")
+        base["notes"].append(f"Local VLM flag check failed ({type(exc).__name__}: {exc}); using measured-pixel critique.")
         return {**base, "ok": True}
 
 
-RANK_PROMPT = """You are choosing B-roll for a short-form video. The image is a labelled contact sheet of candidate clips; each tile is numbered on its top-left and its metadata is below.
+RANK_PROMPT = """This contact sheet has {count} candidate video frames, numbered on each tile. Pick the best ones for a short video.
 
-CREATIVE BRIEF (JSON):
-{brief}
+BRIEF: {brief}
+CAPTIONS: {tiles}
 
-CANDIDATES (JSON, in tile order):
-{tiles}
+Look at the actual pictures. Reject frames that are nearly black, empty, or have black bars. Prefer visible subjects and variety. Use only indices 0 to {last}.
 
-Pick the candidates that would actually make the edit better. Judge visual meaning and emotional fit, not just technical quality. Reject clips that are dark, letterboxed, generic filler, or off-brief. Prefer variety: different subjects, compositions and motion.
+Reply with ONE JSON object with keys "ranking" (an array of objects with integer "index", integer "score" 0-10, and string "why"), "reject" (objects with "index" and "why"), and "queries" (array of strings). Every "why" must name a VISIBLE detail (a colour, a subject, darkness, bars or blur) - never a placeholder. No markdown."""
 
-Return ONLY a JSON object, no markdown, with exactly these keys:
-{{"ranking":[{{"index":0,"score":8.5,"why":"one short reason"}}],
-"reject":[{{"index":1,"why":"one short reason"}}],
-"queries":["2-3 better search phrases if these candidates are weak"]}}
-"""
+RANK_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ranking": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"index": {"type": "integer"}, "score": {"type": "integer"}, "why": {"type": "string"}},
+            "required": ["index", "score"],
+        }},
+        "reject": {"type": "array", "items": {"type": "object", "properties": {"index": {"type": "integer"}, "why": {"type": "string"}}}},
+        "queries": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["ranking"],
+}
 
 
 def rank(spec):
@@ -1059,16 +1179,25 @@ def rank(spec):
         for t in tiles
     ]
     prompt = RANK_PROMPT.format(
-        brief=json.dumps(brief, ensure_ascii=False)[:2000],
-        tiles=json.dumps(thin, ensure_ascii=False)[:6000],
+        count=len(tiles),
+        last=max(0, len(tiles) - 1),
+        brief=json.dumps(brief, ensure_ascii=False)[:600],
+        tiles=json.dumps(thin, ensure_ascii=False)[:1500],
     )
     try:
-        text = local_vlm.ask(prompt, [png_b64], endpoint=ep)
-        m = re.search(r"\{[\s\S]*\}", text)
-        parsed = json.loads(m.group(0)) if m else {}
+        text = local_vlm.ask(prompt, [png_b64], endpoint=ep, json_schema=RANK_SCHEMA, max_tokens=350)
+        parsed = _parse_model_json(text, "rank")
         ranking = parsed.get("ranking") or []
-        if not ranking:
-            return base
+        if not isinstance(ranking, list) or not ranking:
+            raise ValueError("no ranking returned")
+        valid = [r for r in ranking
+                 if isinstance(r, dict)
+                 and isinstance(r.get("index"), int) and not isinstance(r.get("index"), bool)
+                 and 0 <= r["index"] < len(tiles)
+                 and isinstance(r.get("score"), (int, float)) and not isinstance(r.get("score"), bool)]
+        if not valid:
+            raise ValueError("every returned index or score was out of range")
+        ranking = valid
         # Keep the model's ordering but anchor on measured quality (20%).
         measured = {r["index"]: r["score"] for r in scored}
         out = []
@@ -1078,7 +1207,7 @@ def rank(spec):
                 continue
             out.append({
                 "index": i,
-                "score": round(0.8 * _clamp(r.get("score", 5)) + 0.2 * measured.get(i, 5.0), 2),
+                "score": round(0.6 * _clamp(r.get("score", 5)) + 0.4 * measured.get(i, 5.0), 2),
                 "why": str(r.get("why", ""))[:200],
             })
         out.sort(key=lambda r: -r["score"])
@@ -1087,10 +1216,10 @@ def rank(spec):
             "ranking": out,
             "reject": list(parsed.get("reject") or []),
             "queries": list(parsed.get("queries") or []),
-            "note": "Semantic ranking blended with measured pixel quality.",
+            "note": "Short-prompt VLM ranking (60%) blended with measured pixel quality (40%); a 0.5B model contributes coarse visual preferences, not taste.",
         }
     except Exception as exc:
-        base["note"] = f"VLM ranking failed ({type(exc).__name__}: {exc}); used pixel ranking."
+        base["note"] = f"VLM ranking failed ({type(exc).__name__}: {exc}); used measured pixel ranking."
         return base
 
 
@@ -1272,8 +1401,26 @@ def main():
                 {"pngB64": b64, "at": 0, "label": "test A"},
                 {"pngB64": b64, "at": 1, "label": "test B"},
             ]})
+            # The VLM response parsers are the fragile seam: a tiny model
+            # returns markdown fences, empty strings and degenerate scores.
+            parsed = _parse_model_json('```json\\n{"hook": 5}\\n```', "test")
+            assert parsed["hook"] == 5
+            for bad in ("", "no json here", "[]"):
+                try:
+                    _parse_model_json(bad, "test")
+                except ValueError:
+                    pass
+                else:
+                    raise AssertionError(f"accepted a bad VLM response: {bad!r}")
+            base_scores = {axis: 6.0 for axis in AXES}
+            flags = {"blackFrames": True, "bars": True, "readableText": True,
+                     "description": "black empty frame with text"}
+            adjusted, reasons = _flag_adjustments(flags, base_scores)
+            assert all(abs(adjusted[a] - 6.0) <= 1.0 for a in AXES), adjusted
+            assert reasons
             out["selftest"] = True
             out["decoder"] = "pure-python"
+            out["vlmParsers"] = "ok"
     except Exception as exc:
         out = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
     print(json.dumps(out, ensure_ascii=False, separators=(",", ":")), flush=True)

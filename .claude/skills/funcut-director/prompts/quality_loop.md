@@ -48,10 +48,18 @@ overall, confidence, verdict, notes[], revisions[]
 - `engine: "heuristic"` means no vision model was running. The scores are
   honest measurements, explicitly capped at `confidence: 0.45`. Do not
   treat a heuristic 8 as a human 8.
-- `engine: "local-vlm"` means the local 0.5B critic looked at the sheet.
-  Set it up once with `local_vlm {action:"setup", profile:"mini"}` — about
-  546 MB into the app data dir, CPU-only, no system install — or point
-  `FUNCUT_VLM_ENDPOINT` at an existing Ollama / LM Studio server.
+- `engine: "local-vlm-flags"` means the bundled 0.5B critic looked at the
+  sheet and flagged **visible defects only** (near-black frames, letterbox
+  bars, readable text). It adjusts the measured score by at most 1 point
+  per axis. A 0.5B model CANNOT judge taste: in testing it hallucinated an
+  entire film from a plain blue frame. Treat its `observations.description`
+  as unverified and look at the sheet yourself.
+- `engine: "local-vlm"` means a **stronger** model from
+  `FUNCUT_VLM_ENDPOINT` supplied six-axis scores (Ollama, LM Studio or any
+  OpenAI-compatible vision server). This is the only path where the model
+  grades craft; degenerate responses fall back to the flag detector.
+- Set the bundled one up with `local_vlm {action:"setup", profile:"mini"}`
+  — about 546 MB into the app data dir, CPU-only, no system install.
 - `revisions[]` name concrete tools. Execute at least one before exporting.
 
 ## 3. Read the six axes like an editor

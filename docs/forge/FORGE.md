@@ -173,8 +173,12 @@ first instruction is to write one.
 ## 10. The local vision critic (optional, no system install)
 
 `craft_critique` always works: without a model it returns measured,
-explicitly-labelled pixel/audio scores (`engine: "heuristic"`). To add taste,
-call `local_vlm {action:"setup"}` once. It downloads a 0.5B
+explicitly-labelled pixel/audio scores (`engine: "heuristic"`). To add
+visible-defect detection, call `local_vlm {action:"setup"}` once. Be aware
+that a 0.5B model cannot judge taste — it was tested end-to-end and
+hallucinated a whole film from a plain blue frame — so it only applies
+bounded flags. For real taste, set `FUNCUT_VLM_ENDPOINT` to a stronger
+vision server (which also enables six-axis model scoring). It downloads a 0.5B
 SmolVLM2-500M-Video-Instruct Q8_0 model + projector (~546 MB) and a pinned
 llama.cpp CPU server into the app's own data folder, then serves on
 127.0.0.1:8099. Works on a 4 GB laptop; nothing is installed system-wide.

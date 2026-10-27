@@ -27,6 +27,7 @@ import math
 import os
 import re
 import shutil
+import stat
 import struct
 import subprocess
 import sys
@@ -155,17 +156,166 @@ def _png(width, height, rgb):
 
 
 # ---------------------------------------------------------------------------
-# ffmpeg helpers
+# Pure-Python PNG decoding. Concat's preview.frame returns base64 PNGs, so
+# the whole "watch the timeline" loop needs no ffmpeg CLI at all.
 # ---------------------------------------------------------------------------
+def png_decode(data):
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError("not a PNG")
+    pos, idat, ihdr = 8, [], None
+    while pos + 8 <= len(data):
+        n = struct.unpack(">I", data[pos : pos + 4])[0]
+        tag = data[pos + 4 : pos + 8]
+        body = data[pos + 8 : pos + 8 + n]
+        pos += 12 + n
+        if tag == b"IHDR":
+            ihdr = struct.unpack(">IIBBBBB", body)
+        elif tag == b"IDAT":
+            idat.append(body)
+        elif tag == b"IEND":
+            break
+    if not ihdr:
+        raise ValueError("PNG has no IHDR")
+    w, h, depth, colour, _, _, interlace = ihdr
+    if depth != 8 or colour not in (0, 2, 6) or interlace != 0:
+        raise ValueError(f"unsupported PNG: depth={depth} colour={colour} interlace={interlace}")
+    channels = {0: 1, 2: 3, 6: 4}[colour]
+    raw = zlib.decompress(b"".join(idat))
+    stride = w * channels
+    out = bytearray(h * stride)
+    prev = bytearray(stride)
+    at = 0
+    for y in range(h):
+        ft = raw[at]
+        at += 1
+        line = bytearray(raw[at : at + stride])
+        at += stride
+        for x in range(stride):
+            a = line[x - channels] if x >= channels else 0
+            b = prev[x]
+            c = prev[x - channels] if x >= channels else 0
+            if ft == 1:
+                line[x] = (line[x] + a) & 0xFF
+            elif ft == 2:
+                line[x] = (line[x] + b) & 0xFF
+            elif ft == 3:
+                line[x] = (line[x] + ((a + b) >> 1)) & 0xFF
+            elif ft == 4:
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
+                line[x] = (line[x] + pr) & 0xFF
+            elif ft != 0:
+                raise ValueError(f"unknown PNG filter {ft}")
+        out[y * stride : (y + 1) * stride] = line
+        prev = line
+    rgb = bytearray(w * h * 3)
+    for i in range(w * h):
+        j = i * channels
+        if channels == 1:
+            rgb[i * 3 : i * 3 + 3] = bytes((out[j], out[j], out[j]))
+        else:
+            rgb[i * 3 : i * 3 + 3] = out[j : j + 3]
+    return bytes(rgb), w, h
+
+
+def fit_rgb(rgb, sw, sh, dw, dh):
+    """Nearest-neighbour scale into dw x dh, padded black like ffmpeg's pad."""
+    scale = min(dw / sw, dh / sh)
+    cw, ch = max(1, int(sw * scale)), max(1, int(sh * scale))
+    ox, oy = (dw - cw) // 2, (dh - ch) // 2
+    out = bytearray(b"\x00" * (dw * dh * 3))
+    for y in range(ch):
+        sy = min(sh - 1, y * sh // ch)
+        row = oy + y
+        for x in range(cw):
+            sx = min(sw - 1, x * sw // cw)
+            src = (sy * sw + sx) * 3
+            dst = (row * dw + ox + x) * 3
+            out[dst : dst + 3] = rgb[src : src + 3]
+    return bytes(out)
+
+
+# ---------------------------------------------------------------------------
+# ffmpeg helpers. Concat links FFmpeg as a library and does NOT ship the
+# ffmpeg CLI, so we bootstrap a small static build into the app data dir on
+# first use for anything that must decode a video file (rather than frames
+# the API already rendered).
+# ---------------------------------------------------------------------------
+FFMPEG_BUILDS = {
+    ("Linux", "x86_64"): "ffmpeg-release-amd64-static.tar.xz",
+    ("Linux", "aarch64"): "ffmpeg-release-arm64-static.tar.xz",
+    ("Linux", "arm64"): "ffmpeg-release-arm64-static.tar.xz",
+}
+FFMPEG_URL_BASE = "https://johnvansickle.com/ffmpeg/releases/"
+
+
+def _app_dir():
+    return Path(os.environ.get("FUNCUT_VLM_DIR", str(Path.home() / ".local" / "share" / "app.concat.editor")))
+
+
+def _ensure_ffmpeg(spec):
+    """Return (ffmpeg, ffprobe) paths, bootstrapping a static build if needed."""
+    explicit = spec.get("ffmpeg") or os.environ.get("FUNCUT_FFMPEG")
+    if explicit and os.path.isfile(explicit) and os.access(explicit, os.X_OK):
+        ff = explicit
+    else:
+        ff = shutil.which("ffmpeg")
+    if ff:
+        fp = spec.get("ffprobe") or os.path.join(os.path.dirname(ff), "ffprobe")
+        return ff, (fp if os.path.isfile(fp) else (shutil.which("ffprobe") or "ffprobe"))
+    root = _app_dir() / "ffmpeg"
+    for name in ("ffmpeg", "ffmpeg.exe"):
+        cand = root / name
+        if cand.is_file():
+            probe = root / ("ffprobe.exe" if name.endswith(".exe") else "ffprobe")
+            return str(cand), str(probe if probe.is_file() else cand)
+    if spec.get("autoSetup") is False:
+        return "ffmpeg", "ffprobe"
+    import platform as _p
+    asset = FFMPEG_BUILDS.get((_p.system(), _p.machine()))
+    if not asset:
+        raise RuntimeError(
+            "no ffmpeg CLI on this machine; install one or set FUNCUT_FFMPEG to its path "
+            "(timeline previews via preview.frame need no ffmpeg at all)"
+        )
+    import tarfile
+    import urllib.request
+    root.mkdir(parents=True, exist_ok=True)
+    archive = root / asset
+    if not archive.is_file():
+        req = urllib.request.Request(FFMPEG_URL_BASE + asset, headers={"User-Agent": "concat-sense/1.0"})
+        with urllib.request.urlopen(req, timeout=60) as r, open(archive, "wb") as f:
+            total = int(r.headers.get("Content-Length") or 0)
+            done = 0
+            while True:
+                buf = r.read(1 << 20)
+                if not buf:
+                    break
+                f.write(buf)
+                done += len(buf)
+                if total:
+                    print(f"[sense] ffmpeg: {done/1e6:.0f}/{total/1e6:.0f} MB", file=sys.stderr, flush=True)
+    with tarfile.open(archive) as t:
+        for member in t.getmembers():
+            if member.isfile() and os.path.basename(member.name) in ("ffmpeg", "ffprobe"):
+                src = t.extractfile(member)
+                if src is None:
+                    continue
+                dest = root / os.path.basename(member.name)
+                dest.write_bytes(src.read())
+                dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    archive.unlink(missing_ok=True)
+    return str(root / "ffmpeg"), str(root / "ffprobe")
+
+
 def _tools(spec):
-    ff = spec.get("ffmpeg") or shutil.which("ffmpeg") or "ffmpeg"
-    fp = spec.get("ffprobe") or shutil.which("ffprobe") or "ffprobe"
-    base = os.path.dirname(ff)
-    if base and not spec.get("ffprobe"):
-        cand = os.path.join(base, "ffprobe")
-        if os.path.isfile(cand):
-            fp = cand
-    return ff, fp
+    try:
+        return _ensure_ffmpeg(spec)
+    except Exception as exc:
+        print(f"[sense] ffmpeg bootstrap: {exc}", file=sys.stderr, flush=True)
+        return (spec.get("ffmpeg") or shutil.which("ffmpeg") or "ffmpeg",
+                spec.get("ffprobe") or shutil.which("ffprobe") or "ffprobe")
 
 
 def _run(cmd, timeout=45):
@@ -324,12 +474,19 @@ def _fmt_time(t):
 
 
 def build_sheet(spec):
-    ff, fp = _tools(spec)
     tw = max(64, min(480, int(spec.get("tileWidth", 320))))
     th = max(48, min(360, int(spec.get("tileHeight", 180))))
     cols = max(1, min(6, int(spec.get("cols", 4))))
     sources = list(spec.get("sources") or [])
     errors = []
+
+    # Only reach for ffmpeg when at least one source really is a media file.
+    # Timeline previews arrive as base64 PNGs and need no decoder at all.
+    needs_ffmpeg = (
+        bool(spec.get("path")) or bool(spec.get("paths")) or bool(spec.get("audio"))
+        or any(s.get("pngB64") is None for s in sources)
+    )
+    ff, fp = _tools(spec) if needs_ffmpeg else ("", "")
 
     if spec.get("path") and not sources:
         path = spec["path"]
@@ -352,19 +509,27 @@ def build_sheet(spec):
 
     frames, metas = [], []
     for i, s in enumerate(sources):
-        path = s.get("path")
-        if not path or not os.path.isfile(path):
-            errors.append(f"source {i}: file not found: {path}")
-            continue
-        rgb, err = extract_frame(ff, path, s.get("at", 0.5), tw, th)
-        if rgb is None:
-            errors.append(f"source {i}: {err}")
-            continue
+        if s.get("pngB64"):
+            try:
+                raw, sw, sh = png_decode(base64.b64decode(s["pngB64"]))
+                rgb = fit_rgb(raw, sw, sh, tw, th)
+            except Exception as exc:
+                errors.append(f"source {i}: png decode: {exc}")
+                continue
+        else:
+            path = s.get("path")
+            if not path or not os.path.isfile(path):
+                errors.append(f"source {i}: file not found: {path}")
+                continue
+            rgb, err = extract_frame(ff, path, s.get("at", 0.5), tw, th)
+            if rgb is None:
+                errors.append(f"source {i}: {err}")
+                continue
         frames.append(rgb)
         m = tile_metrics(rgb, tw, th)
         m.update({
             "index": len(frames) - 1,
-            "path": path,
+            "path": s.get("path"),
             "at": round(float(s.get("at", 0.5)), 3),
             "label": s.get("label") or str(len(frames)),
         })
@@ -790,20 +955,21 @@ def main():
         else:
             # No external dependencies: generate a synthetic gradient sheet and
             # measure it. Proves ffmpeg, PNG encoding and metrics all work.
-            import tempfile
-            with tempfile.TemporaryDirectory() as td:
-                p = os.path.join(td, "grad.png")
-                tw, th = 64, 36
-                buf = bytearray(tw * th * 3)
-                for y in range(th):
-                    for x in range(tw):
-                        i = (y * tw + x) * 3
-                        buf[i] = int(255 * x / tw)
-                        buf[i + 1] = int(255 * y / th)
-                        buf[i + 2] = 128
-                Path(p).write_bytes(_png(tw, th, bytes(buf)))
-                out = build_sheet({"sources": [{"path": p, "at": 0, "label": "test"}]})
-                out["selftest"] = True
+            tw, th = 64, 36
+            buf = bytearray(tw * th * 3)
+            for y in range(th):
+                for x in range(tw):
+                    i = (y * tw + x) * 3
+                    buf[i] = int(255 * x / tw)
+                    buf[i + 1] = int(255 * y / th)
+                    buf[i + 2] = 128
+            b64 = base64.b64encode(_png(tw, th, bytes(buf))).decode()
+            out = build_sheet({"sources": [
+                {"pngB64": b64, "at": 0, "label": "test A"},
+                {"pngB64": b64, "at": 1, "label": "test B"},
+            ]})
+            out["selftest"] = True
+            out["decoder"] = "pure-python"
     except Exception as exc:
         out = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
     print(json.dumps(out, ensure_ascii=False, separators=(",", ":")), flush=True)

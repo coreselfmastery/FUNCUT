@@ -260,16 +260,34 @@ pub fn frame(arguments: Value) -> Result<Outcome, ApiError> {
         .frame(&comp, at, width, &comps_dir(&project))
         .map_err(|error| ApiError::failed(error.to_string()))?;
     let out = motion_dir(&project).join(format!("frame-{:016x}-{at:.2}.png", comp.hash(),));
+    // Read the drawn PNG before it is removed: an agent cannot open a path,
+    // so the frame has to travel back as MCP `type: image` content. This is
+    // what makes the look-before-you-bake design loop actually work.
+    let bytes = std::fs::read(&drawn)
+        .map_err(|error| ApiError::failed(format!("could not read the drawn frame: {error}")))?;
     std::fs::copy(&drawn, &out)
         .map_err(|error| ApiError::failed(format!("could not keep the frame: {error}")))?;
     let _ = std::fs::remove_file(&drawn);
-    Ok(Outcome::json(json!({
+    let inline = crate::sense::base64(&bytes);
+    let reading = json!({
         "at": at,
         "frame": out.display().to_string(),
         "duration": comp.duration,
         "width": width.unwrap_or(comp.width),
         "height": comp.height,
-    })))
+        "note": "Look at this frame. Check legibility, contrast, safe margins and whether the motion is mid-entrance or settled before baking.",
+    });
+    Ok(Outcome {
+        content: vec![
+            json!({ "type": "image", "data": inline, "mimeType": "image/png" }),
+            json!({
+                "type": "text",
+                "text": serde_json::to_string_pretty(&reading).unwrap_or_default(),
+            }),
+        ],
+        structured: Some(reading),
+        is_error: false,
+    })
 }
 
 /// `motion_bake`: a comp - a preset or a file, edited by `ops` - baked to

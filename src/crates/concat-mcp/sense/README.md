@@ -2,8 +2,21 @@
 
 Two standard-library Python files, shipped inside the `concat-mcp` binary via
 `include_str!`. They need **no pip install, no Python packages, no system-wide
-installation**. The only runtime requirement is an `ffmpeg`/`ffprobe` binary —
-which Concat already ships and passes in explicitly.
+installation**. Python 3 itself is required (Concat already needs it for
+`analyze_scenes` / `transcribe`); set `FUNCUT_PYTHON` if it is not `python3`.
+
+Decoding has two paths:
+
+- **Timeline previews (no decoder at all).** `watch_render` asks the API's
+  `preview.frame` for base64 PNGs and `sense.py` decodes them with its own
+  pure-Python PNG reader (zlib + filters + nearest-neighbour fit). Concat
+  links FFmpeg as a library and does **not** ship an ffmpeg CLI, so this path
+  matters: it works on a stock install with zero downloads.
+- **Rendered movie files.** If `ffmpeg` is on `PATH` (or `FUNCUT_FFMPEG` /
+  `spec.ffmpeg` names it), it is used. Otherwise a pinned ~42 MB static build
+  is bootstrapped once into the app data dir on Linux x86_64/arm64. On other
+  platforms set `FUNCUT_FFMPEG` to an ffmpeg binary; the error message says
+  exactly that. This same decoder supplies the audio energy envelope.
 
 ## Why this exists
 
@@ -31,7 +44,7 @@ Diagnostics go to stderr, so stdout stays parseable.
 | `critique` | Six-axis craft score + concrete revisions, from the sheet + brief. |
 | `rank` | Semantically rank stock candidates against the creative brief. |
 | `vlm` | `status` / `setup` for the local vision model. |
-| `selftest` | Generate a synthetic PNG, decode it, measure it — no fixtures. |
+| `selftest` | Generate a synthetic PNG, decode it, measure it — no fixtures, no ffmpeg. |
 
 Example:
 

@@ -92,6 +92,16 @@ pub enum Action {
     MotionBake,
     /// A word-timed transcript as one caption video.
     CaptionsAnimate,
+    /// Sample a render or the open timeline into a contact sheet.
+    WatchRender,
+    /// Look at B-roll candidates before choosing them.
+    StockSheet,
+    /// Score the cut on six craft axes and name concrete revisions.
+    CraftCritique,
+    /// Status or first-use setup of the local sub-1B vision critic.
+    LocalVlm,
+    /// Read or write the project's persisted creative brief.
+    CreativeBrief,
 }
 
 /// How a reply is shown to the agent.
@@ -714,7 +724,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "motion_frame",
             title: "Draw one motion frame",
-            description: "One frame of a motion comp at `at` seconds - tens of milliseconds, no bake - written under the project's motion/ and returned as a PNG path. The look-before-you-bake of the design loop: mid-entrance, settled, mid-exit. Takes `preset` or `comp` (+ `project`), optional `ops`, and `width` to draw at another size.",
+            description: "One frame of a motion comp at `at` seconds - tens of milliseconds, no bake - returned as an INLINE IMAGE you can actually look at, and also written under the project's motion/. The look-before-you-bake of the design loop: mid-entrance, settled, mid-exit. Check legibility, contrast, safe margins and timing before baking. Takes `preset` or `comp` (+ `project`), optional `ops`, and `width`/`height` to draw at another size.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -746,6 +756,51 @@ pub fn catalogue() -> Vec<Tool> {
             destructive: false,
             idempotent: true,
             action: Action::ExportWait,
+        },
+        Tool {
+            name: "watch_render",
+            title: "Watch the cut",
+            description: "LOOK at the edit. Samples true composited frames across the open project's timeline (or a rendered movie at `path`) and returns ONE labelled contact sheet as an inline image, with measured craft facts: black frames, letterbox bars, flat/low-contrast shots, duplicate shots, static transitions, per-shot energy-centroid cropHint, and an audio energy envelope when a movie is given. Call this after every render, read the notes, fix the edit, and call it again. Optional: samples (12 default, 24 max), times[] (explicit sample times), duration, cols, tileWidth, tileHeight, audio, out (write the PNG there).",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::WatchRender,
+        },
+        Tool {
+            name: "stock_contact_sheet",
+            title: "Look at B-roll candidates",
+            description: "SEE stock footage before choosing it. Give a `query` (openvid_search's words), `ids` from openvid_search, or local `paths`; each candidate's real first frame is decoded into one labelled contact sheet returned as an inline image, with per-candidate pixel metrics and a cropHint for off-centre subjects. With `rank: true` a local vision model re-ranks the candidates against `brief` (or the project's creative_brief) and suggests better queries. Never choose B-roll from captions alone again. Optional: limit (8 default, 12 max), minAesthetic, minMotion, orientation, source, sort, cols, tileWidth, out.",
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            action: Action::StockSheet,
+        },
+        Tool {
+            name: "craft_critique",
+            title: "Score the cut",
+            description: "The final creative director. Takes the `sheet` JSON returned by watch_render (or a raw `pngB64`) and a `brief`, and returns six honest 0-10 scores - hook, story, rhythm, shotChoice, design, sound - plus specific notes and a short list of concrete revisions naming the tools to call. Uses a local sub-1B vision model when one is running (see local_vlm); otherwise it says so and returns an explicitly-labelled pixel/measurement-based score. Optional: project (loads its creative_brief), autoSetup (fetch the local model on first use), profile.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::CraftCritique,
+        },
+        Tool {
+            name: "local_vlm",
+            title: "Local vision critic",
+            description: "Status or first-use setup of the tiny local vision model that grades edits. `action: \"status\"` reports whether a local Ollama / LM Studio / llama.cpp vision endpoint is reachable. `action: \"setup\"` downloads, once and into the app's own data folder (no system install, no pip), the 0.5B SmolVLM2-500M-Video-Instruct Q8_0 model + projector (~546 MB) and a pinned llama.cpp CPU server binary, then starts it on 127.0.0.1. `profile` is mini (default, every PC), image, or minicpm (~2.2 GB). Set FUNCUT_VLM_ENDPOINT to reuse an existing server and skip the download.",
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            action: Action::LocalVlm,
+        },
+        Tool {
+            name: "creative_brief",
+            title: "Set the creative intent",
+            description: "Persist the WHY of the edit in the project folder so every turn works from the same intent. `action: \"set\"` merges `brief` into creative-brief.json; `action: \"get\"` reads it. Fields: audience, platform, goal, thesis, curiosityGap, payoff, emotionalArc, referenceStyle, tone, durationSeconds, brandKit, constraints, avoid. Returns a ready-to-use directorPrompt to give the AI director, and lists missingCoreFields. An edit without these fields is an edit without a point of view.",
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            action: Action::CreativeBrief,
         },
     ]
 }
@@ -898,6 +953,11 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
         | Action::MotionFrame
         | Action::MotionBake
         | Action::CaptionsAnimate => motion_schema(tool.name),
+        Action::WatchRender
+        | Action::StockSheet
+        | Action::CraftCritique
+        | Action::LocalVlm
+        | Action::CreativeBrief => sense_schema(tool.name),
         Action::Mask => {
             let update = schemas.command("updateClip")?;
             let mut mask = schemas.def("ClipMask")?;
@@ -953,6 +1013,84 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
             }))
         }
     }
+}
+
+/// The five sense tools' inputs. They wrap the embedded Python perception
+/// layer rather than an API method, so no generated schema exists for them.
+fn sense_schema(name: &str) -> Option<Value> {
+    let string = |description: &str| json!({ "type": "string", "description": description });
+    let count = |minimum: u64, maximum: u64, default: u64, description: &str| {
+        json!({
+            "type": "integer", "minimum": minimum, "maximum": maximum,
+            "default": default, "description": description,
+        })
+    };
+    let times = json!({
+        "type": "array", "description": "Explicit sample times in seconds; overrides `samples`.",
+        "items": { "type": "number", "minimum": 0 },
+    });
+    let props: Value = match name {
+        "watch_render" => json!({
+            "path": string("A rendered movie file to sample. Omit to sample the open project's true composited timeline."),
+            "project": string("The project folder, used when `path` is absent."),
+            "samples": count(2, 24, 12, "How many frames to sample."),
+            "times": times,
+            "duration": { "type": "number", "minimum": 0, "description": "Timeline duration in seconds; read from the project when absent." },
+            "cols": count(1, 6, 4, "Contact-sheet columns."),
+            "tileWidth": count(64, 480, 320, "Width of each sampled frame."),
+            "tileHeight": count(48, 360, 180, "Height of each sampled frame."),
+            "audio": { "type": "boolean", "default": true, "description": "Measure the soundtrack's energy envelope (movie files only)." },
+            "out": string("Also write the contact sheet PNG here."),
+            "autoSetup": { "type": "boolean", "default": true, "description": "Bootstrap a static ffmpeg if no decoder is on this machine." },
+        }),
+        "stock_contact_sheet" => json!({
+            "query": string("openvid_search words; the top `limit` results become candidates."),
+            "ids": { "type": "array", "description": "Explicit OpenVid clip ids.", "items": { "type": "integer" } },
+            "paths": { "type": "array", "description": "Already-local video files, for offline use.", "items": { "type": "string" } },
+            "project": string("Project folder: loads its creative_brief for ranking."),
+            "brief": { "type": "object", "description": "Creative brief used for semantic ranking." },
+            "rank": { "type": "boolean", "default": false, "description": "Re-rank candidates against the brief with the local vision model." },
+            "limit": count(1, 12, 8, "Maximum candidates to fetch and show."),
+            "cols": count(1, 6, 4, "Contact-sheet columns."),
+            "tileWidth": count(64, 480, 320, "Width of each candidate frame."),
+            "minAesthetic": { "type": "number", "description": "Minimum OpenVid aesthetic score." },
+            "minMotion": { "type": "number", "description": "Minimum OpenVid motion score." },
+            "orientation": string("vertical, horizontal or square."),
+            "source": string("pixabay, pexels, celebv or other."),
+            "sort": string("relevance, aesthetic, motion, temporal, shortest, longest or surprise."),
+            "out": string("Also write the contact sheet PNG here."),
+            "autoSetup": { "type": "boolean", "default": true },
+            "profile": string("mini, image or minicpm."),
+        }),
+        "craft_critique" => json!({
+            "sheet": { "type": "object", "description": "The JSON watch_render or stock_contact_sheet returned (its pngB64 is the image to judge)." },
+            "pngB64": string("A base64 PNG contact sheet, when `sheet` is not given."),
+            "brief": { "type": "object", "description": "The creative brief; loaded from `project` when absent." },
+            "project": string("Project folder holding creative-brief.json."),
+            "autoSetup": { "type": "boolean", "default": false, "description": "Fetch and start the local vision model on first use." },
+            "profile": string("mini, image or minicpm."),
+        }),
+        "local_vlm" => json!({
+            "action": { "type": "string", "enum": ["status", "setup"], "default": "status" },
+            "profile": { "type": "string", "enum": ["mini", "image", "minicpm"], "default": "mini" },
+        }),
+        "creative_brief" => json!({
+            "path": string("The project folder."),
+            "action": { "type": "string", "enum": ["get", "set"], "default": "get" },
+            "brief": { "type": "object", "description": "Fields to merge: audience, platform, goal, thesis, curiosityGap, payoff, emotionalArc, referenceStyle, tone, durationSeconds, brandKit, constraints, avoid." },
+        }),
+        _ => return None,
+    };
+    let required = match name {
+        "creative_brief" => vec!["path"],
+        _ => vec![],
+    };
+    Some(json!({
+        "type": "object",
+        "properties": props,
+        "required": required,
+        "additionalProperties": false,
+    }))
 }
 
 /// The full director schema used at runtime to validate a plan.
@@ -1331,6 +1469,11 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         Action::MotionFrame => crate::motion::frame(arguments),
         Action::MotionBake => crate::motion::bake(arguments),
         Action::CaptionsAnimate => crate::motion::captions_animate(arguments),
+        Action::WatchRender => crate::sense::watch_render(arguments, backend),
+        Action::StockSheet => crate::sense::stock_contact_sheet(arguments, backend),
+        Action::CraftCritique => crate::sense::craft_critique(arguments),
+        Action::LocalVlm => crate::sense::local_vlm(arguments),
+        Action::CreativeBrief => crate::sense::creative_brief(arguments),
         Action::Mask => {
             let result = backend.call(mask(arguments)?)?;
             Ok(Outcome::json(summary::view(&result)))
@@ -2424,6 +2567,23 @@ mod tests {
                 "analysis_wait",
                 json!({ "job": "j1", "timeoutSeconds": 30 }),
             ),
+            (
+                "watch_render",
+                json!({ "project": "/tmp/Cut", "samples": 8 }),
+            ),
+            (
+                "stock_contact_sheet",
+                json!({ "query": "rain on a window", "limit": 6, "rank": true }),
+            ),
+            (
+                "craft_critique",
+                json!({ "sheet": { "craft": { "samples": 8 } } }),
+            ),
+            ("local_vlm", json!({ "action": "status" })),
+            (
+                "creative_brief",
+                json!({ "path": "/tmp/Cut", "action": "get" }),
+            ),
         ]
     }
 
@@ -2510,6 +2670,14 @@ mod tests {
                 Action::MotionFrame | Action::MotionBake | Action::CaptionsAnimate => {
                     continue;
                 }
+                // The sense tools run Python, ffmpeg or a project; a unit
+                // test has none of those. Their arguments have already been
+                // checked against their schemas above.
+                Action::WatchRender
+                | Action::StockSheet
+                | Action::CraftCritique
+                | Action::LocalVlm
+                | Action::CreativeBrief => continue,
             };
             let built = built.unwrap_or_else(|error| panic!("{name}: {error}"));
             // Back again: the request as the API writes it fits the API's

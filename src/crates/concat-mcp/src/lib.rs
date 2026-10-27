@@ -21,6 +21,7 @@ pub mod backend;
 pub mod motion;
 pub mod protocol;
 pub mod schema;
+pub mod sense;
 pub mod summary;
 pub mod tools;
 

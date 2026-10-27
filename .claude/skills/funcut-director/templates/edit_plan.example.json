@@ -44,7 +44,7 @@
       "spoken": "Every drop of ocean you've ever tasted was a mountain first.",
       "visual": {
         "type": "broll",
-        "query": "rocky mountain cliff eroding waves crash",
+        "query": "mountain cliff waves",
         "sort": "aesthetic",
         "trimIn": 1.0,
         "trimOut": 7.0,
@@ -73,7 +73,7 @@
       "spoken": "Rain falls on rock, dissolves its minerals, and rivers carry that salt to the sea.",
       "visual": {
         "type": "broll",
-        "query": "river flowing through canyon aerial",
+        "query": "river canyon aerial",
         "sort": "relevance",
         "trimIn": 0.0,
         "trimOut": 8.0,
@@ -105,7 +105,7 @@
       "spoken": "The ocean can never fill up: water leaves as vapor, but the salt stays behind.",
       "visual": {
         "type": "broll",
-        "query": "sun glare over ocean waves slow motion evaporation",
+        "query": "ocean sun glare",
         "sort": "temporal",
         "trimIn": 2.0,
         "trimOut": 9.0,
@@ -187,7 +187,7 @@
       "spoken": "So the next mouthful of seawater is really a mountain, dissolved. Follow for one fact like this a day.",
       "visual": {
         "type": "broll",
-        "query": "person standing shoreline sunset ocean wide",
+        "query": "shoreline sunset",
         "sort": "aesthetic",
         "trimIn": 0.0,
         "trimOut": 6.5,

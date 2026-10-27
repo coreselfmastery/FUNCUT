@@ -151,7 +151,7 @@ vocabulary the `concat-motion-agent` CLI speaks):
   encoded in one call. This is the word-synced caption path; the
   timeline's own `captions_add` stays segment-timed.
 
-## Perception and the creative loop (five more tools)
+## Perception and the creative loop (six more tools)
 
 An agent that gets a PNG *path* back cannot see the picture. These tools
 return MCP `type: image` content blocks, so the model can actually look:
@@ -251,9 +251,9 @@ Tools are named for what they do, and their argument schemas are generated from 
 | Area | Tools |
 | --- | --- |
 | Projects | `project_list`, `project_create`, `project_open`, `project_save`, `project_close`, `project_set_video` |
-| Reading and plans | `timeline_read` (compact: lanes, clips in time order, media, ids), `project_get` (everything), `concat_version`, `plan_validate` (checks a director plan before edits) |
+| Reading and plans | `timeline_read` (compact: lanes, clips in time order, media, ids), `collision_check` (every place two clips share a lane; `clean` when none), `project_get` (everything), `concat_version`, `plan_validate` (checks a director plan before edits) |
 | Media | `media_probe`, `media_import` |
-| Stock clips | `openvid_status`, `openvid_prepare`, `openvid_search`, `openvid_get`, `openvid_fetch`, `openvid_import` |
+| Stock clips | `openvid_status`, `openvid_prepare`, `openvid_search`, `openvid_search_batch` (several queries, one call), `openvid_get`, `openvid_fetch`, `openvid_import` |
 | Sound effects | `sounds_search`, `sounds_add` |
 | Music | `bgm_status`, `bgm_prepare`, `bgm_search`, `bgm_fetch`, `bgm_import` |
 | Stickers | `magick_status`, `magick_prepare`, `magick_search`, `magick_fetch`, `magick_add` |
@@ -281,7 +281,7 @@ are absolute targets relative to unity;
 `clip_update.patch.volume` and `keyframe_set` on `volume` instead take a linear
 multiplier (`1` = unchanged). `sounds_add` has no gain argument.
 
-Edits stay in memory until `project_save`, as in the window. Times are seconds; a keyframe's position is a fraction of its clip (0 to 1); sizes and offsets are fractions of the frame.
+Edits autosave as they happen - the document is written after every applied edit, so work survives without `project_save` - and arguments are checked against each tool's schema before the tool runs: a key the schema does not name is a misspelling, and the refusal names it rather than dropping it on the way to a half-read edit. Times are seconds; a keyframe's position is a fraction of its clip (0 to 1); sizes and offsets are fractions of the frame.
 
 ## Protocol
 

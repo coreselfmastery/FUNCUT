@@ -65,7 +65,7 @@ The script looks for a release **on this fork first**, and falls back to
 Concat's own releases when the fork has none yet. The fallback is a working
 editor, but it is not this one: upstream carries none of FUNCUT's own work -
 no OpenVid, sticker or sound shelves, no Forge page, 42 MCP tools instead of
-69 - so if the fork has a published release, that is the one you want. (A
+84 - so if the fork has a published release, that is the one you want. (A
 release the workflows build starts as a draft, and a draft is invisible to
 this script; see the note below.) No checkout handy? Run it straight off the
 repository:
@@ -149,7 +149,7 @@ and does not help with, is in [FUNCUT-CHANGES.md](FUNCUT-CHANGES.md).
 Nothing is lost on a small machine, only held closer: a decoder closed is
 reopened at the price of one seek, a still not held is painted again, a
 cache that evicts sooner evicts to the same LRU it always did. The proxy
-system (a smaller working copy of any file larger than HD) and the preview
+system (a smaller working copy of any file as large as HD) and the preview
 quality tiers (half-size until you ask for more) are upstream's own
 potato-laptop machinery, and this fork keeps all of it.
 
@@ -226,7 +226,7 @@ and a great deal of patience. If you are only building for yourself,
 
 The editor meets you more than halfway if you meet it a little too:
 
-- **Let the proxies finish.** Any file larger than full HD gets a
+- **Let the proxies finish.** Any file as large as full HD gets a
   quarter-size working copy written in the background the first time you
   bring it in; playback reads the copy while the paused monitor and the
   export read the original. On a potato this is *the* feature - a 4K phone

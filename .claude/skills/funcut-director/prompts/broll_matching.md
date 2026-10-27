@@ -15,6 +15,15 @@ two laws:
 2. **Concrete beats abstract.** "money" is weak; "coins stacking",
    "counting bills", "card tapping at a terminal" are strong. A query a
    camera operator could film is a query that will find footage.
+3. **Two or three words, not a sentence.** `openvid_search` words are
+   ANDed and prefix-matched, with the stop words dropped for you
+   ("rain on a window" is `rain window"): "coin drop", "skyline dusk",
+   "keyboard close-up" - not "coins dropping onto a wooden table in slow
+   motion", where every remaining word must match and the search drifts
+   into the OR fallback. Cut to the noun that changes plus at most one
+   modifier; the search retries wider on its own when the AND finds
+   nothing, and a short query ranks better either way.
+   `openvid_search_batch` takes the whole list at once - use it.
 
 Score what comes back: does the caption actually describe the clip
 (OpenVid captions are the dataset's own alt-text and can be wrong — when

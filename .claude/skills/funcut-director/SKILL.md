@@ -96,9 +96,11 @@ differ, set the canvas with `project_set_video` BEFORE gathering assets.
 
 **Phase 4 — Gather (parallel if your harness allows).** All `openvid_search`
 calls, all `sounds_search` calls, the `bgm_search` — these are independent;
-fan them out when you can. Fetch what you picked (`openvid_fetch`,
-`bgm_fetch`), then import (`openvid_import`, `bgm_import`). If a search comes
-back thin, follow the fallback ladder in `prompts/broll_matching.md` — never
+fan them out when you can, and where you cannot, one `openvid_search_batch`
+carries the whole B-roll query list (two or three words per query, per
+`prompts/broll_matching.md`) in a single round trip. Fetch what you picked
+(`openvid_fetch`, `bgm_fetch`), then import (`openvid_import`, `bgm_import`).
+If a search comes back thin, follow the fallback ladder in `prompts/broll_matching.md` — never
 invent a clip id, never leave a gap. **Never choose B-roll from caption text
 alone.** Call `stock_contact_sheet {query, rank: true, brief}` and actually
 look at the returned image; use its `ranking`, reject dark/letterboxed/generic

@@ -2,7 +2,11 @@
 
 The schema each tool ships with (MCP `tools/list`) is **authoritative** for
 argument names — read it before first use in a session. This page is the map,
-the semantics, the units, and the traps.
+the semantics, the units, and the traps. Arguments are checked against that
+schema before a tool runs: a key it does not name is refused by name (a
+misspelling is one round trip, never a silently-dropped field), and edits
+autosave as they happen — the document is written after every applied edit,
+so work survives without `project_save`.
 
 ## Jobs (the long work)
 
@@ -28,7 +32,8 @@ rule: surface the pip hint.
 `motion_presets` · `motion_inspect {preset|comp, project?, ops?}` ·
 `motion_frame {project, preset|comp, at, ops?, width?}` ·
 `motion_bake {project, preset|comp, ops?, width?, height?, fps?, crf?, encode?, name?}` ·
-`captions_animate {project, words, preset?, wordsPerLine?, maxLineSeconds?, gapSeconds?, width?, height?, fps?, plate?, name?}`
+`captions_animate {project, words, preset?, wordsPerLine?, maxLineSeconds?, gapSeconds?, width?, height?, fps?, plate?, name?}` ·
+`motion_overlay {frames | hash + project, plate, at?, fps?, width?, height?, crf?, out?}`
 
 - The loop: `motion_presets` → `motion_inspect` (never guess node ids) → one
   `ops` batch → `motion_frame` at 2-3 moments → `motion_bake {encode: true}` →
@@ -40,7 +45,10 @@ rule: surface the pip hint.
 - Encoded files are opaque (H.264/VP9/ProRes carry no alpha here); a
   transparent overlay keeps its alpha only as the PNG sequence in the bake
   `dir`. Full-frame comps (stat cards, chapters, backdrops, stings) encode
-  perfectly; overlays go under a `plate` or wait for the Motion clip.
+  perfectly; overlays that must sit over real footage go through
+  `motion_overlay` — take `dir` and `hash` from the `motion_bake` reply —
+  which composites the RGBA frames over the plate with the alpha
+  honoured (see `prompts/motion_comps.md`).
 - `captions_animate` needs MEASURED word times (`[text, start, end]`
   triples). Whisper gives segment times - per-word estimates are not
   timing. 1080x1920 30fps default; captions sit centered in the lower
@@ -51,13 +59,17 @@ rule: surface the pip hint.
 `concat_version` · `project_list` · `project_create {location,name,video?}` ·
 `project_open {path}` · `project_save` · `project_close {path,save}` ·
 `project_set_video` · `project_get {path}` · `timeline_read {path}` ·
-`plan_validate {plan}` · `media_probe {path}` · `media_import {path,file}` ·
-`effects_list {kind}` (the effect/filter/transition/audio packages)
+`collision_check {path}` · `plan_validate {plan}` · `media_probe {path}` ·
+`media_import {path,file}` · `effects_list {kind}` (the effect/filter/transition/audio
+packages)
 
 - One API session per folder: open before editing; a project the window has
   open cannot be opened headless (and vice versa).
 - `timeline_read` is the compact view (lanes, clips in time order, ids, media)
-  — use it for gap/overlap checks. `project_get` is everything.
+  — use it for gap/overlap checks; `collision_check {path}` reads the same
+  view and reports every place two clips share one lane (`clean: true` when
+  none — the placing tools never make one, so a collision means a hand-edited
+  document). `project_get` is everything.
 - `plan_validate {plan}` checks the director plan against its canonical schema,
   timeline continuity, visual references, supported audio/caption ranges, AND
   the structure: `mode` (a 70 s "reel" is refused), `sections` (hook first,
@@ -129,9 +141,9 @@ rule: surface the pip hint.
 
 ## Libraries
 
-`openvid_status/prepare/search/get/fetch/import` (937k clips; sources
-`pixabay|pexels|celebv|other`; orientation `vertical|horizontal|square` with
-±5 % slack; sorts `relevance|aesthetic|motion|temporal|shortest|longest|
+`openvid_status/prepare/search/search_batch/get/fetch/import` (937k clips;
+sources `pixabay|pexels|celebv|other`; orientation `vertical|horizontal|square`
+with ±5 % slack; sorts `relevance|aesthetic|motion|temporal|shortest|longest|
 surprise`) · `bgm_status/prepare/search/fetch/import` (FreePD 1,025 CC0
 tracks; MobyGratis/OpenLo-Fi 166; sorts `relevance|shortest|longest|surprise`) ·
 `sounds_search/add` (430 CC0 sounds; categories: Whoosh, Impact, Riser,
@@ -140,6 +152,11 @@ Motion, UI, Notification, Keyboard, Digital, Foley, Writing, Ambience, Music;
 where its peak lands) · `magick_status/prepare/search/fetch/add` (shelves:
 `magick` 145k AI pictures **CC BY-NC — never in monetized work**, and
 `openmoji` 4,565 emoji CC-BY 4.0)
+
+- `openvid_search_batch {queries, …same filters as openvid_search}` runs the
+  same search once per entry of `queries` (1–8, two or three words each) in
+  one call — the reply's `searches` carry one `{query, total, clips}` per
+  entry. This is how a plan's whole B-roll list is shopped in one round trip.
 
 - `prepare` warms a library's index (OpenVid's is ~435 MB — check
   `openvid_status` first; it reports `missing|downloading|ready|failed`).
@@ -161,4 +178,23 @@ height?, rateNum?, rateDen?, codec?, tenBit?, colorRange?, hdr?}` ·
   ("mux"); states `running|done|cancelled|failed`.
 - `preview_frame {path, time, output?, width?, height?}` — the true composite
   at a time, as an image to look at (titles, effects, transforms included).
-  Budget: ≤5 calls per minute of finished video.
+  Without a size it fits within 960 on the long side, which each clip's
+  proxy serves: the first frame is fast and the next ones faster. Budget:
+  ≤5 calls per minute of finished video.
+
+## Perception and the creative loop
+
+`creative_brief {path, action: get|set, …}` · `local_vlm {action: status|setup,
+profile?}` · `stock_contact_sheet {query|ids|paths, limit?, cols?, rank?,
+brief?}` · `watch_render {path|project, samples?, times?, cols?}` ·
+`craft_critique {sheet|pngB64, brief?}`
+
+- The loop that uses them is the skill's Phase 0 and §4 (and
+  `prompts/quality_loop.md`): brief first, plan, `stock_contact_sheet` to SEE
+  B-roll candidates before choosing, `motion_frame` to SEE graphics, export,
+  `watch_render` to SEE the whole cut, `craft_critique` for the honest score.
+  `stock_contact_sheet`'s `ids` name OpenVid clips from any search, so a
+  shortlist from `openvid_search_batch` can be looked at before anything is
+  fetched. `local_vlm` reports whether the local vision critic is installed
+  (`setup` fetches it, no system install); without it the ranking and the
+  critique degrade to captions and scores.

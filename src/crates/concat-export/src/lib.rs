@@ -211,6 +211,13 @@ pub struct ExportClip {
     /// older caller still exports correctly - just slower to start.
     #[serde(default)]
     pub has_audio: Option<bool>,
+    /// The media keeps its alpha channel and the layers beneath must show
+    /// through it: a motion comp's RGBA PNG sequence, whose frames are
+    /// translucent where the comp was. The compositor blends RGBA either
+    /// way, so this is the model of record carrying what the flattener
+    /// resolved - and the mark that a clip's pixels are not opaque.
+    #[serde(default)]
+    pub preserve_alpha: bool,
     /// The background taken away by a mask, as the document holds it.
     /// Rendered only with `mask_dir`: a cutout whose masks are nowhere yet
     /// leaves the picture whole.
@@ -346,6 +353,7 @@ impl ExportClip {
             media_height: None,
             media_duration: None,
             has_audio: None,
+            preserve_alpha: false,
             cutout: None,
             mask: None,
             mask_dir: String::new(),

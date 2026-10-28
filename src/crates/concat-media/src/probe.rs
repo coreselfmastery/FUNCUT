@@ -92,7 +92,7 @@ pub fn probe(path: impl AsRef<Path>) -> Result<MediaInfo> {
     let path = path.as_ref();
     // An SVG is probed as its drawing, and described as itself; see svg.rs.
     let drawn = crate::svg::readable(path)?;
-    let input = ffmpeg::format::input(&drawn).map_err(|error| ffi::fail("open", path, error))?;
+    let input = crate::decode::open_input(&drawn).map_err(|error| ffi::fail("open", path, error))?;
 
     let duration = input.duration();
     let duration =

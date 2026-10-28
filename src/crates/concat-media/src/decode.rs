@@ -596,6 +596,30 @@ fn alpha_decoder(stream: &ffmpeg::format::stream::Stream<'_>) -> Option<&'static
     }
 }
 
+/// Opens a media path for demuxing, both the decode and the probe way.
+///
+/// An `.ffconcat` script - the carrier a motion bake's PNG sequence travels
+/// in, written by the export flattener beside the frames it names - has to
+/// be opened with the concat demuxer's `safe` guard off, or the per-file
+/// `option framerate` lines that carry the bake's own rate are refused and
+/// every frame would read at the image demuxer's default 25 fps, playing
+/// the comp slow and cutting its tail. The script is the editor's own
+/// writing - entries relative, inside the bake they describe - so relaxing
+/// the guard for it opens nothing a project did not put there itself.
+pub(crate) fn open_input(path: &Path) -> Result<format::context::Input, ffmpeg::Error> {
+    let script = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("ffconcat"));
+    if !script {
+        return ffmpeg::format::input(path);
+    }
+    let mut options = ffmpeg::util::dictionary::Dictionary::new();
+    options.set("format", "concat");
+    options.set("safe", "0");
+    ffmpeg::format::input_with_dictionary(path, options)
+}
+
 /// One decoded picture, before the filtergraph.
 struct Source {
     frame: Video,
@@ -668,7 +692,7 @@ impl Decoder {
         // An SVG is read as its drawing, which FFmpeg can open; see svg.rs.
         let drawn = crate::svg::readable(path.as_ref())?;
         let path = drawn.as_path();
-        let input = ffmpeg::format::input(path).map_err(|error| ffi::fail("open", path, error))?;
+        let input = open_input(path).map_err(|error| ffi::fail("open", path, error))?;
         let stream = input
             .streams()
             .best(ffmpeg::media::Type::Video)

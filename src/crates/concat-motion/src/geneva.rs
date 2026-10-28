@@ -301,10 +301,16 @@ impl Geneva {
         output.insert("duration".into(), Json::String(seconds(comp.duration)));
         output.insert("background".into(), Json::String(comp.background.to_hex()));
         // Frames with alpha: the one carrier the engine guarantees, and the one
-        // the compositor samples without a conversion.
+        // the compositor samples without a conversion. `pixel_format` rgba
+        // says the PNGs carry their alpha channel whole, so a motion card's
+        // bake lands translucent where the comp was - which is what lets it
+        // sit on footage in an export instead of covering it.
         output.insert(
             "encode".into(),
-            json!({ "container": "image-sequence", "video": { "codec": "png" } }),
+            json!({
+                "container": "image-sequence",
+                "video": { "codec": "png", "pixel_format": "rgba" }
+            }),
         );
 
         let mut document = serde_json::Map::new();
@@ -1277,6 +1283,7 @@ mod tests {
         assert_eq!(document["geneva"], "1.1");
         assert_eq!(document["output"]["encode"]["container"], "image-sequence");
         assert_eq!(document["output"]["encode"]["video"]["codec"], "png");
+        assert_eq!(document["output"]["encode"]["video"]["pixel_format"], "rgba");
         assert_eq!(document["output"]["background"], "#00000000");
         assert_eq!(document["layers"].as_array().unwrap().len(), 1);
     }

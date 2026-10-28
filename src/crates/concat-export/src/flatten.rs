@@ -11,13 +11,17 @@
 //!
 //! Text clips are deliberately not flattened here. Titles rasterise
 //! separately and rejoin the exporter as plain image clips; see
-//! `ExportRequest`'s caller. A motion comp resolves to the ENCODED bake in
-//! the project's `motion/` folder when one exists (see
-//! [`motion_encoded`]); without one it is skipped with a warning rather
-//! than silently disappearing, since the exporter cannot read a PNG frame
-//! sequence on its own.
+//! `ExportRequest`'s caller. A motion comp resolves to its bake in the
+//! project's cache: the RGBA PNG sequence first - the one carrier that
+//! keeps what a transparent comp meant, so a motion card sits on the
+//! footage beneath it instead of covering it (see [`motion_sequence`]) -
+//! and the encoded video under `motion/` when there is no sequence (see
+//! [`motion_encoded`]). Without either it is skipped with a warning rather
+//! than silently disappearing.
 
 use std::path::Path;
+
+use serde_json::Value as Json;
 
 use concat_project::model::{
     Background, ClipKind as ModelClipKind, KeyProperty, MediaKind, Project, Timeline,
@@ -73,6 +77,191 @@ fn motion_encoded(
     }
     matches.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)).then(a.2.cmp(&b.2)));
     matches.into_iter().next().map(|(_, _, path)| path)
+}
+
+/// A comp's bake as the export reads it: the `.ffconcat` script naming the
+/// frames, and the facts the manifest vouched for.
+struct MotionSequence {
+    /// The script's path, the one the exporter opens. A bare frames
+    /// directory is not a media file, and a `%04d.png` pattern carries no
+    /// frame rate - the script carries both.
+    script: String,
+    /// The frames' size, from the manifest, for an aspect-correct decode.
+    width: u32,
+    height: u32,
+    /// Whether the frames keep the comp's transparency.
+    alpha: bool,
+}
+
+/// A comp's RGBA PNG sequence bake, under the project's cache: the one
+/// carrier that keeps what a transparent comp meant, and so the one a
+/// motion card is exported from when it is there. The comp's hash keys the
+/// cache (`<hash>-<w>x<h>@<fps>/`, each with its manifest), and the bake
+/// whose manifest answers for this comp is the one taken - the one with
+/// alpha over one without, the larger over the smaller, so a comp baked at
+/// two sizes still picks the same bake twice.
+///
+/// A bake that promises more frames than it holds - an interrupted or a
+/// still-running parallel bake - refuses: an export is not worth a card
+/// that freezes halfway through.
+fn motion_sequence(
+    project_dir: Option<&Path>,
+    motion: &concat_project::model::MotionClip,
+) -> Option<MotionSequence> {
+    let dir = project_dir?.join("cache").join("comps");
+    let key = motion
+        .hash
+        .trim_end_matches(".json")
+        .trim()
+        .to_ascii_lowercase();
+    if key.is_empty() {
+        return None;
+    }
+    let mut candidates: Vec<(bool, u64, u32, u32, f64, std::path::PathBuf)> = Vec::new();
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        // The dash keeps one comp's hash from matching a longer one's
+        // prefix; the manifest's own hash keeps a renamed directory from
+        // speaking for a comp it is not.
+        if !name.starts_with(&key) || name.as_bytes().get(key.len()) != Some(&b'-') {
+            continue;
+        }
+        let Some(manifest) = manifest_of(&path) else {
+            continue;
+        };
+        let frames = manifest.get("frames").and_then(Json::as_u64).unwrap_or(0);
+        let fps = manifest.get("fps").and_then(Json::as_f64).unwrap_or(0.0);
+        let width = manifest.get("width").and_then(Json::as_u64).unwrap_or(0) as u32;
+        let height = manifest.get("height").and_then(Json::as_u64).unwrap_or(0) as u32;
+        let alpha = manifest.get("alpha").and_then(Json::as_bool).unwrap_or(false);
+        let hash = manifest.get("hash").and_then(Json::as_u64).unwrap_or(0);
+        if hash == 0
+            || format!("{hash:016x}") != key
+            || frames == 0
+            || width == 0
+            || height == 0
+            || !fps.is_finite()
+            || fps <= 0.0
+        {
+            continue;
+        }
+        let frames_dir = path.join("frames");
+        // The count is the bake's own arithmetic: fewer PNGs on disk than
+        // the manifest promises is a bake that never finished.
+        if png_count(&frames_dir).is_none_or(|present| present < frames as usize) {
+            continue;
+        }
+        candidates.push((
+            alpha,
+            u64::from(width) * u64::from(height),
+            width,
+            height,
+            fps,
+            frames_dir,
+        ));
+    }
+    // Alpha first - that is the whole point of taking the sequence - then
+    // the larger bake, then the name, so two bakes of one comp resolve the
+    // same way twice.
+    candidates.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then(b.1.cmp(&a.1))
+            .then(a.5.cmp(&b.5))
+    });
+    let (alpha, _, width, height, fps, frames_dir) = candidates.into_iter().next()?;
+    let script = sequence_script(&frames_dir, fps)?;
+    Some(MotionSequence {
+        script,
+        width,
+        height,
+        alpha,
+    })
+}
+
+/// The bake manifest, read loose: unknown fields are the engine's to add,
+/// and the flattener asks only for the ones it names.
+fn manifest_of(bake_dir: &Path) -> Option<Json> {
+    let text = std::fs::read_to_string(bake_dir.join("manifest.json")).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// How many PNGs a frames directory holds, or `None` when it holds none at
+/// all - a directory that cannot be read is a bake that cannot be read.
+fn png_count(dir: &Path) -> Option<usize> {
+    let count = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("png"))
+        })
+        .count();
+    (count > 0).then_some(count)
+}
+
+/// Writes - or leaves - the `.ffconcat` script that carries a PNG sequence
+/// to the exporter: one `file` entry per frame, each stamped with the
+/// bake's own rate, the last frame once more so the window it shows
+/// through outlives a comp a frame longer than the bake. The entries are
+/// relative and the script sits beside the frames it names, so a moved
+/// project takes both along together. An existing script that already says
+/// the same thing is left as it is: the flattener runs for the monitor as
+/// well as the export, and a write per call is a cost neither needs.
+fn sequence_script(frames_dir: &Path, fps: f64) -> Option<String> {
+    let mut names: Vec<String> = Vec::new();
+    for entry in std::fs::read_dir(frames_dir).ok()?.flatten() {
+        let path = entry.path();
+        let is_png = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("png"));
+        if !is_png {
+            continue;
+        }
+        if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+            names.push(name.to_owned());
+        }
+    }
+    if names.is_empty() {
+        return None;
+    }
+    names.sort();
+    let rate = format!("{fps}");
+    let duration = format!("{:.6}", 1.0 / fps);
+    let mut text = String::from("ffconcat version 1.0\n");
+    // Every frame, and the last one again: its second entry is the window
+    // the player shows it through, which a comp a frame longer than its
+    // bake would otherwise fall out of.
+    for name in names.iter().chain(names.last()) {
+        text.push_str("file '");
+        text.push_str(name);
+        text.push_str("'\n");
+        text.push_str("option framerate ");
+        text.push_str(&rate);
+        text.push('\n');
+        text.push_str("duration ");
+        text.push_str(&duration);
+        text.push('\n');
+    }
+
+    let path = frames_dir.join("index.ffconcat");
+    if std::fs::read_to_string(&path)
+        .is_ok_and(|existing| existing == text)
+    {
+        return Some(path.to_string_lossy().into_owned());
+    }
+    std::fs::write(&path, text).ok()?;
+    Some(path.to_string_lossy().into_owned())
 }
 
 /// Flattens one timeline of `project` for the exporter - the active one
@@ -131,26 +320,55 @@ pub fn flatten_timeline_in(
             }
 
             // A motion comp: the document is not a file the exporter can
-            // decode, but `motion_bake {encode:true}` (or the motion agent)
-            // writes an ordinary video under `motion/` named by the comp's
-            // hash. Find it and rejoin as a video clip. If only the RGBA
-            // PNG sequence exists, say so loudly: silently dropping the
-            // comp from an export is the defect this fixes.
+            // decode, but its bake is on disk in one of two shapes - the
+            // RGBA PNG sequence in the project's cache, or an ordinary
+            // video under `motion/` that `motion_bake {encode:true}` (or
+            // the motion agent) wrote. The sequence is the export's
+            // choice whenever it is there: its PNGs keep the comp's
+            // transparency, where the video codecs carry none, so a
+            // motion card sits on the footage beneath it instead of
+            // covering it. A comp with no transparency either way renders
+            // the same from the encoded bake, which decodes cheaper; and
+            // with neither on disk the clip is skipped loudly - silently
+            // dropping the comp from an export is the defect this fixes.
             if clip.kind == ModelClipKind::Motion {
+                let sequence = clip
+                    .motion
+                    .as_ref()
+                    .and_then(|motion| motion_sequence(project_dir, motion));
                 let encoded = clip
                     .motion
                     .as_ref()
                     .and_then(|motion| motion_encoded(project_dir, motion));
-                let Some(encoded) = encoded else {
-                    log::warn!(
-                        "motion clip {} has no encoded bake under motion/ - it is skipped by the export. \
-                         Run motion_bake with encode:true, or motion_overlay to composite the RGBA frames over footage.",
-                        clip.id
-                    );
-                    return None;
+                let (path, media_size, alpha) = match (sequence.as_ref(), encoded.as_ref()) {
+                    (Some(sequence), _) if sequence.alpha => (
+                        sequence.script.clone(),
+                        Some((sequence.width, sequence.height)),
+                        true,
+                    ),
+                    (Some(sequence), None) => (
+                        sequence.script.clone(),
+                        Some((sequence.width, sequence.height)),
+                        sequence.alpha,
+                    ),
+                    (_, Some(encoded)) => (encoded.clone(), None, false),
+                    (None, None) => {
+                        log::warn!(
+                            "motion clip {} has no bake on disk - no PNG sequence under cache/comps/ \
+                             and no encoded file under motion/ - so it is skipped by the export. \
+                             Run motion_bake to bake the comp.",
+                            clip.id
+                        );
+                        return None;
+                    }
+                };
+                let (media_width, media_height) = match media_size {
+                    Some((width, height)) => (Some(width), Some(height)),
+                    None => (None, None),
                 };
                 return Some(ExportClip {
-                    path: encoded,
+                    path,
+                    preserve_alpha: alpha,
                     hidden: !track.visible,
                     muted: true,
                     volume: 0.0,
@@ -175,6 +393,8 @@ pub fn flatten_timeline_in(
                             params: transition.params.clone(),
                         }
                     }),
+                    media_width,
+                    media_height,
                     has_audio: Some(false),
                     ..ExportClip::blank(ClipKind::Video, clip.start, clip.duration, index)
                 });
@@ -570,6 +790,108 @@ mod tests {
             ..motion
         };
         assert!(motion_encoded(Some(&dir), &missing).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A bake on disk in the shape `motion_bake` leaves it, as a helper:
+    /// `cache/comps/<hash>-<w>x<h>@<fps>/` with its manifest and frames.
+    fn staged_bake(
+        root: &Path,
+        hash: u64,
+        width: u32,
+        height: u32,
+        alpha: bool,
+        frames: usize,
+        present: usize,
+    ) -> std::path::PathBuf {
+        let bake = root
+            .join("cache")
+            .join("comps")
+            .join(format!("{hash:016x}-{width}x{height}@30"));
+        std::fs::create_dir_all(bake.join("frames")).expect("creates the bake");
+        let manifest = format!(
+            "{{\"hash\": {hash}, \"frames\": {frames}, \"width\": {width}, \
+             \"height\": {height}, \"fps\": 30.0, \"alpha\": {alpha}, \
+             \"engine\": \"geneva\", \"engine_version\": \"1.1\"}}"
+        );
+        std::fs::write(bake.join("manifest.json"), manifest).expect("writes the manifest");
+        for index in 1..=present {
+            let name = format!("{index:04}.png");
+            std::fs::write(bake.join("frames").join(&name), b"png").expect("writes a frame");
+        }
+        bake
+    }
+
+    #[test]
+    fn motion_sequence_finds_the_alpha_bake_and_writes_the_script() {
+        let dir = std::env::temp_dir().join(format!("concat-motion-seq-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let hash = 0x0123456789abcdef_u64;
+        // A larger opaque bake and a smaller one with alpha: alpha is the
+        // point, so the smaller bake is the one the export takes.
+        staged_bake(&dir, hash, 640, 480, false, 3, 3);
+        staged_bake(&dir, hash, 320, 240, true, 3, 3);
+        let motion = concat_project::model::MotionClip {
+            comp: "funcut.lower-third.glass".to_owned(),
+            hash: "0123456789abcdef.json".to_owned(),
+            engine: "geneva".to_owned(),
+            width: 0,
+            height: 0,
+        };
+        let sequence = motion_sequence(Some(&dir), &motion).expect("finds the sequence");
+        assert!(sequence.alpha, "the alpha bake wins");
+        assert_eq!(sequence.width, 320);
+        assert_eq!(sequence.height, 240);
+        assert!(sequence.script.ends_with("index.ffconcat"));
+        let script = std::fs::read_to_string(&sequence.script).expect("reads the script");
+        assert!(script.starts_with("ffconcat version 1.0\n"), "{script}");
+        // Three frames, and the last one again for its window.
+        assert_eq!(script.matches("file '").count(), 4, "{script}");
+        assert!(script.contains("option framerate 30\n"), "{script}");
+        assert!(script.contains("duration 0.033333\n"), "{script}");
+        assert!(script.contains("file '0003.png'\n"), "{script}");
+        // A second flatten writes the same words, not a second file.
+        let again = motion_sequence(Some(&dir), &motion).expect("resolves again");
+        assert_eq!(again.script, sequence.script);
+
+        // No folder, no sequence; a hash that owns no bake either.
+        assert!(motion_sequence(None, &motion).is_none());
+        let stranger = concat_project::model::MotionClip {
+            hash: "ffffffffffffffff.json".to_owned(),
+            ..motion
+        };
+        assert!(motion_sequence(Some(&dir), &stranger).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_partial_or_foreign_bake_is_not_a_sequence() {
+        let dir = std::env::temp_dir().join(format!("concat-motion-part-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let hash = 0x0123456789abcdef_u64;
+        // A bake still running: five frames promised, two on disk.
+        staged_bake(&dir, hash, 320, 240, true, 5, 2);
+        // A longer hash that shares the prefix: the dash after the key
+        // keeps it from being read as this comp's bake.
+        let longer = dir
+            .join("cache")
+            .join("comps")
+            .join("0123456789abcdef00-320x240@30");
+        std::fs::create_dir_all(longer.join("frames")).expect("creates");
+        std::fs::write(
+            longer.join("manifest.json"),
+            "{\"hash\": 78187493520, \"frames\": 1, \"width\": 320, \"height\": 240, \
+             \"fps\": 30.0, \"alpha\": true}",
+        )
+        .expect("writes");
+        let motion = concat_project::model::MotionClip {
+            comp: "funcut.lower-third.glass".to_owned(),
+            hash: "0123456789abcdef.json".to_owned(),
+            engine: "geneva".to_owned(),
+            width: 0,
+            height: 0,
+        };
+        assert!(motion_sequence(Some(&dir), &motion).is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -467,7 +467,11 @@ impl Api {
             Request::ProjectList => Ok(Reply::Projects(self.recents())),
             Request::ProjectGet { path } => view(self.session(&path)?.view()),
             Request::ProjectDocument { path } => {
-                Ok(Reply::Document(self.session(&path)?.document()))
+                Ok(Reply::Document(
+                    self.session(&path)?
+                        .document()
+                        .map_err(ApiError::failed)?,
+                ))
             }
             Request::ProjectSave { path, name } => {
                 self.save(&path, name.as_deref())?;
@@ -1956,9 +1960,10 @@ impl Api {
         name: &str,
     ) -> Result<concat_host::templates::TemplateInfo, ApiError> {
         let session = self.session(path)?;
+        let document = session.document().map_err(ApiError::failed)?;
         templates::save(
             &self.dirs.config,
-            &session.document(),
+            &document,
             &session.settings(),
             session.path(),
             name,

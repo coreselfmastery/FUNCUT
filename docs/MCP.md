@@ -312,7 +312,7 @@ claude mcp add concat -- /usr/bin/concat --mcp
 
 Choose explicitly with `--mcp window` (fail rather than run on its own) or `--mcp headless`; the default is `--mcp auto`. To reach a server elsewhere, set `CONCAT_API_ADDRESS` (e.g. `127.0.0.1:7420`) and `CONCAT_API_TOKEN` in the client's `env` for the server.
 
-Either way the agent writes files - projects, exports, frames, contact sheets, encoded bakes, the craft journal - only under your home folder. Set `CONCAT_MCP_ROOTS` (a path list, `:`-separated) to allow other folders in headless mode. Writes the sense and motion layers make on an agent's word - a contact sheet's `out`, a bake's `name`, the brief, the journal - are held to the same roots and refuse `..`, exactly like the API's own writes.
+Either way the agent writes files - projects, exports, frames, contact sheets, encoded bakes, the craft journal - only where the session is allowed to. In headless mode that is the directory the server was started in, which is where an agent's work area is; name more folders with `CONCAT_MCP_ROOTS` (a path list, `:`-separated) when a project lives elsewhere. Through the window, the window's server holds its own line. Writes the sense and motion layers make on an agent's word - a contact sheet's `out`, a bake's `name`, the brief, the journal, and the motion tools' `project` itself - are held to the same roots and refuse `..`, exactly like the API's own writes.
 
 The agent edits projects of its own; it does not edit the project open in the window while you watch. That ("live mode") is planned in [#337](https://github.com/jub0t/Concat/issues/337).
 

@@ -277,27 +277,39 @@ impl Session {
     /// Takes a new name, if there is one, and hands back what a save must
     /// write: the folder and the document. The frame is not a parameter any
     /// more - it is the active timeline's, set through [`Session::set_video`]
-    /// as an edit. The disk write is the caller's, so it can happen off the
-    /// thread that owns the session; [`Session::save`] does both.
-    pub fn prepare_save(&mut self, name: Option<&str>) -> (String, serde_json::Value) {
+    /// as an edit. Fallible for the reason `Editor::to_document` is: a
+    /// project holding a number that cannot be serialised cannot be saved,
+    /// and the save says so instead of panicking at its caller. The disk
+    /// write is the caller's, so it can happen off the thread that owns
+    /// the session; [`Session::save`] does both.
+    pub fn prepare_save(
+        &mut self,
+        name: Option<&str>,
+    ) -> Result<(String, serde_json::Value), String> {
         if let Some(name) = name {
             let trimmed = name.trim();
             if !trimmed.is_empty() {
                 self.settings.name = trimmed.to_owned();
             }
         }
-        (self.path.clone(), self.editor.to_document(&self.settings))
+        let document = self
+            .editor
+            .to_document(&self.settings)
+            .map_err(|error| format!("the project cannot be saved: {error}"))?;
+        Ok((self.path.clone(), document))
     }
 
     /// Writes the session's document to its project folder.
     pub fn save(&mut self, name: Option<&str>) -> Result<(), String> {
-        let (path, document) = self.prepare_save(name);
+        let (path, document) = self.prepare_save(name)?;
         projects::save(&path, &document)
     }
 
-    /// The document as it would be saved.
-    pub fn document(&self) -> serde_json::Value {
-        self.editor.to_document(&self.settings)
+    /// The document as it would be saved, or the reason it cannot be.
+    pub fn document(&self) -> Result<serde_json::Value, String> {
+        self.editor
+            .to_document(&self.settings)
+            .map_err(|error| format!("the project cannot be saved: {error}"))
     }
 
     /// The active timeline flattened for rendering. This is what export and

@@ -127,7 +127,12 @@ impl ProjectPane {
         video.rate_num = num;
         video.rate_den = den;
         video.color_space = sheet.color_space;
-        session.prepare_save((!name.is_empty()).then_some(name.as_str()));
+        // The rename rides the save; a document that cannot be encoded
+        // here is said by the autosave the edit below triggers, so the
+        // sheet still applies.
+        if let Err(error) = session.prepare_save((!name.is_empty()).then_some(name.as_str())) {
+            log::warn!("project: the sheet's rename did not land: {error}");
+        }
         if !name.is_empty() {
             studio.project_name = name;
         }

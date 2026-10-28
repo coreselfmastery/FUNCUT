@@ -35,7 +35,6 @@ use serde_json::{Map, Value, json};
 use crate::backend::Backend;
 use crate::tools::Outcome;
 use concat_api::{ApiError, ErrorCode};
-
 /// Where in the project the motion layer works: comps, their bake cache,
 /// and the encoded pieces ready to import.
 fn comps_dir(project: &Path) -> PathBuf {
@@ -63,7 +62,13 @@ fn geneva() -> Result<Geneva, ApiError> {
 }
 
 /// A project folder argument: present, a folder, and without `..` in it.
-fn project_of(fields: &Map<String, Value>) -> Result<PathBuf, ApiError> {
+/// When the session knows where it writes (the headless backend's roots),
+/// the folder must be inside one of them: the motion tools write into the
+/// project - comps/, cache/, motion/ - and a project anywhere on the disk
+/// was a way to make those writes land anywhere on the disk. An empty
+/// roots list is the window backend, whose server holds its own line and
+/// refuses there.
+fn project_of(fields: &Map<String, Value>, backend: &dyn Backend) -> Result<PathBuf, ApiError> {
     let path = fields
         .get("project")
         .and_then(Value::as_str)
@@ -84,6 +89,29 @@ fn project_of(fields: &Map<String, Value>) -> Result<PathBuf, ApiError> {
             ErrorCode::NotFound,
             format!("no project folder at {path}"),
         ));
+    }
+    let roots = backend.roots();
+    if !roots.is_empty() {
+        // The same resolution the sense layer's write_target does: what
+        // exists is canonicalised, and what does not is compared
+        // lexically past its deepest existing ancestor, so a symlink
+        // cannot quietly move the folder out of a root.
+        let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
+        if !roots.iter().any(|root| {
+            resolved.starts_with(root)
+                || root
+                    .canonicalize()
+                    .is_ok_and(|real| resolved.starts_with(real))
+        }) {
+            let list = roots
+                .iter()
+                .map(|root| root.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(ApiError::invalid(format!(
+                "invalid arguments: {path} is outside where this session works ({list})"
+            )));
+        }
     }
     Ok(PathBuf::from(path))
 }
@@ -229,7 +257,7 @@ pub fn inspect(arguments: Value) -> Result<Outcome, ApiError> {
 /// `motion_frame`: one frame of a comp at `at` seconds, drawn in tens of
 /// milliseconds, written under the project's `motion/` and returned as a
 /// path - the look-before-you-bake of the verification loop.
-pub fn frame(arguments: Value) -> Result<Outcome, ApiError> {
+pub fn frame(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError> {
     let fields = arguments
         .as_object()
         .cloned()
@@ -241,7 +269,7 @@ pub fn frame(arguments: Value) -> Result<Outcome, ApiError> {
             )));
         }
     }
-    let project = project_of(&fields)?;
+    let project = project_of(&fields, backend)?;
     let at = fields
         .get("at")
         .and_then(Value::as_f64)
@@ -323,7 +351,7 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
             )));
         }
     }
-    let project = project_of(&fields)?;
+    let project = project_of(&fields, backend)?;
     let (comp, _) = resolve_comp(&fields)?;
     let width = fields
         .get("width")
@@ -533,7 +561,7 @@ pub fn captions_animate(arguments: Value, backend: &dyn Backend) -> Result<Outco
             )));
         }
     }
-    let project = project_of(&fields)?;
+    let project = project_of(&fields, backend)?;
     let words = read_words(
         fields
             .get("words")

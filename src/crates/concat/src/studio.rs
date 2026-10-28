@@ -2942,7 +2942,16 @@ impl Studio {
             return;
         };
         self.autosave.stop();
-        let (path, document) = session.prepare_save(None);
+        // A document that cannot be encoded is a failed save like any
+        // other: said, and the project stays dirty for the next try.
+        let (path, document) = match session.prepare_save(None) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.dirty = true;
+                self.notify(&tf("studio.couldNotSave", &[&error]), true);
+                return;
+            }
+        };
         // Capture the write order with the snapshot, not later when a
         // worker happens to pick it up.
         let ticket = projects::ticket();
@@ -8752,7 +8761,13 @@ impl Studio {
         // written is not a close, and the jobs it would have stopped are
         // not ours to throw away.
         if let Some(session) = self.session.as_mut() {
-            let (path, document) = session.prepare_save(None);
+            let (path, document) = match session.prepare_save(None) {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    log::warn!("project: could not be saved, not closing: {error}");
+                    return Err(error);
+                }
+            };
             let ticket = projects::ticket();
             if let Err(error) = projects::save_ordered(&path, &document, ticket) {
                 log::warn!("project: could not be saved, not closing: {error}");
@@ -9193,12 +9208,24 @@ impl Studio {
     }
 
     pub fn save_template(&mut self) {
-        let Some(session) = self.session.as_ref() else {
+        // The session's borrow ends before the failure is said, so the
+        // notice can take the studio.
+        let prepared = self.session.as_ref().map(|session| {
+            session
+                .document()
+                .map(|document| (document, session.settings(), session.path().to_owned()))
+        });
+        let Some(prepared) = prepared else {
             return;
         };
-        let document = session.document();
-        let settings = session.settings();
-        let path = session.path().to_owned();
+        let (document, settings, path) = match prepared {
+            // A project that cannot be encoded cannot be a template either.
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.notify(&tf("studio.couldNotSave", &[&error]), true);
+                return;
+            }
+        };
         let name = format!("{} template", self.project_name);
         let config = self.host.dirs.config.clone();
         spawn(

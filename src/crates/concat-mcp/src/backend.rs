@@ -202,7 +202,15 @@ impl Headless {
                     .collect::<Vec<PathBuf>>()
             })
             .filter(|roots: &Vec<PathBuf>| !roots.is_empty())
-            .unwrap_or_else(concat_server::home_root);
+            .unwrap_or_else(|| {
+                // The directory the server was started in, not the whole
+                // home. "Anywhere under home" read as a safety property
+                // while it handed an agent every folder that matters -
+                // .ssh, .config, the documents - when a headless session's
+                // work area is where it was started. An operator who wants
+                // more names CONCAT_MCP_ROOTS.
+                std::env::current_dir().into_iter().collect()
+            });
         api.add_capability("mcp");
         if api.roots().is_empty() {
             api.restrict_writes_to(roots);

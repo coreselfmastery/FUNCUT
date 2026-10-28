@@ -368,7 +368,7 @@ mod tests {
         };
         item.color_space = ColorSpace::Pq;
         editor.apply(Command::AddMedia { item }).expect("adds");
-        let document = crate::to_document(&settings(), editor.project());
+        let document = crate::to_document(&settings(), editor.project()).expect("serialises");
         let loaded = Editor::from_document(&document).expect("loads");
         assert_eq!(loaded.project().active().video.color_space, ColorSpace::Pq);
         assert_eq!(loaded.project().media[1].color_space, ColorSpace::Pq);
@@ -384,7 +384,7 @@ mod tests {
     fn a_background_is_absent_until_chosen_and_round_trips() {
         use crate::model::Background;
         let (mut editor, _, clip_id) = fixture();
-        let document = editor.to_document(&settings());
+        let document = editor.to_document(&settings()).expect("serialises");
         let timeline = &document["timelines"][0];
         assert!(timeline.get("background").is_none(), "{timeline}");
         assert!(timeline["clips"][0].get("background").is_none());
@@ -415,7 +415,7 @@ mod tests {
                 },
             })
             .expect("sets");
-        let mut document = editor.to_document(&settings());
+        let mut document = editor.to_document(&settings()).expect("serialises");
         assert_eq!(
             document["timelines"][0]["background"],
             json!({ "kind": "blur", "amount": 1.0 })
@@ -1776,7 +1776,7 @@ mod tests {
         assert_eq!(editor.project(), &before);
         editor.redo();
         assert_eq!(editor.project(), &after);
-        let document = editor.to_document(&settings());
+        let document = editor.to_document(&settings()).expect("serialises");
         assert_eq!(Editor::from_document(&document).unwrap().project(), &after);
     }
 
@@ -2664,7 +2664,7 @@ mod tests {
     #[test]
     fn a_document_from_a_newer_build_is_refused() {
         let (editor, _, _) = fixture();
-        let mut document = editor.to_document(&settings());
+        let mut document = editor.to_document(&settings()).expect("serialises");
         document["version"] = serde_json::json!(crate::DOCUMENT_VERSION + 1);
         assert!(Editor::from_document(&document).is_none());
         assert_eq!(
@@ -2677,7 +2677,7 @@ mod tests {
     #[test]
     fn a_loaded_document_holds_the_same_ranges_every_command_does() {
         let (editor, _, _) = fixture();
-        let mut document = editor.to_document(&settings());
+        let mut document = editor.to_document(&settings()).expect("serialises");
         let clip = &mut document["timelines"][0]["clips"][0];
         clip["duration"] = serde_json::json!(0.001);
         clip["scale"] = serde_json::json!(50.0);
@@ -2899,7 +2899,7 @@ mod tests {
     #[test]
     fn fields_this_build_does_not_know_survive_a_round_trip() {
         let (editor, _, clip_id) = fixture();
-        let mut document = editor.to_document(&settings());
+        let mut document = editor.to_document(&settings()).expect("serialises");
         document["futureSetting"] = json!({ "on": true });
         document["timelines"][0]["colourSpace"] = json!("rec709");
         document["timelines"][0]["tracks"][0]["name"] = json!("Dialogue");
@@ -2916,7 +2916,7 @@ mod tests {
                 .extra["motionTrack"]["shape"],
             "ellipse"
         );
-        let saved = loaded.to_document(&settings());
+        let saved = loaded.to_document(&settings()).expect("serialises");
         assert_eq!(saved["futureSetting"]["on"], true);
         assert_eq!(saved["timelines"][0]["colourSpace"], "rec709");
         assert_eq!(saved["timelines"][0]["tracks"][0]["name"], "Dialogue");
@@ -3410,7 +3410,7 @@ mod tests {
         );
 
         // The document keeps the choice and the list.
-        let saved = crate::doc::to_document(&settings(), editor.project());
+        let saved = crate::doc::to_document(&settings(), editor.project()).expect("serialises");
         let loaded = crate::doc::from_document(&saved).expect("loads");
         assert_eq!(
             loaded.media[0].audio_tracks,
@@ -3627,7 +3627,7 @@ mod tests {
             .expect("updates");
         editor.apply(Command::AddTimeline).expect("adds");
 
-        let document = editor.to_document(&settings());
+        let document = editor.to_document(&settings()).expect("serialises");
         let restored = Editor::from_document(&document).expect("loads");
         assert_eq!(restored.project(), editor.project());
     }
@@ -3688,7 +3688,7 @@ mod tests {
         // An unkeyed number is the mask's own.
         assert_eq!(clip.value_at(KeyProperty::MaskRoundness, 0.5), 0.4);
 
-        let document = editor.to_document(&settings());
+        let document = editor.to_document(&settings()).expect("serialises");
         let written = &document["timelines"][0]["clips"][0];
         assert_eq!(written["mask"]["shape"], "rectangle");
         assert_eq!(written["mask"]["invert"], true);
@@ -3715,7 +3715,7 @@ mod tests {
         let clip = editor.project().active().clip(&clip_id).expect("clip");
         assert!(clip.mask.is_none());
         assert!(
-            !editor.to_document(&settings())["timelines"][0]["clips"][0]
+            !editor.to_document(&settings()).expect("serialises")["timelines"][0]["clips"][0]
                 .as_object()
                 .expect("a clip")
                 .contains_key("mask")
@@ -3750,7 +3750,7 @@ mod tests {
     #[test]
     fn a_document_without_a_mask_opens_maskless() {
         let (editor, _, clip_id) = fixture();
-        let mut document = editor.to_document(&settings());
+        let mut document = editor.to_document(&settings()).expect("serialises");
         let restored = Editor::from_document(&document).expect("loads");
         assert!(
             restored
@@ -3863,7 +3863,7 @@ mod tests {
     #[test]
     fn restored_ids_can_never_be_reissued() {
         let (editor, _, _) = fixture();
-        let document = editor.to_document(&settings());
+        let document = editor.to_document(&settings()).expect("serialises");
         let mut restored = Editor::from_document(&document).expect("loads");
         let media_id = restored
             .apply(media("/b.mp4", 5.0, false))
@@ -3991,14 +3991,14 @@ mod tests {
 
         // Saved as the word, read back as the range; absent stays absent,
         // so a project that never said stays byte-identical.
-        let saved = editor.to_document(&settings());
+        let saved = editor.to_document(&settings()).expect("serialises");
         assert_eq!(saved["media"][0]["colorRange"], "full");
         let reopened = Editor::from_document(&saved).expect("loads");
         assert_eq!(
             reopened.project().media[0].color_range,
             Some(ColorRange::Full)
         );
-        let untold = crate::doc::to_document(&settings(), &before);
+        let untold = crate::doc::to_document(&settings(), &before).expect("serialises");
         assert!(untold["media"][0].get("colorRange").is_none());
         // A word this build does not know reads as the tag, not as a
         // media item lost.
@@ -4196,7 +4196,7 @@ mod tests {
             })
             .expect("marks");
 
-        let document = editor.to_document(&settings());
+        let document = editor.to_document(&settings()).expect("serialises");
         let restored = Editor::from_document(&document).expect("loads");
         assert!(
             restored.project().media[0].placeholder,
@@ -4226,7 +4226,7 @@ mod tests {
         editor.apply(Command::AddMedia { item }).expect("adds");
         editor.apply(media("/a.mp4", 10.0, true)).expect("adds");
 
-        let document = editor.to_document(&settings());
+        let document = editor.to_document(&settings()).expect("serialises");
         let media = document["media"].as_array().expect("a list");
         assert_eq!(media[0]["origin"], json!("speech"));
         assert!(
@@ -4311,7 +4311,7 @@ mod tests {
             }
         ));
 
-        let document = editor.to_document(&settings());
+        let document = editor.to_document(&settings()).expect("serialises");
         let restored = Editor::from_document(&document).expect("loads");
         assert_eq!(restored.project(), editor.project());
     }
@@ -5560,7 +5560,7 @@ mod tests {
         assert_eq!(link.keys_around("exposure", 0.5), (Some(0.0), Some(1.0)));
         assert!(link.key_at("exposure", 1.0).is_some());
 
-        let document = editor.to_document(&settings());
+        let document = editor.to_document(&settings()).expect("serialises");
         let restored = Editor::from_document(&document).expect("loads");
         let link = &restored
             .project()
@@ -5697,7 +5697,7 @@ mod tests {
             assert_eq!(shape.fill, "#ff8800");
         }
 
-        let document = editor.to_document(&settings());
+        let document = editor.to_document(&settings()).expect("serialises");
         let restored = Editor::from_document(&document).expect("loads");
         assert_eq!(restored.project(), editor.project());
 
@@ -5745,7 +5745,7 @@ mod tests {
                 })
                 .expect("a layer");
         }
-        let mut document = editor.to_document(&settings());
+        let mut document = editor.to_document(&settings()).expect("serialises");
         let clips = document["timelines"][0]["clips"]
             .as_array_mut()
             .expect("clips");

@@ -1681,7 +1681,7 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         Action::PreviewFrame => preview(arguments, backend),
         Action::MotionPresets => crate::motion::presets_list(),
         Action::MotionInspect => crate::motion::inspect(arguments),
-        Action::MotionFrame => crate::motion::frame(arguments),
+        Action::MotionFrame => crate::motion::frame(arguments, backend),
         Action::MotionBake => crate::motion::bake(arguments, backend),
         Action::CaptionsAnimate => crate::motion::captions_animate(arguments, backend),
         Action::WatchRender => crate::sense::watch_render(arguments, backend),

@@ -339,7 +339,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "openvid_search",
             "Search stock clips",
-            "Searches 937,957 stock clips (the Pixabay, Pexels and CelebV shelves cut to 512x512, and the WebVid shelf of 720p and 1080p landscape footage) by what their captions say and by their quality numbers, without watching anything: each match carries the caption, `aesthetic` (0-6), `motion`, `temporal` consistency (0-1), `camera` motion, `fps`, `seconds`, `bytes` (the fetch cost), its shelf and its measured `dims`. Every filter is optional: `query` words are ANDed and prefix-matched (\"ocean sunset\"), `minAesthetic`/`minMotion`/`maxMotion`/`minTemporal` set the quality floor, `minSeconds`/`maxSeconds`/`minFps` the shape, `camera` takes a motion exactly as the library names it, `source` is pixabay/pexels/celebv/other, `orientation` is vertical/horizontal/square (measured from each clip's own MP4 header: the first shape search takes a one-time census of every shelf, a few seconds, after which square finds the three 512x512 shelves and horizontal the WebVid shelf's landscape footage, and nothing vertical has been measured in it), and `sort` is relevance/aesthetic/motion/temporal/shortest/longest/surprise. Returns up to `limit` (default 20, at most 100) from `offset`, with `total` saying how many match in all.",
+            "Searches 937,957 stock clips (the Pixabay, Pexels and CelebV shelves cut to 512x512, and the WebVid shelf of 720p and 1080p landscape footage) by what their captions say and by their quality numbers, without watching anything: each match carries the caption, `aesthetic` (0-6), `motion`, `temporal` consistency (0-1), `camera` motion, `fps`, `seconds`, `bytes` (the fetch cost), its shelf and its measured `dims`. Every filter is optional: `query` words are ANDed and prefix-matched (\"ocean sunset\"), `minAesthetic`/`minMotion`/`maxMotion`/`minTemporal` set the quality floor, `minSeconds`/`maxSeconds`/`minFps` the shape, `camera` takes a motion exactly as the library names it, `source` is pixabay/pexels/celebv/other, `orientation` is vertical/horizontal/square (measured from each clip's own MP4 header: the first shape search takes a one-time census of every shelf, a few seconds, after which square finds the three 512x512 shelves and horizontal the WebVid shelf's landscape footage, and nothing vertical has been measured in it), and `sort` is relevance/aesthetic/motion/temporal/shortest/longest/surprise. Returns up to `limit` (default 20, at most 100) from `offset`, with `total` saying how many match in all. A relevance search of more than ten matches then gets a semantic second pass: a local MobileCLIP2-S0 ONNX model looks at each candidate's real frames (already-fetched clips are read as they are, the rest are fetched once and cached, under a time budget) and re-orders the page by what the clips SHOW, not what their captions say - \"the moment a decision goes wrong\" reaches worried faces and hesitation, not every caption carrying \"decision\". Missing models or wheels leave the BM25 order untouched; the reply's `rerank` says whether it ran (`applied`, `scored`, `ms`) and why not when it did not. The models are two ONNX exports of MobileCLIP2-S0 found under `$FUNCUT_MOBILECLIP` or the app data dir's models/mobileclip2-s0/; the wheels are `pip install onnxruntime numpy transformers`.",
             "openvid.search",
             Raw,
         )
@@ -1618,6 +1618,19 @@ fn edit(op: &str, mut arguments: Value) -> Result<Request, ApiError> {
 fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, ApiError> {
     let backend = context.backend;
     match tool.action {
+        Action::Method { method, reply } if method == "openvid.search" => {
+            // The one search this layer adds a step to: BM25's page, then
+            // the CLIP rerank in sense. The arguments are remembered
+            // before `request` stamps the method into them, because the
+            // rerank reads the caller's query, sort and offset back out.
+            let remembered = arguments.clone();
+            let result = backend.call(request(method, arguments)?)?;
+            let shown = match reply {
+                Reply::Raw => crate::sense::semantic_rerank(&remembered, result, backend),
+                Reply::Summary => summary::view(&result),
+            };
+            Ok(Outcome::json(shown))
+        }
         Action::Method { method, reply } => {
             let result = backend.call(request(method, arguments)?)?;
             let shown = match reply {

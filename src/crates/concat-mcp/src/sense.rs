@@ -12,6 +12,7 @@
 //! temp directory once. The timeline path needs no ffmpeg CLI at all: it
 //! asks `preview.frame` for PNGs and decodes them in Python.
 
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -30,6 +31,10 @@ use crate::tools::Outcome;
 const SENSE_PY: &str = include_str!("../sense/sense.py");
 const VLM_PY: &str = include_str!("../sense/vlm.py");
 const EMOTION_PY: &str = include_str!("../sense/emotion.py");
+/// The semantic search step, at the repo's `analysis/rerank.py`: the CLIP
+/// rerank `openvid_search` runs behind BM25. It lands in the same runtime
+/// directory as the other scripts, so it can import their ffmpeg helpers.
+const RERANK_PY: &str = include_str!("../../../../analysis/rerank.py");
 static RUNTIME: OnceLock<Result<PathBuf, String>> = OnceLock::new();
 static NONCE: AtomicU64 = AtomicU64::new(0);
 
@@ -82,6 +87,7 @@ fn runtime() -> Result<&'static PathBuf, ApiError> {
         fs::write(dir.join("sense.py"), SENSE_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("vlm.py"), VLM_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("emotion.py"), EMOTION_PY).map_err(|e| e.to_string())?;
+        fs::write(dir.join("rerank.py"), RERANK_PY).map_err(|e| e.to_string())?;
         Ok(dir)
     });
     result.as_ref().map_err(failed)
@@ -114,6 +120,14 @@ fn kill_group(leader: u32) {
 /// content the tool exists for, argv was `E2BIG` and the call simply failed.
 fn run(cmd: &str, spec: &Value, timeout: Duration) -> Result<Value, ApiError> {
     let dir = runtime()?;
+    run_py(&dir.join("sense.py"), cmd, spec, timeout)
+}
+
+/// [`run`], naming the script: sense.py for the pixel and sound commands,
+/// rerank.py for the semantic search step - both unpacked into the same
+/// runtime directory, which is what lets one import the other's helpers.
+fn run_py(script: &Path, cmd: &str, spec: &Value, timeout: Duration) -> Result<Value, ApiError> {
+    let dir = runtime()?;
     let n = NONCE.fetch_add(1, Ordering::Relaxed);
     let out_path = dir.join(format!("out-{cmd}-{n}.json"));
     let err_path = dir.join(format!("err-{cmd}-{n}.log"));
@@ -122,7 +136,7 @@ fn run(cmd: &str, spec: &Value, timeout: Duration) -> Result<Value, ApiError> {
     let spec = serde_json::to_string(spec).map_err(failed)?;
     let mut command = Command::new(python());
     command
-        .arg(dir.join("sense.py"))
+        .arg(script)
         .arg(cmd)
         .arg("--spec")
         .arg("-")
@@ -218,6 +232,201 @@ fn run(cmd: &str, spec: &Value, timeout: Duration) -> Result<Value, ApiError> {
         map.insert("stderrTail".to_owned(), json!(tail));
     }
     Ok(value)
+}
+
+/// `openvid_search`'s second half: the BM25 page, re-read by a CLIP.
+///
+/// The index ranks the captions that carry the words; a query like "the
+/// moment a decision goes wrong" deserves the clips that SHOW it. The
+/// rerank runs only when it can: a textless query, a page sorted by
+/// something other than relevance, a page past the first, and a page of
+/// ten or fewer all keep the BM25 order untouched. The shortlist is the
+/// page BM25 gave, capped at fifty; the clips whose files are already
+/// local are scored straight away and the rest are fetched under a time
+/// budget, so a first search pays for a few downloads and every later
+/// one is the ~200ms the model costs. Whatever the Python half answers -
+/// or fails with - lands in the reply as `rerank`, never as an error.
+pub fn semantic_rerank(arguments: &Value, mut found: Value, backend: &mut dyn Backend) -> Value {
+    /// The shortlist the rerank sees: wide enough that the meaning has
+    /// room to be on the page, small enough that scoring it stays cheap.
+    const POOL: usize = 50;
+    /// A page this short is already the answer; ranking it cannot help.
+    const TINY: usize = 10;
+    /// What fetching may cost before the rest keep their BM25 places.
+    const FETCH_BUDGET: Duration = Duration::from_secs(20);
+
+    let query = arguments
+        .get("query")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|query| !query.is_empty());
+    let sort = arguments
+        .get("sort")
+        .and_then(Value::as_str)
+        .unwrap_or("relevance");
+    let offset = arguments.get("offset").and_then(Value::as_u64).unwrap_or(0);
+    if query.is_none()
+        || !sort.eq_ignore_ascii_case("relevance")
+        || offset > 0
+        || !found
+            .get("clips")
+            .and_then(Value::as_array)
+            .is_some_and(|clips| clips.len() > TINY)
+    {
+        return found;
+    }
+    let Some(query) = query else {
+        return found;
+    };
+    let page: Vec<Value> = found
+        .get("clips")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut page = page.into_iter();
+    let shortlist: Vec<Value> = page.by_ref().take(POOL).collect();
+    let rest: Vec<Value> = page.collect();
+
+    // Two looks per clip, early and middle, the sheet's own timing; a
+    // clip too short for two gets one. Files already local are read as
+    // they are; the rest are fetched until the budget runs out, and the
+    // clips it left behind keep their BM25 places.
+    let deadline = Instant::now() + FETCH_BUDGET;
+    let mut frames: Vec<Value> = Vec::new();
+    let mut fetched = 0_usize;
+    for clip in &shortlist {
+        let Some(id) = clip.get("id").and_then(Value::as_i64) else {
+            continue;
+        };
+        let seconds = clip.get("seconds").and_then(Value::as_f64).unwrap_or(2.0);
+        let mut path = clip
+            .get("localPath")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        if path.is_none() && Instant::now() < deadline {
+            match backend.call(request("openvid.fetch", json!({ "id": id }))) {
+                Ok(reply) => {
+                    let list = reply.as_array().cloned().unwrap_or_else(|| {
+                        reply
+                            .get("clips")
+                            .and_then(Value::as_array)
+                            .cloned()
+                            .unwrap_or_default()
+                    });
+                    path = list
+                        .first()
+                        .and_then(|clip| clip.get("localPath"))
+                        .and_then(Value::as_str)
+                        .map(str::to_owned);
+                    if path.is_some() {
+                        fetched += 1;
+                    }
+                }
+                Err(_) => continue,
+            }
+        }
+        let Some(path) = path else {
+            continue;
+        };
+        frames.push(json!({
+            "id": id,
+            "path": path.clone(),
+            "at": (seconds * 0.35).clamp(0.0, 1.5),
+        }));
+        if seconds > 1.2 {
+            frames.push(json!({
+                "id": id,
+                "path": path,
+                "at": (seconds * 0.65).clamp(0.0, 3.0),
+            }));
+        }
+    }
+    if frames.is_empty() {
+        if let Some(slot) = found.as_object_mut() {
+            slot.insert(
+                "rerank".into(),
+                json!({ "applied": false, "reason": "no candidate frames were reachable" }),
+            );
+        }
+        return found;
+    }
+
+    let script = match runtime() {
+        Ok(dir) => dir.join("rerank.py"),
+        Err(error) => {
+            if let Some(slot) = found.as_object_mut() {
+                slot.insert(
+                    "rerank".into(),
+                    json!({ "applied": false, "reason": error.to_string() }),
+                );
+            }
+            return found;
+        }
+    };
+    // The shortlist's ids in the order BM25 gave them: whatever the reply
+    // never named goes back into that order, not a hash map's.
+    let ids_in_order: Vec<i64> = shortlist
+        .iter()
+        .filter_map(|clip| clip.get("id").and_then(Value::as_i64))
+        .collect();
+    let mut by_id: HashMap<i64, Value> = HashMap::new();
+    for clip in &shortlist {
+        if let Some(id) = clip.get("id").and_then(Value::as_i64) {
+            by_id.insert(id, clip.clone());
+        }
+    }
+    let spec = json!({
+        "query": query,
+        "frames": frames,
+        "candidates": shortlist,
+        "autoSetup": true,
+    });
+    match run_py(&script, "rerank", &spec, Duration::from_secs(240)) {
+        Ok(reply) => {
+            let order: Vec<i64> = reply
+                .get("order")
+                .and_then(Value::as_array)
+                .map(|list| list.iter().filter_map(Value::as_i64).collect())
+                .unwrap_or_default();
+            let mut ordered: Vec<Value> = Vec::with_capacity(order.len() + rest.len());
+            for id in &order {
+                if let Some(clip) = by_id.remove(id) {
+                    ordered.push(clip);
+                }
+            }
+            for id in &ids_in_order {
+                if let Some(clip) = by_id.remove(id) {
+                    ordered.push(clip);
+                }
+            }
+            ordered.extend(by_id.into_values());
+            ordered.extend(rest);
+            let scored = reply.get("scored").and_then(Value::as_u64).unwrap_or(0);
+            let ms = reply.get("ms").and_then(Value::as_u64).unwrap_or(0);
+            if let Some(slot) = found.as_object_mut() {
+                slot.insert("clips".into(), Value::Array(ordered));
+                slot.insert(
+                    "rerank".into(),
+                    json!({
+                        "applied": true,
+                        "engine": "mobileclip2-s0",
+                        "scored": scored,
+                        "fetched": fetched,
+                        "ms": ms,
+                    }),
+                );
+            }
+        }
+        Err(error) => {
+            if let Some(slot) = found.as_object_mut() {
+                slot.insert(
+                    "rerank".into(),
+                    json!({ "applied": false, "reason": error.to_string() }),
+                );
+            }
+        }
+    }
+    found
 }
 
 /// An image plus its compact JSON reading. `pngB64` stays in the image block

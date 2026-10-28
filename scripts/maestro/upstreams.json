@@ -1,0 +1,426 @@
+{
+  "$comment": "Upstream sources maestro distills from. `watch` = repo paths whose commits matter; `feeds` = maestro reference modules each upstream informs; `pins` = last commit per watched path at distillation time (managed by scripts/check-upstreams.mjs --pin).",
+  "upstreams": [
+    {
+      "name": "impeccable",
+      "repo": "pbakaus/impeccable",
+      "$comment": "Watch the knowledge layer only. `skill/scripts/` is the Live in-browser iteration toolchain — operational code maestro never distills (companions.md points at it by name, not by API), so watching it produced drift alarms with zero re-distillation work. Lowest authority on design conflicts (taste-skill > hallmark > impeccable). Reference corpus also vendored in skills/maestro/library/impeccable/ (Apache-2.0, LICENSE + NOTICE carried).",
+      "watch": [
+        "skill/reference",
+        "skill/SKILL.src.md"
+      ],
+      "feeds": [
+        "commands.md",
+        "design-foundations.md",
+        "design-direction.md",
+        "design-dna.md",
+        "design-audit.md",
+        "motion-principles.md",
+        "process.md"
+      ],
+      "pins": {
+        "skill/reference": {
+          "sha": "6fe900dbb47a649ffd54044d4ac16ce04618ddbe",
+          "date": "2026-09-01T04:22:49Z"
+        },
+        "skill/SKILL.src.md": {
+          "sha": "6fe900dbb47a649ffd54044d4ac16ce04618ddbe",
+          "date": "2026-09-01T04:22:49Z"
+        }
+      }
+    },
+    {
+      "name": "genjutsu",
+      "repo": "AThevon/genjutsu",
+      "watch": [
+        "skills/_jutsu/canvas-generative",
+        "skills/_jutsu/compose-graphics",
+        "skills/_jutsu/compose-motion",
+        "skills/_jutsu/compose-multiplatform",
+        "skills/_jutsu/css-native",
+        "skills/_jutsu/design-audit",
+        "skills/_jutsu/desktop-principles",
+        "skills/_jutsu/framer-motion",
+        "skills/_jutsu/gsap",
+        "skills/_jutsu/mobile-principles",
+        "skills/_jutsu/motion-principles",
+        "skills/_jutsu/swiftui-graphics",
+        "skills/_jutsu/swiftui-motion",
+        "skills/_jutsu/threejs-r3f"
+      ],
+      "feeds": [
+        "design-direction.md",
+        "design-audit.md",
+        "motion-principles.md",
+        "motion-web.md",
+        "gsap.md",
+        "threejs.md",
+        "creative-coding.md",
+        "platform-native.md"
+      ],
+      "pins": {
+        "skills": {
+          "sha": "642e857d2807e273a2e72e02cdbc10fbcb058e66",
+          "date": "2026-07-18T20:04:52Z"
+        },
+        "skills/_jutsu/canvas-generative": {
+          "sha": "0c6ea76072736913321a37112e4a32e23d371f8b",
+          "date": "2026-04-26T09:36:33Z"
+        },
+        "skills/_jutsu/compose-graphics": {
+          "sha": "0c6ea76072736913321a37112e4a32e23d371f8b",
+          "date": "2026-04-26T09:36:33Z"
+        },
+        "skills/_jutsu/compose-motion": {
+          "sha": "bd12dac0847c9f98667bba782123445a6c6d4728",
+          "date": "2026-07-24T04:29:58Z"
+        },
+        "skills/_jutsu/compose-multiplatform": {
+          "sha": "bd12dac0847c9f98667bba782123445a6c6d4728",
+          "date": "2026-07-24T04:29:58Z"
+        },
+        "skills/_jutsu/css-native": {
+          "sha": "3e1b138048c34cbffd1d21df5313437cc54fb942",
+          "date": "2026-07-24T04:40:12Z"
+        },
+        "skills/_jutsu/design-audit": {
+          "sha": "bd12dac0847c9f98667bba782123445a6c6d4728",
+          "date": "2026-07-24T04:29:58Z"
+        },
+        "skills/_jutsu/desktop-principles": {
+          "sha": "0c6ea76072736913321a37112e4a32e23d371f8b",
+          "date": "2026-04-26T09:36:33Z"
+        },
+        "skills/_jutsu/framer-motion": {
+          "sha": "0c6ea76072736913321a37112e4a32e23d371f8b",
+          "date": "2026-04-26T09:36:33Z"
+        },
+        "skills/_jutsu/gsap": {
+          "sha": "bd12dac0847c9f98667bba782123445a6c6d4728",
+          "date": "2026-07-24T04:29:58Z"
+        },
+        "skills/_jutsu/mobile-principles": {
+          "sha": "bd12dac0847c9f98667bba782123445a6c6d4728",
+          "date": "2026-07-24T04:29:58Z"
+        },
+        "skills/_jutsu/motion-principles": {
+          "sha": "a41ae8b04334e7edce6c4289d9068aa65cf5a24e",
+          "date": "2026-07-24T04:30:01Z"
+        },
+        "skills/_jutsu/swiftui-graphics": {
+          "sha": "bd12dac0847c9f98667bba782123445a6c6d4728",
+          "date": "2026-07-24T04:29:58Z"
+        },
+        "skills/_jutsu/swiftui-motion": {
+          "sha": "bd12dac0847c9f98667bba782123445a6c6d4728",
+          "date": "2026-07-24T04:29:58Z"
+        },
+        "skills/_jutsu/threejs-r3f": {
+          "sha": "0c6ea76072736913321a37112e4a32e23d371f8b",
+          "date": "2026-04-26T09:36:33Z"
+        }
+      },
+      "$comment": "Watch the 14 fed sub-skills individually. Excluded on purpose: skills/_jutsu/ui-ux-pro-max (Python tooling + CSV data), skills/cast and skills/paint (orchestrator plumbing) — together 93% of the last drift and zero maestro edits. The checker passes each path to GitHub's commits?path= prefix API, so exclusion can only be expressed by enumerating what to include."
+    },
+    {
+      "name": "gsap-skills",
+      "repo": "greensock/gsap-skills",
+      "watch": [
+        "skills"
+      ],
+      "feeds": [
+        "gsap.md"
+      ],
+      "pins": {
+        "skills": {
+          "sha": "a9d6270b6a09827c74ac2d7bfe2a55adaf5fd597",
+          "date": "2026-04-21T23:28:34Z"
+        }
+      }
+    },
+    {
+      "name": "threejs-skills",
+      "repo": "CloudAI-X/threejs-skills",
+      "watch": [
+        "skills"
+      ],
+      "feeds": [
+        "threejs.md"
+      ],
+      "pins": {
+        "skills": {
+          "sha": "260ead4214960c21a74952b54a61184a4708becf",
+          "date": "2026-01-19T21:03:58Z"
+        }
+      }
+    },
+    {
+      "name": "design-dna",
+      "repo": "zanwei/design-dna",
+      "watch": [
+        "SKILL.md",
+        "references"
+      ],
+      "feeds": [
+        "design-dna.md"
+      ],
+      "pins": {
+        "SKILL.md": {
+          "sha": "593e39bc9e3652734653bd75544a333d7d43615e",
+          "date": "2026-08-28T01:58:49Z"
+        },
+        "references": {
+          "sha": "593e39bc9e3652734653bd75544a333d7d43615e",
+          "date": "2026-08-28T01:58:49Z"
+        }
+      }
+    },
+    {
+      "name": "motion-design-skill",
+      "repo": "lottiefiles/motion-design-skill",
+      "watch": [
+        "skills"
+      ],
+      "feeds": [
+        "motion-principles.md"
+      ],
+      "pins": {
+        "skills": {
+          "sha": "b6606e101601ef027f01729a7289e97c329ad0cd",
+          "date": "2026-03-12T09:23:58Z"
+        }
+      }
+    },
+    {
+      "name": "remotion",
+      "repo": "remotion-dev/remotion",
+      "$comment": "Watch packages/skills/skills, one segment narrower than packages/skills — the parent also holds package.json, whose version bumps every release and would drift the pin unconditionally.",
+      "watch": [
+        "packages/skills/skills"
+      ],
+      "feeds": [
+        "video-remotion.md"
+      ],
+      "pins": {
+        "packages/skills": {
+          "sha": "1f7af39b9db3cef7bdc97cd9c4ec3e02091157bb",
+          "date": "2026-07-19T17:33:30Z"
+        },
+        "packages/skills/skills": {
+          "sha": "af717290f3561232a4597825cbd828e236ed8144",
+          "date": "2026-09-01T10:09:51Z"
+        }
+      }
+    },
+    {
+      "name": "taste-skill",
+      "repo": "Leonxlnx/taste-skill",
+      "$comment": "Highest-authority design source on conflicts (taste-skill > hallmark > impeccable). Watch skills/ only — research/ is LLM-behavior material maestro does not distill. Corpus also vendored verbatim in skills/maestro/library/taste-skill/ (MIT).",
+      "watch": [
+        "skills"
+      ],
+      "feeds": [
+        "commands.md",
+        "design-audit.md",
+        "design-direction.md",
+        "design-foundations.md",
+        "design-dna.md",
+        "toolbox.md",
+        "motion-web.md",
+        "gsap.md",
+        "process.md"
+      ],
+      "pins": {
+        "skills": {
+          "sha": "0d0aca956ce8c6d268b30ad74e5d93ff829f819b",
+          "date": "2026-06-12T15:10:26Z"
+        }
+      }
+    },
+    {
+      "name": "video-shotcraft",
+      "repo": "Vincentwei1021/video-shotcraft",
+      "$comment": "Authoritative for product-demo video craft; does not participate in the design-taste hierarchy. Watch everything maestro re-vendors: demos/ and template/src/ are the tuned parameter truth the shot cards point at (knowledge, not tooling), so they must fire drift. Not vendored and not watched: gallery/ (108MB previews), template/out/ + template/public/ (22MB), audio binaries. Split documented in skills/maestro/library/video-shotcraft/VENDOR-NOTES.md.",
+      "watch": [
+        "references",
+        "demos",
+        "template/src",
+        "assets/lib",
+        "SKILL.md"
+      ],
+      "feeds": [
+        "video-shotcraft.md",
+        "video-sound.md",
+        "video-direction.md",
+        "commands.md"
+      ],
+      "pins": {
+        "references": {
+          "sha": "6c116cbd24eeb43c99d396696b509f8d88e58789",
+          "date": "2026-09-01T18:08:43Z"
+        },
+        "SKILL.md": {
+          "sha": "6c116cbd24eeb43c99d396696b509f8d88e58789",
+          "date": "2026-09-01T18:08:43Z"
+        },
+        "demos": {
+          "sha": "6c116cbd24eeb43c99d396696b509f8d88e58789",
+          "date": "2026-09-01T18:08:43Z"
+        },
+        "template/src": {
+          "sha": "741938f1a8159b274a7164b95ed6d1f0e0513c69",
+          "date": "2026-07-19T05:45:41Z"
+        },
+        "assets/lib": {
+          "sha": "368792f2a4b3d8b57e65eda6e2cfec4a1a6ff811",
+          "date": "2026-08-21T18:55:03Z"
+        }
+      }
+    },
+    {
+      "name": "hyperframes",
+      "repo": "heygen-com/hyperframes",
+      "watch": [
+        "skills/hyperframes-core",
+        "skills/hyperframes-cli",
+        "skills/hyperframes-creative",
+        "skills/hyperframes-animation",
+        "skills/hyperframes-keyframes",
+        "skills/hyperframes-registry",
+        "skills/hyperframes/SKILL.md"
+      ],
+      "feeds": [
+        "video-direction.md",
+        "video-hyperframes.md",
+        "video-sound.md",
+        "motion-web.md",
+        "gsap.md",
+        "companions.md"
+      ],
+      "pins": {
+        "skills": {
+          "sha": "49113eb08487b2c53b7404bc26c5e419244ae97f",
+          "date": "2026-07-18T08:36:36Z"
+        },
+        "skills/hyperframes-core": {
+          "sha": "b2fc18b2df60fd9049cb694c97c45104ee5b4e0d",
+          "date": "2026-08-24T22:04:39Z"
+        },
+        "skills/hyperframes-cli": {
+          "sha": "45cc3435254c44abe7b21bc8e996bbef32365fe6",
+          "date": "2026-09-01T04:41:57Z"
+        },
+        "skills/hyperframes-creative": {
+          "sha": "a6a9e2f89e509424a64a1dcd976aabfd54b60d02",
+          "date": "2026-08-20T06:21:31Z"
+        },
+        "skills/hyperframes-animation": {
+          "sha": "b2fc18b2df60fd9049cb694c97c45104ee5b4e0d",
+          "date": "2026-08-24T22:04:39Z"
+        },
+        "skills/hyperframes-keyframes": {
+          "sha": "afafca4b9670cad60afd66475207ef6a016a759b",
+          "date": "2026-08-18T14:17:02Z"
+        },
+        "skills/hyperframes-registry": {
+          "sha": "6b17c24f980f9514345c8c882b00477328dbc3e6",
+          "date": "2026-08-17T21:20:22Z"
+        },
+        "skills/hyperframes/SKILL.md": {
+          "sha": "2685c8f2231e39da31871f25b2e4609551a78c76",
+          "date": "2026-08-24T02:19:27Z"
+        }
+      },
+      "$comment": "Watch the six core skills maestro distills, plus the router SKILL.md whose route table is the one file any workflow add/rename/remove must touch - that single file preserves the companions.md signal while dropping the workflow pipelines maestro only name-checks."
+    },
+    {
+      "name": "higgsfield-skills",
+      "repo": "higgsfield-ai/skills",
+      "$comment": "First-party generative-media skills. THE BASELINE for generative mechanics: CLI syntax, model IDs, flags, parameter enums, error strings, Marketing Studio object model, Soul ID chaining. maestro's generative modules distil its planning/prompt doctrine into their own prose and override it in exactly three places (cost consent, engine-is-the-user's-pick, ledger outlives the platform) - see references/generative-engines.md. Whole repo vendored to skills/maestro/library/higgsfield-skills/ (MIT, LICENSE carried; binary assets and CI excluded).",
+      "watch": [
+        "higgsfield-generate",
+        "higgsfield-brandkit",
+        "higgsfield-product-photoshoot",
+        "higgsfield-youtube-thumbnail",
+        "higgsfield-soul-id",
+        "higgsfield-websites",
+        "higgsfield-marketplace-cards",
+        "higgsfield-video-explainer"
+      ],
+      "feeds": [
+        "generative-engines.md",
+        "generative-direction.md",
+        "generative-stills.md",
+        "generative-video.md",
+        "generative-production.md",
+        "brand-systems.md",
+        "generative-web.md",
+        "companions.md"
+      ],
+      "pins": {
+        "higgsfield-generate": {
+          "sha": "fb18134b4aabe99c4bf7ff01c8f4883400efc80d",
+          "date": "2026-08-07T17:24:21Z"
+        },
+        "higgsfield-brandkit": {
+          "sha": "eeeb434c03ba6939d3da24dba2e9d6b877cd7404",
+          "date": "2026-08-03T20:26:26Z"
+        },
+        "higgsfield-product-photoshoot": {
+          "sha": "ce08d21be072783697e38380749dbf893865c7a3",
+          "date": "2026-07-06T18:06:29Z"
+        },
+        "higgsfield-youtube-thumbnail": {
+          "sha": "942f239492c05fb07fbb6864327b4af214dbf80a",
+          "date": "2026-08-03T18:36:48Z"
+        },
+        "higgsfield-soul-id": {
+          "sha": "ce08d21be072783697e38380749dbf893865c7a3",
+          "date": "2026-07-06T18:06:29Z"
+        },
+        "higgsfield-websites": {
+          "sha": "aaa82dbda00bc312722418fc594d27ceaa9ca7af",
+          "date": "2026-08-07T17:16:35Z"
+        },
+        "higgsfield-marketplace-cards": {
+          "sha": "ce08d21be072783697e38380749dbf893865c7a3",
+          "date": "2026-07-06T18:06:29Z"
+        },
+        "higgsfield-video-explainer": {
+          "sha": "d63d77e6997c64065b108fc507efa8bac42e5555",
+          "date": "2026-07-16T17:38:55Z"
+        }
+      }
+    },
+    {
+      "name": "comfy-skills",
+      "repo": "Comfy-Org/comfy-skills",
+      "$comment": "First-party ComfyUI agent skills + the comfy-cloud Claude Code plugin. THE BASELINE for ComfyUI mechanics: template vs node routing, the OSS/partner split, search_* discovery, save-node validation, hardware gating. Its evidence-precedence rule is absorbed into references/generative-engines.md and cockpit's grilling skill. Whole repo vendored to skills/maestro/library/comfy-skills/ (MIT, LICENSE carried).",
+      "watch": [
+        "skills",
+        "claude-code/commands",
+        "openclaw/comfy"
+      ],
+      "feeds": [
+        "generative-engines.md",
+        "generative-video.md",
+        "generative-stills.md",
+        "companions.md"
+      ],
+      "pins": {
+        "skills": {
+          "sha": "9cc425628ff67e2d62300b68472f3c119e6d9967",
+          "date": "2026-08-20T01:27:14Z"
+        },
+        "claude-code/commands": {
+          "sha": "ab5a0cafdf1bd4bf6cbe7e9ddddf93bd4faf40b9",
+          "date": "2026-08-07T21:25:41Z"
+        },
+        "openclaw/comfy": {
+          "sha": "ab5a0cafdf1bd4bf6cbe7e9ddddf93bd4faf40b9",
+          "date": "2026-08-07T21:25:41Z"
+        }
+      }
+    }
+  ]
+}

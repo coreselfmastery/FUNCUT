@@ -87,6 +87,14 @@ forge skill install coreselfmastery/FUNCUT
 also has `forge import claude` for skills you already have there.) Verify:
 `forge commands` lists `funcut-director`.
 
+A second skill ships beside it: **maestro** (`.claude/skills/maestro/`), a
+design, motion and video judgment library — 28 reference modules plus ten
+vendored corpora, including a 157-card product-shot vocabulary,
+engine-agnostic motion principles, and a sound-design and beat-sync method.
+The same `forge skill install coreselfmastery/FUNCUT` picks it up, and the
+director's skill routes into it phase by phase (its §6; the full map is
+[docs/MAESTRO.md](../MAESTRO.md)).
+
 ## 5. First run
 
 Ask for a whole faceless video, end to end — the skill drives the pipeline:

@@ -55,7 +55,7 @@ Everything runs locally on a native Rust engine with a GPU compositor. Install i
 
 **Good for:** TikTok, Reels and Shorts, YouTube videos, tutorials and screen recordings, podcast clips, memes.
 
-**Also for machines:** a built-in MCP server for AI agents (`concat --mcp`, [set up](docs/MCP.md)) and a JSON-RPC API for scripts, so they can cut video with it too. The agents get senses as well - scene cuts, beat grids, dead air, transcription and a spoken voiceover, all MCP jobs - and a director's brain ships in this repo: the [funcut-director skill](docs/forge/FORGE.md), one `forge run` from a finished faceless video.
+**Also for machines:** a built-in MCP server for AI agents (`concat --mcp`, [set up](docs/MCP.md)) and a JSON-RPC API for scripts, so they can cut video with it too. The agents get senses as well - scene cuts, beat grids, dead air, transcription and a spoken voiceover, all MCP jobs - and a director's brain ships in this repo: the [funcut-director skill](docs/forge/FORGE.md), one `forge run` from a finished faceless video. A second skill, [maestro](docs/MAESTRO.md), rides beside it with the design, motion and film judgment - a 157-shot vocabulary, motion principles and a sound-design method the director draws on phase by phase.
 
 ## Highlights
 
@@ -73,7 +73,7 @@ Everything runs locally on a native Rust engine with a GPU compositor. Install i
 - 🎙️ **One-switch voice cleanup.** Denoise, enhance voice, level the loudness. Plus chipmunk, robot, telephone and friends.
 - 📤 **Export.** H.264, HEVC, AV1. Up to 4K 60, 10-bit colour.
 - 🦀 **Native Rust engine.** GPU compositor, proxies, hardware decode. 4K scrubs smoothly.
-- 🤖 **Scriptable.** An MCP server built in, so Claude and other AI agents can edit with it ([one line to set up](docs/MCP.md)), and a JSON-RPC API for scripts. A build from source adds gRPC and a command-line tool. With the [Forge harness](docs/forge/FORGE.md) and the [funcut-director skill](.claude/skills/funcut-director/SKILL.md) an agent directs a whole video from a script - and the editor's Forge page starts one with a click.
+- 🤖 **Scriptable.** An MCP server built in, so Claude and other AI agents can edit with it ([one line to set up](docs/MCP.md)), and a JSON-RPC API for scripts. A build from source adds gRPC and a command-line tool. With the [Forge harness](docs/forge/FORGE.md) and the [funcut-director skill](.claude/skills/funcut-director/SKILL.md) an agent directs a whole video from a script - with [maestro](docs/MAESTRO.md), the design-and-motion judgment skill, riding shotgun - and the editor's Forge page starts one with a click.
 - 🖥️ **Linux.** x86_64 and ARM. 26 languages. Same app, same project files.
 
 ## Download

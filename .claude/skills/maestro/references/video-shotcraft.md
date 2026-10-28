@@ -1,0 +1,152 @@
+# Video Shotcraft
+
+*The lead for product demo and promo video: a 157-card shot vocabulary with tuned reference implementations, a mode gate, an eight-stage pipeline, and a real-screenshot doctrine. Renders through Remotion — this is the craft layer above `video-remotion.md`, not a replacement for it.*
+
+## When shotcraft leads
+
+| Job | Lead |
+|---|---|
+| Product demo, launch promo, feature tour built from a real app or site | **This module** — pick a mode, then run the pipeline |
+| One cinematic moment inside any other video | **This module's shot cards** — pull one card, adapt it, ignore the rest |
+| Story/beat/pacing planning before an engine is chosen | `video-direction.md` (engine-neutral; still the planning layer) |
+| HTML-native composition, agent-driven CLI loop, HyperFrames project | `video-hyperframes.md` |
+| Remotion API surface, determinism mechanics, rendering | `video-remotion.md` (shotcraft builds on it) |
+| Sound design and beat-sync for any of the above | `video-sound.md` |
+
+Shotcraft's focus is web/desktop product film. The cards themselves are general motion vocabulary — a single card is worth pulling into any video regardless of engine, as long as you adapt rather than transplant.
+
+## The mode gate — settle it before anything else
+
+**Where this sits.** `process.md` §1b picks the film kind — choosing the product film is what selects shotcraft — and §3a's direction round runs next, narrowing on free text directions before one finalist styleframe. Only then does the mode gate below decide how the *rest* of the pipeline is gated. **Autonomous mode is the user delegating the direction pick, not the round ceasing to exist**: choose the direction, state it in one line, record the waiver, and go.
+
+Three modes for a full promo. They do not merge. Decide before asset capture, storyboard, or a line of code; if the user already chose, execute that and do not re-ask or silently switch.
+
+| Mode | The user gets | The agent does |
+|---|---|---|
+| **Template** | Close to the reference film | Follow `library/video-shotcraft/template/TEMPLATE.md`'s replace-guide shot by shot — swap screenshots, copy, brand. The template's source is vendored and readable; rendering it needs the upstream clone for its textures |
+| **Autonomous** | A new direction, no interruptions | Derive visual direction, shot mapping, storyboard, assets, and audio; record decisions and run straight through to the cut without stage-gates |
+| **Co-creation** | Control of the creative calls | Propose with evidence, then pause for user sign-off at product brief → requirement decisions → visual direction → shot mapping → final storyboard; then continue into the pipeline's asset capture |
+
+When the user supplies a project, URL, recording, or screenshots but hasn't chosen: run one **minimal read-only product inspection** (positioning, core features, page visuals, presentable states, asset risks — no edits to their project, no sensitive data, no video code). Then present all three modes with a specific recommendation and its trade-offs, and point them at the hosted gallery to pick shots by watching them: <https://vincentwei1021.github.io/video-shotcraft/library.html>. Always send the hosted one — the preview clips are no longer stored in the repository, so a local gallery has to fetch its media first and is the fallback, not the default. Wait for the pick — never default a mode.
+
+Two standing exceptions: naming the template means template mode is chosen; naming specific shot cards fixes those as constraints (resolve the names, read each card in full, locate its exact demo) but still leaves autonomous-vs-co-creation open for a full film. In co-creation, "you decide" or "skip the confirmations" switches the run to autonomous — record the switch and stop asking; don't claim autonomy while still gating.
+
+## Core doctrine
+
+1. **Real pages demand real screenshots.** To show an existing product, start a local dev server and capture full-page 2× textures, element-level cutouts, and a coordinate table. Hand-built UI is allowed only for non-reproduction scenes (abstract openers, brand segments, standalone display components) and only if it reaches publication quality and reads unambiguously; otherwise fall back to capture. Handle page data by risk: public demo data only after the brief confirms it; customer, personal, internal, credential, or live data must be fictionalized or masked, and frozen before capture.
+2. **The film's visual language grows from the product.** Before styleframes, extract a design spec from the product's own system, source, or computed styles — families, weights, size ramp, line-height/tracking, grid, spacing, alignment, density, radii, and background/surface/body/accent/state colors, gradients, materials. Every title, caption, number, card, transition, particle, and light effect reuses or conservatively extends those tokens. From a template or a card, inherit only shot structure, motion grammar, rhythm, and tuned parameters — reskin type, layout, color, and material to the target product. Deviating from the product's visuals for narrative reasons needs a stated reason (user-confirmed in co-creation, written into the spec in autonomous).
+3. **Cinematic comes from camera, light, rhythm, and sound — not from tricky animation.** What repeatedly earns approval: one protagonist with a complete action arc (spotlight → push-in → hover → reseat), acceleration driven by a physical metaphor (dealing cards), an oblique orbiting close-up, and the riser → impact → sparkle sound phrase. Batch entrances land through motion itself, not per-item glints — decorative glow sprayed across a group reads cheap; one high-quality light moment does not.
+4. **One move per shot; after key information lands, breathe.** A given technique (fly-in, stacking, page-turn) headlines exactly once per film; cut repeated shots and repeated taglines. The pacing bias is one-directional: every round of real feedback said *slower / hold longer*, never "too slow". Budget the rest frames **before** laying in motion — brand lockup holds ≥1s, batch moves end with 0.5s of stillness, an opening protagonist gets a full 3s arc.
+5. **Using a card means reading its exact demo source.** The card gives semantics and a parameter table; the tuned demo is where the truth lives (easing, duration ratios, mask timing, the workaround for each known trap). Resolve the card name, read the card in full, then open the implementation it names. Adapting is expected; downgrading a parameter the card flags as load-bearing is not — quality ratchets up only. Writing fresh from the card name alone discards every round of tuning behind it.
+6. **Strong-beat BGM means everything cuts on the beat.** Music is chosen *before* the storyboard, not after it — it is the clock, and a track picked late means re-cutting picture. Analyze rhythm first and write the timeline in beat numbers. Analysis alone is no longer the bar: the fitted grid must **pass an acceptance gate** against real transients before storyboarding begins, and a grid that fails is not a grid to build on. Pin dense regular cuts to the grid and sparse featured accents to the real transient. Full method in `video-sound.md`.
+7. **Determinism.** No `Date.now()`, no `Math.random()`; seed every pseudo-random value (hash or `mulberry32`, seed derived from index) so frames reproduce exactly. This is maestro constitution rule 11 and the Remotion module's law both.
+8. **Verification runs throughout, and the final review is somebody else's job.** From implementation onward, still-frame each shot and re-render + extract frames after each revision round. Before delivery, hand a clean-context reviewer the cut, key frames, the brief, decisions, visual direction, shot mapping, card names and variants, the exact demo sources, the storyboard, and the aesthetic rules — the maker is biased about their own output, so the first review is never the user's job.
+
+## Shot cards — the vocabulary
+
+157 cards in `library/video-shotcraft/references/shots/<category>/`, each with frontmatter carrying **name · one-line description · when to use · duration · energy**, then intent, motion core, a parameter table with tuning feel, sound notes, and known traps. Read in full only the ones you pick.
+
+**The cards and every other vendored file are Chinese-language source** (the frontmatter keys below are `name` / `一句话` / `适用` / `时长` / `能量`). Read them in the original — the parameter tables and known-traps sections are the value, and a translation round-trip is where precision goes missing.
+
+Cards and demos are filed under the same ten functional categories, so a narrative slot maps straight to a directory. Each card belongs to exactly one; cross-over cards are filed by what they're most often used *for* (a speed-ramp freeze is rhythm, not camera).
+
+| Category | Owns |
+|---|---|
+| `opening/` | Openers and brand — establishing the film, wordmark and key-visual entrances |
+| `typography/` | Type and title cards — headlines, taglines, chapter breaks, their entrance and rhythm |
+| `ui-entrance/` | Interface arrival and display — UI, card walls, lists materializing, flooding in, massing |
+| `camera/` | Camera and space — 2.5D/3D lensing: push, pull, pan, tilt, surface grazes |
+| `data/` | Data and metrics — charts, number reveals, KPI and milestone narration |
+| `interaction/` | Interaction and feature demo — action chains, AI responses, input and toggle shots |
+| `transition/` | Seams — every between-shot technique; the technique cards concentrate here |
+| `rhythm/` | Rhythm and montage — beat cuts, cut patterns, segment breathing, speed control |
+| `effects/` | Light and emphasis — sweeps, neon, hit feedback; the emphasis layer over everything |
+| `outro/` | Endings — closing collapse, group photo, UI-to-brand morphs |
+
+Don't open 157 files to choose. Scan one category's frontmatter per narrative slot, or harvest the lot in one pass:
+
+```bash
+# one-line summary of every card: name, what it's for, duration, energy
+awk '/^---$/{f=!f; next} f' library/video-shotcraft/references/shots/*/*.md
+# or scan a single slot's category
+awk '/^---$/{f=!f; next} f' library/video-shotcraft/references/shots/transition/*.md
+```
+
+Within a category, card names are descriptive — `*-transitions` and `*-wipe` for seam work, `*-camera-moves` and `crane`/`crash-zoom`/`graze`/`steep-tilt` for lensing, `type-*`/`typewriter`/`letterspace`/`text-*` for typography, `*-title`/`brand-*` for openers, `*-moves` for reusable technique families. When a user picks from the hosted gallery they'll hand you a card name (optionally `card · style`); resolve it to its category and file rather than reinterpreting the name.
+
+Defaults per segment (a single-instance precedent, labelled as such upstream — starting points, not mandates): brand open → `brand-ink-open`; protagonist → `spotlight-hero-card`; feature climb → `deck-deal-flyin`, `type-and-filter`, `list-stack-press`, `row-embed`, `document-typewriter-reveal`; breather → `paper-title-card`; finale → `outro-group-photo-launch`. Seams between chosen shots get their transition style picked last, from the transition cards, with those frames drawn from the neighbouring shots' budgets.
+
+Where each card's implementation lives: **every one of the 157 resolves to `library/video-shotcraft/demos/<category>/<name>/`** — same category as the card. That is a change: the nine energy-arc defaults used to be implemented only inside the reference film, and upstream has since given them their own demos. The template source stays vendored anyway, because `template/src/aifl/Main.tsx` is the SFX pin table the whole sound methodology is drawn from. Every card still names its own path in its *参考实现* section — read that rather than assuming the demo directory, since a card is free to point elsewhere.
+
+Selection order: pick the film's energy skeleton first, then fill each slot from the cards. The default skeleton for a 30–60s multi-feature product film (`library/video-shotcraft/references/sequences/promo-energy-arc.md`):
+
+| Segment | Share | Energy | Job |
+|---|---|---|---|
+| Brand open | 8–12% | Low | Wordmark stamps, holds ≥1s, hands off to the product |
+| Single protagonist | 12–15% | Medium, slowest and richest | One subject, one complete ≥3s arc — establishes the product's atomic unit |
+| Feature climb | 55–65% | Alternating high/low | One unique feature per shot, one technique headlining once, breather title cards between |
+| Finale | 13–16% | Peak | Elements from every shown feature assemble around the wordmark; sign-off holds ≥1s |
+
+Breather title cards run 50–55 frames (~1.8s), 2–4 per film, one after every 1–2 feature shots. Allocate frames by subtracting the fixed segments and the cards first, then splitting the remainder across feature shots — and inside each shot, carve out the hold/rest frames before laying in motion. Alternate high-energy shots with steady ones; the densest shot (documents, reports) sits second or third from the end. Treat the ratios as a well-evidenced default, not a law — short films should merge segments deliberately, but never drop the opening hold or the peak finale.
+
+## Aesthetic rules — the standard
+
+`library/video-shotcraft/references/aesthetic-rules.md` codifies the standard as precedents in five families: **R** rhythm, **Q** texture/camera/composition, **S** sound, **C** copy, **P** process. The load-bearing ones beyond the doctrine above:
+
+- **Text meant to be read has a minimum effective height** — captions ≥5% of frame height (≥56px at 1080p; 60px is the recommended step), secondary text like subtitles, stats, and URLs ≥3% (≥32px). *Effective* height is `fontSize × every ancestor scale × perspective compression` (`cos(rotY)` for a 3D shot), measured on the rendered frame rather than read out of the code. Type has exactly two states: **texture** — decorative small type inside a screenshot cutout, which must be visibly softened or dimmed so nobody tries to read it — or **meant to be read**, at size and with enough contrast (a scrim or shadow over light backgrounds). There is no middle state; text that was "reflowed for legibility" but still lands under the line is the failure case, and unreadable text is better deleted. The sign-off URL or call to action is the last line in the film that should be small. Self-check: pull a frame from every captioned shot, scale it to 480px wide to simulate a phone in-feed, and read it.
+- **Camera stays steady** — no handheld shake by default on product film. Frame for readability: dense shots face-on, text close-ups laterally level, stylized tilts validated per shot.
+- **Object close-up needs all four**: oblique tilt angle, perceptible height, an orbit, and a contrasting dark material background. The source's self-check is whether the subject reads as having volume and standing out from its surroundings.
+- **Under 3D perspective, rasterize UI textures at 2–4× their display size and downsample.** Blurry text is a texture-resolution problem first. On the **scaling method, pick by content**: `transform: scale` is the right default and is what the shipped motion-lab stage uses, because it composites cheaply and does not reflow; layout-level CSS `zoom` is the opt-in for **text-dense small-type scenes**, where it re-rasterizes glyphs at the final size instead of magnifying them. Reach for `zoom` when small type is the subject, not as a blanket rule.
+- **Fly-in endpoints are real layout slots**, never floating above the page.
+- **Document/report mock content must be publication-grade**: native typography, text filling its measure, complete layout in frame.
+- **Copy gets rewritten against the locked cut**, and taglines name team + feature + concrete benefit rather than abstract metaphor.
+- **Ambiguous feedback gets its referent confirmed** before acting; a wrong change gets a clean revert, not a patch on top.
+
+## Asset capture — the three-piece set
+
+Real-page shots are built on captured geometry, not on screenshots alone. Capture only *after* the storyboard is released — with **one exception**: §3a's finalist styleframe needs pixels first, so run a *minimal pre-capture* of the few screenshots and tokens that one frame needs, under the brief's data policy, and never the three-piece set. Full capture stays behind the released storyboard — capturing earlier means recapturing, because page states and scope aren't settled yet. Start the product's dev server (or use a window-capture tool for desktop apps) and produce three artifacts per page:
+
+| Artifact | Spec | Feeds |
+|---|---|---|
+| **Full-page 2× texture** | 1920×1080 viewport at `deviceScaleFactor: 2`; wait for `document.fonts.ready` plus ~600ms settle, and 1.5–2s more on live-syncing pages | The page surface the camera flies over |
+| **Per-element cutouts** | One capture per semantic selector; transparent background for floating pieces; also grab an empty backplate when a shot flies cards into a bare board | Elements that animate independently of the page |
+| **`layout.json`** | Every element's `{x, y, w, h}` in full-page coordinates, plus each page's height | Flight targets, mask positions, entry zones — all read from here |
+
+Freeze, fictionalize, or mask live data *before* the final capture, per the brief's data policy. Support incremental recapture per page and per element. The two recurring failures: capturing before the storyboard is released, and grabbing full-page images without recording the layout coordinates — which forces every position to be eyeballed later.
+
+**`PageCam` is the foundation of every real-page shot**: full-page texture + keyframed 2.5D camera + page-space overlays, with children positioned in the page's own CSS pixels sharing `layout.json`'s coordinate system.
+
+Per shot, the read order is a hard rule: resolve the card name and style key → read the card in full → open and read the exact demo implementation it names → copy the needed `assets/lib/` components in. Keep the gallery sample for that style on hand for comparison during implementation and final review. Styles marked reference-only aren't recommended by default — implement them only when the user names them, and flag the risk; styles with no preview must never be described as reproduced from a sample.
+
+**Still-frame acceptance is the highest-frequency action.** Write two acceptance frame numbers into the plan for each shot, and the moment the shot is built render those stills (`npx remotion still src/index.ts <Comp> out/qa/<name>.png --frame=<N>`) and inspect composition, clipping, and text sharpness yourself. A shot isn't finished until its stills pass.
+
+## Pipeline
+
+Eight stages in `library/video-shotcraft/references/pipeline.md` — 0 product understanding and constraints · 1 visual direction and styleframe · 2 feature-to-shot mapping · 3 storyboard and production go-ahead · 4 final asset capture · 5 shot-by-shot implementation · 6 sound design · 7 acceptance. Autonomous runs 0→7 continuously; co-creation confirms 0–3 via `guided-free-creation.md` then resumes at stage 4 without re-asking or redesigning. Note that a feature-to-shot mapping is *not* a storyboard: after mapping is agreed, still produce shot order, durations, concrete frames, page states, asset sources, captions, transitions, and SFX before capture begins.
+
+Stage 6 is `video-sound.md`. Stage 7 is `library/video-shotcraft/references/final-review.md`, run by an independent reviewer against product goal, feature completeness, visual direction, card fidelity, storyboard consistency, data safety, audio/rhythm, and technical quality — reporting per item with frame-number evidence.
+
+A scored film renders **both cuts at stage 7**, not only at final delivery: with BGM, and without BGM but with SFX intact, from the same timeline via the `bgm` input prop (`video-sound.md`). The reviewer needs both to check they actually match, and the second render is what the recipient uses to lay their own music under the film.
+
+## Handing back an editable project
+
+Upstream ships a **JianYing / CapCut-CN export**: a finished Remotion film converted into an editable draft the user can open and keep cutting. **After final delivery, in any mode, ask once** whether they want it — then never ask again, and skip the question entirely if they already named it.
+
+The protocol and its platform quirks are vendored at `library/video-shotcraft/references/jianying-export.md`, with the implementation in `library/video-shotcraft/jianying-export/` (`mac_draft.py`, `windows_draft.py`, `smoke_test.py`). **Read the Mac module's own docstring before running it on macOS** — it documents the format differences that make a Windows-shaped draft fail to open there, and they are not guessable from the Windows path.
+
+This is a delivery-format question, not a creative one: it changes nothing about the cut, so it belongs after acceptance rather than in the brief.
+
+## Assets
+
+`library/video-shotcraft/assets/lib/` components are **copied into the target project** and modified freely, never imported as a dependency: `PageCam` (the 2.5D page camera every real-page shot is built on), `DigitRoll`, `FlashCut`, `Caption`, `FlatPanel`, `VerticalTicker`, plus `helpers/` (rand, shake, camera, motion). `FlatPanel` and `helpers/camera` need `three` + `@react-three/fiber` + `@remotion/three`; the rest need only Remotion.
+
+`library/video-shotcraft/demos/<category>/` holds the tuned implementation for 143 cards — copy into a Remotion project and run. Most are self-contained; many import from `demos/_fixtures/`, which is vendored and now holds **two unrelated shared modules**: `Fixtures.tsx`, the fake-UI scene pieces, and `Motion.tsx`, a design-coordinate stage used by the newer motion-lab cards. `Motion.tsx` establishes a fixed design canvas with a `raster` switch choosing between transform-scale and layout-zoom rastering, and each of its components exports its own duration in frames — read it before adapting one of those cards, because its cards assume that stage rather than a raw Remotion composition. Four demos import real-page textures that are not vendored. The remaining nine live in `library/video-shotcraft/template/src/`, whose `aifl/Main.tsx` also carries the central SFX pin table behind `video-sound.md`. The page-capture script stage 4 uses is at `library/video-shotcraft/assets/scripts/capture-template.mjs`.
+
+**Three traps in the newer cards, worth knowing before you adapt one.** Some need `@remotion/motion-blur` — camera-motion-blur wrappers, and the real set is 6 cards across 8 files — crash-zoom-punch, space-camera-moves, magician-card-flourish, speed-ramp-freeze and their siblings, **not** steep-tilt-glide, which never imports it — and its absence is an install error, not a visual difference. Hard-coded ids on SVG `<filter>` and gradient elements **collide when two instances of the same card render in one composition**: the second instance silently references the first's definition, so a colour or blur reads wrong in exactly one of them. Generate ids per instance. And the 48 motion-lab cards are **clean-room re-implementations of publicly released promos and OSS sites** — their attribution file makes the boundary explicit, and public release is not a licence to reproduce, so treat them as technique references rather than as artwork to ship verbatim.
+
+The audio library — `bgm/` plus 149 sounds across 16 category folders — is documented in `library/video-shotcraft/assets/audio/`: `ATTRIBUTION.md` for what exists and under which license, `AUDITION-2026-07-27.md` for per-file duration, measured peak, and suggested pin point. `video-sound.md` carries the category map and the selection discipline.
+
+Left upstream: the preview gallery, the template's rendered output and page textures, the four demos' real-page textures, and the SFX/BGM binaries themselves — `companions.md` has the retrieval routes and `library/video-shotcraft/VENDOR-NOTES.md` the full split.
+
+---
+*Distilled from: video-shotcraft (authoritative — shot cards, pipeline, aesthetic rules).*

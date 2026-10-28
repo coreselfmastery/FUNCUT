@@ -1,0 +1,241 @@
+# Generative Direction
+
+*The shared grammar for prompting image and video models: one cinematography vocabulary, one continuity ledger, one photoreal stack, one pre-flight. Everything here governs both output surfaces — `generative-stills.md` and `generative-video.md` — so it is stated once and never restated.*
+
+## What this family is, and when it leads
+
+A different discipline from the rest of maestro's video work. Everywhere else the deliverable is **code that deterministically renders frames** — Remotion compositions, HyperFrames HTML, shot cards with tuned parameters. Here the deliverable is **text a generative model interprets**, and the same text run twice returns two different images. Determinism is gone; the craft moves into locking what must not vary and describing what should.
+
+| Job | Lead |
+|---|---|
+| **A multi-shot piece — a sequence, a recurring character, anything with an arc** | **`generative-production.md`** — the phased pipeline. Config, story, cast, look, then the whole storyboard approved before a single generation runs |
+| Character reference, outfit base, model sheet, environment plate, photoreal still | `generative-stills.md` |
+| Prompted video shot or sequence from a text description and reference images | `generative-video.md` |
+| Story spine, beat planning, pacing, transition taxonomy for any of the above | `video-direction.md` — still the planning layer; it decides *what* the shots are, this family decides how to ask for them |
+| Product demo built from a real app's screenshots | `video-shotcraft.md` — capture beats generation for a UI that already exists |
+| Anything that must be frame-exact, versionable, or re-renderable | `video-remotion.md` / `video-hyperframes.md` — a generative model cannot hit a spec twice |
+
+The two families compose rather than compete: generative plates make excellent establishing shots and backdrops *inside* a programmatic edit, and a locked character sheet is reusable art direction no renderer can produce.
+
+**Photoreal is the default posture.** Every prompt describes a real subject in a real frame — never plastic, never CGI, never commercial gloss. Stylization is an explicit override the user asks for, noted in the ledger when they do.
+
+## The model gate — the engine is the user's choice, never a default
+
+**No module in this family names a model you should reach for.** Every model name that appears anywhere in maestro is a filled-in example of an adapter, never a prescription — image and video engines turn over faster than any document can track, and a skill that hard-codes today's best model is wrong within a season and silently wrong after that. Treat a named model the way you treat a version number: something to verify this session, never to recall.
+
+Ask before the first prompt is composed. Same discipline as cockpit's crew proposal for language models, applied to rendering engines.
+
+**This is the second question, not the first.** `process.md` §1b already asked what the film *is*, and "filmed — real people, places, texture" is what routes here. That pick is settled; this gate asks only *which engine* generates it. Do not re-open the kind — a user who chose photoreal footage has ruled out the code-rendered paths, and offering them again reads as not having listened.
+
+**1. Probe what is actually reachable — don't recite a canon.** This is tool calls, not recall: comfy-mcp's `server_info` for a local ComfyUI and its hardware, `list_partner_models()` for the hosted partner catalog, `search_templates(exclude_api=true)` for what runs free on the user's own GPU, and `higgsfield model list --json` (or the MCP's `models_explore`) for the Higgsfield catalog with each model's real parameters, aspect ratios, durations, and media roles. **`references/generative-engines.md` owns this probe** along with the OSS-vs-paid route gate and the local-hardware gate — run it before proposing anything. If exactly one engine is reachable, say so in a line and skip to composing; there is no choice to present. If none is, say that too and route to a code-rendered engine, which needs no credits at all.
+
+**2. Map the job to capabilities, not to names.** What an asset needs is stable even as the models churn:
+
+| The asset needs | Ask for the engine that is strongest at |
+|---|---|
+| A character who survives across twelve assets | **Reference fidelity** — copying an uploaded face rather than re-interpreting it |
+| A six-panel sheet, a designed page, a specific layout | **Prompt adherence** — following structural instruction over making a pretty frame |
+| Skin, fabric weave, hair at the strand | **Texture realism** at the fidelity tier you are paying for |
+| Hands, jewelry, legible text in frame | **Detail integrity** — the classic failure surface |
+| A moving shot that holds together | **Temporal stability** and physical plausibility across the runtime |
+| Forty exploratory frames before a direction is chosen | **Speed and cost per generation**, with fidelity deliberately traded away |
+
+**3. Propose concretely, for this batch.** One line per asset kind: what it needs, which reachable engine you would point at it, and why — plus the honest cost and latency. A table the user can correct beats a paragraph of hedging.
+
+**4. Offer the real alternatives and ask once.** Your proposal (recommended) · **one engine for everything** (simplest, cheapest, accepts its weak axis) · **a bake-off** (below — best output, highest cost) · **custom**. A model the user names explicitly always wins and is never re-litigated.
+
+**5. Write the answer down.** Record it in the ledger as `MODELS.md`, per asset kind rather than globally, with the date and the reason:
+
+```markdown
+## street-01 batch · locked 2026-08-04
+Base reference + sheet: <engine A> — held the face across all six panels in the bake-off
+Detail portraits:        <engine B> — visible pore texture at 4:5; ~3x the credit cost, approved
+Video shots:             <engine C> — only reachable engine with native audio
+Rejected: <engine D> for sheets — merged panels 2 and 3 on both attempts
+```
+
+Then stop asking. Re-open the gate only when the work changes character — a new asset kind, a quality complaint that traces to the engine, or the user asking.
+
+## The bake-off — compare engines, then synthesize
+
+When an asset is load-bearing — the character lock every later asset quotes, the hero shot, the plate a whole sequence is built on — one engine's single answer is a guess. Run several and choose with evidence.
+
+**Hold everything constant except the engine.** Same composed prompt, same reference images, same framing. If you change the wording per engine to suit it, you are comparing prompts, not engines, and you cannot carry the result forward.
+
+**Score on the axes that matter for this asset**, named before you look at the outputs — deciding what "better" means after seeing them is how a preference gets rationalized into a finding. For a character base: identity fidelity to the reference · skin and fabric texture · hands and jewelry integrity · adherence to the framing asked for. For a shot: temporal stability · physical plausibility · whether the camera did what the block said.
+
+**Then synthesize, because the winner is rarely one engine.** Three ways to combine, in increasing order of effort:
+
+- **Pick the winner outright** when one leads on every axis that matters. Say which axes, so the choice is auditable.
+- **Composite across engines.** Take the strongest output as a *reference image* into a second engine — the face from one, re-rendered into the environment another handles better. This is the composite path in `generative-stills.md`, applied across engines rather than within one.
+- **Extract the phrasing that worked and re-run.** Sometimes one engine's output reveals that a line was ambiguous. Fix the prompt, re-run everywhere, and note it in the ledger — that line is worth more than the image that exposed it.
+
+**State the cost before running one.** A four-engine bake-off on a six-asset manifest is twenty-four generations. Propose it for the assets that earn it and single-engine everything downstream of an approved lock.
+
+Record the outcome in `MODELS.md` — including what lost and how, because the next batch should not re-run a comparison that already has an answer.
+
+## Prompt construction — the mechanics under the grammar
+
+The cinema modes, the photoreal stack, and the ledger below are maestro's contribution. The mechanics of *how a prompt is shaped for a model* are upstream's, and they are load-bearing enough to state here rather than leave in the library:
+
+**Concrete and sensory beats abstract and evaluative.** Subject, setting, style — then camera (lens, angle, motion), then lighting, then medium. "A red fox curled in a snowy pine forest, golden hour, cinematic" is a prompt; "a beautiful nature scene" is a wish.
+
+**Length has a ceiling.** Keep the prompt near **200 tokens or under** for a single generation. Models distort on very long prompts — the far end of a bloated prompt gets weighted into noise. maestro's Static/Dynamic split and the photoreal stack push against this, so on a long composed prompt, cut adjectives that repeat a fact the ledger already fixed rather than cutting the specification.
+
+**When a reference image is attached, describe the delta — not the picture.** This is the single most common waste in image-to-image and image-to-video work:
+
+| Surface | Wrong | Right |
+|---|---|---|
+| Image-to-image | "a man with brown hair in a leather jacket holding coffee, made into anime" | "transform into anime style, vibrant colors, soft cel shading" |
+| Image-to-video | Re-describing the wardrobe, location, and light already in the start frame | The motion alone — "she turns toward the window, camera pushes in slowly" |
+
+The model already has the frame. Re-describing it invites re-interpretation of exactly what you wanted preserved — which is why `generative-production.md` Phase 6 collapses a shot with an approved still down to its motion line.
+
+**Phrase negatives as positives.** Most models expose no `negative_prompt` field at all, so a "no blur" lands as the word *blur*. Say **"tack sharp"**. Not "no people" — **"uninhabited landscape"**. This is why the pre-flight below bans negative blocks rather than merely discouraging them.
+
+**Rejections have named causes.** Models return terminal statuses like `nsfw` or `ip_detected` rather than a useful message. The three reliable triggers are real public figures, sexual content, and trademarked or branded characters — which is precisely what the pre-flight's name, brand, and age rules exist to strip *before* a generation is spent on a refusal.
+
+**Aspect ratio is a parameter where the surface offers one**, and plain language everywhere else — 16:9 landscape/cinematic, 9:16 vertical/social, 1:1 square, with 4:3, 3:4 and 21:9 model-dependent. Validate against the model's own enum rather than assuming; a bad value is usually coerced to the nearest legal one and silently changes your framing.
+
+## The continuity ledger — the lock has to outlive the conversation
+
+Identity locking is the whole value of this family, and a lock held only in conversation dies at the next context reset. **Write it down.** Four files at the project root, appended as specs lock — `CHARACTERS.md`, `WORLD.md`, the `MODELS.md` from the gate above, and `ASSETS.md` for every recurring thing that is not a person (props, wardrobe, vehicles, objects that must stay the same across shots — its format and the extraction pass that fills it are in `generative-production.md` Phase 2):
+
+**`CHARACTERS.md`** — one section per character:
+
+```markdown
+## silver-runner            <- internal handle; never appears in a prompt
+Locked: 2026-07-28 · from: refs/runner-01.jpg, refs/runner-face.jpg
+Prompt descriptor: "the rose-pink braided woman in the cropped white ribbed tank"
+Face: sharp almond eyes, cool grey iris · high straight brow · narrow nose bridge · warm fair skin, matte finish
+Hair: rose-pink, mid-back length, box braids, centre part, baby hairs at the hairline
+Body: slim build, long limbs, squared shoulders · small hoop in the left helix
+Default makeup: skin-tint base, soft brow, sharp thin liner, neutral gloss lip
+Default expression: level, closed-lip, eyes to camera
+Outfits:
+  - street-01: cropped white ribbed tank · light-wash baggy cargos · tan suede work boots · silver hip chain
+    base reference: assets/base-street-01.png · sheet: assets/sheet-street-01.png
+```
+
+**`WORLD.md`** — one section per location: architecture and materials, time of day and weather, set dressing, the palette with hex values, the cinema mode assigned to it, and which plates exist.
+
+Three rules make the ledger worth keeping:
+
+- **The ledger is the source of truth; the prompt is composed from it.** At session start, read it back before composing anything. Mirror the relevant lock to the user in plain language and let them correct it — a stale ledger is worse than none.
+- **Anything not in the ledger and not in the user's message is a question, not an invention.** A new scene needing an outfit the ledger doesn't have gets asked about. This is maestro's evidence discipline applied to art direction: what you didn't read, you don't know.
+- **The `Prompt descriptor` line is the only name the model ever sees.** Handles are for you and the user.
+
+Append what worked, too. When a re-roll finally lands, record the phrasing that fixed it next to the outfit — that line is worth more than the spec around it.
+
+**The prompt travels with the asset.** The thread that wrote a prompt knows what the image contains, why, and how it is meant to sit in the work; a later session composing with that asset has none of it. So store each generated asset's exact prompt beside it — a sidecar file or a column in the ledger — and read those prompts before building anything on top of them. When a subagent produces assets, the prompt is part of what it returns, not a detail it consumed. Prefer generating anything build-critical in the thread that will use it.
+
+**If you ever prompt for a designed page rather than a scene, state the skeleton literally.** Nav bar and its items, headline block and its scale, each section in order, the footer. A prompt that leads with atmosphere gets atmosphere back — the model paints the fish market instead of the fish market's *website*. Self-check the render: if it could hang as a poster, or reads as a photograph with some text on it, it isn't a page; regenerate with the layout scaffold stated more plainly.
+
+## The six cinema modes
+
+One camera vocabulary across stills and video, so a plate and the shot it feeds share visual DNA. Pick the mode from the scene, then pull its spec whole — mixing halves of two modes produces the averaged, characterless grade this grammar exists to avoid.
+
+| Mode | Scene | Body | Lens | Movement | Filtration | Grade & palette |
+|---|---|---|---|---|---|---|
+| **M1 Narrative** | Real-world dramatic — streets, kitchens, cars, bars, interiors, exteriors; anywhere lived-in | Alexa 35 | Panavision Ultra Vintage 2× anamorphic 40/55/75/100mm T2.3 | Handheld with natural breath, slight shake, occasional slow dolly | Black Pro-Mist 1/4 | Kodak Vision3 250D, 800 ASA, teal-amber split — cool shadows, warm highlights, blacks not crushed |
+| **M2 Studio / Editorial** | White void, clean set, editorial portrait, fashion film, hyperpop saturation — *crafted* rather than photographed | Alexa Mini LF | Cooke S4/i spherical 32/50/75/100mm T2 | Locked-off, optional 4–6″ slow push | Black Pro-Mist 1/2 + Glimmerglass on chrome and rhinestone | Saturated editorial, pushed magentas or pastels, warm-retained blacks, Cooke skin warmth, 400 ASA |
+| **M3 Action / Combat** | Combat, chase, stunts, mechs, debris, smoke, destruction | Alexa 35 | Panavision Ultra Vintage 2× anamorphic 40/55/75/100mm T2.3 | Handheld and shaky **throughout** — constant micro-jitter, reactive, often orbital; no stabilized shot anywhere | Black Pro-Mist 1/4 | Kodak Vision3 250D, 800 ASA, documentary-meets-sci-fi grit, dusty haze, palette per scene |
+| **M4 Performance / Concert** | Stage, arena, festival pit, jumbotron, lightstick crowd | Alexa 35 | Panavision Ultra Vintage 2× anamorphic 40/55/75/100mm T2.3 | Mixed pit-photographer handheld, low-angle shake, orbital passes, hard cuts | Black Pro-Mist 1/4 | Kodak Vision3 250D fine grain, desaturated cool with warm bloom, stage-lighting cast, heavy haze, sweat sheen |
+| **M5 Atmospheric / Empty** | Abandoned, no-humans, landscape, weather, world-establishing — the environment *is* the subject | Alexa Mini LF | Panavision Ultra Vintage 2× anamorphic 35→85mm T2.3 | Locked-off or extremely slow push/pull; never handheld | Black Pro-Mist 1/4 | Kodak Vision3 250D, 400 ASA, palette-driven with named hex values, strong negative space, weathered material |
+| **M6 Device-authentic** | Must read as *captured*, not produced — lifestyle, personal-archive, someone-standing-nearby framing, the dominant register of contemporary social and music-video work | Current flagship smartphone, named by generation | The phone's own focal lengths: ~13mm ultrawide · ~24mm main · 48–120mm equivalent telephoto at its optical zoom steps | Handheld with real human unsteadiness, or set down and left; never a dolly, never a crane | **None** — the computational pipeline replaces it | Natural color science, film-like tonal response, mild sensor noise in shadows, slight bloom around practical highlights, realistic edge softness. **No HDR look, no oversharpening, no artificial clarity** |
+
+M6 is the one mode whose realism comes from **restraint rather than equipment**, and it inverts the usual failure. The other five degrade toward flat and characterless; M6 degrades toward *too good* — a frame that is sharper, better lit, and better composed than any phone produces reads instantly as generated. Name the device and its optics, keep the framing casually imperfect, describe the artifacts (bloom, shadow noise, edge softness) as positives, and state the negatives — no HDR, no clarity, no CGI appearance — because a model's default is to make it beautiful. It pairs with the photoreal stack but **replaces the stack's film-emulation sentence**, since a phone is not shooting Vision3.
+
+Modes M1–M5 run **24fps at a 180° shutter**; M6 runs at the device's own capture rate. A slow-motion beat is an intercut 96fps frame at the impact, shutter held at 180° so the blur stays natural — never a change to the base rate.
+
+**Lens by framing, across all modes:** 32–40mm wide establishing, full body, groups · 50–55mm medium, two-shot, waist-up · 75mm tight portrait, single-character isolation · 85–100mm extreme close — eyes, lips, jewelry, fabric. Default to 55mm (M1/M3/M4) or 50mm (M2) when the framing isn't specified; M5 lives at the wide end.
+
+The five paste-ready camera blocks for M1–M5 — the full sentence each mode contributes to a prompt, with lens and runtime slots — are in `library/higgsfield-directors/cinema-worldbuilder.md`. Pull the one for the chosen mode verbatim; they are tuned text, not a summary to paraphrase.
+
+**Stacking modes.** A sequence that cuts between worlds — a white void intercut with a kitchen, action intercut with performance — gets **one camera block per shot, per its own mode.** Averaging two modes into one grade destroys the cut, which was the point of cutting.
+
+## The photoreal stack
+
+Every prompt closes with this block. It is the texture floor, not a flourish:
+
+```
+Hyperrealistic photography. Real human skin texture with visible pores, subtle subsurface scattering on the cheeks, nose bridge, and ears, fine peach fuzz catching light along the jawline and cheekbones, slight skin imperfections — natural unevenness, not retouched. Hair rendered strand by strand with realistic flyaways, baby hairs at the hairline, individual strands catching light, light transmission through the hair ends, natural texture and movement. Fabric rendered with real weave detail, real weight, real drape, visible texture variation across the surface. Eyes with real reflection, real moisture, real depth in the iris. Jewelry with real metal surface detail and tarnish or polish appropriate to the piece. Kodak Vision3 500T film emulation, visible fine film grain, subtle chromatic aberration at the edges of the frame, soft lens vignette, cinematic color grade with warm mid-tones and slightly cooled shadows. Lived-in, not pristine. Photographic, not rendered.
+```
+
+For a plate with no people, drop the skin and hair sentences and keep fabric, light, lens, grain, and grade. When a model preserves reference fidelity natively from an uploaded image, the stack is **omitted** — describing texture it is already copying only gives it room to drift (see the composite path in `generative-stills.md`).
+
+## Reading reference images
+
+Extract by **visual description only**. Never a name, never a detail that isn't in the frame.
+
+| Layer | Capture |
+|---|---|
+| Hair | Colour with every nuance (platinum, jet black with cool undertone, rose-pink, ash brown), length, texture, parting, styling (slicked, blown out, braided, bunned, which kind of bangs), accessories |
+| Makeup | Skin finish (matte, dewy, glass, bare), coverage, brow shape and density, eye treatment, lashes, lip finish and colour, cheek work, face jewelry. Freckles and beauty marks **only if visible** |
+| Wardrobe | Every garment top to bottom — fabric, colour, fit, structural detail (cutouts, ribbing, knit, denim wash, leather finish, mesh), neckline, sleeve and hem position, layering, branding described generically |
+| Jewelry | Every piece — earring style, necklace count and material, rings, bracelets, body chains, belts, bag, eyewear, watch |
+| Body markers | Piercings and tattoos **only if visible**, nail length and colour, distinguishing features |
+| Pose and energy | Body angle, weight distribution, hand position, expression register |
+| Environment | Interior/exterior, architecture, materials, scale · time of day, light direction and colour temperature, weather, atmosphere · set dressing, props, vehicles, signage, vegetation, crowd · palette |
+
+### Deriving a palette instead of inventing one
+
+M5 asks for named hex values, and a palette guessed from memory is the same failure as a version guessed from memory. Derive it from a source: run `design-dna.md`'s extraction against the reference image or an existing plate and take **four to eight anchors** — dominant surface, secondary surface, deepest shadow, brightest highlight, and one or two accents that carry the scene's identity. Write them into `WORLD.md` next to the location so every later plate and shot of that place quotes the same numbers. If there is no source image, say the palette is being invented and get it confirmed before it becomes the lock.
+
+## Pre-flight — run this on the finished text, every time
+
+Read the composed prompt back and check the output itself, not your intention:
+
+1. **No proper names.** Models don't know them, and a name near a person description is the classic false-positive trigger for identity filtering. Descriptors survive across prompts; names never did anything.
+2. **No real brand names or protected IP.** "Black three-stripe athletic sneakers", not the brand. Chat with the user freely; the prompt output stays generic.
+3. **No age words.** Not *boy, girl, child, kid, young, teen, little, middle-aged, elderly, old*. They add nothing a body-and-wardrobe description doesn't, and they push an adult subject toward a minor-safety misclassification. Describe by role, build, and clothing. **These pipelines depict adults only** — a brief that would put a minor in a photoreal generated frame is one to decline, not to rephrase.
+4. **No invented detail.** Every visual fact traces to a reference image, the ledger, or the user's words.
+5. **Pure visual description.** No meta-commentary on why the frame is composed that way, no reference to the medium, no emotional intent. Every word names a thing visible in the frame.
+6. **Self-contained.** No "as established earlier", no "matching the previous scene". Each prompt re-states everything it needs.
+7. **No negative prompt block, no aspect ratio, no image placeholders** in the prompt body. Framing is plain language — "full body", "chest-up", "wide establishing". Aspect and image attachment belong to the platform UI.
+8. **Wardrobe by construction, not by exposure.** Describe cut, fabric, and fit; adjectives about how much skin shows read as intent and get filtered.
+
+A prompt failing any line gets fixed before it ships, not after the render disappoints.
+
+## Plan the batch before composing the first prompt
+
+A brief is rarely one asset. Composing prompts one at a time is how the cinema mode drifts between the plate and the shot it was supposed to match, and how the third outfit stops looking like the first.
+
+**Emit an asset manifest first** — a table the user approves before any prompt is written:
+
+| # | Asset | Kind | Character / location | Mode | Engine | Depends on |
+|---|---|---|---|---|---|---|
+| 1 | runner base, street-01 | still base reference | silver-runner | M2 | bake-off, 3 engines | character lock |
+| 2 | runner sheet, street-01 | 6-panel | silver-runner | M2 | winner of 1 | 1 |
+| 3 | rooftop night plate | environment plate | rooftop-north | M1 | per `MODELS.md` | palette from WORLD.md |
+| 4 | rooftop approach, 8s | video shot | silver-runner @ rooftop-north | M1 | per `MODELS.md` | 1, 3 |
+
+Four rules the manifest enforces that per-prompt work cannot:
+
+- **Lock the cinema mode once, at the manifest level.** Everything that will be cut together shares it. A still that feeds a video shot inherits that shot's mode — that pairing is the reason both surfaces share one grammar.
+- **Carry the engine per row, from `MODELS.md`.** The column is not decoration: it is where a bake-off gets scheduled on the one asset that earns it, and where every downstream row inherits that winner instead of re-opening the question.
+- **Respect the dependency order.** A model sheet needs an approved base; a shot needs its character locked and its location plated. Building out of order means rebuilding.
+- **Name the whole set before pricing it.** Generation costs money and time per asset, and a bake-off multiplies its row. The user should see the count and the multiplier before the first one runs, not discover it at asset nine.
+
+Then compose down the list, confirming each prompt before delivering it. Keep the manifest updated with what exists — it is the shot list and the progress tracker in one.
+
+## When the model disobeys
+
+Generative failure is normal and mostly diagnosable. Re-rolling the same prompt is the least informative response available. **Change one variable per attempt** and record the fix in the ledger.
+
+| Symptom | Actual cause | Fix |
+|---|---|---|
+| Multi-panel sheet merges cells, or bleeds one pose across two | Grid under-specified — the layout was described but the panels weren't individually labelled by position | Restate every panel with its explicit position label; if it still merges, drop to four panels or split into two sheets |
+| Identity drifts between panels of one sheet | Identity was described per-panel, so each description was read as a different person | Move the full identity into the opening paragraph, described once; each panel then names only what differs — stance, angle, framing |
+| Studio backdrop comes back grey or gradient | "White seamless" alone under-constrains it | Add the negatives as positives: no shadow falloff to grey, no visible seam line, perfectly even backdrop |
+| Wardrobe details appear that nobody specified | The gap is upstream in the spec, not in the prompt — the model filled a hole the ledger left | Re-lock the outfit with the missing layer named, then recompose |
+| Face doesn't match the character reference | A composite prompt was polluted with description; the model blended the text with the image instead of copying the image | Strip the composite instruction to its minimum — reference images carry identity, text only says where to put it |
+| Camera stabilizes in a mode that demands handheld | Movement words in the action description contradict the camera block | Purge "smooth", "glide", "steady", "locked" from everything except the block, and restate the shake as continuous |
+| Generated audio includes music | A genre, mood, or score word leaked into the audio line | Cut it to physical sources only — see the diegetic rule in `generative-video.md` |
+| Sequence runs long or short | Per-shot timings don't sum to the stated total | Re-derive the shot timings from the total and restate both |
+| Texture reads plastic despite the stack | Competing instruction — a "clean", "polished", "perfect", or "flawless" adjective elsewhere is overriding it | Remove the adjective; the stack cannot outvote an explicit request for perfection |
+
+Two escalations worth knowing: when three variations fail the same way, the problem is the spec rather than the phrasing — go back to the ledger. And when a model repeatedly refuses a legitimate brief, re-read the pre-flight above; it is almost always a name, a brand, or an age word.
+
+---
+*Distilled from: banana-pro-director, cinema-worldbuilder (both vendored in `library/higgsfield-directors/`).*

@@ -340,3 +340,31 @@ OpenMoji (CC-BY) is the safe shelf.
 | `prompts/creative_direction.md` | Phase 0: turning a topic into a sharp angle, arc and payoff |
 | `prompts/quality_loop.md` | watch_render -> craft_critique -> revise, and how to read the scores |
 | `prompts/tool_reference.md` | every tool's arguments, units, and gotchas |
+
+## 6. The maestro shelf (judgment, when a phase wants taste)
+
+The `maestro` skill sits beside this one at `.claude/skills/maestro/`. This
+skill is the hands — the pipeline, the tools, the floors; maestro is a
+distilled library of design, motion and film judgment (28 reference modules
+over ten vendored corpora: a 157-card product-shot vocabulary, engine-agnostic
+motion principles, a sound-design and beat-sync method, art-direction
+catalogs). Read it when a phase wants taste, not tool mechanics — and read
+only the module the phase needs, never the whole shelf. Its Grill Gate does
+not run here: the Phase-0 `creative_brief` is the one locked brief; use
+maestro's interview questions to fill it, never to open a second one.
+
+| Phase | Reach into `.claude/skills/maestro/references/` for |
+| --- | --- |
+| 0 direction | `design-direction.md` (style registers, art direction), `process.md` (brief-locking discipline) |
+| 3 plan | `video-direction.md` (story structure, beat planning, pacing), `video-shotcraft.md` (the 157-shot vocabulary for product/demo work) |
+| 5b comps | `motion-principles.md` (timing, easing, choreography), `design-foundations.md` (typography, color, hierarchy) |
+| 6 grade | `design-foundations.md` (color systems) |
+| 7 critique | `design-audit.md` (systematic critique, anti-slop gates) — feed its findings into the mandatory revision |
+| SFX/BGM | `video-sound.md` (SFX pinning, anti-machine-gun spacing, beat-sync that verifies the render) |
+
+When guidance conflicts, the hard floors in §3 win — maestro refines how a
+floor is met, never lowers it. When a piece needs something the editor's own
+motion layer cannot express, maestro's engine modules (`video-remotion.md`,
+`video-hyperframes.md`, `gsap.md`, `threejs.md`) can build it as code, and
+the rendered result imports as footage. The full map, plus the update and
+drift-check procedure: `docs/MAESTRO.md`.

@@ -330,6 +330,46 @@ users get it from `install-linux.sh` instead. Concat's own sources are
 AGPL-3.0-or-later; Geneva is a separate executable invoked as a process,
 not linked into Concat.
 
+## The maestro skill (design, motion and video judgment for agents)
+
+**maestro** (https://github.com/leobbaroni/maestro), by leobbaroni, is a
+unified design, motion, 3D and video skill for AI coding agents. This
+repository redistributes it at `.claude/skills/maestro/` — the project-skill
+install path its own documentation defines — vendored verbatim at maestro
+5.0.0, commit `64e1d6ba443dc477547ad646c8b090afd15a0c04`, along with its
+root `NOTICE.md` and `LICENSE`. Maestro's own text is **MIT**
+(`.claude/skills/maestro/LICENSE`). The skill has two layers: `references/`
+(28 distilled modules — rewritten and editorially reconciled, no verbatim
+redistribution) and `library/` (unmodified verbatim copies of nine
+permissively licensed corpora, each carrying its own license file alongside):
+
+- **taste-skill** (https://github.com/Leonxlnx/taste-skill), by Leonxlnx — MIT
+- **genjutsu** (https://github.com/AThevon/genjutsu), by Adrien Thevon — MIT
+- **gsap-skills** (https://github.com/greensock/gsap-skills), by GreenSock — MIT
+- **design-dna** (https://github.com/zanwei/design-dna), by zanwei — MIT
+- **motion-design-skill** (https://github.com/lottiefiles/motion-design-skill),
+  by LottieFiles — MIT
+- **higgsfield-ai/skills** (https://github.com/higgsfield-ai/skills), by
+  Higgsfield AI — MIT
+- **comfy-skills** (https://github.com/Comfy-Org/comfy-skills), by
+  Comfy-Org — MIT
+- **impeccable** (https://github.com/pbakaus/impeccable), by Paul Bakaus —
+  **Apache-2.0**, its upstream NOTICE.md carried alongside per §4(d)
+- **video-shotcraft** (https://github.com/Vincentwei1021/video-shotcraft),
+  by Wei Yihao — **Apache-2.0**, partially vendored: shot cards, pipeline,
+  demos and components only; its preview gallery, template project and audio
+  binaries are not redistributed, and third-party audio it references carries
+  separate per-file licensing recorded in the ATTRIBUTION manifests inside
+  the vendored copy
+
+A tenth `library/` directory, `higgsfield-directors/`, is the maestro
+author's own material and tracks no upstream. MIT and Apache-2.0 are both
+compatible with this repository's AGPL-3.0-or-later. The full upstream
+attribution table — including sources that informed the distilled layer only
+(threejs-skills, remotion, hyperframes, hallmark) — is
+`.claude/skills/maestro/NOTICE.md`; the upstream-drift pins for re-syncing
+the vendor live in `scripts/maestro/` (see `scripts/maestro/README.md`).
+
 ## Tools fetched at runtime by the sense layer (not redistributed here)
 
 The MCP sense tools (`watch_render`, `stock_contact_sheet`,

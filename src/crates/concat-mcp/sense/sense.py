@@ -298,11 +298,17 @@ def _ensure_ffmpeg(spec):
     if not archive.is_file():
         # Download to a .part and rename only once the whole file is here:
         # a half-written tarball left at the final name was reused forever
-        # after, and the bootstrap never recovered by itself.
+        # after, and the bootstrap never recovered by itself. The stream
+        # is capped - a mirror that never ends must not fill the disk.
+        MAX_BOOTSTRAP_BYTES = 128 * 1024 * 1024
         part = root / (asset + ".part")
         req = urllib.request.Request(FFMPEG_URL_BASE + asset, headers={"User-Agent": "concat-sense/1.0"})
         with urllib.request.urlopen(req, timeout=60) as r, open(part, "wb") as f:
             total = int(r.headers.get("Content-Length") or 0)
+            if total > MAX_BOOTSTRAP_BYTES:
+                raise RuntimeError(
+                    f"the ffmpeg bootstrap claims {total} bytes; the most it fetches is {MAX_BOOTSTRAP_BYTES}"
+                )
             done = 0
             while True:
                 buf = r.read(1 << 20)
@@ -310,6 +316,8 @@ def _ensure_ffmpeg(spec):
                     break
                 f.write(buf)
                 done += len(buf)
+                if done > MAX_BOOTSTRAP_BYTES:
+                    raise RuntimeError("the ffmpeg bootstrap passed its size cap without ending")
                 if total:
                     print(f"[sense] ffmpeg: {done/1e6:.0f}/{total/1e6:.0f} MB", file=sys.stderr, flush=True)
         part.rename(archive)

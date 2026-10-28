@@ -402,9 +402,8 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
         "cached": baked.cached,
     });
     if asked != (width, height) {
-        reply["clampedTo"] = json!(
-            "4096: the bake was requested above 4K and is rendered at 4K for safety"
-        );
+        reply["clampedTo"] =
+            json!("4096: the bake was requested above 4K and is rendered at 4K for safety");
     }
 
     if fields.get("encode").and_then(Value::as_bool) == Some(true) {

@@ -450,12 +450,7 @@ impl Geneva {
 /// and the frames it promises are actually still on disk. The comp's hash
 /// is the cache key, so "an unchanged comp re-renders nothing" stops being
 /// a promise the bake loop quietly broke on every call.
-fn bake_cache_hit(
-    dir: &Path,
-    comp: &Comp,
-    request: &BakeRequest,
-    version: &str,
-) -> Option<Baked> {
+fn bake_cache_hit(dir: &Path, comp: &Comp, request: &BakeRequest, version: &str) -> Option<Baked> {
     if request.frames.is_some() {
         // A ranged (parallel) bake is not a full cache entry; render it.
         return None;
@@ -1594,7 +1589,7 @@ mod tests {
             bake_cache_hit(&dir, &comp, &ranged, "1.6.0").is_none(),
             "a ranged bake is never a cache hit"
         );
-        std::fs::remove(frames.join("0001.png")).expect("the frame is removed");
+        std::fs::remove_file(frames.join("0001.png")).expect("the frame is removed");
         assert!(
             bake_cache_hit(&dir, &comp, &request, "1.6.0").is_none(),
             "a cache that lost its frames must miss"

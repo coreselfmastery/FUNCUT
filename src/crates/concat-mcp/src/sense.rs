@@ -464,12 +464,10 @@ pub fn watch_render(arguments: Value, backend: &mut dyn Backend) -> Result<Outco
         );
     }
     let mut result = run("sheet", &spec, Duration::from_secs(180))?;
-    if pinned_frames {
-        if let Some(notes) = result.get_mut("notes").and_then(Value::as_array_mut) {
-            notes.push(json!(
-                "`times` pinned the exact frames, so the audio envelope and loudness were not measured; call measure_loudness on the file for the mix."
-            ));
-        }
+    if pinned_frames && let Some(notes) = result.get_mut("notes").and_then(Value::as_array_mut) {
+        notes.push(json!(
+            "`times` pinned the exact frames, so the audio envelope and loudness were not measured; call measure_loudness on the file for the mix."
+        ));
     }
     Ok(image_outcome(&result, &caption))
 }

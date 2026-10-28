@@ -1107,10 +1107,19 @@ impl Command {
             Command::AddLayerClip {
                 start, duration, ..
             } => bad([*start]) || bad(*duration),
-            Command::SetClipSpeedCurve { curve, .. } => bad(curve
-                .iter()
-                .flatten()
-                .flat_map(|point| [point.at, point.speed])),
+            Command::SetClipSpeedCurve { curve, .. } => {
+                bad(curve
+                    .iter()
+                    .flatten()
+                    .flat_map(|point| [point.at, point.speed]))
+                    || curve.iter().flatten().any(|point| {
+                        // A slope rides along with its point, and a non-finite one
+                        // would save as null: the curve's smooth flag reads
+                        // Some(null) as smooth-with-no-slope and the document stops
+                        // making sense. Refused like the numbers beside it.
+                        point.slope.is_some_and(|slope| !slope.is_finite())
+                    })
+            }
             Command::SetClipKey {
                 at, value, ease, ..
             }

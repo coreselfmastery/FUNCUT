@@ -268,10 +268,10 @@ pub fn semantic_rerank(arguments: &Value, mut found: Value, backend: &mut dyn Ba
     if query.is_none()
         || !sort.eq_ignore_ascii_case("relevance")
         || offset > 0
-        || !found
+        || found
             .get("clips")
             .and_then(Value::as_array)
-            .is_some_and(|clips| clips.len() > TINY)
+            .is_none_or(|clips| clips.len() <= TINY)
     {
         return found;
     }

@@ -1400,6 +1400,63 @@ mod tests {
         assert!(matches!(error, crate::commands::CommandError::NotANumber));
     }
 
+    /// A matched clip is adopted wholesale, so a `like` carrying a
+    /// non-finite number anywhere is refused like any other command: a
+    /// NaN that landed would save as null and make the project
+    /// unreadable (the class of bug 2026-10-20 fixed in the transition
+    /// knobs - this is the one door left open to it).
+    #[test]
+    fn a_matched_clip_that_is_not_a_number_is_refused() {
+        let (mut editor, media_id, first) = fixture();
+        let track_id = editor.project().active().tracks[0].id.clone();
+        let second = editor
+            .apply(Command::AddClip {
+                media_id,
+                track_id,
+                start: 20.0,
+                ripple: false,
+            })
+            .expect("adds")
+            .created_id
+            .expect("id");
+        let _ = first;
+        // One bad number in a field no command arm validates on its own:
+        // the guard has to see the whole clip.
+        let mut like = editor
+            .project()
+            .active()
+            .clip(&second)
+            .expect("clip")
+            .clone();
+        like.volume = f64::NAN;
+        let error = editor
+            .apply(Command::MatchClip {
+                clip_id: second.clone(),
+                like: Box::new(like),
+            })
+            .expect_err("refused");
+        assert!(matches!(error, crate::commands::CommandError::NotANumber));
+        // And one deeper down: the slope of a speed curve point.
+        let mut like = editor
+            .project()
+            .active()
+            .clip(&second)
+            .expect("clip")
+            .clone();
+        like.speed_curve = Some(vec![crate::model::SpeedPoint {
+            at: 0.0,
+            speed: 1.0,
+            slope: Some(f64::INFINITY),
+        }]);
+        let error = editor
+            .apply(Command::MatchClip {
+                clip_id: second,
+                like: Box::new(like),
+            })
+            .expect_err("refused");
+        assert!(matches!(error, crate::commands::CommandError::NotANumber));
+    }
+
     // ── magnetic trim: https://github.com/jub0t/Concat/issues/106 ──
 
     fn trim(clip_id: &str, edge: TrimEdge, delta: f64, ripple: bool) -> Command {

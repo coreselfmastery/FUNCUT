@@ -1126,6 +1126,12 @@ impl Command {
                 .as_ref()
                 .is_some_and(|stabilize| bad([stabilize.smoothness, stabilize.max_zoom])),
             Command::MoveClips { moves } => bad(moves.iter().map(|wanted| wanted.start)),
+            // The whole `like` clip is adopted, so the whole clip is
+            // checked - every time, transform, key, chain and style field
+            // - by the model's own scan. The identity fields the command
+            // overwrites (id, track, start, ...) are re-set from the
+            // target clip and cannot carry anything through.
+            Command::MatchClip { like, .. } => like.has_non_finite(),
             Command::TrimClip { delta, .. } => bad([*delta]),
             Command::SplitClips { time, .. } => bad([*time]),
             Command::RemoveSpans { spans, .. } => {

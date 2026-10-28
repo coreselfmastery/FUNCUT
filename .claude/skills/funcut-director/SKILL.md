@@ -86,6 +86,33 @@ anything unfamiliar before you cut it. **A cut on every beat is a
 slideshow with a metronome:** keep a few cuts deliberately off the pulse,
 and never place more cuts than the story needs.
 
+**Phase 1b — Read what the voiceover feels (the edit's true driver).**
+`emotion {action: "extract", transcript: <the transcribe output>, project}`
+— or `lines`/`script` before any recording exists. Every line returns its
+**emotion** (7 labels) and intensity, its **act** (hook → setup → tension →
+turn → reveal → proof → cta), the hormone shorthand for the state it puts
+the viewer in, the TTS `delivery` + `speed` that would read it (the measured
+version of Phase 1's delivery choice), the **easing curve** as exact
+concat-motion authoring JSON (**tense lines ease in, warm ones ease out, a
+burst pops, anger snaps**), the **colour temperature** + grade hint, the SFX
+register, the **BGM duck depth** in dB, pacing, and 2–3 word stock `queries`
+(emotion register × act shot) — plus the whole piece's **arc** (shape,
+score, warnings) checked against the brief's `emotionalArc`. **This read
+drives everything after it:** the plan carries it per segment (Phase 3), the
+placement gate enforces it on candidates (Phase 4), motion easing and the
+mix duck by it (Phases 5/5b), the grade pushes with it (Phase 6). With
+`FUNCUT_EMOTION_API_KEY` (or `HF_TOKEN`) set, the free hosted
+`j-hartmann/emotion-english-distilroberta-base` sharpens the read (65/35
+blend with the lexicon, confidence 0.8); without a key the stem lexicon
+answers alone (confidence 0.55) — both are first-class, the pipeline never
+requires the key. When the arc's warnings name a flat or repetitive script,
+fix the SCRIPT (or re-deliver the section) before planning — an edit cannot
+rescue a narration that never changes state. A brand guide (channel
+palette/type/grade/SFX/taboos/vibe — `emotion {action: "template"}` returns
+one to copy, then store it as `brandKit` via `creative_brief`) is applied on
+the same call: its taboos are checked against every planned query, and a
+taboo hit is a blocker — replace the query, never the taboo.
+
 **Phase 2 — Tighten the voice.** Feed the silence spans to `clip_cut_spans`
 (remove dead air; `-35` dB threshold, ≥0.5 s spans). **The padding rule the
 tools will not apply for you:** `analyze_silence` reports spans WITH a
@@ -104,8 +131,11 @@ its **mode** (`reel` ≤ 60 s or `longform`), its **sections** by role
 visual (B-roll query or a motion comp), its **cutType**, its **in/out**
 entrance and exit, its `transitionIn` at section changes, its SFX with the
 time its PEAK must land on, its caption style, and the **grade** (required —
-a video with no grade is a rough cut, not a finished piece). Put the Phase-0
-brief in `plan.creativeBrief`. Call `plan_validate` on the completed JSON;
+a video with no grade is a rough cut, not a finished piece). Segments under
+a voiceover also carry the Phase-1b read — **emotion, act, easing,
+colourTemp, duckDb** — copied from the extract's lines (the schema documents
+them, the example shows them); they are what Phases 4–6 answer to. Put the
+Phase-0 brief in `plan.creativeBrief`. Call `plan_validate` on the completed JSON;
 fix every reported error AND every `creativeBlockers` entry until BOTH
 `valid: true` and `creativeReady: true`. A structurally valid plan that is
 not creativeReady is a rejection, not a warning to wave through. Craft score
@@ -123,6 +153,14 @@ invent a clip id, never leave a gap. **Never choose B-roll from caption text
 alone.** Call `stock_contact_sheet {query, rank: true, brief}` and actually
 look at the returned image; use its `ranking`, reject dark/letterboxed/generic
 tiles, and follow its `queries` suggestions when the candidates are weak.
+Then run the **placement gate** on the survivors: `emotion {action: "gate",
+segment: {emotion, act}, candidates, brand}` — a candidate failing 0–1 of
+its three checks (emotion register, act shot, brand taboo) passes; **2+
+failed checks REJECTS it; every candidate rejected means DROP THE BEAT** —
+cut the segment and tighten around it, never pad with a bad match (a hard
+floor, §3.E). The gate is lexical; the pixels were the contact sheet's job —
+both, in that order. Use the extract's per-line `queries` (emotion register ×
+act shot) as the openvid_search vocabulary so candidates arrive pre-matched.
 Pass `aspect` to `stock_contact_sheet` and use each chosen tile's
 `reframeHint.clipTransform` offsets directly with `clip_transform` after
 `clip_frame {framing:'fill'}` — this is a computed crop, not a blind
@@ -136,12 +174,17 @@ the last 30 seconds of plan.
 slightly (J-cut feel — but keep plan segments contiguous; the lead is inside
 the segment, not between them), then per clip: `clip_frame {framing: "fill"}`
 so the picture covers the canvas, entrance/exit motion (`clip_transform` +
-`keyframe_set`, or `fadeIn`/`fadeOut` via `clip_update`), transitions between
-sections — **always `clip_update {patch: {transitionIn: {id, duration}}}` on
+`keyframe_set`, or `fadeIn`/`fadeOut` via `clip_update`) — **the easing
+comes from the plan's per-segment `easing` field** (tense beats ease in,
+warm beats ease out; the extract returned the exact authoring JSON) —
+transitions between sections — **always `clip_update {patch: {transitionIn: {id, duration}}}` on
 the incoming clip** (see §3.T, never `effect_layer_add`) — SFX
 (`sounds_add` at the computed peak time, then its dB level with
 `clip_audio_levels_db`), and BGM automation with `clip_audio_levels_db`
-(absolute dB: 0 is unchanged, −60 is the floor). Use `captions_add` for
+(absolute dB: 0 is unchanged, −60 is the floor; **automate to the plan's
+per-segment `duckDb`** — the act's value from the emotion read: −15 under
+the naked hook, −12 under standard speech, −9 letting the reveal ride, −10
+behind the ask). Use `captions_add` for
 segment-timed captions. Group each logical chunk into one `edit_apply` batch.
 
 **Phase 5b — Motion comps (design). Every finished piece goes through here.**
@@ -170,8 +213,11 @@ duration: <runtime>, effectId, ...}` with the duration WRITTEN (the default
 when absent is 5 seconds, which grades five seconds and stops) — or the same
 `videoEffects` chain on every clip via `clip_update`. The intensity key is
 the package's own (`concat.teal-orange` → `amount` 0–100; find each in
-`effects_list`), never a guessed "intensity". Prove the grade with a
-`preview_frame` A/B at 25% and 75% of runtime.
+`effects_list`), never a guessed "intensity". The emotion read's per-segment
+`colourTemp` tells you which direction each act pushes WITHIN the one look
+(fear cold and crushed, joy golden and lifted, disgust sickly) — express it
+as intensity variation of the same base recipe, never as a second filter.
+Prove the grade with a `preview_frame` A/B at 25% and 75% of runtime.
 
 **Phase 7 — Watch the whole cut (never skip).** Call `watch_render` on the
 open project: ONE call returns a labelled contact sheet sampled across the
@@ -200,7 +246,13 @@ is not proof of compliance: call `measure_loudness {path, targetLufs}`
 (or `watch_render {path, audio:true}`) on the exported file. `export_wait`
 reports no loudness. Short-form targets about −14 LUFS integrated with a
 true peak under −1 dBTP; fix with `clip_audio_levels_db` and measure
-again. Never claim LUFS compliance from the plan alone.
+again. Never claim LUFS compliance from the plan alone. And prove the SPEECH
+itself survived the render: `transcribe` the exported file, then
+`emotion {action: "verify", expected: <the edit's word timings>, actual:
+<the export's words>}` — matchRate ≥ 0.9, worst drift within toleranceMs
+(default 150), no duplicated words is the pass; a failure names clipped,
+shifted or duplicated audio the eye cannot see (check clip ends, trims and
+ripple cuts against the retime rule in Phase 2).
 
 ## 2. Job and artifact hygiene
 
@@ -224,6 +276,17 @@ again. Never claim LUFS compliance from the plan alone.
 
 The numbers you are held to. `plan_validate` enforces what it can; you are
 held to the rest at review.
+
+**E — Emotion is the driver, not a decoration.** Under a voiceover, every
+segment carries its measured `emotion`/`act` (Phase 1b), and every layer
+answers to it: motion easing (tense eases in, warm eases out, a burst pops),
+colour temperature, SFX register, duck depth, stock vocabulary. The
+placement gate is absolute: a stock candidate failing 2+ of its three checks
+(emotion register, act shot, brand taboo) is REJECTED; when every candidate
+for a beat is rejected, DROP THE BEAT — tighten around it, never pad with a
+bad match. A brand taboo in any planned query or caption is a blocker.
+Without the hosted key the lexicon read still runs — the floor applies at
+either confidence.
 
 **T — Transitions are clip patches.** `clip_update {patch: {transitionIn:
 {id, duration}}}` on the clip that begins the new section, NEVER

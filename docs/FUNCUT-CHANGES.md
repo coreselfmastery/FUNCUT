@@ -7,11 +7,12 @@ marked as an estimate; nothing is a benchmark this fork ran on your machine,
 because the point of the changes is that the *machine decides* now.
 
 Three kinds of change live here: **memory sizing** (the caches that had one
-fixed size now scale to the machine) and **seven new features** (the OpenVid
+fixed size now scale to the machine) and **eight new features** (the OpenVid
 stock library, the background-music library, pause removal for
 voiceovers, the built-in CC0 sound library, the Wyzowl sound effects
 that grew it to 430, the hosted free-tier vision critic with a stronger
-measured baseline, and the maestro judgment skill for the AI director).
+measured baseline, the maestro judgment skill for the AI director, and
+the emotion-driven edit - the voiceover read that now drives every layer).
 Everything else in the
 program is upstream's own, including
 its existing small-machine machinery: proxies for large files, preview quality
@@ -399,7 +400,46 @@ re-synced instead of freezing. All licenses (MIT / Apache-2.0) are
 AGPL-compatible and attributed in `THIRD_PARTY_NOTICES.md`; the map is
 `docs/MAESTRO.md`.
 
-## 10. Everything else: verified, not changed
+## 10. The feature: the emotion-driven edit
+
+The director pipeline could see its cut (the contact sheets, the critic)
+and change it (the edit tools), but structure alone drove every decision:
+sections, pacing floors, variety laws. The `emotion` tool adds the missing
+sense - what each line of the voiceover **feels like**, measured from the
+words, and the laws that make every layer answer to that read.
+
+The read itself: `emotion {action: "extract"}` on a `transcribe` job's
+output (or `lines`/`script` before any recording exists) returns, per line,
+one of seven emotions with intensity and a full score distribution, the
+dramaturgical act (hook / setup / tension / turn / reveal / proof / cta), a
+hormone shorthand for the viewer's state, the TTS delivery and speed that
+would read the line, the easing curve as **exact concat-motion authoring
+JSON** (tense eases in, warm eases out, a burst pops, anger snaps), the
+colour temperature with a grade hint, the SFX register, the BGM duck depth
+in dB, pacing, and 2-3 word stock queries - plus the whole piece's arc
+(shape, score, warnings) checked against the brief's `emotionalArc`.
+Two engines, both first-class: a stem lexicon always (confidence 0.55), or
+the free hosted `j-hartmann/emotion-english-distilroberta-base` on
+HuggingFace's Inference API when `FUNCUT_EMOTION_API_KEY` / `HF_TOKEN` is
+set (65/35 blend, confidence 0.8). No key is ever required; a failed
+hosted call falls back to the lexicon and says so.
+
+What the read then drives: the edit plan carries per-segment `emotion`,
+`act`, `easing`, `colourTemp` and `duckDb` (validated against the canonical
+schema, optional so non-voiceover edits still pass); the **placement gate**
+(`emotion {action: "gate"}`) checks every stock candidate against the beat's
+emotion register, act shot and the brand guide's taboos - 0-1 failed checks
+passes, 2+ rejects, every candidate rejected means DROP THE BEAT, never pad;
+the brand guide system (`emotion {action: "template"}` returns one to copy,
+`creative_brief` stores it as `brandKit`, taboos are enforced as blockers);
+the mix ducks to the act's value (-15 under the naked hook, -9 letting the
+reveal ride); the grade pushes per-act colour temperature inside one look;
+and after export, `emotion {action: "verify"}` aligns the edit's word
+timings against the re-transcribed render - matchRate, drift and duplicated
+words - proving the speech itself survived the encode. The full map is
+`docs/EMOTION.md`.
+
+## 11. Everything else: verified, not changed
 
 The rest of the fork's work was verification, and it is worth saying what
 that means concretely. The full engine test suites were run against every
@@ -418,7 +458,7 @@ that touch it are the memory table above (which changes *how much* is held,
 never what is computed) and `removeSpans`, which is exercised by the eleven
 engine tests listed above, including the keyframe and fade sharing.
 
-## 11. The files
+## 12. The files
 
 | File | What it is |
 | --- | --- |
@@ -448,3 +488,8 @@ engine tests listed above, including the keyframe and fade sharing.
 | `src/crates/concat-mcp/src/motion.rs` | the 4K clamp, `cached` in the reply, `curtain: false` for captions |
 | `docs/VLM.md` | new: the vision critic's three rungs, providers, privacy line |
 | `docs/MAESTRO.md`, `.claude/skills/maestro/`, `scripts/maestro/` | new: the judgment skill, vendored, with drift tracking |
+| `src/crates/concat-mcp/sense/emotion.py` | new: the emotional read - lexicon + hosted engine, the act classifier, the brand guide, the placement gate, the transcript alignment |
+| `src/crates/concat-mcp/sense/sense.py` | the `emotion` proxy beside the `vlm` one, selftested in CI |
+| `src/crates/concat-mcp/src/sense.rs`, `src/crates/concat-mcp/src/tools.rs`, `src/crates/concat-mcp/src/protocol.rs` | the `emotion` MCP tool: embedded runtime, schema, dispatch, creative-loop wiring |
+| `.claude/skills/funcut-director/SKILL.md`, `templates/edit_plan.schema.json`, `templates/edit_plan.example.json` | Phase 1b the read, the per-segment emotion fields, the gate as hard floor E, the export verify |
+| `docs/EMOTION.md` | new: the emotion-driven edit's own page |

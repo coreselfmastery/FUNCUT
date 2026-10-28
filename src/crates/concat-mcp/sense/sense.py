@@ -11,6 +11,7 @@ Commands (all take --spec JSON and print one JSON object on stdout):
   sheet      decode frames -> contact sheet PNG + per-shot pixel metrics
   critique   contact sheet + brief + metrics -> 6-axis craft score + revisions
   vlm        proxy to vlm.py status / setup
+  emotion    proxy to emotion.py extract / brand / gate / verify
 
 The pixel metrics are honest but shallow. When a local VLM is reachable,
 `critique` uses it as the semantic rater and keeps the pixel metrics as a
@@ -41,6 +42,10 @@ try:
     import vlm as local_vlm
 except Exception:  # pragma: no cover - sense must work without the VLM helper
     local_vlm = None
+try:
+    import emotion as emotion_read
+except Exception:  # pragma: no cover - sense must work without the emotion reader
+    emotion_read = None
 
 
 # ---------------------------------------------------------------------------
@@ -1501,10 +1506,38 @@ def vlm_command(spec):
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
+def emotion_command(spec):
+    """The emotion read of the voiceover, proxied to emotion.py: what each
+    line FEELS like and what that feeling demands of every layer. Same
+    degradation contract as vlm_command - a missing module is an honest
+    error, never a crash."""
+    if emotion_read is None:
+        return {"ok": False, "error": "emotion.py missing from sense runtime"}
+    action = str(spec.get("action", "extract"))
+    try:
+        if action == "template":
+            return emotion_read.brand_template()
+        if action == "selftest":
+            return emotion_read.selftest()
+        if action == "extract":
+            return emotion_read.extract(spec)
+        if action == "brand":
+            return emotion_read.brand_apply(spec.get("brand") or {},
+                                            spec.get("lines") or [])
+        if action == "gate":
+            return emotion_read.gate(spec)
+        if action == "verify":
+            return emotion_read.verify(spec)
+        return {"ok": False,
+                "error": "action is extract, brand, gate, verify, template or selftest"}
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
 def main():
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["sheet", "critique", "rank", "overlay", "loudness", "rhythm", "vlm", "selftest"])
+    ap.add_argument("cmd", choices=["sheet", "critique", "rank", "overlay", "loudness", "rhythm", "vlm", "emotion", "selftest"])
     ap.add_argument("--spec", default="{}")
     args = ap.parse_args()
     try:
@@ -1538,6 +1571,8 @@ def main():
                 out["ok"] = True
         elif args.cmd == "vlm":
             out = vlm_command(spec)
+        elif args.cmd == "emotion":
+            out = emotion_command(spec)
         else:
             # No external dependencies: generate a synthetic gradient sheet and
             # measure it. Proves ffmpeg, PNG encoding and metrics all work.
@@ -1652,6 +1687,21 @@ def main():
             assert _string_list(["a", "b", ""]) == ["a", "b"]
             assert _string_list(7) == []
             assert _string_list(None) == []
+            # The emotion proxy is the seam between the MCP tool and the
+            # reader: prove the wiring here too, not just in emotion.py's
+            # own selftest (both run in CI, but only this one proves the
+            # dispatch a Rust tool call actually takes).
+            if emotion_read is not None:
+                probe = emotion_command({"action": "extract",
+                                         "script": "You won't believe this."})
+                assert probe.get("ok") and probe["lines"][0]["emotion"] == "surprise", probe
+                gate_probe = emotion_command({
+                    "action": "gate",
+                    "segment": {"emotion": "joy", "act": "reveal"},
+                    "candidates": [{"index": 0, "caption": "sunlit meadow celebration"}],
+                })
+                assert gate_probe.get("ok") and gate_probe["order"] == [0], gate_probe
+                out["emotionProxy"] = "ok"
             out["selftest"] = True
             out["decoder"] = "pure-python"
             out["vlmParsers"] = "ok"

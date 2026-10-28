@@ -104,6 +104,8 @@ pub enum Action {
     CraftCritique,
     /// Status or first-use setup of the local sub-1B vision critic.
     LocalVlm,
+    /// The emotional read of the voiceover, and the gates it drives.
+    Emotion,
     /// Read or write the project's persisted creative brief.
     CreativeBrief,
     /// Composite a transparent motion bake over real footage.
@@ -853,6 +855,15 @@ pub fn catalogue() -> Vec<Tool> {
             action: Action::LocalVlm,
         },
         Tool {
+            name: "emotion",
+            title: "Read what the voiceover feels",
+            description: "The emotional read of the voiceover that drives every layer. `action: \"extract\"` (default) takes `transcript` (a transcribe job's output), `lines` [{text,start,end}] or `script` text and returns PER LINE: one of 7 emotions with intensity, the act (hook/setup/tension/turn/reveal/proof/cta), a hormone shorthand, the TTS `delivery` and `speed`, the easing curve as exact concat-motion authoring JSON (tense lines ease in, warm ones ease out, a burst pops), colour temperature with a grade hint, the SFX register, the BGM duck depth in dB, pacing and 2-3 word stock `queries` - plus the whole piece's arc (shape, score, warnings) checked against the brief's emotionalArc. Engines: a stem lexicon always (confidence 0.55), or j-hartmann/emotion-english-distilroberta-base on HuggingFace's free Inference API when FUNCUT_EMOTION_API_KEY / HF_TOKEN is set (65/35 blend, confidence 0.8). `project` loads the creative brief automatically. `action: \"gate\"` checks stock candidates (openvid_search / stock_contact_sheet results) against a beat's `segment` {emotion, act} and `brand`: 0-1 failed checks passes, 2+ REJECTS the candidate, every candidate rejected = DROP THE BEAT - never pad with a bad match. `action: \"brand\"` validates a brand guide (`action: \"template\"` returns a ready-to-edit example) and applies it to lines. `action: \"verify\"` aligns the edit's words (`expected`) against the re-transcribed export (`actual`): what a render loses, duplicates or shifts (toleranceMs, default 150) is a defect the eye cannot see.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Emotion,
+        },
+        Tool {
             name: "creative_brief",
             title: "Set the creative intent",
             description: "Persist the WHY of the edit in the project folder so every turn works from the same intent. `action: \"set\"` merges `brief` into creative-brief.json; `action: \"get\"` reads it. Fields: audience, platform, goal, thesis, curiosityGap, payoff, emotionalArc, referenceStyle, tone, durationSeconds, brandKit, constraints, avoid. Returns a ready-to-use directorPrompt to give the AI director, and lists missingCoreFields. An edit without these fields is an edit without a point of view.",
@@ -1057,6 +1068,7 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
         | Action::StockSheet
         | Action::CraftCritique
         | Action::LocalVlm
+        | Action::Emotion
         | Action::CreativeBrief
         | Action::MotionOverlay
         | Action::MeasureLoudness
@@ -1120,7 +1132,7 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
     }
 }
 
-/// The five sense tools' inputs. They wrap the embedded Python perception
+/// The sense tools' inputs. They wrap the embedded Python perception
 /// layer rather than an API method, so no generated schema exists for them.
 fn sense_schema(name: &str) -> Option<Value> {
     let string = |description: &str| json!({ "type": "string", "description": description });
@@ -1217,6 +1229,23 @@ fn sense_schema(name: &str) -> Option<Value> {
             "apiKey": string("With action 'configure': the provider's API key; stored in the app's own vlm.json, never echoed back in full."),
             "endpoint": string("With action 'configure' and provider 'custom': an OpenAI-compatible base URL."),
             "model": string("Override the provider's default vision model id."),
+        }),
+        "emotion" => json!({
+            "action": { "type": "string", "enum": ["extract", "brand", "gate", "verify", "template", "selftest"], "default": "extract" },
+            "project": string("The project folder; its creative-brief.json supplies the brief (emotionalArc) and brandKit when not given directly."),
+            "transcript": { "type": "object", "description": "A transcribe job's output: {segments: [{text, start, end, words: [{text,start,end}]}]}." },
+            "lines": { "type": "array", "description": "Lines as [{text, start, end}] (or bare strings) when there is no transcript.", "items": { "type": ["object", "string"] } },
+            "script": string("Raw narration text; split into sentences when no transcript or lines are given."),
+            "brief": { "type": "object", "description": "The creative brief; its emotionalArc is checked against the states the lines actually visit." },
+            "sections": { "type": "array", "description": "The plan's sections [{role, start, end}]; a line inside a hook/cta/outro section inherits that act.", "items": { "type": "object" } },
+            "brand": { "type": "object", "description": "The brand guide (action 'template' returns one to copy): id, name, vibe, palette, type, grade, taboos, and optional motion, sfx, bgm, voice." },
+            "apiKey": string("A HuggingFace token for the hosted emotion model; FUNCUT_EMOTION_API_KEY / HF_TOKEN otherwise. Without one the lexicon engine answers."),
+            "model": string("Override the default emotion model id (j-hartmann/emotion-english-distilroberta-base)."),
+            "segment": { "type": "object", "description": "With action 'gate': the beat a candidate is up for, {emotion: one of the 7, act: one of the 7}." },
+            "candidates": { "type": "array", "description": "With action 'gate': openvid_search / stock_contact_sheet results carrying caption, keywords or query.", "items": { "type": "object" } },
+            "expected": { "type": ["object", "array"], "description": "With action 'verify': the edit's words - a transcribe job's output or a [{text,start,end}] word list." },
+            "actual": { "type": ["object", "array"], "description": "With action 'verify': the exported file's re-transcribed words." },
+            "toleranceMs": { "type": "number", "default": 150, "minimum": 0, "description": "With action 'verify': how far a word may start from where the edit placed it." },
         }),
         "creative_brief" => json!({
             "path": string("The project folder."),
@@ -1648,6 +1677,7 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         Action::StockSheet => crate::sense::stock_contact_sheet(arguments, backend),
         Action::CraftCritique => crate::sense::craft_critique(arguments, backend),
         Action::LocalVlm => crate::sense::local_vlm(arguments),
+        Action::Emotion => crate::sense::emotion(arguments),
         Action::CreativeBrief => crate::sense::creative_brief(arguments, backend),
         Action::MotionOverlay => crate::sense::motion_overlay(arguments, backend),
         Action::MeasureLoudness => crate::sense::measure_loudness(arguments),
@@ -3059,6 +3089,10 @@ mod tests {
             ("measure_loudness", json!({ "path": "/tmp/render.mp4" })),
             ("local_vlm", json!({ "action": "status" })),
             (
+                "emotion",
+                json!({ "script": "You won't believe what they found." }),
+            ),
+            (
                 "creative_brief",
                 json!({ "path": "/tmp/Cut", "action": "get" }),
             ),
@@ -3160,6 +3194,7 @@ mod tests {
                 | Action::StockSheet
                 | Action::CraftCritique
                 | Action::LocalVlm
+                | Action::Emotion
                 | Action::CreativeBrief
                 | Action::MotionOverlay
                 | Action::MeasureLoudness

@@ -237,11 +237,35 @@ return MCP `type: image` content blocks, so the model can actually look:
   works. `profile: "minicpm"` is ~2.2 GB and reads dense text
   better. `vlm.py ask` supports grammar-constrained JSON and retries once
   without the schema on servers that reject it.
+- `emotion` - the emotional read of the voiceover that drives every layer
+  (see [docs/EMOTION.md](EMOTION.md) for the full map). `action "extract"`
+  takes a `transcript` (a transcribe job's output), `lines` or raw `script`
+  text and returns, per line: the **emotion** (7 labels) with intensity and
+  confidence, the **act** (hook / setup / tension / turn / reveal / proof /
+  cta), a hormone shorthand, the TTS `delivery` + `speed`, the **easing
+  curve** as exact concat-motion authoring JSON (tense eases in, warm eases
+  out, a burst pops), colour temperature + grade hint, the SFX register,
+  the BGM **duck depth** in dB, pacing and 2–3 word stock `queries`; plus
+  the whole piece's **arc** (shape, score, warnings) checked against the
+  brief's `emotionalArc`. Engines: a stem lexicon always (confidence 0.55),
+  or `j-hartmann/emotion-english-distilroberta-base` on HuggingFace's free
+  Inference API when `FUNCUT_EMOTION_API_KEY` / `HF_TOKEN` is set (65/35
+  blend, confidence 0.8) — with and without the key are both first-class.
+  `project` loads the brief automatically. `action "gate"` checks stock
+  candidates against a beat's `{emotion, act}` and the brand guide: 0–1
+  failed checks passes, **2+ rejects the candidate, every candidate rejected
+  = DROP THE BEAT** — never pad with a bad match. `action "brand"`
+  validates a brand guide (`action "template"` returns one to copy) and
+  applies it; `action "verify"` aligns the edit's words against the
+  re-transcribed export — what a render loses, duplicates or shifts is a
+  defect the eye cannot see.
 
-The intended loop: `creative_brief` -> `plan_validate` (creativeReady true)
--> `stock_contact_sheet` -> build -> `watch_render` -> `craft_critique` ->
-revise -> `watch_render` again -> export -> `watch_render {path}` on the
-file that shipped. See `src/crates/concat-mcp/sense/README.md` and the
+The intended loop: `creative_brief` -> `emotion` (extract, on the
+voiceover) -> `plan_validate` (creativeReady true) -> `stock_contact_sheet`
+-> `emotion` (gate, before anything is placed) -> build -> `watch_render` ->
+`craft_critique` -> revise -> `watch_render` again -> export ->
+`watch_render {path}` + `measure_loudness` + `emotion` (verify) on the file
+that shipped. See `src/crates/concat-mcp/sense/README.md` and the
 director skill's `prompts/quality_loop.md`.
 
 The first three need a Python 3 with the extras named in the analysis

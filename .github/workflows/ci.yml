@@ -69,6 +69,11 @@ jobs:
       # used to hide.
       - run: python3 src/crates/concat-mcp/sense/sense.py selftest
         if: ${{ !cancelled() }}
+      # The emotion reader's own selftest, same contract: pure stdlib,
+      # deterministic, no network - it proves the lexicon, the act
+      # classifier, the gate and the transcript alignment.
+      - run: python3 src/crates/concat-mcp/sense/emotion.py selftest
+        if: ${{ !cancelled() }}
 
   engine:
     name: Engine tests and lints

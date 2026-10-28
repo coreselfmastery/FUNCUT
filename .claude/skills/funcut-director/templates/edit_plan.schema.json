@@ -56,6 +56,72 @@
             "type": "string",
             "description": "The narration words this segment covers (for caption grouping)."
           },
+          "emotion": {
+            "type": "string",
+            "enum": [
+              "anger",
+              "disgust",
+              "fear",
+              "joy",
+              "neutral",
+              "sadness",
+              "surprise"
+            ],
+            "description": "What this segment's narration FEELS like, from the `emotion` tool's read of the transcript (action extract). The layer every other per-segment choice answers to: the easing, the colour push, the SFX register, the stock vocabulary."
+          },
+          "act": {
+            "type": "string",
+            "enum": [
+              "hook",
+              "setup",
+              "tension",
+              "turn",
+              "reveal",
+              "proof",
+              "cta"
+            ],
+            "description": "The dramaturgical act this segment plays - the emotion read assigns it, the plan's sections may override it. Drives the shot register (extreme close-up for a hook, wide establishing for setup, hero shot for the reveal) and the BGM duck depth."
+          },
+          "easing": {
+            "oneOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "ease-in",
+                  "ease-out",
+                  "ease-in-out",
+                  "emphasis",
+                  "snap-in",
+                  "spring",
+                  "spring-pop"
+                ]
+              },
+              {
+                "type": "object",
+                "description": "The exact concat-motion authoring curve object the emotion read returns ({kind: bezier|spring, ...})."
+              }
+            ],
+            "description": "How this segment's motion enters, from the emotion: tense lines ease in, warm ones ease out, a burst pops, anger snaps."
+          },
+          "colourTemp": {
+            "type": "string",
+            "enum": [
+              "hot",
+              "cold",
+              "warm",
+              "cool",
+              "sickly",
+              "split",
+              "balanced"
+            ],
+            "description": "The colour-temperature push this segment rides on top of the base grade, from the emotion read (fear is cold and crushed, joy golden and lifted, disgust sickly)."
+          },
+          "duckDb": {
+            "type": "number",
+            "minimum": -60,
+            "maximum": 0,
+            "description": "How deep the BGM ducks under this segment's speech, as an absolute dB target from the act's profile in the emotion read (-15 under the naked hook, -9 letting the reveal ride)."
+          },
           "visual": {
             "type": "object",
             "required": [

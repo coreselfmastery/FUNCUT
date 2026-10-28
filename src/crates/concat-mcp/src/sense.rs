@@ -29,6 +29,7 @@ use crate::tools::Outcome;
 
 const SENSE_PY: &str = include_str!("../sense/sense.py");
 const VLM_PY: &str = include_str!("../sense/vlm.py");
+const EMOTION_PY: &str = include_str!("../sense/emotion.py");
 static RUNTIME: OnceLock<Result<PathBuf, String>> = OnceLock::new();
 static NONCE: AtomicU64 = AtomicU64::new(0);
 
@@ -80,6 +81,7 @@ fn runtime() -> Result<&'static PathBuf, ApiError> {
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         fs::write(dir.join("sense.py"), SENSE_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("vlm.py"), VLM_PY).map_err(|e| e.to_string())?;
+        fs::write(dir.join("emotion.py"), EMOTION_PY).map_err(|e| e.to_string())?;
         Ok(dir)
     });
     result.as_ref().map_err(failed)
@@ -1001,6 +1003,73 @@ pub fn local_vlm(arguments: Value) -> Result<Outcome, ApiError> {
         "vlm",
         &spec,
         Duration::from_secs(if action == "setup" { 900 } else { 30 }),
+    )?;
+    Ok(Outcome::json(result))
+}
+
+/// `emotion`: the emotional read of the voiceover - per line: the emotion,
+/// its act, the easing curve it demands, colour temperature, duck depth and
+/// stock vocabulary - plus the brand gate and the export verify.
+pub fn emotion(arguments: Value) -> Result<Outcome, ApiError> {
+    let fields = arguments
+        .as_object()
+        .cloned()
+        .ok_or_else(|| invalid("the arguments are an object"))?;
+    let action = fields
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("extract");
+    if !["extract", "brand", "gate", "verify", "template", "selftest"].contains(&action) {
+        return Err(invalid(
+            "action is `extract`, `brand`, `gate`, `verify`, `template` or `selftest`",
+        ));
+    }
+    let mut spec = json!({ "action": action });
+    // `project` loads the brief the way every other creative tool does: the
+    // brief's emotionalArc checks the lines, and its brandKit (when it is a
+    // full brand guide) is applied as the brand.
+    if let Some(project) = fields.get("project").and_then(Value::as_str) {
+        let brief = load_brief(Some(project));
+        let has_brief = brief.as_object().is_some_and(|map| !map.is_empty());
+        if has_brief && !fields.contains_key("brief") {
+            spec["brief"] = brief.clone();
+        }
+        let kit = brief.get("brandKit").filter(|kit| kit.is_object());
+        if kit.is_some() && !fields.contains_key("brand") {
+            spec["brand"] = kit.cloned().unwrap_or(Value::Null);
+        }
+    }
+    // Only the fields the action reads travel on: the spec crosses a
+    // process boundary, and a transcript with word timings is large enough
+    // without carrying fields the command would ignore.
+    let passthrough: &[&str] = match action {
+        "extract" => &[
+            "transcript",
+            "lines",
+            "script",
+            "brief",
+            "sections",
+            "brand",
+            "apiKey",
+            "model",
+        ],
+        "brand" => &["brand", "lines"],
+        "gate" => &["segment", "candidates", "brand"],
+        "verify" => &["expected", "actual", "toleranceMs"],
+        _ => &[],
+    };
+    for key in passthrough {
+        if let Some(value) = fields.get(*key) {
+            spec[*key] = value.clone();
+        }
+    }
+    // `extract` is the only action that may wait on a hosted model: one
+    // batched POST for every line, with the Python side's own endpoint
+    // retries inside the budget.
+    let result = run(
+        "emotion",
+        &spec,
+        Duration::from_secs(if action == "extract" { 90 } else { 30 }),
     )?;
     Ok(Outcome::json(result))
 }

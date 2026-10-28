@@ -1,9 +1,10 @@
-# concat-sense — giving the editor eyes
+# concat-sense — giving the editor eyes and a feel for the voice
 
-Two standard-library Python files, shipped inside the `concat-mcp` binary via
-`include_str!`. They need **no pip install, no Python packages, no system-wide
-installation**. Python 3 itself is required (Concat already needs it for
-`analyze_scenes` / `transcribe`); set `FUNCUT_PYTHON` if it is not `python3`.
+Three standard-library Python files, shipped inside the `concat-mcp` binary
+via `include_str!`. They need **no pip install, no Python packages, no
+system-wide installation**. Python 3 itself is required (Concat already
+needs it for `analyze_scenes` / `transcribe`); set `FUNCUT_PYTHON` if it is
+not `python3`.
 
 Decoding has two paths:
 
@@ -50,6 +51,7 @@ parseable.
 | `loudness` | EBU R128 integrated LUFS, true peak dBTP and loudness range of a media file, checked against a platform target. |
 | `rhythm` | BPM, energy-onset curve and beat-aligned cut times spread across the whole piece, with no Python extras. |
 | `vlm` | `status` / `setup` for the local vision model. |
+| `emotion` | The emotional read of the voiceover: per-line emotion, act, easing, colour, duck, vocabulary + the arc; `brand` / `gate` / `verify` / `template` beside it. |
 | `selftest` | Generate a synthetic PNG, decode it, measure it, and exercise the model-reply, loudness and cut-spread parsers — no fixtures, no ffmpeg. |
 
 Example:
@@ -59,6 +61,7 @@ python3 sense.py selftest
 python3 sense.py sheet --spec '{"path":"render.mp4","samples":12,"audio":true}'
 python3 sense.py critique --spec '{"sheet": <sheet json>, "brief": {...}, "autoSetup":true}'
 python3 sense.py vlm --spec '{"action":"status"}'
+python3 sense.py emotion --spec '{"script":"You won't believe what they found."}'
 cat big-spec.json | python3 sense.py sheet --spec -
 ```
 
@@ -133,6 +136,33 @@ measures exposure (black AND blown-out frames), contrast, detail,
 letterbox/pillarbox bars, colour saturation, full-frame duplicate hashing,
 static transitions, the opening frame (the hook axis), the audio envelope
 and EBU R128 loudness — every axis score is a formula over those facts.
+
+## The emotion read (`emotion.py`)
+
+`emotion.py` is the third sense: what the voiceover **feels like**, measured
+from the words themselves. The director pipeline had eyes (the sheets) and
+hands (the edit tools); the edit was driven by structure alone. This file
+adds the missing driver — every line of narration read as an emotion, an
+intensity, an act and a viewer state, and each of those mapped to what the
+edit actually does: the easing curve (tense eases in, warm eases out, a
+burst pops), the colour temperature, the SFX register, the BGM duck depth,
+the TTS delivery and the stock-query vocabulary.
+
+Two engines, both honest about what they are: a **stem lexicon** (always
+available, zero dependencies, confidence 0.55) and the hosted
+`j-hartmann/emotion-english-distilroberta-base` text classifier on
+HuggingFace's free Inference API when `FUNCUT_EMOTION_API_KEY` / `HF_TOKEN`
+is set (65/35 blend with the lexicon, confidence 0.8 — the model sees
+semantics the lexicon cannot, the lexicon sees punctuation and caps the
+model never will). The pipeline never *requires* the key.
+
+Commands (same `--spec` contract): `extract` (per-line read + the arc),
+`brand` (validate and apply a brand guide), `gate` (the placement gate:
+0–1 failed checks passes, 2+ rejects, all rejected = DROP THE BEAT),
+`verify` (word-level alignment of the edit against the re-transcribed
+export), `template` (a ready-to-edit brand guide) and `selftest`
+(deterministic, no network). The MCP tool is `emotion`; see
+`docs/EMOTION.md` for the full map.
 
 ## Licensing note
 

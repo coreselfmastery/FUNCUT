@@ -1058,9 +1058,10 @@ pub fn suggest_cuts(arguments: Value) -> Result<Outcome, ApiError> {
     if let Some(bpm) = fields.get("bpm") {
         spec["bpm"] = bpm.clone();
     }
-    if let Some(ff) = fields.get("ffmpeg") {
-        spec["ffmpeg"] = ff.clone();
-    }
+    // No `ffmpeg` here, by design: the executable that runs is the
+    // operator's (FUNCUT_FFMPEG, the PATH, or the pinned bootstrap) and
+    // never the agent's to name - a tool that took a binary path from
+    // its caller was arbitrary execution wearing a media tool's name.
     let mut result = run("rhythm", &spec, Duration::from_secs(240))?;
     result["hint"] = json!(
         "These are energy onsets, not a finished edit. Use them for section changes and entrances, keep a few cuts deliberately OFF the pulse, and never place more cuts than the story needs. Feed the times into plan_validate as section boundaries."
@@ -1081,15 +1082,13 @@ pub fn measure_loudness(arguments: Value) -> Result<Outcome, ApiError> {
         .and_then(Value::as_str)
         .filter(|p| !p.trim().is_empty())
         .ok_or_else(|| invalid("`path` is the media file to measure"))?;
-    let mut spec = json!({
+    let spec = json!({
         "path": path,
         "targetLufs": number(&fields, "targetLufs", -14.0),
         "targetTruePeakDbtp": number(&fields, "targetTruePeakDbtp", -1.0),
         "autoSetup": fields.get("autoSetup").and_then(Value::as_bool).unwrap_or(true),
     });
-    if let Some(ff) = fields.get("ffmpeg") {
-        spec["ffmpeg"] = ff.clone();
-    }
+    // As `suggest_cuts`: the binary is never the caller's to choose.
     let mut result = run("loudness", &spec, Duration::from_secs(300))?;
     result["hint"] = json!(
         "Short-form platforms sit near -14 LUFS integrated with a true peak under -1 dBTP; broadcast EBU R128 is -23 LUFS. A plan's target is a wish - this is the measurement. Fix with clip_audio_levels_db and measure again; never claim compliance from a plan."

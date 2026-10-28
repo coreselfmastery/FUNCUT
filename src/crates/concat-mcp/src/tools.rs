@@ -1196,14 +1196,12 @@ fn sense_schema(name: &str) -> Option<Value> {
             "cuts": { "type": "integer", "minimum": 1, "maximum": 64, "default": 12 },
             "minGap": { "type": "number", "minimum": 0.05, "maximum": 10, "default": 0.35 },
             "bpm": { "type": "number", "minimum": 30, "maximum": 300, "description": "Optional BPM hint when the estimate is wrong." },
-            "ffmpeg": string("An explicit ffmpeg binary; the sense layer bootstraps one when absent."),
             "autoSetup": { "type": "boolean", "default": true },
         }),
         "measure_loudness" => json!({
             "path": string("The media file with an audio stream to measure."),
             "targetLufs": { "type": "number", "default": -14, "minimum": -70, "maximum": 0 },
             "targetTruePeakDbtp": { "type": "number", "default": -1, "minimum": -20, "maximum": 6 },
-            "ffmpeg": string("An explicit ffmpeg binary; the sense layer bootstraps one when absent."),
             "autoSetup": { "type": "boolean", "default": true },
         }),
         "motion_overlay" => json!({

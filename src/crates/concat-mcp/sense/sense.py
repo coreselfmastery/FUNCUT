@@ -260,14 +260,21 @@ def _app_dir():
 
 
 def _ensure_ffmpeg(spec):
-    """Return (ffmpeg, ffprobe) paths, bootstrapping a static build if needed."""
-    explicit = spec.get("ffmpeg") or os.environ.get("FUNCUT_FFMPEG")
+    """Return (ffmpeg, ffprobe) paths, bootstrapping a static build if needed.
+
+    The binary is NEVER taken from the spec. The spec crosses a trust
+    boundary - it is built from an agent's tool arguments - and a caller
+    that could name "ffmpeg" could name any executable and have the sense
+    layer run it. Only the operator's environment may choose a binary:
+    FUNCUT_FFMPEG, the PATH, or the pinned bootstrap download below.
+    """
+    explicit = os.environ.get("FUNCUT_FFMPEG")
     if explicit and os.path.isfile(explicit) and os.access(explicit, os.X_OK):
         ff = explicit
     else:
         ff = shutil.which("ffmpeg")
     if ff:
-        fp = spec.get("ffprobe") or os.path.join(os.path.dirname(ff), "ffprobe")
+        fp = os.path.join(os.path.dirname(ff), "ffprobe")
         return ff, (fp if os.path.isfile(fp) else (shutil.which("ffprobe") or "ffprobe"))
     root = _app_dir() / "ffmpeg"
     for name in ("ffmpeg", "ffmpeg.exe"):
@@ -324,8 +331,8 @@ def _tools(spec):
         return _ensure_ffmpeg(spec)
     except Exception as exc:
         print(f"[sense] ffmpeg bootstrap: {exc}", file=sys.stderr, flush=True)
-        return (spec.get("ffmpeg") or shutil.which("ffmpeg") or "ffmpeg",
-                spec.get("ffprobe") or shutil.which("ffprobe") or "ffprobe")
+        return (os.environ.get("FUNCUT_FFMPEG") or shutil.which("ffmpeg") or "ffmpeg",
+                shutil.which("ffprobe") or "ffprobe")
 
 
 def _run(cmd, timeout=45):

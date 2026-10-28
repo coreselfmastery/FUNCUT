@@ -140,7 +140,10 @@ fn motion_sequence(
         let fps = manifest.get("fps").and_then(Json::as_f64).unwrap_or(0.0);
         let width = manifest.get("width").and_then(Json::as_u64).unwrap_or(0) as u32;
         let height = manifest.get("height").and_then(Json::as_u64).unwrap_or(0) as u32;
-        let alpha = manifest.get("alpha").and_then(Json::as_bool).unwrap_or(false);
+        let alpha = manifest
+            .get("alpha")
+            .and_then(Json::as_bool)
+            .unwrap_or(false);
         let hash = manifest.get("hash").and_then(Json::as_u64).unwrap_or(0);
         if hash == 0
             || format!("{hash:016x}") != key
@@ -170,11 +173,7 @@ fn motion_sequence(
     // Alpha first - that is the whole point of taking the sequence - then
     // the larger bake, then the name, so two bakes of one comp resolve the
     // same way twice.
-    candidates.sort_by(|a, b| {
-        b.0.cmp(&a.0)
-            .then(b.1.cmp(&a.1))
-            .then(a.5.cmp(&b.5))
-    });
+    candidates.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)).then(a.5.cmp(&b.5)));
     let (alpha, _, width, height, fps, frames_dir) = candidates.into_iter().next()?;
     let script = sequence_script(&frames_dir, fps)?;
     Some(MotionSequence {
@@ -255,9 +254,7 @@ fn sequence_script(frames_dir: &Path, fps: f64) -> Option<String> {
     }
 
     let path = frames_dir.join("index.ffconcat");
-    if std::fs::read_to_string(&path)
-        .is_ok_and(|existing| existing == text)
-    {
+    if std::fs::read_to_string(&path).is_ok_and(|existing| existing == text) {
         return Some(path.to_string_lossy().into_owned());
     }
     std::fs::write(&path, text).ok()?;

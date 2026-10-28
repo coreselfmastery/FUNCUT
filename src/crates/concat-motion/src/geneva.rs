@@ -1283,7 +1283,10 @@ mod tests {
         assert_eq!(document["geneva"], "1.1");
         assert_eq!(document["output"]["encode"]["container"], "image-sequence");
         assert_eq!(document["output"]["encode"]["video"]["codec"], "png");
-        assert_eq!(document["output"]["encode"]["video"]["pixel_format"], "rgba");
+        assert_eq!(
+            document["output"]["encode"]["video"]["pixel_format"],
+            "rgba"
+        );
         assert_eq!(document["output"]["background"], "#00000000");
         assert_eq!(document["layers"].as_array().unwrap().len(), 1);
     }

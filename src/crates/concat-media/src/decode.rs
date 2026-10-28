@@ -606,7 +606,9 @@ fn alpha_decoder(stream: &ffmpeg::format::stream::Stream<'_>) -> Option<&'static
 /// the comp slow and cutting its tail. The script is the editor's own
 /// writing - entries relative, inside the bake they describe - so relaxing
 /// the guard for it opens nothing a project did not put there itself.
-pub(crate) fn open_input(path: &Path) -> Result<format::context::Input, ffmpeg::Error> {
+pub(crate) fn open_input(
+    path: &Path,
+) -> std::result::Result<format::context::Input, ffmpeg::Error> {
     let script = path
         .extension()
         .and_then(|ext| ext.to_str())

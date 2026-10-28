@@ -1214,7 +1214,7 @@ mod tests {
         let (x, y) = reframe_offset("16:9", 0.0, -0.5);
         assert_eq!(x, 0.0, "a landscape frame has no horizontal overhang");
         assert!((0.19..=0.2).contains(&y), "y = {y}");
-        assert_eq!(reframe_offset("16:9", 0.0, 99.0).1, 0.39);
+        assert_eq!(reframe_offset("16:9", 0.0, 99.0).1, -0.39);
         // 4:5: barely portrait, so barely any room - the old code's 0.45
         // clamp here could push a clip mostly off its source.
         let (x, y) = reframe_offset("4:5", 1.0, 1.0);

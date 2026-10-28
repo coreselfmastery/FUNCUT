@@ -89,10 +89,10 @@ impl Api {
                 ),
             ));
         }
-        if speed.is_some_and(|value| !value.is_finite()) {
+        if speed.is_some_and(|value| !value.is_finite() || !(0.5..=2.0).contains(&value)) {
             return Err(ApiError::new(
                 ErrorCode::Invalid,
-                "speed must be a finite number",
+                "speed must be a finite number from 0.5 to 2",
             ));
         }
         if pauses.is_some_and(|value| !value.is_finite() || !(0.0..=1.0).contains(&value)) {
@@ -101,10 +101,13 @@ impl Api {
                 "pauses must be a finite number from 0 to 1",
             ));
         }
-        if steps.is_some_and(|value| !(1..=50).contains(&value)) {
+        // 16 is the engine's own ceiling (its diffusion steps clamp there),
+        // so anything above was accepted and then silently halved - an
+        // error at the door names the real dial instead.
+        if steps.is_some_and(|value| !(1..=16).contains(&value)) {
             return Err(ApiError::new(
                 ErrorCode::Invalid,
-                "steps must be between 1 and 50",
+                "steps must be between 1 and 16",
             ));
         }
         let (delivery_speed, delivery_pauses) = match delivery {

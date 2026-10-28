@@ -4284,7 +4284,7 @@ impl Studio {
             return;
         }
         if !video && clip.kind == model::ClipKind::Image {
-            self.notify("A still has no sound to filter", true);
+            self.notify(&t("studio.stillNoSound"), true);
             return;
         }
         let entry = AppliedFilter::new(id);

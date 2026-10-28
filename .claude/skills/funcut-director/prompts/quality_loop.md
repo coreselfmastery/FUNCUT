@@ -86,9 +86,9 @@ Pick the highest-leverage revision, not the easiest one. Typical fixes:
 
 | Symptom | Tool |
 | --- | --- |
-| black / letterboxed tiles | `trim_clip`, `clip_transform` |
-| static run | `set_entrance`, `add_keyframes`, `clip_transform` |
-| repeated images | `stock_contact_sheet {rank:true}` then `clip_replace` |
+| black / letterboxed tiles | `clip_trim`, `clip_transform` |
+| static run | `clip_transform`, `keyframe_set` |
+| repeated images | `stock_contact_sheet {rank:true}` then `clip_update` (or `clips_remove` + `clip_add`) |
 | weak hook | rewrite the first line, `captions_animate`, new first shot |
 | flat design | `motion_inspect` -> `motion_frame` -> `motion_bake` |
 | dead soundtrack | `sounds_search`, `bgm_search`, `clip_audio_levels_db` |

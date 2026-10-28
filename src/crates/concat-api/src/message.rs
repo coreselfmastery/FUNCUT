@@ -742,7 +742,8 @@ pub enum Request {
         #[serde(default)]
         pauses: Option<f64>,
         /// Pocket's flow-matching steps: more is a cleaner voice and a
-        /// longer wait, 5 is the engine's own. Ignored by other families.
+        /// longer wait, 5 is the engine's own and 16 its ceiling.
+        /// Ignored by other families.
         #[serde(default)]
         steps: Option<i32>,
     },

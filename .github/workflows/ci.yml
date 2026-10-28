@@ -63,6 +63,12 @@ jobs:
       # the two saying the same thing. See models/manifest.toml.
       - run: python3 scripts/models.py --check
         if: ${{ !cancelled() }}
+      # The sense sidecar's selftest: pure stdlib, no ffmpeg and no model,
+      # it proves the PNG pipeline and the model-reply parsers the Rust
+      # tests cannot reach - the parsers were exactly where the e2e gaps
+      # used to hide.
+      - run: python3 src/crates/concat-mcp/sense/sense.py selftest
+        if: ${{ !cancelled() }}
 
   engine:
     name: Engine tests and lints

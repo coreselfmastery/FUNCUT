@@ -284,8 +284,12 @@ def _ensure_ffmpeg(spec):
     root.mkdir(parents=True, exist_ok=True)
     archive = root / asset
     if not archive.is_file():
+        # Download to a .part and rename only once the whole file is here:
+        # a half-written tarball left at the final name was reused forever
+        # after, and the bootstrap never recovered by itself.
+        part = root / (asset + ".part")
         req = urllib.request.Request(FFMPEG_URL_BASE + asset, headers={"User-Agent": "concat-sense/1.0"})
-        with urllib.request.urlopen(req, timeout=60) as r, open(archive, "wb") as f:
+        with urllib.request.urlopen(req, timeout=60) as r, open(part, "wb") as f:
             total = int(r.headers.get("Content-Length") or 0)
             done = 0
             while True:
@@ -296,6 +300,7 @@ def _ensure_ffmpeg(spec):
                 done += len(buf)
                 if total:
                     print(f"[sense] ffmpeg: {done/1e6:.0f}/{total/1e6:.0f} MB", file=sys.stderr, flush=True)
+        part.rename(archive)
     with tarfile.open(archive) as t:
         for member in t.getmembers():
             if member.isfile() and os.path.basename(member.name) in ("ffmpeg", "ffprobe"):
@@ -354,6 +359,29 @@ def extract_frame(ff, path, at, w, h):
     return bytes(out[:want]), None
 
 
+def _parse_ebur128(text):
+    """The integrated figures out of an ebur128 run's stderr.
+
+    Only the final Summary block carries them. Reading the last occurrence
+    matters: the per-frame lines were silenced, but older FFmpeg builds
+    ignore framelog and print I: on every frame.
+    """
+    summary = text[text.rfind("Summary:"):] if "Summary:" in text else text
+
+    def grab(pattern):
+        m = re.findall(pattern, summary)
+        try:
+            return float(m[-1])
+        except (ValueError, IndexError):
+            return None
+
+    return (
+        grab(r"I:\s*(-?[\d.]+)\s*LUFS"),
+        grab(r"LRA:\s*(-?[\d.]+)\s*LU"),
+        grab(r"Peak:\s*(-?[\d.]+)\s*dBFS"),
+    )
+
+
 def loudness(ff, path, target_lufs=-14.0, target_peak=-1.0):
     """Measure the exported mix with FFmpeg's EBU R128 / true-peak meter.
 
@@ -368,19 +396,7 @@ def loudness(ff, path, target_lufs=-14.0, target_peak=-1.0):
     ]
     rc, _, err = _run(cmd, 240)
     text = err.decode("utf-8", "replace")
-    # Only the final Summary block carries the integrated figures. Reading
-    # the last occurrence matters: the per-frame lines were silenced, but
-    # older FFmpeg builds ignore framelog and print I: on every frame.
-    summary = text[text.rfind("Summary:"):] if "Summary:" in text else text
-    def grab(pattern):
-        m = re.findall(pattern, summary)
-        try:
-            return float(m[-1])
-        except (ValueError, IndexError):
-            return None
-    integrated = grab(r"I:\s*(-?[\d.]+)\s*LUFS")
-    lra = grab(r"LRA:\s*(-?[\d.]+)\s*LU")
-    true_peak = grab(r"Peak:\s*(-?[\d.]+)\s*dBFS")
+    integrated, lra, true_peak = _parse_ebur128(text)
     if integrated is None:
         return None
     out = {
@@ -406,6 +422,35 @@ def loudness(ff, path, target_lufs=-14.0, target_peak=-1.0):
         true_peak is None or true_peak <= target_peak
     )
     return out
+
+
+def _pick_cuts(candidates, duration, wanted, min_gap):
+    """Spread `wanted` cuts over the WHOLE piece.
+
+    Picking the globally strongest onsets first clustered every cut into
+    one loud chorus and left the opening untouched - the opposite of what
+    an editor needs. One cut per equal span of the piece, each on that
+    span's strongest onset, then a strongest-first sweep only when half
+    the request could not be placed.
+    """
+    span = duration / wanted
+    chosen: list[float] = []
+    for bucket in range(wanted):
+        lo, hi = bucket * span, (bucket + 1) * span
+        pool = [(strength, at) for strength, at in candidates if lo <= at < hi]
+        if not pool:
+            continue
+        strength, at = max(pool, key=lambda pair: pair[0])
+        if all(abs(at - other) >= min_gap for other in chosen):
+            chosen.append(at)
+    if len(chosen) < wanted // 2:
+        for strength, at in sorted(candidates, key=lambda pair: -pair[0]):
+            if all(abs(at - other) >= min_gap for other in chosen):
+                chosen.append(at)
+            if len(chosen) >= wanted:
+                break
+    chosen.sort()
+    return chosen
 
 
 def rhythm(ff, path, cuts=12, min_gap=0.35, bpm_hint=None):
@@ -442,7 +487,8 @@ def rhythm(ff, path, cuts=12, min_gap=0.35, bpm_hint=None):
     var = sum((v - mean) ** 2 for v in onset) / len(onset)
     threshold = mean + 0.6 * math.sqrt(var)
 
-    # Autocorrelation over 60-200 BPM -> lag 6..40 frames of 50 ms.
+    # Autocorrelation over 30-200 BPM -> lag 6..40 frames of 50 ms (lag 40
+    # is 2 s a beat, so the window reaches a slow 30 BPM, not 60).
     def pulse_at(lag):
         return sum(onset[i] * onset[i - lag] for i in range(lag, len(onset)))
     best_lag, best_score = 0, -1.0
@@ -465,27 +511,7 @@ def rhythm(ff, path, cuts=12, min_gap=0.35, bpm_hint=None):
         if onset[i] >= onset[i - 1] and onset[i] > onset[i + 1] and onset[i] > threshold:
             candidates.append((onset[i], i * hop / rate))
     duration = n / rate
-    # Spread the cuts over the WHOLE piece. Picking the globally strongest
-    # onsets first clustered every cut into one loud chorus and left the
-    # opening untouched - the opposite of what an editor needs.
-    wanted = max(1, min(64, int(cuts)))
-    span = duration / wanted
-    chosen: list[float] = []
-    for bucket in range(wanted):
-        lo, hi = bucket * span, (bucket + 1) * span
-        pool = [(strength, at) for strength, at in candidates if lo <= at < hi]
-        if not pool:
-            continue
-        strength, at = max(pool, key=lambda pair: pair[0])
-        if all(abs(at - other) >= min_gap for other in chosen):
-            chosen.append(at)
-    if len(chosen) < wanted // 2:
-        for strength, at in sorted(candidates, key=lambda pair: -pair[0]):
-            if all(abs(at - other) >= min_gap for other in chosen):
-                chosen.append(at)
-            if len(chosen) >= wanted:
-                break
-    chosen.sort()
+    chosen = _pick_cuts(candidates, duration, max(1, min(64, int(cuts))), min_gap)
     out = {
         "bpm": bpm,
         "bpmSource": "autocorrelation of the energy-onset function (50 ms hops)",
@@ -679,11 +705,16 @@ def build_sheet(spec):
                 continue
         frames.append(rgb)
         m = tile_metrics(rgb, tw, th)
+        # The index is the SOURCE's position, not the count of frames
+        # decoded so far: the caller merges per-candidate metadata (ids,
+        # captions, scores) back onto tiles by it, and one failed fetch
+        # mid-list used to shift every caption after it onto the wrong
+        # tile - which the ranker then judged against the wrong words.
         m.update({
-            "index": len(frames) - 1,
+            "index": i,
             "path": s.get("path"),
             "at": round(float(s.get("at", 0.5)), 3),
-            "label": s.get("label") or str(len(frames)),
+            "label": s.get("label") or str(i + 1),
         })
         metas.append(m)
 
@@ -801,6 +832,7 @@ def build_sheet(spec):
     return {
         "ok": True,
         "pngB64": base64.b64encode(png).decode(),
+        "pngPath": out_path,
         "mimeType": "image/png",
         "width": W,
         "height": H,
@@ -871,15 +903,15 @@ def heuristic(brief, sheet):
                 notes.append(f"Creative brief is missing `{key}`. The edit has no stated {key}; define it before cutting.")
     revisions = []
     if black_pen > 0.05:
-        revisions.append("CALL trim_clip on black/empty lead-ins, then re-run watch_render.")
+        revisions.append("CALL clip_trim on black/empty lead-ins, then re-run watch_render.")
     if bar_pen > 0.1:
         revisions.append("CALL clip_transform to reframe letterboxed sources; use cropHint from stock_contact_sheet for off-centre subjects.")
     if static_pen > 0.4:
-        revisions.append("CALL set_entrance / add_keyframes on consecutive static shots; vary focal length and direction.")
+        revisions.append("CALL clip_transform and keyframe_set on consecutive static shots; vary focal length and direction.")
     if dup_pen > 0.1 or variety < 0.6:
         revisions.append("CALL openvid_search with 3 different visual queries and replace repeated frames.")
     if not brief or not brief.get("emotionalArc"):
-        revisions.append("CALL set_creative_brief with audience, platform, emotionalArc, curiosityGap and payoff, then re-plan.")
+        revisions.append("CALL creative_brief (action set) with audience, platform, emotionalArc, curiosityGap and payoff, then re-plan.")
     if not audio:
         revisions.append("CALL watch_render with audio:true to measure the soundtrack instead of guessing.")
     elif loud and not loud.get("platformTargetMet", True):
@@ -912,7 +944,7 @@ MEASURED FACTS (real pixel/audio measurements): {facts}
 
 Score each axis 0-10 (0 unwatchable, 5 generic, 8 good, 10 excellent):
 hook, story, rhythm, shotChoice, design, sound.
-Judge only what the frames and the measurements support. Be harsh.
+Judge only what the frames and the measurements support. The sound axis is judged from the measured loudness facts in MEASURED FACTS (LUFS, true peak, silence), never guessed from the picture. Be harsh.
 Reply with a JSON object containing integer "hook","story","rhythm","shotChoice","design","sound" (0-10), a short "verdict", up to 4 "notes" citing frame numbers, and up to 4 "revisions" naming concrete editing tools. No markdown."""
 
 FLAG_PROMPT = """Look at this frame/contact sheet from a video. Describe only what you can actually SEE in one short sentence; do NOT invent people, objects or a story. Then answer three yes/no questions about the image: are any parts nearly black or empty; are there black letterbox/pillarbox bars; is there readable text/captions on screen."""
@@ -962,6 +994,18 @@ def _parse_model_json(text, schema_name):
     return parsed
 
 
+def _string_list(value, cap=6, per=200):
+    """A model's array-of-strings reply field, defended on both sides: a
+    string is tolerated as a one-item list, and anything else is empty -
+    because `list("text")` iterates a string into its characters, which
+    once turned one malformed reply into a hundred one-letter notes."""
+    if isinstance(value, str):
+        return [value[:per]] if value.strip() else []
+    if isinstance(value, list):
+        return [str(v)[:per] for v in value if isinstance(v, str) and v.strip()][:cap]
+    return []
+
+
 def _flag_adjustments(flags, base_scores):
     """Bounded, explainable nudges from visible defects only (max +/-1.0
     total per axis, however many flags fire). A tiny model produces false
@@ -999,7 +1043,6 @@ def critique(spec):
             sheet = json.loads(sheet)
         except Exception:
             sheet = {}
-    png_b64 = spec.get("pngB64") or sheet.get("pngB64")
     facts = {
         "craft": sheet.get("craft", {}),
         "audio": {k: v for k, v in (sheet.get("audio") or {}).items() if k != "envelope"},
@@ -1010,6 +1053,22 @@ def critique(spec):
         "notes": sheet.get("notes", []),
     }
     base = heuristic(brief, sheet)
+    png_b64 = spec.get("pngB64") or sheet.get("pngB64")
+    if not png_b64:
+        # An agent cannot hand image bytes back in a tool call; the sheet's
+        # pngPath - where watch_render kept it - is how the critic sees the
+        # frames it is about to judge. Without this the documented loop
+        # could only ever critique measurements, never pictures.
+        image_path = spec.get("pngPath") or sheet.get("pngPath")
+        if isinstance(image_path, str) and image_path:
+            if os.path.isfile(image_path):
+                try:
+                    with open(image_path, "rb") as fh:
+                        png_b64 = base64.b64encode(fh.read()).decode()
+                except OSError as exc:
+                    base["notes"].append(f"The sheet's image at {image_path} could not be read ({exc}); semantic review skipped.")
+            else:
+                base["notes"].append(f"The sheet's image at {image_path} is gone; call watch_render again before critiquing.")
     if not png_b64:
         base["notes"].append("No contact sheet image was supplied; semantic review skipped.")
         return {**base, "ok": True}
@@ -1058,8 +1117,8 @@ def critique(spec):
                 "overall": round(sum(blended.values()) / len(blended), 1),
                 "confidence": 0.78,
                 "verdict": str(parsed.get("verdict", ""))[:300],
-                "notes": list(parsed.get("notes") or [])[:6] + base["notes"][:3],
-                "revisions": list(parsed.get("revisions") or [])[:6] or base["revisions"],
+                "notes": _string_list(parsed.get("notes"), 6) + base["notes"][:3],
+                "revisions": _string_list(parsed.get("revisions"), 6) or base["revisions"],
                 "measured": base["scores"],
             }
         except Exception as exc:
@@ -1077,7 +1136,7 @@ def critique(spec):
         adjusted, reasons = _flag_adjustments(flags, base["scores"])
         revisions = list(base["revisions"])
         if flags.get("blackFrames"):
-            revisions.insert(0, "CALL trim_clip on the near-black/empty frames the vision model saw.")
+            revisions.insert(0, "CALL clip_trim on the near-black/empty frames the vision model saw.")
         if flags.get("bars"):
             revisions.insert(0, "CALL clip_transform to reframe the letterboxed shots the vision model saw.")
         return {
@@ -1161,7 +1220,7 @@ def rank(spec):
         "ok": True, "engine": "heuristic", "ranking": scored,
         "reject": [r for r in scored if r["score"] < 4.0],
         "queries": [],
-        "note": "Ranked by measured pixel quality only; run vlm_setup for semantic ranking.",
+        "note": "Ranked by measured pixel quality only; run local_vlm (action setup) once for semantic ranking.",
     }
     if not png_b64 or local_vlm is None:
         return base
@@ -1198,7 +1257,7 @@ def rank(spec):
         if not valid:
             raise ValueError("every returned index or score was out of range")
         ranking = valid
-        # Keep the model's ordering but anchor on measured quality (20%).
+        # Keep the model's ordering but anchor on measured quality (40%).
         measured = {r["index"]: r["score"] for r in scored}
         out = []
         for r in ranking:
@@ -1214,8 +1273,8 @@ def rank(spec):
         return {
             "ok": True, "engine": "local-vlm", "model": ep.get("model", "local-vlm"),
             "ranking": out,
-            "reject": list(parsed.get("reject") or []),
-            "queries": list(parsed.get("queries") or []),
+            "reject": [r for r in (parsed.get("reject") or []) if isinstance(r, dict)][:8],
+            "queries": _string_list(parsed.get("queries"), 6),
             "note": "Short-prompt VLM ranking (60%) blended with measured pixel quality (40%); a 0.5B model contributes coarse visual preferences, not taste.",
         }
     except Exception as exc:
@@ -1360,7 +1419,12 @@ def main():
     ap.add_argument("--spec", default="{}")
     args = ap.parse_args()
     try:
-        spec = json.loads(args.spec)
+        # `--spec -` reads the spec from standard input: a spec carrying real
+        # frames is megabytes of base64, and Linux caps one argv string at
+        # 128 KiB, so on exactly the content these commands exist for the
+        # old argv form died with `Argument list too long`.
+        raw = sys.stdin.read() if args.spec == "-" else args.spec
+        spec = json.loads(raw)
         if not isinstance(spec, dict):
             raise ValueError("spec must be a JSON object")
         if args.cmd == "sheet":
@@ -1418,9 +1482,40 @@ def main():
             adjusted, reasons = _flag_adjustments(flags, base_scores)
             assert all(abs(adjusted[a] - 6.0) <= 1.0 for a in AXES), adjusted
             assert reasons
+            # The loudness parser is only ever exercised against real ffmpeg
+            # output in production, so it gets no second chance: feed it the
+            # exact shape an ebur128 Summary prints, including the per-frame
+            # I: lines an older build emits despite framelog=quiet.
+            ebur = (
+                "  I: -12.4 LUFS  LRA:  5.7 LU  Peak: -1.8 dBFS\n"
+                "  I: -14.1 LUFS  LRA:  6.0 LU  Peak: -1.2 dBFS\n"
+                "Summary:\n"
+                "  I: -14.8 LUFS  LRA:  6.1 LU  Peak: -0.9 dBFS\n"
+            )
+            assert _parse_ebur128(ebur) == (-14.8, 6.1, -0.9), _parse_ebur128(ebur)
+            assert _parse_ebur128("no summary at all") == (None, None, None)
+            # The cut spread: one cut per span of the piece, not the loudest
+            # chorus six times - a regression here quietly ruins every
+            # beat-aligned edit.
+            loud_chorus = [(0.9, t) for t in (10.0, 10.5, 11.0, 11.5, 12.0, 12.5)]
+            quiet_elsewhere = [(strength, t) for strength, t in
+                               ((0.3, 1.0), (0.2, 5.0), (0.2, 15.0), (0.2, 20.0), (0.2, 25.0), (0.4, 29.0))]
+            spread = _pick_cuts(loud_chorus + quiet_elsewhere, 30.0, 6, 0.35)
+            assert len(spread) == 6, spread
+            assert spread[0] == 1.0 and spread[-1] == 29.0, spread
+            assert 10.0 in spread, spread
+            assert all(b - a >= 0.35 for a, b in zip(spread, spread[1:])), spread
+            # A model reply that answers an array with a bare string must not
+            # be iterated into its characters.
+            assert _string_list("one note") == ["one note"]
+            assert _string_list(["a", "b", ""]) == ["a", "b"]
+            assert _string_list(7) == []
+            assert _string_list(None) == []
             out["selftest"] = True
             out["decoder"] = "pure-python"
             out["vlmParsers"] = "ok"
+            out["loudnessParser"] = "ok"
+            out["cutSpread"] = "ok"
     except Exception as exc:
         out = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
     print(json.dumps(out, ensure_ascii=False, separators=(",", ":")), flush=True)

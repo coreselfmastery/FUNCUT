@@ -43,6 +43,15 @@ pub trait Backend: Send {
     /// "headless", and where.
     fn describe(&self) -> Value;
 
+    /// Where this backend's API allows writes, so tools that write files of
+    /// their own - the sense layer's contact sheets and encodes, a motion
+    /// bake - can hold an agent to the same line the API already draws for
+    /// its own writes. Empty when the backend cannot know: the window's
+    /// server holds its own list, and its refusal happens there.
+    fn roots(&self) -> Vec<PathBuf> {
+        Vec::new()
+    }
+
     /// The session is over: stop what is running, and wait for it.
     fn finish(&mut self) {}
 }
@@ -220,6 +229,10 @@ impl Backend for Headless {
             .map(|root| root.display().to_string())
             .collect();
         serde_json::json!({ "mode": "headless", "writesUnder": roots })
+    }
+
+    fn roots(&self) -> Vec<PathBuf> {
+        self.api.roots().to_vec()
     }
 
     fn finish(&mut self) {

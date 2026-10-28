@@ -253,7 +253,11 @@ def start(profile: str = "mini", port: int = DEFAULT_PORT, progress=None):
     cmd = [
         str(binary), "-m", str(model), "--mmproj", str(mmproj),
         "--host", "127.0.0.1", "--port", str(port),
-        "-c", "2048", "-ngl", "0", "-t", str(max(2, min(8, os.cpu_count() or 4))),
+        # 6144, not the 2048 a hello-world demo uses: the strong six-axis
+        # prompt (brief + measured facts + image tokens + the reply) runs
+        # past 4k tokens, and a server that truncates its input answers
+        # from half a question.
+        "-c", "6144", "-ngl", "0", "-t", str(max(2, min(8, os.cpu_count() or 4))),
     ]
     with open(log_path, "ab") as log:
         kwargs = {"stdout": log, "stderr": subprocess.STDOUT, "stdin": subprocess.DEVNULL}

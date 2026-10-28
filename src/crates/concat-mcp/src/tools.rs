@@ -717,7 +717,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "tts_generate",
             "Speak a voiceover",
-            "Speaks `text` with a `voice` as a WAV in an open project's own audio folder - a voiceover in one call, ready for media_import. Wait with analysis_wait; the status's `output` is the WAV's path and length. Voices are the Settings > Speech ids (Kokoro 0-52); a missing model is fetched headless with models_download. DELIVERY: give `delivery` (neutral, conversational, urgent, excited, calm, awed, somber, authoritative) to set a director's pacing - rate AND the breath between sentences - instead of a flat read; `speed` overrides its rate and `pauses` (0-1) overrides its breath. `steps` (1-50) is Pocket's quality dial. Match the delivery to the emotionalArc: urgent for the hook, calm or awed for the reveal, authoritative or warm for the CTA.",
+            "Speaks `text` with a `voice` as a WAV in an open project's own audio folder - a voiceover in one call, ready for media_import. Wait with analysis_wait; the status's `output` is the WAV's path and length. Voices are the Settings > Speech ids (Kokoro 0-52); a missing model is fetched headless with models_download. DELIVERY: give `delivery` (neutral, conversational, urgent, excited, calm, awed, somber, authoritative) to set a director's pacing - rate AND the breath between sentences - instead of a flat read; `speed` (0.5-2) overrides its rate and `pauses` (0-1) overrides its breath. `steps` (1-16) is Pocket's quality dial. Match the delivery to the emotionalArc: urgent for the hook, calm or awed for the reveal, authoritative or warm for the CTA.",
             "speech.generate",
             Raw,
         ),
@@ -765,7 +765,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "motion_bake",
             title: "Bake a motion comp",
-            description: "Bakes a motion comp - `preset` or `comp`, edited by an optional `ops` batch (set-slot, set-text, set-words, set-track, slide-to, pop, fade-in, add-text, ...) - into PNG frames under the project's cache/comps/, content-addressed by the comp's hash, and with `encode: true` writes one video file under motion/ ready for media_import and clip_add (`name` picks its file name; .webm is VP9, .mov ProRes 4444, otherwise H.264 - none carry alpha, which the PNG sequence keeps). For a transparent comp, take `dir` and `hash` from this reply to motion_overlay, which composites the RGBA frames over your real footage with the alpha honoured. Optional width/height - the project's own frame, read from its document, when absent, so a vertical project bakes vertical; never above 4K for safety - fps, crf (0-51).",
+            description: "Bakes a motion comp - `preset` or `comp`, edited by an optional `ops` batch (set-slot, set-text, set-words, set-track, slide-to, pop, fade-in, add-text, ...) - into PNG frames under the project's cache/comps/, content-addressed by the comp's hash, and with `encode: true` writes one video file under motion/ ready for media_import and clip_add (`name` picks its file name, with the comp's hash prepended when missing so export can find it; .webm is VP9, .mov ProRes 4444, otherwise H.264 - none carry alpha, which the PNG sequence keeps). For a transparent comp, take `dir` and `hash` from this reply to motion_overlay, which composites the RGBA frames over your real footage with the alpha honoured. Optional width/height - the project's own frame, read from its document, when absent, so a vertical project bakes vertical; never above 4K for safety - fps, crf (0-51).",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -792,7 +792,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "watch_render",
             title: "Watch the cut",
-            description: "LOOK at the edit. Samples true composited frames across the open project's timeline (or a rendered movie at `path`) and returns ONE labelled contact sheet as an inline image, with measured craft facts: black frames, letterbox bars, flat/low-contrast shots, duplicate shots, static transitions, per-shot energy-centroid cropHint, and an audio energy envelope when a movie is given. Call this after every render, read the notes, fix the edit, and call it again. Optional: samples (12 default, 24 max), times[] (explicit sample times), duration, cols, tileWidth, tileHeight, audio, out (write the PNG there).",
+            description: "LOOK at the edit. Samples true composited frames across the open project's timeline (or a rendered movie at `path`) and returns ONE labelled contact sheet as an inline image, with measured craft facts: black frames, letterbox bars, flat/low-contrast shots, duplicate shots, static transitions, per-shot energy-centroid cropHint, and an audio energy envelope when a movie is given. Call this after every render, read the notes, fix the edit, and call it again. The sheet is also written under the project's cache/sense/ and its path returned as pngPath, which is how craft_critique sees the same frames. Optional: samples (12 default, 24 max), times[] (explicit sample times), duration, cols, tileWidth, tileHeight, audio, out (write the PNG there).",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -810,7 +810,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "craft_critique",
             title: "Score the cut",
-            description: "The measured creative critic. Takes the `sheet` JSON returned by watch_render (or a raw `pngB64`) and a `brief`, and returns six honest 0-10 scores - hook, story, rhythm, shotChoice, design, sound - plus notes and concrete revisions. Baseline is REAL pixel/audio measurement (engine 'heuristic', confidence 0.45). With the bundled 0.5B local model it adds bounded visible-defect flags (engine 'local-vlm-flags', confidence 0.58, at most 1 point per axis: black frames, letterbox bars, readable text) - it CANNOT judge taste. Set FUNCUT_VLM_ENDPOINT to a stronger vision model to get full six-axis VLM scoring (engine 'local-vlm'). With `project` it journals every pass to craft-history.json and returns pass, previousOverall, delta, improved and trend. Call it after EVERY watch_render. Optional: autoSetup, profile.",
+            description: "The measured creative critic. Takes the `sheet` JSON returned by watch_render (its pngPath is how the critic sees the frames; a raw `pngB64` also works) and a `brief`, and returns six honest 0-10 scores - hook, story, rhythm, shotChoice, design, sound - plus notes and concrete revisions. Baseline is REAL pixel/audio measurement (engine 'heuristic', confidence 0.45). With the bundled 0.5B local model it adds bounded visible-defect flags (engine 'local-vlm-flags', confidence 0.58, at most 1 point per axis: black frames, letterbox bars, readable text) - it CANNOT judge taste. Set FUNCUT_VLM_ENDPOINT to a stronger vision model to get full six-axis VLM scoring (engine 'local-vlm'). With `project` it journals every pass to craft-history.json and returns pass, previousOverall, delta, improved and trend. Call it after EVERY watch_render. Optional: autoSetup, profile.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -1171,8 +1171,9 @@ fn sense_schema(name: &str) -> Option<Value> {
             "profile": string("mini, image or minicpm."),
         }),
         "craft_critique" => json!({
-            "sheet": { "type": "object", "description": "The JSON watch_render or stock_contact_sheet returned (its pngB64 is the image to judge)." },
+            "sheet": { "type": "object", "description": "The JSON watch_render or stock_contact_sheet returned; its pngPath is the image to judge." },
             "pngB64": string("A base64 PNG contact sheet, when `sheet` is not given."),
+            "pngPath": string("A PNG file to judge, overriding the sheet's own pngPath."),
             "brief": { "type": "object", "description": "The creative brief; loaded from `project` when absent." },
             "project": string("Project folder holding creative-brief.json."),
             "autoSetup": { "type": "boolean", "default": false, "description": "Fetch and start the local vision model on first use." },
@@ -1430,8 +1431,10 @@ fn motion_schema(name: &str) -> Option<Value> {
                         "name",
                         json!({
                             "type": "string",
-                            "description": "The encoded file's name; .webm is VP9, .mov \
-                             ProRes 4444, otherwise H.264."
+                            "description": "The encoded file's name; the comp's hash is \
+                             prepended when missing, because export finds a motion clip's \
+                             bake by that hash. .webm is VP9, .mov ProRes 4444, otherwise \
+                             H.264."
                         }),
                     ),
                 ],
@@ -1591,7 +1594,7 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
                     let key = match method {
                         "project.list" => "projects",
                         "openvid.get" | "openvid.fetch" => "clips",
-                        "magick.get" | "magick.fetch" => "stickers",
+                        "magick.fetch" => "stickers",
                         "catalogue.list" => "packages",
                         "template.list" => "templates",
                         _ => "result",
@@ -1628,14 +1631,14 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         Action::MotionPresets => crate::motion::presets_list(),
         Action::MotionInspect => crate::motion::inspect(arguments),
         Action::MotionFrame => crate::motion::frame(arguments),
-        Action::MotionBake => crate::motion::bake(arguments),
-        Action::CaptionsAnimate => crate::motion::captions_animate(arguments),
+        Action::MotionBake => crate::motion::bake(arguments, backend),
+        Action::CaptionsAnimate => crate::motion::captions_animate(arguments, backend),
         Action::WatchRender => crate::sense::watch_render(arguments, backend),
         Action::StockSheet => crate::sense::stock_contact_sheet(arguments, backend),
-        Action::CraftCritique => crate::sense::craft_critique(arguments),
+        Action::CraftCritique => crate::sense::craft_critique(arguments, backend),
         Action::LocalVlm => crate::sense::local_vlm(arguments),
-        Action::CreativeBrief => crate::sense::creative_brief(arguments),
-        Action::MotionOverlay => crate::sense::motion_overlay(arguments),
+        Action::CreativeBrief => crate::sense::creative_brief(arguments, backend),
+        Action::MotionOverlay => crate::sense::motion_overlay(arguments, backend),
         Action::MeasureLoudness => crate::sense::measure_loudness(arguments),
         Action::SuggestCuts => crate::sense::suggest_cuts(arguments),
         Action::CollisionCheck => {

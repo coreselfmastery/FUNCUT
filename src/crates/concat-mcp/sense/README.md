@@ -35,8 +35,11 @@ render / candidates  ->  decode real frames  ->  labelled contact sheet PNG
 
 ## Commands
 
-All commands take `--spec '<json>'` and print one JSON object on stdout.
-Diagnostics go to stderr, so stdout stays parseable.
+All commands take `--spec '<json>'` (or `--spec -`, which reads the spec
+from standard input - the form the Rust layer uses, because a spec carrying
+real frames is megabytes and Linux caps one argv string at 128 KiB) and
+print one JSON object on stdout. Diagnostics go to stderr, so stdout stays
+parseable.
 
 | command | purpose |
 | --- | --- |
@@ -47,7 +50,7 @@ Diagnostics go to stderr, so stdout stays parseable.
 | `loudness` | EBU R128 integrated LUFS, true peak dBTP and loudness range of a media file, checked against a platform target. |
 | `rhythm` | BPM, energy-onset curve and beat-aligned cut times spread across the whole piece, with no Python extras. |
 | `vlm` | `status` / `setup` for the local vision model. |
-| `selftest` | Generate a synthetic PNG, decode it, measure it — no fixtures, no ffmpeg. |
+| `selftest` | Generate a synthetic PNG, decode it, measure it, and exercise the model-reply, loudness and cut-spread parsers — no fixtures, no ffmpeg. |
 
 Example:
 
@@ -56,6 +59,7 @@ python3 sense.py selftest
 python3 sense.py sheet --spec '{"path":"render.mp4","samples":12,"audio":true}'
 python3 sense.py critique --spec '{"sheet": <sheet json>, "brief": {...}, "autoSetup":true}'
 python3 sense.py vlm --spec '{"action":"status"}'
+cat big-spec.json | python3 sense.py sheet --spec -
 ```
 
 `sense.py sheet` returns `pngB64` (base64 PNG), `tiles[]` with measured

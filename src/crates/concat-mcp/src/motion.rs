@@ -32,6 +32,7 @@ use concat_motion::presets;
 use concat_motion::sequence;
 use serde_json::{Map, Value, json};
 
+use crate::backend::Backend;
 use crate::tools::Outcome;
 use concat_api::{ApiError, ErrorCode};
 
@@ -306,7 +307,7 @@ fn frame_of(project: &Path) -> Option<(u32, u32)> {
 /// `motion_bake`: a comp - a preset or a file, edited by `ops` - baked to
 /// PNG frames in the project's cache and, when `encode` is set, written as
 /// one video file under `motion/` ready for `media_import`.
-pub fn bake(arguments: Value) -> Result<Outcome, ApiError> {
+pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError> {
     let fields = arguments
         .as_object()
         .cloned()
@@ -399,7 +400,17 @@ pub fn bake(arguments: Value) -> Result<Outcome, ApiError> {
             .filter(|name| !name.trim().is_empty() && !name.contains(".."))
             .map(|name| name.trim().to_owned())
             .unwrap_or_else(|| format!("{hash}.mp4"));
-        let out = motion_dir(&project).join(&name);
+        // The export resolver finds a motion clip's bake by the comp hash
+        // in the filename, so a custom name carries it too: a bake written
+        // under a hashless name encoded fine and then vanished from the
+        // render, which is exactly the bug this follows. The confinement
+        // is the same line every other write holds.
+        let name = if name.starts_with(&hash) {
+            name
+        } else {
+            format!("{hash}-{name}")
+        };
+        let out = crate::sense::write_target(backend, Some(&motion_dir(&project)), &name)?;
         encode_bake(&engine, &dir, &out, crf)?;
         // The honest note every overlay comp earns: the sidecar's video
         // codecs carry no alpha channel, and only the PNG sequence keeps
@@ -480,7 +491,7 @@ fn encode_bake(engine: &Geneva, dir: &Path, out: &Path, crf: u8) -> Result<(), A
 /// kinetic comp, the whole thing one render. The file lands under the
 /// project's `motion/`, ready for `media_import` and `clip_add` at the
 /// voiceover's own start.
-pub fn captions_animate(arguments: Value) -> Result<Outcome, ApiError> {
+pub fn captions_animate(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError> {
     let fields = arguments
         .as_object()
         .cloned()
@@ -607,7 +618,9 @@ pub fn captions_animate(arguments: Value) -> Result<Outcome, ApiError> {
         .filter(|name| !name.trim().is_empty() && !name.contains(".."))
         .map(|name| name.trim().to_owned())
         .unwrap_or_else(|| format!("captions-{stamp}.mp4"));
-    let out = motion_dir(&project).join(name);
+    // The name lands under motion/, and an agent-named write is held to
+    // the same roots every other write is.
+    let out = crate::sense::write_target(backend, Some(&motion_dir(&project)), &name)?;
     planned
         .render(&engine, &cache, &out)
         .map_err(|error| ApiError::failed(error.to_string()))?;

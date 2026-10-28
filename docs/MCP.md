@@ -94,7 +94,7 @@ searches the same engine, and its heart button keeps the favourites the
 
 ### Analysis and speech (the agent's senses)
 
-Six tools give an agent what a director has before touching a timeline: the
+Eight tools give an agent what a director has before touching a timeline: the
 shot list, the beat grid, the dead air, the words - and a voice. Each runs
 as a job (returns `job` at once) and is waited on with `analysis_wait`, the
 same loop as `export_wait`, which returns the status; a finished analysis
@@ -118,9 +118,9 @@ carries its JSON result in the status's `output`:
   a missing model is one `models_download` away, window or no window.
   `delivery` (neutral, conversational, urgent, excited, calm, awed,
   somber, authoritative) sets rate AND sentence-breath for a paced read;
-  `speed` / `pauses` (0–1) override it, and `steps` (1–50) is Pocket's
-  quality dial. These are the two dials the shipped voices actually honour —
-  it is pacing, not a claimed emotion embedding.
+  `speed` (0.5–2) / `pauses` (0–1) override it, and `steps` (1–16) is
+  Pocket's quality dial. These are the two dials the shipped voices
+  actually honour — it is pacing, not a claimed emotion embedding.
 - `models_list` - every voice (tts) and transcriber (whisper) model this
   build knows, with sizes and which are on disk; the ids are what
   `models_download` takes.
@@ -156,7 +156,7 @@ vocabulary the `concat-motion-agent` CLI speaks):
   encoded in one call. This is the word-synced caption path; the
   timeline's own `captions_add` stays segment-timed.
 
-## Perception and the creative loop (six more tools)
+## Perception and the creative loop (eight more tools)
 
 An agent that gets a PNG *path* back cannot see the picture. These tools
 return MCP `type: image` content blocks, so the model can actually look:
@@ -178,9 +178,14 @@ return MCP `type: image` content blocks, so the model can actually look:
 - `watch_render` - sample the open timeline (via `preview.frame`, no ffmpeg
   CLI needed) or a rendered movie, and return the whole cut as ONE image
   plus measured facts: black frames, letterbox bars, flat and duplicate
-  shots, static transitions, an audio energy envelope.
+  shots, static transitions, an audio energy envelope. The sheet is also
+  written under the project's `cache/sense/`, and its path comes back as
+  `pngPath` - which is how the next tool sees the same frames, because an
+  agent cannot hand image bytes back in a tool call.
 - `craft_critique` - six 0-10 scores (hook, story, rhythm, shotChoice,
-  design, sound), notes and concrete tool-level revisions. Uses a local
+  design, sound), notes and concrete tool-level revisions. Pass the whole
+  `sheet` object `watch_render` returned: the critic reads its `pngPath`
+  (a raw `pngB64` also works). Uses a local
   vision model when available, otherwise says `engine: "heuristic"` and
   grades measurements honestly. **The bundled 0.5B model only flags visible
   defects** (`engine: "local-vlm-flags"`, at most 1 point per axis); it was
@@ -269,7 +274,7 @@ claude mcp add concat -- /usr/bin/concat --mcp
 
 Choose explicitly with `--mcp window` (fail rather than run on its own) or `--mcp headless`; the default is `--mcp auto`. To reach a server elsewhere, set `CONCAT_API_ADDRESS` (e.g. `127.0.0.1:7420`) and `CONCAT_API_TOKEN` in the client's `env` for the server.
 
-Either way the agent writes files - projects, exports, frames - only under your home folder. Set `CONCAT_MCP_ROOTS` (a path list, `:`-separated) to allow other folders in headless mode.
+Either way the agent writes files - projects, exports, frames, contact sheets, encoded bakes, the craft journal - only under your home folder. Set `CONCAT_MCP_ROOTS` (a path list, `:`-separated) to allow other folders in headless mode. Writes the sense and motion layers make on an agent's word - a contact sheet's `out`, a bake's `name`, the brief, the journal - are held to the same roots and refuse `..`, exactly like the API's own writes.
 
 The agent edits projects of its own; it does not edit the project open in the window while you watch. That ("live mode") is planned in [#337](https://github.com/jub0t/Concat/issues/337).
 

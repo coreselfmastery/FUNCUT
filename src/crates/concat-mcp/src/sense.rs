@@ -304,7 +304,13 @@ pub fn semantic_rerank(arguments: &Value, mut found: Value, backend: &mut dyn Ba
             .and_then(Value::as_str)
             .map(str::to_owned);
         if path.is_none() && Instant::now() < deadline {
-            match backend.call(request("openvid.fetch", json!({ "id": id }))) {
+            // The fetch call, like the rerank around it, never fails the
+            // reply: a request that cannot even be built - and with a
+            // literal object it cannot - leaves the clip its BM25 place.
+            let Ok(fetch) = request("openvid.fetch", json!({ "id": id })) else {
+                continue;
+            };
+            match backend.call(fetch) {
                 Ok(reply) => {
                     let list = reply.as_array().cloned().unwrap_or_else(|| {
                         reply

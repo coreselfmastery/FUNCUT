@@ -106,16 +106,20 @@ esac
 # The published releases of `repo`, newest first, as a stream of
 # tab-separated asset lines: NAME<TAB>URL, with a release separator
 # line of just the tag. Drafts are invisible to anyone but their
-# authors, so nothing here has to skip them. Python reads the JSON
-# where there is Python, and grep carves out the download URLs where
-# there is not - each URL names the release it belongs to, so the
-# separators are cut out of them and the two paths print the same
-# shape.
+# authors, so nothing here has to skip them; prereleases are not
+# install material either and are skipped on both paths. Data-release
+# tags (sound shelves, sticker and OpenVid indexes, the models mirror)
+# can push the app releases pages deep, so this reads up to five pages
+# of a hundred. Python reads the JSON where there is Python, and grep
+# carves out the download URLs where there is not - each URL names the
+# release it belongs to, so the separators are cut out of them and the
+# two paths print the same shape.
 release_assets() {
-    local repo="$1" page json
-    for page in 1 2 3; do
+    local repo="$1" page json tmp_tags
+    tmp_tags=$(mktemp) || return 1
+    for page in 1 2 3 4 5; do
         if command -v python3 >/dev/null 2>&1; then
-            json=$(fetch "https://api.github.com/repos/$repo/releases?per_page=20&page=$page" -) || return 1
+            json=$(fetch "https://api.github.com/repos/$repo/releases?per_page=100&page=$page" -) || return 1
             printf '%s' "$json" | python3 -c '
 import json, sys
 try:
@@ -132,23 +136,46 @@ for release in releases:
         print(asset["name"] + "\t" + asset["browser_download_url"])
 ' && return 0
         else
-            json=$(fetch "https://api.github.com/repos/$repo/releases?per_page=20&page=$page" -) || return 1
+            json=$(fetch "https://api.github.com/repos/$repo/releases?per_page=100&page=$page" -) || return 1
             # Every asset URL carries its release's tag between
             # "download/" and the file name: a change of tag is a change
             # of release, and the separator the python path prints from
-            # the JSON is printed here from that.
+            # the JSON is printed here from that. Prerelease-ness is not
+            # in a URL, so the flags are read from the JSON in object
+            # order - GitHub's serializer emits one tag_name and one
+            # prerelease flag per release object, in the same order - and
+            # a prerelease's tag is skipped whole.
+            printf '%s' "$json" | grep -oE '"tag_name": *"[^"]+"|"prerelease": *(true|false)' |
+                paste - - |
+                awk -F'\t' '
+                    match($1, /"tag_name": *"[^"]+"/) {
+                        tag = substr($1, RSTART, RLENGTH)
+                        gsub(/.*"tag_name": *"|"$/, "", tag)
+                        if ($2 ~ /true/) prerelease[tag] = 1
+                        order[++n] = tag
+                    }
+                    END { for (i = 1; i <= n; i++) if (!prerelease[order[i]]) print order[i] }
+                ' > "$tmp_tags" || true
             printf '%s' "$json" | grep -oE '"browser_download_url": *"[^"]+"' |
                 sed -E 's/"browser_download_url": *"([^"]+)"/\1/' |
-                awk -F/ -v OFS='\t' '{
-                    tag = $(NF - 1)
-                    if (tag != last) {
-                        print "RELEASE", tag
-                        last = tag
+                awk -F/ -v OFS='\t' -v skipped="$tmp_tags" '
+                    BEGIN {
+                        while ((getline line < skipped) > 0) skip[line] = 1
+                        close(skipped)
                     }
-                    print $NF, $0
-                }' && return 0
+                    {
+                        tag = $(NF - 1)
+                        if (skip[tag]) next
+                        if (tag != last) {
+                            print "RELEASE", tag
+                            last = tag
+                        }
+                        print $NF, $0
+                    }
+                ' && { rm -f "$tmp_tags"; return 0; }
         fi
     done
+    rm -f "$tmp_tags"
     return 1
 }
 
@@ -295,21 +322,31 @@ trap 'rm -rf "$TMP"' EXIT
 say "downloading ..."
 fetch "$ASSET_URL" "$TMP/$ASSET_NAME"
 
-# The checksum, when the release carries one: the download is only
-# installed once it has passed. A missing SHA256SUMS is said and carried
-# on - an unsigned fork release is exactly what the fallback installs.
+# The checksum. A release that carries a SHA256SUMS is a release that
+# promises its bytes, and the promise is enforced: a sums file that
+# cannot be fetched, an asset the sums do not name, or a machine with
+# no tool to check them is a failed install, not an unchecked one - the
+# download is a whole application, run by this user, from the network.
+# Only a release with no SHA256SUMS at all installs with a notice.
 CHECK=$(checksums_url "$STREAM" "$ASSET_NAME")
 if [ -n "$CHECK" ]; then
-    if fetch "$CHECK" "$TMP/SHA256SUMS"; then
-        if command -v sha256sum >/dev/null 2>&1; then
-            (cd "$TMP" && grep -F "$ASSET_NAME" SHA256SUMS | sha256sum -c -)
-            say "checksum ok"
-        elif command -v shasum >/dev/null 2>&1; then
-            (cd "$TMP" && grep -F "$ASSET_NAME" SHA256SUMS | shasum -a 256 -c -)
-            say "checksum ok"
-        else
-            say "no sha256 tool found - installing unchecked"
-        fi
+    fetch "$CHECK" "$TMP/SHA256SUMS" \
+        || die "could not fetch the release's SHA256SUMS - not installing unchecked"
+    # The exact file, by the whole second field: a substring grep could
+    # match a longer name that merely ends in this one.
+    awk -v n="$ASSET_NAME" '$2 == n' "$TMP/SHA256SUMS" > "$TMP/MY_SUM"
+    [ -s "$TMP/MY_SUM" ] \
+        || die "SHA256SUMS names no $ASSET_NAME - not installing unchecked"
+    if command -v sha256sum >/dev/null 2>&1; then
+        (cd "$TMP" && sha256sum -c MY_SUM) \
+            || die "checksum FAILED for $ASSET_NAME - not installing it"
+        say "checksum ok"
+    elif command -v shasum >/dev/null 2>&1; then
+        (cd "$TMP" && shasum -a 256 -c MY_SUM) \
+            || die "checksum FAILED for $ASSET_NAME - not installing it"
+        say "checksum ok"
+    else
+        die "no sha256 tool found and the release carries a SHA256SUMS - not installing unchecked"
     fi
 else
     say "release carries no SHA256SUMS - installing unchecked"

@@ -445,6 +445,51 @@ impl Geneva {
     }
 }
 
+/// A bake that already sits in `dir`, when its manifest matches the comp,
+/// the engine, the engine's version, the size, the rate and the alpha -
+/// and the frames it promises are actually still on disk. The comp's hash
+/// is the cache key, so "an unchanged comp re-renders nothing" stops being
+/// a promise the bake loop quietly broke on every call.
+fn bake_cache_hit(
+    dir: &Path,
+    comp: &Comp,
+    request: &BakeRequest,
+    version: &str,
+) -> Option<Baked> {
+    if request.frames.is_some() {
+        // A ranged (parallel) bake is not a full cache entry; render it.
+        return None;
+    }
+    let manifest: Baked =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("manifest.json")).ok()?).ok()?;
+    if manifest.hash != comp.hash()
+        || manifest.engine != EngineKind::Geneva
+        || manifest.engine_version != version
+        || manifest.width != request.width(comp)
+        || manifest.height != request.height(comp)
+        || manifest.fps != request.fps(comp)
+        || manifest.alpha != request.alpha
+        || manifest.frames == 0
+    {
+        return None;
+    }
+    // The manifest's own `dir` was written relative to wherever the bake
+    // ran; count the frames where this caller says the bake lives, so a
+    // moved project or a trimmed cache misses instead of lying.
+    let frames_dir = dir.join("frames");
+    let present = std::fs::read_dir(&frames_dir)
+        .ok()?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "png"))
+        .count();
+    if present < manifest.frames {
+        return None;
+    }
+    let mut hit = manifest;
+    hit.cached = true;
+    Some(hit)
+}
+
 impl CompEngine for Geneva {
     fn kind(&self) -> EngineKind {
         EngineKind::Geneva
@@ -476,6 +521,13 @@ impl CompEngine for Geneva {
         } else {
             request.source_dir.clone()
         };
+        // The cache answers before anything is staged or rendered: an
+        // unchanged comp at the same size and rate has nothing new to say,
+        // and the inspect -> frame -> bake loop stops paying for a full
+        // re-render on every iteration.
+        if let Some(hit) = bake_cache_hit(dir, comp, request, &version) {
+            return Ok(hit);
+        }
         self.stage(comp, &source_dir, request, dir)?;
 
         let frames = dir.join("frames");
@@ -530,6 +582,7 @@ impl CompEngine for Geneva {
             engine: EngineKind::Geneva,
             engine_version: version,
             alpha: request.alpha,
+            cached: false,
         };
         let manifest = serde_json::to_string_pretty(&baked).unwrap_or_default();
         std::fs::write(dir.join("manifest.json"), manifest).map_err(|source| MotionError::Io {
@@ -1466,5 +1519,86 @@ mod tests {
         assert!(major_mismatch("").is_some());
         assert!(major_mismatch("1.6.0").is_none());
         assert!(major_mismatch("1.99.9").is_none());
+    }
+
+    #[test]
+    fn a_matching_manifest_short_circuits_and_every_mismatch_misses() {
+        // A cache hit must answer without the sidecar: no binary, no
+        // staging, no render - only the manifest and the frames it
+        // promises. Every mismatch (engine version, size, missing frames,
+        // a ranged request) is a miss that re-renders.
+        let comp = crate::presets::build("funcut.chapter.chip").expect("a preset");
+        let dir = std::env::temp_dir().join(format!(
+            "concat-motion-cache-{}-{}",
+            std::process::id(),
+            comp.hash()
+        ));
+        let frames = dir.join("frames");
+        std::fs::create_dir_all(&frames).expect("the frames dir");
+        std::fs::write(frames.join("0001.png"), b"not really a png").expect("a frame");
+        let manifest = Baked {
+            dir: frames.clone(),
+            frames: 1,
+            width: comp.width,
+            height: comp.height,
+            fps: comp.fps,
+            hash: comp.hash(),
+            engine: EngineKind::Geneva,
+            engine_version: "1.6.0".to_owned(),
+            alpha: true,
+            cached: false,
+        };
+        std::fs::write(
+            dir.join("manifest.json"),
+            serde_json::to_string(&manifest).expect("the manifest serialises"),
+        )
+        .expect("the manifest is written");
+
+        let request = BakeRequest {
+            alpha: true,
+            source_dir: ".".into(),
+            ..BakeRequest::default()
+        };
+        let hit = bake_cache_hit(&dir, &comp, &request, "1.6.0").expect("a cache hit");
+        assert!(hit.cached);
+        assert_eq!(hit.frames, 1);
+        // `cached` is never persisted: the manifest on disk still reads
+        // as a description of the bake it was written for.
+        let on_disk: Baked =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("manifest.json")).unwrap())
+                .unwrap();
+        assert!(!on_disk.cached);
+
+        assert!(
+            bake_cache_hit(&dir, &comp, &request, "1.7.0").is_none(),
+            "an engine change must miss"
+        );
+        let narrow = BakeRequest {
+            width: Some(640),
+            height: Some(360),
+            alpha: true,
+            source_dir: ".".into(),
+            ..BakeRequest::default()
+        };
+        assert!(
+            bake_cache_hit(&dir, &comp, &narrow, "1.6.0").is_none(),
+            "a size change must miss"
+        );
+        let ranged = BakeRequest {
+            frames: Some((1, 1)),
+            alpha: true,
+            source_dir: ".".into(),
+            ..BakeRequest::default()
+        };
+        assert!(
+            bake_cache_hit(&dir, &comp, &ranged, "1.6.0").is_none(),
+            "a ranged bake is never a cache hit"
+        );
+        std::fs::remove(frames.join("0001.png")).expect("the frame is removed");
+        assert!(
+            bake_cache_hit(&dir, &comp, &request, "1.6.0").is_none(),
+            "a cache that lost its frames must miss"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

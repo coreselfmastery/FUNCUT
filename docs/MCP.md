@@ -187,10 +187,16 @@ return MCP `type: image` content blocks, so the model can actually look:
   `sheet` object `watch_render` returned: the critic reads its `pngPath`
   (a raw `pngB64` also works). Uses a local
   vision model when available, otherwise says `engine: "heuristic"` and
-  grades measurements honestly. **The bundled 0.5B model only flags visible
+  grades measurements honestly — black frames, bars, flat and overexposed
+  shots, duplicates, static transitions, colour saturation and the
+  opening frame are all measured from real pixels (confidence 0.5).
+  **The bundled 0.5B model only flags visible
   defects** (`engine: "local-vlm-flags"`, at most 1 point per axis); it was
   tested end-to-end and cannot judge taste. Full six-axis model scoring
-  needs `FUNCUT_VLM_ENDPOINT` pointing at a stronger vision server. Every
+  (confidence 0.78) needs a stronger critic: `local_vlm {action: "configure",
+  provider, apiKey}` with a free-tier hosted vision API (groq, gemini, zai,
+  openrouter — one call, see [docs/VLM.md](VLM.md)) or `FUNCUT_VLM_ENDPOINT`
+  pointing at any OpenAI-compatible vision server. Every
   model response is schema-validated and degenerate answers fall back to the
   measured score. With `project`, each pass is journaled to
   `craft-history.json` and the reply reports `pass`, `previousOverall`,
@@ -214,13 +220,21 @@ return MCP `type: image` content blocks, so the model can actually look:
   video codecs and FFmpeg's WebM muxer do not reliably carry alpha, so the
   transparency is honoured at the compositing step instead of faked in an
   encoder. Without a plate it composites over a solid `background`.
-- `local_vlm` - `status` or first-use `setup` of a tiny local vision critic.
-  `profile: "mini"` fetches SmolVLM2-500M-Video-Instruct Q8_0 + projector
+- `local_vlm` - the vision critic, on any of three rungs (see
+  [docs/VLM.md](VLM.md) for the full map). `status` reports what is
+  reachable; `setup` fetches SmolVLM2-500M-Video-Instruct Q8_0 + projector
   (~546 MB, 0.5B params, CPU-only, 4 GB laptop is enough) and a pinned
-  llama.cpp server into the app data dir; no system install, no pip. Set
-  `FUNCUT_VLM_ENDPOINT` to reuse an existing Ollama / LM Studio / llama.cpp
-  server — that also unlocks full six-axis scoring, because a 0.5B model
-  cannot grade craft. `profile: "minicpm"` is ~2.2 GB and reads dense text
+  llama.cpp server into the app data dir; no system install, no pip.
+  `providers` lists the free-tier hosted vision APIs (groq, gemini, zai,
+  openrouter) with endpoints, default model ids and honest free-tier
+  notes; `configure` with `provider` + `apiKey` wires one up in a single
+  call — the key lands in `vlm.json` in the app's own data dir, is masked
+  in every reply, and unlocks full six-axis scoring in `craft_critique`
+  (hosted means the contact-sheet frames go to that provider's API; the
+  local rungs never leave the machine). `clear` removes the saved config.
+  `FUNCUT_VLM_ENDPOINT` / `FUNCUT_VLM_API_KEY` / `FUNCUT_VLM_MODEL` env
+  vars do the same without a config file — any OpenAI-compatible server
+  works. `profile: "minicpm"` is ~2.2 GB and reads dense text
   better. `vlm.py ask` supports grammar-constrained JSON and retries once
   without the schema on servers that reject it.
 

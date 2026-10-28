@@ -55,7 +55,7 @@ Everything runs locally on a native Rust engine with a GPU compositor. Install i
 
 **Good for:** TikTok, Reels and Shorts, YouTube videos, tutorials and screen recordings, podcast clips, memes.
 
-**Also for machines:** a built-in MCP server for AI agents (`concat --mcp`, [set up](docs/MCP.md)) and a JSON-RPC API for scripts, so they can cut video with it too. The agents get senses as well - scene cuts, beat grids, dead air, transcription and a spoken voiceover, all MCP jobs - and a director's brain ships in this repo: the [funcut-director skill](docs/forge/FORGE.md), one `forge run` from a finished faceless video. A second skill, [maestro](docs/MAESTRO.md), rides beside it with the design, motion and film judgment - a 157-shot vocabulary, motion principles and a sound-design method the director draws on phase by phase.
+**Also for machines:** a built-in MCP server for AI agents (`concat --mcp`, [set up](docs/MCP.md)) and a JSON-RPC API for scripts, so they can cut video with it too. The agents get senses as well - scene cuts, beat grids, dead air, transcription and a spoken voiceover, all MCP jobs - and a director's brain ships in this repo: the [funcut-director skill](docs/forge/FORGE.md), one `forge run` from a finished faceless video. A second skill, [maestro](docs/MAESTRO.md), rides beside it with the design, motion and film judgment - a 157-shot vocabulary, motion principles and a sound-design method the director draws on phase by phase. The agents' craft critic runs on three rungs - measured pixels only, a bundled 0.5B local model, or a free-tier hosted vision API wired up in one call ([docs/VLM.md](docs/VLM.md)).
 
 ## Highlights
 

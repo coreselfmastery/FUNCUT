@@ -103,12 +103,36 @@ Windows x64/arm64. Nothing is installed into the system; files live in
 
 If the user already runs Ollama, LM Studio, LM Studio-compatible servers, or
 any OpenAI-compatible endpoint, set `FUNCUT_VLM_ENDPOINT` and the download is
-skipped entirely. `vlm.py` probes `FUNCUT_VLM_ENDPOINT`, `127.0.0.1:8099`,
-`:8080`, `:1234` (OpenAI-compatible) and `:11434` (Ollama).
+skipped entirely. `vlm.py` resolves the endpoint in this order:
+`FUNCUT_VLM_ENDPOINT`, the saved hosted-provider config (`vlm.json` in the
+data dir, written by the `local_vlm {action: "configure"}` MCP tool),
+`127.0.0.1:8099`, `:8080`, `:1234` (OpenAI-compatible) and `:11434`
+(Ollama).
+
+## Hosted free-tier providers (`configure` / `providers`)
+
+`vlm.py` also speaks to hosted vision APIs — the free tiers of groq
+(`https://api.groq.com/openai/v1`, default `meta-llama/llama-4-scout-17b-16e-instruct`),
+gemini (`https://generativelanguage.googleapis.com/v1beta/openai`,
+`gemini-2.5-flash-lite`), zai (`https://api.z.ai/api/paas/v4`,
+`glm-4v-flash`) and openrouter (`https://openrouter.ai/api/v1`,
+`qwen/qwen2.5-vl-72b-instruct:free`). `FUNCUT_VLM_API_KEY` (or the
+provider's own env var — `GROQ_API_KEY`, `GEMINI_API_KEY`, `ZAI_API_KEY`,
+`OPENROUTER_API_KEY`) is sent as a Bearer token, which is the only thing a
+hosted endpoint needs beyond the base URL; `FUNCUT_VLM_MODEL` overrides the
+model id. A keyed entry is trusted even when its probe fails, so `ask()`
+surfaces the provider's own 401 instead of silently dropping to pixels, and
+a hosted entry unlocks the full six-axis prompt by itself. **A hosted
+provider means the contact-sheet frames are sent to that provider's API** —
+the local rungs never leave the machine. See `docs/VLM.md`.
 
 **No model is bundled in the repository.** The deterministic pixel/audio
 scorer always works and is explicitly labelled `engine: "heuristic"` with
-`confidence: 0.45` so the agent never mistakes a measurement for taste.
+`confidence: 0.5` so the agent never mistakes a measurement for taste. It
+measures exposure (black AND blown-out frames), contrast, detail,
+letterbox/pillarbox bars, colour saturation, full-frame duplicate hashing,
+static transitions, the opening frame (the hook axis), the audio envelope
+and EBU R128 loudness — every axis score is a formula over those facts.
 
 ## Licensing note
 

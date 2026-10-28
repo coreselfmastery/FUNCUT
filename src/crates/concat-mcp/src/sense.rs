@@ -964,7 +964,8 @@ pub fn motion_overlay(arguments: Value, backend: &dyn Backend) -> Result<Outcome
     Ok(Outcome::json(result))
 }
 
-/// `local_vlm`: status or first-use setup of the sub-1B local critic.
+/// `local_vlm`: status, first-use setup, or provider configuration of the
+/// vision critic - local 0.5B by default, or a free-tier hosted API.
 pub fn local_vlm(arguments: Value) -> Result<Outcome, ApiError> {
     let fields = arguments
         .as_object()
@@ -974,8 +975,10 @@ pub fn local_vlm(arguments: Value) -> Result<Outcome, ApiError> {
         .get("action")
         .and_then(Value::as_str)
         .unwrap_or("status");
-    if !["status", "setup"].contains(&action) {
-        return Err(invalid("action is `status` or `setup`"));
+    if !["status", "setup", "configure", "providers", "clear"].contains(&action) {
+        return Err(invalid(
+            "action is `status`, `setup`, `configure`, `providers` or `clear`",
+        ));
     }
     let profile = fields
         .get("profile")
@@ -984,9 +987,21 @@ pub fn local_vlm(arguments: Value) -> Result<Outcome, ApiError> {
     if !["mini", "image", "minicpm"].contains(&profile) {
         return Err(invalid("profile is `mini`, `image` or `minicpm`"));
     }
+    let mut spec = json!({ "action": action, "profile": profile });
+    // `configure` is the only action that carries provider fields; the key
+    // travels the existing stdin pipe (never argv), and the Python side
+    // replies with a masked key only - the real one stays in vlm.json
+    // inside the app's own data dir.
+    if action == "configure" {
+        for key in ["provider", "apiKey", "endpoint", "model"] {
+            if let Some(value) = fields.get(key).and_then(Value::as_str) {
+                spec[key] = json!(value);
+            }
+        }
+    }
     let result = run(
         "vlm",
-        &json!({ "action": action, "profile": profile }),
+        &spec,
         Duration::from_secs(if action == "setup" { 900 } else { 30 }),
     )?;
     Ok(Outcome::json(result))

@@ -765,7 +765,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "motion_bake",
             title: "Bake a motion comp",
-            description: "Bakes a motion comp - `preset` or `comp`, edited by an optional `ops` batch (set-slot, set-text, set-words, set-track, slide-to, pop, fade-in, add-text, ...) - into PNG frames under the project's cache/comps/, content-addressed by the comp's hash, and with `encode: true` writes one video file under motion/ ready for media_import and clip_add (`name` picks its file name, with the comp's hash prepended when missing so export can find it; .webm is VP9, .mov ProRes 4444, otherwise H.264 - none carry alpha, which the PNG sequence keeps). For a transparent comp, take `dir` and `hash` from this reply to motion_overlay, which composites the RGBA frames over your real footage with the alpha honoured. Optional width/height - the project's own frame, read from its document, when absent, so a vertical project bakes vertical; never above 4K for safety - fps, crf (0-51).",
+            description: "Bakes a motion comp - `preset` or `comp`, edited by an optional `ops` batch (set-slot, set-text, set-words, set-track, slide-to, pop, fade-in, add-text, ...) - into PNG frames under the project's cache/comps/, content-addressed by the comp's hash, and with `encode: true` writes one video file under motion/ ready for media_import and clip_add (`name` picks its file name, with the comp's hash prepended when missing so export can find it; .webm is VP9, .mov ProRes 4444, otherwise H.264 - none carry alpha, which the PNG sequence keeps). For a transparent comp, take `dir` and `hash` from this reply to motion_overlay, which composites the RGBA frames over your real footage with the alpha honoured. Optional width/height - the project's own frame, read from its document, when absent, so a vertical project bakes vertical; clamped to 4096 for safety - fps, crf (0-51). A bake whose manifest already matches the comp, engine, size and rate is returned from the cache without re-rendering (cached: true in the reply).",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -774,7 +774,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "captions_animate",
             title: "Caption a transcript word by word",
-            description: "A word-timed transcript in, one caption video out: words as [text, start, end] triples (or objects), broken into lines by the caption rules (word count, sentence ends, silences), each line one kinetic caption comp, the whole thing baked and encoded under the project's motion/ ready for media_import and clip_add at the voiceover's start. Word times must be measured (whisper segments with per-word estimates will not do); 1080x1920 30fps by default. Optional: preset (default funcut.caption.kinetic), wordsPerLine, maxLineSeconds, gapSeconds, leadSeconds, tailSeconds, width, height, fps, plate (a still the captions render over), name.",
+            description: "A word-timed transcript in, one caption video out: words as [text, start, end] triples (or objects), broken into lines by the caption rules (word count, sentence ends, silences), each line one kinetic caption comp, the whole thing baked and encoded under the project's motion/ ready for media_import and clip_add at the voiceover's start. Word times must be measured (whisper segments with per-word estimates will not do); 1080x1920 30fps by default. Optional: preset (default funcut.caption.kinetic), wordsPerLine, maxLineSeconds, gapSeconds, leadSeconds, tailSeconds, width, height, fps, plate (a still the captions render over), name, curtain (true default; false gives hard cuts between lines, which read better when the reel sits over a voiceover).",
             read_only: false,
             destructive: false,
             idempotent: false,
@@ -792,7 +792,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "watch_render",
             title: "Watch the cut",
-            description: "LOOK at the edit. Samples true composited frames across the open project's timeline (or a rendered movie at `path`) and returns ONE labelled contact sheet as an inline image, with measured craft facts: black frames, letterbox bars, flat/low-contrast shots, duplicate shots, static transitions, per-shot energy-centroid cropHint, and an audio energy envelope when a movie is given. Call this after every render, read the notes, fix the edit, and call it again. The sheet is also written under the project's cache/sense/ and its path returned as pngPath, which is how craft_critique sees the same frames. Optional: samples (12 default, 24 max), times[] (explicit sample times), duration, cols, tileWidth, tileHeight, audio, out (write the PNG there).",
+            description: "LOOK at the edit. Samples true composited frames across the open project's timeline (or a rendered movie at `path`) and returns ONE labelled contact sheet as an inline image, with measured craft facts: black frames, letterbox bars, flat/low-contrast shots, overexposed shots, duplicate shots (full-frame comparison), static transitions, per-shot colour saturation, per-shot energy-centroid cropHint, and an audio energy envelope when a movie is given. Call this after every render, read the notes, fix the edit, and call it again. The sheet is also written under the project's cache/sense/ and its path returned as pngPath, which is how craft_critique sees the same frames. Optional: samples (12 default, 24 max), times[] (explicit sample times), duration, cols, tileWidth, tileHeight, audio, out (write the PNG there).",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -810,7 +810,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "craft_critique",
             title: "Score the cut",
-            description: "The measured creative critic. Takes the `sheet` JSON returned by watch_render (its pngPath is how the critic sees the frames; a raw `pngB64` also works) and a `brief`, and returns six honest 0-10 scores - hook, story, rhythm, shotChoice, design, sound - plus notes and concrete revisions. Baseline is REAL pixel/audio measurement (engine 'heuristic', confidence 0.45). With the bundled 0.5B local model it adds bounded visible-defect flags (engine 'local-vlm-flags', confidence 0.58, at most 1 point per axis: black frames, letterbox bars, readable text) - it CANNOT judge taste. Set FUNCUT_VLM_ENDPOINT to a stronger vision model to get full six-axis VLM scoring (engine 'local-vlm'). With `project` it journals every pass to craft-history.json and returns pass, previousOverall, delta, improved and trend. Call it after EVERY watch_render. Optional: autoSetup, profile.",
+            description: "The measured creative critic. Takes the `sheet` JSON returned by watch_render (its pngPath is how the critic sees the frames; a raw `pngB64` also works) and a `brief`, and returns six honest 0-10 scores - hook, story, rhythm, shotChoice, design, sound - plus notes and concrete revisions. Baseline is REAL pixel/audio measurement: black frames, letterbox bars, flat and overexposed shots, duplicates, static transitions, opening-frame hook check, colour saturation (engine 'heuristic', confidence 0.5). With the bundled 0.5B local model it adds bounded visible-defect flags (engine 'local-vlm-flags', confidence 0.58, at most 1 point per axis: black frames, letterbox bars, readable text) - it CANNOT judge taste. Full six-axis VLM scoring (engine 'local-vlm', confidence 0.78) needs a stronger critic: local_vlm {action:'configure', provider, apiKey} with a free-tier provider (groq, gemini, zai, openrouter), or FUNCUT_VLM_ENDPOINT pointing at any OpenAI-compatible vision server. With `project` it journals every pass to craft-history.json and returns pass, previousOverall, delta, improved and trend. Call it after EVERY watch_render. Optional: autoSetup, profile.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -845,8 +845,8 @@ pub fn catalogue() -> Vec<Tool> {
         },
         Tool {
             name: "local_vlm",
-            title: "Local vision critic",
-            description: "Status or first-use setup of the tiny local vision model that FLAGS visible defects (it does not grade taste). `action: \"status\"` reports whether a local Ollama / LM Studio / llama.cpp vision endpoint is reachable. `action: \"setup\"` downloads, once and into the app's own data folder (no system install, no pip), the 0.5B SmolVLM2-500M-Video-Instruct Q8_0 model + projector (~546 MB) and a pinned llama.cpp CPU server binary, then starts it on 127.0.0.1. `profile` is mini (default, every PC), image, or minicpm (~2.2 GB). Set FUNCUT_VLM_ENDPOINT to reuse an existing server and skip the download.",
+            title: "Local or hosted vision critic",
+            description: "The vision critic behind craft_critique, on any of three rungs. `action: \"status\"` reports what is reachable right now. `action: \"setup\"` downloads, once and into the app's own data folder (no system install, no pip), the 0.5B SmolVLM2 model + projector (~546 MB) and a pinned llama.cpp CPU server - a bounded flag detector, not a taste judge. `action: \"providers\"` lists the free-tier hosted vision APIs (groq, gemini, zai, openrouter) with their endpoints, default model ids and honest free-tier notes. `action: \"configure\"` with `provider` + `apiKey` wires one up in a single call (key stored in vlm.json in the app's data dir, masked in every reply; HOSTED means contact-sheet frames go to that provider's API - the local paths never leave the machine) and unlocks full six-axis VLM scoring in craft_critique. `action: \"clear\"` removes the saved config. FUNCUT_VLM_ENDPOINT / FUNCUT_VLM_API_KEY / FUNCUT_VLM_MODEL env vars do the same without a config file; any OpenAI-compatible server works.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -1211,8 +1211,12 @@ fn sense_schema(name: &str) -> Option<Value> {
             "autoSetup": { "type": "boolean", "default": true },
         }),
         "local_vlm" => json!({
-            "action": { "type": "string", "enum": ["status", "setup"], "default": "status" },
+            "action": { "type": "string", "enum": ["status", "setup", "configure", "providers", "clear"], "default": "status" },
             "profile": { "type": "string", "enum": ["mini", "image", "minicpm"], "default": "mini" },
+            "provider": string("With action 'configure': groq, gemini, zai, openrouter or custom."),
+            "apiKey": string("With action 'configure': the provider's API key; stored in the app's own vlm.json, never echoed back in full."),
+            "endpoint": string("With action 'configure' and provider 'custom': an OpenAI-compatible base URL."),
+            "model": string("Override the provider's default vision model id."),
         }),
         "creative_brief" => json!({
             "path": string("The project folder."),
@@ -1405,11 +1409,11 @@ fn motion_schema(name: &str) -> Option<Value> {
                 &[
                     (
                         "width",
-                        json!({ "type": "integer", "minimum": 1, "maximum": 8192 }),
+                        json!({ "type": "integer", "minimum": 1, "maximum": 4096, "description": "Clamped to 4096; the project's own frame when absent." }),
                     ),
                     (
                         "height",
-                        json!({ "type": "integer", "minimum": 1, "maximum": 8192 }),
+                        json!({ "type": "integer", "minimum": 1, "maximum": 4096, "description": "Clamped to 4096; the project's own frame when absent." }),
                     ),
                     (
                         "fps",
@@ -1482,6 +1486,13 @@ fn motion_schema(name: &str) -> Option<Value> {
                         json!({
                             "type": "string",
                             "description": "A still under the project the captions render over."
+                        }),
+                    ),
+                    (
+                        "curtain",
+                        json!({
+                            "type": "boolean", "default": true,
+                            "description": "Keep the curtain dip between caption lines; false gives hard cuts, which read better when the reel sits over a voiceover."
                         }),
                     ),
                     ("name", json!({ "type": "string" })),

@@ -394,13 +394,18 @@ fn director_run_prompt(
                  sharp angle from the script; do not proceed without one.\n\n"
             .to_owned();
     }
-    let critic = if std::env::var("FUNCUT_VLM_ENDPOINT").is_ok() {
-        "A local vision critic is configured. Prefer craft_critique with autoSetup:true \
+    let critic = if std::env::var("FUNCUT_VLM_ENDPOINT").is_ok()
+        || std::env::var("FUNCUT_VLM_API_KEY").is_ok()
+    {
+        "A vision critic is configured. Prefer craft_critique with autoSetup:true \
          so a model, not a heuristic, grades the frames.\n"
+            .to_owned()
     } else {
         "If no local vision critic is running, call local_vlm {action:\"setup\"} once \
          (0.5B, ~546 MB, CPU-only, no system install) so craft_critique can see the \
-         frames rather than only measure pixels.\n"
+         frames rather than only measure pixels - or local_vlm {action:\"configure\"} \
+         with a free-tier provider (groq, gemini, zai, openrouter) for a stronger critic.\n"
+            .to_owned()
     };
     format!(
         "Use the funcut-director skill and follow its phases IN ORDER. You are directing a \

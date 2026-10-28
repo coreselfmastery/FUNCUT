@@ -42,7 +42,13 @@ reaches it.
   and `local_vlm` are part of the required pipeline, not optional extras.
   `local_vlm` with `action: "setup"` fetches a 0.5B local vision critic once
   (~546 MB, no system install); without it, `craft_critique` still works but
-  says `engine: "heuristic"` and grades pixels rather than taste.
+  says `engine: "heuristic"` and grades measured pixels (exposure, bars,
+  duplicates, saturation, the opening frame) rather than taste. For real
+  taste, `local_vlm` with `action: "configure"` + `provider` + `apiKey`
+  wires up a free-tier hosted vision critic (groq, gemini, zai,
+  openrouter — see docs/VLM.md) and unlocks full six-axis scoring; that
+  path sends the contact-sheet frames to the provider's API, so ask the
+  user before configuring it on their machine.
 
 ## 1. The pipeline (in order — do not skip phases)
 

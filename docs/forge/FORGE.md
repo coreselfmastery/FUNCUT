@@ -178,18 +178,37 @@ requires `stock_contact_sheet` before choosing B-roll, and requires
 first instruction is to write one.
 
 
-## 10. The local vision critic (optional, no system install)
+## 10. The vision critic (optional — local, or a free hosted tier)
 
 `craft_critique` always works: without a model it returns measured,
-explicitly-labelled pixel/audio scores (`engine: "heuristic"`). To add
-visible-defect detection, call `local_vlm {action:"setup"}` once. Be aware
-that a 0.5B model cannot judge taste — it was tested end-to-end and
-hallucinated a whole film from a plain blue frame — so it only applies
-bounded flags. For real taste, set `FUNCUT_VLM_ENDPOINT` to a stronger
-vision server (which also enables six-axis model scoring). It downloads a 0.5B
+explicitly-labelled pixel/audio scores (`engine: "heuristic"`, confidence 0.5
+— black frames, bars, flat and overexposed shots, duplicates, static
+transitions, colour saturation and the opening frame, all measured from real
+pixels). To add visible-defect detection, call `local_vlm {action:"setup"}`
+once. Be aware that a 0.5B model cannot judge taste — it was tested
+end-to-end and hallucinated a whole film from a plain blue frame — so it only
+applies bounded flags. It downloads a 0.5B
 SmolVLM2-500M-Video-Instruct Q8_0 model + projector (~546 MB) and a pinned
 llama.cpp CPU server into the app's own data folder, then serves on
 127.0.0.1:8099. Works on a 4 GB laptop; nothing is installed system-wide.
 If you already run Ollama or LM Studio with a vision model, set
 `FUNCUT_VLM_ENDPOINT` instead and skip the download. The heavier
 `profile: "minicpm"` (~2.2 GB) reads dense text and charts better.
+
+For real taste there is now a third rung, and it is free: the hosted
+free-tier vision APIs. One call wires one up —
+
+```json
+local_vlm {"action": "configure", "provider": "groq", "apiKey": "gsk_..."}
+```
+
+— and `craft_critique` immediately scores with the full six-axis model
+prompt (`engine: "local-vlm"`, confidence 0.78). Providers: `groq`
+(llama-4-scout, ~30 req/min), `gemini` (Flash models on the free tier),
+`zai` (GLM vision flash), `openrouter` (`:free` vision models) —
+`local_vlm {action:"providers"}` lists the live table. The key is stored in
+`vlm.json` in the app's own data dir and masked in every reply. **A hosted
+provider sends the contact-sheet frames to that provider's API** — 12-24
+sampled stills of the cut, not the source media; the local rungs never
+leave the machine. The full map, with the privacy trade spelled out, is
+[docs/VLM.md](../VLM.md).

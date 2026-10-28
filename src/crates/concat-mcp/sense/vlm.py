@@ -1,4 +1,4 @@
-"""concat-vlm: zero-install local vision critic for the FUNCUT editor.
+"""concat-vlm: the FUNCUT editor's vision critic, local or hosted.
 
 The editor ships *no* model weights. `setup()` downloads a sub-1B vision model
 plus a llama.cpp server binary into the app data dir on first use, then starts
@@ -17,8 +17,21 @@ Verified, public, pinned artifacts (checked 2026-10-27):
 
   ggml-org/llama.cpp release b11930 prebuilt llama-server binaries.
 
-Set FUNCUT_VLM_ENDPOINT to reuse an already-running Ollama / LM Studio /
-llama.cpp server and skip the download entirely.
+Three ways to reach a stronger critic, in the order `detect()` tries them:
+
+1. `FUNCUT_VLM_ENDPOINT` (+ optional `FUNCUT_VLM_API_KEY`,
+   `FUNCUT_VLM_MODEL`) pointing at any OpenAI-compatible server - Ollama,
+   LM Studio, llama.cpp, or a hosted API.
+2. The saved provider config (`vlm.json` in the data dir), written by
+   `configure()` / the `local_vlm {action:"configure"}` MCP tool. The
+   bundled PROVIDERS table below carries the free-tier hosted vision APIs,
+   their base URLs, default model ids and where their keys usually live.
+3. A local server already running on :8099 / :8080 / :1234, or Ollama on
+   :11434.
+
+Privacy: the local paths never send a byte off the machine. A hosted
+provider sends the contact-sheet frames to that provider's API - `configure()`
+says so in every reply, and docs/VLM.md says so in bold.
 """
 
 from __future__ import annotations
@@ -33,6 +46,7 @@ import sys
 import tarfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -71,6 +85,135 @@ PROFILES = {
     },
 }
 
+# Free-tier hosted vision providers (facts checked 2026-10-28; every one
+# speaks the OpenAI chat-completions dialect `ask()` already uses, so a
+# provider is just a base URL, a default vision model, the env var its key
+# usually lives in, and an honest line about what the free tier gives).
+# Model ids drift - the `providers` action lists what an endpoint actually
+# serves, and FUNCUT_VLM_MODEL or the config file overrides the default.
+PROVIDERS = {
+    "groq": {
+        "base": "https://api.groq.com/openai/v1",
+        "model": "meta-llama/llama-4-scout-17b-16e-instruct",
+        "key_env": "GROQ_API_KEY",
+        "free": "free tier, no card needed; LPU-fast; roughly 30 requests/minute, limits are org-wide (console.groq.com shows the live numbers)",
+        "keys": "https://console.groq.com/keys",
+    },
+    "gemini": {
+        "base": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "model": "gemini-2.5-flash-lite",
+        "key_env": "GEMINI_API_KEY",
+        "free": "free tier covers the Flash models (the Pro models left the free tier in April 2026); aistudio.google.com shows the live quotas",
+        "keys": "https://aistudio.google.com/apikey",
+    },
+    "zai": {
+        "base": "https://api.z.ai/api/paas/v4",
+        "model": "glm-4v-flash",
+        "key_env": "ZAI_API_KEY",
+        "free": "the GLM vision flash models are served free; check z.ai/model-api for the current model id and quota before trusting the default",
+        "keys": "https://z.ai/model-api",
+    },
+    "openrouter": {
+        "base": "https://openrouter.ai/api/v1",
+        "model": "qwen/qwen2.5-vl-72b-instruct:free",
+        "key_env": "OPENROUTER_API_KEY",
+        "free": "models suffixed :free cost nothing and rotate often; pick a vision one at openrouter.ai/models before trusting the default id",
+        "keys": "https://openrouter.ai/keys",
+    },
+}
+
+CONFIG_NAME = "vlm.json"
+
+
+def config_path() -> Path:
+    return data_dir() / CONFIG_NAME
+
+
+def load_config() -> dict:
+    try:
+        d = json.loads(config_path().read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_config(entry: dict) -> dict:
+    config_path().parent.mkdir(parents=True, exist_ok=True)
+    tmp = config_path().with_suffix(".json.part")
+    tmp.write_text(json.dumps(entry, indent=2), encoding="utf-8")
+    tmp.replace(config_path())
+    return entry
+
+
+def clear_config() -> bool:
+    """Remove the saved provider config. True when one existed."""
+    existed = config_path().exists()
+    config_path().unlink(missing_ok=True)
+    return existed
+
+
+def _mask(key):
+    if not key:
+        return ""
+    key = str(key)
+    return f"{key[:4]}...{key[-4:]}" if len(key) > 12 else "****"
+
+
+def _provider_env_key(name):
+    p = PROVIDERS.get(name or "")
+    return os.environ.get(p["key_env"]) if p else None
+
+
+def _resolved_key(provider=None, config=None):
+    """FUNCUT_VLM_API_KEY beats the saved config, which beats the
+    provider's own exported env var (so a machine that already has
+    GROQ_API_KEY in the environment just works)."""
+    if os.environ.get("FUNCUT_VLM_API_KEY"):
+        return os.environ["FUNCUT_VLM_API_KEY"]
+    cfg = config if config is not None else load_config()
+    if isinstance(cfg, dict) and cfg.get("apiKey"):
+        return cfg["apiKey"]
+    return _provider_env_key(provider)
+
+
+def configure(provider=None, endpoint=None, api_key=None, model=None):
+    """Save the hosted-critic config. A named provider fills in its base
+    URL and default model; `custom` (or no provider) needs an endpoint.
+    The key lands in vlm.json inside the app's own data dir and is never
+    echoed back in full."""
+    if provider and provider not in PROVIDERS and provider != "custom":
+        raise RuntimeError(
+            f"unknown provider {provider!r}; choose from {list(PROVIDERS)} or 'custom'"
+        )
+    previous = load_config()
+    preset = PROVIDERS.get(provider or "", {})
+    base = (endpoint or preset.get("base") or previous.get("endpoint") or "").rstrip("/")
+    if not base:
+        raise RuntimeError(
+            "no endpoint to configure: name a provider or pass an endpoint URL"
+        )
+    key = api_key or _resolved_key(provider, previous) or ""
+    chosen = model or preset.get("model") or previous.get("model") or ""
+    entry = {
+        "provider": provider or previous.get("provider") or "custom",
+        "endpoint": base,
+        "apiKey": key,
+        "model": chosen,
+    }
+    save_config(entry)
+    return {
+        **{k: v for k, v in entry.items() if k != "apiKey"},
+        "apiKey": _mask(key),
+        "saved": True,
+        "privacy": (
+            "HOSTED: contact-sheet frames are sent to this provider's API."
+            if not _is_local(base)
+            else "local endpoint; frames stay on this machine."
+        ),
+        "note": "craft_critique now scores with the full six-axis model prompt; "
+                "re-check the model id with local_vlm {action:'providers'} if scores look odd.",
+    }
+
 
 def data_dir() -> Path:
     override = os.environ.get("FUNCUT_VLM_DIR")
@@ -85,20 +228,23 @@ def data_dir() -> Path:
     ) / "app.concat.editor" / "vlm"
 
 
-def _http(url: str, timeout: float = 8.0):
-    req = urllib.request.Request(url, headers={"User-Agent": "concat-editor-vlm/1.0"})
+def _http(url: str, timeout: float = 8.0, key: str = None):
+    headers = {"User-Agent": "concat-editor-vlm/1.0"}
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    req = urllib.request.Request(url, headers=headers)
     return urllib.request.urlopen(req, timeout=timeout)
 
 
-def _json(url: str, timeout: float = 8.0):
-    with _http(url, timeout) as resp:
+def _json(url: str, timeout: float = 8.0, key: str = None):
+    with _http(url, timeout, key) as resp:
         return json.loads(resp.read().decode("utf-8", "replace"))
 
 
-def _probe_openai(base: str):
+def _probe_openai(base: str, key: str = None):
     for path in ("/v1/models", "/models"):
         try:
-            d = _json(base.rstrip("/") + path, 2.5)
+            d = _json(base.rstrip("/") + path, 2.5, key)
             models = [m.get("id", "") for m in d.get("data", [])]
             return {"type": "openai", "base": base.rstrip("/"), "models": models}
         except Exception:
@@ -106,13 +252,68 @@ def _probe_openai(base: str):
     return None
 
 
+def _is_local(base: str):
+    """A loopback endpoint never leaves the machine; everything else is
+    hosted and owes the user a privacy note."""
+    try:
+        host = (urllib.parse.urlparse(base).hostname or "").lower()
+    except Exception:
+        return False
+    return host in ("127.0.0.1", "localhost", "::1", "0.0.0.0") or host.endswith(".local")
+
+
 def detect(timeout: float = 3.0):
-    """Find any already-running local vision-capable server. No downloads."""
-    candidates = []
+    """Resolve a vision endpoint. Order: FUNCUT_VLM_ENDPOINT, the saved
+    hosted-provider config, an already-running local server, Ollama.
+
+    A keyless entry must answer its probe (the old behaviour: a dead
+    endpoint falls through to the local candidates). An entry WITH a key
+    is trusted even when the probe fails, so `ask()` can surface the
+    provider's own error - a 401 from the provider is information a
+    silent fall-back to pixels would hide. Hosted entries carry
+    `hosted: True`, which sense.py reads as "strong enough for the
+    six-axis prompt".
+    """
     env = os.environ.get("FUNCUT_VLM_ENDPOINT")
+    key = os.environ.get("FUNCUT_VLM_API_KEY")
+    model = os.environ.get("FUNCUT_VLM_MODEL") or None
     if env:
-        candidates.append(env.rstrip("/"))
-    candidates += [
+        base = env.rstrip("/")
+        got = _probe_openai(base, key)
+        if got or key:
+            models = (got or {}).get("models") or []
+            entry = {
+                "type": "openai",
+                "base": base,
+                "hosted": not _is_local(base),
+                "verified": bool(got),
+                "models": models,
+                "model": model or (models[0] if models else "local-model"),
+            }
+            if key:
+                entry["key"] = key
+            return entry
+        # a dead keyless endpoint keeps the old fall-through behaviour
+    cfg = load_config()
+    if cfg.get("endpoint"):
+        base = str(cfg["endpoint"]).rstrip("/")
+        cfg_key = key or cfg.get("apiKey") or _provider_env_key(cfg.get("provider"))
+        got = _probe_openai(base, cfg_key)
+        if got or cfg_key:
+            models = (got or {}).get("models") or []
+            entry = {
+                "type": "openai",
+                "base": base,
+                "hosted": not _is_local(base),
+                "provider": cfg.get("provider"),
+                "verified": bool(got),
+                "models": models,
+                "model": model or cfg.get("model") or (models[0] if models else "local-model"),
+            }
+            if cfg_key:
+                entry["key"] = cfg_key
+            return entry
+    candidates = [
         f"http://127.0.0.1:{DEFAULT_PORT}",
         "http://127.0.0.1:8080",
         "http://127.0.0.1:1234",
@@ -121,6 +322,7 @@ def detect(timeout: float = 3.0):
         got = _probe_openai(base)
         if got:
             got["model"] = got["models"][0] if got["models"] else "local-model"
+            got["hosted"] = False
             return got
     # Ollama has a different API shape.
     for base in ("http://127.0.0.1:11434",):
@@ -134,6 +336,7 @@ def detect(timeout: float = 3.0):
                     "base": base,
                     "models": names,
                     "model": vision[0] if vision else names[0],
+                    "hosted": False,
                 }
         except Exception:
             pass
@@ -293,7 +496,9 @@ def health(base: str = None):
 
 def ask(prompt: str, images=None, endpoint=None, model=None, timeout=90.0,
         max_tokens=600, json_schema=None, temperature=0.2):
-    """Send images + prompt to a local OpenAI-compatible vision endpoint.
+    """Send images + prompt to a local or hosted OpenAI-compatible vision
+    endpoint. A key on the endpoint entry (or FUNCUT_VLM_API_KEY) is sent
+    as a Bearer token, which is what the free-tier hosted providers need.
 
     `json_schema` asks llama.cpp's server for grammar-constrained JSON. Not
     every OpenAI-compatible server accepts it, so a 400 with a schema set
@@ -303,6 +508,11 @@ def ask(prompt: str, images=None, endpoint=None, model=None, timeout=90.0,
     if not ep:
         raise RuntimeError("no local vision endpoint")
     base = ep["base"] if isinstance(ep, dict) else str(ep)
+    key = None
+    if isinstance(ep, dict) and ep.get("key"):
+        key = ep["key"]
+    elif os.environ.get("FUNCUT_VLM_API_KEY"):
+        key = os.environ["FUNCUT_VLM_API_KEY"]
     chosen = model or (ep.get("model") if isinstance(ep, dict) else None) or "local-model"
     content = [{"type": "text", "text": prompt}]
     for b64 in images or []:
@@ -331,10 +541,10 @@ def ask(prompt: str, images=None, endpoint=None, model=None, timeout=90.0,
             payload["response_format"] = {"type": "json_object", "schema": json_schema}
 
     def send(body):
-        req = urllib.request.Request(
-            url, data=json.dumps(body).encode(),
-            headers={"Content-Type": "application/json", "User-Agent": "concat-editor-vlm/1.0"},
-        )
+        headers = {"Content-Type": "application/json", "User-Agent": "concat-editor-vlm/1.0"}
+        if key:
+            headers["Authorization"] = f"Bearer {key}"
+        req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers)
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8", "replace"))
 
@@ -355,9 +565,40 @@ def ask(prompt: str, images=None, endpoint=None, model=None, timeout=90.0,
 
 def status():
     ep = detect()
-    out = {"available": bool(ep), "profiles": {k: {"params": v["params"], "mb": v["model_mb"] + v["mmproj_mb"]} for k, v in PROFILES.items()}, "dir": str(data_dir())}
-    if ep:
-        out.update({"endpoint": ep["base"], "model": ep.get("model"), "type": ep["type"]})
+    cfg = load_config()
+    out = {
+        "available": bool(ep),
+        "endpoint": (ep or {}).get("base"),
+        "model": (ep or {}).get("model"),
+        "type": (ep or {}).get("type"),
+        "hosted": (ep or {}).get("hosted", False),
+        "provider": (ep or {}).get("provider"),
+        "verified": (ep or {}).get("verified", False),
+        "config": (
+            {
+                "provider": cfg.get("provider"),
+                "endpoint": cfg.get("endpoint"),
+                "model": cfg.get("model"),
+                "apiKey": _mask(cfg.get("apiKey")),
+            }
+            if cfg
+            else None
+        ),
+        "providers": {
+            name: {
+                "endpoint": p["base"],
+                "model": p["model"],
+                "keyEnv": p["key_env"],
+                "free": p["free"],
+                "keys": p["keys"],
+            }
+            for name, p in PROVIDERS.items()
+        },
+        "profiles": {k: {"params": v["params"], "mb": v["model_mb"] + v["mmproj_mb"]} for k, v in PROFILES.items()},
+        "dir": str(data_dir()),
+    }
+    if out["hosted"]:
+        out["privacy"] = "HOSTED critic active: contact-sheet frames are sent to this provider's API."
     return out
 
 
@@ -369,7 +610,10 @@ def _progress(label, done, total):
 def main():
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["status", "setup", "ask", "health"])
+    ap.add_argument(
+        "cmd",
+        choices=["status", "setup", "ask", "health", "providers", "configure", "clear"],
+    )
     ap.add_argument("--profile", default="mini", choices=list(PROFILES))
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     ap.add_argument("--spec", default="{}")
@@ -381,6 +625,33 @@ def main():
             out = {"ok": True, "setup": True, **start(args.profile, args.port, _progress)}
         elif args.cmd == "health":
             out = {"ok": True, "healthy": health()}
+        elif args.cmd == "providers":
+            out = {
+                "ok": True,
+                "providers": {
+                    name: {
+                        "endpoint": p["base"],
+                        "model": p["model"],
+                        "keyEnv": p["key_env"],
+                        "free": p["free"],
+                        "keys": p["keys"],
+                    }
+                    for name, p in PROVIDERS.items()
+                },
+            }
+        elif args.cmd == "configure":
+            spec = json.loads(args.spec)
+            out = {
+                "ok": True,
+                "configured": configure(
+                    provider=spec.get("provider"),
+                    endpoint=spec.get("endpoint"),
+                    api_key=spec.get("apiKey"),
+                    model=spec.get("model"),
+                ),
+            }
+        elif args.cmd == "clear":
+            out = {"ok": True, "cleared": clear_config()}
         else:
             spec = json.loads(args.spec)
             text = ask(spec.get("prompt", ""), spec.get("images") or [], spec.get("endpoint"), spec.get("model"))

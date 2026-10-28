@@ -7,10 +7,12 @@ marked as an estimate; nothing is a benchmark this fork ran on your machine,
 because the point of the changes is that the *machine decides* now.
 
 Three kinds of change live here: **memory sizing** (the caches that had one
-fixed size now scale to the machine) and **five new features** (the OpenVid
+fixed size now scale to the machine) and **seven new features** (the OpenVid
 stock library, the background-music library, pause removal for
-voiceovers, the built-in CC0 sound library, and the Wyzowl sound effects
-that grew it to 430). Everything else in the
+voiceovers, the built-in CC0 sound library, the Wyzowl sound effects
+that grew it to 430, the hosted free-tier vision critic with a stronger
+measured baseline, and the maestro judgment skill for the AI director).
+Everything else in the
 program is upstream's own, including
 its existing small-machine machinery: proxies for large files, preview quality
 tiers, hardware decode where it wins, and the swap-friendly design of the
@@ -338,7 +340,66 @@ pairing advice) beyond the sync point, which is the one an agent can act
 on. Everything else stays in the dataset, which the manifest's `source`
 line points at.
 
-## 8. Everything else: verified, not changed
+## 8. The feature: the vision critic's three rungs
+
+Upstream's `craft_critique` had two rungs: a measured pixel/audio baseline,
+and a bundled 0.5B local model that flags visible defects. This fork adds
+the third, and strengthens the first.
+
+**The hosted rung.** `vlm.py` now speaks authenticated OpenAI-compatible
+HTTP: a Bearer key travels with every request, so `FUNCUT_VLM_ENDPOINT`
+finally works against endpoints that require one, and a saved provider
+config (`vlm.json` in the app's own data dir) adds four free-tier hosted
+vision APIs — groq (llama-4-scout), gemini (Flash models), zai (GLM vision
+flash) and openrouter (`:free` models) — wired up by one MCP call:
+`local_vlm {action:"configure", provider, apiKey}` (the key is masked in
+every reply; `providers` lists the live table; `clear` removes it). A
+keyed hosted entry is trusted even when its probe fails, so the critique
+surfaces the provider's own 401 instead of silently dropping to pixels,
+and a hosted entry unlocks the full six-axis prompt on its own. **The
+privacy line is drawn in words everywhere it matters: a hosted provider
+sends the contact-sheet frames to that provider's API; the local rungs
+never leave the machine.** The full map is `docs/VLM.md`.
+
+**The stronger baseline.** The no-VLM heuristic scorer measures more than
+it did: overexposed frames (blown highlights were measured but never
+consumed by any score), per-frame colour saturation and a whole-sheet
+colour-starvation check, and an opening-frame hook check (a black, barred
+or flat first frame costs the hook axis). The duplicate-shot dHash bug is
+fixed — it sampled only the top ~2 of 18 grid rows before breaking at 64
+bits, so two frames differing below the top border hashed identical and
+duplicate detection was blind to the lower ~90% of every frame; the hash
+now strides the whole frame. Confidence rises honestly from 0.45 to 0.5,
+and the selftest covers every new path.
+
+**The motion layer got faster and truer.** `Geneva::bake` honours its own
+cache key: a bake whose manifest matches the comp hash, engine, engine
+version, size, rate, alpha and frame count - with the frames still on
+disk - answers without re-rendering (`cached: true` in the reply), so the
+inspect -> frame -> bake iteration loop stops paying for a full re-render
+every time. Bakes are clamped to 4096 a side (the tool description always
+promised "never above 4K for safety"; now the clamp exists and the schema
+agrees), and `captions_animate` takes `curtain: false` for hard cuts
+between caption lines - the dips read as flashes when the reel is burned
+over a voiceover.
+
+## 9. The feature: the maestro judgment skill
+
+The AI director got a second shelf to read: **maestro**
+(https://github.com/leobbaroni/maestro, MIT, vendored verbatim at
+`.claude/skills/maestro/` - 762 files, its own documented project-skill
+install path) - 28 distilled reference modules over ten vendored corpora:
+a 157-card product-shot vocabulary, engine-agnostic motion principles, a
+sound-design and beat-sync method, art-direction catalogs, critique gates.
+The funcut-director skill routes into it phase by phase (its section 6):
+the director is the hands, maestro is the eye, the Phase-0 brief stays the
+single locked brief, and the hard floors win wherever guidance conflicts.
+`scripts/maestro/` carries the upstream drift checker so the vendor can be
+re-synced instead of freezing. All licenses (MIT / Apache-2.0) are
+AGPL-compatible and attributed in `THIRD_PARTY_NOTICES.md`; the map is
+`docs/MAESTRO.md`.
+
+## 10. Everything else: verified, not changed
 
 The rest of the fork's work was verification, and it is worth saying what
 that means concretely. The full engine test suites were run against every
@@ -357,7 +418,7 @@ that touch it are the memory table above (which changes *how much* is held,
 never what is computed) and `removeSpans`, which is exercised by the eleven
 engine tests listed above, including the keyframe and fade sharing.
 
-## 9. The files
+## 11. The files
 
 | File | What it is |
 | --- | --- |
@@ -380,3 +441,10 @@ engine tests listed above, including the keyframe and fade sharing.
 | `docs/BGM.md` | the music library's own page |
 | `src/crates/concat-export/`, `src/crates/concat-cli/` | pools sized for the machine |
 | `install-linux.sh`, `docs/FUNCUT.md` | the one-line installer; the small-machine notes |
+| `src/crates/concat-mcp/sense/vlm.py` | hosted providers, Bearer auth, the `vlm.json` config, masked keys |
+| `src/crates/concat-mcp/sense/sense.py` | the stronger heuristic baseline (overexposure, saturation, opening frame, full-frame dHash) |
+| `src/crates/concat-mcp/src/sense.rs`, `src/crates/concat-mcp/src/tools.rs` | the `local_vlm` configure/providers/clear actions and schemas |
+| `src/crates/concat-motion/src/geneva.rs`, `engine.rs` | the bake cache short-circuit (`cached` never persisted) |
+| `src/crates/concat-mcp/src/motion.rs` | the 4K clamp, `cached` in the reply, `curtain: false` for captions |
+| `docs/VLM.md` | new: the vision critic's three rungs, providers, privacy line |
+| `docs/MAESTRO.md`, `.claude/skills/maestro/`, `scripts/maestro/` | new: the judgment skill, vendored, with drift tracking |

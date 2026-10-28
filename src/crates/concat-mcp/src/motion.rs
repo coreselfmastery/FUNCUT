@@ -349,6 +349,14 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
     let frame = frame_of(&project);
     let width = width.or(frame.map(|(width, _)| width));
     let height = height.or(frame.map(|(_, height)| height));
+    // The tool description has promised "never above 4K for safety" since
+    // the beginning, and a 4-6 GB laptop has no business rendering 8K PNG
+    // frames - now the clamp actually exists, and the schema agrees at
+    // 4096. A clamped bake says so in the reply instead of silently
+    // rendering smaller than asked.
+    let asked = (width, height);
+    let width = width.map(|value| value.min(4096));
+    let height = height.map(|value| value.min(4096));
 
     // The comp lands in the project, content-addressed: two bakes of the
     // same comp share one file, and an edit is a new hash by itself.
@@ -391,7 +399,13 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
         "dir": baked.dir.display().to_string(),
         "engine": baked.engine.as_str(),
         "engine_version": baked.engine_version,
+        "cached": baked.cached,
     });
+    if asked != (width, height) {
+        reply["clampedTo"] = json!(
+            "4096: the bake was requested above 4K and is rendered at 4K for safety"
+        );
+    }
 
     if fields.get("encode").and_then(Value::as_bool) == Some(true) {
         let name = fields
@@ -511,6 +525,7 @@ pub fn captions_animate(arguments: Value, backend: &dyn Backend) -> Result<Outco
             "fps",
             "plate",
             "name",
+            "curtain",
         ]
         .contains(&key.as_str())
         {
@@ -574,6 +589,13 @@ pub fn captions_animate(arguments: Value, backend: &dyn Backend) -> Result<Outco
     let lines = concat_motion::captions::lay_out(&words, &caps);
     let line_count = lines.len();
     let mut reel = concat_motion::captions::sequence(&words, &caps, width, height, fps);
+    // The curtain dips between caption lines read as flashes when the reel
+    // is burned over a voiceover - hard cuts are usually what that cut
+    // wants. The default keeps the cinematic dip; `curtain: false`
+    // removes the whole curtain layer.
+    if fields.get("curtain").and_then(Value::as_bool) == Some(false) {
+        reel.curtain = None;
+    }
     if let Some(plate) = fields.get("plate").and_then(Value::as_str) {
         if plate.contains("..") || plate.starts_with('/') {
             return Err(ApiError::invalid(

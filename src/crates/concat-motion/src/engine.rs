@@ -178,6 +178,11 @@ pub struct Baked {
     pub engine_version: String,
     /// Whether the frames carry alpha.
     pub alpha: bool,
+    /// Set in memory when this bake answered from the cache instead of a
+    /// fresh render; never persisted, so a manifest always reads as a
+    /// description of the bake it was written for.
+    #[serde(skip)]
+    pub cached: bool,
 }
 
 impl Baked {

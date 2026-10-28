@@ -76,7 +76,13 @@ retiming a comp does not retune its motion. Presets ship `SPRING` (one overshoot
 
 A comp is **validated** before it is baked, and the diagnostics point into the document
 (`/nodes/3/tracks/opacity`). `Comp::hash()` is the content key: the same comp gets the same bake, an
-edit gets a new hash and misses the cache by itself.
+edit gets a new hash and misses the cache by itself. And the bake honours its own
+key: `Geneva::bake` checks the target's `manifest.json` first, and a bake whose
+comp hash, engine, engine version, size, rate, alpha and frame count all match —
+with the frames still on disk — answers from the cache without re-rendering
+(`cached: true` in the `motion_bake` reply). Bakes are also clamped to **4096**
+on each side: the tool always promised "never above 4K for safety", and a
+4-6 GB laptop has no business rendering 8K PNG frames.
 
 ---
 
@@ -222,6 +228,12 @@ The line breaker is the whole value:
 
 Each line becomes **one comp of the caption preset**, placed where it is spoken, with its word times
 made **relative to the line** — so the same comp keeps its motion wherever it lands.
+
+The sequence ships with the standard curtain (opaque ends, a dip at every
+line change). Over a voiceover those dips read as flashes, so
+`captions_animate` takes **`curtain: false`** for hard cuts between lines —
+usually the right choice when the reel is burned over narration, while the
+dip stays the default for a standalone caption reel.
 
 ---
 

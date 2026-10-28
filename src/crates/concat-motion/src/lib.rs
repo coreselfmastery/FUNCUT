@@ -39,9 +39,9 @@
 //!   the stage - tens of milliseconds, so a scrub is responsive without
 //!   baking.
 //! - **Agent**: every operation here is data-in, data-out, so the MCP tools
-//!   (`motion.list`, `motion.create`, `motion.set_keyframes`, `motion.bake`,
-//!   `motion.render_frame`, `captions_animate`, `motion.beat_map`) are thin
-//!   wrappers over this crate rather than a second implementation.
+//!   (`motion_presets`, `motion_inspect`, `motion_frame`, `motion_bake`,
+//!   `captions_animate`, `motion_overlay`) are thin wrappers over this
+//!   crate rather than a second implementation.
 //!
 //! # Example
 //!

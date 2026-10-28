@@ -612,17 +612,32 @@ def tile_metrics(rgb, w, h, gw=32, gh=18):
     cx = sum(x * d for x, _, d in weights) / tw / (gw - 1)
     cy = sum(y * d for _, y, d in weights) / tw / (gh - 1)
 
-    # 64-bit dHash for duplicate-shot detection.
+    # Colour, not just light: a frame with contrast but no chroma reads
+    # as grey mush. Mean HSV-style saturation over the same grid the luma
+    # came from: (max-min)/max per cell, 0 for black cells. (rr/gg/bb:
+    # `g` is the luma grid the dHash below still needs.)
+    sat_total = 0.0
+    for gy in range(gh):
+        y = min(h - 1, int((gy + 0.5) * h / gh))
+        for gx in range(gw):
+            x = min(w - 1, int((gx + 0.5) * w / gw))
+            i = (y * w + x) * 3
+            rr, gg, bb = rgb[i], rgb[i + 1], rgb[i + 2]
+            mx, mn = max(rr, gg, bb), min(rr, gg, bb)
+            sat_total += (mx - mn) / mx if mx > 0 else 0.0
+    saturation = sat_total / (gw * gh)
+
+    # 64-bit dHash sampled across the WHOLE frame: 8 rows x 8 horizontal
+    # comparisons, evenly strided over the luma grid. The old loop broke
+    # at 64 bits barely two rows in, so two frames that differed only
+    # below the top border hashed identical - duplicate detection was
+    # blind to roughly the lower 90% of every frame.
     bits = 0
-    k = 0
-    for y in range(gh):
-        for x in range(gw - 1):
+    for j in range(8):
+        y = (j * gh) // 8
+        for i in range(8):
+            x = (i * (gw - 1)) // 8
             bits = (bits << 1) | (1 if g[y][x] > g[y][x + 1] else 0)
-            k += 1
-            if k >= 64:
-                break
-        if k >= 64:
-            break
 
     return {
         "luma": round(mean, 1),
@@ -631,6 +646,7 @@ def tile_metrics(rgb, w, h, gw=32, gh=18):
         "blackFraction": round(black, 3),
         "blownFraction": round(blown, 3),
         "barRatio": round(bar_ratio, 3),
+        "saturation": round(saturation, 3),
         "cropHint": {
             "x": round(max(-1.0, min(1.0, (cx - 0.5) * 2)), 2),
             "y": round(max(-1.0, min(1.0, (cy - 0.5) * 2)), 2),
@@ -778,6 +794,7 @@ def build_sheet(spec):
     black_shots = [m["index"] for m in metas if m["blackFraction"] > 0.55]
     bars = [m["index"] for m in metas if m["barRatio"] > 0.6]
     flat = [m["index"] for m in metas if m["contrast"] < 18]
+    blown = [m["index"] for m in metas if m.get("blownFraction", 0) > 0.3]
     dups = [m["index"] for m in metas if "duplicateOf" in m]
     static = [i for i, d in enumerate(diffs) if d < 0.45]
     if black_shots:
@@ -786,12 +803,20 @@ def build_sheet(spec):
         notes.append(f"Letterbox/pillarbox bars at samples {bars}. Reframe with clip_transform or pick a different clip.")
     if flat:
         notes.append(f"Very low contrast at samples {flat}. These read as dead air; add motion or a new shot.")
+    if blown:
+        notes.append(f"Overexposed (blown-out) samples {blown}. Clipped highlights cannot be recovered in the edit; pick better-exposed takes.")
     if dups:
         notes.append(f"Visually duplicated samples {dups}. Consecutive near-identical shots feel like a slideshow.")
     if len(static) >= max(3, len(diffs) // 2):
         notes.append(f"{len(static)}/{len(diffs)} sample transitions are near-static. Add entrances, push-ins, or new shots.")
     if len(metas) >= 3 and len(set(m["hash"] for m in metas)) <= max(2, len(metas) // 4):
         notes.append("The whole sequence is built from very few distinct images. Source more varied B-roll.")
+    mean_sat = round(sum(m.get("saturation", 0.0) for m in metas) / max(1, len(metas)), 3)
+    if mean_sat < 0.05:
+        notes.append(
+            f"Mean colour saturation is {mean_sat}: near zero across every sample. If the grade is not "
+            "deliberately monochrome, the piece reads grey; add colour contrast between sections."
+        )
 
     audio = None
     if spec.get("audio") and spec.get("path"):
@@ -825,9 +850,11 @@ def build_sheet(spec):
         "blackFrames": len(black_shots),
         "letterboxedFrames": len(bars),
         "flatFrames": len(flat),
+        "overexposedFrames": len(blown),
         "duplicateFrames": len(dups),
         "staticTransitions": len(static),
         "meanCutEnergy": round(sum(diffs) / len(diffs), 3) if diffs else 0.0,
+        "meanSaturation": mean_sat,
     }
     return {
         "ok": True,
@@ -861,6 +888,7 @@ def _clamp(v):
 def heuristic(brief, sheet):
     c = (sheet or {}).get("craft", {})
     audio = (sheet or {}).get("audio") or {}
+    tiles = (sheet or {}).get("tiles") or []
     n = max(1, c.get("samples", 1))
     distinct = c.get("distinctShots", n)
     variety = distinct / n
@@ -868,13 +896,33 @@ def heuristic(brief, sheet):
     bar_pen = c.get("letterboxedFrames", 0) / n
     flat_pen = c.get("flatFrames", 0) / n
     dup_pen = c.get("duplicateFrames", 0) / n
+    blown_pen = c.get("overexposedFrames", 0) / n
     static_pen = c.get("staticTransitions", 0) / max(1, n - 1)
+    mean_sat = c.get("meanSaturation")
 
     hook = 6.2 + 1.6 * variety - 3.0 * black_pen - 2.0 * flat_pen
-    story = 5.6 + 1.2 * variety - 1.5 * dup_pen
+    # The hook lives or dies on the OPENING: a first frame that is black,
+    # barred or flat is a hook that never landed, wherever the rest of the
+    # piece goes. Weighted at the first sampled frame only - honest about
+    # what a 12-sample sheet can support.
+    opening = tiles[0] if tiles else {}
+    if opening:
+        if opening.get("blackFraction", 0) > 0.5 or opening.get("barRatio", 0) > 0.6:
+            hook -= 1.5
+        elif opening.get("contrast", 99) < 12:
+            hook -= 0.8
+    story = 5.6 + 1.2 * variety - 1.5 * dup_pen - 1.0 * max(0.0, static_pen - 0.5)
     rhythm = 6.4 - 3.2 * static_pen + 0.5 * min(2.0, c.get("meanCutEnergy", 0))
-    shot = 7.4 - 4.0 * black_pen - 2.5 * bar_pen - 2.5 * flat_pen - 1.5 * dup_pen
-    design = 6.1 - 2.2 * flat_pen - 1.2 * dup_pen + 0.8 * min(1.0, c.get("meanCutEnergy", 0))
+    shot = 7.4 - 4.0 * black_pen - 2.5 * bar_pen - 2.5 * flat_pen - 1.5 * dup_pen - 2.0 * blown_pen
+    design = (
+        6.1 - 2.2 * flat_pen - 1.2 * dup_pen + 0.8 * min(1.0, c.get("meanCutEnergy", 0))
+        - 0.8 * blown_pen
+    )
+    # Near-zero saturation across the whole sheet reads grey - but a
+    # deliberate monochrome grade is a choice, so this is a nudge with a
+    # note, never a hammer.
+    if mean_sat is not None and mean_sat < 0.05:
+        design -= 0.4
     sound = 6.6
     loud = (audio or {}).get("loudness") or {}
     if audio:
@@ -906,6 +954,8 @@ def heuristic(brief, sheet):
         revisions.append("CALL clip_trim on black/empty lead-ins, then re-run watch_render.")
     if bar_pen > 0.1:
         revisions.append("CALL clip_transform to reframe letterboxed sources; use cropHint from stock_contact_sheet for off-centre subjects.")
+    if blown_pen > 0.05:
+        revisions.append("Replace the overexposed samples with better-exposed takes (openvid_search with minAesthetic); clipped highlights cannot be recovered in the edit.")
     if static_pen > 0.4:
         revisions.append("CALL clip_transform and keyframe_set on consecutive static shots; vary focal length and direction.")
     if dup_pen > 0.1 or variety < 0.6:
@@ -925,8 +975,8 @@ def heuristic(brief, sheet):
         "engine": "heuristic",
         "scores": {k: round(v, 1) for k, v in scores.items()},
         "overall": round(overall, 1),
-        "confidence": 0.45,
-        "verdict": "measured pixels only; no vision model reviewed the frames",
+        "confidence": 0.5,
+        "verdict": "measured pixels, colour and audio only; no vision model reviewed the frames",
         "notes": notes[:10],
         "revisions": revisions[:8],
     }
@@ -1047,7 +1097,7 @@ def critique(spec):
         "craft": sheet.get("craft", {}),
         "audio": {k: v for k, v in (sheet.get("audio") or {}).items() if k != "envelope"},
         "tiles": [
-            {k: t.get(k) for k in ("index", "label", "at", "luma", "contrast", "detail", "barRatio", "cropHint")}
+            {k: t.get(k) for k in ("index", "label", "at", "luma", "contrast", "detail", "barRatio", "blownFraction", "saturation", "cropHint")}
             for t in (sheet.get("tiles") or [])
         ],
         "notes": sheet.get("notes", []),
@@ -1089,8 +1139,15 @@ def critique(spec):
         return {**base, "ok": True}
 
     # An explicitly configured endpoint is assumed capable; the bundled
-    # 0.5B model is not. FUNCUT_VLM_STRONG=1 overrides for experimentation.
-    strong = bool(os.environ.get("FUNCUT_VLM_ENDPOINT")) or os.environ.get("FUNCUT_VLM_STRONG") == "1"
+    # 0.5B model is not. FUNCUT_VLM_STRONG=1 overrides for experimentation,
+    # and a hosted provider entry (free-tier API or any keyed endpoint)
+    # counts as strong - those models are exactly the class the six-axis
+    # prompt was written for.
+    strong = (
+        bool(os.environ.get("FUNCUT_VLM_ENDPOINT"))
+        or os.environ.get("FUNCUT_VLM_STRONG") == "1"
+        or bool(isinstance(ep, dict) and ep.get("hosted"))
+    )
 
     if strong:
         prompt = STRONG_VLM_PROMPT.format(
@@ -1407,6 +1464,38 @@ def vlm_command(spec):
             if p not in local_vlm.PROFILES:
                 return {"ok": False, "error": f"unknown profile {p}; choose from {list(local_vlm.PROFILES)}"}
             return {"ok": True, **local_vlm.start(p)}
+        if action == "providers":
+            return {
+                "ok": True,
+                "providers": {
+                    name: {
+                        "endpoint": p["base"],
+                        "model": p["model"],
+                        "keyEnv": p["key_env"],
+                        "free": p["free"],
+                        "keys": p["keys"],
+                    }
+                    for name, p in getattr(local_vlm, "PROVIDERS", {}).items()
+                },
+                "note": "every provider speaks the OpenAI dialect; configure one with action 'configure', "
+                        "then verify with action 'status'. Model ids drift - check the provider's "
+                        "console when scores look odd.",
+            }
+        if action == "configure":
+            if not hasattr(local_vlm, "configure"):
+                return {"ok": False, "error": "this vlm.py has no configure; update the sense runtime"}
+            entry = local_vlm.configure(
+                provider=spec.get("provider"),
+                endpoint=spec.get("endpoint"),
+                api_key=spec.get("apiKey"),
+                model=spec.get("model"),
+            )
+            # the reply carries the masked key only; the real one stays in
+            # vlm.json inside the app's own data dir
+            return {"ok": True, "configured": entry}
+        if action == "clear":
+            removed = local_vlm.clear_config() if hasattr(local_vlm, "clear_config") else False
+            return {"ok": True, "cleared": removed}
         return {"ok": False, "error": f"unknown vlm action {action}"}
     except Exception as exc:
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
@@ -1465,6 +1554,58 @@ def main():
                 {"pngB64": b64, "at": 0, "label": "test A"},
                 {"pngB64": b64, "at": 1, "label": "test B"},
             ]})
+            # The new measurements: per-tile saturation, the aggregate craft
+            # fields, and the overexposure the blownFraction always measured
+            # but nothing ever consumed.
+            assert "saturation" in out["tiles"][0], out["tiles"][0].keys()
+            assert "meanSaturation" in out["craft"] and "overexposedFrames" in out["craft"], out["craft"].keys()
+            # The dHash must span the whole frame: two images identical in
+            # the top rows but different below used to hash the same, and
+            # duplicate detection was blind to the lower ~90% of every frame.
+            top = bytearray(tw * th * 3)
+            for y in range(th):
+                for x in range(tw):
+                    i = (y * tw + x) * 3
+                    top[i] = 90 if y < 6 else (200 if (x // 4) % 2 == 0 else 40)
+                    top[i + 1] = top[i]
+                    top[i + 2] = top[i]
+            below = bytearray(top)
+            for y in range(6, th):  # the same stripes, inverted
+                for x in range(tw):
+                    i = (y * tw + x) * 3
+                    below[i] = 40 if (x // 4) % 2 == 0 else 200
+                    below[i + 1] = below[i]
+                    below[i + 2] = below[i]
+            ha = tile_metrics(bytes(top), tw, th)["hash"]
+            hb = tile_metrics(bytes(below), tw, th)["hash"]
+            assert ha != hb and _hamming(ha, hb) > 0, "the dHash is blind below the top rows again"
+            # A pure-white frame is overexposed by the sheet's own rule and
+            # carries no colour at all.
+            white = bytes([255] * (tw * th * 3))
+            wm = tile_metrics(white, tw, th)
+            assert wm["blownFraction"] > 0.9 and wm["saturation"] == 0, wm
+            wsheet = build_sheet({"sources": [
+                {"pngB64": base64.b64encode(_png(tw, th, white)).decode(), "at": 0, "label": "white"},
+            ]})
+            assert wsheet["craft"]["overexposedFrames"] == 1, wsheet["craft"]
+            # The opening-frame hook check: a first tile that is all black
+            # costs the hook axis, wherever the rest of the sheet goes.
+            black = bytes([6] * (tw * th * 3))
+            b64_black = base64.b64encode(_png(tw, th, black)).decode()
+            opening_sheet = build_sheet({"sources": [
+                {"pngB64": b64_black, "at": 0, "label": "open"},
+                {"pngB64": b64, "at": 1, "label": "body"},
+            ]})
+            clean = heuristic({}, {"craft": opening_sheet["craft"], "tiles": opening_sheet["tiles"]})
+            no_opening_check = heuristic({}, {"craft": opening_sheet["craft"], "tiles": []})
+            body_only = heuristic({}, {"craft": build_sheet({"sources": [
+                {"pngB64": b64, "at": 0, "label": "body"},
+                {"pngB64": b64, "at": 1, "label": "body"},
+            ]})["craft"], "tiles": []})
+            # same craft facts, tiles present or not: the difference IS the
+            # opening-frame check, nothing else.
+            assert clean["scores"]["hook"] < no_opening_check["scores"]["hook"], (clean["scores"], no_opening_check["scores"])
+            assert no_opening_check["scores"]["hook"] < body_only["scores"]["hook"], (no_opening_check["scores"], body_only["scores"])
             # The VLM response parsers are the fragile seam: a tiny model
             # returns markdown fences, empty strings and degenerate scores.
             parsed = _parse_model_json('```json\\n{"hook": 5}\\n```', "test")
@@ -1516,6 +1657,9 @@ def main():
             out["vlmParsers"] = "ok"
             out["loudnessParser"] = "ok"
             out["cutSpread"] = "ok"
+            out["colourMetrics"] = "ok"
+            out["fullFrameHash"] = "ok"
+            out["openingCheck"] = "ok"
     except Exception as exc:
         out = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
     print(json.dumps(out, ensure_ascii=False, separators=(",", ":")), flush=True)

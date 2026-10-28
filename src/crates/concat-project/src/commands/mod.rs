@@ -38,9 +38,17 @@ const DEFAULT_LAYER_DURATION: f64 = 5.0;
 /// Default hold for a freeze frame when the caller omits duration.
 const DEFAULT_FREEZE_DURATION: f64 = 1.0;
 pub(crate) use crate::model::ranges::{
-    MAX_OFFSET, MAX_SCALE, MAX_SPEED, MAX_STRETCH, MIN_CLIP_DURATION, MIN_SCALE, MIN_SPEED,
-    MIN_STRETCH, wrap_rotation,
+    MAX_OFFSET, MAX_SCALE, MAX_SPEED, MAX_STRETCH, MAX_TIME, MIN_CLIP_DURATION, MIN_SCALE,
+    MIN_SPEED, MIN_STRETCH, wrap_rotation,
 };
+
+/// Every start an edit takes, held to the same line the document reader
+/// holds a hand-edited file to: not negative, not past the hundred hours
+/// of MAX_TIME. A start past it was finite and therefore passed
+/// has_non_finite, and its frame number overflowed the export's arithmetic.
+pub(super) fn within_timeline(start: f64) -> f64 {
+    start.clamp(0.0, MAX_TIME)
+}
 
 /// Which end of a clip a trim drags. The two are not symmetric: see
 /// [`Command::TrimClip`].

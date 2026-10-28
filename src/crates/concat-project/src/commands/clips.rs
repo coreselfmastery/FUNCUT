@@ -31,6 +31,7 @@ pub(super) fn apply(
             }
             // Magnetic, the lane makes room; otherwise the clip takes the
             // nearest gap it fits, never the top of another clip.
+            let start = within_timeline(start);
             let start = if ripple {
                 ripple_room_for(timeline, &track_id, start, &media)
             } else {
@@ -56,6 +57,7 @@ pub(super) fn apply(
                 .ok_or(CommandError::MediaGone)?
                 .clone();
             let duration = clip_length(&media);
+            let start = within_timeline(start);
             let timeline = project.active_mut();
             let track_id = match above {
                 // The titles' walk, for what sits over the picture.
@@ -95,7 +97,7 @@ pub(super) fn apply(
                     applied: false,
                 });
             }
-            let start = start.max(0.0);
+            let start = within_timeline(start);
             let total: f64 = items.iter().map(clip_length).sum();
             let timeline = project.active_mut();
             let track_id = match track_id {
@@ -107,6 +109,10 @@ pub(super) fn apply(
             let mut at = start;
             let mut first = None;
             for media in &items {
+                // The running head stays in range too: a sequence whose
+                // accumulated length runs past MAX_TIME would place its
+                // tail clips past it, one edit at a time.
+                at = within_timeline(at);
                 let place = if ripple {
                     ripple_room_for(timeline, &track_id, at, media)
                 } else {
@@ -263,7 +269,7 @@ pub(super) fn apply(
             let mut applied = false;
             for wanted in moves {
                 if let Some(clip) = timeline.clip_mut(&wanted.clip_id) {
-                    applied |= assign(&mut clip.start, wanted.start);
+                    applied |= assign(&mut clip.start, within_timeline(wanted.start));
                     applied |= assign(&mut clip.track_id, wanted.track_id);
                 }
             }

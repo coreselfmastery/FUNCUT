@@ -1093,7 +1093,8 @@ mod tests {
                 rate_num: 30,
                 rate_den: 1,
             };
-            let document = concat_project::to_document(&settings, editor.project());
+            let document = concat_project::to_document(&settings, editor.project())
+                .expect("the scratch project serialises");
             let root = scratch.join(name);
             projects::save(&root.to_string_lossy(), &document).expect("saves");
             root.to_string_lossy().into_owned()

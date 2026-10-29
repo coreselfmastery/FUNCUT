@@ -2051,6 +2051,109 @@ impl Clip {
         }
     }
 
+    /// Whether any number this clip holds is not a number. `MatchClip`
+    /// adopts a whole clip from its caller, so the caller's clip is held
+    /// to the same line `has_non_finite` holds every command to: one NaN
+    /// or infinity anywhere - a time, a transform, a key, a style field -
+    /// and the edit is refused rather than saved, because a non-finite
+    /// f64 serialises as null and makes the project unreadable.
+    pub fn has_non_finite(&self) -> bool {
+        fn bad(values: impl IntoIterator<Item = f64>) -> bool {
+            values.into_iter().any(|value| !value.is_finite())
+        }
+        fn bad_stroke(stroke: &Stroke) -> bool {
+            bad([stroke.size])
+                || stroke.at.is_some_and(|at| !at.is_finite())
+                || stroke.points.iter().any(|point| bad(*point))
+        }
+        fn bad_chain(chain: &[AppliedFilter]) -> bool {
+            chain.iter().any(|entry| {
+                bad(entry.params.values().copied())
+                    || entry
+                        .keys
+                        .values()
+                        .flatten()
+                        .any(|key| bad([key.at, key.value]) || bad(key.ease.0))
+            })
+        }
+        bad([
+            self.start,
+            self.duration,
+            self.source_start,
+            self.volume,
+            self.fade_in,
+            self.fade_out,
+            self.scale,
+            self.offset_x,
+            self.offset_y,
+            self.rotation,
+            self.stretch_x,
+            self.stretch_y,
+            self.opacity,
+            self.speed,
+        ])
+            // A curve point's slope rides along with its at and speed.
+            || self.speed_curve.as_deref().is_some_and(|points| {
+                points.iter().any(|point| {
+                    bad([point.at, point.speed])
+                        || point.slope.is_some_and(|slope| !slope.is_finite())
+                })
+            })
+            || self.keys.iter().any(|key| {
+                bad([key.at, key.value]) || bad(key.ease.0)
+            })
+            || self
+                .crop
+                .as_ref()
+                .is_some_and(|crop| bad([crop.left, crop.top, crop.right, crop.bottom]))
+            || self
+                .cutout
+                .as_ref()
+                .is_some_and(|cutout| bad([cutout.feather]) || cutout.strokes.iter().any(bad_stroke))
+            || self.mask.as_ref().is_some_and(|mask| {
+                bad([
+                    mask.x,
+                    mask.y,
+                    mask.width,
+                    mask.height,
+                    mask.rotation,
+                    mask.roundness,
+                    mask.feather,
+                ])
+            })
+            || self
+                .stabilize
+                .as_ref()
+                .is_some_and(|stabilize| bad([stabilize.smoothness, stabilize.max_zoom]))
+            || self.transition_in.as_ref().is_some_and(|transition| {
+                bad([transition.duration]) || bad(transition.params.values().copied())
+            })
+            || bad_chain(&self.filters)
+            || bad_chain(&self.video_effects)
+            || self.text.as_ref().is_some_and(|style| {
+                bad([
+                    style.font_size,
+                    style.font_weight,
+                    style.opacity,
+                    style.stroke_width,
+                    style.background_radius,
+                    style.background_padding_x,
+                    style.background_padding_y,
+                    style.line_height,
+                    style.tracking,
+                    style.max_width,
+                    style.max_height,
+                ])
+            })
+            || self.shape.as_ref().is_some_and(|style| {
+                bad([style.size, style.stroke_width])
+            })
+            || matches!(
+                self.background,
+                Some(Background::Blur { amount }) if !amount.is_finite()
+            )
+    }
+
     /// Pulls every number back into the range a command would have held
     /// it to: the floors and ceilings in [`ranges`], the rotation wrapped,
     /// non-finite values replaced by their neutral, the crop and the cutout

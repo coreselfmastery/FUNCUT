@@ -321,8 +321,13 @@ impl DocumentSettings {
     }
 }
 
-/// Builds the full `concat.json` document.
-pub fn to_document(settings: &DocumentSettings, project: &Project) -> Value {
+/// Builds the full `concat.json` document. Fallible, because a clip
+/// that holds a non-finite number cannot be serialised - serde_json
+/// writes it as null, which would make the project unreadable on the
+/// next open - and a save that cannot encode must say so, not panic:
+/// every non-test caller of this used to `.expect()` here, so one bad
+/// number anywhere took the editor down at its next autosave.
+pub fn to_document(settings: &DocumentSettings, project: &Project) -> Result<Value, serde_json::Error> {
     let active = project.active();
     let mut document = Map::new();
     document.insert("concat".into(), json!("0.1.0"));
@@ -342,25 +347,25 @@ pub fn to_document(settings: &DocumentSettings, project: &Project) -> Value {
     );
     document.insert(
         "media".into(),
-        serde_json::to_value(&project.media).expect("serialises"),
+        serde_json::to_value(&project.media)?,
     );
     // The flat mirror of the active timeline, for builds that predate
     // multiple timelines.
     document.insert(
         "tracks".into(),
-        serde_json::to_value(&active.tracks).expect("serialises"),
+        serde_json::to_value(&active.tracks)?,
     );
     document.insert(
         "clips".into(),
-        serde_json::to_value(&active.clips).expect("serialises"),
+        serde_json::to_value(&active.clips)?,
     );
     document.insert(
         "fonts".into(),
-        serde_json::to_value(&project.fonts).expect("serialises"),
+        serde_json::to_value(&project.fonts)?,
     );
     document.insert(
         "timelines".into(),
-        serde_json::to_value(&project.timelines).expect("serialises"),
+        serde_json::to_value(&project.timelines)?,
     );
     document.insert("activeTimelineId".into(), json!(project.active_timeline_id));
     // Whatever a newer or a different build put at the top level, back
@@ -368,5 +373,5 @@ pub fn to_document(settings: &DocumentSettings, project: &Project) -> Value {
     for (key, value) in &project.extra {
         document.entry(key.clone()).or_insert_with(|| value.clone());
     }
-    Value::Object(document)
+    Ok(Value::Object(document))
 }

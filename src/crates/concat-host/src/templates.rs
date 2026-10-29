@@ -124,7 +124,8 @@ pub fn save(
 
     let mut settings = settings.clone();
     settings.name = name.to_owned();
-    let document = concat_project::to_document(&settings, &project);
+    let document = concat_project::to_document(&settings, &project)
+        .map_err(|error| format!("could not encode the template: {error}"))?;
 
     let encoded = serde_json::to_vec_pretty(&document)
         .map_err(|error| format!("could not encode the template: {error}"))?;
@@ -348,7 +349,10 @@ pub fn instantiate(
         rate_num: info.rate_num,
         rate_den: info.rate_den,
     };
-    projects::save(&project.path, &editor.to_document(&settings))?;
+    let document = editor
+        .to_document(&settings)
+        .map_err(|error| format!("could not encode the filled template: {error}"))?;
+    projects::save(&project.path, &document)?;
 
     // After the save, so the cached poster reads as fresh.
     if bundle.join(POSTER).is_file() {

@@ -165,9 +165,20 @@ pub fn rewindow_clip(clip: &mut Clip, old: f64, from: f64, to: f64) -> Option<f6
     let (a, b) = (from / old, to / old);
     // A smooth curve keeps its slopes, re-expressed over the window's
     // length, and gets the curve's own slope at a cut: the piece is then
-    // the same cubic the whole was.
+    // the same cubic the whole was. The re-expression multiplies by
+    // (b - a), and a multiplication that overflows to an infinity would
+    // put a non-finite slope into the document - it serialises as null,
+    // which the reader reads as "smooth point without a slope". A slope
+    // that is not a number becomes no slope instead: the point still
+    // bends, as a straight join, and the document stays readable.
     let slopes = curve.slopes();
-    let slope = |at: f64| slopes.map(|_| curve.slope_at(at) * (b - a));
+    let slope = |at: f64| {
+        slopes.and_then(|_| {
+            let value = curve.slope_at(at) * (b - a);
+            value.is_finite().then_some(value)
+        })
+    };
+    let resloped = |slope: Option<f64>| slope.filter(|value| value.is_finite());
     let mut points = vec![SpeedPoint {
         at: 0.0,
         speed: curve.speed_at(a),
@@ -182,7 +193,7 @@ pub fn rewindow_clip(clip: &mut Clip, old: f64, from: f64, to: f64) -> Option<f6
             .map(|(index, &(at, speed))| SpeedPoint {
                 at: (at - a) / (b - a),
                 speed,
-                slope: slopes.map(|slopes| slopes[index] * (b - a)),
+                slope: resloped(slopes.map(|slopes| slopes[index] * (b - a))),
             }),
     );
     points.push(SpeedPoint {

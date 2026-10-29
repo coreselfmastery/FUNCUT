@@ -38,9 +38,17 @@ const DEFAULT_LAYER_DURATION: f64 = 5.0;
 /// Default hold for a freeze frame when the caller omits duration.
 const DEFAULT_FREEZE_DURATION: f64 = 1.0;
 pub(crate) use crate::model::ranges::{
-    MAX_OFFSET, MAX_SCALE, MAX_SPEED, MAX_STRETCH, MIN_CLIP_DURATION, MIN_SCALE, MIN_SPEED,
-    MIN_STRETCH, wrap_rotation,
+    MAX_OFFSET, MAX_SCALE, MAX_SPEED, MAX_STRETCH, MAX_TIME, MIN_CLIP_DURATION, MIN_SCALE,
+    MIN_SPEED, MIN_STRETCH, wrap_rotation,
 };
+
+/// Every start an edit takes, held to the same line the document reader
+/// holds a hand-edited file to: not negative, not past the hundred hours
+/// of MAX_TIME. A start past it was finite and therefore passed
+/// has_non_finite, and its frame number overflowed the export's arithmetic.
+pub(super) fn within_timeline(start: f64) -> f64 {
+    start.clamp(0.0, MAX_TIME)
+}
 
 /// Which end of a clip a trim drags. The two are not symmetric: see
 /// [`Command::TrimClip`].
@@ -1097,6 +1105,9 @@ impl Command {
                             style.font_weight,
                             style.opacity,
                             style.stroke_width,
+                            style.background_radius,
+                            style.background_padding_x,
+                            style.background_padding_y,
                             style.line_height,
                             style.tracking,
                             style.max_width,
@@ -1107,10 +1118,19 @@ impl Command {
             Command::AddLayerClip {
                 start, duration, ..
             } => bad([*start]) || bad(*duration),
-            Command::SetClipSpeedCurve { curve, .. } => bad(curve
-                .iter()
-                .flatten()
-                .flat_map(|point| [point.at, point.speed])),
+            Command::SetClipSpeedCurve { curve, .. } => {
+                bad(curve
+                    .iter()
+                    .flatten()
+                    .flat_map(|point| [point.at, point.speed]))
+                    || curve.iter().flatten().any(|point| {
+                        // A slope rides along with its point, and a non-finite one
+                        // would save as null: the curve's smooth flag reads
+                        // Some(null) as smooth-with-no-slope and the document stops
+                        // making sense. Refused like the numbers beside it.
+                        point.slope.is_some_and(|slope| !slope.is_finite())
+                    })
+            }
             Command::SetClipKey {
                 at, value, ease, ..
             }
@@ -1126,6 +1146,12 @@ impl Command {
                 .as_ref()
                 .is_some_and(|stabilize| bad([stabilize.smoothness, stabilize.max_zoom])),
             Command::MoveClips { moves } => bad(moves.iter().map(|wanted| wanted.start)),
+            // The whole `like` clip is adopted, so the whole clip is
+            // checked - every time, transform, key, chain and style field
+            // - by the model's own scan. The identity fields the command
+            // overwrites (id, track, start, ...) are re-set from the
+            // target clip and cannot carry anything through.
+            Command::MatchClip { like, .. } => like.has_non_finite(),
             Command::TrimClip { delta, .. } => bad([*delta]),
             Command::SplitClips { time, .. } => bad([*time]),
             Command::RemoveSpans { spans, .. } => {
@@ -1173,6 +1199,9 @@ impl Command {
                             style.font_weight,
                             style.opacity,
                             style.stroke_width,
+                            style.background_radius,
+                            style.background_padding_x,
+                            style.background_padding_y,
                             style.line_height,
                             style.tracking,
                             style.max_width,

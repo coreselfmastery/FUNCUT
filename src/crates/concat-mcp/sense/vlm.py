@@ -55,6 +55,47 @@ LLAMA_RELEASE = "b11930"
 LLAMA_REPO = "ggml-org/llama.cpp"
 DEFAULT_PORT = 8099
 
+# The largest artifact this module will ever fetch. The pinned models and
+# server are hundreds of MB; a mirror that lies about Content-Length - or
+# an endless stream - must not be able to fill the disk.
+MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024  # 2 GiB
+
+# SHA-256 of every artifact setup() fetches, pinned so that "verified,
+# public, pinned artifacts" in the module docstring is enforced by code
+# and not by trust in a CDN: the llama.cpp b11930 release assets (as the
+# GitHub release API reports them) and the GGUF model files (as
+# HuggingFace's own LFS object ids). A download that does not match its
+# pin is deleted and the setup fails - a substituted binary must never
+# reach chmod +x, let alone run.
+LLAMA_SHA256 = {
+    "llama-b11930-bin-ubuntu-x64.tar.gz":
+        "36a884c75ea47242f532484d09aaa9ecc8bccd3079f901f9c4a340f38303c4a5",
+    "llama-b11930-bin-ubuntu-arm64.tar.gz":
+        "8207aeb8e977f9eacf12cb20a65c8dc4100fbde628cf437be128a524b97748da",
+    "llama-b11930-bin-macos-arm64.tar.gz":
+        "66e0aade3643f10f76fa1ac67bbce59d2e44dcc7138a6bf6d2110d2746601567",
+    "llama-b11930-bin-macos-x64.tar.gz":
+        "e5625c0370d2a12de415ec717a524c8d2104c81ca6b0ea78965b668c3a7f9b10",
+    "llama-b11930-bin-win-cpu-arm64.zip":
+        "7299ad2cc9bc68b1601a4d05799f709abc358f004a42b446658e84f0590552c5",
+    "llama-b11930-bin-win-cpu-x64.zip":
+        "43273de703aaafc0eae7639c1cf71b0b5e8932283190f7aa93f684bafcd1d739",
+}
+MODEL_SHA256 = {
+    "SmolVLM2-500M-Video-Instruct-Q8_0.gguf":
+        "6f67b8036b2469fcd71728702720c6b51aebd759b78137a8120733b4d66438bc",
+    "mmproj-SmolVLM2-500M-Video-Instruct-Q8_0.gguf":
+        "921dc7e259f308e5b027111fa185efcbf33db13f6e35749ddf7f5cdb60ef520b",
+    "SmolVLM-500M-Instruct-Q8_0.gguf":
+        "9d4612de6a42214499e301494a3ecc2be0abdd9de44e663bda63f1152fad1bf4",
+    "mmproj-SmolVLM-500M-Instruct-Q8_0.gguf":
+        "d1eb8b6b23979205fdf63703ed10f788131a3f812c7b1f72e0119d5d81295150",
+    "ggml-model-Q2_K.gguf":
+        "d6c3584306a32ec56b6ca6cce21c05fd01db629ee4360fce665baaece15d2792",
+    "mmproj-model-f16.gguf":
+        "79611c59b5ad5b0547256602e3fb546a3041bcf6db5058091b6bcaa31f3a1c95",
+}
+
 PROFILES = {
     # Every-PC default. 0.5B params, ~546 MB. No GPU, no AVX-512 requirement.
     "mini": {
@@ -360,8 +401,28 @@ def _asset_name():
     return None
 
 
-def _download(url: str, dest: Path, label: str, progress=None):
+def _sha256(path: Path) -> str:
+    """Streaming SHA-256 of a file, as lowercase hex."""
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _download(url: str, dest: Path, label: str, progress=None, sha256: str = None):
+    """Fetch `url` into `dest`. When `sha256` is pinned, the bytes must
+    match it or the file is deleted and the fetch fails: an artifact that
+    arrives wrong is never left where a later call would find and use it.
+    The stream is also capped, so a mirror that never ends cannot fill
+    the disk."""
     if dest.exists() and dest.stat().st_size > 1_000_000:
+        if sha256 and _sha256(dest) != sha256:
+            raise RuntimeError(
+                f"{label} at {dest} is not the pinned file (sha256 mismatch) - "
+                f"delete it and run setup again"
+            )
         return dest
     # data_dir() is a pure path helper, so the very first download on a
     # fresh machine has NO parent directory yet. Every caller used to rely
@@ -372,6 +433,11 @@ def _download(url: str, dest: Path, label: str, progress=None):
     try:
         with _http(url, 30.0) as resp, open(tmp, "wb") as out:
             total = int(resp.headers.get("Content-Length") or 0)
+            if total > MAX_DOWNLOAD_BYTES:
+                raise RuntimeError(
+                    f"{label} claims {total} bytes; the most this module fetches is "
+                    f"{MAX_DOWNLOAD_BYTES}"
+                )
             done, chunk = 0, 1 << 20
             last_report = 0.0
             while True:
@@ -380,16 +446,45 @@ def _download(url: str, dest: Path, label: str, progress=None):
                     break
                 out.write(buf)
                 done += len(buf)
+                if done > MAX_DOWNLOAD_BYTES:
+                    raise RuntimeError(
+                        f"{label} passed {MAX_DOWNLOAD_BYTES} bytes without ending"
+                    )
                 now = time.time()
                 if progress and (now - last_report > 1.0 or done == total):
                     last_report = now
                     progress(label, done, total)
         if total and tmp.stat().st_size != total:
             raise RuntimeError(f"incomplete download for {label}: {tmp.stat().st_size}/{total} bytes")
+        if sha256:
+            actual = _sha256(tmp)
+            if actual != sha256:
+                raise RuntimeError(
+                    f"{label} is not the file it should be: sha256 {actual}, pinned "
+                    f"{sha256}. The download was discarded."
+                )
         tmp.replace(dest)
     finally:
         tmp.unlink(missing_ok=True)
     return dest
+
+
+def _safe_members(archive_names):
+    """The members an archive may be extracted under a root: no absolute
+    paths, no `..`, no drive letters - the zip-slip and tar-traversal
+    rules, checked by us rather than left to whichever extraction helper
+    a Python version happens to route through."""
+    import ntpath
+    keep = []
+    for name in archive_names:
+        pure = name.replace("\\", "/")
+        if pure.startswith("/") or ntpath.splitdrive(pure)[0]:
+            continue
+        parts = [p for p in pure.split("/") if p not in ("", ".")]
+        if not parts or ".." in parts:
+            continue
+        keep.append(name)
+    return keep
 
 
 def _find_server(root: Path):
@@ -408,17 +503,28 @@ def server_binary(progress=None):
     if not asset:
         raise RuntimeError(f"unsupported platform {platform.system()}/{platform.machine()}")
     url = f"https://github.com/{LLAMA_REPO}/releases/download/{LLAMA_RELEASE}/{asset}"
-    archive = _download(url, data_dir() / asset, "llama.cpp server", progress)
+    archive = _download(
+        url, data_dir() / asset, "llama.cpp server", progress, LLAMA_SHA256.get(asset)
+    )
     root.mkdir(parents=True, exist_ok=True)
+    # Extraction takes only members that stay under the root: the archive
+    # is digest-pinned now, but a pin checks the bytes it got, and defence
+    # in depth costs five lines.
     if archive.suffix == ".zip":
         with zipfile.ZipFile(archive) as z:
-            z.extractall(root)
+            z.extractall(root, members=_safe_members(z.namelist()))
     else:
         with tarfile.open(archive) as t:
+            names = [m.name for m in t.getmembers()]
+            allowed = set(_safe_members(names))
+            # No links out, no devices: files and directories only. The
+            # list is ours, so the Python < 3.12 fallback (no `filter`
+            # kwarg) is safe to run against it.
+            safe = [m for m in t.getmembers() if m.name in allowed and (m.isreg() or m.isdir())]
             try:
-                t.extractall(root, filter="data")
-            except TypeError:  # Python < 3.12
-                t.extractall(root)
+                t.extractall(root, members=safe, filter="data")
+            except TypeError:  # Python < 3.11.4 has no `filter`
+                t.extractall(root, members=safe)
     found = _find_server(root)
     if not found:
         raise RuntimeError("llama-server binary missing from downloaded archive")
@@ -432,8 +538,14 @@ def model_files(profile: str, progress=None):
     base = f"https://huggingface.co/{p['repo']}/resolve/main"
     target = data_dir() / "models" / profile
     target.mkdir(parents=True, exist_ok=True)
-    model = _download(f"{base}/{p['model']}", target / p["model"], "vision model", progress)
-    mmproj = _download(f"{base}/{p['mmproj']}", target / p["mmproj"], "vision projector", progress)
+    model = _download(
+        f"{base}/{p['model']}", target / p["model"], "vision model", progress,
+        MODEL_SHA256.get(p["model"]),
+    )
+    mmproj = _download(
+        f"{base}/{p['mmproj']}", target / p["mmproj"], "vision projector", progress,
+        MODEL_SHA256.get(p["mmproj"]),
+    )
     return model, mmproj
 
 

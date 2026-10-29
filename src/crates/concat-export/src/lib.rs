@@ -1191,6 +1191,18 @@ pub fn render_on(
     if total_frames <= 0 {
         return Err("the timeline is empty".to_owned());
     }
+    // The backstop the document and the edit path already hold themselves
+    // to: no cut is a hundred hours long, so no render is more frames
+    // than a hundred hours at 120 fps. A damaged request - or a document
+    // this build's clamps never saw - used to walk straight into the
+    // frame arithmetic and overflow it; this refuses it in words.
+    const MAX_TOTAL_FRAMES: i64 = 43_200_000;
+    if total_frames > MAX_TOTAL_FRAMES {
+        return Err(format!(
+            "the timeline is {total_frames} frames long; the most a render can be is {MAX_TOTAL_FRAMES} \
+             (a hundred hours at 120 fps) - cut it down before exporting"
+        ));
+    }
 
     // Render into siblings of the output so the move at the end stays on one
     // filesystem, then clean up whatever we made.

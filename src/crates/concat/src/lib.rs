@@ -2947,13 +2947,13 @@ mod tests {
         let info = projects::create(&scratch.location(), "Ordered", 1920, 1080, 30, 1)
             .expect("creates the project");
         let mut session = Session::open_info(&info).expect("opens the session");
-        let (old_path, old_document) = session.prepare_save(None);
+        let (old_path, old_document) = session.prepare_save(None).expect("serialises");
         let old_ticket = projects::ticket();
         session
             .apply(concat_project::Command::AddTrack { bottom: false })
             .expect("adds the unsaved track");
         let edited = tracks(&session);
-        let (new_path, new_document) = session.prepare_save(None);
+        let (new_path, new_document) = session.prepare_save(None).expect("serialises");
         let new_ticket = projects::ticket();
 
         let (release, delayed) = std::sync::mpsc::channel();

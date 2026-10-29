@@ -425,8 +425,11 @@ impl Editor {
         !self.redo.is_empty()
     }
 
-    /// The full document for saving.
-    pub fn to_document(&self, settings: &DocumentSettings) -> Value {
+    /// The full document for saving. Fallible for the reason
+    /// [`doc::to_document`] is: a project holding a number that cannot be
+    /// written cannot be saved, and the caller must say so rather than
+    /// crash on it.
+    pub fn to_document(&self, settings: &DocumentSettings) -> Result<Value, serde_json::Error> {
         to_document(settings, &self.project)
     }
 }

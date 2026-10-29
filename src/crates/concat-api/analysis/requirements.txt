@@ -1,11 +1,16 @@
-# Python extras for the Concat analysis tools
-
-The Concat API's analysis jobs (`analysis.scenes`, `analysis.beats`,
-`analysis.silence`) run the three scripts in this folder as subprocesses. The
-scripts are embedded in the binary and materialized at first use under the
-app's data directory; they need this Python environment once:
-
-    pip install -r requirements.txt
+# Python extras for the Concat analysis tools.
+#
+# The Concat API's analysis jobs (`analysis.scenes`, `analysis.beats`,
+# `analysis.silence`) run the three scripts in this folder as subprocesses.
+# The scripts are embedded in the binary and materialized at first use under
+# the app's data directory; they need this Python environment once:
+#
+#     pip install -r requirements.txt
+#
+# The requirements themselves - everything below this block. (Prose without
+# a `#` is a requirement to pip: line 3 of the old file failed the whole
+# install with "Invalid requirement", so `pip install -r` as the README
+# documents it never worked.)
 
 scenedetect>=0.6.5
 opencv-python-headless>=4.8
@@ -13,14 +18,15 @@ librosa>=0.10
 soundfile>=0.12
 numpy>=1.24
 
-Each script is also runnable standalone (see its --help). The contract the
-API relies on:
-
-- exit 0: JSON result on stdout;
-- any other exit: JSON `{"error": ..., "hint": ...}` on stdout (code 3 means
-  a dependency from this file is missing — surface the hint, do not retry);
-- times in seconds for scenes/silence (matching `clip_cut_spans`), and in
-  milliseconds for beat grids (`beatsMs` / `downbeatsMs` / `onsetsMs`).
-
-`analyze_silence` prefers the `ffmpeg` binary on PATH and falls back to
-librosa's RMS envelope; `analyze_scenes` needs the OpenCV backend above.
+# Each script is also runnable standalone (see its --help). The contract the
+# API relies on:
+#
+# - exit 0: JSON result on stdout;
+# - any other exit: JSON `{"error": ..., "hint": ...}` on stdout (code 3
+#   means a dependency from this file is missing - surface the hint, do not
+#   retry);
+# - times in seconds for scenes/silence (matching `clip_cut_spans`), and in
+#   milliseconds for beat grids (`beatsMs` / `downbeatsMs` / `onsetsMs`).
+#
+# `analyze_silence` prefers the `ffmpeg` binary on PATH and falls back to
+# librosa's RMS envelope; `analyze_scenes` needs the OpenCV backend above.

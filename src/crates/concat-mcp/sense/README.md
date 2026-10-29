@@ -149,12 +149,16 @@ burst pops), the colour temperature, the SFX register, the BGM duck depth,
 the TTS delivery and the stock-query vocabulary.
 
 Two engines, both honest about what they are: a **stem lexicon** (always
-available, zero dependencies, confidence 0.55) and the hosted
-`j-hartmann/emotion-english-distilroberta-base` text classifier on
+available, zero dependencies, confidence 0.55, English-only) and the hosted
+`tabularisai/multilingual-emotion-classification` text classifier
+(XLM-RoBERTa across 23 languages — Bengali, Hindi, Urdu, Arabic, Chinese,
+Spanish and more — its 11 labels folded onto the edit's 7) on
 HuggingFace's free Inference API when `FUNCUT_EMOTION_API_KEY` / `HF_TOKEN`
-is set (65/35 blend with the lexicon, confidence 0.8 — the model sees
-semantics the lexicon cannot, the lexicon sees punctuation and caps the
-model never will). The pipeline never *requires* the key.
+is set (75/25 blend with the lexicon, confidence 0.85 — the model is the
+read, multilingual and semantic; the lexicon keeps a quarter for the
+punctuation and caps the model never will). The pipeline never *requires*
+the key; a non-English script without one is answered with an honest note
+rather than a silent run of neutral lines.
 
 Commands (same `--spec` contract): `extract` (per-line read + the arc),
 `brand` (validate and apply a brand guide), `gate` (the placement gate:

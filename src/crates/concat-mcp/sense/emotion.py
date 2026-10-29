@@ -15,14 +15,15 @@ demands of every layer downstream:
 Two engines, both honest about what they are:
 
 - `lexicon` (always available, zero dependencies): a curated stem lexicon
-  over the seven GoEmotions labels, with negation windows, amplifiers,
-  hedges, caps and punctuation intensity. Confidence 0.55 — a bag of words
-  is a real signal, not a model.
-- `hf` (free tier, when `FUNCUT_EMOTION_API_KEY` / `HF_TOKEN` is set):
-  the `j-hartmann/emotion-english-distilroberta-base` text classifier via
-  the HuggingFace Inference API — 7 emotions, ~82% accuracy on GoEmotions,
-  milliseconds per line, no local install. When it answers, it carries 65%
-  of the weight and the lexicon 35%; confidence 0.8.
+  over the seven edit labels, with negation windows, amplifiers,
+  hedges, caps and punctuation intensity. English-only - confidence 0.55.
+  A bag of words is a real signal, not a model.
+- `model` (free tier, when `FUNCUT_EMOTION_API_KEY` / `HF_TOKEN` is set):
+  the `tabularisai/multilingual-emotion-classification` text classifier
+  (XLM-RoBERTa, 23 languages, 11 labels folded onto the edit's seven) via
+  the HuggingFace Inference API - milliseconds per line, no local install.
+  When it answers, it carries 75% of the weight and the lexicon 25%;
+  confidence 0.85.
 
 The "hormone" field is a creative shorthand (adrenaline, cortisol,
 dopamine, serotonin, oxytocin, endorphin) for the state a beat puts the
@@ -50,7 +51,10 @@ import urllib.error
 import urllib.request
 
 # ---------------------------------------------------------------------------
-# The seven labels the distilroberta model emits (GoEmotions, collapsed).
+# The seven labels the edit speaks: every layer downstream (the PROFILE,
+# the plan schema, the gate's registers) is written in these, so the hosted
+# model's eleven labels are folded onto them before anything else sees a
+# score.
 # ---------------------------------------------------------------------------
 
 EMOTIONS = ("anger", "disgust", "fear", "joy", "neutral", "sadness", "surprise")
@@ -59,7 +63,40 @@ ACTS = ("hook", "setup", "tension", "turn", "reveal", "proof", "cta")
 
 HORMONES = ("adrenaline", "cortisol", "dopamine", "endorphin", "oxytocin", "serotonin")
 
-DEFAULT_MODEL = "j-hartmann/emotion-english-distilroberta-base"
+# The multilingual model: XLM-RoBERTa fine-tuned across 23 languages
+# (English, Chinese, Spanish, Hindi, Arabic, Bengali, Portuguese, Russian,
+# Japanese, German, Indonesian, Tamil, Vietnamese, Korean, French, Turkish,
+# Italian, Polish, Ukrainian, Urdu, Dutch, Punjabi, Swahili), 11 labels.
+# It reads the narration in whatever language it was actually written in -
+# an English-only model was the fork's blind spot.
+DEFAULT_MODEL = "tabularisai/multilingual-emotion-classification"
+
+# The label set the hosted model emits, and where each folds onto the
+# edit's seven. The four extras are shades, not new registers: contempt
+# rides the disgust grade, frustration the anger cut, gratitude and love
+# the joy lift (love at calm arousal lands on oxytocin via _hormone_for,
+# which is the state the edit wants anyway).
+MODEL_LABELS = (
+    "anger", "contempt", "disgust", "fear", "frustration",
+    "gratitude", "joy", "love", "neutral", "sadness", "surprise",
+)
+MODEL_LABEL_MAP = {
+    "anger": "anger",
+    "contempt": "disgust",
+    "disgust": "disgust",
+    "fear": "fear",
+    "frustration": "anger",
+    "gratitude": "joy",
+    "joy": "joy",
+    "love": "joy",
+    "neutral": "neutral",
+    "sadness": "sadness",
+    "surprise": "surprise",
+}
+
+# The hosted call batches lines; past this many one POST grows heavy for
+# the free tier, so the extract walks the transcript in chunks.
+MODEL_BATCH = 64
 
 # Free-tier endpoints for the model, in try order. The router is the current
 # form; the legacy api-inference host still answers for text-classification
@@ -471,8 +508,8 @@ def _intensity_signals(text):
 
 
 # ---------------------------------------------------------------------------
-# The hosted engine: j-hartmann/emotion-english-distilroberta-base on the
-# HuggingFace Inference API, free tier, one batched POST for every line.
+# The hosted engine: tabularisai/multilingual-emotion-classification on the
+# HuggingFace Inference API, free tier, batched POSTs for the lines.
 # ---------------------------------------------------------------------------
 
 def _emotion_api_key(spec):
@@ -487,53 +524,79 @@ def _mask(key):
     return key[:3] + "..." + key[-2:] if len(key) > 8 else "***"
 
 
-def _hf_scores(lines, key, model, timeout=25.0):
-    """Per-line label->score dicts from the hosted model, or raises with the
-    honest reason. Text-classification accepts a list of inputs and answers
-    a list of per-input label rankings."""
-    body = json.dumps({"inputs": lines}).encode("utf-8")
-    last_error = "no endpoint tried"
-    for template in HF_ENDPOINTS:
-        url = template.format(model=model or DEFAULT_MODEL)
-        request = urllib.request.Request(
-            url, data=body, method="POST",
-            headers={"Authorization": f"Bearer {key}",
-                     "Content-Type": "application/json"},
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as reply:
-                payload = json.loads(reply.read().decode("utf-8"))
-            break
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", "replace")[:200]
-            last_error = f"HTTP {exc.code} from {url.split('/models/')[0]}: {detail}"
-            if exc.code in (401, 403):
-                raise RuntimeError(f"the emotion API key was refused ({last_error})")
-        except Exception as exc:  # network down, timeout, DNS: fall back
-            last_error = f"{type(exc).__name__}: {exc}"
-    else:
-        raise RuntimeError(last_error)
-    if not isinstance(payload, list) or len(payload) != len(lines):
+def _fold_model_scores(ranking):
+    """One model answer (its 11 labels with scores, sigmoid-independent)
+    folded onto the edit's 7. Scores need not sum to 1 - the model is
+    multi-label, so each label carries its own probability; the fold adds
+    them into their target and the normaliser downstream turns the pile
+    into a share. Unknown labels are ignored rather than fatal: a model
+    swap on the hosted side must degrade to neutral, never to an error."""
+    folded = {emotion: 0.0 for emotion in EMOTIONS}
+    if isinstance(ranking, dict):
+        ranking = [ranking]
+    if not isinstance(ranking, list):
         raise RuntimeError("the emotion model returned an unexpected shape")
-    scores = []
-    for ranking in payload:
-        line_scores = {emotion: 0.0 for emotion in EMOTIONS}
-        if not isinstance(ranking, list):
+    for entry in ranking:
+        if not isinstance(entry, dict):
             raise RuntimeError("the emotion model returned an unexpected shape")
-        for entry in ranking:
-            label = str(entry.get("label", "")).lower()
-            if label in line_scores:
-                line_scores[label] = float(entry.get("score", 0.0))
-        scores.append(line_scores)
+        label = str(entry.get("label", "")).lower()
+        target = MODEL_LABEL_MAP.get(label)
+        if target is not None:
+            folded[target] += max(0.0, float(entry.get("score", 0.0)))
+    return folded
+
+
+def _hf_scores(lines, key, model, timeout=30.0):
+    """Per-line label->score dicts (the edit's 7) from the hosted model, or
+    raises with the honest reason. Text-classification accepts a list of
+    inputs and answers a list of per-input label rankings; long transcripts
+    go in chunks so one POST stays light on the free tier."""
+    model = model or DEFAULT_MODEL
+    scores = []
+    for start in range(0, len(lines), MODEL_BATCH):
+        chunk = lines[start:start + MODEL_BATCH]
+        body = json.dumps({"inputs": chunk}).encode("utf-8")
+        payload = None
+        last_error = "no endpoint tried"
+        for template in HF_ENDPOINTS:
+            url = template.format(model=model)
+            request = urllib.request.Request(
+                url, data=body, method="POST",
+                headers={"Authorization": f"Bearer {key}",
+                         "Content-Type": "application/json"},
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=timeout) as reply:
+                    payload = json.loads(reply.read().decode("utf-8"))
+                break
+            except urllib.error.HTTPError as exc:
+                detail = exc.read().decode("utf-8", "replace")[:200]
+                last_error = f"HTTP {exc.code} from {url.split('/models/')[0]}: {detail}"
+                if exc.code in (401, 403):
+                    raise RuntimeError(f"the emotion API key was refused ({last_error})")
+            except Exception as exc:  # network down, timeout, DNS: fall back
+                last_error = f"{type(exc).__name__}: {exc}"
+        if payload is None:
+            raise RuntimeError(last_error)
+        # A single-line call may answer one flat ranking instead of the
+        # list-of-rankings a batch always gets.
+        if len(chunk) == 1 and isinstance(payload, list) and payload \
+                and isinstance(payload[0], dict):
+            payload = [payload]
+        if not isinstance(payload, list) or len(payload) != len(chunk):
+            raise RuntimeError("the emotion model returned an unexpected shape")
+        scores.extend(_fold_model_scores(ranking) for ranking in payload)
     return scores
 
 
-def _merge_scores(hf, lexicon):
-    """The hosted model carries 65% when it answers; the lexicon keeps 35%
-    because it sees punctuation and caps the model never will."""
+def _merge_scores(model, lexicon):
+    """The hosted model carries 75% when it answers; the lexicon keeps 25%
+    because it sees punctuation and caps the model never will. The model is
+    the read now - it is multilingual and semantic; the lexicon is the
+    marginal signal, not the peer it was beside the English-only model."""
     merged = {}
     for emotion in EMOTIONS:
-        merged[emotion] = 0.65 * (hf or {}).get(emotion, 0.0) + 0.35 * (lexicon or {}).get(emotion, 0.0)
+        merged[emotion] = 0.75 * (model or {}).get(emotion, 0.0) + 0.25 * (lexicon or {}).get(emotion, 0.0)
     return merged
 
 
@@ -695,6 +758,23 @@ def _arc_analysis(lines, brief_arc=None):
 # The extract command.
 # ---------------------------------------------------------------------------
 
+def _latin_share(texts):
+    """The share of letters that are plain a-z. Under ~0.7 the English stem
+    lexicon is reading a translation, not the text: accented Latin mostly
+    still matches, non-Latin scripts (Bengali, Arabic, Chinese, ...) match
+    nothing at all. The hosted model reads all of them natively - the note
+    says so instead of quietly answering neutral."""
+    letters = 0
+    ascii_letters = 0
+    for text in texts:
+        for char in text or "":
+            if char.isalpha():
+                letters += 1
+                if char.isascii():
+                    ascii_letters += 1
+    return (ascii_letters / letters) if letters else 1.0
+
+
 def _collect_lines(spec):
     """Lines from a transcript job, a bare list, or raw script text."""
     if isinstance(spec.get("lines"), list) and spec["lines"]:
@@ -737,13 +817,24 @@ def extract(spec):
         model = spec.get("model") or os.environ.get("FUNCUT_EMOTION_MODEL") or DEFAULT_MODEL
         try:
             hf_rows = _hf_scores(texts, key, model)
-            engine = "hf+lexicon"
-            confidence = 0.8
+            engine = "model+lexicon"
+            confidence = 0.85
         except Exception as exc:
             engine_note = f" (hosted model unavailable: {exc}; fell back to the lexicon)"
     if hf_rows is None:
         engine = "lexicon"
         confidence = 0.55
+        # The lexicon is English-only; a narration in another script would
+        # read as neutral line after line, silently. Say it: the hosted
+        # model is multilingual, the key is free, and the read is the edit's
+        # driver - the director deserves to know what it is driving on.
+        # (When the hosted call itself failed, both facts travel: why it
+        # fell back, and what the fallback cannot read.)
+        if _latin_share(texts) < 0.7:
+            non_english = (" (the stem lexicon reads English only and this text "
+                           "is mostly not; set FUNCUT_EMOTION_API_KEY for the "
+                           f"multilingual model {DEFAULT_MODEL})")
+            engine_note = (engine_note + non_english) if engine_note else non_english
 
     decorated = []
     previous_emotion = None
@@ -817,14 +908,16 @@ def extract(spec):
         "lines": decorated,
         "arc": _arc_analysis(decorated, brief_arc),
         "note": "emotions are measured from the words ("
-                + ("hosted distilroberta + lexicon" if engine == "hf+lexicon"
-                   else "stem lexicon; set FUNCUT_EMOTION_API_KEY for the hosted model")
+                + (f"hosted multilingual model + lexicon: {model}"
+                   if engine == "model+lexicon"
+                   else "stem lexicon; set FUNCUT_EMOTION_API_KEY for the hosted "
+                        f"multilingual model {DEFAULT_MODEL}")
                 + "); the hormone field is a creative shorthand for the viewer's "
                   "state, not physiology" + engine_note,
     }
     if key:
         result["apiKey"] = _mask(key)
-    if engine == "hf+lexicon":
+    if engine == "model+lexicon":
         result["model"] = model
     if isinstance(spec.get("brand"), dict):
         result["brand"] = brand_apply(spec["brand"], decorated)
@@ -1324,10 +1417,46 @@ def selftest():
     assert bad["verdict"] == "revise" and bad["missing"] == 3 and bad["problems"], bad
     out["verify"] = "ok"
 
-    # The HF merge is pure arithmetic and must stay honest about weights.
+    # The model+lexicon merge is pure arithmetic and must stay honest about
+    # weights: the model is the read, the lexicon the marginal signal.
     merged = _merge_scores({"joy": 1.0}, {"sadness": 1.0})
-    assert abs(merged["joy"] - 0.65) < 1e-9 and abs(merged["sadness"] - 0.35) < 1e-9, merged
+    assert abs(merged["joy"] - 0.75) < 1e-9 and abs(merged["sadness"] - 0.25) < 1e-9, merged
     out["merge"] = "ok"
+
+    # The hosted model emits eleven labels; the edit speaks seven. The fold
+    # is a mapping, not a guess: contempt rides disgust, frustration rides
+    # anger, gratitude and love ride joy - and love plus joy (the multi-label
+    # case, where scores need not sum to 1) ADDS, so a tender line reads
+    # more joyful than a merely happy one, which it is.
+    assert DEFAULT_MODEL == "tabularisai/multilingual-emotion-classification"
+    assert set(MODEL_LABELS) == set(MODEL_LABEL_MAP)
+    assert set(MODEL_LABEL_MAP.values()) <= set(EMOTIONS)
+    folded = _fold_model_scores([
+        {"label": "joy", "score": 0.6},
+        {"label": "love", "score": 0.4},
+        {"label": "contempt", "score": 0.2},
+        {"label": "anger", "score": 0.1},
+    ])
+    assert abs(folded["joy"] - 1.0) < 1e-9, folded
+    assert abs(folded["disgust"] - 0.2) < 1e-9 and abs(folded["anger"] - 0.1) < 1e-9, folded
+    assert folded["neutral"] == 0.0 and folded["surprise"] == 0.0, folded
+    # A flat single-dict answer (one line, some deployments) folds too.
+    flat = _fold_model_scores({"label": "sadness", "score": 0.9})
+    assert abs(flat["sadness"] - 0.9) < 1e-9, flat
+    # Labels the map does not know are ignored, never fatal.
+    unknown = _fold_model_scores([{"label": "LABEL_7", "score": 1.0}])
+    assert all(value == 0.0 for value in unknown.values()), unknown
+    out["fold"] = "ok"
+
+    # The multilingual honesty: an English script is fine for the lexicon,
+    # Bengali is not - the note must say so rather than answering neutral.
+    assert _latin_share(["The rain dissolves the rock."]) > 0.9
+    assert _latin_share(["তুমি কোথায় যাচ্ছ আজ রাতে?"]) < 0.1
+    assert _latin_share(["¡Qué alegría verles, señoras y señores!"]) < 0.9
+    report = extract({"script": "তোমার জন্য ভালোবাসা। আজ খুব খুশি লাগছে।"})
+    assert report["engine"] == "lexicon" and "multilingual" in report["note"], report["note"]
+    assert report["lines"][0]["emotion"] == "neutral", report["lines"][0]
+    out["multilingual"] = "ok"
 
     out["selftest"] = True
     return out

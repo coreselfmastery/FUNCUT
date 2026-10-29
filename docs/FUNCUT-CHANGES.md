@@ -549,3 +549,60 @@ engine tests listed above, including the keyframe and fade sharing.
 | `src/crates/concat-mcp/src/sense.rs`, `src/crates/concat-mcp/src/tools.rs`, `src/crates/concat-mcp/src/protocol.rs` | the `emotion` MCP tool: embedded runtime, schema, dispatch, creative-loop wiring |
 | `.claude/skills/funcut-director/SKILL.md`, `templates/edit_plan.schema.json`, `templates/edit_plan.example.json` | Phase 1b the read, the per-segment emotion fields, the gate as hard floor E, the export verify |
 | `docs/EMOTION.md` | new: the emotion-driven edit's own page |
+
+## 13. The upgrades: the multilingual emotion read, and Download
+
+Two changes asked for by the fork's own use: the emotion read now speaks
+the creator's language, and the finished export can be downloaded.
+
+**The multilingual model.** The hosted half of the `emotion` read was
+`j-hartmann/emotion-english-distilroberta-base` - English-only, and the
+fallback lexicon is English-only too, so a voiceover in Bengali, Hindi,
+Arabic or any other script read as neutral line after line, silently, and
+every layer downstream (easing, colour, duck, stock queries, the gate)
+answered a read that never happened. The hosted engine is now
+`tabularisai/multilingual-emotion-classification` - XLM-RoBERTa fine-tuned
+across 23 languages (English, Chinese, Spanish, Hindi, Arabic, Bengali,
+Portuguese, Russian, Japanese, German, Indonesian, Tamil, Vietnamese,
+Korean, French, Turkish, Italian, Polish, Ukrainian, Urdu, Dutch, Punjabi,
+Swahili). Its eleven labels fold onto the edit's seven before anything
+downstream sees a score: contempt rides the disgust register, frustration
+the anger cut, gratitude and love the joy lift (love at calm arousal lands
+on oxytocin, which is the state the edit wants anyway). The fold ADDS
+multi-label probabilities, so a tender line reads more joyful than a
+merely happy one - which it is. The blend moves with the model's standing:
+75/25 model/lexicon (the multilingual semantic read is the read now; the
+lexicon keeps a quarter for the punctuation and caps the model never
+sees), confidence 0.85, engine reported as `model+lexicon`. Long
+transcripts travel in batches of 64 lines per request. And the honesty
+runs both ways: without a key, a mostly non-Latin script is answered with
+a note that says the lexicon is English-only and names the env var,
+rather than a silent run of neutral lines. Nothing downstream changes -
+the seven labels, the PROFILE, the plan schema, the gate, the verify were
+already written in the edit's seven, which is why a better model slots in
+as a drop-in.
+
+**Download.** The export sheet's finished state had Show in folder and
+Export again; it now also has **Download**, which copies the finished file
+into the person's Downloads folder - the one place a browser's muscle
+memory goes looking. A copy, never a move: the export stays where it was
+written, Reveal still finds it, and Again still starts over beside it. A
+file of the same name already downloaded is never replaced - the copy
+lands as `name (2).mp4`, `name (3).mp4`, the way a browser numbers its
+own. The copy runs on a worker (an export can weigh gigabytes) and
+reports through a toast in the person's language; the words ship in all
+26 locales. Show in folder gets the folder icon it always meant to have,
+and Download takes the arrow-into-tray.
+
+The files:
+
+| file | what |
+| --- | --- |
+| `src/crates/concat-mcp/sense/emotion.py` | `tabularisai/multilingual-emotion-classification`, the 11-to-7 label fold, 75/25 blend, confidence 0.85, batched hosted calls, the non-Latin note, the selftest's fold/multilingual cases |
+| `src/crates/concat-mcp/src/tools.rs` | the `emotion` tool's description and schema strings |
+| `docs/EMOTION.md`, `docs/MCP.md`, `src/crates/concat-mcp/sense/README.md`, `.claude/skills/funcut-director/SKILL.md` | the engines table, the model, the weights, the honest-fallback wording |
+| `docs/FEATURES.md` | the inventory's emotion-engine and export bullets brought along |
+| `src/crates/concat/src/panes/export.rs` | the `Download` message, the worker-side copy, the numbered-name logic, the test |
+| `src/crates/concat/ui/dialogs/export.slint` | the Download button beside Show in folder; the folder glyph on Reveal |
+| `src/crates/concat/src/lib.rs` | the button's wiring |
+| `src/crates/concat/locales/*.json` | `export.download`, `export.downloadedTo`, `export.couldNotDownload` in all 26 languages |

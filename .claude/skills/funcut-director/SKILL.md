@@ -102,10 +102,12 @@ drives everything after it:** the plan carries it per segment (Phase 3), the
 placement gate enforces it on candidates (Phase 4), motion easing and the
 mix duck by it (Phases 5/5b), the grade pushes with it (Phase 6). With
 `FUNCUT_EMOTION_API_KEY` (or `HF_TOKEN`) set, the free hosted
-`j-hartmann/emotion-english-distilroberta-base` sharpens the read (65/35
-blend with the lexicon, confidence 0.8); without a key the stem lexicon
-answers alone (confidence 0.55) — both are first-class, the pipeline never
-requires the key. When the arc's warnings name a flat or repetitive script,
+`tabularisai/multilingual-emotion-classification` sharpens the read —
+XLM-RoBERTa across 23 languages, its 11 labels folded onto the edit's 7
+(75/25 blend with the lexicon, confidence 0.85); without a key the
+English-only stem lexicon answers alone (confidence 0.55) — both are
+first-class, the pipeline never requires the key, and a non-English script
+without one comes back with an honest note instead of a silent neutral. When the arc's warnings name a flat or repetitive script,
 fix the SCRIPT (or re-deliver the section) before planning — an edit cannot
 rescue a narration that never changes state. A brand guide (channel
 palette/type/grade/SFX/taboos/vibe — `emotion {action: "template"}` returns

@@ -2041,6 +2041,9 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     app.on_export_reveal(on_window!(|state| {
         state.handle(Msg::Export(ExportMsg::Reveal));
     }));
+    app.on_export_download(on_window!(|state| {
+        state.handle(Msg::Export(ExportMsg::Download));
+    }));
     app.on_export_cancel(on_window!(|state| {
         state.handle(Msg::Export(ExportMsg::Cancel));
     }));

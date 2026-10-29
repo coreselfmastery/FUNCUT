@@ -23,21 +23,28 @@ follows the same read.
 
 | engine | when | confidence | what it sees |
 | --- | --- | --- | --- |
-| `lexicon` | always | 0.55 | a curated stem lexicon over the 7 GoEmotions labels, negation windows, amplifiers, hedges, caps and punctuation intensity |
-| `hf+lexicon` | `FUNCUT_EMOTION_API_KEY` or `HF_TOKEN` set | 0.8 | `j-hartmann/emotion-english-distilroberta-base` on HuggingFace's free Inference API (65% weight) blended with the lexicon (35%) |
+| `lexicon` | always | 0.55 | a curated stem lexicon over the 7 edit labels, negation windows, amplifiers, hedges, caps and punctuation intensity — **English-only** |
+| `model+lexicon` | `FUNCUT_EMOTION_API_KEY` or `HF_TOKEN` set | 0.85 | `tabularisai/multilingual-emotion-classification` (XLM-RoBERTa, **23 languages**, 11 labels folded onto the edit's 7) on HuggingFace's free Inference API (75% weight) blended with the lexicon (25%) |
 
-The hosted model (`j-hartmann/emotion-english-distilroberta-base`, 7
-emotions, ~82% accuracy on GoEmotions, milliseconds per line, free tier,
-no local install) sees semantics a bag of words cannot; the lexicon sees
-punctuation, caps and idioms the model never will. When the hosted call
-fails — no network, refused key, wrong shape — the reply says so and the
-lexicon answer stands, labelled. The pipeline never **requires** the key:
-every phase below runs at either confidence.
+The hosted model reads the narration in whatever language it was written
+in — English, Bengali, Hindi, Urdu, Arabic, Chinese, Spanish and eighteen
+more — where the old English-only classifier saw gibberish and the lexicon
+sees nothing at all. Its eleven labels fold onto the edit's seven:
+contempt rides the disgust grade, frustration the anger cut, gratitude
+and love the joy lift (love at calm arousal lands on oxytocin, which is
+the state the edit wants anyway). The lexicon keeps a quarter of the
+weight because it sees punctuation, caps and idioms the model never will.
+When the hosted call fails — no network, refused key, wrong shape — the
+reply says so and the lexicon answer stands, labelled. The pipeline never
+**requires** the key: every phase below runs at either confidence. A
+non-English script *without* a key is answered with an honest note — the
+lexicon is English-only — rather than a silent run of neutral lines.
 
 The key resolution order: the `apiKey` argument, `FUNCUT_EMOTION_API_KEY`,
 `HF_TOKEN`, `HUGGINGFACE_API_KEY`. The reply masks it (`hf_...xY`). The
 `model` argument (or `FUNCUT_EMOTION_MODEL`) overrides the default model
-id. Nothing is stored on disk by this tool — the key travels the existing
+id. Long transcripts travel in batches of 64 lines per request. Nothing
+is stored on disk by this tool — the key travels the existing
 stdin pipe, never argv, and appears in no log.
 
 The "hormone" field (adrenaline, cortisol, dopamine, serotonin, oxytocin,

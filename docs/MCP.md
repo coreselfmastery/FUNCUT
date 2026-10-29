@@ -247,10 +247,12 @@ return MCP `type: image` content blocks, so the model can actually look:
   out, a burst pops), colour temperature + grade hint, the SFX register,
   the BGM **duck depth** in dB, pacing and 2–3 word stock `queries`; plus
   the whole piece's **arc** (shape, score, warnings) checked against the
-  brief's `emotionalArc`. Engines: a stem lexicon always (confidence 0.55),
-  or `j-hartmann/emotion-english-distilroberta-base` on HuggingFace's free
-  Inference API when `FUNCUT_EMOTION_API_KEY` / `HF_TOKEN` is set (65/35
-  blend, confidence 0.8) — with and without the key are both first-class.
+  brief's `emotionalArc`. Engines: a stem lexicon always (confidence 0.55,
+  English-only), or `tabularisai/multilingual-emotion-classification`
+  (XLM-RoBERTa across 23 languages, its 11 labels folded onto the edit's 7)
+  on HuggingFace's free Inference API when `FUNCUT_EMOTION_API_KEY` /
+  `HF_TOKEN` is set (75/25 blend, confidence 0.85) — with and without the
+  key are both first-class.
   `project` loads the brief automatically. `action "gate"` checks stock
   candidates against a beat's `{emotion, act}` and the brand guide: 0–1
   failed checks passes, **2+ rejects the candidate, every candidate rejected

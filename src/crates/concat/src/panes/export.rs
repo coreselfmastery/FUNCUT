@@ -48,6 +48,10 @@ pub enum ExportMsg {
     FolderChosen(String),
     /// Show the finished file in the file manager.
     Reveal,
+    /// Copy the finished file into the Downloads folder.
+    Download,
+    /// The copy's worker, done: where the copy landed, or why it did not.
+    Downloaded(Result<String, String>),
     Start,
     /// Start over a file already there: the confirmation sheet's answer.
     Overwrite,
@@ -179,6 +183,11 @@ impl ExportPane {
                     studio.notify(&i18n::tf("export.couldNotShowFile", &[&error]), true);
                 }
             }
+            // A download is a copy into the person's Downloads folder - the
+            // one place a browser's muscle memory goes looking - never a
+            // move: the export stays where it was written, Reveal still
+            // finds it, and Again still starts over beside it.
+            ExportMsg::Download => self.download(),
             ExportMsg::Start => self.start(studio),
             ExportMsg::Overwrite => self.begin(studio, true),
             ExportMsg::Cancel => {
@@ -214,6 +223,12 @@ impl ExportPane {
             ExportMsg::Published(Err(error)) => {
                 let folder = platform::published_folder().unwrap_or_default();
                 studio.notify(&tf("export.couldNotPublish", &[&folder, &error]), true);
+            }
+            ExportMsg::Downloaded(Ok(path)) => {
+                studio.notify(&tf("export.downloadedTo", &[&path]), false);
+            }
+            ExportMsg::Downloaded(Err(error)) => {
+                studio.notify(&tf("export.couldNotDownload", &[&error]), true);
             }
             ExportMsg::Finished(Err(error)) => {
                 if self.phase == ExportPhase::Idle {
@@ -386,6 +401,21 @@ impl ExportPane {
     /// switch asks and the codec can be written that deep here.
     pub fn deep(&self, studio: &Studio) -> bool {
         self.hdr(studio) || (self.ten_bit && self.codec(studio).ten_bit_available())
+    }
+
+    /// The copy into the Downloads folder, on a worker - an export can
+    /// weigh gigabytes, and the sheet that reports the copy must not
+    /// freeze waiting on it. Its result comes back as a message, the same
+    /// road every other export outcome takes.
+    fn download(&mut self) {
+        if self.written.is_empty() {
+            return;
+        }
+        let from = self.written.clone();
+        spawn(
+            move || download_copy(&from),
+            |studio, _, _, result| studio.handle(Msg::Export(ExportMsg::Downloaded(result))),
+        );
     }
 
     /// Starts the render on a worker, once the name is a file's and no
@@ -631,6 +661,46 @@ impl ExportPane {
     }
 }
 
+/// The finished export copied into the person's Downloads folder - made
+/// if it is not there yet - and the path it landed at.
+fn download_copy(from: &str) -> Result<String, String> {
+    let folder = home_folder("Downloads");
+    if folder.is_empty() {
+        return Err("the Downloads folder could not be found".into());
+    }
+    download_into(&folder, from)
+}
+
+/// [`download_copy`] with the folder given: a copy, never a move - the
+/// export stays where it was written, Reveal still finds it, and Again
+/// still starts over beside it. A file of the same name already there is
+/// never replaced: the copy lands as `name (2).mp4`, `name (3).mp4`, ...,
+/// the way a browser numbers its own downloads.
+fn download_into(folder: &str, from: &str) -> Result<String, String> {
+    std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;
+    let source = std::path::Path::new(from);
+    let file = source
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or("the finished file has no name")?
+        .to_owned();
+    let stem = source.file_stem().and_then(|name| name.to_str()).unwrap_or(&file).to_owned();
+    let suffix = source
+        .extension()
+        .and_then(|name| name.to_str())
+        .map(|extension| format!(".{extension}"))
+        .unwrap_or_default();
+    let mut target = std::path::PathBuf::from(folder).join(&file);
+    for counter in 2.. {
+        if !target.exists() {
+            break;
+        }
+        target = std::path::PathBuf::from(folder).join(format!("{stem} ({counter}){suffix}"));
+    }
+    std::fs::copy(source, &target).map_err(|error| error.to_string())?;
+    Ok(target.to_string_lossy().into_owned())
+}
+
 /// The typed name as the file's, or `None` for one that cannot be: empty
 /// once trimmed, a dot or two, or holding a character no file system
 /// here takes. The set is Windows' - a slash and a backslash, the colon,
@@ -649,6 +719,32 @@ fn file_name(typed: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A download copies into the folder, makes the folder when it is not
+    /// there, and never replaces what an earlier download left: the second
+    /// copy of the same name lands beside it, numbered the browser way.
+    #[test]
+    fn a_download_copies_and_numbers_rather_than_replaces() {
+        let root = std::env::temp_dir()
+            .join(format!("funcut-download-{}-{}", std::process::id(), line!()));
+        let source = root.join("source");
+        std::fs::create_dir_all(&source).unwrap();
+        let from = source.join("My cut.mp4");
+        std::fs::write(&from, b"bytes").unwrap();
+
+        let folder = root.join("Downloads");
+        let first = download_into(&folder.to_string_lossy(), &from.to_string_lossy()).unwrap();
+        let second = download_into(&folder.to_string_lossy(), &from.to_string_lossy()).unwrap();
+        let third = download_into(&folder.to_string_lossy(), &from.to_string_lossy()).unwrap();
+
+        assert_eq!(std::fs::read(&first).unwrap(), b"bytes".to_vec());
+        assert!(first.ends_with("My cut.mp4"), "{first}");
+        assert!(second.ends_with("My cut (2).mp4"), "{second}");
+        assert!(third.ends_with("My cut (3).mp4"), "{third}");
+        // A copy, never a move: the export stays where it was written.
+        assert!(from.exists());
+        std::fs::remove_dir_all(&root).ok();
+    }
 
     /// A name is a file's or the export does not start: trimmed, never
     /// empty, never a path, and none of the characters Windows refuses.

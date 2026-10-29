@@ -399,6 +399,7 @@ component ExportFooter inherits VerticalLayout {
     callback begin();
     callback cancel();
     callback reveal();
+    callback download();
     callback again();
 
     property <bool> running: root.data.phase == ExportPhase.running;
@@ -499,8 +500,13 @@ component ExportFooter inherits VerticalLayout {
 
         if !root.phone: Button {
             label: I18n.t("export.showInFolder");
-            glyph: Glyph.import;
+            glyph: Glyph.folder;
             clicked => { root.reveal(); }
+        }
+        Button {
+            label: I18n.t("export.download");
+            glyph: Glyph.import;
+            clicked => { root.download(); }
         }
         Button {
             label: I18n.t("export.exportAgain");
@@ -570,6 +576,7 @@ export component ExportDialog inherits Rectangle {
     callback begin();
     callback cancel();
     callback reveal();
+    callback download();
     callback again();
 
     property <bool> running: root.data.phase == ExportPhase.running;
@@ -811,6 +818,7 @@ export component ExportDialog inherits Rectangle {
                     begin => { root.begin(); }
                     cancel => { root.cancel(); }
                     reveal => { root.reveal(); }
+                    download => { root.download(); }
                     again => { root.again(); }
                 }
             }

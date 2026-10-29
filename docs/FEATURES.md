@@ -100,7 +100,9 @@ Everything upstream Concat is, verified in this tree:
 - **Export.** H.264 / HEVC / AV1, 10-bit colour, HDR (BT.2020 HLG/PQ),
   x264/x265/SVT-AV1 and NVENC/QSV/AMF hardware, VBR/CBR/average rate
   control, limited/full range, AAC 48 kHz audio, faststart MP4, staged
-  progress (cutout → stabilize → video → audio → mux) with cancel.
+  progress (cutout → stabilize → video → audio → mux) with cancel. The
+  finished sheet offers **Download** — a copy into the Downloads folder,
+  numbered rather than replacing — beside Show in folder.
 - **Small-machine tuning.** Every cache sizes itself to installed RAM
   (7 caches retuned for ≤6 GB: warm decoders 8→4, stills 24→8, title
   paintings quartered, export pool RAM-shared…), so a 4 GB laptop edits
@@ -217,9 +219,11 @@ Nothing here is bundled whole; indexes download once, media arrives per pick.
   speed, the easing curve as exact concat-motion authoring JSON, colour
   temperature with a grade hint, the SFX register, the BGM duck depth in
   dB, pacing and 2–3 word stock queries — plus the whole piece's arc
-  checked against the brief. Engines: a stem lexicon always (0.55), or
-  j-hartmann's distilroberta on HuggingFace's free Inference API when keyed
-  (65/35 blend, 0.8). Actions: `extract`, `brand` (validate + apply a brand
+  checked against the brief. Engines: a stem lexicon always (0.55,
+  English-only), or tabularisai/multilingual-emotion-classification —
+  XLM-RoBERTa across 23 languages, its 11 labels folded onto the edit's 7 —
+  on HuggingFace's free Inference API when keyed (75/25 blend, 0.85).
+  Actions: `extract`, `brand` (validate + apply a brand
   guide), `gate` (the placement gate below), `verify` (re-transcribe the
   export and align words — what a render loses, duplicates or shifts is a
   defect), `template`.

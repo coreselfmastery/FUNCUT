@@ -17,7 +17,7 @@ The upstream project is ~164 MB, most of it rendered video and captured textures
 | `references/sound-design.md` · `references/music-beat-sync.md` | Sound methodology and the beat-grid analysis method |
 | `references/final-review.md` | The independent pre-delivery review checklist |
 | `references/sequences/` | Whole-film energy skeletons to fill in before picking cards |
-| `demos/<category>/` | The tuned reference implementation for **all 157 cards**, in the same ten categories — copy into a Remotion project and run. `demos/_fixtures/` is vendored too, and holds **two** unrelated shared modules: `Fixtures.tsx` (the fake-UI scene pieces) and `Motion.tsx` (the design-coordinate stage the 48 motion-lab cards build on — read it before adapting one of those) |
+| `demos/<category>/` | The tuned reference implementation for **all 157 cards**, in the same ten categories — copy into a Remotion project and run. `demos/_fixtures/` is vendored too, and holds **three** unrelated shared modules: `Fixtures.tsx` (the fake-UI scene pieces), `Motion.tsx` (the design-coordinate stage the 48 motion-lab cards build on — read it before adapting one of those), and `PageCam2D.tsx` (a self-contained 2.5D page camera — the template `PageCam`'s coordinate math with no library import — that the real-texture demos build on) |
 | `template/src/` | The reference film's source — kept for `aifl/Main.tsx` — the central SFX pin table the whole sound methodology is drawn from |
 | `template/TEMPLATE.md` + `package.json` · `remotion.config.ts` · `tsconfig.json` | The replace-guide template mode follows, and the project config that makes the source buildable |
 | `assets/lib/` | Components to copy (not import): `PageCam`, `DigitRoll`, `FlashCut`, `Caption`, `FlatPanel`, `VerticalTicker`, `helpers/` |
@@ -37,7 +37,7 @@ One demo directory, `demos/interaction/clipcard-looping/`, has no card of its ow
 | `gallery/` (161 preview clips) | Browse the hosted gallery instead: <https://vincentwei1021.github.io/video-shotcraft/library.html> — the right way to let a user *watch* shots and pick by name. The clips now live in a release rather than in git, so even an upstream clone must run `gallery/fetch-media.sh` before serving it locally |
 | `template/out/` (15 MB rendered film) · `template/public/` (7.6 MB page textures) | The template's **source** is vendored and readable, but without its textures and output the project won't render as-is. Clone upstream to run it |
 | `assets/audio/*.mp3` (~30 MB of SFX + BGM) | Clone upstream, or source equivalents per the licensing guidance in `../../references/video-sound.md`. The manifest above says what exists |
-| `demos/_textures/` (real-page captures) | Four demos import these and won't run standalone without them; their card documentation is still complete |
+| `demos/_textures/` (real-page captures) | Eleven demos import the real-page captures (`textures/live/*`, resolved through the project's `public/`) and won't run standalone without them; their card documentation is still complete |
 
 ## Notes
 

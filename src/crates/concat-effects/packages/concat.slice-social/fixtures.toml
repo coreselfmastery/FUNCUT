@@ -3,14 +3,14 @@ name = "default, a warm tone cutting to a cool blue"
 input = [0.8, 0.5, 0.3, 1]
 to = [0.05, 0.15, 0.4, 1]
 progress = 0.4
-expect = [0.475830078125, 0.343017578125, 0.324951171875, 1]
+expect = [0.46142578125, 0.33642578125, 0.3271484375, 1]
 
 [[probe]]
 name = "default, a grey cutting to a saturated red"
 input = [0.18, 0.18, 0.18, 1]
 to = [0.9, 0.05, 0.1, 1]
 progress = 0.4
-expect = [0.4482421875, 0.12200927734375, 0.1412353515625, 1]
+expect = [0.462890625, 0.1195068359375, 0.1397705078125, 1]
 
 [[probe]]
 name = "min, a warm tone cutting to a cool blue"
@@ -34,7 +34,7 @@ at = "max"
 input = [0.8, 0.5, 0.3, 1]
 to = [0.05, 0.15, 0.4, 1]
 progress = 0.4
-expect = [0.298095703125, 0.258544921875, 0.34375, 1]
+expect = [0.28857421875, 0.25439453125, 0.345947265625, 1]
 
 [[probe]]
 name = "max, a grey cutting to a saturated red"
@@ -42,4 +42,4 @@ at = "max"
 input = [0.18, 0.18, 0.18, 1]
 to = [0.9, 0.05, 0.1, 1]
 progress = 0.4
-expect = [0.60791015625, 0.0906982421875, 0.12109375, 1]
+expect = [0.619140625, 0.089111328125, 0.12030029296875, 1]

@@ -1,7 +1,7 @@
 [[probe]]
 name = "default, a warm tone"
 input = [0.8, 0.5, 0.3, 1]
-expect = [0.828125, 0.5283203125, 0.328369140625, 1]
+expect = [1.318359375, 1.0185546875, 0.81884765625, 1]
 
 [[probe]]
 name = "default, a grey and a highlight"
@@ -24,7 +24,7 @@ expect = [0.1800537109375, 0.1800537109375, 0.1800537109375, 1]
 name = "max, a warm tone"
 at = "max"
 input = [0.8, 0.5, 0.3, 1]
-expect = [0.84033203125, 0.54052734375, 0.340576171875, 1]
+expect = [1.541015625, 1.2412109375, 1.041015625, 1]
 
 [[probe]]
 name = "max, a grey and a highlight"

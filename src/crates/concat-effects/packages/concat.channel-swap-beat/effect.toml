@@ -22,4 +22,4 @@ unit = "%"
 entry = "effect.wgsl"
 
 [card]
-moment = 1.0
+moment = 0.5

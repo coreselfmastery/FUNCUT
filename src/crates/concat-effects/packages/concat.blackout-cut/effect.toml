@@ -1,0 +1,26 @@
+format = 2
+
+[effect]
+id = "concat.blackout-cut"
+name = "Blackout Cut"
+kind = "transition"
+category = "Flash & Impact"
+order = 81
+description = "The world dips to black for a breath and comes back as the new shot."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "fadeblack"
+fallback = "fade-black"
+
+[card]
+progress = 0.4

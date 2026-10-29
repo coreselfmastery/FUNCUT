@@ -1,0 +1,25 @@
+format = 2
+
+[effect]
+id = "concat.neon-glow-pulse"
+name = "Neon Glow Pulse"
+kind = "effect"
+category = "Light & Glow"
+shelves = ["Light"]
+order = 23
+description = "The picture's own light laid back over itself as a cool neon glow."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"
+
+[card]
+moment = 1.1

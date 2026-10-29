@@ -62,7 +62,7 @@ met, never lowers it.
 ## The escape hatch: when the editor's motion layer is not enough
 
 FUNCUT's motion layer covers titles, tickers, charts, kinetic captions and
-the 127 effect packages. When a piece needs something it cannot express — a
+the 327 effect packages. When a piece needs something it cannot express — a
 bespoke 3D logo sting, a scroll-driven narrative sequence, a procedural
 generative background — maestro's engine modules describe how to build it as
 code (`video-remotion` for React-to-video, `video-hyperframes` for

@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.beat-pulse"
+name = "Beat Pulse"
+kind = "effect"
+category = "Speed & Motion"
+shelves = ["Motion"]
+order = 97
+description = "Brightness that lands on a 120 bpm beat, the edit's own metronome."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

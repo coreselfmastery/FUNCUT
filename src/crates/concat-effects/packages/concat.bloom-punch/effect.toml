@@ -1,0 +1,26 @@
+format = 2
+
+[effect]
+id = "concat.bloom-punch"
+name = "Bloom Punch"
+kind = "transition"
+category = "Flash & Impact"
+order = 84
+description = "Exposure punches up into bloom at the cut and settles on the new shot."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "fadewhite"
+fallback = "cross-fade"
+
+[card]
+progress = 0.4

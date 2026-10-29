@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.radial-speed-blur"
+name = "Radial Speed Blur"
+kind = "effect"
+category = "Speed & Motion"
+shelves = ["Motion"]
+order = 92
+description = "A radial smear flying out from the centre with a hot middle."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

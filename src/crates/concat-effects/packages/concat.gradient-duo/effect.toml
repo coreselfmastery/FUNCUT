@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.gradient-duo"
+name = "Gradient Duo"
+kind = "effect"
+category = "Stylize"
+shelves = ["Color"]
+order = 221
+description = "Two colours sliding across the frame by luma - the music-video gradient."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

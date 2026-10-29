@@ -1,0 +1,45 @@
+[[probe]]
+name = "default, a warm tone cutting to a cool blue"
+input = [0.8, 0.5, 0.3, 1]
+to = [0.05, 0.15, 0.4, 1]
+progress = 0.4
+expect = [0.89453125, 0.59912109375, 0.399658203125, 1]
+
+[[probe]]
+name = "default, a grey cutting to a saturated red"
+input = [0.18, 0.18, 0.18, 1]
+to = [0.9, 0.05, 0.1, 1]
+progress = 0.4
+expect = [0.2978515625, 0.282470703125, 0.27685546875, 1]
+
+[[probe]]
+name = "min, a warm tone cutting to a cool blue"
+at = "min"
+input = [0.8, 0.5, 0.3, 1]
+to = [0.05, 0.15, 0.4, 1]
+progress = 0.4
+expect = [0.7880859375, 0.49462890625, 0.301513671875, 1]
+
+[[probe]]
+name = "min, a grey cutting to a saturated red"
+at = "min"
+input = [0.18, 0.18, 0.18, 1]
+to = [0.9, 0.05, 0.1, 1]
+progress = 0.4
+expect = [0.1912841796875, 0.177978515625, 0.1788330078125, 1]
+
+[[probe]]
+name = "max, a warm tone cutting to a cool blue"
+at = "max"
+input = [0.8, 0.5, 0.3, 1]
+to = [0.05, 0.15, 0.4, 1]
+progress = 0.4
+expect = [0.9404296875, 0.6435546875, 0.441650390625, 1]
+
+[[probe]]
+name = "max, a grey cutting to a saturated red"
+at = "max"
+input = [0.18, 0.18, 0.18, 1]
+to = [0.9, 0.05, 0.1, 1]
+progress = 0.4
+expect = [0.343505859375, 0.3271484375, 0.31884765625, 1]

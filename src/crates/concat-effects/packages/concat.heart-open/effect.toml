@@ -1,0 +1,44 @@
+format = 2
+
+[effect]
+id = "concat.heart-open"
+name = "Heart Open"
+kind = "transition"
+category = "Shape Reveal"
+order = 53
+description = "A heart blooms open with a soft pink rim. Weddings, romance montages, and comment-bait."
+
+[[param]]
+key = "size"
+label = "Size"
+min = 20
+max = 100
+default = 75
+step = 1
+unit = "%"
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 30
+step = 1
+unit = "%"
+
+[[param]]
+key = "edge"
+label = "Rim glow"
+min = 0
+max = 100
+default = 50
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "circleopen"
+fallback = "cross-fade"
+
+[card]
+progress = 0.4

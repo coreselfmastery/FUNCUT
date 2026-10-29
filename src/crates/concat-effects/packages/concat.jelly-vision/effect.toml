@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.jelly-vision"
+name = "Jelly Vision"
+kind = "effect"
+category = "Distort"
+shelves = ["Distort"]
+order = 63
+description = "Everything wobbles like jelly, slow and large."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

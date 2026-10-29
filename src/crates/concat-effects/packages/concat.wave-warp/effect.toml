@@ -1,0 +1,35 @@
+format = 2
+
+[effect]
+id = "concat.wave-warp"
+name = "Wave Warp"
+kind = "transition"
+category = "Organic"
+order = 94
+description = "A tide of a boundary sweeps up the frame with a swell along its length."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 45
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "smoothup"
+fallback = "push"
+
+[card]
+progress = 0.55

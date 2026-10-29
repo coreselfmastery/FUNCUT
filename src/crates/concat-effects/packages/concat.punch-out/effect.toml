@@ -1,0 +1,27 @@
+format = 2
+
+[effect]
+id = "concat.punch-out"
+name = "Punch Out"
+kind = "transition"
+category = "Viral Zoom"
+shelves = ["Zoom"]
+order = 21
+description = "The cut zooms out of the old shot and the new one arrives small and grows to meet the eye."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "zoomin"
+fallback = "zoom"
+
+[card]
+progress = 0.4

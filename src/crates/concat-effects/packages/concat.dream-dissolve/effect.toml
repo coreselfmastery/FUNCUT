@@ -1,0 +1,26 @@
+format = 2
+
+[effect]
+id = "concat.dream-dissolve"
+name = "Dream Dissolve"
+kind = "transition"
+category = "Cinematic"
+order = 118
+description = "A soft warm bloom bridges the two shots, half-remembered and gentle."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "fadeslow"
+fallback = "cross-fade"
+
+[card]
+progress = 0.4

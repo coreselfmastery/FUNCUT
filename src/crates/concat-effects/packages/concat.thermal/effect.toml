@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.thermal"
+name = "Thermal"
+kind = "effect"
+category = "Color Play"
+shelves = ["Color"]
+order = 127
+description = "The heat palette: blue cold, red hot, the edges of the frame deciding."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

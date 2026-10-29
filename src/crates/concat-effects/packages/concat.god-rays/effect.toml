@@ -1,0 +1,25 @@
+format = 2
+
+[effect]
+id = "concat.god-rays"
+name = "God Rays"
+kind = "effect"
+category = "Light & Glow"
+shelves = ["Light"]
+order = 20
+description = "Shafts of light from the centre, each at its own strength, breathing slowly."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"
+
+[card]
+moment = 1.2

@@ -1,0 +1,35 @@
+format = 2
+
+[effect]
+id = "concat.spin-social"
+name = "Spin Social"
+kind = "transition"
+category = "Social FX"
+order = 124
+description = "A quick half-spin with a zoom pulse and the swap at the fastest moment."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 45
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "radial"
+fallback = "cross-fade"
+
+[card]
+progress = 0.4

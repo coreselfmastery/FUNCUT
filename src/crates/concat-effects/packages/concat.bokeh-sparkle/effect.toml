@@ -1,0 +1,25 @@
+format = 2
+
+[effect]
+id = "concat.bokeh-sparkle"
+name = "Bokeh Sparkle"
+kind = "effect"
+category = "Light & Glow"
+shelves = ["Light"]
+order = 22
+description = "Soft circles of light drifting through the frame, twinkling as they go."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"
+
+[card]
+moment = 1.0

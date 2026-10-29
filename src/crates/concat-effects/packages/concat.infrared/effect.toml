@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.infrared"
+name = "Infrared"
+kind = "effect"
+category = "Color Play"
+shelves = ["Color"]
+order = 125
+description = "False-colour infrared: hot things white, veins dark."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

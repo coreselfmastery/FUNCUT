@@ -1,0 +1,33 @@
+[[probe]]
+name = "default, a warm tone"
+input = [0.8, 0.5, 0.3, 1]
+expect = [0.7314453125, 0.57421875, 0.45654296875, 1]
+
+[[probe]]
+name = "default, a grey and a highlight"
+input = [0.18, 0.18, 0.18, 1]
+expect = [0.3642578125, 0.358154296875, 0.342529296875, 1]
+
+[[probe]]
+name = "min, a warm tone"
+at = "min"
+input = [0.8, 0.5, 0.3, 1]
+expect = [0.7998046875, 0.5, 0.300048828125, 1]
+
+[[probe]]
+name = "min, a grey and a highlight"
+at = "min"
+input = [0.18, 0.18, 0.18, 1]
+expect = [0.1800537109375, 0.1800537109375, 0.1800537109375, 1]
+
+[[probe]]
+name = "max, a warm tone"
+at = "max"
+input = [0.8, 0.5, 0.3, 1]
+expect = [0.7236328125, 0.67431640625, 0.61669921875, 1]
+
+[[probe]]
+name = "max, a grey and a highlight"
+at = "max"
+input = [0.18, 0.18, 0.18, 1]
+expect = [0.51416015625, 0.50341796875, 0.4765625, 1]

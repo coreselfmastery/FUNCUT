@@ -29,6 +29,16 @@ intent, not as a bucket:
 | Typing, writing, working | `keyboard-*`, `writing-*` |
 | Room, place, mood under a section | `ambience-*` |
 | Build-ups into a reveal | risers (`impact` + `whoosh` layered) |
+| A trailer-grade hit, a title card, THE moment | `impact-cinematic-slam`, `impact-trailer-hit`, `impact-final-blow`, `stinger-logo-hit` |
+| A sub drop, a bass accent under a reveal | `impact-sub-drop-hit`, `impact-bass-cannon`, `stinger-sub-hit` |
+| Tension climbing into a cut | `riser-cinematic-long`, `riser-braam-rise`, `riser-tension-build`, `riser-pre-drop-tension` |
+| The suck before the hit | `whoosh-reverse-cinematic`, `impact-reverse-slam`, `riser-reverse-cymbal` |
+| Something flying past, a fast pan | `whoosh-doppler-pass`, `whoosh-dragon-flyby`, `whoosh-fast-air-cut` |
+| A glitch or digital moment | `transition-zap-digital`, `transition-glitch-stutter`, `transition-pixel-dissolve` |
+| A portal, magic, transformation | `transition-portal-open`, `transition-magic-shimmer`, `stinger-magic-reveal` |
+| Dread or scale holding a section | `drone-dark-tension`, `drone-horror-sub`, `drone-epic-swell` |
+| Water, ice, fire, mechanical beats | `transition-water-drop-reveal`, `transition-ice-crackle`, `transition-fire-whoosh`, `transition-mechanical-clunk` |
+| Powering down, rewinding, shutting off | `transition-power-down`, `transition-tape-rewind`, `impact-dramatic-stop` |
 
 Queries are ANDed and prefix-matched: **two or three words, no sentences**
 — "coin drop", not "coins dropping onto a wooden table in slow motion".

@@ -1,0 +1,35 @@
+format = 2
+
+[effect]
+id = "concat.flip-card"
+name = "Flip Card"
+kind = "transition"
+category = "Spin & Flip"
+order = 71
+description = "The picture flips over like a trading card and the new shot is on the back."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 45
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "squeezeh"
+fallback = "cross-fade"
+
+[card]
+progress = 0.45

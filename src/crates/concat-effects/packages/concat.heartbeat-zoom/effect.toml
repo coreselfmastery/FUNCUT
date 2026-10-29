@@ -1,0 +1,26 @@
+format = 2
+
+[effect]
+id = "concat.heartbeat-zoom"
+name = "Heartbeat Zoom"
+kind = "transition"
+category = "Viral Zoom"
+order = 28
+description = "The scale beats twice through the cut, a pulse you can cut music to."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "zoomin"
+fallback = "zoom"
+
+[card]
+progress = 0.45

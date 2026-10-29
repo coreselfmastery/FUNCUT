@@ -1,0 +1,35 @@
+format = 2
+
+[effect]
+id = "concat.flip-snap"
+name = "Flip Snap"
+kind = "transition"
+category = "Spin & Flip"
+order = 72
+description = "An expo-fast card flip: there, edge-on, and the new face lands."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 45
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "squeezeh"
+fallback = "cross-fade"
+
+[card]
+progress = 0.4

@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.neon-outline"
+name = "Neon Outline"
+kind = "effect"
+category = "Stylize"
+shelves = ["Stylised"]
+order = 216
+description = "A neon lift on the brights with the saturation pushed - the outline glow."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.split-frame-line"
+name = "Split Frame Line"
+kind = "effect"
+category = "Frame & Focus"
+shelves = ["Frame"]
+order = 183
+description = "A thin lit rule down the middle - the split-screen divider."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

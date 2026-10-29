@@ -1,0 +1,35 @@
+format = 2
+
+[effect]
+id = "concat.rubber-band"
+name = "Rubber Band"
+kind = "transition"
+category = "Meme & Bounce"
+order = 104
+description = "A push that stretches past its mark and springs back, both ways at once."
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 45
+step = 1
+unit = "%"
+
+[[param]]
+key = "fade"
+label = "Seam dim"
+min = 0
+max = 100
+default = 35
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "slideright"
+fallback = "push"
+
+[card]
+progress = 0.45

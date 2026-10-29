@@ -1,0 +1,35 @@
+format = 2
+
+[effect]
+id = "concat.barrel-roll"
+name = "Barrel Roll"
+kind = "transition"
+category = "Spin & Flip"
+order = 74
+description = "A full barrel roll with a zoom pulse - do a barrel roll."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 45
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "radial"
+fallback = "cross-fade"
+
+[card]
+progress = 0.4

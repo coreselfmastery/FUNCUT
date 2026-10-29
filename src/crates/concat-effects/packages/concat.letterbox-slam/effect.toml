@@ -1,0 +1,26 @@
+format = 2
+
+[effect]
+id = "concat.letterbox-slam"
+name = "Letterbox Slam"
+kind = "transition"
+category = "Cinematic"
+order = 111
+description = "Cinema bars slam in, the cut lands behind them, and they lift off the new shot."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "fadeblack"
+fallback = "fade-black"
+
+[card]
+progress = 0.35

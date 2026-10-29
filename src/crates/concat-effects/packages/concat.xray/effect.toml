@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.xray"
+name = "X-Ray"
+kind = "effect"
+category = "Color Play"
+shelves = ["Color"]
+order = 128
+description = "Inverted and blue-white - the radiograph read."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

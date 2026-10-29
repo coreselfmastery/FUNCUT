@@ -1,0 +1,25 @@
+format = 2
+
+[effect]
+id = "concat.film-scratch"
+name = "Film Scratch"
+kind = "effect"
+category = "Retro & Tape"
+shelves = ["Retro & Film"]
+order = 46
+description = "Hair-thin scratches that come and go, running up the frame."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"
+
+[card]
+moment = 1.2

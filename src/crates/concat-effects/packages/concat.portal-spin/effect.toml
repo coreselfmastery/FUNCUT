@@ -1,0 +1,35 @@
+format = 2
+
+[effect]
+id = "concat.portal-spin"
+name = "Portal Spin"
+kind = "transition"
+category = "Spin & Flip"
+order = 76
+description = "A double rotation through a zoom - stepping through a spinning door between shots."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 45
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "radial"
+fallback = "cross-fade"
+
+[card]
+progress = 0.3

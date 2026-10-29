@@ -1,0 +1,35 @@
+format = 2
+
+[effect]
+id = "concat.static-burst"
+name = "Static Burst"
+kind = "transition"
+category = "Glitch"
+order = 49
+description = "A wall of noise-static swallows the cut and clears to reveal the next shot."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 45
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "dissolve"
+fallback = "cross-fade"
+
+[card]
+progress = 0.4

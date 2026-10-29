@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.cloud-drift"
+name = "Cloud Drift"
+kind = "effect"
+category = "Particles"
+shelves = ["Weather"]
+order = 159
+description = "Bright soft cells rolling by, a fair-weather wash."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

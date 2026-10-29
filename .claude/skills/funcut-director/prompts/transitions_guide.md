@@ -1,6 +1,6 @@
 # Transitions
 
-The 22 real ones, when each earns its place, and the mechanics that make
+The 122 real ones, when each earns its place, and the mechanics that make
 them actually render.
 
 ## The mechanics (get this wrong and the transition is not there)
@@ -62,6 +62,32 @@ transition. Pair them in the plan.
 | `concat.blinds` | structured, corporate, clean reveals |
 | `concat.distortion-*` | impact hits with sound design |
 | `concat.split-*` | before/after, compare beats |
+
+## The 100 viral pack, by shelf
+
+The classic 22 above stay the defaults. The hundred below are for edits
+that want to be *felt* — faceless channels, reels, trailers, retention
+edits. Same rules: a cut by default, and every transition paired with
+its SFX on the cut.
+
+| Shelf | Reach for |
+| --- | --- |
+| Viral Zoom | `concat.punch-in`, `concat.crash-zoom`, `concat.velocity-ramp`, `concat.dolly-vertigo` — the beat-drop of scale; hook moments and claim landings |
+| Whip & Pan | `concat.whip-left`…`whip-down`, `concat.lurch-whip`, `concat.pendulum-swipe` — fast topic changes with camera energy |
+| Glitch | `concat.datamosh-warp`, `concat.signal-drop`, `concat.bitrate-crash`, `concat.pixel-storm` — tech, error states, digital money |
+| Shape Reveal | `concat.circle-pop`, `concat.heart-open`, `concat.hex-reveal`, `concat.star-wipe-spin` — playful reveals, romance, tech channels |
+| Slice & Split | `concat.venetian-down`, `concat.checker-sweep`, `concat.razor-diagonal`, `concat.curtain-lift` — structured, editorial section changes |
+| Spin & Flip | `concat.door-swing`, `concat.flip-card`, `concat.barrel-roll`, `concat.portal-spin` — scene geometry changing, portal/magic cuts |
+| Flash & Impact | `concat.impact-flash`, `concat.whiteout-cut`, `concat.blackout-cut`, `concat.strobe-beat` — hits that land on the beat, drop moments |
+| Organic | `concat.ink-bleed`, `concat.smoke-reveal`, `concat.ripple-dissolve`, `concat.liquid-melt` — mood shifts, dreamy sections |
+| Meme & Bounce | `concat.meme-shake`, `concat.jelly-wobble`, `concat.squash-cut`, `concat.bounce-drop` — comedy, meme energy, listicle beats |
+| Cinematic | `concat.film-burn-ember`, `concat.letterbox-slam`, `concat.shuttle-warp`, `concat.anamorphic-squeeze` — film language, scope moments |
+| Social FX | `concat.story-slide`, `concat.swipe-soft`, `concat.zoom-slam-social` — the clean reads story edits already use |
+
+The knobs matter: most of the pack takes an `amount` (0–100), the
+directional ones a `softness` and a `seam dim`, the shape reveals a
+`size` and a `rim glow`. Defaults already read; touch them only when the
+footage demands it.
 
 (Legacy short ids still resolve: `cross-fade`, `fade-black`, `fade-white`,
 `push`, `zoom`, `wipe-left`, `wipe-right`. The package ids are the ones

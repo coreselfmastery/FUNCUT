@@ -1,0 +1,35 @@
+format = 2
+
+[effect]
+id = "concat.bars-collapse"
+name = "Bars Collapse"
+kind = "transition"
+category = "Slice & Split"
+order = 64
+description = "Six columns collapse downward one after another, the scaffold coming down."
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 45
+step = 1
+unit = "%"
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "vdslice"
+fallback = "cross-fade"
+
+[card]
+progress = 0.45

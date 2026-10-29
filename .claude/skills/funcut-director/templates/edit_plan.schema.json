@@ -241,7 +241,7 @@
             "properties": {
               "effect": {
                 "type": "string",
-                "description": "One of the 22 transition ids, e.g. concat.dissolve, concat.whip-pan, concat.glitch-transition."
+                "description": "One of the 122 transition ids, e.g. concat.dissolve, concat.whip-pan, concat.glitch-transition, concat.punch-in."
               },
               "seconds": {
                 "type": "number",

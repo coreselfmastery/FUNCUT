@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.scanlines"
+name = "Scanlines"
+kind = "effect"
+category = "Retro & Tape"
+shelves = ["Retro & Film"]
+order = 41
+description = "The CRT raster: fine dark lines down the frame."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

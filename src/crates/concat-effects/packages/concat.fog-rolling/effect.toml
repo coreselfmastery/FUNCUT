@@ -1,0 +1,25 @@
+format = 2
+
+[effect]
+id = "concat.fog-rolling"
+name = "Rolling Fog"
+kind = "effect"
+category = "Particles"
+shelves = ["Weather"]
+order = 158
+description = "Big soft cells of grey drifting over the picture."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"
+
+[card]
+moment = 1.4

@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.pixel-mosaic"
+name = "Pixel Mosaic"
+kind = "effect"
+category = "Stylize"
+shelves = ["Stylised"]
+order = 217
+description = "Big honest pixels with a whisper of grid so they read as pixels."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

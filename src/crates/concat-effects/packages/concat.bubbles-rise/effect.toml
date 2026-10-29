@@ -1,0 +1,25 @@
+format = 2
+
+[effect]
+id = "concat.bubbles-rise"
+name = "Bubbles"
+kind = "effect"
+category = "Particles"
+shelves = ["Nature"]
+order = 162
+description = "Soft round bubbles drifting up through the frame."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"
+
+[card]
+moment = 1.2

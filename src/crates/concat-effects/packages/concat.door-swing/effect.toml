@@ -1,0 +1,35 @@
+format = 2
+
+[effect]
+id = "concat.door-swing"
+name = "Door Swing"
+kind = "transition"
+category = "Spin & Flip"
+order = 70
+description = "The outgoing shot swings away on a hinge at its edge, lit like a door in a doorway."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 45
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "squeezeh"
+fallback = "cross-fade"
+
+[card]
+progress = 0.45

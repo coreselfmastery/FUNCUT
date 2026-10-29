@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.color-cycle"
+name = "Color Cycle"
+kind = "effect"
+category = "Color Play"
+shelves = ["Color"]
+order = 122
+description = "The palette sweeps across the frame left to right, the music-video wash."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

@@ -146,7 +146,7 @@ sources `pixabay|pexels|celebv|other`; orientation `vertical|horizontal|square`
 with ±5 % slack; sorts `relevance|aesthetic|motion|temporal|shortest|longest|
 surprise`) · `bgm_status/prepare/search/fetch/import` (FreePD 1,025 CC0
 tracks; MobyGratis/OpenLo-Fi 166; sorts `relevance|shortest|longest|surprise`) ·
-`sounds_search/add` (430 CC0 sounds; categories: Whoosh, Impact, Riser,
+`sounds_search/add` (530 CC0 sounds; categories: Whoosh, Impact, Riser,
 Motion, UI, Notification, Keyboard, Digital, Foley, Writing, Ambience, Music;
 `sounds_add` starts the file at `start`; the search result's `syncAt` says
 where its peak lands) · `magick_status/prepare/search/fetch/add` (shelves:

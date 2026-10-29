@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.glow-bloom"
+name = "Glow Bloom"
+kind = "effect"
+category = "Light & Glow"
+shelves = ["Light"]
+order = 27
+description = "The brights screened back over the picture: a clean one-knob bloom."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

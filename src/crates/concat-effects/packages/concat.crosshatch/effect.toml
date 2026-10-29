@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.crosshatch"
+name = "Crosshatch"
+kind = "effect"
+category = "Stylize"
+shelves = ["Stylised"]
+order = 214
+description = "Diagonal hatching whose density follows the shadows - the engraver's read."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

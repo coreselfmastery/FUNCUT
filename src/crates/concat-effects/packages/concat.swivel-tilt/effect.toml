@@ -1,0 +1,35 @@
+format = 2
+
+[effect]
+id = "concat.swivel-tilt"
+name = "Swivel Tilt"
+kind = "transition"
+category = "Spin & Flip"
+order = 75
+description = "A quarter-turn swivel with the switch early, so the new shot settles the spin."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 45
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "radial"
+fallback = "cross-fade"
+
+[card]
+progress = 0.35

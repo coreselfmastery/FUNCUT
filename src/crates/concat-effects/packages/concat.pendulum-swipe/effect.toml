@@ -1,0 +1,35 @@
+format = 2
+
+[effect]
+id = "concat.pendulum-swipe"
+name = "Pendulum Swipe"
+kind = "transition"
+category = "Whip & Pan"
+order = 35
+description = "The new shot swings in past the middle and settles back like a pendulum finding rest."
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 45
+step = 1
+unit = "%"
+
+[[param]]
+key = "fade"
+label = "Seam dim"
+min = 0
+max = 100
+default = 35
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "slideright"
+fallback = "push"
+
+[card]
+progress = 0.4

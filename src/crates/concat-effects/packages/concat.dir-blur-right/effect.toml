@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.dir-blur-right"
+name = "Directional Blur Right"
+kind = "effect"
+category = "Speed & Motion"
+shelves = ["Motion"]
+order = 99
+description = "A horizontal smear to the right, brightness leaning east."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

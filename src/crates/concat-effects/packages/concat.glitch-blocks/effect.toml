@@ -1,0 +1,25 @@
+format = 2
+
+[effect]
+id = "concat.glitch-blocks"
+name = "Glitch Blocks"
+kind = "effect"
+category = "Stylize"
+shelves = ["Glitch"]
+order = 218
+description = "Random blocks jump sideways and the channels shear apart - always somewhere new."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"
+
+[card]
+moment = 1.1

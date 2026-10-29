@@ -17,7 +17,7 @@ assets; it validates structure and timeline continuity, not creative quality.
 3. **SFX with `peakAt` on the segment's first frame** (the cut), not the word.
    See `prompts/sfx_design.md` for query writing.
 4. **`transitionIn` only where the SECTION changes** — most segments take a
-   plain cut (`null`). The 22 transitions and their uses:
+   plain cut (`null`). The 122 transitions and their uses:
    `prompts/transitions_guide.md`.
 5. **Audio beds** — voiceover block mirrors the TTS you already made; bgm
    query per `prompts/music_and_duck.md` with `alignTo` and absolute `duckDb`

@@ -1,0 +1,26 @@
+format = 2
+
+[effect]
+id = "concat.whiteout-cut"
+name = "Whiteout Cut"
+kind = "transition"
+category = "Flash & Impact"
+order = 82
+description = "A clean blowout to white and back - the softest hard cut there is."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "fadewhite"
+fallback = "fade-white"
+
+[card]
+progress = 0.4

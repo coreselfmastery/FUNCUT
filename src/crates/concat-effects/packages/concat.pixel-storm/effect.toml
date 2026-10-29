@@ -1,0 +1,26 @@
+format = 2
+
+[effect]
+id = "concat.pixel-storm"
+name = "Pixel Storm"
+kind = "transition"
+category = "Glitch"
+order = 46
+description = "A fine grid of cells flips to the new shot in a hashed storm - dissolve energy with glitch texture."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "pixelize"
+fallback = "cross-fade"
+
+[card]
+progress = 0.4

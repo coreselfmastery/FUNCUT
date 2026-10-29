@@ -1,0 +1,25 @@
+format = 2
+
+[effect]
+id = "concat.heat-shimmer"
+name = "Heat Shimmer"
+kind = "effect"
+category = "Distort"
+shelves = ["Distort"]
+order = 60
+description = "The air above a hot road, wobbing sideways."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"
+
+[card]
+moment = 1.0

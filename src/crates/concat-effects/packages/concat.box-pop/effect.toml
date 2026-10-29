@@ -1,0 +1,44 @@
+format = 2
+
+[effect]
+id = "concat.box-pop"
+name = "Box Pop"
+kind = "transition"
+category = "Shape Reveal"
+order = 56
+description = "A rounded square springs open with elastic overshoot, the UI-card reveal."
+
+[[param]]
+key = "size"
+label = "Size"
+min = 20
+max = 100
+default = 75
+step = 1
+unit = "%"
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 20
+step = 1
+unit = "%"
+
+[[param]]
+key = "edge"
+label = "Rim glow"
+min = 0
+max = 100
+default = 50
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "rectcrop"
+fallback = "cross-fade"
+
+[card]
+progress = 0.35

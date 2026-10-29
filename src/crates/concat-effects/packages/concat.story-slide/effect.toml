@@ -1,0 +1,35 @@
+format = 2
+
+[effect]
+id = "concat.story-slide"
+name = "Story Slide"
+kind = "transition"
+category = "Social FX"
+order = 120
+description = "The clean vertical slide every story edit uses, with a soft seam and a gentle dim."
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 45
+step = 1
+unit = "%"
+
+[[param]]
+key = "fade"
+label = "Seam dim"
+min = 0
+max = 100
+default = 35
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "slideup"
+fallback = "push"
+
+[card]
+progress = 0.45

@@ -1,0 +1,26 @@
+format = 2
+
+[effect]
+id = "concat.velocity-ramp"
+name = "Velocity Ramp"
+kind = "transition"
+category = "Viral Zoom"
+order = 27
+description = "The zoom accelerates like a speed ramp: slow, then gone. Made for sport and car edits."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "zoomin"
+fallback = "zoom"
+
+[card]
+progress = 0.5

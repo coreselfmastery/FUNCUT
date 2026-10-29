@@ -10,7 +10,9 @@ Three kinds of change live here: **memory sizing** (the caches that had one
 fixed size now scale to the machine) and the new features - the OpenVid
 stock library, the background-music library, pause removal for
 voiceovers, the built-in CC0 sound library, the Wyzowl sound effects
-that grew it to 430, the sticker library, the hosted free-tier vision
+that grew it to 430 and the designed Hollywood pack that grew it to 530,
+the hundred viral transitions and the hundred viral effects that grew the
+package count to 327, the sticker library, the hosted free-tier vision
 critic with a stronger measured baseline, the analysis and speech layer
 on the API, the perception tools, the maestro judgment skill and the clip-skills editing-craft skill for
 the AI director, the emotion-driven edit - the voiceover read that now
@@ -642,3 +644,72 @@ The files:
 | `src/crates/concat/src/prefs.rs` | `ForgePrefs.hf`, documented |
 | `src/crates/concat/src/panes/forge.rs` | the `hf` provider's save; `FUNCUT_EMOTION_API_KEY` and `HF_TOKEN` injected into the run's environment |
 | `src/crates/concat/src/studio.rs` | the page's key sync |
+## 15. The feature: a hundred viral transitions, a hundred effects, and the Hollywood sound pack
+
+The fork's shelves of transitions (22), effects (23) and CC0 sounds (430)
+were honest upstream inherited sets. This change triples the first two and
+grows the third by a quarter, all of it verified the way the repo already
+verifies its own.
+
+**Where it is:** the Effects and Filters browsers in the editor, the
+`effects_list` MCP tool, and the Audio page's Built-in sounds shelf.
+Nothing new was wired by hand: a package is a folder under
+`src/crates/concat-effects/packages/`, embedded by the build, loaded by
+the catalogue, previewed by its own card and offered by the tools - so
+the two hundred new packages appear everywhere the old ones do.
+
+**What it is:**
+
+- **100 transitions in ten new shelves** - Viral Zoom (punch-ins, crash
+  zooms, dolly vertigo, velocity ramps), Whip & Pan (directional whips,
+  lurches, pendulum swipes), Glitch (datamosh, signal drop, bitrate
+  crash, pixel storms), Shape Reveal (elastic circles, stars, hearts,
+  hexes, crosses with lit rims), Slice & Split (venetians, checkers,
+  razors, blades), Spin & Flip (doors, cards, barrel rolls, portals),
+  Flash & Impact (whiteouts, blackouts, strobes, exposure slams),
+  Organic (ink bleeds, smoke, ripples, kaleidoscopes, melts), Meme &
+  Bounce (shake cuts, jelly wobbles, squash-and-stretch, elastic snaps),
+  Cinematic (film burns, letterbox slams, speed streaks, anamorphic
+  squeezes) and Social FX (clean story slides, swipes, zoom slams).
+  Every one is a two-input WGSL shader with an FFmpeg `xfade` fallback
+  for export without a GPU, one to three knobs, and a preview card drawn
+  by the shader itself.
+- **100 effects in eight new shelves** - Light & Glow (god rays, bokeh
+  sparkle, anamorphic streaks, star filters), Retro & Tape (VHS lines,
+  CRT triads, tape tracking, projector flicker, halftone print), Distort
+  (heat shimmer, twirl vortices, fisheye pulses, earthquakes, handheld
+  sway), Speed & Motion (speed lines, radial blurs, motion echoes, beat
+  pulses, directional blurs), Color Play (chromatic pulses, hue drifts,
+  thermal, night vision, x-ray, posterize), Particles (snow, embers,
+  confetti, fireflies, rain, fog, lightning, matrix drizzle), Frame &
+  Focus (cinema bars, vignettes, split lines, photo frames), and Stylize
+  (manga impact, blueprint, crosshatch, toon shade, glitch blocks).
+- **100 Hollywood sounds** designed and synthesised in this repository -
+  trailer slams and sub drops, braams and reverse sucks, doppler flybys
+  and dragon passes, glitch zaps, portal and magic reveals, water, ice
+  and fire design, dark drones and wide winds, and logo stingers - all
+  seeded and deterministic, encoded Ogg Vorbis q4 at 48 kHz stereo,
+  normalised with a decode-verify loop so nothing leaves full scale,
+  each with its SHA-256, tags, a sentence of description, use-for lines
+  and a `syncAt` peak position, in the same manifest the shelf and the
+  `sounds.search` API already read.
+
+**How it was verified:** the probe fixtures every WGSL package ships are
+pinned from a double-precision model of the same shader under the exact
+conditions of the GPU probe (the 8×8 half-float picture, the centre
+pixel, time zero), including the integer hash the prelude defines, which
+the model reproduces bit for bit - the same method `concat.film-grain`'s
+fixtures document. The loader's own gates all run in CI: every package
+loads, every knob the manifest declares is read by its shader and every
+`params.` read is declared, and every package probes its default and
+both slider bounds. The sounds are checked into `audio/` with digests
+the app verifies on download, exactly like the rest of the library.
+
+**What it costs:** each package is a few kilobytes of TOML and WGSL
+embedded in the binary; two hundred of them add well under a megabyte
+and load in the same catalogue pass as before. The sound files add
+about 4.5 MB to the repository and to the `audio-v1` release mirror;
+nothing ships inside the app or loads at startup. The shaders use only
+the prelude's helpers plus plain arithmetic, so they run anywhere the
+existing packages run, GPU or not (the `xfade` fallbacks cover the
+rest), and they were written for the small machines this fork targets.

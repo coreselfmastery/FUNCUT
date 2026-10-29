@@ -1,0 +1,35 @@
+format = 2
+
+[effect]
+id = "concat.trap-reveal"
+name = "Trap Reveal"
+kind = "transition"
+category = "Whip & Pan"
+order = 37
+description = "The old shot springs away and the new one was under it all along, snapped in place like a trap."
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 45
+step = 1
+unit = "%"
+
+[[param]]
+key = "fade"
+label = "Seam dim"
+min = 0
+max = 100
+default = 35
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "slidedown"
+fallback = "push"
+
+[card]
+progress = 0.45

@@ -1,0 +1,27 @@
+format = 2
+
+[effect]
+id = "concat.datamosh-warp"
+name = "Datamosh Warp"
+kind = "transition"
+category = "Glitch"
+shelves = ["Glitch"]
+order = 40
+description = "The picture tears into smeared slices and reassembles as the new shot - the datamosh look without the codec."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "pixelize"
+fallback = "cross-fade"
+
+[card]
+progress = 0.4

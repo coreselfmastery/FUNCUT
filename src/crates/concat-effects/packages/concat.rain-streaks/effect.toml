@@ -1,0 +1,25 @@
+format = 2
+
+[effect]
+id = "concat.rain-streaks"
+name = "Rain Streaks"
+kind = "effect"
+category = "Particles"
+shelves = ["Weather"]
+order = 156
+description = "Thin fast streaks of rain, read as motion rather than droplets."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"
+
+[card]
+moment = 1.0

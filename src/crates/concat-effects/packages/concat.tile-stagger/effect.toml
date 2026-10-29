@@ -1,0 +1,26 @@
+format = 2
+
+[effect]
+id = "concat.tile-stagger"
+name = "Tile Stagger"
+kind = "transition"
+category = "Glitch"
+order = 48
+description = "Six rows of tiles turn over one after another, each a little later than the last."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "pixelize"
+fallback = "cross-fade"
+
+[card]
+progress = 0.45

@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.camera-sway"
+name = "Camera Sway"
+kind = "effect"
+category = "Frame & Focus"
+shelves = ["Frame"]
+order = 185
+description = "A gentle lean and drift - the operator finding the shot."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

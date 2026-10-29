@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.databend-smear"
+name = "Databend Smear"
+kind = "effect"
+category = "Stylize"
+shelves = ["Glitch"]
+order = 219
+description = "Heavy horizontal smear bands, the codec misbehaving on purpose."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

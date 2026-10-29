@@ -1,0 +1,26 @@
+format = 2
+
+[effect]
+id = "concat.bitrate-crash"
+name = "Bitrate Crash"
+kind = "transition"
+category = "Glitch"
+order = 44
+description = "Fine tearing, heavy scan darkening and channel split: the stream falling apart in real time."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "pixelize"
+fallback = "cross-fade"
+
+[card]
+progress = 0.4

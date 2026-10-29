@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.toon-shade"
+name = "Toon Shade"
+kind = "effect"
+category = "Stylize"
+shelves = ["Stylised"]
+order = 220
+description = "Cel shading: flat steps of colour, saturation up, nothing between."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

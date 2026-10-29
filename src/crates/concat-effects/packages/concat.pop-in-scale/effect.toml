@@ -1,0 +1,26 @@
+format = 2
+
+[effect]
+id = "concat.pop-in-scale"
+name = "Pop In Scale"
+kind = "transition"
+category = "Meme & Bounce"
+order = 107
+description = "The new shot arrives large and elastic, popping down into place."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "zoomin"
+fallback = "zoom"
+
+[card]
+progress = 0.45

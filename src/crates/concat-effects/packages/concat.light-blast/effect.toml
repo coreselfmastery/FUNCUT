@@ -1,0 +1,26 @@
+format = 2
+
+[effect]
+id = "concat.light-blast"
+name = "Light Blast"
+kind = "transition"
+category = "Flash & Impact"
+order = 86
+description = "Warm light floods the sensor at the cut, a lens pointed at the sun for one beat."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "fadewhite"
+fallback = "fade-white"
+
+[card]
+progress = 0.4

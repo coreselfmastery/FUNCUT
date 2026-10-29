@@ -22,10 +22,10 @@ with one click.
 | MCP tools | **87** | `src/crates/concat-mcp/src/tools.rs` (`catalogue()`) |
 | JSON-RPC API methods | 48 requests + 8 progress notifications | `src/crates/concat-api/src/message.rs` |
 | Core edit commands (`edit.apply` ops) | **52** | `src/crates/concat-project/src/commands/mod.rs` |
-| Effect/filter/transition/audio packages | **127** = 57 filters + 23 effects + 22 transitions + 25 audio | `src/crates/concat-effects/packages/` |
+| Effect/filter/transition/audio packages | **327** = 57 filters + 123 effects + 122 transitions + 25 audio | `src/crates/concat-effects/packages/` |
 | Text presets | 31 named + default | `src/crates/concat/text-presets/` |
 | Motion presets | 12 | `src/crates/concat-motion/src/presets.rs` |
-| Bundled CC0 sounds | 430 (11.5 MB, 12 categories) | `audio/` |
+| Bundled CC0 sounds | 530 (16 MB, 12 categories; 100 of them the designed Hollywood pack) | `audio/` |
 | BGM library | 1,191 CC0 tracks (FreePD 1,025 + MobyGratis 166) | fetched on demand |
 | Stock clips (OpenVid) | 937,957 | ~435 MB local index, fetched per clip |
 | Stickers | 149,758 (MAGICK 145,193 + OpenMoji 4,565) | ~18 MB indexes, fetched per sticker |
@@ -62,12 +62,23 @@ Everything upstream Concat is, verified in this tree:
   curves view with per-key bezier handles. Effect knobs are keyframable too;
   speed ramps are a separate smooth-Hermite curve system (1/16×–16×) with six
   presets (montage, hero, bullet, jump-cut, flash-in, flash-out).
-- **Effects.** 127 packages, all GPU (WGSL) for picture and FFmpeg chains for
+- **Effects.** 327 packages, all GPU (WGSL) for picture and FFmpeg chains for
   audio: 57 look filters (Cinematic, Film, Retro, Portrait, Food, Scenery…),
-  23 effects (blur family, chroma/luma key, grain, halation, color wheels,
-  curves…), 22 transitions, 25 audio packages (cleanup, spaces, tones,
-  voices). Multi-pass shaders, 3D LUTs, `.cube` import, user packages
-  hot-loaded and GPU-vetted, a 164-filter FFmpeg allowlist for safety.
+  123 effects (the blur family, chroma/luma key, grain, halation, color
+  wheels, curves…, plus a 100-pack of viral effects: god rays, bokeh
+  sparkle, anamorphic streaks, VHS/CRT/projection tape looks, heat shimmer,
+  fisheye and twirl warps, speed lines, radial blurs, motion echoes, beat
+  pulses, hue drifts, thermal/night-vision/x-ray false palettes, snow,
+  embers, rain, confetti, fireflies, lightning, matrix drizzle, cinema
+  bars, halftone/manga/blueprint/sketch stylises…), 122 transitions (the
+  classic 22 plus a 100-pack across ten shelves: Viral Zoom, Whip & Pan,
+  Glitch, Shape Reveal, Slice & Split, Spin & Flip, Flash & Impact,
+  Organic, Meme & Bounce, Cinematic, Social FX - every one GPU-shaded with
+  an FFmpeg `xfade` fallback for GPU-less export), and 25 audio packages
+  (cleanup, spaces, tones, voices). Multi-pass shaders, 3D LUTs, `.cube`
+  import, user packages hot-loaded and GPU-vetted, a 164-filter FFmpeg
+  allowlist for safety. Every package's colour pipeline is pinned by probe
+  fixtures modelled in doubles and checked on the GPU.
 - **Grading.** Colour wheels (lift/gamma/gain with pucks + master), curves
   per channel, stops-based exposure, LUT shelf, adjustment layers that treat
   everything beneath, per-clip or one-look-per-video.
@@ -123,7 +134,7 @@ Nothing here is bundled whole; indexes download once, media arrives per pick.
   1,025) and Moby's MobyGratis instrumentals as OpenLo-Fi (166) — a Lo-Fi
   track is one ranged read of exactly its span out of the 554 MB zip. See
   [docs/BGM.md](BGM.md).
-- **Sounds — 430 CC0 effects** bundled in the repo (12 categories), each
+- **Sounds — 530 CC0 effects** bundled in the repo (12 categories), each
   with a description, use-for lines and `syncAt` (where its peak lands),
   ranked 6-field search. See [docs/AUDIO_LIBRARY.md](AUDIO_LIBRARY.md).
 - **Stickers — 149,758 transparent PNGs**: MAGICK (145,193 captioned
@@ -429,7 +440,7 @@ model at all.
 | Engine vocabulary (time, frames, masks, curves, timeline) | `src/crates/concat-core` |
 | FFmpeg media (probe, decode, encode, audio, proxies) | `src/crates/concat-media` |
 | GPU compositor + plans | `src/crates/concat-render` |
-| The 127 effect packages + WGSL libraries | `src/crates/concat-effects` |
+| The 327 effect packages + WGSL libraries | `src/crates/concat-effects` |
 | Text shaping and painting | `src/crates/concat-text` |
 | The document and its 52 commands | `src/crates/concat-project` |
 | Vision models (cutout, brushes, enhance) | `src/crates/concat-vision` |
@@ -442,5 +453,5 @@ model at all.
 | Session, proxies, models, templates, sounds | `src/crates/concat-host` |
 | The skills | `.claude/skills/{funcut-director,maestro,motion,run-concat}` |
 | The Forge wiring | `.forge/mcp.toml`, `docs/forge/`, the Forge page |
-| Bundled sounds | `audio/` (430, CC0) |
+| Bundled sounds | `audio/` (530, CC0; 100 designed in-repo) |
 | Model manifest | `models/manifest.toml` |

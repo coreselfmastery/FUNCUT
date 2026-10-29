@@ -1,0 +1,26 @@
+format = 2
+
+[effect]
+id = "concat.signal-drop"
+name = "Signal Drop"
+kind = "transition"
+category = "Glitch"
+order = 41
+description = "The broadcast loses sync: bands jump, colour smears, and the new shot tunes in."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "pixelize"
+fallback = "cross-fade"
+
+[card]
+progress = 0.4

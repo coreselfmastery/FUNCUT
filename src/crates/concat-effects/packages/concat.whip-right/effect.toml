@@ -1,0 +1,36 @@
+format = 2
+
+[effect]
+id = "concat.whip-right"
+name = "Whip Right"
+kind = "transition"
+category = "Whip & Pan"
+shelves = ["Slide", "Push"]
+order = 31
+description = "The camera whips right so fast the shot smears, and the new one is there when the eye lands."
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 45
+step = 1
+unit = "%"
+
+[[param]]
+key = "fade"
+label = "Seam dim"
+min = 0
+max = 100
+default = 35
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "slideright"
+fallback = "push"
+
+[card]
+progress = 0.45

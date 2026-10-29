@@ -1,0 +1,44 @@
+format = 2
+
+[effect]
+id = "concat.blade-flash"
+name = "Blade Flash"
+kind = "transition"
+category = "Slice & Split"
+order = 67
+description = "A bright blade sweeps from the bottom-right corner, hot edge first."
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 45
+step = 1
+unit = "%"
+
+[[param]]
+key = "fade"
+label = "Seam dim"
+min = 0
+max = 100
+default = 35
+step = 1
+unit = "%"
+
+[[param]]
+key = "line"
+label = "Edge glow"
+min = 0
+max = 100
+default = 55
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "diagbr"
+fallback = "cross-fade"
+
+[card]
+progress = 0.55

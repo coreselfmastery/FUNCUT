@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.cinema-bars"
+name = "Cinema Bars"
+kind = "effect"
+category = "Frame & Focus"
+shelves = ["Frame"]
+order = 180
+description = "2.39:1 scope bars top and bottom, the picture held a touch brighter between."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

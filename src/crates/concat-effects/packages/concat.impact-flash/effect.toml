@@ -1,0 +1,26 @@
+format = 2
+
+[effect]
+id = "concat.impact-flash"
+name = "Impact Flash"
+kind = "transition"
+category = "Flash & Impact"
+order = 80
+description = "A white shockwave of light right on the cut - the hit that lands with the beat."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "fadewhite"
+fallback = "fade-white"
+
+[card]
+progress = 0.4

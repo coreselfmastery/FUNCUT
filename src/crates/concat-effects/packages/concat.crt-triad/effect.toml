@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.crt-triad"
+name = "CRT Triad"
+kind = "effect"
+category = "Retro & Tape"
+shelves = ["Retro & Film"]
+order = 42
+description = "A colour tube's rgb stripes, merging to white at a distance."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

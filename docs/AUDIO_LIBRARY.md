@@ -1,10 +1,16 @@
 # The Concat sound library
 
-> **FUNCUT:** this fork ships the library itself - 430 CC0 sounds in
+> **FUNCUT:** this fork ships the library itself - 530 CC0 sounds in
 > [`audio/`](../audio) with the manifest beside them, mirrored onto this
 > repository's `audio-v1` release - and the URLs the app reads point here
 > (`raw.githubusercontent.com/coreselfmastery/FUNCUT/main/audio/…`) rather
 > than at the upstream assets repository, which has nothing published yet.
+> Of the 530, one hundred are the **Hollywood pack**: trailer-grade slams,
+> sub drops, braams, reverse sucks, flybys, glitch zaps, portal and magic
+> reveals, drones and logo stingers, designed and synthesised in-repo
+> (seeded, deterministic, CC0 by authorship) under the same categories -
+> Impact, Riser, Whoosh, Motion, Ambience, Music, Digital, UI and Foley -
+> so the shelf's filter and the API's search find them beside the rest.
 > The manifest carries three fields this page's schema does not name:
 > `tags`, a list of words the shelf's search and the API's `sounds.search`
 > narrow by, beyond the name; `description`, a sentence saying what the

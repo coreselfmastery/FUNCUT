@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.light-leak-cool"
+name = "Cool Light Leak"
+kind = "effect"
+category = "Light & Glow"
+shelves = ["Light"]
+order = 29
+description = "A cyan leak from the top corner - the modern, cold sibling."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

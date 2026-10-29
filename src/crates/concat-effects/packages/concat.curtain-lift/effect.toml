@@ -1,0 +1,35 @@
+format = 2
+
+[effect]
+id = "concat.curtain-lift"
+name = "Curtain Lift"
+kind = "transition"
+category = "Slice & Split"
+order = 65
+description = "The old shot lifts away like a theatre curtain and the new one was on stage all along."
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 45
+step = 1
+unit = "%"
+
+[[param]]
+key = "fade"
+label = "Seam dim"
+min = 0
+max = 100
+default = 35
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "slideup"
+fallback = "push"
+
+[card]
+progress = 0.45

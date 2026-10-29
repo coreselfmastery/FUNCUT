@@ -1,0 +1,35 @@
+format = 2
+
+[effect]
+id = "concat.lurch-whip"
+name = "Lurch Whip"
+kind = "transition"
+category = "Whip & Pan"
+order = 34
+description = "A whip that overshoots and lurches back - the drunk-camera cut for comedy and shock beats."
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 45
+step = 1
+unit = "%"
+
+[[param]]
+key = "fade"
+label = "Seam dim"
+min = 0
+max = 100
+default = 35
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "slideleft"
+fallback = "push"
+
+[card]
+progress = 0.45

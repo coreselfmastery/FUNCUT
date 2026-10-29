@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.twirl-vortex"
+name = "Twirl Vortex"
+kind = "effect"
+category = "Distort"
+shelves = ["Distort"]
+order = 64
+description = "A vortex twisting the frame, tightest in the middle and breathing."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

@@ -1,0 +1,35 @@
+format = 2
+
+[effect]
+id = "concat.rumble-cut"
+name = "Rumble Cut"
+kind = "transition"
+category = "Meme & Bounce"
+order = 101
+description = "A low heavy jolt: two slow shake pulses and the swap lands between them."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 45
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "zoomin"
+fallback = "zoom"
+
+[card]
+progress = 0.45

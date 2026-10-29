@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.techno-rush"
+name = "Techno Rush"
+kind = "effect"
+category = "Color Play"
+shelves = ["Color"]
+order = 129
+description = "A fast hue sweep across the frame, the techno edit's colour energy."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

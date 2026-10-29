@@ -125,9 +125,9 @@ segment-timed captions, keyframes, effect layers, batched atomic edits,
 templates, export with progress, `preview_frame`, and now the sense tools
 `watch_render` / `stock_contact_sheet` / `craft_critique` / `creative_brief`
 / `local_vlm`), the OpenVid library
-(937,957 clips), BGM (1,191 tracks), SFX (430 CC0 sounds, 12 categories),
-MAGICK stickers (145,193, CC BY-NC), 127 effect packages (57 filters, 25 audio,
-23 effects, 22 transitions), 31 text presets, Kokoro/Pocket/Chatterbox voices,
+(937,957 clips), BGM (1,191 tracks), SFX (530 CC0 sounds, 12 categories),
+MAGICK stickers (145,193, CC BY-NC), 327 effect packages (57 filters, 25 audio,
+123 effects, 122 transitions), 31 text presets, Kokoro/Pocket/Chatterbox voices,
 whisper.cpp transcription, window/headless/auto MCP backends, and a Slint UI
 with a free tab slot and a settings dialog with a free page.
 

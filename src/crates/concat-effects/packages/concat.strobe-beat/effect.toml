@@ -1,0 +1,26 @@
+format = 2
+
+[effect]
+id = "concat.strobe-beat"
+name = "Strobe Beat"
+kind = "transition"
+category = "Flash & Impact"
+order = 88
+description = "Three fast strobes across the cut instead of one long flash - the nightclub edit."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "fadefast"
+fallback = "fade-white"
+
+[card]
+progress = 0.4

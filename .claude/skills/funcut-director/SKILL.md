@@ -397,7 +397,7 @@ OpenMoji (CC-BY) is the safe shelf.
 | `prompts/edit_plan.md` | writing the plan JSON (with a worked 30 s example) |
 | `prompts/broll_matching.md` | choosing B-roll queries, scoring results, the fallback ladder, aspect fit |
 | `prompts/cuts_and_pacing.md` | the twelve cut types, J/L feel, pacing curves by mode |
-| `prompts/transitions_guide.md` | the 22 transitions, the clip-patch mechanics, when a plain cut wins |
+| `prompts/transitions_guide.md` | the 122 transitions (classic 22 + the 100 viral pack), the clip-patch mechanics, when a plain cut wins |
 | `prompts/sfx_design.md` | sound design: categories, semantic mapping, sync peaks, anti-repetition |
 | `prompts/motion_comps.md` | designing graphics: which comp, worked plans, density floors |
 | `prompts/music_and_duck.md` | BGM choice, beat alignment, ducking keyframes, longform structure |

@@ -1,0 +1,26 @@
+format = 2
+
+[effect]
+id = "concat.flash-social"
+name = "Flash Social"
+kind = "transition"
+category = "Social FX"
+order = 126
+description = "A bright single flash right on the beat, over before it registers."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "fadefast"
+fallback = "fade-white"
+
+[card]
+progress = 0.4

@@ -1,0 +1,26 @@
+format = 2
+
+[effect]
+id = "concat.kaleido-morph"
+name = "Kaleido Morph"
+kind = "transition"
+category = "Organic"
+order = 95
+description = "Six mirrored sectors fold through the cut, each turning over at its own moment."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "radial"
+fallback = "cross-fade"
+
+[card]
+progress = 0.4

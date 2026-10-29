@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.spotlight-pool"
+name = "Spotlight Pool"
+kind = "effect"
+category = "Light & Glow"
+shelves = ["Light"]
+order = 31
+description = "A hard pool of light in the middle of the frame; the rest falls away."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

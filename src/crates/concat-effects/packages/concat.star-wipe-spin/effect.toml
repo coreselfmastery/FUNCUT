@@ -1,0 +1,44 @@
+format = 2
+
+[effect]
+id = "concat.star-wipe-spin"
+name = "Star Wipe Spin"
+kind = "transition"
+category = "Shape Reveal"
+order = 52
+description = "A five-point star spins open from the centre - loud, proud, and unapologetic."
+
+[[param]]
+key = "size"
+label = "Size"
+min = 20
+max = 100
+default = 75
+step = 1
+unit = "%"
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 20
+step = 1
+unit = "%"
+
+[[param]]
+key = "edge"
+label = "Rim glow"
+min = 0
+max = 100
+default = 60
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "circleopen"
+fallback = "cross-fade"
+
+[card]
+progress = 0.35

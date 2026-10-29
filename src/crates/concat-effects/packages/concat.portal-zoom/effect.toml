@@ -1,0 +1,26 @@
+format = 2
+
+[effect]
+id = "concat.portal-zoom"
+name = "Portal Zoom"
+kind = "transition"
+category = "Viral Zoom"
+order = 29
+description = "A zoom that warms to amber as it goes, as if the new shot were lit from somewhere else."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "zoomin"
+fallback = "zoom"
+
+[card]
+progress = 0.4

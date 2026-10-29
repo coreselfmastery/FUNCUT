@@ -1,0 +1,44 @@
+format = 2
+
+[effect]
+id = "concat.swipe-hard"
+name = "Hard Swipe"
+kind = "transition"
+category = "Social FX"
+order = 122
+description = "A crisp swipe with a bright edge line - the infographic cut."
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 45
+step = 1
+unit = "%"
+
+[[param]]
+key = "fade"
+label = "Seam dim"
+min = 0
+max = 100
+default = 35
+step = 1
+unit = "%"
+
+[[param]]
+key = "line"
+label = "Edge glow"
+min = 0
+max = 100
+default = 55
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "wiperight"
+fallback = "push"
+
+[card]
+progress = 0.5

@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.photo-frame"
+name = "Photo Frame"
+kind = "effect"
+category = "Frame & Focus"
+shelves = ["Frame"]
+order = 188
+description = "A clean border with a soft inner shadow: the print on the table."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

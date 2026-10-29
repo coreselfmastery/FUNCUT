@@ -1,0 +1,26 @@
+format = 2
+
+[effect]
+id = "concat.dolly-vertigo"
+name = "Dolly Vertigo"
+kind = "transition"
+category = "Viral Zoom"
+order = 24
+description = "The outgoing shot pushes in while its scale pulls back - the Hitchcock pull, uneasy and pulling the eye."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "zoomin"
+fallback = "zoom"
+
+[card]
+progress = 0.45

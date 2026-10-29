@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.bleach-flash"
+name = "Bleach Bypass"
+kind = "effect"
+category = "Color Play"
+shelves = ["Color"]
+order = 130
+description = "Skip-bleach: contrast up, saturation nearly gone, hard and filmic."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

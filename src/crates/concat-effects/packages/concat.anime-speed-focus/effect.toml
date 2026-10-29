@@ -1,0 +1,25 @@
+format = 2
+
+[effect]
+id = "concat.anime-speed-focus"
+name = "Anime Speed Focus"
+kind = "effect"
+category = "Stylize"
+shelves = ["Stylised"]
+order = 210
+description = "Warm speed lines focused hard on the middle - the anime rush at sunset."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"
+
+[card]
+moment = 1.0

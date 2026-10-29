@@ -1,0 +1,25 @@
+format = 2
+
+[effect]
+id = "concat.frame-stutter"
+name = "Frame Stutter"
+kind = "effect"
+category = "Speed & Motion"
+shelves = ["Motion"]
+order = 96
+description = "Time holds still in steps, a flash on each advance - the stutter edit."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"
+
+[card]
+moment = 1.1

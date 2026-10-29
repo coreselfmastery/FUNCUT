@@ -1,0 +1,35 @@
+format = 2
+
+[effect]
+id = "concat.gravity-drop"
+name = "Gravity Drop"
+kind = "transition"
+category = "Cinematic"
+order = 114
+description = "The new shot falls in from above with weight and settles hard."
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 45
+step = 1
+unit = "%"
+
+[[param]]
+key = "fade"
+label = "Seam dim"
+min = 0
+max = 100
+default = 35
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "slidedown"
+fallback = "push"
+
+[card]
+progress = 0.45

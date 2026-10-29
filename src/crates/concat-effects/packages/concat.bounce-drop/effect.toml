@@ -1,0 +1,35 @@
+format = 2
+
+[effect]
+id = "concat.bounce-drop"
+name = "Bounce Drop"
+kind = "transition"
+category = "Meme & Bounce"
+order = 102
+description = "The new shot drops in from above and bounces to rest."
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 45
+step = 1
+unit = "%"
+
+[[param]]
+key = "fade"
+label = "Seam dim"
+min = 0
+max = 100
+default = 35
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "slidedown"
+fallback = "push"
+
+[card]
+progress = 0.3

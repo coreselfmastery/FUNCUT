@@ -1,0 +1,35 @@
+format = 2
+
+[effect]
+id = "concat.dust-melt"
+name = "Dust Melt"
+kind = "transition"
+category = "Organic"
+order = 92
+description = "A fine dust of cells drifts the old shot away, one speck at a time."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 45
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "dissolve"
+fallback = "cross-fade"
+
+[card]
+progress = 0.4

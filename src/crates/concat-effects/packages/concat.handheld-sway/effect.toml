@@ -1,0 +1,22 @@
+format = 2
+
+[effect]
+id = "concat.handheld-sway"
+name = "Handheld Sway"
+kind = "effect"
+category = "Distort"
+shelves = ["Distort"]
+order = 69
+description = "The operator's breathing: a slow two-axis drift with exposure to match."
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[wgsl]
+entry = "effect.wgsl"

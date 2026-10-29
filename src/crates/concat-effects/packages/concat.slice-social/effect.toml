@@ -1,0 +1,35 @@
+format = 2
+
+[effect]
+id = "concat.slice-social"
+name = "Slice Social"
+kind = "transition"
+category = "Social FX"
+order = 125
+description = "Four clean bands slice the new shot in, one after another."
+
+[[param]]
+key = "softness"
+label = "Softness"
+min = 0
+max = 100
+default = 45
+step = 1
+unit = "%"
+
+[[param]]
+key = "amount"
+label = "Amount"
+min = 0
+max = 100
+default = 70
+step = 1
+unit = "%"
+
+[transition]
+entry = "effect.wgsl"
+xfade = "hlslice"
+fallback = "cross-fade"
+
+[card]
+progress = 0.45

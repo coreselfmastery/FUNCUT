@@ -466,13 +466,9 @@ impl Api {
             }
             Request::ProjectList => Ok(Reply::Projects(self.recents())),
             Request::ProjectGet { path } => view(self.session(&path)?.view()),
-            Request::ProjectDocument { path } => {
-                Ok(Reply::Document(
-                    self.session(&path)?
-                        .document()
-                        .map_err(ApiError::failed)?,
-                ))
-            }
+            Request::ProjectDocument { path } => Ok(Reply::Document(
+                self.session(&path)?.document().map_err(ApiError::failed)?,
+            )),
             Request::ProjectSave { path, name } => {
                 self.save(&path, name.as_deref())?;
                 Ok(Reply::Done(Done {}))

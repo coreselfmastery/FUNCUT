@@ -327,7 +327,10 @@ impl DocumentSettings {
 /// next open - and a save that cannot encode must say so, not panic:
 /// every non-test caller of this used to `.expect()` here, so one bad
 /// number anywhere took the editor down at its next autosave.
-pub fn to_document(settings: &DocumentSettings, project: &Project) -> Result<Value, serde_json::Error> {
+pub fn to_document(
+    settings: &DocumentSettings,
+    project: &Project,
+) -> Result<Value, serde_json::Error> {
     let active = project.active();
     let mut document = Map::new();
     document.insert("concat".into(), json!("0.1.0"));
@@ -345,24 +348,12 @@ pub fn to_document(settings: &DocumentSettings, project: &Project) -> Result<Val
             "rateDen": active.video.rate_den,
         }),
     );
-    document.insert(
-        "media".into(),
-        serde_json::to_value(&project.media)?,
-    );
+    document.insert("media".into(), serde_json::to_value(&project.media)?);
     // The flat mirror of the active timeline, for builds that predate
     // multiple timelines.
-    document.insert(
-        "tracks".into(),
-        serde_json::to_value(&active.tracks)?,
-    );
-    document.insert(
-        "clips".into(),
-        serde_json::to_value(&active.clips)?,
-    );
-    document.insert(
-        "fonts".into(),
-        serde_json::to_value(&project.fonts)?,
-    );
+    document.insert("tracks".into(), serde_json::to_value(&active.tracks)?);
+    document.insert("clips".into(), serde_json::to_value(&active.clips)?);
+    document.insert("fonts".into(), serde_json::to_value(&project.fonts)?);
     document.insert(
         "timelines".into(),
         serde_json::to_value(&project.timelines)?,

@@ -14,7 +14,8 @@
 > transcription, TTS, loudness), perception (contact-sheet images a model
 > can actually see), an emotion-driven edit pipeline with a validated brand
 > kit, a motion-graphics engine, a director skill that runs an 11-phase
-> measured pipeline, the vendored maestro design judgment, and a Forge page
+> measured pipeline, the vendored maestro design judgment and clip-skills
+> editing craft riding beside it, and a Forge page
 > in the editor that starts a whole faceless video with one click. Stock
 > (937,957 clips), music (1,191 CC0 tracks), sounds (430) and stickers
 > (149,758) are all searched locally and fetched per use. The complete
@@ -67,7 +68,7 @@ Everything runs locally on a native Rust engine with a GPU compositor. Install i
 
 **Good for:** TikTok, Reels and Shorts, YouTube videos, tutorials and screen recordings, podcast clips, memes.
 
-**Also for machines:** a built-in MCP server for AI agents (`concat --mcp`, [set up](docs/MCP.md)) and a JSON-RPC API for scripts, so they can cut video with it too. The agents get senses as well - scene cuts, beat grids, dead air, transcription and a spoken voiceover, all MCP jobs - and a director's brain ships in this repo: the [funcut-director skill](docs/forge/FORGE.md), one `forge run` from a finished faceless video. A second skill, [maestro](docs/MAESTRO.md), rides beside it with the design, motion and film judgment - a 157-shot vocabulary, motion principles and a sound-design method the director draws on phase by phase. The agents' craft critic runs on three rungs - measured pixels only, a bundled 0.5B local model, or a free-tier hosted vision API wired up in one call ([docs/VLM.md](docs/VLM.md)). And the edit itself is emotion-driven: the `emotion` tool reads what every line of the voiceover feels like and drives the easing, the colour, the sound, the duck and the stock choices from it - gate included ([docs/EMOTION.md](docs/EMOTION.md)).
+**Also for machines:** a built-in MCP server for AI agents (`concat --mcp`, [set up](docs/MCP.md)) and a JSON-RPC API for scripts, so they can cut video with it too. The agents get senses as well - scene cuts, beat grids, dead air, transcription and a spoken voiceover, all MCP jobs - and a director's brain ships in this repo: the [funcut-director skill](docs/forge/FORGE.md), one `forge run` from a finished faceless video. A second skill, [maestro](docs/MAESTRO.md), rides beside it with the design, motion and film judgment - a 157-shot vocabulary, motion principles and a sound-design method the director draws on phase by phase - and a third, [clip-skills](docs/CLIPSKILLS.md), supplies the editing craft: where to cut, how to shape the audio spine, B-roll matching, pacing, grading workflow, voice processing and export numbers, phase by phase. The agents' craft critic runs on three rungs - measured pixels only, a bundled 0.5B local model, or a free-tier hosted vision API wired up in one call ([docs/VLM.md](docs/VLM.md)). And the edit itself is emotion-driven: the `emotion` tool reads what every line of the voiceover feels like and drives the easing, the colour, the sound, the duck and the stock choices from it - gate included ([docs/EMOTION.md](docs/EMOTION.md)).
 
 ## Highlights
 
@@ -85,7 +86,7 @@ Everything runs locally on a native Rust engine with a GPU compositor. Install i
 - 🎙️ **One-switch voice cleanup.** Denoise, enhance voice, level the loudness. Plus chipmunk, robot, telephone and friends.
 - 📤 **Export.** H.264, HEVC, AV1. Up to 4K 60, 10-bit colour.
 - 🦀 **Native Rust engine.** GPU compositor, proxies, hardware decode. 4K scrubs smoothly.
-- 🤖 **Scriptable.** An MCP server built in, so Claude and other AI agents can edit with it ([one line to set up](docs/MCP.md)), and a JSON-RPC API for scripts. A build from source adds gRPC and a command-line tool. With the [Forge harness](docs/forge/FORGE.md) and the [funcut-director skill](.claude/skills/funcut-director/SKILL.md) an agent directs a whole video from a script - with [maestro](docs/MAESTRO.md), the design-and-motion judgment skill, riding shotgun - and the editor's Forge page starts one with a click.
+- 🤖 **Scriptable.** An MCP server built in, so Claude and other AI agents can edit with it ([one line to set up](docs/MCP.md)), and a JSON-RPC API for scripts. A build from source adds gRPC and a command-line tool. With the [Forge harness](docs/forge/FORGE.md) and the [funcut-director skill](.claude/skills/funcut-director/SKILL.md) an agent directs a whole video from a script - with [maestro](docs/MAESTRO.md), the design-and-motion judgment skill, riding shotgun, and [clip-skills](docs/CLIPSKILLS.md), the editing-craft skill, beside it - and the editor's Forge page starts one with a click.
 - 🖥️ **Linux.** x86_64 and ARM. 26 languages. Same app, same project files.
 
 ## Download

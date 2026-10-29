@@ -1,0 +1,10 @@
+{
+  "$comment": "Upstream source of the vendored clip-skills skill. `repo` = GitHub repo; `pin` = commit the vendor was taken from (plus the FUNCUT delta documented in docs/CLIPSKILLS.md); `delta` = local additions on top of the pin, kept in sync with the vendored tree.",
+  "repo": "appergb/ClipSkills",
+  "watch": "clip-skills",
+  "pin": {
+    "upstream": "4d85c26",
+    "delta": "FUNCUT integration: editor-funcut.md, modules 13/14/15, bilingual SKILL.md triggers, README updates, jianji-knowledge ref fixes",
+    "date": "2026-10-29"
+  }
+}

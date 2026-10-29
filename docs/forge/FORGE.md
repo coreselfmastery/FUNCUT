@@ -95,6 +95,17 @@ The same `forge skill install coreselfmastery/FUNCUT` picks it up, and the
 director's skill routes into it phase by phase (its §6; the full map is
 [docs/MAESTRO.md](../MAESTRO.md)).
 
+A third skill ships beside them: **clip-skills**
+(`.claude/skills/clip-skills/`), the editing-craft core — 15
+software-agnostic knowledge modules (audio-driven cutting, A/B-roll
+matching, pacing, grading workflow, keyframes, speed ramps, keying,
+tracking, multicam, subtitles, transitions, voice processing, export
+numbers) plus a FUNCUT execution guide that maps every module to this
+editor's MCP tools. Maestro judges what looks good; clip-skills judges how
+to cut. The same install picks it up; the director's skill routes into it
+phase by phase (its §7; the full map is
+[docs/CLIPSKILLS.md](../CLIPSKILLS.md)).
+
 ## 5. First run
 
 Ask for a whole faceless video, end to end — the skill drives the pipeline:

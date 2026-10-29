@@ -40,15 +40,17 @@ Maestro is two layers, and both earn their place differently:
   craft corpus, and the generative-media mechanics baselines
   (`higgsfield-skills`, `comfy-skills`).
 
-## The three-way division of labor
+## The division of labor
 
-FUNCUT ships three skills. They do not overlap; they stack:
+FUNCUT's director stack ships four skills (a fifth, `run-concat`, is the
+build-and-verify utility). They do not overlap; they stack:
 
 | Skill | What it owns | Format |
 | --- | --- | --- |
 | `funcut-director` | The pipeline: measure, plan, execute, verify — every MCP tool, the phases (0–8 plus the 1b/5b sub-phases), the hard floors | Contract + router (`SKILL.md`) with playbooks in `prompts/` |
 | `motion` | The editor's own motion-comp engine: presets, nodes, baking, overlays | `SKILL.md` (see also `docs/MOTION.md`) |
 | `maestro` | Judgment: what good design, motion, film and sound look like — plus escape-hatch engines when a piece needs code | 28 modules + vendored corpora |
+| `clip-skills` | Editing craft: how to cut — audio spine, B-roll, pacing, grading workflow, voice, transitions, export numbers | 15 knowledge modules + 4 execution guides (see [docs/CLIPSKILLS.md](CLIPSKILLS.md)) |
 
 The routing from the director's phases into maestro modules is in the
 funcut-director skill, §6. Two rules govern the interaction: the Phase-0

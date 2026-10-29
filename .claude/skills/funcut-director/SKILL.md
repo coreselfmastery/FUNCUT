@@ -439,3 +439,52 @@ motion layer cannot express, maestro's engine modules (`video-remotion.md`,
 `video-hyperframes.md`, `gsap.md`, `threejs.md`) can build it as code, and
 the rendered result imports as footage. The full map, plus the update and
 drift-check procedure: `docs/MAESTRO.md`.
+
+## 7. The clip-skills shelf (editing craft, when a phase wants the cutter's judgment)
+
+The `clip-skills` skill sits beside this one at `.claude/skills/clip-skills/`.
+It is the editing-craft core: 15 software-agnostic knowledge modules that
+systematize professional post-production decisions — the audio-driven
+pipeline, breath/gap handling, A/B-roll matching, beat-sync, pacing theory,
+color-grading workflow, keyframe discipline, speed ramps, keying/masking,
+tracking, multicam, subtitles, transitions, voice processing, export
+parameters. Its modules are written in Chinese; read the one the phase
+needs (the file names carry English topic hints in `NOTICE.md`), never the
+whole shelf. Its execution guide `references/editor-funcut.md` maps every
+module to this editor's tools — the table below is the phase-level view.
+
+**Maestro judges what looks good; clip-skills judges how to cut.** The two
+shelves do not overlap: reach for maestro on typography, color systems,
+motion temperament, art direction, critique; reach for clip-skills on where
+to cut, what to cover with, how to shape the audio spine, how deep to duck,
+what a transition means, which export numbers to pick. A phase that wants
+both (a comp over a beat-matched cut) uses both.
+
+| Phase | Reach into `.claude/skills/clip-skills/references/` for |
+| --- | --- |
+| 0 direction | `01-视频分类与剪辑逻辑.md` (type the video, pick the edit skeleton), `05-节奏与结构.md` (hook three-step, duration strategy, wave pacing) |
+| 1 understand | `02-音频驱动剪辑流程.md` (the audio-first spine, breath/gap typology, the three gap rules behind the Phase-2 padding rule) |
+| 2 tighten | `02` §三 (气口三规则: keep/expand/crossfade-pad — the judgment behind the 80 ms shrink), `15-人声与对白处理.md` (cleanup chain order, de-noise restraint) |
+| 3 plan | `01`/`05` (section skeleton, 时钟理论 wave points as a thinking tool — labeled heuristic), `14-转场决策.md` (transition semantics for the plan's `transitionIn` fields — the "earned, not decorated" rule) |
+| 4 gather | `03-素材AB分类与替换.md` (A/B classification to seed queries, the five B-roll rules: cover the sentence, group shots, no repeats, mute the track) |
+| 5 place | `04-声音与音乐衔接.md` (J/L-cut feel, duck depths, leaving breath between peaks), `14` (transition choice + duration numbers), `15` (duck dB by context) |
+| 5b comps | `13-字幕与文字设计.md` (caption readability six rules, the four-zone text system, word-time honesty) — with the `motion` skill for execution |
+| 6 grade | `06-调色.md` (Log/LUT order, correct-then-style, scope-quantified deltas — map them to `effect_key_set` values) |
+| 7 watch | `05` (pacing diagnosis: information density vs shot length, the fix list for a sagging middle) |
+| 8 export | `12-导出与交付.md` (resolution/fps follow the source, bit-rate "recommended not max", platform framing table, naming), `15` §六 (LUFS targets per platform — what `measure_loudness` should read) |
+
+Two integration rules, mirroring maestro's:
+
+1. **clip-skills' 自主执行 (autonomous-execute) mode does not run inside
+   FUNCUT** — this pipeline is the executor. Inside this repo, clip-skills
+   is read as knowledge; its three-mode framing (answer / ask / execute) and
+   its clarification checklist are for filling THIS pipeline's brief and
+   plan, never a second interrogation. Outside this repo (a user asking
+   editing questions in any harness), clip-skills runs its own modes.
+2. When its guidance conflicts with the hard floors in §3, **the floors
+   win** — clip-skills refines how a floor is met (e.g. its cut-rate
+   heuristics tune the P floor's ranges by niche), never lowers one. Where
+   both shelves speak to the same phase, maestro owns aesthetics,
+   clip-skills owns craft, and the plan JSON reconciles them.
+
+The vendoring, pin and update procedure: `docs/CLIPSKILLS.md`.

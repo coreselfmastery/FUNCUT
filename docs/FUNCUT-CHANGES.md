@@ -12,10 +12,10 @@ stock library, the background-music library, pause removal for
 voiceovers, the built-in CC0 sound library, the Wyzowl sound effects
 that grew it to 430, the sticker library, the hosted free-tier vision
 critic with a stronger measured baseline, the analysis and speech layer
-on the API, the perception tools, the maestro judgment skill for the AI
-director, the emotion-driven edit - the voiceover read that now drives
-every layer - the funcut-director skill, the motion layer and its skill,
-and the Forge integration. The complete verified inventory of what this
+on the API, the perception tools, the maestro judgment skill and the clip-skills editing-craft skill for
+the AI director, the emotion-driven edit - the voiceover read that now
+drives every layer - the funcut-director skill, the motion layer and its
+skill, and the Forge integration. The complete verified inventory of what this
 fork ships is [`docs/FEATURES.md`](FEATURES.md); section 10a of this
 ledger maps the capability groups that grew up around the emotion work.
 Everything else in the

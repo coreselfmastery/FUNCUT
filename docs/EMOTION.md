@@ -41,7 +41,10 @@ non-English script *without* a key is answered with an honest note — the
 lexicon is English-only — rather than a silent run of neutral lines.
 
 The key resolution order: the `apiKey` argument, `FUNCUT_EMOTION_API_KEY`,
-`HF_TOKEN`, `HUGGINGFACE_API_KEY`. The reply masks it (`hf_...xY`). The
+`HF_TOKEN`, `HUGGINGFACE_API_KEY`. The Forge page's HuggingFace field is
+injected as both `FUNCUT_EMOTION_API_KEY` and `HF_TOKEN` when a director
+run starts, so a paste-a-script-one-click edit gets the multilingual read
+without touching a terminal. The reply masks it (`hf_...xY`). The
 `model` argument (or `FUNCUT_EMOTION_MODEL`) overrides the default model
 id. Long transcripts travel in batches of 64 lines per request. Nothing
 is stored on disk by this tool — the key travels the existing

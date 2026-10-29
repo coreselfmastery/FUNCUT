@@ -262,6 +262,7 @@ export component App inherits Window {
     callback export-start();
     callback export-cancel();
     callback export-reveal();
+    callback export-download();
     callback export-again();
 
     callback settings-closed();
@@ -842,6 +843,7 @@ export component App inherits Window {
         begin => { root.export-start(); }
         cancel => { root.export-cancel(); }
         reveal => { root.export-reveal(); }
+        download => { root.export-download(); }
         again => { root.export-again(); }
     }
 

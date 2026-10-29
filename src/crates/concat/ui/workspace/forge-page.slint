@@ -41,6 +41,10 @@ export global Forge {
     in-out property <string> cerebras-key;
     in-out property <string> sambanova-key;
     in-out property <string> nim-key;
+    /// The HuggingFace token: not a chat provider but the emotion model's
+    /// host - with it the director's `emotion` tool reads the voiceover
+    /// with the multilingual model rather than the English-only lexicon.
+    in-out property <string> hf-key;
 
     /// The script and the three choices went to the harness.
     callback forge-start(script: string, voice: int, niche: int, mood: int);
@@ -126,6 +130,7 @@ export component ForgePage inherits VerticalLayout {
         { id: "cerebras", label: "Cerebras" },
         { id: "sambanova", label: "SambaNova" },
         { id: "nim", label: "NVIDIA NIM" },
+        { id: "hf", label: "HuggingFace" },
     ];
 
     padding: 8px;
@@ -347,7 +352,8 @@ export component ForgePage inherits VerticalLayout {
                         : row.id == "mistral" ? Forge.mistral-key
                         : row.id == "cerebras" ? Forge.cerebras-key
                         : row.id == "sambanova" ? Forge.sambanova-key
-                        : Forge.nim-key;
+                        : row.id == "nim" ? Forge.nim-key
+                        : Forge.hf-key;
                     edited => { Forge.key-edited(row.id, self.text); }
                 }
             }

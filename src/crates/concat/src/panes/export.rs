@@ -684,7 +684,11 @@ fn download_into(folder: &str, from: &str) -> Result<String, String> {
         .and_then(|name| name.to_str())
         .ok_or("the finished file has no name")?
         .to_owned();
-    let stem = source.file_stem().and_then(|name| name.to_str()).unwrap_or(&file).to_owned();
+    let stem = source
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or(&file)
+        .to_owned();
     let suffix = source
         .extension()
         .and_then(|name| name.to_str())
@@ -725,8 +729,11 @@ mod tests {
     /// copy of the same name lands beside it, numbered the browser way.
     #[test]
     fn a_download_copies_and_numbers_rather_than_replaces() {
-        let root = std::env::temp_dir()
-            .join(format!("funcut-download-{}-{}", std::process::id(), line!()));
+        let root = std::env::temp_dir().join(format!(
+            "funcut-download-{}-{}",
+            std::process::id(),
+            line!()
+        ));
         let source = root.join("source");
         std::fs::create_dir_all(&source).unwrap();
         let from = source.join("My cut.mp4");

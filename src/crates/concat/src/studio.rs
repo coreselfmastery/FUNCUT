@@ -11557,6 +11557,7 @@ impl Studio {
             page.set_cerebras_key(keys.cerebras.clone().into());
             page.set_sambanova_key(keys.sambanova.clone().into());
             page.set_nim_key(keys.nim.clone().into());
+            page.set_hf_key(keys.hf.clone().into());
         }
         // The OpenVid page.
         sync(&models.openvid_results, self.openvid.rows());

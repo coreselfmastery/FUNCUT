@@ -330,6 +330,13 @@ pub struct ForgePrefs {
     pub sambanova: String,
     /// NVIDIA NIM.
     pub nim: String,
+    /// HuggingFace: not a chat provider but the emotion read's model host -
+    /// `tabularisai/multilingual-emotion-classification` on the Inference
+    /// API's free tier. Injected as both `FUNCUT_EMOTION_API_KEY` and
+    /// `HF_TOKEN`, the two spellings the sense sidecar reads, so the
+    /// director's `emotion` tool runs on the multilingual model instead of
+    /// the English-only lexicon.
+    pub hf: String,
 }
 
 /// Where the window's server listens unless told otherwise: loopback, on

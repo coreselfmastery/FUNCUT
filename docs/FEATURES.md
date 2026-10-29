@@ -331,10 +331,13 @@ always win; maestro refines how a floor is met, never lowers it. See
   voice (5 Kokoro speakers), a niche (10) and a music mood (6), press Start
   — the external `forge` harness runs the funcut-director skill against
   this editor over MCP, its output streams into the page log, and its edits
-  land on the open timeline as ordinary undoable commands. Seven provider
-  API-key fields (Groq, Gemini, OpenRouter, Mistral, Cerebras, SambaNova,
-  NVIDIA NIM) are stored in settings and injected as env vars for free-tier
-  models.
+  land on the open timeline as ordinary undoable commands. Eight API-key
+  fields (Groq, Gemini, OpenRouter, Mistral, Cerebras, SambaNova,
+  NVIDIA NIM, HuggingFace) are stored in settings and injected as env vars
+  for free-tier models; the HuggingFace key is what lets the director's
+  `emotion` tool run on the multilingual
+  `tabularisai/multilingual-emotion-classification` model rather than the
+  English-only lexicon.
 - **The harness config** (`.forge/mcp.toml`): one stdio server (`concat
   --mcp auto`), a 900-second call timeout for patient work, servers
   allow-listed to `funcut`.

@@ -606,3 +606,39 @@ The files:
 | `src/crates/concat/ui/dialogs/export.slint` | the Download button beside Show in folder; the folder glyph on Reveal |
 | `src/crates/concat/src/lib.rs` | the button's wiring |
 | `src/crates/concat/locales/*.json` | `export.download`, `export.downloadedTo`, `export.couldNotDownload` in all 26 languages |
+
+## 14. The fix: the red turned green, and the emotion model reachable from the editor
+
+Section 13 shipped one file short and one file rough, and CI said so in
+red: `lib.rs` called `app.on_export_download()`, but the window's
+`app.slint` never declared the `export-download` callback that generates
+that method - the whole workspace stopped compiling at E0599 - and
+`export.rs` had drifted past `cargo fmt`. The callback and its wiring in
+the dialog instantiation are now there, exactly as `export-reveal` and
+`export-again` do it beside it, and the formatter ran over the file. The
+Slint tree compiles clean through the same `slint-build` 1.18.1 pass the
+window crate uses, and the generated code carries `on_export_download`.
+
+The second half closes a gap the multilingual model could not cross
+alone: the Forge page handed the harness seven chat-provider keys, but
+never a HuggingFace token - and the `emotion` tool reads its hosted
+model only through `FUNCUT_EMOTION_API_KEY` / `HF_TOKEN`. A director
+launched from the editor therefore ran the English-only lexicon forever,
+model or no model. The page now carries a HuggingFace row (saved in the
+settings file with the others), injected at run time under BOTH
+spellings, so the director's very first `emotion` call reads the
+voiceover with `tabularisai/multilingual-emotion-classification` - the
+75/25 blend, the 23 languages, confidence 0.85 - the way the lexicon
+always fed the whole plan: easing, colour, duck, stock queries, the
+gate.
+
+The files:
+
+| file | what |
+| --- | --- |
+| `src/crates/concat/ui/app.slint` | the missing `export-download` callback and its wiring in the dialog instantiation |
+| `src/crates/concat/src/panes/export.rs` | `cargo fmt` over section 13's additions |
+| `src/crates/concat/ui/workspace/forge-page.slint` | the `hf-key` property and the HuggingFace row among the provider keys |
+| `src/crates/concat/src/prefs.rs` | `ForgePrefs.hf`, documented |
+| `src/crates/concat/src/panes/forge.rs` | the `hf` provider's save; `FUNCUT_EMOTION_API_KEY` and `HF_TOKEN` injected into the run's environment |
+| `src/crates/concat/src/studio.rs` | the page's key sync |

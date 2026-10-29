@@ -104,7 +104,12 @@ environment as `<PROVIDER>_API_KEY`. Forge stacks keys comma-separated
 (`GROQ_API_KEY="k1,k2"` doubles free-tier requests/min), and `credit_mode =
 "strict"` in Forge's `[mesh]` keeps every route on free + subscription models
 — the "$0 setup" the plan promised. `forge auth` remains the canonical,
-OS-keyring way for keys used outside the editor.
+OS-keyring way for keys used outside the editor. A HuggingFace key rides
+the same road under both spellings the emotion sidecar reads
+(`FUNCUT_EMOTION_API_KEY` and `HF_TOKEN`): with it, the director's
+`emotion` tool reads the voiceover with the multilingual
+`tabularisai/multilingual-emotion-classification` model instead of the
+English-only lexicon.
 
 ## Reliability (both sides)
 

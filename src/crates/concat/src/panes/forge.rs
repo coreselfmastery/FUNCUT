@@ -205,6 +205,7 @@ impl ForgePane {
                     "cerebras" => forge.cerebras = key,
                     "sambanova" => forge.sambanova = key,
                     "nim" => forge.nim = key,
+                    "hf" => forge.hf = key,
                     _ => return,
                 }
                 studio.prefs.save(&studio.host.dirs);
@@ -256,7 +257,11 @@ impl ForgePane {
         // The provider keys the page keeps are handed to the harness as
         // its environment, in each provider's own spelling, so the free
         // tiers work without leaving the editor. Keys stacked in the
-        // harness's own keyring arrive on their own.
+        // harness's own keyring arrive on their own. The HuggingFace key
+        // is both spellings the emotion sidecar reads: with it, the
+        // director's `emotion` tool runs on the multilingual
+        // tabularisai/multilingual-emotion-classification model instead of
+        // the English-only lexicon.
         let forge = &studio.prefs.forge;
         for (name, value) in [
             ("GROQ_API_KEY", &forge.groq),
@@ -266,6 +271,8 @@ impl ForgePane {
             ("CEREBRAS_API_KEY", &forge.cerebras),
             ("SAMBANOVA_API_KEY", &forge.sambanova),
             ("NVIDIA_API_KEY", &forge.nim),
+            ("FUNCUT_EMOTION_API_KEY", &forge.hf),
+            ("HF_TOKEN", &forge.hf),
         ] {
             if !value.trim().is_empty() {
                 command.env(name, value.trim());

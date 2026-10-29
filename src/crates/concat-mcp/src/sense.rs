@@ -174,10 +174,18 @@ fn run_py(script: &Path, cmd: &str, spec: &Value, timeout: Duration) -> Result<V
             Ok(Some(_)) => break,
             Ok(None) => {
                 if started.elapsed() > timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    // The group first, while the leader still exists and its
+                    // pid is certainly its pgid: a kill-and-reap can land on
+                    // a recycled id, and the ffmpeg grandchildren are the
+                    // expensive part anyway. The call's temp files leave
+                    // with the error too - a timed-out call used to leak
+                    // both into the runtime dir.
                     #[cfg(unix)]
                     kill_group(child.id());
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = fs::remove_file(&out_path);
+                    let _ = fs::remove_file(&err_path);
                     return Err(failed(format!(
                         "sense {cmd} timed out after {}s",
                         timeout.as_secs()
@@ -196,10 +204,11 @@ fn run_py(script: &Path, cmd: &str, spec: &Value, timeout: Duration) -> Result<V
     let _ = fs::remove_file(&out_path);
     let _ = fs::remove_file(&err_path);
     let value: Value = serde_json::from_str(text.trim()).map_err(|e| {
-        failed(format!(
-            "sense {cmd} returned no JSON ({e}). {}",
-            stderr.chars().take(500).collect::<String>()
-        ))
+        // The tail, not the head: argparse noise opens stderr, and the line
+        // that names a Python traceback's actual error closes it.
+        let count = stderr.chars().count();
+        let tail: String = stderr.chars().skip(count.saturating_sub(500)).collect();
+        failed(format!("sense {cmd} returned no JSON ({e}). {tail}"))
     })?;
     if value.get("ok") == Some(&Value::Bool(false)) {
         let mut message = value["error"]
@@ -448,11 +457,17 @@ fn image_outcome(value: &Value, caption: &str) -> Outcome {
         map.remove("stderrTail");
     }
     let text = serde_json::to_string_pretty(&structured).unwrap_or_else(|_| structured.to_string());
+    let mut content = Vec::with_capacity(2);
+    // An empty image block - a reply whose picture never materialised - is a
+    // base64 decoding error on a strict client, for a sheet that is
+    // otherwise fine: send the measurements and let the caption say what
+    // happened, instead of an image block no renderer can read.
+    if !png.is_empty() {
+        content.push(json!({ "type": "image", "data": png, "mimeType": "image/png" }));
+    }
+    content.push(json!({ "type": "text", "text": format!("{caption}\n\n{text}") }));
     Outcome {
-        content: vec![
-            json!({ "type": "image", "data": png, "mimeType": "image/png" }),
-            json!({ "type": "text", "text": format!("{caption}\n\n{text}") }),
-        ],
+        content,
         structured: Some(structured),
         is_error: false,
     }
@@ -545,6 +560,12 @@ pub(crate) fn write_target(
     }
 }
 
+/// The sheet's own tile ceiling (sense.py caps its sources at 24): an
+/// agent-supplied `times` list longer than it is a render paid for and
+/// never drawn, so both `watch_render` paths cut it down to this before
+/// doing any work.
+const MAX_SHEET_TILES: usize = 24;
+
 /// `watch_render`: sample a rendered file or, with no file, the open
 /// project's true composited timeline. Either way the agent gets a picture.
 pub fn watch_render(arguments: Value, backend: &mut dyn Backend) -> Result<Outcome, ApiError> {
@@ -583,6 +604,7 @@ pub fn watch_render(arguments: Value, backend: &mut dyn Backend) -> Result<Outco
             let sources: Vec<Value> = times
                 .iter()
                 .filter_map(|t| t.as_f64())
+                .take(MAX_SHEET_TILES)
                 .enumerate()
                 .map(|(i, at)| json!({ "path": file, "at": at, "label": format!("{i:02}") }))
                 .collect();
@@ -623,17 +645,34 @@ pub fn watch_render(arguments: Value, backend: &mut dyn Backend) -> Result<Outco
         let pw = ((width * scale).round() as u32).clamp(16, 640);
         let ph = ((height * scale).round() as u32).clamp(16, 640);
         let times: Vec<f64> = match fields.get("times").and_then(Value::as_array) {
-            Some(list) => list.iter().filter_map(Value::as_f64).collect(),
+            // MAX_SHEET_TILES is the sheet's own tile ceiling: every entry
+            // past it is a synchronous preview.frame render whose tile is
+            // dropped before it is ever drawn - paid for, then thrown away.
+            Some(list) => list
+                .iter()
+                .filter_map(Value::as_f64)
+                .take(MAX_SHEET_TILES)
+                .collect(),
             None => (0..samples)
                 .map(|i| duration * (i as f64 + 0.5) / samples as f64)
                 .collect(),
         };
         let mut sources = Vec::with_capacity(times.len());
+        let mut dropped = 0u32;
         for (i, at) in times.iter().enumerate() {
-            let frame = backend.call(request(
+            // One flaky frame render used to fail the whole sheet: skip it
+            // and keep watching. A dropped tile costs one sample; an error
+            // here cost the agent its only look at the cut.
+            let frame = match backend.call(request(
                 "preview.frame",
                 json!({ "path": project, "time": at, "width": pw, "height": ph }),
-            )?)?;
+            )?) {
+                Ok(frame) => frame,
+                Err(_) => {
+                    dropped += 1;
+                    continue;
+                }
+            };
             let Some(png) = frame.get("png").and_then(Value::as_str) else {
                 continue;
             };
@@ -649,8 +688,13 @@ pub fn watch_render(arguments: Value, backend: &mut dyn Backend) -> Result<Outco
         spec["sources"] = json!(sources);
         spec["duration"] = json!(duration);
         caption = format!(
-            "{} true composited frames from the open timeline ({duration:.1}s), in timeline order.",
-            sources.len()
+            "{} true composited frames from the open timeline ({duration:.1}s), in timeline order.{}",
+            sources.len(),
+            if dropped > 0 {
+                format!(" {dropped} sampled frames failed to render and were skipped.")
+            } else {
+                String::new()
+            }
         );
     }
     if let Some(out) = fields.get("out").and_then(Value::as_str) {
@@ -901,7 +945,11 @@ pub fn stock_contact_sheet(
             .get("brief")
             .cloned()
             .unwrap_or_else(|| load_brief(fields.get("project").and_then(Value::as_str)));
-        let ranking = run(
+        // The same degradation contract `semantic_rerank` keeps: the sheet
+        // and its measured pixels are the point of the tool, and a rank
+        // that cannot run (the model not downloaded yet, a slow first
+        // setup) must not throw the whole sheet away after it was built.
+        let ranking = match run(
             "rank",
             &json!({
                 "sheet": sheet,
@@ -914,7 +962,14 @@ pub fn stock_contact_sheet(
                 "profile": fields.get("profile").cloned().unwrap_or(json!("mini")),
             }),
             Duration::from_secs(180),
-        )?;
+        ) {
+            Ok(ranking) => ranking,
+            Err(error) => json!({
+                "applied": false,
+                "reason": error.to_string(),
+                "use": "The sheet and its measured pixels are intact; rank again after local_vlm setup.",
+            }),
+        };
         sheet["ranking"] = json!(ranking);
     }
     Ok(image_outcome(
@@ -1277,14 +1332,30 @@ pub fn emotion(arguments: Value) -> Result<Outcome, ApiError> {
             spec[*key] = value.clone();
         }
     }
-    // `extract` is the only action that may wait on a hosted model: one
-    // batched POST for every line, with the Python side's own endpoint
-    // retries inside the budget.
-    let result = run(
-        "emotion",
-        &spec,
-        Duration::from_secs(if action == "extract" { 90 } else { 30 }),
-    )?;
+    // `extract` is the only action that may wait on a hosted model: the
+    // lines travel in batches of 64 with per-endpoint retries inside the
+    // budget. A fixed 90 s covered a short script; a real one - hundreds of
+    // lines against a slow free tier - was killed mid-batch with no partial
+    // result and no fallback note. Scale the budget with the work, capped
+    // under the harness's own 900 s call timeout.
+    let budget = if action == "extract" {
+        let scripted = fields
+            .get("script")
+            .and_then(Value::as_str)
+            .map_or(0, |text| text.lines().count());
+        let lined = fields
+            .get("lines")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        let segments = fields
+            .get("transcript")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        90 + 8 * scripted.max(lined).max(segments) as u64
+    } else {
+        30
+    };
+    let result = run("emotion", &spec, Duration::from_secs(budget.min(480)))?;
     Ok(Outcome::json(result))
 }
 

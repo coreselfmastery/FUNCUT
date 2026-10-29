@@ -31,7 +31,13 @@ bash tests/make_test_media.sh   # tiny synthetic fixtures (ffmpeg only)
 python3 tests/run_tests.py     # asserts real detection on them
 ```
 
-The fixtures are generated files (not committed): `tests/test_media/`.
+The fixtures are generated files (not committed): `tests/test_media/` —
+`scenes.mp4`, `beats.wav`, `gaps.wav`, plus `silence.wav` (beatless),
+`gaps.mp4` (the gaps audio under a picture track) and `rapid.mp4` (a
+rapid-fire cut run the scene merge must fold).
 Last full run: scenes cut at 2.0 s detected, 117 BPM measured on a 120 BPM
-click track, 1.0 s + 2.0 s silence gaps found exactly, error contract and the
-librosa fallback verified.
+click track, 1.0 s + 2.0 s silence gaps found exactly (in the WAV and
+through the picture track), the rapid flicker merged and the long scene
+after it left alone, beatless audio answered with an honest `0.0` BPM
+(strict-JSON parsed the way the Rust caller parses it), error contract and
+the librosa fallback verified.

@@ -74,6 +74,31 @@ jobs:
       # classifier, the gate and the transcript alignment.
       - run: python3 src/crates/concat-mcp/sense/emotion.py selftest
         if: ${{ !cancelled() }}
+      # The vision critic's selftest, same contract again: the key masking,
+      # the loopback detector behind every privacy note, the archive
+      # traversal rules, the provider table's shape and a config
+      # round-trip in a scratch dir. The config round-trip is the seam the
+      # hosted-critic setup once broke silently.
+      - run: python3 src/crates/concat-mcp/sense/vlm.py selftest
+        if: ${{ !cancelled() }}
+
+  # The analysis senses against real fixtures: beats, silence and scene
+  # cuts measured on generated media, so the JSON the API parses is
+  # checked at the source. Strictly parsed - the NaN a beatless file used
+  # to print is what serde_json refuses, and this catches it in CI
+  # instead of as "the analysis did not print JSON" in production.
+  analysis:
+    name: The analysis senses against real fixtures
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: pip install --break-system-packages -r src/crates/concat-api/analysis/requirements.txt
+      - run: bash src/crates/concat-api/analysis/tests/make_test_media.sh
+      - run: python3 src/crates/concat-api/analysis/tests/run_tests.py
 
   engine:
     name: Engine tests and lints

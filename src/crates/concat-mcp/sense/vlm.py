@@ -719,12 +719,83 @@ def _progress(label, done, total):
     print(f"[vlm] {label}: {done/1e6:.0f}/{total/1e6:.0f} MB ({pct:.0f}%)", file=sys.stderr, flush=True)
 
 
+def selftest():
+    """The fragile seams, checked with no network, no model, no download:
+    key masking, loopback detection, archive traversal rules, the provider
+    table's shape, and a config round-trip in a scratch data dir. The reply
+    is the same shape sense.py's and emotion.py's selftests give."""
+    import tempfile
+
+    out = {}
+    # Key masking: never echo a whole key back.
+    assert _mask("") == ""
+    assert _mask("short") == "****"
+    assert _mask("sk-1234567890abcdef") == "sk-1...cdef"
+    out["mask"] = "ok"
+    # Loopback detection decides the privacy note every reply carries.
+    assert _is_local("http://127.0.0.1:8099") is True
+    assert _is_local("http://localhost:1234/v1") is True
+    assert _is_local("http://[::1]:8099") is True
+    assert _is_local("https://api.groq.com/openai/v1") is False
+    out["localProbe"] = "ok"
+    # The extraction allow-list: absolute paths, `..`, drive letters and
+    # mixed separators must all fall away however they are spelled.
+    keep = _safe_members(
+        ["bin/llama-server", "/etc/passwd", "../evil", "C:\\x",
+         "a/../../b", "./nested/ok", "..\\\\win"]
+    )
+    assert keep == ["bin/llama-server", "./nested/ok"], keep
+    out["archiveGuards"] = "ok"
+    # Every provider needs a base, a default model, a key env and a console
+    # link, and the platform table needs an asset for this machine.
+    for name, provider in PROVIDERS.items():
+        assert provider["base"].startswith("http"), name
+        assert provider["model"], name
+        assert provider["key_env"], name
+        assert provider["keys"].startswith("http"), name
+    assert _asset_name() is not None
+    out["providers"] = "ok"
+    # Config round-trip in a scratch dir - the real data dir is never read
+    # or written by a selftest.
+    previous = os.environ.pop("FUNCUT_VLM_DIR", None)
+    try:
+        os.environ["FUNCUT_VLM_DIR"] = tempfile.mkdtemp(prefix="vlm-selftest-")
+        entry = configure(provider="groq", api_key="sk-test-123456789")
+        assert entry["saved"] is True
+        assert entry["apiKey"] == "sk-t...6789", entry["apiKey"]  # masked, never whole
+        cfg = load_config()
+        assert cfg["provider"] == "groq"
+        assert cfg["endpoint"].startswith("https://api.groq.com")
+        assert cfg["apiKey"] == "sk-test-123456789"
+        assert cfg["model"] == PROVIDERS["groq"]["model"]
+        assert clear_config() is True
+        assert not config_path().exists()
+        # A provider-less configure with no endpoint and no history refuses
+        # rather than saving an entry that can never be reached.
+        try:
+            configure()
+        except RuntimeError:
+            out["config"] = "ok"
+        else:
+            raise AssertionError("configure() saved an endpoint-less entry")
+    finally:
+        import shutil
+
+        shutil.rmtree(os.environ["FUNCUT_VLM_DIR"], ignore_errors=True)
+        if previous is None:
+            os.environ.pop("FUNCUT_VLM_DIR", None)
+        else:
+            os.environ["FUNCUT_VLM_DIR"] = previous
+    out["selftest"] = True
+    return out
+
+
 def main():
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "cmd",
-        choices=["status", "setup", "ask", "health", "providers", "configure", "clear"],
+        choices=["status", "setup", "ask", "health", "providers", "configure", "clear", "selftest"],
     )
     ap.add_argument("--profile", default="mini", choices=list(PROFILES))
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
@@ -764,6 +835,8 @@ def main():
             }
         elif args.cmd == "clear":
             out = {"ok": True, "cleared": clear_config()}
+        elif args.cmd == "selftest":
+            out = {"ok": True, **selftest()}
         else:
             spec = json.loads(args.spec)
             text = ask(spec.get("prompt", ""), spec.get("images") or [], spec.get("endpoint"), spec.get("model"))

@@ -160,6 +160,16 @@ def _normalise(vector):
     return vector / size if size > 0.0 else vector
 
 
+def _cid(candidate):
+    """A candidate's id as an int, or None: one malformed entry must cost
+    that candidate its ranking, not the whole reply (a bare `int()` raised
+    before any score could be returned)."""
+    try:
+        return int(candidate["id"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def rerank(spec):
     """Score the candidates' frames against the query, and order by score.
 
@@ -212,7 +222,7 @@ def rerank(spec):
         best: dict[int, float] = {}
         for frame in frames:
             identifier = frame.get("id")
-            if identifier is None or identifier in best:
+            if identifier is None:
                 continue
             pixels, error = sense.extract_frame(
                 ff, frame["path"], float(frame.get("at") or 0.0), INPUT_SIDE, INPUT_SIDE
@@ -230,15 +240,22 @@ def rerank(spec):
                         "the ONNX pair is not one MobileCLIP2-S0 export"
                     ),
                 }
-            best[identifier] = float(np.dot(query_vector, vector))
+            score = float(np.dot(query_vector, vector))
+            # The caller sends two looks per clip (early and middle): a clip
+            # whose subject only appears mid-clip must be ranked on what it
+            # shows there, not discarded because the early frame was scored
+            # first. Keep each clip's best frame.
+            previous = best.get(identifier)
+            if previous is None or score > previous:
+                best[identifier] = score
     except Exception as error:  # a broken half is a fallback, not a failure
         return {"ok": False, "error": f"{type(error).__name__}: {error}", "pip": PIP_LINE}
 
-    scored = [candidate for candidate in candidates if candidate.get("id") in best]
-    kept = [candidate for candidate in candidates if candidate.get("id") not in best]
-    scored.sort(key=lambda candidate: -best[candidate["id"]])
-    order = [int(candidate["id"]) for candidate in scored]
-    order += [int(candidate["id"]) for candidate in kept]
+    scored = [candidate for candidate in candidates if _cid(candidate) in best]
+    kept = [candidate for candidate in candidates if _cid(candidate) not in best]
+    scored.sort(key=lambda candidate: -best[_cid(candidate)])
+    order = [_cid(candidate) for candidate in scored]
+    order += [_cid(candidate) for candidate in kept]
     return {
         "ok": True,
         "order": order,

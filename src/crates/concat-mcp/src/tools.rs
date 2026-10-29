@@ -1892,11 +1892,15 @@ fn audio_levels_db(mut arguments: Value) -> Result<Request, ApiError> {
                     && points.iter().enumerate().all(|(place, point)| {
                         point.as_f64().is_some_and(|number| {
                             number.is_finite()
-                                // The two x coordinates are times, not
-                                // values: a CSS timing function keeps them
-                                // in 0-1, and the engine's solver assumes
-                                // they are.
-                                && (place != 0 && place != 1 || (0.0..=1.0).contains(&number))
+                                // The two x coordinates (places 0 and 2) are
+                                // times, not values: a CSS timing function
+                                // keeps them in 0-1, and the engine's solver
+                                // assumes they are. The y coordinates
+                                // (places 1 and 3) may overshoot past 1 - a
+                                // cubic-bezier(0.34, 1.56, 0.64, 1) is a
+                                // legal spring, and clamping its y1 used to
+                                // refuse it while accepting x2 > 1.
+                                && (place != 0 && place != 2 || (0.0..=1.0).contains(&number))
                         })
                     })
             });

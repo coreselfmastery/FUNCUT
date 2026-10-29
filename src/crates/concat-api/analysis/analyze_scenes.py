@@ -18,6 +18,16 @@ import os
 import sys
 
 
+def _seconds(timecode):
+    """A FrameTimecode as float, without the deprecation warning newer
+    scenedetect prints for the old name: the warning went to stderr on
+    every run, and the analysis job shows stderr in its failure hints."""
+    seconds = getattr(timecode, "seconds", None)  # scenedetect 0.6.5+
+    if seconds is not None:
+        return float(seconds)
+    return float(timecode.get_seconds())  # the older, still-working name
+
+
 def emit(payload, code=0, output=None):
     text = json.dumps(payload, indent=2)
     if output:
@@ -82,11 +92,18 @@ def main():
         fail(f"could not analyse {args.input}: {type(error).__name__}: {error}", 4,
              "the file must be a readable video (OpenCV backend)")
 
-    # Merge runs of cuts closer than min_scene_len into their predecessors.
+    # Merge cuts closer than min_scene_len into their predecessors. The
+    # scenes a detector returns are contiguous - one's start is the last
+    # one's end - so two cuts are `min_scene_len` apart exactly when the
+    # scene between them is shorter than it. The old comparison read the
+    # group's start, which only ever merged a run of cuts all within
+    # min_scene_len of t=0: a rapid-fire cut ten seconds into a long
+    # scene never merged, its distance from the group's start being ten
+    # seconds, not the 0.2 s it sat from the previous cut.
     merged = []
     for start, end in scenes:
-        seconds = (start.get_seconds(), end.get_seconds())
-        if merged and seconds[0] - merged[-1][0] < args.min_scene_len:
+        seconds = (_seconds(start), _seconds(end))
+        if merged and seconds[1] - seconds[0] < args.min_scene_len:
             merged[-1] = (merged[-1][0], seconds[1])
         else:
             merged.append(seconds)

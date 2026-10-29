@@ -71,6 +71,13 @@ def main():
         tempo, beats = librosa.beat.beat_track(y=y, sr=sr)
         # librosa >= 0.10 returns a scalar tempo; older versions an ndarray.
         bpm = float(numpy.atleast_1d(tempo)[0])
+        # Beatless or very short input gets a NaN tempo from librosa, and
+        # json.dumps happily writes the literal NaN - which serde_json, the
+        # Rust caller, refuses to parse: the whole job then failed with
+        # "did not print JSON" instead of "no tempo in this audio". Zero
+        # BPM is the honest number for "no pulse detected".
+        if not numpy.isfinite(bpm):
+            bpm = 0.0
         beat_times = librosa.frames_to_time(beats, sr=sr)
         onset_env = librosa.onset.onset_strength(y=y, sr=sr)
         onsets = librosa.onset.onset_detect(onset_envelope=onset_env, sr=sr)
@@ -105,6 +112,11 @@ def main():
     if beats_cut or onsets_cut:
         payload["truncated"] = True
         payload["truncationHint"] = "grid kept from both ends; analyse with --offset for the middle"
+    if bpm == 0.0:
+        payload["tempoHint"] = (
+            "no steady tempo detected in this audio; use onsetsMs, or the "
+            "suggest_cuts tool, instead of a beat grid"
+        )
     emit(payload, 0, args.output)
 
 

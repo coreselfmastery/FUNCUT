@@ -52,7 +52,7 @@ parseable.
 | `rhythm` | BPM, energy-onset curve and beat-aligned cut times spread across the whole piece, with no Python extras. |
 | `vlm` | `status` / `setup` for the local vision model. |
 | `emotion` | The emotional read of the voiceover: per-line emotion, act, easing, colour, duck, vocabulary + the arc; `brand` / `gate` / `verify` / `template` beside it. |
-| `selftest` | Generate a synthetic PNG, decode it, measure it, and exercise the model-reply, loudness and cut-spread parsers — no fixtures, no ffmpeg. |
+| `selftest` | Generate a synthetic PNG, decode it, measure it, and exercise the model-reply, loudness and cut-spread parsers — no fixtures; the beat path (onset curve, click-track BPM) runs when an ffmpeg is on PATH. `vlm.py selftest` and `emotion.py selftest` check the critic and the reader the same way, and CI runs all three. |
 
 Example:
 

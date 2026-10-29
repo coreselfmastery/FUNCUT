@@ -47,8 +47,11 @@ END = re.compile(r"silence_end:\s*([-0-9.]+)")
 def spans_from_ffmpeg(path, threshold_db, min_seconds):
     """FFmpeg's silencedetect filter, when the ffmpeg binary is on PATH."""
     command = [
-        shutil.which("ffmpeg"), "-hide_banner", "-nostdin",
+        shutil.which("ffmpeg"), "-hide_banner", "-nostdin", "-nostats",
         "-i", path,
+        # -vn: silencedetect reads the audio only, and decoding the video
+        # track of an hour-long file cost minutes of CPU for nothing.
+        "-vn",
         "-af", "silencedetect=noise=-%gdB:d=%g" % (threshold_db, min_seconds),
         "-f", "null", "-",
     ]
@@ -86,8 +89,16 @@ def spans_from_librosa(path, threshold_db, min_seconds):
         return [], 0.0
     hop = 256
     rms = librosa.feature.rms(y=y, frame_length=1024, hop_length=hop)[0]
+    # Absolute full-scale floor, matching ffmpeg's noise=-NdB: the old
+    # relative floor (rms < floor * rms.max()) answered a different
+    # question - the same file gave different spans depending on whether
+    # an ffmpeg binary happened to be on PATH. librosa loads audio in
+    # [-1, 1], so dBFS below full scale is the same arithmetic on both
+    # paths. RMS sits under a window's peak, so this floor is slightly
+    # stricter than ffmpeg's per-sample one; the method field says which
+    # path answered.
     floor = 10.0 ** (-threshold_db / 20.0)
-    quiet = rms < floor * max(rms.max(), 1e-6)
+    quiet = rms < floor
     duration = float(y.size) / float(sr)
     spans = []
     start = None

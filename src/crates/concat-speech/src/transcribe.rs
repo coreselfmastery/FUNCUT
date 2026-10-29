@@ -642,10 +642,14 @@ impl Transcriber {
                 let start = segment.start_timestamp() as f64 / 100.0;
                 let end = segment.end_timestamp() as f64 / 100.0;
                 let text = segment.to_str_lossy().ok()?.trim().to_owned();
-                let words = words_of(&segment, start, end);
-                keep_segment(start, end, text).map(|mut segment| {
-                    segment.words = words;
-                    segment
+                // `words_of` clamps its word timestamps into the segment, and
+                // a clamp needs end >= start: measure the words AFTER the
+                // degenerate spans are gone. A hallucinated segment whose
+                // end falls before its start used to reach the clamp first
+                // and panic it, taking the whole transcription job down.
+                keep_segment(start, end, text).map(|mut seg| {
+                    seg.words = words_of(&segment, start, end);
+                    seg
                 })
             })
             .collect())
@@ -709,6 +713,15 @@ fn words_of(segment: &whisper_rs::WhisperSegment<'_>, start: f64, end: f64) -> V
 fn group_words(tokens: &[(String, i64, i64)], start: f64, end: f64) -> Vec<Word> {
     let mut words = Vec::new();
     let mut current: Option<(String, f64, f64)> = None;
+    // A clamp needs low <= high: a hallucinated segment whose end fell
+    // before its start must cost the segment, not panic the job - and this
+    // must hold even if a future caller measures the words before the
+    // degenerate spans are filtered again.
+    let (lo, hi) = if start <= end {
+        (start, end)
+    } else {
+        (end, start)
+    };
     for (text, t0, t1) in tokens {
         // Stage directions arrive space-led too (" [BLANK_AUDIO]"), so the
         // bracket check reads the trimmed text.
@@ -716,8 +729,8 @@ fn group_words(tokens: &[(String, i64, i64)], start: f64, end: f64) -> Vec<Word>
         if stage.is_empty() || (stage.starts_with('[') && stage.ends_with(']')) {
             continue;
         }
-        let t0 = (*t0 as f64 / 100.0).clamp(start, end);
-        let t1 = (*t1 as f64 / 100.0).clamp(start, end);
+        let t0 = (*t0 as f64 / 100.0).clamp(lo, hi);
+        let t1 = (*t1 as f64 / 100.0).clamp(lo, hi);
         let opens_word = text.starts_with(' ') || current.is_none();
         if let Some((closed, word_start, word_end)) = current.take_if(|_| opens_word) {
             push_word(&mut words, closed, word_start, word_end);
@@ -764,6 +777,30 @@ mod tests {
         assert!(keep_segment(2.5, 2.5, "degenerate".to_owned()).is_none());
         assert!(keep_segment(3.0, 4.0, "[BLANK_AUDIO]".to_owned()).is_none());
         assert!(keep_segment(3.0, 4.0, String::new()).is_none());
+    }
+
+    /// A hallucinated segment whose end falls before its start: the words
+    /// are clamped inside a low..=high range that exists, instead of the
+    /// t0.clamp(start, end) that panicked (min > max) and took the whole
+    /// transcription job down over one bad segment.
+    #[test]
+    fn an_end_before_its_start_clamps_instead_of_panicking() {
+        let tokens = vec![
+            (" backwards".to_owned(), 500, 200),
+            (" span".to_owned(), 200, 100),
+        ];
+        let words = group_words(&tokens, 5.0, 3.0);
+        // The swap keeps every timestamp inside 3.0..=5.0 - a wrong but
+        // bounded answer, not a panic.
+        for word in &words {
+            assert!((3.0..=5.0).contains(&word.start), "{}", word.start);
+            assert!((3.0..=5.0).contains(&word.end), "{}", word.end);
+            assert!(word.end >= word.start);
+        }
+        // The empty and single-token edges clamp quietly too.
+        assert!(group_words(&[], 2.0, 1.0).is_empty());
+        let one = group_words(&[(" alone".to_owned(), 0, 50)], 1.0, 0.0);
+        assert!(one.is_empty() || one[0].end <= 1.0);
     }
 
     /// Words as whisper really emits them: space-led tokens that open

@@ -473,6 +473,23 @@ def _pick_cuts(candidates, duration, wanted, min_gap):
     return chosen
 
 
+def _onset_curve(energies):
+    """The positive short-time energy derivative, as an onset function.
+
+    The first window has no predecessor: the wrap-around subtraction a
+    plain `energies[i] - energies[i - 1]` computes at i == 0 reads the
+    LAST window (Python's negative index), so any piece that ended louder
+    than it began opened with a phantom onset at t=0 - which then shifted
+    the threshold, the autocorrelation and the first suggested cut.
+    """
+    if not energies:
+        return []
+    onset = [0.0]
+    for i in range(1, len(energies)):
+        onset.append(max(0.0, energies[i] - energies[i - 1]))
+    return onset
+
+
 def rhythm(ff, path, cuts=12, min_gap=0.35, bpm_hint=None):
     """Beat grid and suggested cut times from the soundtrack, pure stdlib.
 
@@ -502,7 +519,7 @@ def rhythm(ff, path, cuts=12, min_gap=0.35, bpm_hint=None):
         return None
     peak = max(energies) or 1e-9
     energies = [e / peak for e in energies]
-    onset = [max(0.0, energies[i] - energies[i - 1]) for i in range(len(energies))]
+    onset = _onset_curve(energies)
     mean = sum(onset) / len(onset)
     var = sum((v - mean) ** 2 for v in onset) / len(onset)
     threshold = mean + 0.6 * math.sqrt(var)
@@ -684,7 +701,12 @@ def _hamming(a, b):
 
 def _fmt_time(t):
     t = max(0.0, float(t))
-    return f"{int(t // 60):02d}:{t % 60:04.1f}"
+    minutes, seconds = divmod(t, 60.0)
+    if seconds >= 59.95:
+        # 59.97 formats as "60.0", borrowing from the minute instead of
+        # printing a timestamp no clock ever shows.
+        minutes, seconds = minutes + 1.0, 0.0
+    return f"{int(minutes):02d}:{seconds:04.1f}"
 
 
 def build_sheet(spec):
@@ -702,11 +724,17 @@ def build_sheet(spec):
     )
     ff, fp = _tools(spec) if needs_ffmpeg else ("", "")
 
+    probe_failed = False
     if spec.get("path") and not sources:
         path = spec["path"]
         samples = max(2, min(24, int(spec.get("samples", 12))))
         duration = probe_duration(fp, path)
         if duration <= 0:
+            # The fallback still samples SOMETHING - but the whole-file
+            # arc an agent believes it watched is not what it got, so the
+            # sheet has to say so instead of presenting the first few
+            # seconds as the whole cut.
+            probe_failed = True
             duration = max(1.0, samples * 0.5)
         sources = [
             {"path": path, "at": round(duration * (i + 0.5) / samples, 3),
@@ -811,6 +839,13 @@ def build_sheet(spec):
         b["cutEnergy"] = diffs[-1]
 
     notes = []
+    if probe_failed:
+        notes.append(
+            f"The duration probe failed, so these {len(metas)} samples cover only the "
+            f"first {duration:.1f} s of the file, NOT the whole cut. Fix the probe (a "
+            "corrupt header, a missing ffprobe) or sample explicit times[] before "
+            "treating this sheet as the whole piece."
+        )
     black_shots = [m["index"] for m in metas if m["blackFraction"] > 0.55]
     bars = [m["index"] for m in metas if m["barRatio"] > 0.6]
     flat = [m["index"] for m in metas if m["contrast"] < 18]
@@ -1702,6 +1737,52 @@ def main():
             assert _string_list(["a", "b", ""]) == ["a", "b"]
             assert _string_list(7) == []
             assert _string_list(None) == []
+            # The onset curve's first window has no predecessor: the old
+            # wrap-around subtraction planted a phantom onset at t=0 for
+            # every piece that ended louder than it began.
+            assert _onset_curve([]) == []
+            assert _onset_curve([0.9]) == [0.0]
+            assert _onset_curve([0.2, 0.9, 0.1]) == [0.0, 0.7, 0.0]
+            # Integers: 0.3 - 0.2 is 0.09999...8 in IEEE, and the curve
+            # must not be tested against arithmetic the floats cannot do.
+            assert _onset_curve([1, 2, 4, 2]) == [0.0, 1.0, 2.0, 0.0]
+            # 59.97 is one second to midnight, not "00:60.0".
+            assert _fmt_time(59.97) == "01:00.0", _fmt_time(59.97)
+            assert _fmt_time(119.98) == "02:00.0", _fmt_time(119.98)
+            assert _fmt_time(0.0) == "00:00.0"
+            # An end-to-end of the beat path when a decoder exists: a click
+            # track at 120 BPM must read ~120 BPM with cuts on the beats,
+            # never in the silence between them.
+            if shutil.which("ffmpeg"):
+                import struct as _struct
+                import tempfile as _tempfile
+                import wave as _wave
+
+                with _tempfile.TemporaryDirectory() as tmp:
+                    click = os.path.join(tmp, "click.wav")
+                    rate = 8000
+                    with _wave.open(click, "w") as handle:
+                        handle.setnchannels(1)
+                        handle.setsampwidth(2)
+                        handle.setframerate(rate)
+                        frames = bytearray()
+                        for i in range(rate * 8):  # eight seconds
+                            phase = (i / rate) % 0.5
+                            amp = (
+                                int(20000 * max(0.0, 1.0 - phase / 0.03))
+                                if phase < 0.03
+                                else 100
+                            )
+                            frames += _struct.pack("<h", amp)
+                        handle.writeframes(bytes(frames))
+                    ff_bin, _ = _tools({"autoSetup": False})
+                    beats = rhythm(ff_bin, click, cuts=8)
+                    assert beats and beats["bpm"], beats
+                    assert 110.0 <= beats["bpm"] <= 130.0, beats
+                    assert beats["cutTimes"], beats
+                    for t in beats["cutTimes"]:
+                        assert min(t % 0.5, 0.5 - t % 0.5) < 0.1, beats
+                out["beatTest"] = "ok"
             # The emotion proxy is the seam between the MCP tool and the
             # reader: prove the wiring here too, not just in emotion.py's
             # own selftest (both run in CI, but only this one proves the

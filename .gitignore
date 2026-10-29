@@ -59,6 +59,12 @@ desktop.ini
 # machine-specific.
 /vendor/
 /ffmpeg-dev/
+# The archives scripts/ci/fetch.sh downloads for a local build -
+# ffmpeg.tar.xz, onnxruntime.tgz, sherpa.tar.bz2 - are a warm machine's
+# cache: kept so a rerun downloads nothing, never part of the tree.
+/ffmpeg.tar.xz
+/onnxruntime.tgz
+/sherpa.tar.bz2
 # FFmpeg built for a phone by src/scripts/ffmpeg-mobile.sh: sources,
 # build trees and the installed prefixes, all machine-built.
 /src/vendor/

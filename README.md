@@ -6,11 +6,23 @@
 <h3 align="center">The free, open-source CapCut replacement for Linux.</h3>
 
 > [!NOTE]
-> **FUNCUT** - this repository is that editor tuned for small, low-memory
+> **FUNCUT** — this repository is that editor tuned for small, low-memory
 > Linux laptops (4-6 GB of RAM): every cache sizes itself to the machine it
-> is on, and `./install-linux.sh` puts it on one in a single command. The
-> notes for a small machine - install, builds in 4 GB, editing long videos -
-> live in [docs/FUNCUT.md](docs/FUNCUT.md).
+> is on, and `./install-linux.sh` puts it on one in a single command. On top
+> of the editor it ships an agent stack: a built-in MCP server with **87
+> tools**, the agent's senses (scene cuts, beat grids, dead air,
+> transcription, TTS, loudness), perception (contact-sheet images a model
+> can actually see), an emotion-driven edit pipeline with a validated brand
+> kit, a motion-graphics engine, a director skill that runs an 11-phase
+> measured pipeline, the vendored maestro design judgment, and a Forge page
+> in the editor that starts a whole faceless video with one click. Stock
+> (937,957 clips), music (1,191 CC0 tracks), sounds (430) and stickers
+> (149,758) are all searched locally and fetched per use. The complete
+> verified inventory — every tool, page, engine and model, read from the
+> source — is [docs/FEATURES.md](docs/FEATURES.md); the fork's change
+> ledger is [docs/FUNCUT-CHANGES.md](docs/FUNCUT-CHANGES.md), the
+> small-machine notes [docs/FUNCUT.md](docs/FUNCUT.md), and the agent
+> guide [docs/MCP.md](docs/MCP.md).
 
 <div align="center">
 

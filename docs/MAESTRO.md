@@ -46,7 +46,7 @@ FUNCUT ships three skills. They do not overlap; they stack:
 
 | Skill | What it owns | Format |
 | --- | --- | --- |
-| `funcut-director` | The pipeline: measure, plan, execute, verify — every MCP tool, the nine phases, the hard floors | Contract + router (`SKILL.md`) with playbooks in `prompts/` |
+| `funcut-director` | The pipeline: measure, plan, execute, verify — every MCP tool, the phases (0–8 plus the 1b/5b sub-phases), the hard floors | Contract + router (`SKILL.md`) with playbooks in `prompts/` |
 | `motion` | The editor's own motion-comp engine: presets, nodes, baking, overlays | `SKILL.md` (see also `docs/MOTION.md`) |
 | `maestro` | Judgment: what good design, motion, film and sound look like — plus escape-hatch engines when a piece needs code | 28 modules + vendored corpora |
 

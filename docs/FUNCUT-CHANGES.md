@@ -7,12 +7,17 @@ marked as an estimate; nothing is a benchmark this fork ran on your machine,
 because the point of the changes is that the *machine decides* now.
 
 Three kinds of change live here: **memory sizing** (the caches that had one
-fixed size now scale to the machine) and **eight new features** (the OpenVid
+fixed size now scale to the machine) and the new features - the OpenVid
 stock library, the background-music library, pause removal for
 voiceovers, the built-in CC0 sound library, the Wyzowl sound effects
-that grew it to 430, the hosted free-tier vision critic with a stronger
-measured baseline, the maestro judgment skill for the AI director, and
-the emotion-driven edit - the voiceover read that now drives every layer).
+that grew it to 430, the sticker library, the hosted free-tier vision
+critic with a stronger measured baseline, the analysis and speech layer
+on the API, the perception tools, the maestro judgment skill for the AI
+director, the emotion-driven edit - the voiceover read that now drives
+every layer - the funcut-director skill, the motion layer and its skill,
+and the Forge integration. The complete verified inventory of what this
+fork ships is [`docs/FEATURES.md`](FEATURES.md); section 10a of this
+ledger maps the capability groups that grew up around the emotion work.
 Everything else in the
 program is upstream's own, including
 its existing small-machine machinery: proxies for large files, preview quality
@@ -68,8 +73,10 @@ The library pane grew a fourth stock page beside Media and Audio:
 Face (the Pixabay, Pexels and CelebV shelves cut to 512x512, and the WebVid
 shelf of 720p and 1080p landscape footage, each clip with a caption and
 quality scores beside it), searched in a local index, fetched one clip at
-a time. The same library is scriptable: six `openvid.*` tools on the MCP
-server and JSON-RPC API, so an agent can search by caption and quality
+a time. The same library is scriptable: seven `openvid.*` tools on the MCP
+server and JSON-RPC API (the seventh, `openvid_search_batch`, shops a
+whole plan's B-roll list in one round trip), so an agent can search by
+caption and quality
 numbers, fetch and place clips without a window.
 
 **How it stays small.** The dataset is 7.5 TB; what this machine holds is
@@ -388,7 +395,7 @@ over a voiceover.
 
 The AI director got a second shelf to read: **maestro**
 (https://github.com/leobbaroni/maestro, MIT, vendored verbatim at
-`.claude/skills/maestro/` - 762 files, its own documented project-skill
+`.claude/skills/maestro/` - 764 files at this count, its own documented project-skill
 install path) - 28 distilled reference modules over ten vendored corpora:
 a 157-card product-shot vocabulary, engine-agnostic motion principles, a
 sound-design and beat-sync method, art-direction catalogs, critique gates.
@@ -438,6 +445,55 @@ and after export, `emotion {action: "verify"}` aligns the edit's word
 timings against the re-transcribed render - matchRate, drift and duplicated
 words - proving the speech itself survived the encode. The full map is
 `docs/EMOTION.md`.
+
+## 10a. The feature: the agent's senses and its director's brain
+
+Six capability groups landed around the emotion work and belong in this
+ledger (they were verified from source for the inventory in
+`docs/FEATURES.md`, which lists them with their counts):
+
+- **The analysis layer.** `analyze_scenes` (PySceneDetect, three
+  detectors), `analyze_beats` (librosa: bpm, beats, downbeats, onsets),
+  `analyze_silence` (ffmpeg silencedetect or librosa fallback), all run as
+  jobs waited on with `analysis_wait`, the scripts embedded in the binary
+  and materialized on first use - a missing wheel says the exact pip line.
+  `suggest_cuts` covers rhythm with **no Python extras** (ffmpeg-only BPM +
+  beat-aligned cut times), and `measure_loudness` puts EBU R128 (integrated
+  LUFS, true peak, error against the platform target) on the API - the only
+  proof a loudness target was met.
+- **Speech on the API.** `transcribe` (Whisper, word timestamps, language
+  hints), `tts_generate` (all three voice families, delivery presets,
+  speed/pauses/steps), `models_list` / `models_download` - headless model
+  fetching as jobs.
+- **Perception.** `preview_frame`, `stock_contact_sheet` (one labelled
+  image of B-roll candidates with pixel metrics, crop hints and
+  ready-to-use 9:16 `clip_transform` offsets), `watch_render` (the whole
+  cut as one contact sheet plus measured facts: black frames, letterbox
+  bars, flat/duplicate shots, static transitions, audio envelope, R128),
+  `motion_frame` - all return MCP image content so the model actually
+  looks. `craft_critique` scores six axes on three honest rungs
+  (`docs/VLM.md`) and journals every pass to `craft-history.json` with
+  pass/delta/trend. `creative_brief` persists the why (and the brandKit)
+  as `creative-brief.json`.
+- **The funcut-director skill.** `.claude/skills/funcut-director/`: the
+  0-8 phase pipeline with the 1b/5b sub-phases, the 13 hard floors, the 9
+  hard rules, the v2 edit-plan schema (`templates/edit_plan.schema.json`)
+  and the 18 prompt playbooks under `prompts/`. `plan_validate` enforces
+  the schema's cross-field constraints **and the creative gate**
+  (`creativeReady`, `creativeBlockers`, `craftScore`) before edits.
+- **The motion layer and its skill.** `concat-motion` (the Geneva sidecar,
+  12 presets, the authoring format, `motion_overlay`'s honest alpha path -
+  `docs/MOTION.md`) plus the `motion` skill that teaches an agent to
+  design with it, and the `concat-motion-agent` CLI.
+- **The Forge integration.** The Forge page in the editor (library page 12:
+  script box, voice/niche/mood, Start - the harness streams into the page
+  and its edits land as undoable commands), `.forge/mcp.toml`, seven
+  provider key fields, `FUNCUT_FORGE_MODEL`, overnight queues -
+  `docs/forge/FORGE.md`, `ARCHITECTURE.md`, `RESEARCH.md`.
+- **The sticker library** (also counted under the libraries): MAGICK
+  145,193 + OpenMoji 4,565, five `magick` tools, the Stickers page -
+  `docs/MAGICK.md`, and the CC BY-NC line the director skill enforces as
+  floor N.
 
 ## 11. Everything else: verified, not changed
 

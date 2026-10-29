@@ -100,7 +100,7 @@ director's skill routes into it phase by phase (its §6; the full map is
 Ask for a whole faceless video, end to end — the skill drives the pipeline:
 
 ```bash
-forge run "Using the funcut-director skill, make a 30-second faceless video about why the sea is salty: script from the hook rules, Kokoro voice 8 narration, dead-air removed, B-roll from OpenVid, one SFX per cut on the beat, readable segment-timed bold captions, teal-orange grade, verify with preview_frame, then export."
+forge run "Using the funcut-director skill, make a 30-second faceless video about why the sea is salty: script from the hook rules, Kokoro voice 8 narration, dead-air removed, B-roll from OpenVid, one SFX per cut on the beat, readable segment-timed bold captions, teal-orange grade, verify with watch_render and craft_critique, then export."
 ```
 
 Or do it from the editor: the **Forge** page (page 12, beside Stickers) — paste the script, pick a

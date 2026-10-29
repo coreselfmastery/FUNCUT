@@ -185,9 +185,11 @@ height?, rateNum?, rateDen?, codec?, tenBit?, colorRange?, hdr?}` ·
 ## Perception and the creative loop
 
 `creative_brief {path, action: get|set, …}` · `local_vlm {action: status|setup,
-profile?}` · `stock_contact_sheet {query|ids|paths, limit?, cols?, rank?,
-brief?}` · `watch_render {path|project, samples?, times?, cols?}` ·
-`craft_critique {sheet|pngB64, brief?}`
+providers|configure|clear, profile?}` · `stock_contact_sheet {query|ids|paths,
+limit?, cols?, rank?, brief?}` · `watch_render {path|project, samples?, times?,
+cols?}` · `craft_critique {sheet|pngB64, brief?}` · `emotion {action:
+extract|brand|gate|verify|template, project?}` · `measure_loudness {path,
+targetLufs?}` · `suggest_cuts {path, cuts?, minGap?, bpm?}`
 
 - The loop that uses them is the skill's Phase 0 and §4 (and
   `prompts/quality_loop.md`): brief first, plan, `stock_contact_sheet` to SEE
@@ -198,3 +200,14 @@ brief?}` · `watch_render {path|project, samples?, times?, cols?}` ·
   fetched. `local_vlm` reports whether the local vision critic is installed
   (`setup` fetches it, no system install); without it the ranking and the
   critique degrade to captions and scores.
+- `emotion` is Phase 1b's reader and Phase 4's gate (see
+  `prompts/creative_direction.md` and the placement-gate floor E): `extract`
+  on the transcript, `gate` on stock candidates before anything is placed,
+  `brand`/`template` for the brandKit, `verify` in Phase 8 on the export.
+  Give it `project` and the brief and brandKit load themselves.
+- `measure_loudness` is the only proof a loudness target was met — EBU R128
+  integrated LUFS, true peak and the error against `targetLufs` (−14
+  short-form default, −23 broadcast). `export_wait` reports no loudness.
+- `suggest_cuts` is Phase 1's no-Python rhythm path: BPM estimate and
+  beat-aligned `cutTimes` from any file with an `ffmpeg` binary — use it
+  when the librosa extras are not installed.

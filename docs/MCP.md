@@ -337,9 +337,10 @@ Tools are named for what they do, and their argument schemas are generated from 
 | Speech | `transcribe`, `tts_generate`, `models_list`, `models_download` |
 | Anything else | `edit_apply` (any edit command, or a batch of them as one undo step), `edit_undo`, `edit_redo` |
 | Templates | `template_list`, `template_instantiate` |
-| Motion design | `motion_presets`, `motion_inspect`, `motion_frame`, `motion_bake`, `captions_animate` |
+| Motion design | `motion_presets`, `motion_inspect`, `motion_frame`, `motion_bake`, `motion_overlay`, `captions_animate` |
 | Export | `export_start`, `export_status`, `export_wait` (with progress), `export_cancel` |
 | Looking | `preview_frame` (the composited frame as an image) |
+| Perception and the creative loop | `creative_brief`, `stock_contact_sheet`, `watch_render`, `craft_critique`, `suggest_cuts`, `measure_loudness`, `local_vlm`, `emotion` |
 
 `plan_validate` takes the edit-plan object defined by the Director skill's
 canonical schema and checks its structure, segment continuity, visual

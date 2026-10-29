@@ -127,7 +127,15 @@ impl Agent {
 fn an_agent_edits_previews_and_exports_a_project_headless() {
     let scratch = tempfile::tempdir().expect("scratch");
     let home = scratch.path();
-    let mut agent = Agent::spawn(home, "headless", &[]);
+    // The headless server works where it is told: the scratch home is
+    // named in CONCAT_MCP_ROOTS, as an operator with a work area would
+    // name theirs - the default is the directory the server starts in,
+    // which is not where this test's projects live.
+    let mut agent = Agent::spawn(
+        home,
+        "headless",
+        &[("CONCAT_MCP_ROOTS", home.to_string_lossy().into_owned())],
+    );
 
     let (_, welcome) = agent.ask(
         "initialize",

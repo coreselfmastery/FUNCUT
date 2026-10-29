@@ -184,7 +184,7 @@ pub struct Headless {
 impl Headless {
     /// An API over this machine's app directories, writing under the
     /// roots `CONCAT_MCP_ROOTS` names (the platform's path-list syntax),
-    /// or the user's home.
+    /// or the directory the server was started in.
     pub fn start() -> Result<Headless, String> {
         Ok(Headless::with_api(Api::new(Arc::new(|_| {}))?))
     }

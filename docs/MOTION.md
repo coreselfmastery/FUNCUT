@@ -149,7 +149,7 @@ a dip between them and a bed of music under the lot.
 
 ```rust
 use concat_motion::authoring::Op;
-use concat_motion::comp::Asset;
+use concat_motion::comp::{Asset, Blend};
 use concat_motion::{geneva::Geneva, presets, sequence};
 
 let mut reel = sequence::Sequence::new(1920, 1080, 30.0);
@@ -159,6 +159,16 @@ reel.asset("plate", Asset { src: "assets/plate.jpg".into(), kind: None });
 reel.push(
     sequence::Scene::new(presets::build("funcut.lower-third.glass").expect("a preset"))
         .over("plate", 0.05)                       // a still underneath, drifting 5%
+        .layer(                                      // and one more, moving on its own clock
+            sequence::SceneLayer::new("plate")
+                .panning(-0.03, 0.0)
+                .fading(0.5, 0.8))
+        .layer(                                      // over the comp: a screen-blended light leak
+            sequence::SceneLayer::new("leak")
+                .blending(Blend::Screen)
+                .at_offset(-0.25, -0.2)
+                .scaled(0.8)
+                .above())
         .holding(3.6)                              // shorter than the comp: it runs shorter
         .with_ops(vec![Op::SetSlot { slot: "Name".into(), value: "Grace Hopper".into() }]),
 );
@@ -171,6 +181,12 @@ plan.frame(&geneva, cache, 12.4, std::path::Path::new("check.jpg"))?;    // one 
 plan.render(&geneva, cache, std::path::Path::new("reel.mp4"))?;          // the whole thing
 ```
 
+A scene's `layers` are the multi-layer scene: plates under the comp in the order they are added,
+`above()` overlays over it, each a [`sequence::SceneLayer`] with its own drift (`zoom`, `pan`),
+position (`offset`, `scale`, `fit`), mixing (`blend`, `opacity`, `fade_in`/`fade_out`) and timing
+(`start`, `hold`). `over(asset, zoom)` is and remains one plain plate; a scene may stack as many
+layers as it has pictures for.
+
 What `plan` guarantees:
 
 - **Every scene is validated and its operations applied first.** A shot that does not make sense stops
@@ -178,11 +194,15 @@ What `plan` guarantees:
 - **A scene's `hold` retimes the comp, it does not cut it off** — the comp's own length shrinks, so a
   track keyed as a fraction of a span is still inside its span.
 - **Layer ids are prefixed per scene**, so two scenes using the same template never collide, and asset
-  ids are copied per scene so one scene can hold a different plate of the same name.
+  ids are copied per scene so one scene can hold a different plate of the same name. A scene's own
+  layers are numbered on their side of the comp: `s0.plate`, `s0.plate2`, `s0.overlay`,
+  `s0.overlay2`.
+- **A cover-fitted layer that pans or sits off-centre is scaled up by its own travel**, so the
+  frame's edge never shows behind it; a `scale` under one is a deliberate shape and keeps its edges.
 - **One curtain** over everything, opaque at the ends and dipping at each cut, with times forced to
   strictly increase.
-- **The output is one timeline**: a scene's own @keyframes, the plates, the curtain and the audio beds,
-  rendered in a single pass because they are one document.
+- **The output is one timeline**: a scene's own @keyframes, its plates and overlays, the curtain and
+  the audio beds, rendered in a single pass because they are one document.
 
 `Plan::write` copies every asset into the render directory, so the folder renders on a machine that has
 nothing else; `Plan::render` writes it and calls the engine.
@@ -335,7 +355,9 @@ writes the storyboard, `reel` renders it. The transcript is `[["Make", 0.2, 0.55
 or objects with `text`/`start`/`end`.
 
 `reel` is the whole-sequence verb: a storyboard of scenes (a preset id or a comp file each, with
-operations, a plate and a hold), shared assets, audio beds and a curtain, in one JSON document.
+operations, layers and a hold), shared assets, audio beds and a curtain, in one JSON document.
+It is the library's own contract (`concat_motion::storyboard`) - the same document the MCP
+`motion_reel` tool takes, so a reel that renders one way renders the other way too.
 
 `bake --encode out.mp4` renders the staged timeline once more into one video file the timeline
 plays like any other footage - `.webm` asks for VP9, `.mov` for ProRes 4444, anything else H.264.
@@ -345,15 +367,61 @@ overlay's truth stays in the bake.
 
 ```json
 { "width": 1920, "height": 1080, "fps": 30,
-  "assets": { "plate": "assets/plate.jpg", "score": "assets/score.wav" },
+  "assets": { "back": "assets/back.jpg", "mid": "assets/mid.png", "leak": "assets/leak.png",
+              "score": "assets/score.wav" },
   "scenes": [
-    { "preset": "funcut.chapter.chip", "hold": 3.0, "plate": "plate", "zoom": 0.04,
+    { "preset": "funcut.chapter.chip", "hold": 3.0,
+      "layers": [
+        { "asset": "back", "zoom": 0.04 },
+        { "asset": "mid", "pan": [-0.03, 0.0], "fade_in": 0.5, "fade_out": 0.8 },
+        { "asset": "leak", "blend": "screen", "scale": 0.8, "offset": [-0.25, -0.2],
+          "fade_in": 0.4, "fade_out": 0.4, "above": true }
+      ],
       "ops": [ { "op": "set-slot", "slot": "Chapter", "value": "01 / INTRO" } ] },
-    { "comp": "comps/mine.json", "at": 3.0 }
+    { "comp": "comps/mine.json", "at": 3.0, "plate": "back", "zoom": 0.03 }
   ],
   "audio": [ { "asset": "score", "gain_db": -2.0 } ],
   "curtain": { "color": "#05060aff", "open": 0.6, "close": 0.8, "dip": 0.2, "depth": 1.0 } }
 ```
+
+### Multi-layer scenes
+
+A scene's `layers` stack **bottom first**: plates under the comp, and - with `"above": true` -
+grain, vignettes, light leaks and foreground cards over it. The short form (`"plate": "back",
+"zoom": 0.04`) is still one layer under the comp and nothing else, exactly what it always was.
+
+Every layer moves on its own clock, and that is the whole point: a background drifting four
+percent while a foreground card slides two is parallax, and parallax is what makes a stack of
+stills read as a scene rather than a collage.
+
+| Field | What it does | The read |
+| --- | --- | --- |
+| `asset` | an asset id from the storyboard's `assets` | required |
+| `zoom` | growth over the span, as a scale delta | `0.04` is life without a zoom |
+| `pan` | drift over the span, `[x, y]` fractions of the frame | `-0.03` slides left three percent; a cover layer grows by its own travel so the edge never shows |
+| `offset` | static offset from the centre, `[x, y]` fractions | `-0.25, -0.2` sits up and left, like a light leak |
+| `scale` | base scale multiplier | under `1` shows the frame's edges on purpose - a card, not a plate |
+| `fit` | `cover` (default), `contain`, `fill`, `none` | `cover` is the plate; anything else is a shape |
+| `blend` | `normal` (default), `multiply`, `screen`, `overlay`, `darken`, `lighten`, `difference`, `soft-light`, `add` | `screen`/`add` turn a soft radial picture into a light leak; `multiply` shades one into a vignette |
+| `opacity` | steady opacity, 0 to 1 | `0.08` grain over everything |
+| `fade_in` / `fade_out` | fade up and down, seconds (`fadeIn`/`fadeOut` also parse) | held to half the span so the two never cross |
+| `start` / `hold` | its own timing, from the scene's start | a foreground that arrives at `1.2` lands over a scene already running; a layer that outlives its scene is cut to the scene's end |
+| `above` | paint over the comp rather than under it | grain, vignettes, light leaks, silhouettes - still under the curtain and under any scene that overlaps this one |
+
+The layers a scene paints, bottom to top: its plates in order, the comp, its overlays in order,
+the curtain. A layer naming an asset the storyboard does not carry stops the plan and names the
+scene - a missing picture is a mistake to hear about, not one to render around.
+
+The recipes worth reaching for first:
+
+- **Parallax depth** - `back` at `zoom: 0.04`, `mid` at `pan: [-0.03, 0]` with a slow fade in
+  and out, the comp over both. The differing drift is the depth.
+- **A light leak** - a soft radial picture, `blend: "screen"`, `scale: 0.8`, `offset` into a
+  corner, `above: true`, fading in and out over half the scene.
+- **Film grain** - a grain tile at `opacity: 0.08`, `above: true`, running the whole scene.
+- **A vignette** - a dark radial picture, `blend: "multiply"`, `above: true`.
+- **A foreground card** - `fit: "contain"` or a `scale` under one, `start: 1.2`, `fade_in: 0.3`:
+  it arrives over a scene already running and leaves before the cut.
 
 Operations: `set-slot`, `set-text`, `set-words`, `set-markup`, `move`, `retime`, `set-track`, `set-track-points`,
 `fade-in`, `slide-to`, `pop`, `add-group`, `add-rect`, `add-text`, `delete`, `set-blend`,

@@ -713,3 +713,94 @@ nothing ships inside the app or loads at startup. The shaders use only
 the prelude's helpers plus plain arithmetic, so they run anywhere the
 existing packages run, GPU or not (the `xfade` fallbacks cover the
 rest), and they were written for the small machines this fork targets.
+
+## 16. The feature: multi-layer scenes, and the reel on the MCP
+
+A scene in a sequence could hold one plate - a still under the comp,
+drifting a few percent. That is the CapCut background, and it is one
+layer deep. This change makes a scene as deep as it has pictures for:
+a scene's `layers` stack bottom first, plates under the comp and - with
+`above` - grain, vignettes, light leaks and foreground cards over it,
+each on its own clock.
+
+**What a layer is.** `SceneLayer` in `concat-motion/src/sequence.rs`:
+an asset id, a drift (`zoom`, the scale delta the plate always had, and
+`pan`, a drift across the frame as fractions of its width and height),
+a position (`offset` from the centre, `scale`, `fit`), a mix
+(`blend` - `screen` turns a soft radial picture into a light leak,
+`multiply` shades one into a vignette; `opacity`; `fade_in`/`fade_out`)
+and its own timing (`start`, `hold`). Two rules hold themselves so a
+layer cannot go wrong quietly: a cover-fitted layer that pans or sits
+off-centre is scaled up by its own travel, so the frame's edge never
+shows behind it (a `scale` under one is a deliberate shape and keeps
+its edges), and each fade is held to half the span with the hold key
+dropped when the two would land on the same time, so the engine never
+meets a track that runs backwards.
+
+**The timeline it becomes.** A scene paints, bottom to top: its plates
+in order (`s0.plate`, `s0.plate2`, ...), its comp, its overlays in
+order (`s0.overlay`, `s0.overlay2`, ...), the curtain. A layer naming
+an asset the sequence does not carry stops the plan and names the
+scene - the old plate's silent skip is gone; a storyboard with a
+missing picture is a mistake to hear about. A layer that starts after
+its scene ends is dropped with a warning, and one that outlives its
+scene is cut to the scene's end.
+
+**The storyboard is the library's own now.** The document the
+`concat-motion-agent reel` verb eats moved out of the binary into
+`concat-motion/src/storyboard.rs`, so the MCP door and the CLI door eat
+the identical contract: scenes (preset or comp file, ops, at, hold,
+plate/zoom short form, layers), assets by id, audio beds, a curtain.
+The short form is unchanged - `plate` + `zoom` is still one layer under
+the comp - and every error names the scene it stopped at, which the old
+CLI errors did not do for a bad preset or comp file.
+
+**The AI can drive the whole thing.** A new MCP tool, `motion_reel`
+(the eighty-eighth), takes the same storyboard inline: `plan: true`
+lays it out and returns the timeline without rendering, `frame:
+seconds` renders one still and returns it as an inline image (the
+look-before-you-render of the design loop), and the render lands under
+the project's `motion/` ready for `media_import` and `clip_add`. The
+cache is content-addressed by the storyboard's own hash. The door holds
+its line: the project is the storyboard's world - every asset and comp
+path is confined to it, a `source_dir` in the payload is ignored, and
+a symlink cannot quietly move an asset out.
+
+**How it was verified:** fourteen new unit tests read the emitted
+timeline document itself - layer order around the comp and under the
+curtain, the pan keyframes in pixels, the cover-safe scale (1 + twice
+the travel), the fade keys and their clamping, per-layer timing inside
+its scene, the dropped-late-layer warning, the refused unknown asset,
+the short form's compatibility, and the storyboard parser's full
+document, short form, error messages (scene index, fit and blend
+vocabularies, unknown bed asset, comp paths out of the folder,
+malformed operations) and hash stability. The tool carries a sample in
+the MCP suite's every-tool-has-a-schema-and-a-sample test, and the
+whole `concat-motion` and `concat-mcp` suites run green - 116 and 29
+tests plus the six end-to-end ones, under the same pinned toolchain,
+FFmpeg and ONNX Runtime CI pins.
+
+Then it was verified for real, end to end, on this machine: the real
+Geneva 1.6.0 sidecar rendered the `layers` example (two scenes, eight
+timeline layers - two plates, a comp, two overlays, a second scene's
+comp and its late-arriving foreground card, and the curtain) to 300
+frames of 1080p30 H.264 with zero errors and zero warnings, and the
+frames were measured: the mid plate's fade-in, the screen-blended
+leak's lift in the top-left quadrant, the card arriving exactly at its
+`start`, and the curtain's open, dip and close all land where the
+document says. The MCP door was driven through the protocol itself:
+`motion_reel` answered `tools/list` as the eighty-eighth tool, planned
+the same storyboard, returned one still as a real inline image, and
+rendered it under the project's `motion/` - and a storyboard that
+named a path out of the project, or a project outside the session's
+roots, was refused. A vision model looking at the returned still read
+the stack back: the warm mid layer, the glow in the upper-left, and
+the wordmark over both.
+
+**What it costs:** one `Vec<SceneLayer>` per scene and one clip per
+layer in a document that renders in a single pass; a layer adds no
+engine, no binary and no protocol - it is a picture on the timeline the
+compositor already draws. `Plate` (the old single-plate field) is gone
+from the public `sequence` API; in-repo callers were moved to
+`SceneLayer` in the same change, and the storyboard's `plate`/`zoom`
+short form keeps every existing storyboard rendering as it did.

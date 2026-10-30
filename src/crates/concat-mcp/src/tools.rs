@@ -96,6 +96,8 @@ pub enum Action {
     MotionBake,
     /// A word-timed transcript as one caption video.
     CaptionsAnimate,
+    /// A whole storyboard as one reel.
+    MotionReel,
     /// Sample a render or the open timeline into a contact sheet.
     WatchRender,
     /// Look at B-roll candidates before choosing them.
@@ -783,6 +785,15 @@ pub fn catalogue() -> Vec<Tool> {
             action: Action::CaptionsAnimate,
         },
         Tool {
+            name: "motion_reel",
+            title: "Render a storyboard as one reel",
+            description: "A whole motion reel from one storyboard document: several scenes (a preset id or a comps/ file each, with ops, at, hold), MULTI-LAYER scenes (a scene's layers stack bottom first - plates under the comp, and with above:true grain, vignettes, light leaks and foreground cards over it - each with its own zoom, pan [x,y], offset, scale, fit, blend, opacity, fade_in/fade_out, start and hold; differing drift between layers is what reads as depth/parallax), shared assets by id (paths under the project), audio beds (gain_db, fades) and a curtain (color, open, close, dip, depth). plan:true lays it out and returns the timeline without rendering; frame:seconds renders one still and returns it as an INLINE IMAGE to check the stack before committing; otherwise it renders to <project>/motion/<name> (.mp4 H.264, .webm VP9, .mov ProRes 4444) ready for media_import and clip_add. Every error names the scene it stopped at. The same storyboard document the concat-motion-agent reel verb eats, so a reel that renders one way renders the other way too.",
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            action: Action::MotionReel,
+        },
+        Tool {
             name: "analysis_wait",
             title: "Wait for a job",
             description: "Waits for any job - an analysis, a transcription, a voice, an export - to end, up to `timeoutSeconds` (60 by default, 600 at most), and returns its status; a finished analysis carries its JSON result in the status's `output`. If the job is still running when the time is up, call it again.",
@@ -1063,7 +1074,8 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
         | Action::MotionInspect
         | Action::MotionFrame
         | Action::MotionBake
-        | Action::CaptionsAnimate => motion_schema(tool.name),
+        | Action::CaptionsAnimate
+        | Action::MotionReel => motion_schema(tool.name),
         Action::WatchRender
         | Action::StockSheet
         | Action::CraftCritique
@@ -1527,6 +1539,103 @@ fn motion_schema(name: &str) -> Option<Value> {
             ),
             &["project", "words"],
         ),
+        "motion_reel" => {
+            // The storyboard's own shape, written once here so the tool
+            // describes what it actually eats: scenes with layers, assets
+            // by id, audio beds and a curtain.
+            let layer = json!({
+                "type": "object",
+                "required": ["asset"],
+                "properties": {
+                    "asset": { "type": "string", "description": "An asset id from the storyboard's assets." },
+                    "zoom": { "type": "number", "description": "Growth over the span as a scale delta: 0.04 is four percent." },
+                    "pan": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "number" },
+                             "description": "Drift over the span as [x, y] fractions of the frame; a cover layer grows by its own travel so the edge never shows." },
+                    "offset": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "number" },
+                                "description": "A static offset from the centre, as [x, y] fractions of the frame." },
+                    "scale": { "type": "number", "description": "Base scale multiplier; under 1 shows the frame's edges on purpose." },
+                    "fit": { "type": "string", "enum": ["cover", "contain", "fill", "none"], "default": "cover" },
+                    "blend": { "type": "string", "enum": ["normal", "multiply", "screen", "overlay", "darken", "lighten", "difference", "soft-light", "add"], "default": "normal",
+                               "description": "screen/add turn a soft radial picture into a light leak; multiply shades one into a vignette." },
+                    "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+                    "fade_in": { "type": "number", "minimum": 0, "description": "Fade up from transparent, seconds. fadeIn also parses." },
+                    "fade_out": { "type": "number", "minimum": 0, "description": "Fade down to transparent, seconds." },
+                    "start": { "type": "number", "minimum": 0, "description": "When it starts, from the scene's own start." },
+                    "hold": { "type": "number", "minimum": 0, "description": "How long it holds; omitted runs to the scene's end." },
+                    "above": { "type": "boolean", "default": false,
+                               "description": "Paint over the comp - grain, vignettes, light leaks, foreground cards - rather than under it." }
+                }
+            });
+            let scene = json!({
+                "type": "object",
+                "properties": {
+                    "preset": { "type": "string", "description": "A preset id from motion_presets." },
+                    "comp": { "type": "string", "description": "A comp file under the project's comps/." },
+                    "at": { "type": "number", "description": "Where it starts; omitted means after the scene before it." },
+                    "hold": { "type": "number", "description": "How long it holds; omitted means the comp's own length." },
+                    "plate": { "type": "string", "description": "The short form: one still under the comp." },
+                    "zoom": { "type": "number", "description": "The short form's plate drift." },
+                    "layers": { "type": "array", "items": layer,
+                                "description": "The scene's layers, bottom first: plates under the comp, above:true overlays over it." },
+                    "ops": { "type": "array", "items": {}, "description": "Authoring operations applied to the comp before it is placed." }
+                }
+            });
+            let storyboard = json!({
+                "type": "object",
+                "required": ["scenes"],
+                "properties": {
+                    "width": { "type": "integer", "default": 1920 },
+                    "height": { "type": "integer", "default": 1080 },
+                    "fps": { "type": "number", "default": 30 },
+                    "assets": { "type": "object",
+                                "description": "Assets by id; each value is a path under the project.",
+                                "additionalProperties": { "type": "string" } },
+                    "scenes": { "type": "array", "minItems": 1, "items": scene },
+                    "audio": { "type": "array", "items": { "type": "object", "required": ["asset"], "properties": {
+                        "asset": { "type": "string" }, "gain_db": { "type": "number", "default": 0 },
+                        "fade_in": { "type": "number" }, "fade_out": { "type": "number" } } } },
+                    "curtain": { "type": "object", "properties": {
+                        "color": { "type": "string", "default": "#05060aff" },
+                        "open": { "type": "number", "default": 0.6 }, "close": { "type": "number", "default": 0.8 },
+                        "dip": { "type": "number", "default": 0.2 }, "depth": { "type": "number", "default": 1.0 } } }
+                }
+            });
+            let mut properties = Map::new();
+            properties.insert(
+                "project".to_owned(),
+                json!({
+                    "type": "string",
+                    "description": "The project folder - where the assets live, comps/ is read from and motion/ is written to."
+                }),
+            );
+            properties.insert("storyboard".to_owned(), storyboard);
+            properties.insert(
+                "name".to_owned(),
+                json!({
+                    "type": "string",
+                    "description": "The rendered file's name under motion/; .mp4 H.264, .webm VP9, .mov ProRes 4444."
+                }),
+            );
+            properties.insert(
+                "frame".to_owned(),
+                json!({
+                    "type": "number", "minimum": 0,
+                    "description": "Render one still at this many seconds and return it as an inline image, instead of the whole reel."
+                }),
+            );
+            properties.insert(
+                "plan".to_owned(),
+                json!({
+                    "type": "boolean", "default": false,
+                    "description": "Lay the reel out and return the timeline without rendering."
+                }),
+            );
+            properties.insert(
+                "crf".to_owned(),
+                json!({ "type": "integer", "minimum": 0, "maximum": 51, "default": 18 }),
+            );
+            object(properties, &["project", "storyboard"])
+        }
         _ => return None,
     };
     Some(schema)
@@ -1684,6 +1793,7 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         Action::MotionFrame => crate::motion::frame(arguments, backend),
         Action::MotionBake => crate::motion::bake(arguments, backend),
         Action::CaptionsAnimate => crate::motion::captions_animate(arguments, backend),
+        Action::MotionReel => crate::motion::reel(arguments, backend),
         Action::WatchRender => crate::sense::watch_render(arguments, backend),
         Action::StockSheet => crate::sense::stock_contact_sheet(arguments, backend),
         Action::CraftCritique => crate::sense::craft_critique(arguments, backend),
@@ -3074,6 +3184,22 @@ mod tests {
                 json!({ "project": "/tmp/Cut", "words": [["Make", 0.0, 0.4], ["it", 0.4, 0.8], ["move.", 0.8, 1.2]] }),
             ),
             (
+                "motion_reel",
+                json!({ "project": "/tmp/Cut", "name": "opening.mp4", "storyboard": {
+                    "scenes": [
+                        { "preset": "funcut.sting.wordmark", "hold": 4.0,
+                          "layers": [
+                              { "asset": "back", "zoom": 0.04 },
+                              { "asset": "leak", "blend": "screen", "scale": 0.8,
+                                "offset": [-0.25, -0.2], "fade_in": 0.4, "fade_out": 0.4, "above": true }
+                          ] }
+                    ],
+                    "assets": { "back": "assets/back.jpg", "leak": "assets/leak.png" },
+                    "audio": [ { "asset": "score", "gain_db": -2.0 } ],
+                    "curtain": { "color": "#05060aff", "open": 0.6, "close": 0.8, "dip": 0.2, "depth": 1.0 }
+                } }),
+            ),
+            (
                 "models_download",
                 json!({ "kind": "tts", "id": "kokoro-int8-multi-lang-v1_0" }),
             ),
@@ -3199,7 +3325,10 @@ mod tests {
                     crate::motion::inspect(sample.clone()).expect("the sample inspects");
                     continue;
                 }
-                Action::MotionFrame | Action::MotionBake | Action::CaptionsAnimate => {
+                Action::MotionFrame
+                | Action::MotionBake
+                | Action::CaptionsAnimate
+                | Action::MotionReel => {
                     continue;
                 }
                 // The sense tools run Python, ffmpeg or a project; a unit

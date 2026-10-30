@@ -1,6 +1,6 @@
 ---
 name: motion
-description: Design and render motion graphics inside FUNCUT (the Concat video editor) — titles, lower thirds, kinetic captions, stat cards, charts, quotes, chapters, terminals, before/after splits, logo stings, backdrops, and hand-authored comps with masks, effects, blends and spring curves. Use this whenever a video needs designed type or animated graphics, whenever you are asked to animate text, caption a transcript word by word, build a title package or a showreel, or retime/restyle an existing comp. Covers the design doctrine (hooks, rhythm, contrast, one idea per beat), the comp JSON document down to every node kind, the twelve shipped presets and how to break out of them, the full operation vocabulary (set-slot, set-words, set-track, set-track-points, add-text/add-rect/add-group, spring/bezier/steps/points curves), the `concat-motion-agent` CLI (list, inspect, edit, frame, bake, reel, captions), the Geneva engine's real limits, and the verification loop: inspect, edit in one validated batch, look at three frames, bake at cut size.
+description: Design and render motion graphics inside FUNCUT (the Concat video editor) — titles, lower thirds, kinetic captions, stat cards, charts, quotes, chapters, terminals, before/after splits, logo stings, backdrops, and hand-authored comps with masks, effects, blends and spring curves. Use this whenever a video needs designed type or animated graphics, whenever you are asked to animate text, caption a transcript word by word, build a title package or a showreel, or retime/restyle an existing comp. Covers the design doctrine (hooks, rhythm, contrast, one idea per beat), the comp JSON document down to every node kind, the twelve shipped presets and how to break out of them, the full operation vocabulary (set-slot, set-words, set-track, set-track-points, add-text/add-rect/add-group, spring/bezier/steps/points curves), the `concat-motion-agent` CLI (list, inspect, edit, frame, bake, reel, captions), multi-layer scenes (parallax plates, light leaks, grain and vignettes stacked under and over a comp, each on its own clock), the Geneva engine's real limits, and the verification loop: inspect, edit in one validated batch, look at three frames, bake at cut size.
 ---
 
 # Motion comps
@@ -285,7 +285,8 @@ plan.render(&geneva, cache, "reel.mp4")?;
 - the curtain dips at every cut and is opaque at both ends;
 - `plan.frame(...)` checks one moment for pence before `plan.render(...)` pays for all of them.
 
-**From the agent door**, the same thing is one verb and one document:
+**From the agent door**, the same thing is one verb and one document — and the same document is
+the MCP `motion_reel` tool's `storyboard` argument, so what renders here renders there:
 
 ```sh
 concat-motion-agent reel storyboard.json -o reel.mp4        # or --frame 12.4, or --plan
@@ -293,15 +294,34 @@ concat-motion-agent reel storyboard.json -o reel.mp4        # or --frame 12.4, o
 
 ```json
 { "width": 1920, "height": 1080, "fps": 30,
-  "assets": { "plate": "assets/plate.jpg", "score": "assets/score.wav", "Inter": "assets/Inter.ttf" },
+  "assets": { "back": "assets/plate.jpg", "mid": "assets/mid.png", "leak": "assets/leak.png",
+              "score": "assets/score.wav", "Inter": "assets/Inter.ttf" },
   "scenes": [
-    { "preset": "funcut.chapter.chip", "hold": 3.0, "plate": "plate", "zoom": 0.04,
+    { "preset": "funcut.chapter.chip", "hold": 3.0,
+      "layers": [
+        { "asset": "back", "zoom": 0.04 },
+        { "asset": "mid", "pan": [-0.03, 0.0], "fade_in": 0.5, "fade_out": 0.8 },
+        { "asset": "leak", "blend": "screen", "scale": 0.8, "offset": [-0.25, -0.2],
+          "fade_in": 0.4, "fade_out": 0.4, "above": true }
+      ],
       "ops": [ { "op": "set-slot", "slot": "Chapter", "value": "01 / INTRO" } ] },
-    { "comp": "comps/mine.json", "at": 3.0, "plate": "plate", "zoom": 0.05, "ops": [] }
+    { "comp": "comps/mine.json", "at": 3.0, "plate": "back", "zoom": 0.05, "ops": [] }
   ],
   "audio": [ { "asset": "score", "gain_db": -2.0, "fade_in": 0.4, "fade_out": 1.2 } ],
   "curtain": { "color": "#05060aff", "open": 0.6, "close": 0.8, "dip": 0.2, "depth": 1.0 } }
 ```
+
+**Multi-layer scenes** are a scene's `layers`: they stack bottom first — plates under the comp,
+and with `"above": true` grain, vignettes, light leaks and foreground cards over it. Each layer
+has its own `zoom` (scale delta), `pan` ([x, y] fractions of the frame — a cover layer grows by
+its own travel, so the edge never shows), `offset`, `scale` (under 1 shows the frame's edges on
+purpose), `fit`, `blend`, `opacity`, `fade_in`/`fade_out` (held to half the span), and its own
+`start`/`hold`. Differing drift between layers is what reads as depth: background 0.04 zoom,
+midground `pan: [-0.03, 0]`, foreground card `scale: 0.6, start: 1.2` is parallax; identical drift
+on every layer is a slideshow. Reach first for: parallax depth, a screen-blended light leak
+(`blend: "screen"`, `above: true`), film grain (`opacity: 0.08`, `above: true`), a vignette
+(`blend: "multiply"`, `above: true`). A layer naming an asset the storyboard does not carry stops
+the plan and names the scene.
 
 Ship every font the comps name as an asset (`"Inter": "assets/Inter.ttf"`), or the render says
 `W405` and another machine draws different type. A plate with `zoom` 0.03–0.06 drifts enough to read as

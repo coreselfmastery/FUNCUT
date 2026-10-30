@@ -19,18 +19,19 @@
 //! agent bake edited.json cache/lower-third
 //! # the same comp as one file the timeline plays: bake, then encode
 //! agent bake edited.json cache/lower-third --encode comp.mp4
-//! # a whole reel: several comps, plates, a curtain, a bed of sound
+//! # a whole reel: several comps, layered scenes, a curtain, a bed of sound
 //! agent reel storyboard.json -o reel.mp4
 //! ```
 
 use std::path::{Path, PathBuf};
 
 use concat_motion::authoring::{CompSummary, apply_json};
-use concat_motion::comp::{Asset, Comp, Rgba};
+use concat_motion::comp::{Asset, Comp};
 use concat_motion::engine::{BakeRequest, CompEngine, EnginePreference};
 use concat_motion::geneva::Geneva;
 use concat_motion::presets;
-use concat_motion::sequence::Curtain;
+use concat_motion::sequence::SceneLayer;
+use concat_motion::storyboard;
 use serde_json::json;
 
 fn main() {
@@ -104,111 +105,25 @@ fn usage() -> serde_json::Value {
     })
 }
 
-/// A storyboard: several comps, in order, as one render.
-#[derive(serde::Deserialize)]
-struct Storyboard {
-    #[serde(default = "default_width")]
-    width: u32,
-    #[serde(default = "default_height")]
-    height: u32,
-    #[serde(default = "default_fps")]
-    fps: f64,
-    /// Where asset paths resolve from; the storyboard's own folder by default.
-    #[serde(default)]
-    source_dir: Option<PathBuf>,
-    #[serde(default)]
-    assets: std::collections::BTreeMap<String, String>,
-    scenes: Vec<SceneCard>,
-    #[serde(default)]
-    audio: Vec<AudioCard>,
-    #[serde(default)]
-    curtain: Option<CurtainCard>,
-}
-
-#[derive(serde::Deserialize)]
-struct SceneCard {
-    /// A preset id from `agent list`.
-    #[serde(default)]
-    preset: Option<String>,
-    /// Or a comp document, relative to the storyboard.
-    #[serde(default)]
-    comp: Option<String>,
-    /// Where it starts; omitted means after the scene before it.
-    #[serde(default)]
-    at: Option<f64>,
-    /// How long it holds; omitted means the comp's own length.
-    #[serde(default)]
-    hold: Option<f64>,
-    /// A still underneath it.
-    #[serde(default)]
-    plate: Option<String>,
-    /// How much the plate grows over the scene.
-    #[serde(default)]
-    zoom: Option<f64>,
-    /// Operations applied to the comp before it is placed.
-    #[serde(default)]
-    ops: Vec<serde_json::Value>,
-}
-
-#[derive(serde::Deserialize)]
-struct AudioCard {
-    asset: String,
-    #[serde(default)]
-    gain_db: f64,
-    #[serde(default)]
-    fade_in: Option<f64>,
-    #[serde(default)]
-    fade_out: Option<f64>,
-}
-
-#[derive(serde::Deserialize)]
-struct CurtainCard {
-    #[serde(default = "default_curtain")]
-    color: String,
-    #[serde(default = "default_open")]
-    open: f64,
-    #[serde(default = "default_close")]
-    close: f64,
-    #[serde(default = "default_dip")]
-    dip: f64,
-    #[serde(default = "default_depth")]
-    depth: f64,
-}
-
-fn default_width() -> u32 {
-    1920
-}
-fn default_height() -> u32 {
-    1080
-}
-fn default_fps() -> f64 {
-    30.0
-}
-fn default_curtain() -> String {
-    "#05060aff".into()
-}
-fn default_open() -> f64 {
-    0.6
-}
-fn default_close() -> f64 {
-    0.8
-}
-fn default_dip() -> f64 {
-    0.2
-}
-fn default_depth() -> f64 {
-    1.0
-}
-
 /// `agent reel <storyboard.json> [-o out.mp4] [--cache DIR] [--frame SECONDS] [--plan]`
 ///
-/// The storyboard is the contract:
+/// The storyboard is the contract, and it is the library's own
+/// (`concat_motion::storyboard`): the same document the MCP `motion_reel`
+/// tool takes, so a reel that renders one way renders the other way too.
+/// A scene's `layers` stack bottom first - plates under the comp, and with
+/// `above: true` grain, vignettes and light leaks over it - each with its
+/// own drift, blend, opacity and timing. The short form is still the whole
+/// story for a single plate: `"plate": "back", "zoom": 0.04`.
 ///
 /// ```json
 /// { "width": 1920, "height": 1080, "fps": 30,
-///   "assets": { "plate": "assets/plate.jpg", "score": "assets/score.wav" },
+///   "assets": { "back": "assets/back.jpg", "mid": "assets/mid.png", "score": "assets/score.wav" },
 ///   "scenes": [
-///     { "preset": "funcut.chapter.chip", "hold": 3.0, "plate": "plate", "zoom": 0.04,
+///     { "preset": "funcut.chapter.chip", "hold": 3.0,
+///       "layers": [
+///         { "asset": "back", "zoom": 0.04 },
+///         { "asset": "mid", "pan": [-0.03, 0.0], "fade_in": 0.5, "fade_out": 0.8 }
+///       ],
 ///       "ops": [ { "op": "set-slot", "slot": "Chapter", "value": "01 / INTRO" } ] },
 ///     { "comp": "comps/mine.json", "at": 3.0 }
 ///   ],
@@ -230,70 +145,14 @@ fn reel(args: &[String]) -> Result<serde_json::Value, String> {
     let script = Path::new(script_path);
     let text =
         std::fs::read_to_string(script).map_err(|error| format!("{script_path}: {error}"))?;
-    let board: Storyboard =
-        serde_json::from_str(&text).map_err(|error| format!("{script_path}: {error}"))?;
+    let board = storyboard::Storyboard::parse(&text)?;
     let root = board
         .source_dir
         .clone()
         .or_else(|| script.parent().map(Path::to_path_buf))
         .unwrap_or_else(|| PathBuf::from("."));
 
-    let mut sequence = concat_motion::sequence::Sequence::new(board.width, board.height, board.fps);
-    sequence.source_dir = root.clone();
-    for (id, src) in &board.assets {
-        sequence.asset(
-            id.clone(),
-            Asset {
-                src: src.clone(),
-                kind: None,
-            },
-        );
-    }
-    if let Some(curtain) = &board.curtain {
-        sequence.curtain = Some(Curtain {
-            color: Rgba::hex(&curtain.color),
-            open: curtain.open,
-            close: curtain.close,
-            dip: curtain.dip,
-            depth: curtain.depth,
-        });
-    }
-    for card in &board.scenes {
-        let comp = match (&card.preset, &card.comp) {
-            (Some(id), _) => {
-                presets::build(id).ok_or_else(|| format!("no preset called {id:?}"))?
-            }
-            (None, Some(file)) => load(&root.join(file).display().to_string())?,
-            (None, None) => return Err("a scene needs a `preset` or a `comp`".into()),
-        };
-        let ops = card
-            .ops
-            .iter()
-            .map(|op| serde_json::from_value(op.clone()))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| format!("a scene operation is not one: {error}"))?;
-        let mut scene = concat_motion::sequence::Scene::new(comp).with_ops(ops);
-        if let Some(at) = card.at {
-            scene = scene.starting_at(at);
-        }
-        if let Some(hold) = card.hold {
-            scene = scene.holding(hold);
-        }
-        if let Some(plate) = &card.plate {
-            scene = scene.over(plate.clone(), card.zoom.unwrap_or(0.0));
-        }
-        sequence.push(scene);
-    }
-    for bed in &board.audio {
-        let mut sound = concat_motion::sequence::AudioBed::new(bed.asset.clone()).at(bed.gain_db);
-        if let Some(fade) = bed.fade_in {
-            sound.fade_in = fade;
-        }
-        if let Some(fade) = bed.fade_out {
-            sound.fade_out = fade;
-        }
-        sequence.bed(sound);
-    }
+    let sequence = board.sequence(&root)?;
 
     let geneva = engine()?;
     let planned =
@@ -381,10 +240,7 @@ fn captions(args: &[String]) -> Result<serde_json::Value, String> {
             },
         );
         for scene in &mut sequence.scenes {
-            scene.plate = Some(concat_motion::sequence::Plate {
-                asset: "plate".into(),
-                zoom: 0.04,
-            });
+            scene.layers.push(SceneLayer::new("plate").zooming(0.04));
         }
     }
     if let Some(audio) = &audio {
@@ -412,8 +268,10 @@ fn captions(args: &[String]) -> Result<serde_json::Value, String> {
                 "preset": scene.comp.id,
                 "at": scene.at,
                 "hold": scene.hold,
-                "plate": scene.plate.as_ref().map(|plate| plate.asset.clone()),
-                "zoom": scene.plate.as_ref().map(|plate| plate.zoom),
+                "layers": scene.layers.iter().map(|layer| json!({
+                    "asset": layer.asset,
+                    "zoom": layer.zoom,
+                })).collect::<Vec<_>>(),
                 "ops": scene.ops,
             })
         })

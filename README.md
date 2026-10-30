@@ -9,7 +9,7 @@
 > **FUNCUT** — this repository is that editor tuned for small, low-memory
 > Linux laptops (4-6 GB of RAM): every cache sizes itself to the machine it
 > is on, and `./install-linux.sh` puts it on one in a single command. On top
-> of the editor it ships an agent stack: a built-in MCP server with **87
+> of the editor it ships an agent stack: a built-in MCP server with **88
 > tools**, the agent's senses (scene cuts, beat grids, dead air,
 > transcription, TTS, loudness), perception (contact-sheet images a model
 > can actually see), an emotion-driven edit pipeline with a validated brand

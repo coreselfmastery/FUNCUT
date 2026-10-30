@@ -146,14 +146,18 @@ than distributing fabricated per-word timestamps.
 ## 5. A reel is an argument, not a playlist
 
 When the deliverable is a title package, a showreel or an explainer, plan it at the **sequence** level
-and render it in one pass (`concat-motion-agent reel storyboard.json -o reel.mp4`, or
-`sequence::Sequence` in Rust):
+and render it in one pass (`concat-motion-agent reel storyboard.json -o reel.mp4`, the MCP
+`motion_reel` tool with the same storyboard inline, or `sequence::Sequence` in Rust):
 
 - **cold open** in the first 1.5 s: a word, a number, or a movement that promises something;
 - **three chapters**, each opened by the same chip on a downbeat — repetition is what makes a package
   read as one system;
 - **one near-static beat** in five, so the movement has something to be movement against;
 - **one idea per scene**: a scene that shows a card, a chart and a caption is three scenes fighting;
+- **multi-layer scenes where depth earns it**: a scene's `layers` stack plates under the comp and
+  `above: true` overlays (grain at `opacity` 0.08, a `screen` light leak, a `multiply` vignette)
+  over it, each with its own `zoom`/`pan`/`start` — differing drift between layers is the depth;
+  identical drift on every layer is a slideshow;
 - **the same curve family and stagger** across repeated elements (60–120 ms), and a *different* family
   for the thing that must feel unlike them;
 - **an ending that lands**, then silence: the last frame should be the one you would freeze.

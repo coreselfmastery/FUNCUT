@@ -132,7 +132,7 @@ carries its JSON result in the status's `output`:
   status.
 
 The motion layer - the design door the director skill's Phase 5b assumes -
-is five more tools, thin wrappers over the `concat-motion` crate (the same
+is six more tools, thin wrappers over the `concat-motion` crate (the same
 vocabulary the `concat-motion-agent` CLI speaks):
 
 - `motion_presets` - the twelve motion-graphics presets (lower thirds,
@@ -155,6 +155,18 @@ vocabulary the `concat-motion-agent` CLI speaks):
   video: lines by the caption rules, each line a kinetic comp, baked and
   encoded in one call. This is the word-synced caption path; the
   timeline's own `captions_add` stays segment-timed.
+- `motion_reel` - a whole storyboard as one reel: several scenes (preset
+  or comp file each, with `ops`, `at`, `hold`), **multi-layer scenes** -
+  a scene's `layers` stack bottom first, plates under the comp and, with
+  `above: true`, grain, vignettes, light leaks and foreground cards over
+  it, each with its own `zoom`, `pan`, `offset`, `scale`, `fit`, `blend`,
+  `opacity`, `fade_in`/`fade_out`, `start` and `hold`; differing drift
+  between layers is what reads as depth - plus shared assets, audio beds
+  and a curtain. `plan: true` lays it out without rendering, `frame:
+  seconds` returns one still as an inline image, and the render lands
+  under `motion/` ready for `media_import` and `clip_add`. The same
+  storyboard document the `concat-motion-agent reel` verb eats; every
+  error names the scene it stopped at.
 
 ## Perception and the creative loop (eight more tools)
 
@@ -339,7 +351,7 @@ Tools are named for what they do, and their argument schemas are generated from 
 | Speech | `transcribe`, `tts_generate`, `models_list`, `models_download` |
 | Anything else | `edit_apply` (any edit command, or a batch of them as one undo step), `edit_undo`, `edit_redo` |
 | Templates | `template_list`, `template_instantiate` |
-| Motion design | `motion_presets`, `motion_inspect`, `motion_frame`, `motion_bake`, `motion_overlay`, `captions_animate` |
+| Motion design | `motion_presets`, `motion_inspect`, `motion_frame`, `motion_bake`, `motion_overlay`, `captions_animate`, `motion_reel` |
 | Export | `export_start`, `export_status`, `export_wait` (with progress), `export_cancel` |
 | Looking | `preview_frame` (the composited frame as an image) |
 | Perception and the creative loop | `creative_brief`, `stock_contact_sheet`, `watch_render`, `craft_critique`, `suggest_cuts`, `measure_loudness`, `local_vlm`, `emotion` |

@@ -253,7 +253,7 @@ pub fn lay_out(words: &[Word], caps: &Captions) -> Vec<Line> {
 /// Each line is the same preset with its words set: one comp per line, placed
 /// where the words are spoken, ready to be rendered as one file or placed on a
 /// project's timeline. `source_dir` is left empty - a caption comp carries no
-/// assets - so a caller that wants a plate underneath can set it.
+/// assets - so a caller that wants plates underneath can stack them.
 pub fn sequence(words: &[Word], caps: &Captions, width: u32, height: u32, fps: f64) -> Sequence {
     let mut reel = Sequence::new(width, height, fps);
     let mut comp = preset(&caps.comp);

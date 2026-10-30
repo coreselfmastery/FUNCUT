@@ -504,7 +504,11 @@ mod tests {
         // one: collision_check and openvid_search_batch (which carries the
         // whole openvid.search filter set), and the additionalProperties:
         // false every generated schema now ends in, together the last
-        // review's worth of growth.
+        // review's worth of growth. The latest is motion_reel, whose
+        // storyboard schema carries the whole multi-layer scene vocabulary
+        // (scenes, layers with zoom/pan/offset/scale/fit/blend/opacity/
+        // fades/timing, assets, audio beds, a curtain) so an agent can write
+        // a reel without a second round trip - reviewed with this change.
         let toolbox = crate::tools::Toolbox::new();
         let sizes: Vec<(String, usize)> = toolbox
             .list()
@@ -512,7 +516,7 @@ mod tests {
             .map(|tool| (tool["name"].to_string(), tool.to_string().len()))
             .collect();
         let total: usize = sizes.iter().map(|(_, size)| size).sum();
-        assert!(total < 220_000, "{total}: {sizes:?}");
+        assert!(total < 230_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }

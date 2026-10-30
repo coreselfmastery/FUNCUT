@@ -40,8 +40,8 @@
 //!   baking.
 //! - **Agent**: every operation here is data-in, data-out, so the MCP tools
 //!   (`motion_presets`, `motion_inspect`, `motion_frame`, `motion_bake`,
-//!   `captions_animate`, `motion_overlay`) are thin wrappers over this
-//!   crate rather than a second implementation.
+//!   `captions_animate`, `motion_overlay`, `motion_reel`) are thin wrappers
+//!   over this crate rather than a second implementation.
 //!
 //! # Example
 //!
@@ -70,6 +70,7 @@ pub mod engine;
 pub mod geneva;
 pub mod presets;
 pub mod sequence;
+pub mod storyboard;
 pub mod track;
 
 pub use authoring::{CompSummary, Op, apply};

@@ -29,12 +29,14 @@ use concat_motion::comp::Comp;
 use concat_motion::engine::{BakeRequest, CompEngine, EnginePreference};
 use concat_motion::geneva::Geneva;
 use concat_motion::presets;
-use concat_motion::sequence;
+use concat_motion::sequence::{self, SceneLayer};
+use concat_motion::storyboard;
 use serde_json::{Map, Value, json};
 
 use crate::backend::Backend;
 use crate::tools::Outcome;
 use concat_api::{ApiError, ErrorCode};
+
 /// Where in the project the motion layer works: comps, their bake cache,
 /// and the encoded pieces ready to import.
 fn comps_dir(project: &Path) -> PathBuf {
@@ -644,10 +646,7 @@ pub fn captions_animate(arguments: Value, backend: &dyn Backend) -> Result<Outco
             },
         );
         for scene in &mut reel.scenes {
-            scene.plate = Some(sequence::Plate {
-                asset: "plate".to_owned(),
-                zoom: 0.04,
-            });
+            scene.layers.push(SceneLayer::new("plate").zooming(0.04));
         }
     }
 
@@ -765,6 +764,191 @@ fn read_words(document: &Value) -> Result<Vec<concat_motion::captions::Word>, Ap
         words.push(word);
     }
     Ok(words)
+}
+
+/// `motion_reel`: a whole storyboard - several scenes, layered plates and
+/// overlays, a curtain, a bed of sound - rendered as one video under the
+/// project's `motion/`, ready for `media_import` and `clip_add`.
+///
+/// The storyboard is the same document `concat-motion-agent reel` eats, so
+/// a reel that renders one way renders the other way too. A scene's
+/// `layers` stack bottom first: plates under the comp, and with `above:
+/// true` grain, vignettes and light leaks over it, each with its own
+/// drift (`pan`, `zoom`), blend, opacity, fades and timing - which is
+/// what makes a stack of stills read as depth. Every asset a storyboard
+/// names lives under the project; a path that climbs out of it is
+/// refused.
+///
+/// `plan: true` lays the reel out and returns the timeline without
+/// rendering; `frame: seconds` renders one still and returns it as an
+/// INLINE IMAGE - the look-before-you-render of the design loop. The
+/// render lands under `<project>/motion/<name>.mp4` (`.mp4` H.264,
+/// `.webm` VP9, `.mov` ProRes 4444).
+pub fn reel(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError> {
+    let fields = arguments
+        .as_object()
+        .cloned()
+        .ok_or_else(|| ApiError::invalid("invalid arguments: the arguments are an object"))?;
+    for key in fields.keys() {
+        if !["project", "storyboard", "name", "frame", "plan", "crf"].contains(&key.as_str()) {
+            return Err(ApiError::invalid(format!(
+                "invalid arguments: unknown field `{key}`"
+            )));
+        }
+    }
+    let project = project_of(&fields, backend)?;
+    let document = fields
+        .get("storyboard")
+        .ok_or_else(|| {
+            ApiError::invalid("invalid arguments: `storyboard` is the storyboard document")
+        })?
+        .clone();
+    // The project is the storyboard's world: every path it names resolves
+    // inside it, and a `source_dir` that would move that world is ignored
+    // rather than honoured - an agent's storyboard cannot reach past the
+    // folder it was given.
+    let mut document = document;
+    if let Value::Object(map) = &mut document {
+        map.remove("source_dir");
+    }
+    confine_storyboard(&document, &project)?;
+    let board = storyboard::Storyboard::from_value(&document).map_err(ApiError::invalid)?;
+    let reel = board.sequence(&project).map_err(ApiError::invalid)?;
+
+    let engine = geneva()?;
+    let mut planned =
+        sequence::plan(&engine, &reel).map_err(|error| ApiError::failed(error.to_string()))?;
+    let summary = json!({
+        "scenes": planned.scenes,
+        "duration": planned.duration,
+        "width": reel.width,
+        "height": reel.height,
+        "fps": reel.fps,
+        "layers": planned.document["layers"].as_array().map(Vec::len).unwrap_or(0),
+        "assets": planned.files.len(),
+        "warnings": planned.warnings,
+    });
+    if fields.get("plan").and_then(Value::as_bool) == Some(true) {
+        let mut reply = summary;
+        reply["timeline"] = planned.document.clone();
+        return Ok(Outcome::json(reply));
+    }
+
+    // The cache is content-addressed by the storyboard's own hash: the
+    // same reel re-renders nothing, and an edit misses immediately.
+    let hash = format!("{:016x}", storyboard::hash(&document));
+    let cache = cache_dir(&project).join(format!("reel-{hash}"));
+    std::fs::create_dir_all(motion_dir(&project))
+        .map_err(|error| ApiError::failed(format!("could not create motion/: {error}")))?;
+    if let Some(crf) = fields.get("crf").and_then(Value::as_u64) {
+        sequence_crf(&mut planned, crf as u8);
+    }
+
+    if let Some(at) = fields.get("frame").and_then(Value::as_f64) {
+        if !at.is_finite() || at < 0.0 {
+            return Err(ApiError::invalid(
+                "invalid arguments: `frame` is a time in seconds, 0 or more",
+            ));
+        }
+        let out = motion_dir(&project).join(format!("reel-frame-{hash}-{at:.2}.jpg"));
+        planned
+            .frame(&engine, &cache, at, &out)
+            .map_err(|error| ApiError::failed(error.to_string()))?;
+        let bytes = std::fs::read(&out)
+            .map_err(|error| ApiError::failed(format!("could not read the frame: {error}")))?;
+        let inline = crate::sense::base64(&bytes);
+        let reading = json!({
+            "at": at,
+            "frame": out.display().to_string(),
+            "duration": planned.duration,
+            "note": "One frame of the whole reel. Check the layer stack reads as one scene - depth, not a collage - before rendering it all.",
+            "plan": summary,
+        });
+        return Ok(Outcome {
+            content: vec![
+                json!({ "type": "image", "data": inline, "mimeType": "image/jpeg" }),
+                json!({
+                    "type": "text",
+                    "text": serde_json::to_string_pretty(&reading).unwrap_or_default(),
+                }),
+            ],
+            structured: Some(reading),
+            is_error: false,
+        });
+    }
+
+    let name = fields
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|name| !name.trim().is_empty() && !name.contains(".."))
+        .map(|name| name.trim().to_owned())
+        .unwrap_or_else(|| format!("reel-{hash}.mp4"));
+    let out = crate::sense::write_target(backend, Some(&motion_dir(&project)), &name)?;
+    let report = planned
+        .render(&engine, &cache, &out)
+        .map_err(|error| ApiError::failed(error.to_string()))?;
+    if !out.is_file() {
+        return Err(ApiError::failed(format!(
+            "geneva reported success but {} was not written",
+            out.display()
+        )));
+    }
+    let mut reply = summary;
+    reply["file"] = json!(out.display().to_string());
+    reply["report"] = report;
+    Ok(Outcome::json(reply))
+}
+
+/// A storyboard's paths are names under the project, not routes out of it:
+/// every asset and every comp is checked before anything is read, so a
+/// storyboard cannot be a way to walk the disk.
+fn confine_storyboard(document: &Value, project: &Path) -> Result<(), ApiError> {
+    let refuse = |what: &str, value: &str| {
+        ApiError::invalid(format!(
+            "invalid arguments: the storyboard's {what} {value:?} is a name under the project, \
+             not a path out of it"
+        ))
+    };
+    let mut paths: Vec<(String, &str)> = Vec::new();
+    if let Some(assets) = document.get("assets").and_then(Value::as_object) {
+        for (id, src) in assets {
+            if let Some(src) = src.as_str() {
+                paths.push((id.clone(), src));
+            }
+        }
+    }
+    if let Some(scenes) = document.get("scenes").and_then(Value::as_array) {
+        for (index, scene) in scenes.iter().enumerate() {
+            if let Some(comp) = scene.get("comp").and_then(Value::as_str) {
+                paths.push((format!("scene {index} comp"), comp));
+            }
+        }
+    }
+    let root = std::fs::canonicalize(project).unwrap_or_else(|_| project.to_path_buf());
+    for (what, path) in paths {
+        if path.starts_with('/')
+            || path.contains('\\')
+            || path.split(['/']).any(|part| part == "..")
+        {
+            return Err(refuse(&what, path));
+        }
+        // A path that exists must resolve inside the project: a symlink
+        // cannot quietly move an asset out of it. A path that does not
+        // exist is left for the plan to name, which it does by asset id.
+        let joined = project.join(path);
+        if joined.exists() {
+            let resolved = std::fs::canonicalize(&joined).unwrap_or(joined);
+            if !resolved.starts_with(&root) {
+                return Err(refuse(&what, path));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The crf a storyboard's render runs at, held to the encoder's own range.
+fn sequence_crf(plan: &mut sequence::Plan, crf: u8) {
+    plan.document["output"]["encode"]["video"]["crf"] = json!(crf.min(51));
 }
 
 /// Whether the motion tools can reach an engine at all, for the catalogue

@@ -8,7 +8,7 @@ detail elsewhere, the link says so.
 
 The one-paragraph version: FUNCUT is the Concat editor (a native Rust, GPU
 composited, CapCut-class video editor for Linux) tuned for small machines,
-plus an agent stack bolted onto it — a built-in MCP server with **87 tools**,
+plus an agent stack bolted onto it — a built-in MCP server with **88 tools**,
 an analysis/sense layer, an emotion-driven edit pipeline with a brand kit, a
 motion-graphics engine with its own sidecar, and two Claude skills (a director
 that runs an 11-phase measured pipeline, and maestro, a vendored design and
@@ -19,7 +19,7 @@ with one click.
 
 | What | Count | Where it lives |
 | --- | --- | --- |
-| MCP tools | **87** | `src/crates/concat-mcp/src/tools.rs` (`catalogue()`) |
+| MCP tools | **88** | `src/crates/concat-mcp/src/tools.rs` (`catalogue()`) |
 | JSON-RPC API methods | 48 requests + 8 progress notifications | `src/crates/concat-api/src/message.rs` |
 | Core edit commands (`edit.apply` ops) | **52** | `src/crates/concat-project/src/commands/mod.rs` |
 | Effect/filter/transition/audio packages | **327** = 57 filters + 123 effects + 122 transitions + 25 audio | `src/crates/concat-effects/packages/` |
@@ -165,7 +165,7 @@ Nothing here is bundled whole; indexes download once, media arrives per pick.
 
 ## The agent layer
 
-- **The MCP server** (`concat --mcp`, [docs/MCP.md](MCP.md)): **87 tools**
+- **The MCP server** (`concat --mcp`, [docs/MCP.md](MCP.md)): **88 tools**
   over stdio, both protocol eras (initialize handshake and per-request
   `_meta`), schemas generated from the API's own types so an agent cannot
   invent an argument. It reaches the engine through the open window
@@ -447,7 +447,7 @@ model at all.
 | Speech (whisper.cpp, three TTS families) | `src/crates/concat-speech` |
 | Motion engine (Geneva, presets, authoring) | `src/crates/concat-motion` |
 | The API (JSON-RPC methods, jobs) | `src/crates/concat-api` |
-| The MCP server (87 tools, senses, emotion) | `src/crates/concat-mcp` |
+| The MCP server (88 tools, senses, emotion) | `src/crates/concat-mcp` |
 | The socket server + CLI | `src/crates/concat-server`, `concat-cli` |
 | The window (Slint UI, studio controller) | `src/crates/concat` |
 | Session, proxies, models, templates, sounds | `src/crates/concat-host` |

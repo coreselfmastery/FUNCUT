@@ -190,12 +190,15 @@ behind the ask). Use `captions_add` for
 segment-timed captions. Group each logical chunk into one `edit_apply` batch.
 
 **Phase 5b — Motion comps (design). Every finished piece goes through here.**
-This is what separates an edit from a video. The motion layer is five MCP
+This is what separates an edit from a video. The motion layer is six MCP
 tools: `motion_presets` (the library), `motion_inspect` (nodes, slots —
 never guess), `motion_frame` (look before you bake — it now returns an inline
 image, so check legibility, contrast and safe margins with your eyes), `motion_bake`
 (encode a piece in one call), `captions_animate` (word-timed kinetic
-captions from measured word times). The floor is one designed beat per
+captions from measured word times), and `motion_reel` (a whole storyboard
+as one reel — scenes with MULTI-LAYER stacks: plates under the comp and
+grain, light leaks, vignettes and foreground cards over it, each on its own
+drift and clock; check one still with `frame: seconds` before rendering). The floor is one designed beat per
 section and at least one per 15 s of runtime; in finance/science/tech every
 number, percentage, comparison or process is a `funcut.ticker.count`,
 `funcut.chart.bars`, `funcut.stats.triptych` or `funcut.compare.split` —

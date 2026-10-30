@@ -33,7 +33,7 @@ rule: surface the pip hint.
 `motion_frame {project, preset|comp, at, ops?, width?}` ·
 `motion_bake {project, preset|comp, ops?, width?, height?, fps?, crf?, encode?, name?}` ·
 `captions_animate {project, words, preset?, wordsPerLine?, maxLineSeconds?, gapSeconds?, width?, height?, fps?, plate?, name?}` ·
-`motion_overlay {frames | hash + project, plate, at?, fps?, width?, height?, crf?, out?}`
+`motion_overlay {frames | hash + project, plate, at?, fps?, width?, height?, crf?, out?}` · `motion_reel {project, storyboard, name?, frame?, plan?, crf?}` (a whole storyboard as one reel — scenes carry multi-layer stacks: plates under the comp, `above` overlays over it, each with zoom/pan/offset/scale/fit/blend/opacity/fades and its own start/hold)
 
 - The loop: `motion_presets` → `motion_inspect` (never guess node ids) → one
   `ops` batch → `motion_frame` at 2-3 moments → `motion_bake {encode: true}` →

@@ -1396,12 +1396,12 @@ fn ranged_with(
 
 /// The start of the last `at_most` bytes of a byte range that begins at
 /// `pos` and runs `size` long: where a trailer read of the *end* of a
-/// clip begins. A clip smaller than the window reads from its own start
-/// - head and tail are the same bytes. Built as a subtraction inside the
-/// guard and a saturating add, never as `pos + size - at_most`: a row
-/// whose numbers pass u64's ceiling wrapped that to an offset at the
-/// file's beginning, and a wrapped offset is a wrong answer the Hub
-/// still serves.
+/// clip begins. A clip smaller than the window reads from its own
+/// start, head and tail the same bytes. Built as a subtraction inside
+/// the guard and a saturating add, never as `pos + size - at_most`: a
+/// row whose numbers pass u64's ceiling wrapped that to an offset at
+/// the file's beginning, and a wrapped offset is a wrong answer the
+/// Hub still serves.
 fn tail_start(pos: u64, size: u64, at_most: u64) -> u64 {
     if size > at_most {
         pos.saturating_add(size - at_most)

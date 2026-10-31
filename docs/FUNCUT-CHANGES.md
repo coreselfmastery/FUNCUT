@@ -1083,3 +1083,33 @@ drawn, zero errors. 151 tests green.
 document (unused named scenes are not emitted), and the recursive plan
 of each - a plan of a document, not a render, so the cost is
 microseconds.
+
+## 25. The reel contact sheet: the critic loop over the reel's own output
+
+The agent authored scenes blind. `motion_reel` could return one still,
+and the critic - the three-rung ladder behind `craft_critique` - never
+saw the reel: the look and the score were two tools that did not meet.
+
+`motion_reel {sheet: true}` closes the loop. It renders four stills of
+the reel - a quarter in, half, three quarters, near the end, where the
+exits live - tiles them into one 2x2 image in the server itself (the
+`png` crate, the same one the API's inline frames use; no Python, no
+second pass), and returns it as an inline image **and** as `pngPath`
+under the project's `cache/sense/`, which is exactly the argument
+`craft_critique` takes. The loop is then: `motion_reel {sheet: true}`
+→ `craft_critique {sheet: pngPath, brief}` → revise what scores under
+7 → again. The funcut-director skill's design loop says so now, at the
+bake step: never ship an unscored reel.
+
+A frame that is missing or unreadable is a black cell rather than a
+refusal - the empty quarter is itself a finding, which is what a sheet
+is for.
+
+Verified: the tiler tested on four solid frames (each cell its own
+colour, decoded back and asserted) and on three missing ones (black
+cells, not refusals); the tool's argument carried through the schema;
+32 tests green in concat-mcp.
+
+**What it costs:** four frame renders at preview size and one PNG
+encode - a quarter of a second of sidecar time on the measured
+machine, once per look.

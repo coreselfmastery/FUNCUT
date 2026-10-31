@@ -886,6 +886,41 @@ pub fn catalogue() -> Vec<Tool> {
     ]
 }
 
+impl Tool {
+    /// How long one call to this tool may run, in seconds, before the
+    /// server answers for it: the per-tool table that replaces one
+    /// global 900-second client timeout. The patient work keeps its
+    /// patience - transcription is real-time audio decode, an export is
+    /// a whole render, a reel or a bake or a watch is a sidecar render -
+    /// and everything else is a document read or an edit, which has no
+    /// business taking a minute. The engine's own calls are bounded a
+    /// second time, per call, by the Geneva guard (see docs/MOTION.md),
+    /// so a hanging sidecar is killed at its own limit and this table is
+    /// the outer answer.
+    pub fn timeout_secs(&self) -> u64 {
+        const TRANSCRIBE: &[&str] = &["transcribe", "analysis_wait"];
+        const EXPORT: &[&str] = &["export_start", "export_wait"];
+        const RENDER: &[&str] = &[
+            "motion_reel",
+            "motion_bake",
+            "motion_frame",
+            "captions_animate",
+            "motion_overlay",
+            "watch_render",
+            "stock_contact_sheet",
+        ];
+        if TRANSCRIBE.contains(&self.name) {
+            900
+        } else if EXPORT.contains(&self.name) {
+            600
+        } else if RENDER.contains(&self.name) {
+            300
+        } else {
+            60
+        }
+    }
+}
+
 /// What a tool call came to: MCP content, and whether it is an error the
 /// agent should read and correct.
 pub struct Outcome {
@@ -1637,6 +1672,13 @@ fn motion_schema(name: &str) -> Option<Value> {
             properties.insert(
                 "crf".to_owned(),
                 json!({ "type": "integer", "minimum": 0, "maximum": 51, "default": 18 }),
+            );
+            properties.insert(
+                "sheet".to_owned(),
+                json!({
+                    "type": "boolean", "default": false,
+                    "description": "Render four stills of the reel (a quarter in, half, three quarters, near the end), tiled into one contact sheet, returned as an inline image and written under cache/sense/ for craft_critique (its `sheet` argument takes the pngPath). The look-before-you-commit of the creative loop, over the reel's own output: score it against the brief, and anything under 7 is a revision."
+                }),
             );
             properties.insert(
                 "genevaTimeoutSecs".to_owned(),

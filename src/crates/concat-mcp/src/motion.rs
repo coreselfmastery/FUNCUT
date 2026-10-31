@@ -798,6 +798,7 @@ pub fn reel(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
             "plan",
             "crf",
             "genevaTimeoutSecs",
+            "sheet",
         ]
         .contains(&key.as_str())
         {
@@ -891,6 +892,51 @@ pub fn reel(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
         return Ok(Outcome {
             content: vec![
                 json!({ "type": "image", "data": inline, "mimeType": "image/jpeg" }),
+                json!({
+                    "type": "text",
+                    "text": serde_json::to_string_pretty(&reading).unwrap_or_default(),
+                }),
+            ],
+            structured: Some(reading),
+            is_error: false,
+        });
+    }
+
+    // The contact sheet: four stills of the reel, tiled into one image
+    // the critic can look at. This is the creative loop's look half over
+    // the reel's own output - render it, see it, revise it - and the
+    // sheet lands where craft_critique reads from.
+    if fields.get("sheet").and_then(Value::as_bool) == Some(true) {
+        let at = [
+            (planned.duration * 0.25).max(0.0),
+            (planned.duration * 0.5).max(0.0),
+            (planned.duration * 0.75).max(0.0),
+            (planned.duration * 0.95).max(0.0),
+        ];
+        let mut frames = Vec::new();
+        for (nth, seconds) in at.iter().enumerate() {
+            let out = motion_dir(&project).join(format!("reel-sheet-{hash}-{nth}.png"));
+            planned
+                .frame(&engine, &cache, *seconds, &out)
+                .map_err(|error| ApiError::failed(error.to_string()))?;
+            frames.push(out);
+        }
+        let sense = project.join("cache").join("sense");
+        std::fs::create_dir_all(&sense)
+            .map_err(|error| ApiError::failed(format!("could not create cache/sense/: {error}")))?;
+        let sheet_path = sense.join(format!("reel-sheet-{hash}.png"));
+        let bytes = crate::sheet::tile(
+            [&frames[0], &frames[1], &frames[2], &frames[3]],
+            reel.width,
+            reel.height,
+        );
+        std::fs::write(&sheet_path, &bytes)
+            .map_err(|error| ApiError::failed(format!("could not write the sheet: {error}")))?;
+        let inline = crate::sense::base64(&bytes);
+        let reading = crate::sheet::reading(&sheet_path, planned.duration, &at);
+        return Ok(Outcome {
+            content: vec![
+                json!({ "type": "image", "data": inline, "mimeType": "image/png" }),
                 json!({
                     "type": "text",
                     "text": serde_json::to_string_pretty(&reading).unwrap_or_default(),

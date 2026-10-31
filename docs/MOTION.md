@@ -520,6 +520,16 @@ The recipes worth reaching for first:
   after another - `delay` 0.0, 0.4, 1.2 - is choreography; a stack that arrives at once is a
   collage.
 
+**Card or scene is a route, not a vibe.** `concat_motion::route::route(duration_secs,
+beat_type)` is the agent's deterministic default: under 5 s is a **card**; a **hook** or a
+**CTA** stays a card until 8 s (both are read at a glance); 5-15 s is a **scene**; over 15 s is
+a **nested** composition - an act, scenes within - except a hook and a CTA, which stay one
+scene however long the slot is. The beat types are the emotion read's acts (hook, setup,
+tension, turn, reveal, proof, cta), the answer carries the rule that fired as its reason, and
+the director's override rides along with the reason it was taken (`Decision::overridden`) -
+because an override nobody can see the why of is a guess with confidence. The full matrix is
+tested; see `concat-motion/src/route.rs`.
+
 Operations: `set-slot`, `set-text`, `set-words`, `set-markup`, `move`, `retime`, `set-track`, `set-track-points`,
 `fade-in`, `slide-to`, `pop`, `add-group`, `add-rect`, `add-text`, `delete`, `set-blend`,
 `set-opacity`, `set-duration`, `set-background`.

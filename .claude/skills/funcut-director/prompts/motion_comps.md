@@ -42,8 +42,19 @@ decisions.
 ## 2. The loop
 
 ```
-five decisions  →  inspect  →  one sentence of intent  →  one edit batch  →  three frames  →  bake at cut size  →  place
+five decisions  →  ROUTE  →  inspect  →  one sentence of intent  →  one edit batch  →  three frames  →  bake at cut size  →  place
 ```
+
+**ROUTE — card or scene, decided before it is designed.** The router is deterministic and it is the
+default: under 5 s is a **card** (one comp, one idea — there is no time for a second layer); a **hook**
+or a **CTA** stays a card until 8 s (both are read at a glance); 5–15 s is a **scene** (a stack of
+layers, each on its own clock, at parallax depth); over 15 s is a **nested** composition — an act,
+scenes within — except a hook and a CTA, which stay one scene however long the slot is. In Rust,
+`concat_motion::route::route(duration_secs, beat_type)` (the beat types are the emotion read's acts:
+hook/setup/tension/turn/reveal/proof/cta); the answer comes with the rule that fired as its reason,
+and you may override it only with a reason you can say out loud
+(`Decision::overridden(Routing::Scene, "…")` is the shape). Choosing by vibe is how a 4-second beat
+becomes a five-layer scene nobody can read; the router exists so that cannot happen quietly.
 
 **Five decisions, before the first operation** (the whole of `motion` §4):
 

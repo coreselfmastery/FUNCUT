@@ -16,3 +16,7 @@ thiserror.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# The guard tests write stub executables into a throwaway directory.
+tempfile = "3"

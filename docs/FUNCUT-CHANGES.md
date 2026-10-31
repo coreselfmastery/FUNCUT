@@ -852,3 +852,54 @@ cache honest, and what the scene-level cache coming next stands on.
 `python3` and the sidecar, one edit to the example (the plates are
 `.png` now), and a section in `docs/MOTION.md` that says how to run the
 whole procedure in four commands.
+
+## 18. The guard: limits, a breaker, and diagnostics that parse
+
+A call to the motion sidecar was `Command::output()`: however long the
+binary took, the caller waited, and the MCP's 900-second client timeout
+was the only thing between an agent and a sidecar that hung. A refusal
+came back as the first line of stderr the caller had to guess at, and a
+sidecar that failed again and again was asked again and again.
+
+Every call is now bounded and counted. Bounded: a render runs under a
+300 s limit, a plan or a frame under 60 s, both configurable - one cap
+from `agent reel --geneva-timeout SECONDS` or the `motion_reel` tool's
+`genevaTimeoutSecs` - and a call that outlives its limit is killed and
+refused as `MotionError::TimedOut`, which names the call and the limit.
+The child's pipes are drained while it runs, so a chatty sidecar cannot
+deadlock on a full buffer either. Counted: three failures inside sixty
+seconds - a refusal, a crash, a timeout, from any door in the process -
+open a circuit breaker for a minute; further calls are refused
+immediately as `MotionError::CircuitOpen` with the fallback story in the
+message, and a success closes it. `EnginePreference::choose` folds the
+breaker into the engine choice: a failing sidecar is a missing one for
+every comp the native compositor can draw - with a note the caller is
+asked to log, because a fallback nobody can see is a fallback nobody can
+trust - and a markup comp keeps Geneva, the native engine not being able
+to draw it, so the honest answer is the fast refusal.
+
+Refusals parse now. `--format json` was already asked for; the
+diagnostics it carries are read whole - code, severity, the JSON-pointer
+`path` into the timeline, message, value, help - and `MotionError::Engine`
+carries them (`E302: ... (at /layers/1/clips/1/start)`), with the most
+specific help available: the engine's own suggestion, else a table that
+says what the code means in storyboard terms (the codes are the
+sidecar's own `geneva guide errors`; E302 is clip overlap, W405 a font
+the machine lacks), else `geneva explain <code>`, asked of the sidecar
+itself.
+
+Nine tests drive stub executables written into tempdirs - a sleeper that
+outlives its limit and is killed, a broken sidecar that trips the
+breaker in three and is refused fast on the fourth, a moody one whose
+success closes the breaker, a fussy one whose diagnostics arrive whole
+with the fix, an explainer for the unknown code, the fix table's shape,
+the cap arithmetic, and the version probe under the same limits - and
+two cover `choose`'s matrix: the shape comp that falls back to native
+with the note, the markup comp that stays. Verified against the real
+sidecar by the geneva.yml CI lane, which renders the layers example
+end to end under the same guard.
+
+**What it costs:** one watchdog thread pair per call (25 ms poll, pipes
+drained), a process-global `Vec<Instant>` for the breaker, and one new
+field on `MotionError::Engine` (`path`) whose in-repo constructors were
+all updated in the same change.

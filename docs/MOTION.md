@@ -139,6 +139,46 @@ case (full-frame radial gradients); bake them once, at the size you need, and re
 and VP9 came back opaque in testing, so a comp bakes to PNG. Use `motion_overlay` to composite those
 RGBA frames over the actual shot; see "Where alpha actually lands" below.
 
+### The guard: limits, a breaker, and diagnostics that parse
+
+Every call to the sidecar is bounded and counted, so a sidecar that hangs or fails is a message, not
+a session:
+
+- **Per-call limits.** A render runs under `CallLimits::render` (300 s by default); every quick call
+  - plan, validate, one frame, the version - under `CallLimits::plan` (60 s). A call that outlives
+  its limit is **killed** and refused with `MotionError::TimedOut`, which names the call and the
+  limit. The pipes are drained while the child runs, so a chatty sidecar cannot deadlock on a full
+  buffer either. `--geneva-timeout SECONDS` (the `agent reel` verb) and `genevaTimeoutSecs` (the
+  `motion_reel` tool) cap every call at the number given - a render at it, a quick call at the
+  lesser of it and the quick default.
+- **A circuit breaker.** Three failures inside sixty seconds - a refusal, a crash, a timeout, from
+  any door - open the breaker for a minute: further calls are refused immediately with
+  `MotionError::CircuitOpen` instead of being spent on a sidecar that is not answering, and a
+  success closes it again. `EnginePreference::choose` folds the breaker into the engine choice: a
+  failing sidecar is a missing one for every comp the native engine can draw (with the note that
+  says so, because a fallback nobody can see is a fallback nobody can trust), and a markup comp
+  keeps Geneva - the native engine cannot draw it, and the honest answer is the fast refusal.
+- **Diagnostics that parse.** `--format json` is asked for on every invocation, so a refusal
+  arrives as [`geneva::Diagnostic`] - code, severity, the JSON-pointer `path` into the timeline,
+  message, value, help - and `MotionError::Engine` carries the code, the message, the location and
+  the most specific help available: the engine's own suggestion, else what `geneva::fix_for`
+  knows about that code in FUNCUT's terms (E302 is clip overlap, W405 is a font the machine
+  lacks - the table is the sidecar's own `geneva guide errors`, said in storyboard words), else
+  `geneva explain <code>`, asked of the sidecar itself.
+
+```rust,ignore
+use concat_motion::geneva::{Breaker, CallLimits, Geneva};
+use std::time::Duration;
+
+// a render that must not take all day
+let geneva = Geneva::discover(None).expect("the sidecar")
+    .with_limits(CallLimits::capped_at(Duration::from_secs(120)));
+match geneva.breaker() {
+    Breaker::Open { failures } => { /* draw natively, or wait a minute */ }
+    Breaker::Closed => { /* call as usual; a hang costs its limit, not the session */ }
+}
+```
+
 ---
 
 ## Sequences: many comps, one render

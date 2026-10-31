@@ -68,7 +68,11 @@ impl std::fmt::Display for SceneError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.layer {
             Some(layer) => {
-                write!(f, "scene {}, the layer {layer:?}: {}", self.scene, self.problem)
+                write!(
+                    f,
+                    "scene {}, the layer {layer:?}: {}",
+                    self.scene, self.problem
+                )
             }
             None => write!(f, "scene {}: {}", self.scene, self.problem),
         }
@@ -249,7 +253,6 @@ fn default_depth() -> f64 {
     1.0
 }
 
-
 /// Whether a number is finite and not negative - the shape every timing
 /// field in a storyboard must have. A NaN or an infinity from a program
 /// (JSON itself cannot carry one) and a negative time are both refused by
@@ -311,17 +314,37 @@ impl Storyboard {
         };
 
         if self.width == 0 || self.height == 0 {
-            problem(0, None, format!("the frame is {}x{}, and neither side may be zero", self.width, self.height));
+            problem(
+                0,
+                None,
+                format!(
+                    "the frame is {}x{}, and neither side may be zero",
+                    self.width, self.height
+                ),
+            );
         }
         if !self.fps.is_finite() || self.fps <= 0.0 {
-            problem(0, None, format!("the frame rate is {}, and it must be a positive number", self.fps));
+            problem(
+                0,
+                None,
+                format!(
+                    "the frame rate is {}, and it must be a positive number",
+                    self.fps
+                ),
+            );
         }
 
         for (index, card) in self.scenes.iter().enumerate() {
             // What the scene is drawn from.
             match (&card.preset, &card.comp) {
-                (None, None) => problem(index, None, "the scene needs a `preset` or a `comp`".into()),
-                (Some(_), Some(_)) => problem(index, None, "the scene names both a `preset` and a `comp`; one or the other".into()),
+                (None, None) => {
+                    problem(index, None, "the scene needs a `preset` or a `comp`".into())
+                }
+                (Some(_), Some(_)) => problem(
+                    index,
+                    None,
+                    "the scene names both a `preset` and a `comp`; one or the other".into(),
+                ),
                 _ => {}
             }
             if let Some(comp) = &card.comp
@@ -339,12 +362,20 @@ impl Storyboard {
             if let Some(at) = card.at
                 && !finite_non_negative(at)
             {
-                problem(index, None, format!("`at` is {at}, and it cannot be negative"));
+                problem(
+                    index,
+                    None,
+                    format!("`at` is {at}, and it cannot be negative"),
+                );
             }
             if let Some(hold) = card.hold
                 && !finite_non_negative(hold)
             {
-                problem(index, None, format!("`hold` is {hold}, and it cannot be negative"));
+                problem(
+                    index,
+                    None,
+                    format!("`hold` is {hold}, and it cannot be negative"),
+                );
             }
             // The short form's plate.
             if let Some(plate) = &card.plate {
@@ -352,13 +383,19 @@ impl Storyboard {
                     problem(
                         index,
                         Some(plate.clone()),
-                        format!("the plate names the asset {plate:?}, which the storyboard does not carry"),
+                        format!(
+                            "the plate names the asset {plate:?}, which the storyboard does not carry"
+                        ),
                     );
                 }
                 if let Some(zoom) = card.zoom
                     && !zoom.is_finite()
                 {
-                    problem(index, Some(plate.clone()), format!("the plate's `zoom` is {zoom}, which is not a finite number"));
+                    problem(
+                        index,
+                        Some(plate.clone()),
+                        format!("the plate's `zoom` is {zoom}, which is not a finite number"),
+                    );
                 }
             }
             // Every layer, in full.
@@ -414,10 +451,7 @@ impl Storyboard {
                         );
                     }
                 }
-                for (field, value) in [
-                    ("pan", layer.pan),
-                    ("offset", layer.offset),
-                ] {
+                for (field, value) in [("pan", layer.pan), ("offset", layer.offset)] {
                     if let Some((x, y)) = value
                         && !(x.is_finite() && y.is_finite())
                     {
@@ -461,7 +495,9 @@ impl Storyboard {
                     problem(
                         index,
                         Some(name.clone()),
-                        format!("`parallax` is {rate}, and it is a positive multiple of the layer's drift"),
+                        format!(
+                            "`parallax` is {rate}, and it is a positive multiple of the layer's drift"
+                        ),
                     );
                 }
             }
@@ -480,13 +516,21 @@ impl Storyboard {
                 );
             }
             if !bed.gain_db.is_finite() {
-                problem(0, Some(bed.asset.clone()), format!("`gain_db` is {}, which is not a finite number", bed.gain_db));
+                problem(
+                    0,
+                    Some(bed.asset.clone()),
+                    format!("`gain_db` is {}, which is not a finite number", bed.gain_db),
+                );
             }
             for (field, value) in [("fade_in", bed.fade_in), ("fade_out", bed.fade_out)] {
                 if let Some(value) = value
                     && !finite_non_negative(value)
                 {
-                    problem(0, Some(bed.asset.clone()), format!("`{field}` is {value}, and it cannot be negative"));
+                    problem(
+                        0,
+                        Some(bed.asset.clone()),
+                        format!("`{field}` is {value}, and it cannot be negative"),
+                    );
                 }
             }
         }
@@ -500,11 +544,22 @@ impl Storyboard {
                 ("depth", curtain.depth),
             ] {
                 if !finite_non_negative(value) {
-                    problem(0, None, format!("the curtain's `{field}` is {value}, and it cannot be negative"));
+                    problem(
+                        0,
+                        None,
+                        format!("the curtain's `{field}` is {value}, and it cannot be negative"),
+                    );
                 }
             }
             if curtain.depth.is_finite() && !(0.0..=1.0).contains(&curtain.depth) {
-                problem(0, None, format!("the curtain's `depth` is {}, and it is a fraction between 0 and 1", curtain.depth));
+                problem(
+                    0,
+                    None,
+                    format!(
+                        "the curtain's `depth` is {}, and it is a fraction between 0 and 1",
+                        curtain.depth
+                    ),
+                );
             }
         }
 
@@ -889,7 +944,11 @@ mod tests {
         assert_eq!(problems.len(), 1, "{problems:?}");
         assert_eq!(problems[0].scene, 0);
         assert_eq!(problems[0].layer.as_deref(), Some("nowhere"));
-        assert!(problems[0].problem.contains("nowhere"), "{}", problems[0].problem);
+        assert!(
+            problems[0].problem.contains("nowhere"),
+            "{}",
+            problems[0].problem
+        );
         // The same refusal through the door a caller actually uses.
         let error = storyboard.sequence(Path::new(".")).expect_err("refused");
         assert!(error.contains("scene 0"), "{error}");
@@ -912,13 +971,19 @@ mod tests {
         );
         let problems = storyboard.validate().expect_err("refused");
         assert!(problems.len() >= 5, "{problems:?}");
-        assert!(problems.iter().any(|p| p.scene == 2 && p.problem.contains("hold")));
-        assert!(problems
-            .iter()
-            .any(|p| p.scene == 1 && p.problem.contains("blend") && p.problem.contains("glow")));
-        assert!(problems
-            .iter()
-            .any(|p| p.scene == 1 && p.problem.contains("start") && p.problem.contains("negative")));
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.scene == 2 && p.problem.contains("hold"))
+        );
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.scene == 1 && p.problem.contains("blend") && p.problem.contains("glow"))
+        );
+        assert!(problems.iter().any(|p| p.scene == 1
+            && p.problem.contains("start")
+            && p.problem.contains("negative")));
     }
 
     #[test]
@@ -929,8 +994,14 @@ mod tests {
                  "assets": { "a": "a.png" } }"##,
         );
         let problems = storyboard.validate().expect_err("refused");
-        assert!(problems.iter().any(|p| p.problem.contains("fit")), "{problems:?}");
-        assert!(problems.iter().any(|p| p.problem.contains("opacity")), "{problems:?}");
+        assert!(
+            problems.iter().any(|p| p.problem.contains("fit")),
+            "{problems:?}"
+        );
+        assert!(
+            problems.iter().any(|p| p.problem.contains("opacity")),
+            "{problems:?}"
+        );
     }
 
     #[test]

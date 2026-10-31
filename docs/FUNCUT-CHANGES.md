@@ -804,3 +804,51 @@ compositor already draws. `Plate` (the old single-plate field) is gone
 from the public `sequence` API; in-repo callers were moved to
 `SceneLayer` in the same change, and the storyboard's `plate`/`zoom`
 short form keeps every existing storyboard rendering as it did.
+
+## 17. The verification: measured, then looked at
+
+Section 16 ended with "the frames were measured". Measurement is not
+inspection: a number that says a region changed does not say the card
+floats over the footage, only that something happened where the card
+should be. This change closes that gap, and leaves the procedure in the
+repository so it is a command, not a memory.
+
+**The assets are written, not carried.** `scripts/motion/layers-assets.py`
+generates the `layers` example's pictures from the standard library
+alone: two gridded plates (gridded on purpose - a grid under an overlay
+is identifiable in a diff, where a smooth gradient is not), a radial
+light leak, a 256x256 grain tile from a fixed LCG seed, and the three
+faces the comps name, copied from `assets/fonts/`. Deterministic by
+construction, so two machines produce byte-identical assets and the
+example's cache key survives a re-run; the plates are PNG now, which is
+what every diff and every engine reads exactly.
+
+**`scripts/motion/inspect-frames.py` measures the two claims a layer
+stack makes, and looks at them.** The card claim: the frame where the
+card overlaps its scene (t = 7.0 s) against the same scene before the
+card arrives (t = 5.5 s) - the card's centre region differs (mean luma
+difference 58.5, peak 102), a border ring around it does not (0.0), and
+four samples inside the frame but outside the card read the scene's own
+tones, not the card's; a card that *replaced* the footage would fail
+all three. The blend claim: the frame with the screen-blended leak
+against the same frame rendered with that one layer dropped from the
+staged timeline - the leak's core differs (mean 144.8) while a far
+corner does not (0.0), and at the leak's rim the plate is lighter with
+the leak than without it (mean luma 164 against 72) with the grid's
+contrast surviving underneath (46 against 49); a cover would have no
+ground detail under the rim at all. Then the frames were read back by a
+vision model, which said the same thing in words: the grid lines and
+the wordmark stay visible through the glow, the card sits over a comp
+whose own text is still readable around it, and the frame reads as one
+composed scene, not a collage.
+
+**Determinism, measured.** Rendering the whole example twice from the
+same assets produces byte-identical H.264 (the engine's report: 300
+frames of 1080p30 in 22.7 s on two cores, zero errors, zero warnings,
+one note naming the x264 build) - which is what makes a content-hash
+cache honest, and what the scene-level cache coming next stands on.
+
+**What it costs:** two scripts under `scripts/motion/` that need only
+`python3` and the sidecar, one edit to the example (the plates are
+`.png` now), and a section in `docs/MOTION.md` that says how to run the
+whole procedure in four commands.

@@ -3,8 +3,12 @@ name: Release
 # Pushing a tag that starts with v (v0.3.0, v0.3.0-alpha.1, ...) builds the
 # app for every architecture, and
 # publishes a GitHub release under that tag with one bundle per target and
-# a checksum file. A tag
-# containing a hyphen is a pre-release. The tag must be the workspace's
+# a checksum file. This fork's own tags - v0.2.8-funcut.5, a re-cut of
+# 0.2.8 - are releases, not pre-releases: the installer, the updater and
+# GitHub's own "latest" pointer all skip a pre-release, and the fork's
+# only channel is its own tags, so marking one would publish it to
+# nobody. Any other suffix - alpha, beta, rc - still marks a pre-release.
+# The tag must be the workspace's
 # version, alone or with a pre-release suffix: a release whose files say
 # one number and whose tag says another is a release nobody can reason
 # about.
@@ -42,6 +46,7 @@ jobs:
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
       version: ${{ steps.tag.outputs.version }}
+      prerelease: ${{ steps.tag.outputs.prerelease }}
     steps:
       # The tag a person typed is checked before anything uses it: as the
       # ref to check out, in a script, or in a file name.
@@ -79,6 +84,16 @@ jobs:
           # The bundles are named for the version, not the tag: v0.2.1 and
           # v0.2.1-alpha.22 both produce Concat-0.2.1-* files.
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          # The fork's own tags - v0.2.8-funcut.5 - are re-cuts of a
+          # released version, not pre-releases: the installer and the
+          # updater both skip pre-releases, and the fork's only channel is
+          # its own tags. Every other suffix - alpha, beta, rc - still
+          # marks one, the way it always did.
+          if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-funcut\.[0-9]+$ ]]; then
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
 
   # The engine's tests and lints, on the tagged commit: a tag on a red
   # tree is not a release. Named, because a run started by hand is on
@@ -173,7 +188,9 @@ jobs:
           tag_name: ${{ needs.check.outputs.tag }}
           name: Concat ${{ needs.check.outputs.tag }}
           draft: true
-          prerelease: ${{ contains(needs.check.outputs.tag, '-') }}
+          # A `-funcut.N` tag is the fork's own release, not a pre-release;
+          # the check job said which this one is.
+          prerelease: ${{ needs.check.outputs.prerelease }}
           body_path: ${{ runner.temp }}/notes.md
           fail_on_unmatched_files: true
           files: bundles/*

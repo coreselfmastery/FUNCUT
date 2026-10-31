@@ -331,6 +331,17 @@ pub fn to_document(
     settings: &DocumentSettings,
     project: &Project,
 ) -> Result<Value, serde_json::Error> {
+    // The walk comes first, and it is the whole of the Result: serde_json
+    // never errors on a non-finite f64 - it writes null - so the `?`
+    // operators further down guard nothing on their own. A project whose
+    // number cannot be written is refused in words, naming the clip or
+    // the bin item that holds it, before any of it reaches the page.
+    if let Some(holder) = non_finite_in(project) {
+        use serde::ser::Error as _;
+        return Err(serde_json::Error::custom(format!(
+            "{holder} holds a number that cannot be written - NaN or infinity, which would save as null and never open again"
+        )));
+    }
     let active = project.active();
     let mut document = Map::new();
     document.insert("concat".into(), json!("0.1.0"));
@@ -365,4 +376,158 @@ pub fn to_document(
         document.entry(key.clone()).or_insert_with(|| value.clone());
     }
     Ok(Value::Object(document))
+}
+
+/// The first place in `project` a non-finite number lives, named so a
+/// refused save says where to look: a clip of *any* timeline - the
+/// document carries them all, not only the active one's - or a media
+/// item in the bin, whose duration or frame rate is written too.
+/// `None` is a project whose every number can be written.
+///
+/// The command layer holds what it is given to
+/// [`Clip::has_non_finite`]'s line, so a number here means a path that
+/// wrote the model directly: a hand-edited document that was read and
+/// settled with the guard missing, a different build, or a test. All
+/// three are better said in words at save time than saved as null.
+fn non_finite_in(project: &Project) -> Option<String> {
+    for timeline in &project.timelines {
+        for clip in &timeline.clips {
+            if clip.has_non_finite() {
+                let name = if clip.name.is_empty() {
+                    "an unnamed clip".to_owned()
+                } else {
+                    clip.name.clone()
+                };
+                return Some(format!("the clip '{name}' on '{}'", timeline.name));
+            }
+        }
+    }
+    for item in &project.media {
+        let bad = |value: Option<f64>| value.is_some_and(|value| !value.is_finite());
+        if bad(item.duration) || bad(item.frame_rate) {
+            return Some(format!("the bin item '{}'", item.name));
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn settings() -> DocumentSettings {
+        DocumentSettings {
+            name: "Test".to_owned(),
+            width: 1920,
+            height: 1080,
+            rate_num: 30,
+            rate_den: 1,
+        }
+    }
+
+    /// One timeline holding one clip, with room to set the clip's numbers
+    /// by hand: the command layer would refuse a non-finite one at the
+    /// door, so the refusal this tests for has to be reached the way a
+    /// hand-edited file or a different build reaches it - straight into
+    /// the model.
+    fn project_with(clip: Clip) -> Project {
+        let mut project = Project::with_video(VideoSettings::default());
+        project.timelines = vec![Arc::new(Timeline {
+            id: "TL1".to_owned(),
+            name: "Timeline 1".to_owned(),
+            video: VideoSettings::default(),
+            background: Default::default(),
+            // A lane with a real id, or `from_document`'s settle step
+            // drops it, then the timeline for having none, and the
+            // read-back below has nothing to read.
+            tracks: vec![crate::model::Track {
+                id: "T1".to_owned(),
+                ..crate::model::Track::default()
+            }],
+            clips: vec![Arc::new(clip)],
+            extra: Map::new(),
+        })];
+        project
+    }
+
+    #[test]
+    fn infinity_in_a_clip_refuses_the_save_in_words() {
+        let clip = Clip {
+            name: "the bad one".to_owned(),
+            start: f64::INFINITY,
+            ..Clip::default()
+        };
+        let project = project_with(clip);
+        let error = to_document(&settings(), &project).expect_err("refused");
+        let said = error.to_string();
+        assert!(said.contains("the bad one"), "{said}");
+        assert!(said.contains("cannot be written"), "{said}");
+    }
+
+    #[test]
+    fn nan_in_the_bin_refuses_the_save_too() {
+        let mut project = project_with(Clip::default());
+        project.media.push(MediaItem {
+            id: "m1".to_owned(),
+            path: "/a/probe.mp4".to_owned(),
+            name: "a probe that went wrong".to_owned(),
+            duration: Some(f64::NAN),
+            kind: crate::model::MediaKind::Video,
+            width: None,
+            height: None,
+            frame_rate: None,
+            frame_rate_fraction: None,
+            video_codec: None,
+            audio_codec: None,
+            has_audio: false,
+            audio_tracks: Vec::new(),
+            placeholder: false,
+            color_range: None,
+            color_space: Default::default(),
+            origin: None,
+            extra: Map::new(),
+        });
+        let error = to_document(&settings(), &project).expect_err("refused");
+        let said = error.to_string();
+        assert!(said.contains("a probe that went wrong"), "{said}");
+    }
+
+    #[test]
+    fn a_clip_of_a_timeline_behind_the_active_one_is_walked() {
+        // The document carries every timeline, so the walk owes the
+        // inactive ones the same refusal - a number saved from a tab the
+        // person is not looking at still takes the project down.
+        let clip = Clip {
+            name: "on the other tab".to_owned(),
+            fade_in: f64::NEG_INFINITY,
+            ..Clip::default()
+        };
+        let mut project = project_with(Clip::default());
+        project.timelines.push(Arc::new(Timeline {
+            id: "TL2".to_owned(),
+            name: "Timeline 2".to_owned(),
+            video: VideoSettings::default(),
+            background: Default::default(),
+            tracks: Vec::new(),
+            clips: vec![Arc::new(clip)],
+            extra: Map::new(),
+        }));
+        let error = to_document(&settings(), &project).expect_err("refused");
+        assert!(error.to_string().contains("on the other tab"));
+    }
+
+    #[test]
+    fn a_finite_project_writes_as_it_always_did() {
+        let clip = Clip {
+            name: "a good one".to_owned(),
+            start: 12.5,
+            duration: 4.0,
+            ..Clip::default()
+        };
+        let document = to_document(&settings(), &project_with(clip)).expect("writes");
+        // The written numbers are numbers, and the document reads back.
+        assert_eq!(document["clips"][0]["start"], json!(12.5));
+        assert!(crate::from_document(&document).is_some());
+    }
 }

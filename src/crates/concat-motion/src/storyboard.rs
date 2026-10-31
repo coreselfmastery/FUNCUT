@@ -1208,7 +1208,7 @@ mod tests {
         assert_eq!(composition["width"], json!(1920));
         assert_eq!(composition["background"], json!("transparent"));
         assert!(
-            composition["layers"].as_array().unwrap().len() >= 1,
+            !composition["layers"].as_array().unwrap().is_empty(),
             "the scene's own stack"
         );
         // The placing layer is a clip with a composition source, at the

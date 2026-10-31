@@ -129,21 +129,12 @@ struct Incoming {
 ///   every patient tool already polls is set, so the work itself stops
 ///   where it can. A sidecar render is bounded a second time, per call,
 ///   by the Geneva guard.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct Serving {
     /// Refuse every tool that changes something.
     pub read_only: bool,
     /// The only tools served, by name; `None` serves them all.
     pub allowed: Option<Vec<String>>,
-}
-
-impl Default for Serving {
-    fn default() -> Self {
-        Serving {
-            read_only: false,
-            allowed: None,
-        }
-    }
 }
 
 impl Serving {
@@ -205,7 +196,7 @@ impl Serving {
 pub fn serve(
     input: impl BufRead + Send + 'static,
     output: impl Write + Send + 'static,
-    mut backend: Box<dyn Backend>,
+    backend: Box<dyn Backend>,
 ) {
     serve_with(input, output, backend, Serving::default());
 }
@@ -608,20 +599,20 @@ impl Server {
         // change a read-only server refuses, is answered before anything
         // runs - with the tool's own name in the message and the list it
         // is not on, when there is one.
-        if let Some((tool, _)) = self.toolbox.find(name) {
-            if let Err(why) = self.serving.permits(tool, &arguments) {
-                let mut result = json!({ "isError": true, "content": [{
-                    "type": "text",
-                    "text": format!("refused: {why}"),
-                }]});
-                if let Some(object) = result.as_object_mut() {
-                    object.insert(
-                        "structuredContent".to_owned(),
-                        json!({ "error": { "message": why } }),
-                    );
-                }
-                return success(id, result, params);
+        if let Some((tool, _)) = self.toolbox.find(name)
+            && let Err(why) = self.serving.permits(tool, &arguments)
+        {
+            let mut result = json!({ "isError": true, "content": [{
+                "type": "text",
+                "text": format!("refused: {why}"),
+            }]});
+            if let Some(object) = result.as_object_mut() {
+                object.insert(
+                    "structuredContent".to_owned(),
+                    json!({ "error": { "message": why } }),
+                );
             }
+            return success(id, result, params);
         }
         // A panic in a tool is that call's failure, not the server's end.
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

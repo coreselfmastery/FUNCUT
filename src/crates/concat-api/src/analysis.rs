@@ -154,6 +154,7 @@ impl Api {
         self.book.start(
             JobStatus::running(&started.job, &started.path, &started.output),
             Arc::clone(&cancel),
+            crate::job::Side::Own,
         );
         let job = AnalysisJob {
             name: started.job.clone(),

@@ -30,12 +30,29 @@ pub(crate) struct Book {
     inner: Mutex<Inner>,
 }
 
+/// Which of the API's services a job runs in. An export holds the
+/// exporter slot, and the cutout and stabilizer pools beside it, while
+/// it runs; an analysis or a voice holds nothing but its own stop flag.
+/// `cancel` of a job must reach the shared machinery only when the job
+/// is one that holds it - the exporter slot is shared with the window,
+/// and an export the window started has no name here to be cancelled
+/// by.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Side {
+    /// The export slot, and the cutout and stabilizer pools with it.
+    Export,
+    /// Its own stop flag, and nothing shared.
+    Own,
+}
+
 #[derive(Default)]
 struct Inner {
     /// Each running job's stop flag, by name.
     running: BTreeMap<String, Arc<AtomicBool>>,
     /// Running jobs' states, by name.
     states: BTreeMap<String, JobStatus>,
+    /// Which service each running job runs in, by name.
+    sides: BTreeMap<String, Side>,
     /// Finished jobs, in the order they finished.
     finished: VecDeque<JobStatus>,
 }
@@ -47,11 +64,27 @@ impl Book {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    /// A job has begun, stopped by `cancel`.
-    pub(crate) fn start(&self, status: JobStatus, cancel: Arc<AtomicBool>) {
+    /// A job has begun, stopped by `cancel`, running in `side`'s service.
+    pub(crate) fn start(&self, status: JobStatus, cancel: Arc<AtomicBool>, side: Side) {
         let mut inner = self.inner();
         inner.running.insert(status.job.clone(), cancel);
+        inner.sides.insert(status.job.clone(), side);
         inner.states.insert(status.job.clone(), status);
+    }
+
+    /// Whether `job` is a running export: the one kind of job whose
+    /// `cancel` must reach the exporter slot and the pools beside it.
+    pub(crate) fn is_export(&self, job: &str) -> bool {
+        self.inner().sides.get(job) == Some(&Side::Export)
+    }
+
+    /// Whether any running job is an export. What a shutdown asks before
+    /// it cancels the cutout pool on the way out.
+    pub(crate) fn exports_running(&self) -> bool {
+        self.inner()
+            .sides
+            .values()
+            .any(|side| *side == Side::Export)
     }
 
     /// Folds one event into its job's state. The last event of a job
@@ -122,6 +155,7 @@ impl Book {
         }
         if status.state != JobState::Running {
             inner.running.remove(&job);
+            inner.sides.remove(&job);
             if let Some(done) = inner.states.remove(&job) {
                 inner.finished.push_back(done);
                 while inner.finished.len() > FINISHED_KEPT {
@@ -187,7 +221,11 @@ mod tests {
 
     fn begun(book: &Book, job: &str) -> Arc<AtomicBool> {
         let flag = Arc::new(AtomicBool::new(false));
-        book.start(JobStatus::running(job, "/p", "/o.mp4"), Arc::clone(&flag));
+        book.start(
+            JobStatus::running(job, "/p", "/o.mp4"),
+            Arc::clone(&flag),
+            Side::Export,
+        );
         flag
     }
 

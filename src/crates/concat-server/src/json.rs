@@ -454,12 +454,31 @@ impl Outbox {
     }
 
     /// Queues one line. False once the caller is gone.
+    ///
+    /// A caller that is alive but slow - the queue is full and the writer
+    /// has not caught up - is hung up on at the cap, the way the bounded
+    /// queue's own contract reads, rather than the queue grown. It used to
+    /// be answered with a plain `false`, which the hub read as "gone" and
+    /// unsubscribed permanently: a connection that still took replies,
+    /// looked healthy, and never heard an event again - not even
+    /// `export.done`. Dropping the queue ends the writer once it has
+    /// drained what it holds, the socket goes with it, and the reader's
+    /// next send says gone.
     fn send(&self, message: Message) -> bool {
-        match self.queue.lock() {
-            Ok(queue) => queue
-                .as_ref()
-                .is_some_and(|queue| queue.try_send(message).is_ok()),
-            Err(_) => false,
+        let mut guard = match self.queue.lock() {
+            Ok(queue) => queue,
+            Err(_) => return false,
+        };
+        let Some(queue) = guard.as_ref() else {
+            return false;
+        };
+        match queue.try_send(message) {
+            Ok(()) => true,
+            Err(mpsc::TrySendError::Disconnected(_)) => false,
+            Err(mpsc::TrySendError::Full(_)) => {
+                *guard = None;
+                false
+            }
         }
     }
 

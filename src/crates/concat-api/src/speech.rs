@@ -197,6 +197,7 @@ impl Api {
         self.book.start(
             JobStatus::running(&started.job, &started.path, &started.output),
             Arc::clone(&cancel),
+            crate::job::Side::Own,
         );
         let job = SpeechJob {
             name: started.job.clone(),

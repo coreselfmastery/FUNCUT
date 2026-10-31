@@ -1474,9 +1474,14 @@ pub struct ParamInfo {
 pub enum ErrorCode {
     /// The line was not JSON.
     Parse,
-    /// The JSON was not a request: an unknown method, a missing or
-    /// ill-typed field, a value out of range.
+    /// The JSON was not a request: a missing or ill-typed field, a value
+    /// out of range.
     Invalid,
+    /// The method named is not one this API carries. JSON-RPC 2.0's own
+    /// -32601, so a spec-strict client that keys on the difference
+    /// between "no such method" and "bad parameters" is answered
+    /// honestly.
+    MethodNotFound,
     /// The project named is not open; open it first.
     NotOpen,
     /// A job, template or package named does not exist.
@@ -1503,6 +1508,7 @@ impl ErrorCode {
         match self {
             ErrorCode::Parse => -32700,
             ErrorCode::Invalid => -32600,
+            ErrorCode::MethodNotFound => -32601,
             ErrorCode::Failed => -32000,
             ErrorCode::NotOpen => -32001,
             ErrorCode::NotFound => -32002,

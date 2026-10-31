@@ -278,9 +278,11 @@ impl Stopper {
     /// were running.
     pub fn cancel_all(&self) -> usize {
         let running = self.book.cancel_all();
-        if running > 0 {
+        if self.book.exports_running() {
             // A job still finding masks is in the analysis, not the
-            // render; the analysis is this API's own.
+            // render; the analysis is this API's own - and only an
+            // export of this API's is running, so the pool is this
+            // API's to cancel.
             self.cutouts.cancel();
         }
         running
@@ -2059,6 +2061,7 @@ impl Api {
         self.book.start(
             JobStatus::running(&started.job, &started.path, &started.output),
             slot.cancel_handle(),
+            job::Side::Export,
         );
         let job = ExportJob {
             name: started.job.clone(),
@@ -2092,11 +2095,19 @@ impl Api {
                 format!("no job {job} is running"),
             ));
         }
-        // Whichever phase it is in: the analysis ahead of the render, or
-        // the render itself.
-        self.cutouts.cancel();
-        self.stabilizers.cancel();
-        self.exporter.cancel();
+        // The shared machinery is reached only when the named job is
+        // the export that holds it: the exporter slot is shared with
+        // the window, and an export the window started - or a cutout it
+        // is finding, or a render it is waiting on - has no name here to
+        // be cancelled by. An analysis or a voice is stopped by its own
+        // flag and nothing else's.
+        if self.book.is_export(job) {
+            // Whichever phase it is in: the analysis ahead of the
+            // render, or the render itself.
+            self.cutouts.cancel();
+            self.stabilizers.cancel();
+            self.exporter.cancel();
+        }
         // And the jobs that are only this API's: an analysis or a voice.
         self.book.cancel(job);
         Ok(())

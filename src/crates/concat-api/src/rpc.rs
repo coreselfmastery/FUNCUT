@@ -55,6 +55,24 @@ impl Call {
             }
         };
         let refuse = |message: String| (id.clone(), ApiError::invalid(message));
+        let refuse_method = |method: &str| {
+            (
+                id.clone(),
+                ApiError::new(
+                    ErrorCode::MethodNotFound,
+                    format!(
+                        "no method {method:?}: the API's methods are listed by server.discover"
+                    ),
+                ),
+            )
+        };
+        // The method's own name, read before the envelope is taken
+        // apart: an unknown method's refusal names it.
+        let method_name = object
+            .get("method")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
 
         let flat = match object.remove("jsonrpc") {
             None => object,
@@ -72,8 +90,23 @@ impl Call {
             }
             Some(_) => return Err(refuse("jsonrpc is \"2.0\"".to_owned())),
         };
-        let request = serde_json::from_value::<Request>(Value::Object(flat))
-            .map_err(|error| refuse(error.to_string()))?;
+        let request = serde_json::from_value::<Request>(Value::Object(flat)).map_err(|error| {
+            // An unknown method is -32601 (Method not found), the code a
+            // spec-strict client keys on - not -32600, which is for a
+            // known method's bad parameters. The tag alone is probed, so
+            // an unknown variant *inside* the parameters (a blend the
+            // enum does not carry, say) stays what it is: a parameter
+            // error of a method that exists.
+            let text = error.to_string();
+            if text.contains("unknown variant") && !method_name.is_empty() {
+                let probe =
+                    serde_json::from_value::<Request>(serde_json::json!({ "method": method_name }));
+                if probe.is_err() && probe.unwrap_err().to_string().contains("unknown variant") {
+                    return refuse_method(&method_name);
+                }
+            }
+            refuse(text)
+        })?;
         Ok(Call { id, request })
     }
 }
@@ -169,8 +202,18 @@ mod tests {
         assert_eq!((id, error.code), (None, ErrorCode::Parse));
         let (id, error) =
             Call::parse(r#"{"jsonrpc":"2.0","id":3,"method":"nope"}"#).expect_err("no such method");
-        assert_eq!((id, error.code), (Some(json!(3)), ErrorCode::Invalid));
+        // -32601: an unknown method is Method not found, the number a
+        // spec-strict client keys on - not Invalid, which is for a known
+        // method's bad parameters.
+        assert_eq!(
+            (id, error.code),
+            (Some(json!(3)), ErrorCode::MethodNotFound)
+        );
         assert!(error.message.contains("nope"), "{}", error.message);
+        let (id, error) =
+            Call::parse(r#"{"jsonrpc":"2.0","id":4,"method":"project.open","params":{}}"#)
+                .expect_err("bad parameters");
+        assert_eq!((id, error.code), (Some(json!(4)), ErrorCode::Invalid));
         let (_, error) =
             Call::parse(r#"{"jsonrpc":"1.0","method":"version"}"#).expect_err("wrong version");
         assert_eq!(error.code, ErrorCode::Invalid);

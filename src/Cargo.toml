@@ -26,6 +26,8 @@ concat-motion = { path = "crates/concat-motion" }
 concat = { path = "crates/concat" }
 
 serde_json = "1"
+# PNG decode/encode for the API's inline frames and the reel contact sheet.
+png = "0.17"
 thiserror = "2"
 clap = { version = "4", features = ["derive", "env"] }
 # JSON Schemas for the API's request types, behind the `schema` features of

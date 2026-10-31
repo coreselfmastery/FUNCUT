@@ -20,6 +20,9 @@ concat-server.workspace = true
 # through before, which the director skill's Phase 5b always assumed.
 concat-motion.workspace = true
 serde_json.workspace = true
+# The reel contact sheet decodes and encodes PNG frames: the same crate
+# the API's frame method hands back through.
+png.workspace = true
 
 [dev-dependencies]
 tempfile = "3"

@@ -80,7 +80,7 @@ impl std::fmt::Display for SceneError {
 }
 
 /// A storyboard: several scenes, in order, as one render.
-#[derive(serde::Deserialize, Clone)]
+#[derive(serde::Deserialize, Clone, Debug)]
 pub struct Storyboard {
     /// Frame width.
     #[serde(default = "default_width")]
@@ -111,8 +111,14 @@ pub struct Storyboard {
 
 /// One scene: a preset or a comp file, operations on it, layers stacked
 /// into it, and where and how long it runs.
-#[derive(serde::Deserialize, Clone)]
+#[derive(serde::Deserialize, Clone, Debug)]
 pub struct SceneCard {
+    /// The scene's own name, when another scene's layer places it as a
+    /// nested composition: `"id": "intro"` and then, elsewhere,
+    /// `"layers": [{"scene": "intro", ...}]`. Two scenes of one
+    /// storyboard cannot share a name.
+    #[serde(default)]
+    pub id: Option<String>,
     /// A preset id from the library.
     #[serde(default)]
     pub preset: Option<String>,
@@ -140,12 +146,22 @@ pub struct SceneCard {
     pub ops: Vec<Json>,
 }
 
-/// One layer of a scene, as a storyboard writes it. Every field but
-/// `asset` is optional; the defaults are [`SceneLayer`]'s own.
-#[derive(serde::Deserialize, serde::Serialize, Clone)]
+/// One layer of a scene, as a storyboard writes it. The source is either
+/// an `asset` id or a named `scene`; every other field is optional, and
+/// the defaults are [`SceneLayer`]'s own.
+#[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
 pub struct LayerCard {
-    /// An asset id from the storyboard's assets.
-    pub asset: String,
+    /// An asset id from the storyboard's assets. Exactly one of `asset`
+    /// and `scene` is written.
+    #[serde(default)]
+    pub asset: Option<String>,
+    /// A named scene of this storyboard, placed as a nested composition:
+    /// the scene renders once as a reusable composition and this layer
+    /// shows it, with this layer's own timing, drift, blend and fades. A
+    /// scene cannot be built from itself, directly or through another -
+    /// the plan refuses the chain by name.
+    #[serde(default)]
+    pub scene: Option<String>,
     /// How much it grows over its span, as a scale delta.
     #[serde(default)]
     pub zoom: Option<f64>,
@@ -193,7 +209,7 @@ pub struct LayerCard {
 }
 
 /// A bed of sound under the whole sequence.
-#[derive(serde::Deserialize, serde::Serialize, Clone)]
+#[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
 pub struct AudioCard {
     /// An asset id from the storyboard's assets.
     pub asset: String,
@@ -209,7 +225,7 @@ pub struct AudioCard {
 }
 
 /// The dip between scenes, as a storyboard writes it.
-#[derive(serde::Deserialize, Clone)]
+#[derive(serde::Deserialize, Clone, Debug)]
 pub struct CurtainCard {
     /// The colour dipped through, as hex.
     #[serde(default = "default_curtain")]
@@ -275,6 +291,33 @@ fn blend_of(name: &str) -> Option<Blend> {
         "soft-light" => Some(Blend::SoftLight),
         "add" => Some(Blend::Add),
         _ => None,
+    }
+}
+
+/// What a layer is made of: a picture from the assets, or another named
+/// scene of this storyboard, placed as a nested composition.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum LayerSource {
+    /// An asset id the storyboard carries.
+    Asset(String),
+    /// A named scene of this storyboard.
+    Scene(String),
+}
+
+impl LayerCard {
+    /// The layer's source, refusing a card that names neither an asset
+    /// nor a scene, or both at once.
+    pub fn source(&self) -> Result<LayerSource, String> {
+        match (&self.asset, &self.scene) {
+            (Some(asset), None) => Ok(LayerSource::Asset(asset.clone())),
+            (None, Some(scene)) => Ok(LayerSource::Scene(scene.clone())),
+            (Some(_), Some(_)) => {
+                Err("a layer names both an `asset` and a `scene`; one or the other".to_owned())
+            }
+            (None, None) => {
+                Err("a layer needs an `asset` (an id from `assets`) or a `scene` (a named scene of this storyboard)".to_owned())
+            }
+        }
     }
 }
 
@@ -400,16 +443,52 @@ impl Storyboard {
             }
             // Every layer, in full.
             for layer in &card.layers {
-                let name = layer.asset.clone();
-                if !self.assets.contains_key(&layer.asset) {
-                    problem(
-                        index,
-                        Some(name.clone()),
-                        format!(
-                            "the layer names the asset {:?}, which the storyboard does not carry",
-                            layer.asset
-                        ),
-                    );
+                let name = layer
+                    .asset
+                    .clone()
+                    .or_else(|| layer.scene.clone())
+                    .unwrap_or_else(|| "?".to_owned());
+                match layer.source() {
+                    Err(why) => problem(index, Some(name.clone()), why),
+                    Ok(LayerSource::Asset(asset)) => {
+                        if !self.assets.contains_key(&asset) {
+                            problem(
+                                index,
+                                Some(name.clone()),
+                                format!(
+                                    "the layer names the asset {asset:?}, which the storyboard does not carry"
+                                ),
+                            );
+                        }
+                    }
+                    Ok(LayerSource::Scene(scene)) => {
+                        // A layer naming a scene: the scene must exist,
+                        // and no chain of them may come back to itself.
+                        let target = self
+                            .scenes
+                            .iter()
+                            .position(|card| card.id.as_deref() == Some(scene.as_str()));
+                        match target {
+                            None => problem(
+                                index,
+                                Some(name.clone()),
+                                format!(
+                                    "the layer names the scene {scene:?}, which this storyboard does not define"
+                                ),
+                            ),
+                            Some(target) => {
+                                if let Some(chain) =
+                                    self.scene_cycle(target, index, &mut Vec::new())
+                                {
+                                    problem(
+                                        index,
+                                        Some(name.clone()),
+                                        format!("a scene cannot be built from itself: {chain}"),
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
                 if let Some(blend) = &layer.blend
                     && blend_of(blend).is_none()
@@ -570,6 +649,44 @@ impl Storyboard {
         }
     }
 
+    /// Whether the scene at `index` can be reached from itself through
+    /// named scenes, and the chain that closes the loop, as a sentence.
+    /// `from` is the scene whose layer started the walk.
+    fn scene_cycle(&self, index: usize, from: usize, seen: &mut Vec<usize>) -> Option<String> {
+        if seen.contains(&index) || index == from {
+            // The chain reads from the scene that erred: a uses b uses a.
+            let name = |i: usize| {
+                self.scenes
+                    .get(i)
+                    .and_then(|c| c.id.clone())
+                    .unwrap_or_else(|| format!("scene {i}"))
+            };
+            let mut chain = vec![name(from)];
+            chain.extend(seen.iter().map(|i| name(*i)));
+            chain.push(name(index));
+            return Some(chain.join(" uses "));
+        }
+        let card = self.scenes.get(index)?;
+        let uses_scenes: Vec<usize> = card
+            .layers
+            .iter()
+            .filter_map(|l| l.scene.as_ref())
+            .filter_map(|name| {
+                self.scenes
+                    .iter()
+                    .position(|card| card.id.as_deref() == Some(name.as_str()))
+            })
+            .collect();
+        seen.push(index);
+        for next in uses_scenes {
+            if let Some(chain) = self.scene_cycle(next, from, seen) {
+                return Some(chain);
+            }
+        }
+        seen.pop();
+        None
+    }
+
     /// The sequence this storyboard lays out, its assets resolved from
     /// `root`.
     ///
@@ -595,6 +712,7 @@ impl Storyboard {
             .unwrap_or_else(|| root.to_path_buf());
         let mut sequence = Sequence::new(self.width, self.height, self.fps);
         sequence.source_dir = source.clone();
+        sequence.scene_cards = self.scenes.clone();
         for (id, src) in &self.assets {
             sequence.asset(
                 id.clone(),
@@ -680,9 +798,22 @@ impl SceneCard {
 }
 
 impl LayerCard {
-    /// The layer this card describes.
+    /// The layer this card describes, for a card whose source is an
+    /// asset; a scene-source layer is placed by the planner, not turned
+    /// into a picture layer.
     fn layer(&self, index: usize) -> Result<SceneLayer, String> {
-        let mut layer = SceneLayer::new(self.asset.clone());
+        // A scene-source layer carries the scene's name as its asset: the
+        // planner reads `scene` off it and places the composition, and
+        // errors name the scene rather than an empty string.
+        let mut layer = SceneLayer::new(
+            self.scene
+                .clone()
+                .or_else(|| self.asset.clone())
+                .unwrap_or_default(),
+        );
+        if let Some(scene) = &self.scene {
+            layer.scene = Some(scene.clone());
+        }
         if let Some(zoom) = self.zoom {
             layer = layer.zooming(zoom);
         }
@@ -802,6 +933,7 @@ pub fn hash(document: &Json) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn board(text: &str) -> Storyboard {
         Storyboard::parse(text).expect("a storyboard")
@@ -1047,6 +1179,124 @@ mod tests {
                  "audio": [ { "asset": "score", "gain_db": -2.0 } ] }"##,
         );
         assert_eq!(storyboard.validate(), Ok(()));
+    }
+
+    #[test]
+    fn a_scene_can_be_placed_inside_another_scene() {
+        let storyboard = board(
+            r##"{ "assets": { "back": "back.png" },
+                 "scenes": [
+                   { "id": "intro", "preset": "funcut.sting.wordmark", "hold": 3.0,
+                     "layers": [ { "asset": "back", "zoom": 0.04 } ] },
+                   { "preset": "funcut.chapter.chip", "hold": 5.0,
+                     "layers": [ { "scene": "intro", "scale": 0.6, "offset": [0.0, 0.1],
+                                   "start": 1.0, "hold": 2.5, "blend": "screen", "above": true } ] }
+                 ] }"##,
+        );
+        let sequence = storyboard.sequence(Path::new(".")).expect("a sequence");
+        let geneva = crate::geneva::Geneva::at("geneva");
+        let planned = crate::sequence::plan(&geneva, &sequence).expect("a plan");
+        let document = &planned.document;
+        // The named scene is emitted once as a composition, its layers at
+        // relative times.
+        let composition = &document["compositions"]["s0.intro"];
+        assert!(
+            composition.is_object(),
+            "{}",
+            serde_json::to_string(document).unwrap_or_default()
+        );
+        assert_eq!(composition["width"], json!(1920));
+        assert_eq!(composition["background"], json!("transparent"));
+        assert!(
+            composition["layers"].as_array().unwrap().len() >= 1,
+            "the scene's own stack"
+        );
+        // The placing layer is a clip with a composition source, at the
+        // parent's start plus the layer's own.
+        let layers = document["layers"].as_array().unwrap();
+        let placed = layers
+            .iter()
+            .find(|l| l["id"] == json!("s1.overlay"))
+            .expect("the placing layer");
+        let clip = &placed["clips"][0];
+        assert_eq!(clip["source"]["kind"], json!("composition"));
+        assert_eq!(clip["source"]["composition"], json!("s0.intro"));
+        assert_eq!(
+            clip["start"],
+            json!("4s"),
+            "the second scene starts at 3s, the layer at +1s"
+        );
+        assert_eq!(clip["duration"], json!("2.5s"));
+        assert_eq!(clip["blend"], json!("screen"));
+        assert_eq!(clip["transform"]["scale"], json!(0.6));
+    }
+
+    #[test]
+    fn a_scene_cannot_be_built_from_itself_directly_or_through_another() {
+        let direct = board(
+            r##"{ "scenes": [
+                 { "id": "ouroboros", "preset": "funcut.sting.wordmark",
+                   "layers": [ { "scene": "ouroboros" } ] } ] }"##,
+        );
+        let problems = direct.validate().expect_err("refused");
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.problem.contains("cannot be built from itself")),
+            "{problems:?}"
+        );
+        let error = direct
+            .sequence(Path::new("."))
+            .expect_err("refused by sequence too");
+        assert!(error.contains("cannot be built from itself"), "{error}");
+
+        // Through another: a uses b, b uses a.
+        let looped = board(
+            r##"{ "scenes": [
+                 { "id": "a", "preset": "funcut.sting.wordmark",
+                   "layers": [ { "scene": "b" } ] },
+                 { "id": "b", "preset": "funcut.chapter.chip",
+                   "layers": [ { "scene": "a" } ] } ] }"##,
+        );
+        let problems = looped.validate().expect_err("refused");
+        let chain = problems
+            .iter()
+            .find(|p| p.problem.contains("uses"))
+            .expect("the chain is named");
+        assert!(
+            chain.problem.contains("a uses b uses a"),
+            "{}",
+            chain.problem
+        );
+    }
+
+    #[test]
+    fn a_layer_naming_an_undefined_scene_is_refused_by_name() {
+        let storyboard = board(
+            r##"{ "scenes": [ { "preset": "funcut.sting.wordmark",
+                 "layers": [ { "scene": "nowhere" } ] } ] }"##,
+        );
+        let problems = storyboard.validate().expect_err("refused");
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.problem.contains("nowhere") && p.problem.contains("does not define")),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn a_layer_naming_both_an_asset_and_a_scene_is_refused() {
+        let storyboard = board(
+            r##"{ "scenes": [ { "preset": "funcut.sting.wordmark",
+                 "layers": [ { "asset": "back", "scene": "intro" } ] } ],
+                 "assets": { "back": "b.png" } }"##,
+        );
+        let problems = storyboard.validate().expect_err("refused");
+        assert!(
+            problems.iter().any(|p| p.problem.contains("both")),
+            "{problems:?}"
+        );
     }
 
     #[test]

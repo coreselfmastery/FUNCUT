@@ -1545,9 +1545,10 @@ fn motion_schema(name: &str) -> Option<Value> {
             // by id, audio beds and a curtain.
             let layer = json!({
                 "type": "object",
-                "required": ["asset"],
+                "description": "A layer of the scene: an asset or a named scene, placed with this layer's own timing, drift, blend and fades.",
                 "properties": {
-                    "asset": { "type": "string", "description": "An asset id from the storyboard's assets." },
+                    "asset": { "type": "string", "description": "An asset id from the storyboard's assets. Exactly one of asset and scene." },
+                    "scene": { "type": "string", "description": "A named scene of this storyboard (a scene with an id), placed as a nested composition. Exactly one of asset and scene; a scene cannot be built from itself." },
                     "zoom": { "type": "number", "description": "Growth over the span as a scale delta: 0.04 is four percent." },
                     "pan": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "number" },
                              "description": "Drift over the span as [x, y] fractions of the frame; a cover layer grows by its own travel so the edge never shows." },
@@ -1571,6 +1572,7 @@ fn motion_schema(name: &str) -> Option<Value> {
             let scene = json!({
                 "type": "object",
                 "properties": {
+                    "id": { "type": "string", "description": "The scene's own name, so another scene's layer can place it as a nested composition." },
                     "preset": { "type": "string", "description": "A preset id from motion_presets." },
                     "comp": { "type": "string", "description": "A comp file under the project's comps/." },
                     "at": { "type": "number", "description": "Where it starts; omitted means after the scene before it." },

@@ -140,15 +140,31 @@ pub fn scene_key(board: &Storyboard, root: &Path, index: usize) -> String {
 
     // The bytes of every asset the scene names: plate, layers, comp
     // file. (Fonts a comp names come through the assets map too.)
-    let mut named: Vec<&String> = Vec::new();
+    let mut named: Vec<String> = Vec::new();
     if let Some(plate) = &scene.plate {
-        named.push(plate);
+        named.push(plate.clone());
     }
     for layer in &scene.layers {
-        named.push(&layer.asset);
+        match layer.source() {
+            Ok(crate::storyboard::LayerSource::Asset(asset)) => named.push(asset),
+            Ok(crate::storyboard::LayerSource::Scene(name)) => {
+                // A nested scene's content is the referenced scene's own
+                // key: its document, its assets, recursively.
+                if let Some(at) = board
+                    .scenes
+                    .iter()
+                    .position(|c| c.id.as_deref() == Some(name.as_str()))
+                {
+                    named.push(scene_key(board, root, at));
+                } else {
+                    named.push(name.clone());
+                }
+            }
+            Err(_) => named.push(String::new()),
+        }
     }
     for id in &named {
-        if let Some(src) = board.assets.get(*id)
+        if let Some(src) = board.assets.get(id)
             && let Some(hash) = file_hash(&root.join(src))
         {
             parts.push(id.as_bytes().to_vec());
@@ -360,6 +376,9 @@ fn render_scene_segment(
 ) -> Result<(), MotionError> {
     let mut sub = Sequence::new(board.width, board.height, board.fps);
     sub.source_dir = root.to_path_buf();
+    // The whole storyboard's cards, so a layer naming a scene finds it
+    // and the segment carries the nested composition.
+    sub.scene_cards = board.scenes.clone();
     for (id, src) in &board.assets {
         sub.asset(
             id.clone(),

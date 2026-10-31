@@ -67,7 +67,25 @@ editor, but it is not this one: upstream carries none of FUNCUT's own work -
 no OpenVid, sticker or sound shelves, no Forge page, 42 MCP tools instead of
 87 - so if the fork has a published release, that is the one you want. (A
 release the workflows build starts as a draft, and a draft is invisible to
-this script; see the note below.) No checkout handy? Run it straight off the
+this script; see the note below.)
+
+> **A private repository needs a token.** While this repository is private,
+> the anonymous GitHub API cannot see its releases at all - the script would
+> read that as "none" and quietly install upstream instead. Give it read
+> access with a fine-grained personal access token (no scopes beyond
+> *Contents: read* on this repository):
+>
+> ```sh
+> GITHUB_TOKEN=github_pat_... ./install-linux.sh
+> ```
+>
+> The token is sent only to GitHub, only on the release listing and the
+> downloads of the repositories named in the script - never to the motion
+> sidecar's own download. A refused token stops the install with the reason
+> rather than falling back, so a wrong token cannot hand you the wrong
+> program.
+
+No checkout handy? Run it straight off the
 repository:
 
 ```sh

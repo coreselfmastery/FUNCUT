@@ -21,6 +21,15 @@
 # no markup bakes on the native engine), so its failure is said and
 # never fatal.
 #
+# A repository can be private (a fork only its owner can see): the
+# anonymous API is refused there, which reads to this script as "no
+# releases" - and it would fall back to upstream, the same program but
+# not this one. GITHUB_TOKEN (or GH_TOKEN, the gh CLI's own name for it)
+# in the environment fixes that: a fine-grained token with read access
+# to the repository is enough, and it is sent only to the API listings
+# and the downloads of the repositories named here - never to a
+# third-party download such as the sidecar's.
+#
 # Needs curl or wget, and one of sha256sum or shasum to check the
 # download. Nothing is installed until the check has passed.
 
@@ -75,18 +84,36 @@ done
 CURL=""
 command -v curl >/dev/null 2>&1 && CURL="yes"
 
-# fetch URL DEST - the file at URL into DEST, or to stdout when DEST is
-# "-". Curl where there is curl, wget where there is not; either way,
-# quiet on success, loud on failure, and three tries at the network.
+# A token for GitHub, when the repository this installs from is private:
+# the anonymous API answers 403/404 for it, which this script would
+# otherwise read as "no releases" and fall back to upstream. GITHUB_TOKEN
+# or GH_TOKEN; sent only where the calls below say `auth` - the release
+# listings and the downloads of the repositories named here, never a
+# third-party URL. A fine-grained token with read access to the
+# repository is enough.
+GH_TOKEN_VALUE="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+
+# fetch URL DEST [auth] - the file at URL into DEST, or to stdout when
+# DEST is "-". Curl where there is curl, wget where there is not; either
+# way, quiet on success, loud on failure, and three tries at the network.
+# The third word, `auth`, sends the token above with this one request.
 fetch() {
+    local auth_header=()
+    if [ "${3:-}" = "auth" ] && [ -n "$GH_TOKEN_VALUE" ]; then
+        auth_header=(-H "Authorization: Bearer $GH_TOKEN_VALUE")
+    fi
     if [ "$2" = "-" ]; then
         if [ -n "$CURL" ]; then
-            curl -fsSL --retry 3 -H 'Accept: application/vnd.github+json' "$1"
+            curl -fsSL --retry 3 ${auth_header[@]+"${auth_header[@]}"} -H 'Accept: application/vnd.github+json' "$1"
+        elif [ "${3:-}" = "auth" ] && [ -n "$GH_TOKEN_VALUE" ]; then
+            wget -qO- --header="Authorization: Bearer $GH_TOKEN_VALUE" "$1"
         else
             wget -qO- "$1"
         fi
     elif [ -n "$CURL" ]; then
-        curl -fsSL --retry 3 -H 'Accept: application/vnd.github+json' -o "$2" "$1"
+        curl -fsSL --retry 3 ${auth_header[@]+"${auth_header[@]}"} -H 'Accept: application/vnd.github+json' -o "$2" "$1"
+    elif [ "${3:-}" = "auth" ] && [ -n "$GH_TOKEN_VALUE" ]; then
+        wget -q --header="Authorization: Bearer $GH_TOKEN_VALUE" -O "$2" "$1"
     else
         wget -q -O "$2" "$1"
     fi
@@ -115,11 +142,11 @@ esac
 # release it belongs to, so the separators are cut out of them and the
 # two paths print the same shape.
 release_assets() {
-    local repo="$1" page json tmp_tags
+    local repo="$1" auth="${2:-}" page json tmp_tags
     tmp_tags=$(mktemp) || return 1
     for page in 1 2 3 4 5; do
         if command -v python3 >/dev/null 2>&1; then
-            json=$(fetch "https://api.github.com/repos/$repo/releases?per_page=100&page=$page" -) || return 1
+            json=$(fetch "https://api.github.com/repos/$repo/releases?per_page=100&page=$page" - $auth) || return 1
             printf '%s' "$json" | python3 -c '
 import json, sys
 try:
@@ -136,7 +163,7 @@ for release in releases:
         print(asset["name"] + "\t" + asset["browser_download_url"])
 ' && return 0
         else
-            json=$(fetch "https://api.github.com/repos/$repo/releases?per_page=100&page=$page" -) || return 1
+            json=$(fetch "https://api.github.com/repos/$repo/releases?per_page=100&page=$page" - $auth) || return 1
             # Every asset URL carries its release's tag between
             # "download/" and the file name: a change of tag is a change
             # of release, and the separator the python path prints from
@@ -242,7 +269,26 @@ for repo in "$REPO" "$FALLBACK"; do
     [ "$repo" = "$VISITED" ] && continue
     VISITED="$repo"
     say "looking for a release on $repo ..."
-    STREAM=$(release_assets "$repo") || { say "  none readable there"; continue; }
+    # The primary repository is asked with the token when there is one:
+    # it is the one that can be private, and a token that cannot read it
+    # is a mistake to stop for, not to fall back from - the fallback is
+    # the same program, but not this one. Without a token the fall-back
+    # stands: a public fork needs none, and a private one is said below.
+    STREAM=$(release_assets "$repo" auth) || {
+        if [ "$repo" = "$REPO" ] && [ -n "$GH_TOKEN_VALUE" ]; then
+            die "the releases of $repo could not be read with the token given -
+it may be refused (check its access and expiry), or the network is down"
+        fi
+        if [ "$repo" = "$REPO" ]; then
+            say "  its releases could not be read: the anonymous API is
+  refused there - a private repository, or a rate-limited network. A
+  token fixes both: GITHUB_TOKEN=github_pat_... $0
+  (a fine-grained token with read access to this repository is enough)"
+        else
+            say "  none readable there"
+        fi
+        continue
+    }
     [ -n "$STREAM" ] || { say "  no published releases"; continue; }
 
     if [ "$LIST_ONLY" = "yes" ]; then
@@ -320,7 +366,14 @@ say "found: $ASSET_NAME (from $FROM_REPO)"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 say "downloading ..."
-fetch "$ASSET_URL" "$TMP/$ASSET_NAME"
+# The token rides this download when the file belongs to the repository
+# it was found on - a private one refuses the anonymous download too -
+# and never does when it does not: a third party's URL must not carry it.
+ASSET_AUTH=""
+case "$ASSET_URL" in
+    "https://github.com/$FROM_REPO/releases/download/"*) ASSET_AUTH="auth" ;;
+esac
+fetch "$ASSET_URL" "$TMP/$ASSET_NAME" $ASSET_AUTH
 
 # The checksum. A release that carries a SHA256SUMS is a release that
 # promises its bytes, and the promise is enforced: a sums file that
@@ -330,7 +383,11 @@ fetch "$ASSET_URL" "$TMP/$ASSET_NAME"
 # Only a release with no SHA256SUMS at all installs with a notice.
 CHECK=$(checksums_url "$STREAM" "$ASSET_NAME")
 if [ -n "$CHECK" ]; then
-    fetch "$CHECK" "$TMP/SHA256SUMS" \
+    CHECK_AUTH=""
+    case "$CHECK" in
+        "https://github.com/$FROM_REPO/releases/download/"*) CHECK_AUTH="auth" ;;
+    esac
+    fetch "$CHECK" "$TMP/SHA256SUMS" $CHECK_AUTH \
         || die "could not fetch the release's SHA256SUMS - not installing unchecked"
     # The exact file, by the whole second field: a substring grep could
     # match a longer name that merely ends in this one.

@@ -26,6 +26,7 @@ use std::io::{BufRead, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 
@@ -109,13 +110,104 @@ struct Incoming {
     params: Value,
 }
 
+/// How this server is served: the safety net around its own tools.
+///
+/// Three switches, all off by default so the server an agent has always
+/// had is the server it still gets:
+///
+/// - **Read-only** refuses every tool that changes something, which is
+///   the mode a harness or a stranger gets. `motion_reel` keeps its
+///   look-before-you-render halves (`plan`, `frame`) and loses only its
+///   render.
+/// - **The allowlist** names the only tools this server serves: a tool
+///   not on the list is refused as if it were not there, though its
+///   description still lists it - the server's surface is what the
+///   operator said, not what the build happens to carry.
+/// - **Per-tool timeouts** answer for a call that outlives its tool's
+///   own limit (see [`crate::tools::Tool::timeout_secs`]): the reply
+///   goes out at the deadline with the limit in it, and the cancel flag
+///   every patient tool already polls is set, so the work itself stops
+///   where it can. A sidecar render is bounded a second time, per call,
+///   by the Geneva guard.
+#[derive(Clone, Debug, Default)]
+pub struct Serving {
+    /// Refuse every tool that changes something.
+    pub read_only: bool,
+    /// The only tools served, by name; `None` serves them all.
+    pub allowed: Option<Vec<String>>,
+}
+
+impl Serving {
+    /// The switches from the environment the app's own `concat --mcp`
+    /// reads, so a server started by the window has the same safety net
+    /// as one started by hand: `CONCAT_MCP_READ_ONLY=1` and
+    /// `CONCAT_MCP_ALLOW=a,b,c`.
+    pub fn from_environment() -> Serving {
+        Serving {
+            read_only: std::env::var("CONCAT_MCP_READ_ONLY")
+                .is_ok_and(|value| value != "0" && !value.is_empty()),
+            allowed: std::env::var("CONCAT_MCP_ALLOW").ok().and_then(|value| {
+                let names: Vec<String> = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_owned)
+                    .collect();
+                (!names.is_empty()).then_some(names)
+            }),
+        }
+    }
+
+    /// Whether `tool` may be called with these `arguments`, and the
+    /// refusal when it may not.
+    fn permits(&self, tool: &crate::tools::Tool, arguments: &Value) -> Result<(), String> {
+        if let Some(allowed) = &self.allowed
+            && !allowed.iter().any(|name| name == tool.name)
+        {
+            return Err(format!(
+                "{} is not on this server's allowlist; the tools it serves are: {}",
+                tool.name,
+                allowed.join(", ")
+            ));
+        }
+        if self.read_only && !tool.read_only {
+            // The one exception that keeps the creative loop whole: a
+            // read-only agent may still LOOK - motion_reel's plan and
+            // frame halves change nothing outside the project's cache,
+            // and refusing them takes away the only way to see a design
+            // before committing to it.
+            let looks = tool.name == "motion_reel"
+                && (arguments.get("plan").and_then(Value::as_bool) == Some(true)
+                    || arguments.get("frame").and_then(Value::as_f64).is_some());
+            if !looks {
+                return Err(format!(
+                    "{} changes the project, and this server is read-only                      (CONCAT_MCP_READ_ONLY / --mcp-read-only)",
+                    tool.name
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Serves MCP on `input` and `output` until `input` ends, with `backend`
 /// behind every tool. Returns once the last request has been answered and
 /// the backend has finished.
 pub fn serve(
     input: impl BufRead + Send + 'static,
     output: impl Write + Send + 'static,
+    backend: Box<dyn Backend>,
+) {
+    serve_with(input, output, backend, Serving::default());
+}
+
+/// [`serve`], with the safety net: the serving switches, the per-tool
+/// timeouts, and everything else the plain form assumes.
+pub fn serve_with(
+    input: impl BufRead + Send + 'static,
+    output: impl Write + Send + 'static,
     mut backend: Box<dyn Backend>,
+    serving: Serving,
 ) {
     let output = Output(Arc::new(Mutex::new(Box::new(output))));
     let cancels: Arc<Mutex<Cancels>> = Arc::default();
@@ -136,6 +228,7 @@ pub fn serve(
         toolbox,
         output: output.clone(),
         cancels,
+        serving,
     };
     for incoming in queue {
         server.handle(incoming, backend.as_mut());
@@ -295,6 +388,7 @@ struct Server {
     toolbox: Toolbox,
     output: Output,
     cancels: Arc<Mutex<Cancels>>,
+    serving: Serving,
 }
 
 impl Server {
@@ -308,11 +402,65 @@ impl Server {
             }
             cancels.running = Some((key, Arc::clone(&flag)));
         }
+        // The per-tool deadline: a call that outlives its tool's own
+        // limit is answered for at the deadline - the reply names the
+        // limit, the cancel flag every patient tool already polls is
+        // set, and the work stops where it can. The answer runs on the
+        // calling thread as it always did; a watcher races it against
+        // the deadline and is the one voice that decides the reply. A
+        // test scales the table down through CONCAT_MCP_TIMEOUT_SCALE
+        // (a fraction of a second per second); production never sets it.
+        let tool = params.get("name").and_then(Value::as_str);
+        let limit = tool
+            .and_then(|name| self.toolbox.find(name).map(|(tool, _)| tool.timeout_secs()))
+            .unwrap_or(60);
+        let scale = std::env::var("CONCAT_MCP_TIMEOUT_SCALE")
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|scale| (0.0..=1.0).contains(scale))
+            .unwrap_or(1.0);
+        let deadline = Duration::from_millis((limit as f64 * scale * 1000.0) as u64);
+        let (reply_tx, reply_rx) = mpsc::channel::<Value>();
+        let output = self.output.clone();
+        let watcher = {
+            let flag = Arc::clone(&flag);
+            let id = id.clone();
+            let tool = tool.map(str::to_owned);
+            std::thread::spawn(move || match reply_rx.recv_timeout(deadline) {
+                Ok(reply) => (reply, false),
+                Err(_) => {
+                    // The tool did not answer in time: cancel it - the
+                    // patient tools poll this flag and stop - and answer
+                    // for it NOW, at the deadline, named and bounded.
+                    // The late answer, when the call finally gives up,
+                    // is dropped on the floor: the agent has been told.
+                    flag.store(true, Ordering::Relaxed);
+                    let reply = failure(
+                        id,
+                        code::INTERNAL,
+                        &format!(
+                            "the {} tool did not answer within its {limit} s limit and was \
+                             cancelled",
+                            tool.as_deref().unwrap_or("unknown")
+                        ),
+                        None,
+                    );
+                    output.send(&reply);
+                    (Value::Null, true)
+                }
+            })
+        };
         let reply = self.answer(&id, &method, &params, backend, &flag);
+        // The watcher is the one voice: it either took this reply or had
+        // already answered for the call at the deadline.
+        let _ = reply_tx.send(reply);
+        let (reply, timed_out) = watcher.join().unwrap_or((Value::Null, true));
         if let Ok(mut cancels) = self.cancels.lock() {
             cancels.running = None;
         }
-        if !flag.load(Ordering::Relaxed) {
+        // A client cancellation drops the reply, as the protocol
+        // requires; a timeout has already had its own.
+        if !timed_out && !flag.load(Ordering::Relaxed) {
             self.output.send(&reply);
         }
     }
@@ -447,6 +595,25 @@ impl Server {
             cancelled,
             progress: wants_progress.then_some(&report as &dyn Fn(f64, f64, String)),
         };
+        // The safety net first: a tool this server does not serve, or a
+        // change a read-only server refuses, is answered before anything
+        // runs - with the tool's own name in the message and the list it
+        // is not on, when there is one.
+        if let Some((tool, _)) = self.toolbox.find(name)
+            && let Err(why) = self.serving.permits(tool, &arguments)
+        {
+            let mut result = json!({ "isError": true, "content": [{
+                "type": "text",
+                "text": format!("refused: {why}"),
+            }]});
+            if let Some(object) = result.as_object_mut() {
+                object.insert(
+                    "structuredContent".to_owned(),
+                    json!({ "error": { "message": why } }),
+                );
+            }
+            return success(id, result, params);
+        }
         // A panic in a tool is that call's failure, not the server's end.
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             self.toolbox.call(name, arguments, context)
@@ -532,5 +699,250 @@ mod tests {
         assert_eq!(replies[0]["id"], Value::Null);
         assert_eq!(replies[1]["id"], 1);
         assert!(replies[1]["result"].is_object());
+    }
+
+    /// The safety net, driven through the protocol itself: read-only
+    /// refusals, one per blocked tool; the allowlist; and the per-tool
+    /// deadline, scaled down through CONCAT_MCP_TIMEOUT_SCALE so the
+    /// test does not wait a minute.
+    fn serve_safety(input: &[u8], serving: Serving) -> Vec<Value> {
+        let written = Shared::default();
+        serve_with(
+            Cursor::new(input.to_vec()),
+            written.clone(),
+            Box::new(Idle),
+            serving,
+        );
+        let bytes = written.0.lock().expect("lock").clone();
+        String::from_utf8(bytes)
+            .expect("the server writes UTF-8")
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("each line is JSON"))
+            .collect()
+    }
+
+    fn call(name: &str, arguments: Value) -> String {
+        format!(
+            "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{{\"name\":\"{name}\",\"arguments\":{}}}}}\n",
+            serde_json::to_string(&arguments).unwrap_or_default()
+        )
+    }
+
+    fn refused(reply: &Value) -> bool {
+        reply.pointer("/result/isError") == Some(&json!(true))
+            && reply
+                .pointer("/result/content/0/text")
+                .and_then(Value::as_str)
+                .is_some_and(|text| text.starts_with("refused:"))
+    }
+
+    #[test]
+    fn read_only_refuses_the_tools_that_change_something() {
+        let serving = Serving {
+            read_only: true,
+            allowed: None,
+        };
+        // One per blocked tool, the ones the net names: an edit, an
+        // export, a stock import, and the reel's render half.
+        for tool in [
+            "clip_add",
+            "export_start",
+            "openvid_import",
+            "project_create",
+        ] {
+            let replies = serve_safety(call(tool, json!({})).as_bytes(), serving.clone());
+            assert_eq!(replies.len(), 1, "{tool}: {replies:?}");
+            assert!(refused(&replies[0]), "{tool}: {replies:?}");
+            let text = replies[0]
+                .pointer("/result/content/0/text")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            assert!(text.contains(tool), "{text}");
+            assert!(text.contains("read-only"), "{text}");
+        }
+    }
+
+    #[test]
+    fn read_only_keeps_the_reads_and_the_reels_look_halves() {
+        let serving = Serving {
+            read_only: true,
+            allowed: None,
+        };
+        // A read is served: the timeline is the agent's map.
+        let replies = serve_safety(
+            call("timeline_read", json!({ "path": "/tmp/p" })).as_bytes(),
+            serving.clone(),
+        );
+        assert!(!refused(&replies[0]), "{replies:?}");
+        // The reel's look halves are served - plan changes nothing
+        // outside the cache - and its render half is refused.
+        let plan = serve_safety(
+            call(
+                "motion_reel",
+                json!({ "project": "/tmp/p", "storyboard": { "scenes": [] }, "plan": true }),
+            )
+            .as_bytes(),
+            serving.clone(),
+        );
+        assert!(!refused(&plan[0]), "plan is a look: {plan:?}");
+        let frame = serve_safety(
+            call(
+                "motion_reel",
+                json!({ "project": "/tmp/p", "storyboard": { "scenes": [] }, "frame": 1.0 }),
+            )
+            .as_bytes(),
+            serving.clone(),
+        );
+        assert!(!refused(&frame[0]), "frame is a look: {frame:?}");
+        let render = serve_safety(
+            call(
+                "motion_reel",
+                json!({ "project": "/tmp/p", "storyboard": { "scenes": [] } }),
+            )
+            .as_bytes(),
+            serving.clone(),
+        );
+        assert!(refused(&render[0]), "the render is a change: {render:?}");
+    }
+
+    #[test]
+    fn an_allowlist_serves_only_what_it_names() {
+        let serving = Serving {
+            read_only: false,
+            allowed: Some(vec![
+                "timeline_read".to_owned(),
+                "concat_version".to_owned(),
+            ]),
+        };
+        let served = serve_safety(
+            call("timeline_read", json!({ "path": "/tmp/p" })).as_bytes(),
+            serving.clone(),
+        );
+        assert!(!refused(&served[0]), "{served:?}");
+        let reply = serve_safety(call("clip_add", json!({})).as_bytes(), serving.clone());
+        assert!(refused(&reply[0]), "{reply:?}");
+        let text = reply[0]
+            .pointer("/result/content/0/text")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        // The refusal names the tool and the list it is not on.
+        assert!(text.contains("clip_add"), "{text}");
+        assert!(text.contains("timeline_read"), "{text}");
+        assert!(text.contains("allowlist"), "{text}");
+    }
+
+    #[test]
+    fn the_default_serving_changes_nothing() {
+        // No switches: every tool is served as it always was, which is
+        // the server an agent has always had.
+        let serving = Serving::default();
+        assert!(!serving.read_only);
+        assert_eq!(serving.allowed, None);
+        let replies = serve_safety(call("concat_version", json!({})).as_bytes(), serving);
+        assert!(!refused(&replies[0]), "{replies:?}");
+    }
+
+    #[test]
+    fn the_environment_switches_are_read() {
+        // The app's own server reads the same switches from the
+        // environment; the test sets them and takes them back.
+        // Edition 2024 makes the environment's mutators unsafe: the
+        // tests are single-threaded through the runner's own guarantees
+        // around these lines, which is what the unsafe blocks say.
+        unsafe {
+            std::env::set_var("CONCAT_MCP_READ_ONLY", "1");
+            std::env::set_var("CONCAT_MCP_ALLOW", "timeline_read");
+        }
+        let serving = Serving::from_environment();
+        unsafe {
+            std::env::remove_var("CONCAT_MCP_READ_ONLY");
+            std::env::remove_var("CONCAT_MCP_ALLOW");
+        }
+        assert!(serving.read_only);
+        assert_eq!(serving.allowed, Some(vec!["timeline_read".to_owned()]));
+    }
+
+    #[test]
+    fn a_tool_that_outlives_its_limit_is_answered_for_at_the_deadline() {
+        // A hanging tool under a scaled-down deadline: the reply is the
+        // timeout's, named and bounded, not the 900-second client
+        // timeout's silence. The hang is a backend whose call for
+        // timeline_read spins until cancelled - the shape of every
+        // patient tool.
+        struct Hangs;
+
+        impl Backend for Hangs {
+            fn call(&mut self, _request: Request) -> Result<Value, ApiError> {
+                // A tool that honours nothing and stops for nothing:
+                // five seconds is a hundred times the scaled deadline,
+                // so the reply the agent reads can only be the
+                // watcher's. The session itself keeps going - the reply
+                // is not the return - which is the whole design.
+                std::thread::sleep(Duration::from_secs(5));
+                Ok(json!({}))
+            }
+
+            fn describe(&self) -> Value {
+                json!({ "mode": "hangs" })
+            }
+        }
+
+        unsafe {
+            std::env::set_var("CONCAT_MCP_TIMEOUT_SCALE", "0.001");
+        }
+        let written = Shared::default();
+        let started = std::time::Instant::now();
+        serve_with(
+            Cursor::new(call("timeline_read", json!({ "path": "/tmp/p" })).into_bytes()),
+            written.clone(),
+            Box::new(Hangs),
+            Serving::default(),
+        );
+        unsafe {
+            std::env::remove_var("CONCAT_MCP_TIMEOUT_SCALE");
+        }
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(30),
+            "the session did not go on past the hung call: {elapsed:?}"
+        );
+        let bytes = written.0.lock().expect("lock").clone();
+        let reply: Value = serde_json::from_str(
+            String::from_utf8(bytes)
+                .expect("UTF-8")
+                .lines()
+                .next()
+                .expect("a reply"),
+        )
+        .expect("JSON");
+        let message = reply
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert!(
+            message.contains("timeline_read") && message.contains("limit"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn the_timeout_table_gives_each_tool_its_own_limit() {
+        use crate::tools::catalogue;
+        let limit = |name: &str| {
+            catalogue()
+                .into_iter()
+                .find(|tool| tool.name == name)
+                .unwrap_or_else(|| panic!("no tool {name}"))
+                .timeout_secs()
+        };
+        assert_eq!(limit("transcribe"), 900);
+        assert_eq!(limit("analysis_wait"), 900);
+        assert_eq!(limit("export_start"), 600);
+        assert_eq!(limit("export_wait"), 600);
+        assert_eq!(limit("motion_reel"), 300);
+        assert_eq!(limit("motion_bake"), 300);
+        assert_eq!(limit("watch_render"), 300);
+        assert_eq!(limit("timeline_read"), 60);
+        assert_eq!(limit("clip_add"), 60);
     }
 }

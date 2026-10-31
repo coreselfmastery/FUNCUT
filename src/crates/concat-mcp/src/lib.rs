@@ -22,6 +22,7 @@ pub mod motion;
 pub mod protocol;
 pub mod schema;
 pub mod sense;
+pub mod sheet;
 pub mod summary;
 pub mod tools;
 
@@ -32,12 +33,29 @@ pub use backend::{Backend, Headless, Mode, Window};
 /// MCP clients show as the server's log; standard output carries nothing
 /// but protocol.
 pub fn run(mode: Mode) -> Result<(), String> {
+    run_with(mode, protocol::Serving::from_environment())
+}
+
+/// [`run`], with the safety net given rather than read from the
+/// environment - for the binary's flags and for a test.
+pub fn run_with(mode: Mode, serving: protocol::Serving) -> Result<(), String> {
     let backend = backend::open(mode)?;
     eprintln!("concat mcp: serving through {}", backend.describe());
-    protocol::serve(
+    if serving.read_only {
+        eprintln!("concat mcp: read-only - every tool that changes something is refused");
+    }
+    if let Some(allowed) = &serving.allowed {
+        eprintln!(
+            "concat mcp: allowlist - {} tool{} served",
+            allowed.len(),
+            if allowed.len() == 1 { "" } else { "s" }
+        );
+    }
+    protocol::serve_with(
         std::io::BufReader::new(std::io::stdin()),
         std::io::stdout(),
         backend,
+        serving,
     );
     Ok(())
 }

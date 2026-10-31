@@ -42,7 +42,7 @@ decisions.
 ## 2. The loop
 
 ```
-five decisions  →  ROUTE  →  inspect  →  one sentence of intent  →  one edit batch  →  three frames  →  bake at cut size  →  place
+five decisions  →  ROUTE  →  inspect  →  one sentence of intent  →  one edit batch  →  three frames  →  bake at cut size  →  SHEET+CRITIQUE  →  place
 ```
 
 **ROUTE — card or scene, decided before it is designed.** The router is deterministic and it is the

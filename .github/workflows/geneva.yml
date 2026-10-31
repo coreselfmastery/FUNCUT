@@ -83,9 +83,26 @@ jobs:
           cd src
           cargo run -q -p concat-motion --example layers -- --plan --assets ../check > ../check/plan.json
           python3 - <<'PY'
-          import json, sys
-          plan = json.load(open("../check/plan.json"))
-          summary, plan = plan[0], plan[1]
+          import json
+          # The example prints the summary and then the plan, two JSON
+          # documents on one stream - the same shape the render report
+          # below is parsed with. json.load reads exactly one document
+          # and stops with "Extra data" at the second, so the stream is
+          # decoded a document at a time here too.
+          docs = []
+          text = open("../check/plan.json").read()
+          decoder = json.JSONDecoder()
+          at = 0
+          while at < len(text):
+              stripped = text[at:].lstrip()
+              if not stripped:
+                  break
+              at = len(text) - len(stripped)
+              obj, end = decoder.raw_decode(text, at)
+              docs.append(obj)
+              at = end
+          assert len(docs) == 2, f"expected the summary and the plan, got {len(docs)}"
+          summary, plan = docs[0], docs[1]
           assert summary["ok"], summary
           assert summary["scenes"] == 2, summary
           assert summary["layers"] == 8, summary

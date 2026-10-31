@@ -1674,6 +1674,13 @@ fn motion_schema(name: &str) -> Option<Value> {
                 json!({ "type": "integer", "minimum": 0, "maximum": 51, "default": 18 }),
             );
             properties.insert(
+                "sheet".to_owned(),
+                json!({
+                    "type": "boolean", "default": false,
+                    "description": "Render four stills of the reel (a quarter in, half, three quarters, near the end), tiled into one contact sheet, returned as an inline image and written under cache/sense/ for craft_critique (its `sheet` argument takes the pngPath). The look-before-you-commit of the creative loop, over the reel's own output: score it against the brief, and anything under 7 is a revision."
+                }),
+            );
+            properties.insert(
                 "genevaTimeoutSecs".to_owned(),
                 json!({
                     "type": "number", "minimum": 5, "maximum": 3600, "default": 300,

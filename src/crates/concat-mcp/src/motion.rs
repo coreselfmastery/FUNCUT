@@ -908,9 +908,19 @@ pub fn reel(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
         .map(|name| name.trim().to_owned())
         .unwrap_or_else(|| format!("reel-{hash}.mp4"));
     let out = crate::sense::write_target(backend, Some(&motion_dir(&project)), &name)?;
-    let report = planned
-        .render(&engine, &cache, &out)
-        .map_err(|error| ApiError::failed(error.to_string()))?;
+    // The scene-aware cache: one scene, one entry. The reel renders
+    // scene by scene, each cached by what actually draws it (its own
+    // document, its assets' bytes, the geometry, the engine, the curtain
+    // at its boundaries), so an edit to one scene re-renders that scene
+    // and serves the rest - and an unchanged reel serves the join whole,
+    // byte-identical, rendering nothing.
+    let crf = fields.get("crf").and_then(Value::as_u64).unwrap_or(18) as u8;
+    // The scene cache is shared across reels: a scene identical in two
+    // reels is one entry, drawn once, wherever it appears.
+    let scene_cache = cache_dir(&project).join("scenes");
+    let report =
+        concat_motion::reel::render_reel(&engine, &board, &project, &out, &scene_cache, crf)
+            .map_err(|error| ApiError::failed(error.to_string()))?;
     if !out.is_file() {
         return Err(ApiError::failed(format!(
             "geneva reported success but {} was not written",
@@ -919,7 +929,14 @@ pub fn reel(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
     }
     let mut reply = summary;
     reply["file"] = json!(out.display().to_string());
-    reply["report"] = report;
+    reply["cache"] = json!({
+        "scenesDrawn": report.renders,
+        "scenesServed": report.scenes.len() - report.renders,
+        "joinedFromCache": report.joined_from_cache,
+        "audioRendered": report.audio_rendered,
+        "seconds": report.seconds,
+        "sceneKeys": report.scenes.iter().map(|s| s.key.clone()).collect::<Vec<String>>(),
+    });
     Ok(Outcome::json(reply))
 }
 

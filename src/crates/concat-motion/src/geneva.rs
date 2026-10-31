@@ -127,6 +127,22 @@ const BREAKER_TRIPS_AT: usize = 3;
 /// of the count, and an open breaker closes again after it.
 const BREAKER_WINDOW_SECS: f64 = 60.0;
 
+/// One lock for every test that touches the process-wide breaker: the
+/// guard tests trip it, the reel tests' stubs clear it with their
+/// successes, and neither may happen inside the other's span.
+#[cfg(test)]
+pub(crate) static BREAKER_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+/// Forget the breaker's failures, for the test about to make its own.
+/// Every test that drives the sidecar calls this under the lock, so one
+/// test's open circuit is never the next test's surprise.
+#[cfg(test)]
+pub(crate) fn reset_breaker_for_tests() {
+    if let Ok(mut failures) = BREAKER.lock() {
+        failures.clear();
+    }
+}
+
 /// The breaker is process-wide, because the sidecar is: three failures
 /// from any door - a bake, a frame, a reel - are three failures against
 /// the same binary, and the next caller whoever it is should not pay to
@@ -471,16 +487,20 @@ impl Geneva {
         output.insert("fps".into(), json!(fps));
         output.insert("duration".into(), Json::String(seconds(comp.duration)));
         output.insert("background".into(), Json::String(comp.background.to_hex()));
-        // Frames with alpha: the one carrier the engine guarantees, and the one
-        // the compositor samples without a conversion. `pixel_format` rgba
-        // says the PNGs carry their alpha channel whole, so a motion card's
-        // bake lands translucent where the comp was - which is what lets it
-        // sit on footage in an export instead of covering it.
+        // Frames with alpha: the one carrier the engine guarantees, and
+        // the one the compositor samples without a conversion. An
+        // image-sequence of PNGs carries its alpha channel whole - that
+        // is what the container is - so a motion card's bake lands
+        // translucent where the comp was, which is what lets it sit on
+        // footage in an export instead of covering it. (The engine's
+        // schema has no `pixel_format` field anywhere: the PNG sequence
+        // IS the alpha, and saying so twice was refused as E101 - a
+        // refusal every comp bake and every comp frame met.)
         output.insert(
             "encode".into(),
             json!({
                 "container": "image-sequence",
-                "video": { "codec": "png", "pixel_format": "rgba" }
+                "video": { "codec": "png" }
             }),
         );
 
@@ -1788,9 +1808,12 @@ mod tests {
         assert_eq!(document["geneva"], "1.1");
         assert_eq!(document["output"]["encode"]["container"], "image-sequence");
         assert_eq!(document["output"]["encode"]["video"]["codec"], "png");
-        assert_eq!(
-            document["output"]["encode"]["video"]["pixel_format"],
-            "rgba"
+        // No `pixel_format`: the engine's schema does not carry one, and
+        // the PNG sequence is the alpha by being a PNG sequence.
+        assert!(
+            document["output"]["encode"]["video"]
+                .get("pixel_format")
+                .is_none()
         );
         assert_eq!(document["output"]["background"], "#00000000");
         assert_eq!(document["layers"].as_array().unwrap().len(), 1);
@@ -2127,7 +2150,7 @@ mod tests {
         /// as threads in one process: the lock makes one test's
         /// failures nobody else's, which is what a tempdir does for
         /// files.
-        static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
+        use super::BREAKER_TEST_LOCK as ONE_AT_A_TIME;
 
         /// A stub executable at `dir/name`, run under tight limits, and
         /// the breaker reset so one test's failures are not the next

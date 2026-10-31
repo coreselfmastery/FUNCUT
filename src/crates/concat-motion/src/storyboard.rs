@@ -80,7 +80,7 @@ impl std::fmt::Display for SceneError {
 }
 
 /// A storyboard: several scenes, in order, as one render.
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Clone)]
 pub struct Storyboard {
     /// Frame width.
     #[serde(default = "default_width")]
@@ -111,7 +111,7 @@ pub struct Storyboard {
 
 /// One scene: a preset or a comp file, operations on it, layers stacked
 /// into it, and where and how long it runs.
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Clone)]
 pub struct SceneCard {
     /// A preset id from the library.
     #[serde(default)]
@@ -142,7 +142,7 @@ pub struct SceneCard {
 
 /// One layer of a scene, as a storyboard writes it. Every field but
 /// `asset` is optional; the defaults are [`SceneLayer`]'s own.
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, serde::Serialize, Clone)]
 pub struct LayerCard {
     /// An asset id from the storyboard's assets.
     pub asset: String,
@@ -193,7 +193,7 @@ pub struct LayerCard {
 }
 
 /// A bed of sound under the whole sequence.
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, serde::Serialize, Clone)]
 pub struct AudioCard {
     /// An asset id from the storyboard's assets.
     pub asset: String,
@@ -209,7 +209,7 @@ pub struct AudioCard {
 }
 
 /// The dip between scenes, as a storyboard writes it.
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Clone)]
 pub struct CurtainCard {
     /// The colour dipped through, as hex.
     #[serde(default = "default_curtain")]
@@ -640,7 +640,7 @@ impl SceneCard {
     /// The scene this card describes: its comp resolved, its operations
     /// parsed, its layers stacked. Errors name the scene's index, so a
     /// twelve-scene storyboard is debuggable from one refusal.
-    fn scene(&self, index: usize, root: &Path) -> Result<Scene, String> {
+    pub(crate) fn scene(&self, index: usize, root: &Path) -> Result<Scene, String> {
         let comp = match (&self.preset, &self.comp) {
             (Some(id), _) => presets::build(id)
                 .ok_or_else(|| format!("scene {index}: no preset called {id:?}"))?,

@@ -260,8 +260,22 @@ jobs:
         timeout-minutes: 60
         shell: bash
         working-directory: src
+        env:
+          # The ref this build was asked for, in through the environment
+          # the way the release workflow's own scripts take a tag: never
+          # pasted into the shell's text.
+          BUILD_REF: ${{ inputs.ref || github.ref_name }}
         run: |
           set -o pipefail
+          # A build cut from one of the fork's own tags - v0.2.8-funcut.5 -
+          # carries that iteration in its own version, read at compile
+          # time by option_env! in concat-host's updates.rs; without it a
+          # .5 install reads itself as the bare 0.2.8 and sits forever
+          # behind the .5 it already is. Any other ref - a branch, a
+          # plain version tag - leaves it unset.
+          case "$BUILD_REF" in
+            v[0-9]*-funcut.[0-9]*) export FUNCUT_ITERATION="${BUILD_REF##*-funcut.}" ;;
+          esac
           cargo build --profile app -p concat -p concat-motion --target ${{ matrix.target }} 2>&1 | tee build.log
 
       - name: Build log to the summary (failure only)

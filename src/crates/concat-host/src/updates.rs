@@ -66,6 +66,14 @@ pub struct Version {
     pub minor: u64,
     /// The third.
     pub patch: u64,
+    /// This fork's own iteration on that base, from a tag like
+    /// `v0.2.8-funcut.5`: the fork re-cuts a base release as `.1`,
+    /// `.2`, ... while the workspace's own version - the number the
+    /// bundles are named by - stays what it is. `None` for a plain
+    /// release, upstream's or this fork's. Ordered last, so a cut of a
+    /// base is newer than the base and older than the next base: an
+    /// install of `.5` is behind `.6` and ahead of `0.2.8` itself.
+    pub funcut: Option<u64>,
 }
 
 impl Version {
@@ -75,15 +83,27 @@ impl Version {
             major,
             minor,
             patch,
+            funcut: None,
         }
     }
 
-    /// `0.2.5` or `v0.2.5`. Anything else - a pre-release such as
-    /// `v0.3.0-beta.1`, the `nightly` tag, two numbers - is `None`: not a
-    /// release a person is offered.
+    /// `0.2.5`, `v0.2.5`, or this fork's own `v0.2.8-funcut.5`. Anything
+    /// else - a pre-release such as `v0.3.0-beta.1`, the `nightly` tag,
+    /// two numbers - is `None`: not a release a person is offered. The
+    /// fork's tags are the fork's *releases*, not pre-releases: a tag
+    /// this cannot read is a tag the updater cannot see, and a fork
+    /// whose every release reads as nothing falls back to upstream
+    /// Concat - the very thing a person chose this fork over.
     pub fn parse(text: &str) -> Option<Version> {
         let text = text.trim();
         let text = text.strip_prefix('v').unwrap_or(text);
+        // A `-funcut.N` suffix is the fork's own iteration on the base
+        // in front of it; every other suffix - beta, rc, a shelf's tag -
+        // stays what it was, not a release.
+        let (text, funcut) = match text.split_once('-') {
+            Some((base, suffix)) => (base, Some(suffix.strip_prefix("funcut.")?.parse().ok()?)),
+            None => (text, None),
+        };
         let mut parts = text.split('.');
         let major = parts.next()?.parse().ok()?;
         let minor = parts.next()?.parse().ok()?;
@@ -91,12 +111,28 @@ impl Version {
         if parts.next().is_some() {
             return None;
         }
-        Some(Version::new(major, minor, patch))
+        Some(Version {
+            major,
+            minor,
+            patch,
+            funcut,
+        })
     }
 
-    /// The version this binary was built as: the workspace's.
+    /// The version this binary was built as: the workspace's, and - when
+    /// the release workflow built this from one of the fork's own tags -
+    /// the iteration that tag carried, read out of `FUNCUT_ITERATION` at
+    /// compile time. Without it a build of `.5` would know itself only
+    /// as `0.2.8`, and sit forever behind the `.5` it already is.
     pub fn current() -> Version {
-        Version::parse(env!("CARGO_PKG_VERSION")).unwrap_or(Version::new(0, 0, 0))
+        let version = Version::parse(env!("CARGO_PKG_VERSION")).unwrap_or(Version::new(0, 0, 0));
+        match option_env!("FUNCUT_ITERATION") {
+            Some(iteration) => Version {
+                funcut: iteration.parse().ok(),
+                ..version
+            },
+            None => version,
+        }
     }
 
     /// The release's tag: `v0.2.5`.
@@ -107,7 +143,11 @@ impl Version {
 
 impl fmt::Display for Version {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
+        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)?;
+        if let Some(iteration) = self.funcut {
+            write!(f, "-funcut.{iteration}")?;
+        }
+        Ok(())
     }
 }
 
@@ -579,6 +619,85 @@ mod tests {
         assert_eq!(Version::new(0, 2, 5).to_string(), "0.2.5");
         assert_eq!(Version::new(0, 2, 5).tag(), "v0.2.5");
         assert!(Version::current() >= Version::new(0, 2, 4));
+    }
+
+    #[test]
+    fn the_forks_own_tags_read_and_order_by_their_iteration() {
+        let cut = |n: u64| Version {
+            funcut: Some(n),
+            ..Version::new(0, 2, 8)
+        };
+        assert_eq!(Version::parse("v0.2.8-funcut.5"), Some(cut(5)));
+        assert_eq!(Version::parse(" 0.2.8-funcut.12 "), Some(cut(12)));
+        assert_eq!(cut(5).to_string(), "0.2.8-funcut.5");
+        assert_eq!(cut(5).tag(), "v0.2.8-funcut.5");
+        // A cut of a base is newer than the base and than an earlier cut,
+        // and older than the next base: the fork re-cuts 0.2.8 while
+        // upstream numbers on to 0.2.9.
+        assert!(cut(5) > cut(4));
+        assert!(cut(1) > Version::new(0, 2, 8));
+        assert!(Version::new(0, 2, 9) > cut(5));
+        // Nothing else with a hyphen opens: a pre-release, a shelf's own
+        // tag, a suffix spelled wrong, a cut without its number.
+        for not_a_release in [
+            "v0.3.0-beta.1",
+            "v0.2.8-funcut",
+            "v0.2.8-funcut.5.1",
+            "v0.2.8-FUNCUT.5",
+            "v0.2.8-funcut.five",
+            "audio-v1",
+            "openvid-index-v1",
+        ] {
+            assert_eq!(Version::parse(not_a_release), None, "{not_a_release:?}");
+        }
+    }
+
+    #[test]
+    fn the_forks_own_release_list_reads_with_its_shelves_left_out() {
+        let releases = releases_from_json(
+            r#"[
+            {"tag_name": "v0.2.8-funcut.5", "draft": false, "prerelease": false, "published_at": "2026-10-31T11:16:35Z"},
+            {"tag_name": "openvid-index-v1", "draft": false, "prerelease": false, "published_at": "2026-10-23T14:51:30Z"},
+            {"tag_name": "v0.2.8-funcut.4", "draft": false, "prerelease": false, "published_at": "2026-10-29T14:08:30Z"},
+            {"tag_name": "v0.2.8-funcut.6", "draft": true, "prerelease": false, "published_at": null}
+        ]"#,
+            REPO,
+        )
+        .expect("reads");
+        let tags: Vec<&str> = releases.iter().map(|r| r.tag.as_str()).collect();
+        // The shelf's index and the still-unpublished .6 are not
+        // releases a person is offered.
+        assert_eq!(tags, ["v0.2.8-funcut.5", "v0.2.8-funcut.4"]);
+        assert_eq!(releases[0].repo, REPO);
+    }
+
+    #[test]
+    fn a_build_from_the_forks_own_tag_stands_where_it_is() {
+        let releases = vec![Release {
+            version: Version::parse("v0.2.8-funcut.6").expect("reads"),
+            tag: "v0.2.8-funcut.6".to_owned(),
+            repo: REPO,
+            published: "2026-10-31".to_owned(),
+        }];
+        let on_it = Version {
+            funcut: Some(6),
+            ..Version::new(0, 2, 8)
+        };
+        assert_eq!(standing(on_it, &releases), Standing::Latest);
+        let one_behind = Version {
+            funcut: Some(5),
+            ..Version::new(0, 2, 8)
+        };
+        assert_eq!(
+            standing(one_behind, &releases),
+            Standing::Behind(releases[0].version)
+        );
+        // A build that knows no iteration - one from the tree - sits
+        // behind the fork's cut of the same base, which it is.
+        assert_eq!(
+            standing(Version::new(0, 2, 8), &releases),
+            Standing::Behind(releases[0].version)
+        );
     }
 
     const RELEASES: &str = r#"[

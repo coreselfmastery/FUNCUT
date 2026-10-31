@@ -940,3 +940,31 @@ tests green in total.
 resolves it, and nothing else; the checks are the ones the resolver and
 the engine were making one scene at a time, moved to where they cost a
 microsecond instead of a render.
+
+## 20. The scene builder's three first-class options
+
+The fields were on `SceneLayer`; the builder did not speak them as one
+call, and the storyboard could not say the one that matters most.
+
+`SceneLayer::parallax(rate)` is that one. A rate is a multiple of the
+layer's own drift - `zoom` and `pan` as written, or, for a layer with no
+drift of its own, the classic plate's four percent of growth and three
+of slide - applied where the timeline is emitted, so the layer's own
+numbers stay what they said and a layer built before the field existed
+renders exactly as it did (`None` is the whole of backwards
+compatibility; five tests pin it). Three layers at 0.5, 1.0 and 2.0 are
+three depths of one scene, and the emitted timeline carries three
+different scale keyframes and three different pan keyframes, asserted in
+that order and in that ratio. The storyboard's layers carry `parallax`
+too, validated as a positive multiple.
+
+`blend(mode)` and `delay(secs)` join `blending()` and `starting_at()` as
+the vocabulary's other names: a stack of layers taking the stage one
+after another - `delay` 0.0, 0.4, 1.2 - is choreography, where a stack
+that arrives at once is a collage, and the emitted timeline carries each
+delay as the clip's own start. The `motion_reel` tool's layer schema
+carries all three.
+
+**What it costs:** one `Option<f64>` on a struct that is built by hand
+or parsed once, and the rate arithmetic at emission - the layer's
+document stays what its author wrote.

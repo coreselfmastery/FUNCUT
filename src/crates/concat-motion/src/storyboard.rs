@@ -181,6 +181,12 @@ pub struct LayerCard {
     /// How long it holds; omitted runs to the scene's end.
     #[serde(default)]
     pub hold: Option<f64>,
+    /// How fast it drifts, as a multiple of its own `zoom` and `pan` (or
+    /// of the classic plate's drift, when it carries none): `2.0` twice
+    /// as fast, `0.5` half - nearer layers move faster, which is
+    /// parallax.
+    #[serde(default)]
+    pub parallax: Option<f64>,
     /// Whether it paints over the comp rather than under it.
     #[serde(default)]
     pub above: Option<bool>,
@@ -433,6 +439,7 @@ impl Storyboard {
                     ("fade_out", layer.fade_out),
                     ("start", layer.start),
                     ("hold", layer.hold),
+                    ("parallax", layer.parallax),
                 ] {
                     if let Some(value) = value
                         && !value.is_finite()
@@ -479,6 +486,18 @@ impl Storyboard {
                         index,
                         Some(name.clone()),
                         format!("`opacity` is {opacity}, and it is a fraction between 0 and 1"),
+                    );
+                }
+                if let Some(rate) = layer.parallax
+                    && rate.is_finite()
+                    && rate <= 0.0
+                {
+                    problem(
+                        index,
+                        Some(name.clone()),
+                        format!(
+                            "`parallax` is {rate}, and it is a positive multiple of the layer's drift"
+                        ),
                     );
                 }
             }
@@ -732,6 +751,9 @@ impl LayerCard {
         }
         if let Some(hold) = self.hold {
             layer = layer.holding(hold);
+        }
+        if let Some(rate) = self.parallax {
+            layer = layer.parallax(rate);
         }
         if self.above == Some(true) {
             layer = layer.above();

@@ -1,0 +1,16 @@
+{
+  "_readme": "A counting timeline: the ticker counts a number up over footage, grain over all, the comp a beat late. Assets: plate, grain. Slots: Number, Label.",
+  "width": 1920, "height": 1080, "fps": 30,
+  "assets": { "plate": "assets/plate.png", "grain": "assets/grain.png" },
+  "scenes": [
+    { "preset": "funcut.ticker.count", "hold": 5.0,
+      "layers": [
+        { "asset": "plate", "parallax": 0.8 },
+        { "asset": "grain", "opacity": 0.08, "above": true }
+      ],
+      "ops": [
+        { "op": "set-slot", "slot": "Number", "value": "100000" },
+        { "op": "set-slot", "slot": "Label", "value": "subscribers" }
+      ] }
+  ]
+}

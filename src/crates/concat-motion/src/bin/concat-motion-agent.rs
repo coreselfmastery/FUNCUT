@@ -204,16 +204,20 @@ fn reel(args: &[String]) -> Result<serde_json::Value, String> {
     }
 
     let path = out.unwrap_or_else(|| PathBuf::from("reel.mp4"));
-    let started = std::time::Instant::now();
-    let report = planned
-        .render(&geneva, &cache, &path)
+    // The scene-aware cache: one scene, one entry, so an edit to one
+    // scene re-renders that scene and serves the rest. The cache flag's
+    // directory is the cache root.
+    let report = concat_motion::reel::render_reel(&geneva, &board, &root, &path, &cache, 18)
         .map_err(|error| error.to_string())?;
-    let seconds = started.elapsed().as_secs_f64();
     let mut value = summary;
     value["written"] = json!(path.display().to_string());
-    value["seconds"] = json!(seconds);
-    value["frames_per_second"] = json!(planned.duration * board.fps / seconds.max(1e-9));
-    value["report"] = report;
+    value["cache"] = json!({
+        "scenesDrawn": report.renders,
+        "scenesServed": report.scenes.len() - report.renders,
+        "joinedFromCache": report.joined_from_cache,
+        "seconds": report.seconds,
+    });
+    value["report"] = json!({"ok": true});
     Ok(value)
 }
 

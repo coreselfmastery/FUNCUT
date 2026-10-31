@@ -1000,3 +1000,86 @@ plan carries.
 **What it costs:** one new module of pure functions, no state, no
 engine; the agent calls it or reads its table, and the table is the
 code.
+
+## 22. The scene-aware reel cache: one scene, one entry
+
+A reel re-rendered on every edit is a reel nobody iterates on: the
+whole ten-scene document rendered again because one layer of one scene
+moved ten pixels. The reel's cache was the storyboard's own hash - all
+or nothing.
+
+`concat-motion::reel` renders a storyboard **scene by scene**, and each
+scene is cached by a key derived from what actually draws it: its own
+document (comp or preset, layers, timing, operations), the **bytes** of
+every asset it names - a re-saved picture misses, a renamed one does not
+have to - the geometry, the engine and its version, and the curtain at
+its boundaries. An edit to scene seven does not move scene three's key,
+and scene three's segment is served untouched. The joined reel is cached
+by its ordered scene keys, so an unchanged reel serves the join whole -
+byte-identical, rendering nothing - and a one-scene change re-renders
+that scene, re-joins, and nothing else. Audio beds render once,
+audio-only, cached by their own numbers and their file's bytes, and mix
+over the joined picture at the end. The scene cache is shared across
+reels: a scene identical in two reels is one entry, drawn once.
+
+Both doors eat it - `motion_reel` reports `cache: {scenesDrawn,
+scenesServed, joinedFromCache, ...}` and the agent CLI's `reel` the same
+- and a relative `-o` works, where the first cut of the join ran its
+child in the empty string's directory and was refused with the one error
+that looks like the executable is missing.
+
+**Found and fixed on the way:** the comp timeline's `encode.video.`
+`pixel_format: "rgba"` was never a field in the engine's schema - every
+comp bake and every comp frame through the strict door was refused as
+E101 (the sequence path never wrote it, which is why the layers example
+rendered clean). The PNG image sequence is the alpha by being a PNG
+sequence; the field is gone and the comp frame path works, verified
+against the real sidecar.
+
+Verified with stub-executable tests - a second render of an unchanged
+reel renders nothing and is byte-identical; one layer changed
+re-renders only its scene; asset bytes, not names, are the key; the
+geometry is in it - and against the real sidecar: two scenes drawn the
+first time, **zero** drawn and the join served the second, **exactly
+one** drawn after one layer's parallax changed. 147 tests green.
+
+**What it costs:** one directory of segments and joins under the
+project's cache, a per-scene plan instead of one, and a join the engine
+does back-to-back; an unchanged reel costs a handful of stat calls.
+
+## 23. Nested compositions: a scene inside a scene
+
+A scene could not reference another scene. An act that wanted its
+opening sting inside its chapter card rebuilt the sting by hand, or
+pre-rendered it to a file and carried the file - both of which forget
+what the sting was the moment it changes.
+
+A scene can be named (`"id": "intro"`) and another scene's layer can
+place it (`"layers": [{"scene": "intro", "scale": 0.5, ...}]`): the
+named scene is emitted once, as a reusable composition in the engine's
+own format - its plates, its comp, its overlays, at relative times -
+and every layer that names it shows it, each with the layer's own
+timing, offset, scale, opacity, blend and fades. A composition that
+itself places a scene nests one level per name, the engine holds the
+stack to eight, and the segment cache includes a nested scene's own
+key in its parent's, so editing the sting re-renders exactly the scenes
+that show it.
+
+A scene cannot be built from itself, directly or through another:
+validation walks the names and refuses the chain as a sentence -
+"a uses b uses a" - before a preset is resolved, and both doors eat the
+same refusal. A layer naming an undefined scene, or both an asset and
+a scene, is refused by name.
+
+Verified: the placement's timeline asserted (composition source, start
+at the parent's start plus the layer's delay, the layer's transform and
+blend), the direct and the two-scene cycle refused with the chain
+named, the undefined name and the both-at-once refused, and the whole
+thing rendered against the real sidecar - a chapter-chip scene holding
+a half-scale, offset, fading copy of a wordmark scene, two segments
+drawn, zero errors. 151 tests green.
+
+**What it costs:** one composition per named-and-placed scene in the
+document (unused named scenes are not emitted), and the recursive plan
+of each - a plan of a document, not a render, so the cost is
+microseconds.

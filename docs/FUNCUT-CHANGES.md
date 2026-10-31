@@ -1046,3 +1046,40 @@ one** drawn after one layer's parallax changed. 147 tests green.
 **What it costs:** one directory of segments and joins under the
 project's cache, a per-scene plan instead of one, and a join the engine
 does back-to-back; an unchanged reel costs a handful of stat calls.
+
+## 23. Nested compositions: a scene inside a scene
+
+A scene could not reference another scene. An act that wanted its
+opening sting inside its chapter card rebuilt the sting by hand, or
+pre-rendered it to a file and carried the file - both of which forget
+what the sting was the moment it changes.
+
+A scene can be named (`"id": "intro"`) and another scene's layer can
+place it (`"layers": [{"scene": "intro", "scale": 0.5, ...}]`): the
+named scene is emitted once, as a reusable composition in the engine's
+own format - its plates, its comp, its overlays, at relative times -
+and every layer that names it shows it, each with the layer's own
+timing, offset, scale, opacity, blend and fades. A composition that
+itself places a scene nests one level per name, the engine holds the
+stack to eight, and the segment cache includes a nested scene's own
+key in its parent's, so editing the sting re-renders exactly the scenes
+that show it.
+
+A scene cannot be built from itself, directly or through another:
+validation walks the names and refuses the chain as a sentence -
+"a uses b uses a" - before a preset is resolved, and both doors eat the
+same refusal. A layer naming an undefined scene, or both an asset and
+a scene, is refused by name.
+
+Verified: the placement's timeline asserted (composition source, start
+at the parent's start plus the layer's delay, the layer's transform and
+blend), the direct and the two-scene cycle refused with the chain
+named, the undefined name and the both-at-once refused, and the whole
+thing rendered against the real sidecar - a chapter-chip scene holding
+a half-scale, offset, fading copy of a wordmark scene, two segments
+drawn, zero errors. 151 tests green.
+
+**What it costs:** one composition per named-and-placed scene in the
+document (unused named scenes are not emitted), and the recursive plan
+of each - a plan of a document, not a render, so the cost is
+microseconds.

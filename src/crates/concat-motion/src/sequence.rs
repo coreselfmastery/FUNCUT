@@ -113,6 +113,11 @@ pub struct SceneLayer {
     /// vignettes, light leaks, foreground silhouettes. It still paints
     /// under the curtain and under any scene that overlaps this one.
     pub above: bool,
+    /// The named scene this layer places, when its source is a scene
+    /// rather than an asset: the scene is emitted once as a reusable
+    /// composition and this layer shows it. `None` is the ordinary
+    /// picture layer, and `asset` is the placement's name in errors.
+    pub scene: Option<String>,
     /// How fast the layer drifts, as a multiple of its own `zoom` and
     /// `pan`: `None` (the default) is as written, so every layer built
     /// before the field existed renders exactly as it did. `Some(2.0)` is
@@ -142,6 +147,7 @@ impl SceneLayer {
             start: 0.0,
             hold: None,
             above: false,
+            scene: None,
             parallax: None,
         }
     }
@@ -312,6 +318,10 @@ pub struct Sequence {
     pub curtain: Option<Curtain>,
     /// Encoder quality, 0 to 51, lower is better.
     pub crf: u8,
+    /// The storyboard's own scene cards, kept so a layer that names a
+    /// scene can find it: the plan places named scenes as nested
+    /// compositions. Empty for a sequence built by hand.
+    pub scene_cards: Vec<crate::storyboard::SceneCard>,
 }
 
 impl Sequence {
@@ -327,6 +337,7 @@ impl Sequence {
             assets: BTreeMap::new(),
             audio: Vec::new(),
             curtain: Some(Curtain::default()),
+            scene_cards: Vec::new(),
             crf: 18,
         }
     }
@@ -437,7 +448,7 @@ impl AudioBed {
     }
 }
 
-/// A sequence laid out as one timeline, plus the files it needs beside it.
+/// A sequence: every scene, in order, with the assets they share.
 #[derive(Clone, Debug)]
 pub struct Plan {
     /// The Geneva timeline document.
@@ -771,6 +782,91 @@ pub fn plan(geneva: &Geneva, sequence: &Sequence) -> Result<Plan, MotionError> {
         let mut over: Vec<Json> = Vec::new();
         let (mut plates, mut overlays) = (0usize, 0usize);
         for layer in &scene.layers {
+            // A layer whose source is a scene places that scene as a
+            // nested composition: the scene is emitted once, below, as
+            // a reusable `compositions` entry, and this clip shows it
+            // with this layer's own timing, drift, blend and fades.
+            if let Some(named) = layer.scene.clone() {
+                let target = sequence
+                    .scene_cards
+                    .iter()
+                    .position(|card| card.id.as_deref() == Some(named.as_str()));
+                let Some(target) = target else {
+                    return Err(unsupported(&format!(
+                        "scene {index} ({}): a layer names the scene {named:?}, which this storyboard does not define",
+                        scene.comp.id
+                    )));
+                };
+                let span_start = layer.start.max(0.0);
+                if span_start >= hold {
+                    warnings.push(format!(
+                        "scene {index}: the layer for the scene {named:?} starts after its scene ends and was dropped"
+                    ));
+                    continue;
+                }
+                let span = layer
+                    .hold
+                    .unwrap_or(hold - span_start)
+                    .min(hold - span_start)
+                    .max(0.0);
+                if span <= 0.0 {
+                    warnings.push(format!(
+                        "scene {index}: the layer for the scene {named:?} holds no time inside its scene and was dropped"
+                    ));
+                    continue;
+                }
+                let mut clip = Map::new();
+                clip.insert(
+                    "source".into(),
+                    json!({
+                        "kind": "composition",
+                        "composition": format!("s{target}.{named}")
+                    }),
+                );
+                clip.insert("start".into(), json!(seconds(start + span_start)));
+                clip.insert("duration".into(), json!(seconds(span)));
+                let mut transform = Map::new();
+                if layer.offset != (0.0, 0.0) {
+                    transform.insert(
+                        "position".into(),
+                        json!([
+                            round(
+                                f64::from(sequence.width) / 2.0
+                                    + layer.offset.0 * f64::from(sequence.width)
+                            ),
+                            round(
+                                f64::from(sequence.height) / 2.0
+                                    + layer.offset.1 * f64::from(sequence.height)
+                            )
+                        ]),
+                    );
+                }
+                if (layer.scale - 1.0).abs() > 1e-9 && layer.scale > 0.0 {
+                    transform.insert("scale".into(), json!(round(layer.scale)));
+                }
+                if !transform.is_empty() {
+                    clip.insert("transform".into(), Json::Object(transform));
+                }
+                if layer.opacity < 0.999 {
+                    clip.insert("opacity".into(), json!(round(layer.opacity)));
+                }
+                if !matches!(layer.blend, Blend::Normal)
+                    && let Json::String(name) =
+                        serde_json::to_value(layer.blend).unwrap_or(Json::Null)
+                {
+                    clip.insert("blend".into(), json!(name));
+                }
+                let id = if layer.above {
+                    overlays += 1;
+                    layer_id(index, "overlay", overlays)
+                } else {
+                    plates += 1;
+                    layer_id(index, "plate", plates)
+                };
+                let stack = if layer.above { &mut over } else { &mut under };
+                stack.push(json!({ "id": id, "clips": [Json::Object(clip)] }));
+                continue;
+            }
             if !sequence.assets.contains_key(&layer.asset) {
                 return Err(unsupported(&format!(
                     "scene {index} ({}): a {} names the asset {:?}, which the sequence does not carry",
@@ -999,11 +1095,22 @@ pub fn plan(geneva: &Geneva, sequence: &Sequence) -> Result<Plan, MotionError> {
         }),
     );
 
+    // The named scenes a layer places, each emitted once as a reusable
+    // composition: the scene's own stack - plates, comp, overlays -
+    // planned on its own, at relative times, and referenced by every
+    // layer that shows it. A composition of a composition nests the same
+    // way, one level per name, and the engine holds it to eight.
+    let mut compositions: Map<String, Json> = Map::new();
+    collect_compositions(geneva, sequence, &sequence.scene_cards, &mut compositions)?;
+
     let mut document = Map::new();
     document.insert("geneva".into(), json!(crate::geneva::TIMELINE_VERSION));
     document.insert("output".into(), Json::Object(output));
     if !assets.is_empty() {
         document.insert("assets".into(), Json::Object(assets));
+    }
+    if !compositions.is_empty() {
+        document.insert("compositions".into(), Json::Object(compositions));
     }
     document.insert("layers".into(), Json::Array(layers));
     if !audio.is_empty() {
@@ -1018,6 +1125,82 @@ pub fn plan(geneva: &Geneva, sequence: &Sequence) -> Result<Plan, MotionError> {
         scenes: sequence.scenes.len(),
         source_root: sequence.source_dir.clone(),
     })
+}
+
+/// Every named scene a layer of this storyboard places, emitted as a
+/// reusable composition: the scene planned on its own (a sub-sequence of
+/// itself, at relative times) and its layers taken whole. A composition
+/// that itself places a scene brings that composition along, merged
+/// under its own globally-unique name, so nesting is one recursive call
+/// and the names never collide.
+fn collect_compositions(
+    geneva: &Geneva,
+    sequence: &Sequence,
+    cards: &[crate::storyboard::SceneCard],
+    compositions: &mut Map<String, Json>,
+) -> Result<(), MotionError> {
+    // Only the scenes this sequence's layers actually place: a named
+    // scene nobody places is not emitted (an unused composition is a
+    // warning), and - the reason this matters more - a sub-plan of one
+    // named scene does not re-emit that scene, which is where a
+    // careless "every named scene" walked into itself forever.
+    let referenced: std::collections::HashSet<&str> = sequence
+        .scenes
+        .iter()
+        .flat_map(|scene| scene.layers.iter().filter_map(|l| l.scene.as_deref()))
+        .collect();
+    let named: Vec<(usize, &crate::storyboard::SceneCard)> = cards
+        .iter()
+        .enumerate()
+        .filter(|(_, card)| {
+            card.id
+                .as_deref()
+                .is_some_and(|name| referenced.contains(name))
+        })
+        .collect();
+    for (index, card) in named {
+        let name = card.id.clone().unwrap_or_default();
+        let key = format!("s{index}.{name}");
+        if compositions.contains_key(&key) {
+            continue;
+        }
+        // A sub-sequence of this one scene: same frame, same assets, no
+        // curtain, its own layers at relative times.
+        let mut sub = Sequence::new(sequence.width, sequence.height, sequence.fps);
+        sub.source_dir = sequence.source_dir.clone();
+        sub.assets = sequence.assets.clone();
+        sub.scene_cards = sequence.scene_cards.clone();
+        sub.push(card.scene(index, &sequence.source_dir).map_err(|message| {
+            MotionError::Engine {
+                code: None,
+                message,
+                path: None,
+                help: None,
+            }
+        })?);
+        let planned = plan(geneva, &sub)?;
+        // Deeper compositions first, so a composition that places a scene
+        // has that scene's composition beside it in the document.
+        if let Some(deeper) = planned
+            .document
+            .get("compositions")
+            .and_then(Json::as_object)
+        {
+            for (deeper_key, value) in deeper {
+                compositions.insert(deeper_key.clone(), value.clone());
+            }
+        }
+        compositions.insert(
+            key,
+            json!({
+                "width": sequence.width,
+                "height": sequence.height,
+                "background": "transparent",
+                "layers": planned.document["layers"].clone(),
+            }),
+        );
+    }
+    Ok(())
 }
 
 /// A name for an asset inside the render directory: one folder, one file,

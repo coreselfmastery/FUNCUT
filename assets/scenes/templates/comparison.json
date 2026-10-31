@@ -1,0 +1,18 @@
+{
+  "_readme": "A before/after comparison over footage: the split preset on a plate, with a vignette holding the eye to the middle. Assets: plate, vignette. Slots: After label, Before text, Before tag, After tag.",
+  "width": 1920, "height": 1080, "fps": 30,
+  "assets": { "plate": "assets/plate.png", "vignette": "assets/vignette.png" },
+  "scenes": [
+    { "preset": "funcut.compare.split", "hold": 6.0,
+      "layers": [
+        { "asset": "plate", "parallax": 0.6 },
+        { "asset": "vignette", "blend": "multiply", "opacity": 0.45, "above": true }
+      ],
+      "ops": [
+        { "op": "set-slot", "slot": "After label", "value": "WITH FUNCUT" },
+        { "op": "set-slot", "slot": "Before text", "value": "the edit before" },
+        { "op": "set-slot", "slot": "Before tag", "value": "BEFORE" },
+        { "op": "set-slot", "slot": "After tag", "value": "AFTER" }
+      ] }
+  ]
+}

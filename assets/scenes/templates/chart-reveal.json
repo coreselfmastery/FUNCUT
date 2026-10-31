@@ -1,0 +1,16 @@
+{
+  "_readme": "A chart building on over dimmed footage: the bars preset on a darkened plate (multiply), the comp arriving a beat after the plate. Assets: plate, vignette (a dark radial picture). Slots: Chart title, Chart subline, Bar 1..5 label.",
+  "width": 1920, "height": 1080, "fps": 30,
+  "assets": { "plate": "assets/plate.png", "vignette": "assets/vignette.png" },
+  "scenes": [
+    { "preset": "funcut.chart.bars", "hold": 7.0,
+      "layers": [
+        { "asset": "plate", "parallax": 0.5 },
+        { "asset": "vignette", "blend": "multiply", "opacity": 0.5, "above": true }
+      ],
+      "ops": [
+        { "op": "set-slot", "slot": "Chart title", "value": "Where the views come from" },
+        { "op": "set-slot", "slot": "Chart subline", "value": "Last 90 days" }
+      ] }
+  ]
+}

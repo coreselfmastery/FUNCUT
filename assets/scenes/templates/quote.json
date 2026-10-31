@@ -1,0 +1,17 @@
+{
+  "_readme": "A pull quote over drifting footage with a light leak: the quote preset, the leak screened in from the left, grain over all. Assets: plate, leak (a warm radial picture), grain. Slots: Quote, Attribution.",
+  "width": 1920, "height": 1080, "fps": 30,
+  "assets": { "plate": "assets/plate.png", "leak": "assets/leak.png", "grain": "assets/grain.png" },
+  "scenes": [
+    { "preset": "funcut.quote.pull", "hold": 6.5,
+      "layers": [
+        { "asset": "plate", "parallax": 0.7 },
+        { "asset": "leak", "blend": "screen", "scale": 0.85, "offset": [-0.22, -0.18], "fade_in": 0.6, "fade_out": 0.6, "above": true },
+        { "asset": "grain", "opacity": 0.06, "above": true }
+      ],
+      "ops": [
+        { "op": "set-slot", "slot": "Quote", "value": "The best time to plant a tree was twenty years ago." },
+        { "op": "set-slot", "slot": "Attribution", "value": "PROVERB" }
+      ] }
+  ]
+}

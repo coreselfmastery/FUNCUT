@@ -1,0 +1,15 @@
+{
+  "_readme": "A section opener: a wordmark sting into a chapter chip, one curtain dip between them, both over the same drifting plate. Assets: plate, grain. Slots: Wordmark, Subline, Chapter.",
+  "width": 1920, "height": 1080, "fps": 30,
+  "assets": { "plate": "assets/plate.png", "grain": "assets/grain.png" },
+  "curtain": { "color": "#05060aff", "open": 0.6, "close": 0.8, "dip": 0.25, "depth": 1.0 },
+  "scenes": [
+    { "preset": "funcut.sting.wordmark", "hold": 2.5,
+      "layers": [ { "asset": "plate", "parallax": 0.5 } ],
+      "ops": [ { "op": "set-slot", "slot": "Wordmark", "value": "PART TWO" },
+               { "op": "set-slot", "slot": "Subline", "value": "THE NUMBERS" } ] },
+    { "preset": "funcut.chapter.chip", "hold": 3.0,
+      "layers": [ { "asset": "plate", "parallax": 0.5 }, { "asset": "grain", "opacity": 0.05, "above": true } ],
+      "ops": [ { "op": "set-slot", "slot": "Chapter", "value": "02 / THE NUMBERS" } ] }
+  ]
+}

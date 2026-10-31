@@ -1,0 +1,83 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
+
+import { Theme } from "../theme/theme.slint";
+import { Glyph } from "../icons.slint";
+import { Button, Modal } from "../primitives/modal.slint";
+
+/// One fact that must be known before a shelf is used: what the shelf
+/// carries and on what licence, and the word on the button that says it
+/// was read. Rust fills it and remembers the answer; the sheet knows
+/// nothing of licences or shelves.
+export struct NoticeData {
+    open: bool,
+    title: string,
+    message: string,
+    /// The button that acknowledges, in the plain tone: "I understand".
+    action: string,
+}
+
+// The notice sheet. Not a question - nothing is thrown away - a fact
+// that stands between a stock shelf's first use and the licence that
+// shelf carries, which lived only in docs/STOCK_LICENSING.md until now,
+// where nobody reads it. Return acknowledges and Escape defers to the
+// next visit, so a notice asked from the keyboard is answered from it,
+// the way the confirm sheet is; a click on the scrim defers too.
+export component NoticeDialog inherits Modal {
+    in property <NoticeData> data;
+
+    callback acknowledged();
+    callback deferred();
+
+    open: root.data.open;
+    title: root.data.title;
+    glyph: Glyph.info;
+    surface-width: 460px;
+
+    closed => { root.deferred(); }
+
+    // The keys go to the sheet the moment it shows, not to whatever had
+    // focus under it.
+    changed open => {
+        if (root.open) {
+            keys.focus();
+        }
+    }
+
+    keys := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.deferred();
+                return accept;
+            }
+            if (event.text == Key.Return) {
+                root.acknowledged();
+                return accept;
+            }
+            reject
+        }
+
+        VerticalLayout {
+            padding: 16px;
+            spacing: 16px;
+
+            Text {
+                text: root.data.message;
+                color: Theme.fg;
+                font-size: Theme.fs;
+                wrap: word-wrap;
+            }
+
+            HorizontalLayout {
+                alignment: end;
+                spacing: 8px;
+
+                Button {
+                    label: root.data.action;
+                    primary: true;
+                    clicked => { root.acknowledged(); }
+                }
+            }
+        }
+    }
+}

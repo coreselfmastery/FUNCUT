@@ -31,6 +31,7 @@ import { ModelData, SettingsData, SettingsDialog, SystemFactData } from "dialogs
 import { ProjectDialog, ProjectSheetData } from "dialogs/project.slint";
 import { RelinkDialog, RelinkData, MissingMediaItem } from "dialogs/relink.slint";
 import { ConfirmData, ConfirmDialog } from "dialogs/confirm.slint";
+import { NoticeData, NoticeDialog } from "dialogs/notice.slint";
 import { CaptionsDialog, CaptionsSheetData } from "dialogs/captions.slint";
 import { SpeechDialog, SpeechSheetData } from "dialogs/speech.slint";
 import { AvatarData } from "primitives/avatar.slint";
@@ -523,6 +524,7 @@ export component App inherits Window {
             // quit the app, a running export with it.
             if (event.text == Key.Escape || event.text == Key.Back) {
                 if (root.confirm.open) { root.confirm-dismissed(); return accept; }
+                if (root.notice.open) { root.notice-deferred(); return accept; }
                 if (root.relink.open) { root.relink-dismiss(); return accept; }
                 if (root.project-sheet.open) { root.project-closed(); return accept; }
                 if (root.settings.open) { root.settings-closed(); return accept; }
@@ -952,6 +954,12 @@ export component App inherits Window {
     callback confirm-accepted();
     callback confirm-dismissed();
 
+    // A fact before a stock shelf is used, over the workspace: the
+    // shelf's licence, said once and remembered by Rust.
+    in property <NoticeData> notice;
+    callback notice-acknowledged();
+    callback notice-deferred();
+
     ConfirmDialog {
         inset-top: root.safe-area-insets.top;
         inset-bottom: root.safe-area-insets.bottom;
@@ -964,6 +972,20 @@ export component App inherits Window {
         data: root.confirm;
         confirmed => { root.confirm-accepted(); }
         dismissed => { root.confirm-dismissed(); }
+    }
+
+    NoticeDialog {
+        inset-top: root.safe-area-insets.top;
+        inset-bottom: root.safe-area-insets.bottom;
+        inset-left: root.safe-area-insets.left;
+        inset-right: root.safe-area-insets.right;
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        data: root.notice;
+        acknowledged => { root.notice-acknowledged(); }
+        deferred => { root.notice-deferred(); }
     }
 
 

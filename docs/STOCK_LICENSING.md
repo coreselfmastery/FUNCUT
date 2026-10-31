@@ -4,6 +4,12 @@ This note exists because FUNCUT's B-roll library is a **research dataset**,
 not a rights-cleared commercial stock subscription. An edit can be
 technically excellent and still be unusable. Know what you are shipping.
 
+Since `v0.2.8-funcut.6` this note is also said where it matters: a
+blocking notice comes up on the stock page's and the sticker page's first
+use — the research-dataset facts on the first, MAGICK's CC BY-NC and
+OpenMoji's CC-BY 4.0 on the second — acknowledged once per machine and
+then never again. This page remains the full account.
+
 ## What OpenVid actually is
 
 `openvid_search` / `openvid_fetch` read a local index of the

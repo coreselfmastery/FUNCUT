@@ -1894,6 +1894,15 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         state.confirm = None;
     }));
 
+    // The stock shelves' licence notices: acknowledged is remembered,
+    // deferred asks again on the shelf's next visit.
+    app.on_notice_acknowledged(on_window!(|state| {
+        state.notice_acknowledged();
+    }));
+    app.on_notice_deferred(on_window!(|state| {
+        state.notice_deferred();
+    }));
+
     app.on_relink_all(on_window!(|state| {
         state.handle(Msg::Relink(RelinkMsg::RelinkAll));
     }));

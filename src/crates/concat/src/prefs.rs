@@ -6,7 +6,7 @@
 //! models are chosen, which languages. A missing or unreadable file is the
 //! defaults, never an error.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use concat_host::AppDirs;
 use serde::{Deserialize, Serialize};
@@ -159,6 +159,15 @@ pub struct Preferences {
     /// by Settings › Shortcuts; resolved in [`crate::keymap`].
     #[serde(default)]
     pub keybinds: BTreeMap<String, String>,
+    /// The stock shelves whose licence notice has been acknowledged, by
+    /// the shelf's own name: `openvid` for the stock library, `stickers`
+    /// for the sticker page. An entry is a "I understand" answered once
+    /// and for good; a shelf with none is asked on its next visit. The
+    /// licences themselves - OpenVid's research data, the stickers' NC
+    /// and CC-BY - lived only in docs/STOCK_LICENSING.md until the
+    /// notices existed, where nobody reads it.
+    #[serde(default)]
+    pub stock_licences: BTreeSet<String>,
 }
 
 /// The voiceover panel's choices, kept from one take to the next and one
@@ -366,6 +375,20 @@ impl Preferences {
     pub fn set_magnetic(&mut self, on: bool) {
         self.magnetic = on;
         self.magnetic_chosen = true;
+    }
+
+    /// Whether the stock shelf `shelf` - "openvid" for the stock library,
+    /// "stickers" for the sticker page - has had its licence notice
+    /// acknowledged. A shelf that has not is shown the notice on its next
+    /// visit; see `Studio::stock_notice`.
+    pub fn stock_licence_acknowledged(&self, shelf: &str) -> bool {
+        self.stock_licences.contains(shelf)
+    }
+
+    /// Acknowledges the stock shelf `shelf`'s licence notice, once and for
+    /// good: the shelf is never asked again on this machine.
+    pub fn acknowledge_stock_licence(&mut self, shelf: &str) {
+        self.stock_licences.insert(shelf.to_owned());
     }
 
     /// Whether this launch draws in software, by choice or after a crash.

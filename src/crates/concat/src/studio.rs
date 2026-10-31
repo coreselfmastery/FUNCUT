@@ -926,6 +926,11 @@ pub struct Studio {
     pub relink: crate::panes::relink::RelinkPane,
     /// What the confirmation sheet is asking about, while it is up.
     pub confirm: Option<Confirm>,
+    /// What the stock licence notice is saying, while it is up: the shelf
+    /// whose page turned under it, and whose licence is said before its
+    /// first use. Read through `Studio::notice_data`, which fills the
+    /// sheet; answered by `Studio::notice_acknowledged`.
+    pub notice: Option<StockShelf>,
     /// The clip whose incoming transition is selected, while no clip is:
     /// a transition is picked on its own, not as part of the clip it rides
     /// into. Read through [`Studio::selected_transition`], which holds it
@@ -2179,6 +2184,36 @@ pub enum Confirm {
     QuitWithoutSaving { error: String },
 }
 
+/// A stock shelf whose licence a blocking notice says before its first
+/// use. The licences lived only in `docs/STOCK_LICENSING.md`, where
+/// nobody reads them, while the shelves carry real obligations: a
+/// research dataset that is not a stock subscription, an overlay set
+/// that is not commercial use. The notice is raised when the shelf's
+/// page is first turned to, blocks it until it is acknowledged, and is
+/// remembered in the preferences - once answered, never asked again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StockShelf {
+    /// The OpenVid stock library: a text-video research dataset, served
+    /// as a local index; its clips carry no licence field, author, or
+    /// release record.
+    Openvid,
+    /// The sticker page's two shelves: MAGICK's overlays, which are
+    /// CC BY-NC - not commercial use - and OpenMoji, which is CC-BY 4.0,
+    /// attribution required.
+    Stickers,
+}
+
+impl StockShelf {
+    /// The shelf's own name in the preferences: what an acknowledged
+    /// notice is remembered under.
+    fn id(self) -> &'static str {
+        match self {
+            StockShelf::Openvid => "openvid",
+            StockShelf::Stickers => "stickers",
+        }
+    }
+}
+
 /// One clip on the clipboard: the clip as it was when copied, the row of
 /// the lane it sat on, and the file it plays. A lane's id belongs to its
 /// timeline, so a paste into another timeline goes by the row instead and
@@ -2391,6 +2426,7 @@ impl Studio {
             settings: crate::panes::settings::SettingsPane::default(),
             relink: crate::panes::relink::RelinkPane::default(),
             confirm: None,
+            notice: None,
             transition_selected: None,
             open_menu: -1,
             menu_bar_token: 0,
@@ -2562,6 +2598,41 @@ impl Studio {
                 slint::quit_event_loop().ok();
             }
             None => {}
+        }
+    }
+
+    /// The stock licence notice's answer: the shelf's licence is
+    /// acknowledged, remembered in the preferences, and the notice comes
+    /// down. The page under it has been showing all along; this is what
+    /// lets it be used.
+    pub fn notice_acknowledged(&mut self) {
+        if let Some(shelf) = self.notice.take() {
+            self.prefs.acknowledge_stock_licence(shelf.id());
+            self.prefs.save(&self.host.dirs);
+        }
+    }
+
+    /// The stock licence notice backed out of - the scrim, Escape, the
+    /// sheet's own close. Nothing is acknowledged: the shelf asks again
+    /// on its next visit.
+    pub fn notice_deferred(&mut self) {
+        self.notice = None;
+    }
+
+    /// The stock licence notice, as Slint shows it.
+    fn notice_data(&self) -> crate::ui::NoticeData {
+        let Some(shelf) = &self.notice else {
+            return crate::ui::NoticeData::default();
+        };
+        let message = match shelf {
+            StockShelf::Openvid => t("stock.openvidLicence"),
+            StockShelf::Stickers => t("stock.stickersLicence"),
+        };
+        crate::ui::NoticeData {
+            open: true,
+            title: t("stock.licenceTitle").into(),
+            message: message.into(),
+            action: t("stock.understood").into(),
         }
     }
 
@@ -8929,6 +9000,17 @@ impl Studio {
                 self.forge = pane;
             }
             crate::panes::Msg::Openvid(msg) => {
+                // The stock library's licence is said before its first use:
+                // the page still turns and its state still reads - the
+                // notice blocks it from above - and one acknowledgement,
+                // remembered in the preferences, ends the asking for good.
+                if matches!(msg, crate::panes::openvid::OpenvidMsg::Shown(true))
+                    && !self
+                        .prefs
+                        .stock_licence_acknowledged(StockShelf::Openvid.id())
+                {
+                    self.notice = Some(StockShelf::Openvid);
+                }
                 let mut pane = std::mem::take(&mut self.openvid);
                 pane.update(msg, self);
                 self.openvid = pane;
@@ -8939,6 +9021,16 @@ impl Studio {
                 self.music = pane;
             }
             crate::panes::Msg::Magick(msg) => {
+                // The sticker page's two licences - MAGICK's NC overlays,
+                // OpenMoji's CC-BY - are said the same way, before the
+                // page's first use.
+                if matches!(msg, crate::panes::magick::MagickMsg::Shown(true))
+                    && !self
+                        .prefs
+                        .stock_licence_acknowledged(StockShelf::Stickers.id())
+                {
+                    self.notice = Some(StockShelf::Stickers);
+                }
                 let mut pane = std::mem::take(&mut self.magick);
                 pane.update(msg, self);
                 self.magick = pane;
@@ -9247,6 +9339,7 @@ impl Studio {
             || self.project_sheet.open
             || self.relink.open
             || self.confirm.is_some()
+            || self.notice.is_some()
     }
 
     // ── notices ──
@@ -11515,6 +11608,7 @@ impl Studio {
         sync(&models.version_details, self.settings.version_details());
         app.set_relink(self.relink.data());
         app.set_confirm(self.confirm_data());
+        app.set_notice(self.notice_data());
 
         // The speech sheets, and the lists they choose from.
         let transcribers = installed(&self.settings.transcribers);

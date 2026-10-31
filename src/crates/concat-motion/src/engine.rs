@@ -539,7 +539,13 @@ mod tests {
         // Missing: native, with a note that says so.
         let missing = preference.choose(&shapes, Sidecar::Missing);
         assert_eq!(missing.engine, EngineKind::Native);
-        assert!(missing.note.as_deref().unwrap_or_default().contains("not installed"));
+        assert!(
+            missing
+                .note
+                .as_deref()
+                .unwrap_or_default()
+                .contains("not installed")
+        );
         // Failing: native again, and the note names the failures - a
         // fallback nobody can see is a fallback nobody can trust.
         let failing = preference.choose(&shapes, Sidecar::Failing { failures: 3 });

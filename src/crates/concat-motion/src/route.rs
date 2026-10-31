@@ -162,9 +162,7 @@ impl Decision {
     pub fn taken_by_default(duration_secs: f64, beat_type: BeatType) -> Decision {
         let route = route(duration_secs, beat_type);
         let reason = if !duration_secs.is_finite() || duration_secs <= 0.0 {
-            format!(
-                "a beat of {duration_secs} s is not a span; the shortest answer is taken"
-            )
+            format!("a beat of {duration_secs} s is not a span; the shortest answer is taken")
         } else if duration_secs < CARD_UNTIL {
             format!(
                 "a {} of {duration_secs} s is under {CARD_UNTIL} s, and nothing that short is a scene",
@@ -256,11 +254,7 @@ mod tests {
             (30.0, BeatType::Cta, Routing::Scene),
         ];
         for (duration, beat, expected) in cases {
-            assert_eq!(
-                route(duration, beat),
-                expected,
-                "{beat:?} at {duration} s"
-            );
+            assert_eq!(route(duration, beat), expected, "{beat:?} at {duration} s");
         }
     }
 
@@ -311,7 +305,11 @@ mod tests {
             "the whole video is one held scene; the hook is its first layer, not its own card",
         );
         assert_eq!(override_.route, Routing::Scene);
-        assert!(override_.reason.contains("director"), "{}", override_.reason);
+        assert!(
+            override_.reason.contains("director"),
+            "{}",
+            override_.reason
+        );
         assert!(
             override_.reason.contains("first layer"),
             "{}",

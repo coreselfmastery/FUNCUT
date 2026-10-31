@@ -630,8 +630,7 @@ fn layer_clip(
     let reach = |from: f64, to: f64| from.abs().max(to.abs());
     let mut base = layer.scale.max(0.0);
     if matches!(layer.fit, Fit::Cover) && base >= 1.0 {
-        let travel =
-            2.0 * reach(offset.0, offset.0 + pan.0).max(reach(offset.1, offset.1 + pan.1));
+        let travel = 2.0 * reach(offset.0, offset.0 + pan.0).max(reach(offset.1, offset.1 + pan.1));
         base = base.max(1.0 + travel);
     }
 
@@ -1623,13 +1622,34 @@ mod tests {
     // all different, all in the document the engine actually draws.
     #[test]
     fn three_parallax_rates_emit_three_different_drifts() {
-        let mut sequence = reel(vec![Scene::new(presets::build("funcut.sting.wordmark").expect("a preset")).holding(4.0)
-            .layer(SceneLayer::new("back").parallax(0.5))
-            .layer(SceneLayer::new("mid").parallax(1.0))
-            .layer(SceneLayer::new("front").parallax(2.0))]);
-        sequence.asset("back", Asset { src: "back.png".into(), kind: None });
-        sequence.asset("mid", Asset { src: "mid.png".into(), kind: None });
-        sequence.asset("front", Asset { src: "front.png".into(), kind: None });
+        let mut sequence = reel(vec![
+            Scene::new(presets::build("funcut.sting.wordmark").expect("a preset"))
+                .holding(4.0)
+                .layer(SceneLayer::new("back").parallax(0.5))
+                .layer(SceneLayer::new("mid").parallax(1.0))
+                .layer(SceneLayer::new("front").parallax(2.0)),
+        ]);
+        sequence.asset(
+            "back",
+            Asset {
+                src: "back.png".into(),
+                kind: None,
+            },
+        );
+        sequence.asset(
+            "mid",
+            Asset {
+                src: "mid.png".into(),
+                kind: None,
+            },
+        );
+        sequence.asset(
+            "front",
+            Asset {
+                src: "front.png".into(),
+                kind: None,
+            },
+        );
         let planned = plan(&geneva(), &sequence).expect("a plan");
         let drift_of = |id: &str| -> (f64, f64) {
             let layer = planned.document["layers"]
@@ -1650,10 +1670,14 @@ mod tests {
         // The classic drift, scaled by each rate: the far layer at 0.5
         // drifts least, the near one at 2.0 most, and the middle at 1.0
         // exactly the plate's own.
-        assert!(back_scale < mid_scale && mid_scale < front_scale,
-            "scales {back_scale} < {mid_scale} < {front_scale}");
-        assert!(back_x > mid_x && mid_x > front_x,
-            "the pan goes left, so the drift is most negative at the fastest rate: {back_x} > {mid_x} > {front_x}");
+        assert!(
+            back_scale < mid_scale && mid_scale < front_scale,
+            "scales {back_scale} < {mid_scale} < {front_scale}"
+        );
+        assert!(
+            back_x > mid_x && mid_x > front_x,
+            "the pan goes left, so the drift is most negative at the fastest rate: {back_x} > {mid_x} > {front_x}"
+        );
         // The rate is a multiple: double the rate, double the drift. The
         // plate's own scale keyframe is 1 + 2 * |pan| for the cover
         // overhang, so the relation is checked on the pan, which is pure.
@@ -1666,13 +1690,31 @@ mod tests {
 
     #[test]
     fn a_layer_with_its_own_drift_has_the_rate_scale_it() {
-        let mut sequence = reel(vec![Scene::new(presets::build("funcut.sting.wordmark").expect("a preset")).holding(4.0)
-            .layer(SceneLayer::new("back").zooming(0.10).panning(-0.06, 0.0).parallax(0.5))]);
-        sequence.asset("back", Asset { src: "back.png".into(), kind: None });
+        let mut sequence = reel(vec![
+            Scene::new(presets::build("funcut.sting.wordmark").expect("a preset"))
+                .holding(4.0)
+                .layer(
+                    SceneLayer::new("back")
+                        .zooming(0.10)
+                        .panning(-0.06, 0.0)
+                        .parallax(0.5),
+                ),
+        ]);
+        sequence.asset(
+            "back",
+            Asset {
+                src: "back.png".into(),
+                kind: None,
+            },
+        );
         let planned = plan(&geneva(), &sequence).expect("a plan");
         let clip = &planned.document["layers"][0]["clips"][0];
-        let end_scale = clip["transform"]["scale"]["keyframes"][1][1].as_f64().unwrap();
-        let pan_end = clip["transform"]["position"]["keyframes"][1][1][0].as_f64().unwrap();
+        let end_scale = clip["transform"]["scale"]["keyframes"][1][1]
+            .as_f64()
+            .unwrap();
+        let pan_end = clip["transform"]["position"]["keyframes"][1][1][0]
+            .as_f64()
+            .unwrap();
         // Half of ten percent growth lands on the cover base 1.06, and
         // half of six percent of the width left of centre is 960 - 57.6.
         assert!((end_scale - 1.06 * 1.05).abs() < 0.01, "{end_scale}");
@@ -1684,25 +1726,60 @@ mod tests {
         // The field is an Option, and None is the whole of backwards
         // compatibility: the layer built before parallax existed renders
         // exactly the timeline it always did.
-        let mut sequence = reel(vec![Scene::new(presets::build("funcut.sting.wordmark").expect("a preset")).holding(4.0)
-            .layer(SceneLayer::new("back").zooming(0.05))]);
-        sequence.asset("back", Asset { src: "back.png".into(), kind: None });
+        let mut sequence = reel(vec![
+            Scene::new(presets::build("funcut.sting.wordmark").expect("a preset"))
+                .holding(4.0)
+                .layer(SceneLayer::new("back").zooming(0.05)),
+        ]);
+        sequence.asset(
+            "back",
+            Asset {
+                src: "back.png".into(),
+                kind: None,
+            },
+        );
         let planned = plan(&geneva(), &sequence).expect("a plan");
         let clip = &planned.document["layers"][0]["clips"][0];
         let keys = &clip["transform"]["scale"]["keyframes"];
         assert_eq!(keys[0][1], json!(1.0));
         assert_eq!(keys[1][1], json!(1.05));
-        assert!(clip["transform"].get("position").is_none(), "no pan was written");
+        assert!(
+            clip["transform"].get("position").is_none(),
+            "no pan was written"
+        );
     }
 
     #[test]
     fn three_blends_and_three_delays_land_in_the_timeline() {
-        let mut sequence = reel(vec![Scene::new(presets::build("funcut.sting.wordmark").expect("a preset")).holding(4.0)
-            .layer(SceneLayer::new("vignette").blend(Blend::Multiply).delay(0.0))
-            .layer(SceneLayer::new("leak").blend(Blend::Screen).delay(0.4).above())
-            .layer(SceneLayer::new("difference").blend(Blend::Difference).delay(1.2).above())]);
+        let mut sequence = reel(vec![
+            Scene::new(presets::build("funcut.sting.wordmark").expect("a preset"))
+                .holding(4.0)
+                .layer(
+                    SceneLayer::new("vignette")
+                        .blend(Blend::Multiply)
+                        .delay(0.0),
+                )
+                .layer(
+                    SceneLayer::new("leak")
+                        .blend(Blend::Screen)
+                        .delay(0.4)
+                        .above(),
+                )
+                .layer(
+                    SceneLayer::new("difference")
+                        .blend(Blend::Difference)
+                        .delay(1.2)
+                        .above(),
+                ),
+        ]);
         for id in ["vignette", "leak", "difference"] {
-            sequence.asset(id, Asset { src: format!("{id}.png").into(), kind: None });
+            sequence.asset(
+                id,
+                Asset {
+                    src: format!("{id}.png"),
+                    kind: None,
+                },
+            );
         }
         let planned = plan(&geneva(), &sequence).expect("a plan");
         let layers = planned.document["layers"].as_array().expect("layers");
@@ -1737,6 +1814,9 @@ mod tests {
         let mid = &sequence.scenes[0].layers[1];
         assert_eq!(back.parallax, Some(0.5));
         assert_eq!(mid.parallax, Some(2.0));
-        assert_eq!(mid.zoom, 0.08, "the layer's own numbers stay what they said");
+        assert_eq!(
+            mid.zoom, 0.08,
+            "the layer's own numbers stay what they said"
+        );
     }
 }

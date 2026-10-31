@@ -852,3 +852,234 @@ cache honest, and what the scene-level cache coming next stands on.
 `python3` and the sidecar, one edit to the example (the plates are
 `.png` now), and a section in `docs/MOTION.md` that says how to run the
 whole procedure in four commands.
+
+## 18. The guard: limits, a breaker, and diagnostics that parse
+
+A call to the motion sidecar was `Command::output()`: however long the
+binary took, the caller waited, and the MCP's 900-second client timeout
+was the only thing between an agent and a sidecar that hung. A refusal
+came back as the first line of stderr the caller had to guess at, and a
+sidecar that failed again and again was asked again and again.
+
+Every call is now bounded and counted. Bounded: a render runs under a
+300 s limit, a plan or a frame under 60 s, both configurable - one cap
+from `agent reel --geneva-timeout SECONDS` or the `motion_reel` tool's
+`genevaTimeoutSecs` - and a call that outlives its limit is killed and
+refused as `MotionError::TimedOut`, which names the call and the limit.
+The child's pipes are drained while it runs, so a chatty sidecar cannot
+deadlock on a full buffer either. Counted: three failures inside sixty
+seconds - a refusal, a crash, a timeout, from any door in the process -
+open a circuit breaker for a minute; further calls are refused
+immediately as `MotionError::CircuitOpen` with the fallback story in the
+message, and a success closes it. `EnginePreference::choose` folds the
+breaker into the engine choice: a failing sidecar is a missing one for
+every comp the native compositor can draw - with a note the caller is
+asked to log, because a fallback nobody can see is a fallback nobody can
+trust - and a markup comp keeps Geneva, the native engine not being able
+to draw it, so the honest answer is the fast refusal.
+
+Refusals parse now. `--format json` was already asked for; the
+diagnostics it carries are read whole - code, severity, the JSON-pointer
+`path` into the timeline, message, value, help - and `MotionError::Engine`
+carries them (`E302: ... (at /layers/1/clips/1/start)`), with the most
+specific help available: the engine's own suggestion, else a table that
+says what the code means in storyboard terms (the codes are the
+sidecar's own `geneva guide errors`; E302 is clip overlap, W405 a font
+the machine lacks), else `geneva explain <code>`, asked of the sidecar
+itself.
+
+Nine tests drive stub executables written into tempdirs - a sleeper that
+outlives its limit and is killed, a broken sidecar that trips the
+breaker in three and is refused fast on the fourth, a moody one whose
+success closes the breaker, a fussy one whose diagnostics arrive whole
+with the fix, an explainer for the unknown code, the fix table's shape,
+the cap arithmetic, and the version probe under the same limits - and
+two cover `choose`'s matrix: the shape comp that falls back to native
+with the note, the markup comp that stays. Verified against the real
+sidecar by the geneva.yml CI lane, which renders the layers example
+end to end under the same guard.
+
+**What it costs:** one watchdog thread pair per call (25 ms poll, pipes
+drained), a process-global `Vec<Instant>` for the breaker, and one new
+field on `MotionError::Engine` (`path`) whose in-repo constructors were
+all updated in the same change.
+
+## 19. The contract, checked before the bake
+
+storyboard.rs defined the contract and resolved it; it did not check it.
+A layer naming an asset the storyboard does not carry stopped the plan -
+at plan time, a comp deep in the render; a negative `start` reached the
+engine and came back as E300 in the sidecar's words, not the
+storyboard's; a blend typo was caught one scene at a time.
+
+`Storyboard::validate` is the step before all of that, and it reads the
+document the way an engine never gets to: every asset a layer, a plate
+or a bed names is carried; every blend one of the nine and every fit
+one of the four; every `start`, `hold`, `at` and fade non-negative;
+every zoom, pan, offset, scale, gain and opacity finite (and the two
+fractions in range); a comp a name under the folder, not a route out of
+it; a scene naming exactly one of a preset and a comp. Every problem is
+found and returned together as `Vec<SceneError>` - one refusal that
+lists them all, each with its scene and its layer (`scene 2, the layer
+"leak": the blend "glow" is not one of ...`), because a twelve-scene
+storyboard with six layers a scene is debugged from one refusal that
+says which of the seventy-two is wrong, not from three render attempts.
+
+`sequence()` calls it first, so both doors - the CLI's `reel` verb and
+the MCP's `motion_reel` tool - refuse an invalid storyboard with the
+same list, before a preset is resolved or an engine is woken.
+
+Six tests: the missing asset named per case, the one-refusal list that
+names every problem across three scenes, the bad fit beside the
+out-of-range opacity, the non-finite scale (JSON cannot carry one; the
+check is on the struct a program writes), the scene naming both a
+preset and a comp, and the valid storyboard that validates clean - 133
+tests green in total.
+
+**What it costs:** one pass over the document before the pass that
+resolves it, and nothing else; the checks are the ones the resolver and
+the engine were making one scene at a time, moved to where they cost a
+microsecond instead of a render.
+
+## 20. The scene builder's three first-class options
+
+The fields were on `SceneLayer`; the builder did not speak them as one
+call, and the storyboard could not say the one that matters most.
+
+`SceneLayer::parallax(rate)` is that one. A rate is a multiple of the
+layer's own drift - `zoom` and `pan` as written, or, for a layer with no
+drift of its own, the classic plate's four percent of growth and three
+of slide - applied where the timeline is emitted, so the layer's own
+numbers stay what they said and a layer built before the field existed
+renders exactly as it did (`None` is the whole of backwards
+compatibility; five tests pin it). Three layers at 0.5, 1.0 and 2.0 are
+three depths of one scene, and the emitted timeline carries three
+different scale keyframes and three different pan keyframes, asserted in
+that order and in that ratio. The storyboard's layers carry `parallax`
+too, validated as a positive multiple.
+
+`blend(mode)` and `delay(secs)` join `blending()` and `starting_at()` as
+the vocabulary's other names: a stack of layers taking the stage one
+after another - `delay` 0.0, 0.4, 1.2 - is choreography, where a stack
+that arrives at once is a collage, and the emitted timeline carries each
+delay as the clip's own start. The `motion_reel` tool's layer schema
+carries all three.
+
+**What it costs:** one `Option<f64>` on a struct that is built by hand
+or parsed once, and the rate arithmetic at emission - the layer's
+document stays what its author wrote.
+
+## 21. The card-or-scene router
+
+An agent chose between a motion card and a multi-layer scene by prompt,
+which nothing could test - the choice lived in a sentence a model wrote,
+and a four-second beat could become a five-layer scene nobody can read,
+quietly.
+
+`concat_motion::route` is the deterministic default. `route(duration_secs,
+beat_type)` - the beat types are the emotion read's seven acts - answers
+Card, Scene or Nested: under 5 s is a card; a hook or a CTA stays a card
+until 8 s, both being read at a glance; 5-15 s is a scene; over 15 s is
+a nested composition, an act of scenes within, except the hook and the
+CTA, which are each one beat however long the slot. A span that is not
+a finite positive number routes as the shortest answer rather than as
+whichever branch a NaN comparison fell through.
+
+The answer carries its reason: `Decision::taken_by_default` names the
+rule that fired, and the director's override rides along with the reason
+it was taken (`Decision::overridden`) - an override nobody can see the
+why of is a guess with confidence. The funcut-director skill's design
+loop now routes before it designs, and the override is the only way off
+the default.
+
+The matrix is tested cell by cell - every beat at 0.5, 4.99, 5.0, 7.99,
+8.0, 12.0, 15.0, 15.01 and 30.0 seconds - plus the NaN and the negative
+span, the reasons the rules fire, the override path, and the names the
+plan carries.
+
+**What it costs:** one new module of pure functions, no state, no
+engine; the agent calls it or reads its table, and the table is the
+code.
+
+## 22. The scene-aware reel cache: one scene, one entry
+
+A reel re-rendered on every edit is a reel nobody iterates on: the
+whole ten-scene document rendered again because one layer of one scene
+moved ten pixels. The reel's cache was the storyboard's own hash - all
+or nothing.
+
+`concat-motion::reel` renders a storyboard **scene by scene**, and each
+scene is cached by a key derived from what actually draws it: its own
+document (comp or preset, layers, timing, operations), the **bytes** of
+every asset it names - a re-saved picture misses, a renamed one does not
+have to - the geometry, the engine and its version, and the curtain at
+its boundaries. An edit to scene seven does not move scene three's key,
+and scene three's segment is served untouched. The joined reel is cached
+by its ordered scene keys, so an unchanged reel serves the join whole -
+byte-identical, rendering nothing - and a one-scene change re-renders
+that scene, re-joins, and nothing else. Audio beds render once,
+audio-only, cached by their own numbers and their file's bytes, and mix
+over the joined picture at the end. The scene cache is shared across
+reels: a scene identical in two reels is one entry, drawn once.
+
+Both doors eat it - `motion_reel` reports `cache: {scenesDrawn,
+scenesServed, joinedFromCache, ...}` and the agent CLI's `reel` the same
+- and a relative `-o` works, where the first cut of the join ran its
+child in the empty string's directory and was refused with the one error
+that looks like the executable is missing.
+
+**Found and fixed on the way:** the comp timeline's `encode.video.`
+`pixel_format: "rgba"` was never a field in the engine's schema - every
+comp bake and every comp frame through the strict door was refused as
+E101 (the sequence path never wrote it, which is why the layers example
+rendered clean). The PNG image sequence is the alpha by being a PNG
+sequence; the field is gone and the comp frame path works, verified
+against the real sidecar.
+
+Verified with stub-executable tests - a second render of an unchanged
+reel renders nothing and is byte-identical; one layer changed
+re-renders only its scene; asset bytes, not names, are the key; the
+geometry is in it - and against the real sidecar: two scenes drawn the
+first time, **zero** drawn and the join served the second, **exactly
+one** drawn after one layer's parallax changed. 147 tests green.
+
+**What it costs:** one directory of segments and joins under the
+project's cache, a per-scene plan instead of one, and a join the engine
+does back-to-back; an unchanged reel costs a handful of stat calls.
+
+## 23. Nested compositions: a scene inside a scene
+
+A scene could not reference another scene. An act that wanted its
+opening sting inside its chapter card rebuilt the sting by hand, or
+pre-rendered it to a file and carried the file - both of which forget
+what the sting was the moment it changes.
+
+A scene can be named (`"id": "intro"`) and another scene's layer can
+place it (`"layers": [{"scene": "intro", "scale": 0.5, ...}]`): the
+named scene is emitted once, as a reusable composition in the engine's
+own format - its plates, its comp, its overlays, at relative times -
+and every layer that names it shows it, each with the layer's own
+timing, offset, scale, opacity, blend and fades. A composition that
+itself places a scene nests one level per name, the engine holds the
+stack to eight, and the segment cache includes a nested scene's own
+key in its parent's, so editing the sting re-renders exactly the scenes
+that show it.
+
+A scene cannot be built from itself, directly or through another:
+validation walks the names and refuses the chain as a sentence -
+"a uses b uses a" - before a preset is resolved, and both doors eat the
+same refusal. A layer naming an undefined scene, or both an asset and
+a scene, is refused by name.
+
+Verified: the placement's timeline asserted (composition source, start
+at the parent's start plus the layer's delay, the layer's transform and
+blend), the direct and the two-scene cycle refused with the chain
+named, the undefined name and the both-at-once refused, and the whole
+thing rendered against the real sidecar - a chapter-chip scene holding
+a half-scale, offset, fading copy of a wordmark scene, two segments
+drawn, zero errors. 151 tests green.
+
+**What it costs:** one composition per named-and-placed scene in the
+document (unused named scenes are not emitted), and the recursive plan
+of each - a plan of a document, not a render, so the cost is
+microseconds.

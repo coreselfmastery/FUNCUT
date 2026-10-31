@@ -69,6 +69,8 @@ pub mod curve;
 pub mod engine;
 pub mod geneva;
 pub mod presets;
+pub mod reel;
+pub mod route;
 pub mod sequence;
 pub mod storyboard;
 pub mod track;
@@ -77,9 +79,12 @@ pub use authoring::{CompSummary, Op, apply};
 pub use comp::{Comp, FORMAT, Node, NodeKind, Slot};
 pub use curve::{Curve, Spring, StepPosition};
 pub use engine::{
-    BakeRequest, Baked, CompEngine, EngineKind, EnginePreference, MotionError, Probe,
+    BakeRequest, Baked, Choice, CompEngine, EngineKind, EnginePreference, MotionError, Probe,
+    Sidecar,
 };
-pub use geneva::Geneva;
+pub use geneva::{Breaker, CallLimits, Diagnostic, Geneva, fix_for};
+pub use reel::{ReelReport, SceneOutcome, render_reel, scene_key};
+pub use route::{BeatType, Decision, Routing, route};
 pub use track::{Key, Track, Tracks, Value};
 
 /// The library version of the preset set, bumped when a preset changes shape

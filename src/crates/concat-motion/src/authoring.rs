@@ -240,10 +240,12 @@ pub fn apply(comp: &Comp, ops: &[Op]) -> Result<Comp, MotionError> {
             MotionError::Engine {
                 code,
                 message,
+                path,
                 help,
             } => MotionError::Engine {
                 code,
                 message: format!("operation {index}: {message}"),
+                path,
                 help,
             },
             other => other,
@@ -679,6 +681,7 @@ fn set_text_in(
                     message: format!(
                         "the slot {what} on node {id:?} has the sample {sample:?}, which is not in its markup"
                     ),
+                    path: None,
                     help: Some(
                         "a slot's sample is the literal text it stands in for; fix the comp's `slots`"
                             .into(),
@@ -919,6 +922,7 @@ fn fail(message: String, help: impl Into<String>) -> MotionError {
     MotionError::Engine {
         code: None,
         message,
+        path: None,
         help: Some(help.into()),
     }
 }

@@ -25,7 +25,9 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value as Json, json};
 
@@ -62,10 +64,131 @@ fn major_mismatch(version: &str) -> Option<String> {
 /// its own.
 pub const ENV_BIN: &str = "CONCAT_GENEVA_BIN";
 
+/// How long one Geneva call may run before it is killed.
+///
+/// Two limits, because the two kinds of call differ by an order of
+/// magnitude: a plan, a validate or a frame is a document read and one
+/// still, and a minute is already generous; a render is every frame of a
+/// reel, and 300 s covers the long ones this crate's own examples
+/// measure (300 frames of 1080p30 in 23 s on two cores - a tenfold
+/// margin). The breaker window and these limits are the whole answer to
+/// "what if the sidecar hangs": a call that outlives its limit is
+/// killed, and a sidecar that fails three times in a minute is refused
+/// until it has had a minute to be fixed.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct CallLimits {
+    /// Plan, validate, frame, probe, version: the quick calls.
+    pub plan: Duration,
+    /// Render: every frame of a comp or a reel, plus the encode.
+    pub render: Duration,
+}
+
+impl Default for CallLimits {
+    fn default() -> Self {
+        CallLimits {
+            plan: Duration::from_secs(60),
+            render: Duration::from_secs(300),
+        }
+    }
+}
+
+impl CallLimits {
+    /// Limits from one cap, the shape a `--geneva-timeout` flag or a
+    /// tool parameter gives: no call may run past `cap`, and the quick
+    /// calls are capped at their own default when the cap is looser
+    /// than it.
+    pub fn capped_at(cap: Duration) -> CallLimits {
+        CallLimits {
+            plan: cap.min(Duration::from_secs(60)),
+            render: cap,
+        }
+    }
+}
+
+/// The circuit breaker's state, as [`Geneva::breaker`] reports it: the
+/// count is the failures inside the window, and the window itself is
+/// [`BREAKER_WINDOW_SECS`] - three inside sixty seconds trips it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Breaker {
+    /// Closed: the sidecar is being called as usual.
+    Closed,
+    /// Open: `failures` calls failed inside the window, and further
+    /// calls are refused until the window has passed without more of
+    /// them.
+    Open {
+        /// How many failures tripped it.
+        failures: usize,
+    },
+}
+
+/// How many failures inside the window trip the breaker.
+const BREAKER_TRIPS_AT: usize = 3;
+/// The breaker's window, in seconds: failures older than this fall out
+/// of the count, and an open breaker closes again after it.
+const BREAKER_WINDOW_SECS: f64 = 60.0;
+
+/// One lock for every test that touches the process-wide breaker: the
+/// guard tests trip it, the reel tests' stubs clear it with their
+/// successes, and neither may happen inside the other's span.
+#[cfg(test)]
+pub(crate) static BREAKER_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+/// Forget the breaker's failures, for the test about to make its own.
+/// Every test that drives the sidecar calls this under the lock, so one
+/// test's open circuit is never the next test's surprise.
+#[cfg(test)]
+pub(crate) fn reset_breaker_for_tests() {
+    if let Ok(mut failures) = BREAKER.lock() {
+        failures.clear();
+    }
+}
+
+/// The breaker is process-wide, because the sidecar is: three failures
+/// from any door - a bake, a frame, a reel - are three failures against
+/// the same binary, and the next caller whoever it is should not pay to
+/// learn that.
+static BREAKER: Mutex<Vec<Instant>> = Mutex::new(Vec::new());
+
+/// Count a failure into the breaker, dropping the ones that have aged
+/// out of the window first.
+fn breaker_failure() {
+    if let Ok(mut failures) = BREAKER.lock() {
+        let now = Instant::now();
+        failures.retain(|at| now.duration_since(*at).as_secs_f64() < BREAKER_WINDOW_SECS);
+        failures.push(now);
+    }
+}
+
+/// Forget the failures: a call succeeded, and a sidecar that answers is
+/// a sidecar to keep calling.
+fn breaker_success() {
+    if let Ok(mut failures) = BREAKER.lock() {
+        failures.clear();
+    }
+}
+
+/// The breaker's state, with the aged-out failures dropped.
+fn breaker_state() -> Breaker {
+    let Ok(failures) = BREAKER.lock() else {
+        return Breaker::Closed;
+    };
+    let now = Instant::now();
+    let live = failures
+        .iter()
+        .filter(|at| now.duration_since(**at).as_secs_f64() < BREAKER_WINDOW_SECS)
+        .count();
+    if live >= BREAKER_TRIPS_AT {
+        Breaker::Open { failures: live }
+    } else {
+        Breaker::Closed
+    }
+}
+
 /// A discovered Geneva binary.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Geneva {
     exe: PathBuf,
+    limits: CallLimits,
 }
 
 impl Geneva {
@@ -97,17 +220,56 @@ impl Geneva {
         candidates
             .into_iter()
             .find(|path| path.is_file())
-            .map(|exe| Geneva { exe })
+            .map(|exe| Geneva {
+                exe,
+                limits: CallLimits::default(),
+            })
     }
 
     /// A Geneva at a known path, without checking that it runs.
     pub fn at(exe: impl Into<PathBuf>) -> Geneva {
-        Geneva { exe: exe.into() }
+        Geneva {
+            exe: exe.into(),
+            limits: CallLimits::default(),
+        }
+    }
+
+    /// Tighten or loosen the per-call limits, for a flag, a tool
+    /// parameter or a test.
+    pub fn with_limits(mut self, limits: CallLimits) -> Geneva {
+        self.limits = limits;
+        self
+    }
+
+    /// The limits this Geneva is called under.
+    pub fn limits(&self) -> CallLimits {
+        self.limits
+    }
+
+    /// The breaker's state right now, for a caller deciding what to draw
+    /// with - see [`crate::engine::EnginePreference::choose`], which
+    /// turns an open breaker into a native-engine fallback for every
+    /// comp that can be drawn natively.
+    pub fn breaker(&self) -> Breaker {
+        breaker_state()
     }
 
     /// The binary's path.
     pub fn exe(&self) -> &Path {
         &self.exe
+    }
+
+    /// Refuse if the breaker is open: the message is the fallback story,
+    /// so the caller hears what happens next instead of spending a
+    /// minute learning the sidecar is not answering.
+    fn gate(&self) -> Result<(), MotionError> {
+        match breaker_state() {
+            Breaker::Closed => Ok(()),
+            Breaker::Open { failures } => Err(MotionError::CircuitOpen {
+                failures,
+                window: BREAKER_WINDOW_SECS,
+            }),
+        }
     }
 
     /// The version it reports, e.g. `1.6.0`.
@@ -117,14 +279,8 @@ impl Geneva {
     /// executable answering to the sidecar's name would otherwise be
     /// believed forever.
     pub fn version(&self) -> Result<String, MotionError> {
-        let output = Command::new(&self.exe)
-            .arg("--version")
-            .output()
-            .map_err(|error| MotionError::Io {
-                doing: "running".into(),
-                path: self.exe.clone(),
-                source: error,
-            })?;
+        self.gate()?;
+        let output = self.call("probing", &["--version".to_owned()], self.limits.plan)?;
         let text = String::from_utf8_lossy(&output.stdout);
         // "geneva 1.6.0": the version is the first token that begins as one.
         let version = text.split_whitespace().find(|token| {
@@ -134,18 +290,26 @@ impl Geneva {
                 .is_some_and(|first| !first.is_empty() && first.chars().all(|c| c.is_ascii_digit()))
         });
         match version {
-            Some(version) if output.status.success() => Ok(version.to_string()),
-            _ => Err(MotionError::Engine {
-                code: None,
-                message: format!(
-                    "{} did not report a version (exited with {})",
-                    self.exe.display(),
-                    output.status
-                ),
-                help: Some(
-                    "the sidecar is geneva-render/geneva; check what answers to its name".into(),
-                ),
-            }),
+            Some(version) if output.status.success() => {
+                breaker_success();
+                Ok(version.to_string())
+            }
+            _ => {
+                breaker_failure();
+                Err(MotionError::Engine {
+                    code: None,
+                    message: format!(
+                        "{} did not report a version (exited with {})",
+                        self.exe.display(),
+                        output.status
+                    ),
+                    path: None,
+                    help: Some(
+                        "the sidecar is geneva-render/geneva; check what answers to its name"
+                            .into(),
+                    ),
+                })
+            }
         }
     }
 
@@ -183,15 +347,38 @@ impl Geneva {
     /// diagnostic can be shown with the text that explains it, from the binary
     /// the project actually renders with.
     pub fn manual(&self, topic: &str) -> Option<String> {
-        let output = Command::new(&self.exe)
-            .arg("guide")
-            .arg(topic)
-            .output()
+        let mut args = vec!["guide".to_owned()];
+        args.extend(topic.split_whitespace().map(str::to_owned));
+        self.call("reading the manual", &args, self.limits.plan)
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    /// What a diagnostic code means, in the sidecar's own words:
+    /// `geneva explain E302`. The answer's first line is the sentence a
+    /// caller wants to carry into its own message; the rest is a pointer
+    /// at the guide page, which stays in the manual.
+    pub fn explain(&self, code: &str) -> Option<String> {
+        let output = self
+            .call(
+                "explaining a diagnostic",
+                &["explain".to_owned(), code.to_owned()],
+                self.limits.plan,
+            )
             .ok()?;
-        output
-            .status
-            .success()
-            .then(|| String::from_utf8_lossy(&output.stdout).to_string())
+        if !output.status.success() {
+            return None;
+        }
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .find(|line| {
+                let trimmed = line.trim();
+                !trimmed.is_empty()
+                    && !trimmed.starts_with("error[")
+                    && !trimmed.starts_with("The whole page")
+            })
+            .map(str::to_owned)
     }
 
     /// The timeline a comp becomes, and what could not be expressed in it.
@@ -300,16 +487,20 @@ impl Geneva {
         output.insert("fps".into(), json!(fps));
         output.insert("duration".into(), Json::String(seconds(comp.duration)));
         output.insert("background".into(), Json::String(comp.background.to_hex()));
-        // Frames with alpha: the one carrier the engine guarantees, and the one
-        // the compositor samples without a conversion. `pixel_format` rgba
-        // says the PNGs carry their alpha channel whole, so a motion card's
-        // bake lands translucent where the comp was - which is what lets it
-        // sit on footage in an export instead of covering it.
+        // Frames with alpha: the one carrier the engine guarantees, and
+        // the one the compositor samples without a conversion. An
+        // image-sequence of PNGs carries its alpha channel whole - that
+        // is what the container is - so a motion card's bake lands
+        // translucent where the comp was, which is what lets it sit on
+        // footage in an export instead of covering it. (The engine's
+        // schema has no `pixel_format` field anywhere: the PNG sequence
+        // IS the alpha, and saying so twice was refused as E101 - a
+        // refusal every comp bake and every comp frame met.)
         output.insert(
             "encode".into(),
             json!({
                 "container": "image-sequence",
-                "video": { "codec": "png", "pixel_format": "rgba" }
+                "video": { "codec": "png" }
             }),
         );
 
@@ -369,6 +560,7 @@ impl Geneva {
             serde_json::to_string_pretty(&document).map_err(|error| MotionError::Engine {
                 code: None,
                 message: format!("the comp could not be written as a geneva timeline: {error}"),
+                path: None,
                 help: None,
             })?;
         std::fs::write(&path, text).map_err(|source| MotionError::Io {
@@ -392,16 +584,28 @@ impl Geneva {
     /// The working directory is the bake's own: a timeline is opened by the
     /// name `timeline.json`, and its assets resolve against the directory it
     /// sits in, which is what keeps a render inside the folder it was given.
+    ///
+    /// Every call is bounded and counted. Bounded: the call runs under the
+    /// limit its verb earns - `render` under [`CallLimits::render`],
+    /// everything else under [`CallLimits::plan`] - and a call that
+    /// outlives it is killed and named, so a sidecar that hangs costs a
+    /// minute and a message, not a session. Counted: a failed call counts
+    /// against the circuit breaker and a successful one closes it, so a
+    /// sidecar that fails three times in a minute is refused with the
+    /// fallback story instead of being asked a fourth.
     fn run(&self, dir: &Path, args: &[String]) -> Result<Json, MotionError> {
-        let output = Command::new(&self.exe)
-            .current_dir(dir)
-            .args(args)
-            .output()
-            .map_err(|source| MotionError::Io {
-                doing: "running geneva".into(),
-                path: self.exe.clone(),
-                source,
-            })?;
+        self.gate()?;
+        let what = if args.iter().any(|arg| arg == "render") {
+            "rendering"
+        } else {
+            "planning"
+        };
+        let limit = if what == "rendering" {
+            self.limits.render
+        } else {
+            self.limits.plan
+        };
+        let output = self.call_in(what, dir, args, limit)?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let report: Json = serde_json::from_str(stdout.trim()).unwrap_or_else(|_| {
             json!({
@@ -414,40 +618,359 @@ impl Geneva {
         });
         let ok = report.get("ok").and_then(Json::as_bool).unwrap_or(false);
         if ok && output.status.success() {
+            breaker_success();
             return Ok(report);
         }
+        breaker_failure();
         // The first error diagnostic is the one worth showing; the rest are
-        // usually consequences of it.
-        let first = report
-            .get("diagnostics")
-            .and_then(Json::as_array)
-            .and_then(|list| {
-                list.iter()
-                    .find(|d| d.get("severity").and_then(Json::as_str) == Some("error"))
-            });
-        let (code, message, help) = match first {
+        // usually consequences of it. Its code, message and location are
+        // kept whole, and the help is the most specific of what the engine
+        // itself suggested, what this crate knows about the code in
+        // FUNCUT's own terms, and what the sidecar's manual says the code
+        // means.
+        let diagnostics = Diagnostic::list(&report);
+        let first = diagnostics.iter().find(|d| d.is_error());
+        let (code, message, path) = match first {
             Some(diagnostic) => (
-                diagnostic
-                    .get("code")
-                    .and_then(Json::as_str)
-                    .map(str::to_string),
-                diagnostic
-                    .get("message")
-                    .and_then(Json::as_str)
-                    .unwrap_or("geneva refused the timeline")
-                    .to_string(),
-                diagnostic
-                    .get("help")
-                    .and_then(Json::as_str)
-                    .map(str::to_string),
+                diagnostic.code.clone(),
+                diagnostic.message.clone(),
+                diagnostic.path.clone(),
             ),
             None => (None, format!("geneva exited with {}", output.status), None),
+        };
+        let help = match first {
+            Some(diagnostic) => diagnostic
+                .help
+                .clone()
+                .or_else(|| code.as_deref().and_then(fix_for).map(str::to_owned))
+                .or_else(|| code.as_deref().and_then(|code| self.explain(code))),
+            None => None,
         };
         Err(MotionError::Engine {
             code,
             message,
+            path,
             help,
         })
+    }
+
+    /// Run the binary once, under a deadline: a watcher polls the child
+    /// while reader threads drain its pipes (a child that fills a pipe
+    /// blocks on writing, and a watcher that does not read would hang a
+    /// chatty child at the buffer's edge), and a child that outlives the
+    /// deadline is killed and said so - the one behaviour a caller can
+    /// never otherwise get out of a hung sidecar.
+    fn call(&self, what: &str, args: &[String], limit: Duration) -> Result<Output, MotionError> {
+        self.call_in(what, Path::new("."), args, limit)
+    }
+
+    /// [`call`], in a working directory.
+    fn call_in(
+        &self,
+        what: &str,
+        dir: &Path,
+        args: &[String],
+        limit: Duration,
+    ) -> Result<Output, MotionError> {
+        let result = self.spawn_and_wait(what, dir, args, limit);
+        if result.is_err() {
+            // A call that could not start, or that outlived its limit,
+            // is a failure against the breaker exactly as a refusal is:
+            // the next caller should not pay to learn the same thing.
+            breaker_failure();
+        }
+        result
+    }
+
+    /// Spawn the binary, wait for it under a deadline, and drain its
+    /// pipes on their own threads (a child that fills a pipe blocks on
+    /// writing, and a watcher that does not read would hang a chatty
+    /// child at the buffer's edge). A child that outlives the deadline
+    /// is killed and said so - the one behaviour a caller can never
+    /// otherwise get out of a hung sidecar.
+    fn spawn_and_wait(
+        &self,
+        what: &str,
+        dir: &Path,
+        args: &[String],
+        limit: Duration,
+    ) -> Result<Output, MotionError> {
+        let mut child = Command::new(&self.exe)
+            .current_dir(dir)
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|source| MotionError::Io {
+                doing: "running geneva".into(),
+                path: self.exe.clone(),
+                source,
+            })?;
+        // Drain the pipes on their own threads, so a report bigger than a
+        // pipe never blocks the child that is writing it.
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+        let drain = |pipe: Option<Box<dyn std::io::Read + Send>>| {
+            std::thread::spawn(move || {
+                let mut bytes = Vec::new();
+                if let Some(mut pipe) = pipe {
+                    let _ = pipe.read_to_end(&mut bytes);
+                }
+                bytes
+            })
+        };
+        let out_thread = drain(stdout.map(|pipe| Box::new(pipe) as Box<dyn std::io::Read + Send>));
+        let err_thread = drain(stderr.map(|pipe| Box::new(pipe) as Box<dyn std::io::Read + Send>));
+
+        let deadline = Instant::now() + limit;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => {}
+                Err(source) => {
+                    return Err(MotionError::Io {
+                        doing: "waiting for geneva".into(),
+                        path: self.exe.clone(),
+                        source,
+                    });
+                }
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(MotionError::TimedOut {
+                    what: what.to_owned(),
+                    limit: limit.as_secs_f64(),
+                });
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        };
+        let stdout = out_thread.join().unwrap_or_default();
+        let stderr = err_thread.join().unwrap_or_default();
+        Ok(Output {
+            status,
+            stdout,
+            stderr,
+        })
+    }
+}
+
+/// What a finished child left behind: its exit status and its two pipes.
+struct Output {
+    status: std::process::ExitStatus,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+/// One diagnostic from a Geneva report, parsed whole: the stable code, the
+/// severity, the JSON-pointer path into the timeline, the message, the
+/// offending value and the engine's own suggested fix.
+///
+/// `--format json` is asked for on every invocation, so every refusal the
+/// engine makes arrives as these rather than as an exit code to guess at;
+/// see `geneva guide errors` for the code tables.
+#[derive(Clone, PartialEq, Debug, Default)]
+pub struct Diagnostic {
+    /// `error`, `warning` or `note`.
+    pub severity: String,
+    /// The stable code, e.g. `E302` or `W405`.
+    pub code: Option<String>,
+    /// Where in the document: a JSON pointer into the timeline, or a file
+    /// and line for a markup problem.
+    pub path: Option<String>,
+    /// What went wrong, in one sentence.
+    pub message: String,
+    /// The offending value, when the engine names it.
+    pub value: Option<String>,
+    /// What the engine itself suggests.
+    pub help: Option<String>,
+}
+
+impl Diagnostic {
+    /// Whether this diagnostic stops the render.
+    pub fn is_error(&self) -> bool {
+        self.severity == "error"
+    }
+
+    /// Every diagnostic in a report, errors first-parsed-as-found.
+    fn list(report: &Json) -> Vec<Diagnostic> {
+        report
+            .get("diagnostics")
+            .and_then(Json::as_array)
+            .map(|list| {
+                list.iter()
+                    .filter_map(|entry| {
+                        let text = |field: &str| {
+                            entry.get(field).and_then(Json::as_str).map(str::to_owned)
+                        };
+                        let severity = text("severity").unwrap_or_default();
+                        if severity.is_empty() {
+                            return None;
+                        }
+                        Some(Diagnostic {
+                            severity,
+                            code: text("code"),
+                            path: text("path"),
+                            message: text("message").unwrap_or_default(),
+                            value: text("value"),
+                            help: text("help"),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+}
+
+/// What a Geneva diagnostic code means in FUNCUT's own terms: the same fix
+/// the engine's help offers, said in the words of the storyboard and the
+/// comp that caused it. The codes are the sidecar's own tables (`geneva
+/// guide errors`); an unknown code falls back to [`Geneva::explain`],
+/// which asks the sidecar itself.
+pub fn fix_for(code: &str) -> Option<&'static str> {
+    match code {
+        // Structure: the document itself.
+        "E100" => Some(
+            "the timeline the planner wrote is not valid JSON, which is this crate's bug - \
+             please report it with the storyboard that produced it",
+        ),
+        "E101" | "E102" | "E103" | "E104" | "E105" => Some(
+            "the timeline a comp produced does not match the format the sidecar reads; a \
+             hand-edited comp is the usual cause - check the comp's JSON against \
+             `geneva schema`",
+        ),
+        "E110" => Some(
+            "the sidecar is a different major version than the timeline this build writes; \
+             reinstall the pinned geneva (install-linux.sh) or point CONCAT_GENEVA_BIN at \
+             the one this build was written for",
+        ),
+        // References: what a document names.
+        "E200" => Some(
+            "a layer or an audio bed names an asset the storyboard does not carry; check the \
+             id against the storyboard's `assets`",
+        ),
+        "E201" => Some(
+            "an asset is used as a kind it is not: a picture where a sound is named, or the \
+             reverse; check the asset's file and the layer that names it",
+        ),
+        "E202" => Some(
+            "an asset path must be a name under the project, not a route out of it; check \
+             the storyboard's `assets`",
+        ),
+        "E203" => Some(
+            "give the asset a `kind`, or a file name whose extension names one: the sidecar \
+             could not tell what the file is",
+        ),
+        "E206" => Some(
+            "the composition a clip names is not declared; check the comp's compositions \
+             against the clip that points at one",
+        ),
+        "E207" => Some(
+            "a composition contains itself, directly or through another; a scene cannot be \
+             built from itself",
+        ),
+        // Timing: what a storyboard lays out.
+        "E300" => {
+            Some("a time is negative; check the layer's `start` and `hold` and the scene's `at`")
+        }
+        "E301" => Some(
+            "an empty or inverted range; a layer's `hold` must outlast its fades, and a \
+             scene's `at` cannot swallow the scene before it",
+        ),
+        "E302" => Some(
+            "two clips of one layer overlap without a transition; the planner gives every \
+             layer its own, so this is a hand-edited timeline - move one clip or add the \
+             transition that blends them",
+        ),
+        "E303" => Some(
+            "keyframes must strictly increase in time; the planner holds every fade to half \
+             its span for exactly this, so check a hand-edited timeline's keyframe times",
+        ),
+        "E305" => Some(
+            "a clip's length could not be determined; a storyboard layer needs a `hold` or a \
+             scene long enough to end it",
+        ),
+        "E306" => Some(
+            "a transition is longer than the overlap before it; shorten the transition or \
+             lengthen the overlap",
+        ),
+        // Values and markup: what a comp carries.
+        "E401" => Some(
+            "an easing is malformed: cubic-bezier control points outside 0..=1, or \
+             non-positive spring parameters; check the comp's curves",
+        ),
+        "E402" => Some(
+            "a value is out of range: opacity outside 0..=1, a non-positive size or \
+             duration, a font weight outside 100..=900; check the comp's numbers",
+        ),
+        "E440" => Some(
+            "the comp's animation names a keyframes rule the document does not carry; add \
+             the missing @keyframes block to the comp's CSS or take the animation off the \
+             node",
+        ),
+        "E441" => Some(
+            "an `animation` value is malformed: a rule name, one duration and one timing \
+             function - check the node's animation",
+        ),
+        "E442" => Some(
+            "a keyframes rule is malformed: offsets are `from`, `to` or a percentage in \
+             0%..100%, and a clip's rule animates transform and opacity only; check the \
+             comp's CSS",
+        ),
+        "E443" => Some(
+            "one property is driven by the clip's keyframes and by an animation at once; \
+             keep the property in one of the two",
+        ),
+        "E450" => Some(
+            "an HTML source carries either `html` or `asset`, not both and not neither; \
+             check the comp's HTML node",
+        ),
+        "E451" => Some(
+            "the comp's markup or CSS did not parse; the message and the location say where \
+             - an unclosed tag, a selector the engine does not support, a block that never \
+             closes",
+        ),
+        "E452" => Some(
+            "the markup points at a file that is not there: paths inside markup are relative \
+             to the markup itself, and must stay under the asset root; carry the file as an \
+             asset and point at its staged name",
+        ),
+        "E453" => Some(
+            "a caption file could not be read or parsed; check that it is .srt, .vtt or a \
+             recogniser's .json, and that its word times are seconds",
+        ),
+        // Rendering: what a render meets.
+        "E501" => Some(
+            "an asset file could not be opened or decoded; check the asset's path under the \
+             project and that the file is a readable picture, video, sound or font",
+        ),
+        "E502" => Some(
+            "a frame was asked for outside the composition; check the time against the \
+             reel's duration",
+        ),
+        "E503" => Some(
+            "the renderer's device failed or ran out of memory; the CPU renderer never \
+             reports it - retry, and if it repeats, report it with the comp",
+        ),
+        "E504" => Some(
+            "this output cannot be split into parts for parallel rendering; render it in one \
+             call",
+        ),
+        // Warnings a storyboard author meets often enough to want in
+        // their own words.
+        "W405" => Some(
+            "a font family this machine has no face of; carry the face as a `font` asset in \
+             the storyboard's `assets` and the comp draws the same everywhere",
+        ),
+        "W407" => Some(
+            "letters no available face has a glyph for; add a font asset that covers them, \
+             or the boxes another machine will not show",
+        ),
+        "W440" => Some(
+            "an animation rule interpolates nothing; give the rule a property at two \
+             offsets",
+        ),
+        _ => None,
     }
 }
 
@@ -512,6 +1035,7 @@ impl CompEngine for Geneva {
             return Err(MotionError::Engine {
                 code: None,
                 message: reason,
+                path: None,
                 help: Some(format!(
                     "point {ENV_BIN} at a geneva the comp was written for, or reinstall the sidecar"
                 )),
@@ -567,6 +1091,7 @@ impl CompEngine for Geneva {
             return Err(MotionError::Engine {
                 code: None,
                 message: "the render reported success but wrote no frames".into(),
+                path: None,
                 help: Some(
                     "the bake directory is left as it is; baking into a fresh one answers whether the sidecar is at fault"
                         .into(),
@@ -1283,9 +1808,12 @@ mod tests {
         assert_eq!(document["geneva"], "1.1");
         assert_eq!(document["output"]["encode"]["container"], "image-sequence");
         assert_eq!(document["output"]["encode"]["video"]["codec"], "png");
-        assert_eq!(
-            document["output"]["encode"]["video"]["pixel_format"],
-            "rgba"
+        // No `pixel_format`: the engine's schema does not carry one, and
+        // the PNG sequence is the alpha by being a PNG sequence.
+        assert!(
+            document["output"]["encode"]["video"]
+                .get("pixel_format")
+                .is_none()
         );
         assert_eq!(document["output"]["background"], "#00000000");
         assert_eq!(document["layers"].as_array().unwrap().len(), 1);
@@ -1605,5 +2133,302 @@ mod tests {
             "a cache that lost its frames must miss"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // The guard: per-call limits, the circuit breaker, and the
+    // diagnostics parsing. Every test here drives a stub executable
+    // written into a tempdir, so nothing needs the real sidecar and
+    // nothing depends on the machine it runs on. Unix only, because a
+    // stub executable is a shell script with its bit set.
+    #[cfg(unix)]
+    mod guard {
+        use super::*;
+        use std::os::unix::fs::PermissionsExt;
+        use tempfile::TempDir;
+
+        /// The breaker is process-wide, and the test runner runs these
+        /// as threads in one process: the lock makes one test's
+        /// failures nobody else's, which is what a tempdir does for
+        /// files.
+        use super::BREAKER_TEST_LOCK as ONE_AT_A_TIME;
+
+        /// A stub executable at `dir/name`, run under tight limits, and
+        /// the breaker reset so one test's failures are not the next
+        /// test's open circuit.
+        fn stub(dir: &TempDir, name: &str, body: &str) -> Geneva {
+            let path = dir.path().join(name);
+            std::fs::write(&path, body).expect("the stub is written");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+                .expect("the stub is executable");
+            reset_breaker();
+            Geneva::at(&path).with_limits(CallLimits {
+                plan: Duration::from_millis(400),
+                render: Duration::from_millis(400),
+            })
+        }
+
+        fn reset_breaker() {
+            if let Ok(mut failures) = BREAKER.lock() {
+                failures.clear();
+            }
+        }
+
+        #[test]
+        fn a_call_that_outlives_its_limit_is_killed_and_named() {
+            let _serial = ONE_AT_A_TIME
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let dir = TempDir::new().unwrap();
+            let geneva = stub(&dir, "sleepy", "#!/bin/sh\nexec sleep 30\n");
+            let started = Instant::now();
+            let error = geneva
+                .run_in(
+                    dir.path(),
+                    &["--format".into(), "json".into(), "render".into()],
+                )
+                .expect_err("a sleeper is refused");
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "the call returned in {:?}, not after the sleeper finished",
+                started.elapsed()
+            );
+            match error {
+                MotionError::TimedOut { what, limit } => {
+                    assert_eq!(what, "rendering");
+                    assert!((limit - 0.4).abs() < 0.05, "{limit}");
+                }
+                other => panic!("a timeout is a timeout, not {other:?}"),
+            }
+        }
+
+        #[test]
+        fn three_failures_open_the_breaker_and_the_fourth_is_refused_fast() {
+            let _serial = ONE_AT_A_TIME
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let dir = TempDir::new().unwrap();
+            // A sidecar that answers with nothing parseable and exits
+            // badly, three times, then a fourth call that must not reach
+            // it at all.
+            let geneva = stub(&dir, "broken", "#!/bin/sh\necho 'garbage'\nexit 1\n");
+            for _ in 0..3 {
+                assert!(geneva.run_in(dir.path(), &["--format".into()]).is_err());
+            }
+            assert_eq!(geneva.breaker(), Breaker::Open { failures: 3 });
+            let started = Instant::now();
+            let error = geneva
+                .run_in(dir.path(), &["--format".into()])
+                .expect_err("the breaker refuses");
+            assert!(
+                started.elapsed() < Duration::from_secs(1),
+                "the refusal is immediate, not another call: {:?}",
+                started.elapsed()
+            );
+            match error {
+                MotionError::CircuitOpen { failures, window } => {
+                    assert_eq!(failures, 3);
+                    assert!((window - 60.0).abs() < 0.001);
+                }
+                other => panic!("an open breaker is an open breaker, not {other:?}"),
+            }
+        }
+
+        #[test]
+        fn a_success_closes_the_breaker() {
+            let _serial = ONE_AT_A_TIME
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let dir = TempDir::new().unwrap();
+            // Two failures, then a call that succeeds: the breaker
+            // forgets them, and the next failure is a first failure
+            // again.
+            let geneva = stub(
+                &dir,
+                "moody",
+                "#!/bin/sh\nif [ -f mood ]; then echo '{\"ok\":true,\"diagnostics\":[],\"summary\":{}}'; exit 0; fi\necho 'nope'; exit 1\n",
+            );
+            let mood = dir.path().join("mood");
+            for _ in 0..2 {
+                let _ = std::fs::remove_file(&mood);
+                let _ = geneva.run_in(dir.path(), &[]);
+            }
+            assert_eq!(
+                geneva.breaker(),
+                Breaker::Closed,
+                "two failures do not trip it"
+            );
+            std::fs::write(&mood, "good").unwrap();
+            geneva
+                .run_in(dir.path(), &[])
+                .expect("the third call succeeds");
+            assert_eq!(geneva.breaker(), Breaker::Closed);
+            let _ = std::fs::remove_file(&mood);
+            let _ = geneva.run_in(dir.path(), &[]);
+            assert_eq!(
+                geneva.breaker(),
+                Breaker::Closed,
+                "a success cleared the two failures, so one more is not three"
+            );
+        }
+
+        #[test]
+        fn a_reported_diagnostic_arrives_whole_with_its_fix() {
+            let _serial = ONE_AT_A_TIME
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let dir = TempDir::new().unwrap();
+            let geneva = stub(
+                &dir,
+                "fussy",
+                concat!(
+                    "#!/bin/sh\n",
+                    "cat <<'EOF'\n",
+                    "{\"ok\":false,\"diagnostics\":[{\"severity\":\"error\",\"code\":\"E302\",",
+                    "\"path\":\"/layers/1/clips/1/start\",",
+                    "\"message\":\"clip 1 of overlay starts at 1s, before clip 0 ends at 2s\",",
+                    "\"value\":\"1s\",",
+                    "\"help\":\"start it at 2s or later\"}],\"summary\":{}}\n",
+                    "EOF\n",
+                ),
+            );
+            let error = geneva
+                .run_in(dir.path(), &["--format".into()])
+                .expect_err("ok:false is a refusal");
+            match error {
+                MotionError::Engine {
+                    ref code,
+                    ref message,
+                    ref path,
+                    ref help,
+                } => {
+                    assert_eq!(code.as_deref(), Some("E302"));
+                    assert!(message.contains("clip 1 of overlay"), "{message}");
+                    assert_eq!(path.as_deref(), Some("/layers/1/clips/1/start"));
+                    // The engine's own help wins over the table's.
+                    assert!(help.as_deref().unwrap_or_default().contains("2s or later"));
+                }
+                other => panic!("a diagnostic is an Engine refusal, not {other:?}"),
+            }
+            let text = error.to_string();
+            assert!(text.contains("E302"), "{text}");
+            assert!(text.contains("/layers/1/clips/1/start"), "{text}");
+        }
+
+        #[test]
+        fn a_known_code_without_its_own_help_gets_the_funcut_fix() {
+            let _serial = ONE_AT_A_TIME
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let dir = TempDir::new().unwrap();
+            let geneva = stub(
+                &dir,
+                "terse",
+                concat!(
+                    "#!/bin/sh\n",
+                    "cat <<'EOF'\n",
+                    "{\"ok\":false,\"diagnostics\":[{\"severity\":\"error\",\"code\":\"W405\",",
+                    "\"message\":\"the family Archivo is not on this machine\"}],\"summary\":{}}\n",
+                    "EOF\n",
+                ),
+            );
+            let error = geneva
+                .run_in(dir.path(), &["--format".into()])
+                .expect_err("refused");
+            let help = match error {
+                MotionError::Engine { help, .. } => help,
+                other => panic!("{other:?}"),
+            };
+            let help = help.expect("the table answers for W405");
+            assert!(help.contains("font"), "the fix is about fonts: {help}");
+            assert!(help.contains("assets"), "the fix names where: {help}");
+        }
+
+        #[test]
+        fn an_unknown_code_is_explained_by_the_sidecar_itself() {
+            let _serial = ONE_AT_A_TIME
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let dir = TempDir::new().unwrap();
+            let geneva = stub(
+                &dir,
+                "explainer",
+                concat!(
+                    "#!/bin/sh\n",
+                    "if [ \"$1\" = \"explain\" ]; then\n",
+                    "  echo 'error[E999]: a made-up code'\n",
+                    "  echo 'E999 means the frobnicator is misaligned.'\n",
+                    "  exit 0\n",
+                    "fi\n",
+                    "cat <<'EOF'\n",
+                    "{\"ok\":false,\"diagnostics\":[{\"severity\":\"error\",\"code\":\"E999\",",
+                    "\"message\":\"the frobnicator\"}],\"summary\":{}}\n",
+                    "EOF\n",
+                ),
+            );
+            let error = geneva
+                .run_in(dir.path(), &["--format".into()])
+                .expect_err("refused");
+            match error {
+                MotionError::Engine { code, help, .. } => {
+                    assert_eq!(code.as_deref(), Some("E999"));
+                    assert_eq!(
+                        help.as_deref(),
+                        Some("E999 means the frobnicator is misaligned.")
+                    );
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+
+        #[test]
+        fn the_fix_table_only_names_codes_the_sidecar_defines() {
+            let _serial = ONE_AT_A_TIME
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            // The table's codes come from `geneva guide errors`; a code
+            // the sidecar has never defined is a typo in the table, and
+            // an unknown one falls through to explain(). The shape of
+            // the check: every tabled code parses as E/W/N + digits.
+            for code in [
+                "E100", "E101", "E102", "E103", "E104", "E105", "E110", "E200", "E201", "E202",
+                "E203", "E206", "E207", "E300", "E301", "E302", "E303", "E305", "E306", "E401",
+                "E402", "E440", "E441", "E442", "E443", "E450", "E451", "E452", "E453", "E501",
+                "E502", "E503", "E504", "W405", "W407", "W440",
+            ] {
+                assert!(fix_for(code).is_some(), "{code} is tabled");
+                let digits = &code[1..];
+                assert!(!digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()));
+            }
+            assert!(fix_for("E999").is_none());
+            assert!(fix_for("not-a-code").is_none());
+        }
+
+        #[test]
+        fn a_cap_that_tightens_the_render_limit_tightens_the_plan_less() {
+            let _serial = ONE_AT_A_TIME
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let limits = CallLimits::capped_at(Duration::from_secs(30));
+            assert_eq!(limits.render, Duration::from_secs(30));
+            assert_eq!(limits.plan, Duration::from_secs(30));
+            let loose = CallLimits::capped_at(Duration::from_secs(600));
+            assert_eq!(loose.render, Duration::from_secs(600));
+            assert_eq!(loose.plan, Duration::from_secs(60));
+        }
+
+        #[test]
+        fn the_version_is_read_under_the_same_limits() {
+            let _serial = ONE_AT_A_TIME
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let dir = TempDir::new().unwrap();
+            let geneva = stub(&dir, "versioned", "#!/bin/sh\necho 'geneva 1.6.0'\n");
+            assert_eq!(geneva.version().expect("a version"), "1.6.0");
+            let slow = stub(&dir, "slow-version", "#!/bin/sh\nexec sleep 30\n");
+            assert!(matches!(
+                slow.version().expect_err("a sleeper has no version"),
+                MotionError::TimedOut { .. }
+            ));
+        }
     }
 }

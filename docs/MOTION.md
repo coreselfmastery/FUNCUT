@@ -139,6 +139,46 @@ case (full-frame radial gradients); bake them once, at the size you need, and re
 and VP9 came back opaque in testing, so a comp bakes to PNG. Use `motion_overlay` to composite those
 RGBA frames over the actual shot; see "Where alpha actually lands" below.
 
+### The guard: limits, a breaker, and diagnostics that parse
+
+Every call to the sidecar is bounded and counted, so a sidecar that hangs or fails is a message, not
+a session:
+
+- **Per-call limits.** A render runs under `CallLimits::render` (300 s by default); every quick call
+  - plan, validate, one frame, the version - under `CallLimits::plan` (60 s). A call that outlives
+  its limit is **killed** and refused with `MotionError::TimedOut`, which names the call and the
+  limit. The pipes are drained while the child runs, so a chatty sidecar cannot deadlock on a full
+  buffer either. `--geneva-timeout SECONDS` (the `agent reel` verb) and `genevaTimeoutSecs` (the
+  `motion_reel` tool) cap every call at the number given - a render at it, a quick call at the
+  lesser of it and the quick default.
+- **A circuit breaker.** Three failures inside sixty seconds - a refusal, a crash, a timeout, from
+  any door - open the breaker for a minute: further calls are refused immediately with
+  `MotionError::CircuitOpen` instead of being spent on a sidecar that is not answering, and a
+  success closes it again. `EnginePreference::choose` folds the breaker into the engine choice: a
+  failing sidecar is a missing one for every comp the native engine can draw (with the note that
+  says so, because a fallback nobody can see is a fallback nobody can trust), and a markup comp
+  keeps Geneva - the native engine cannot draw it, and the honest answer is the fast refusal.
+- **Diagnostics that parse.** `--format json` is asked for on every invocation, so a refusal
+  arrives as [`geneva::Diagnostic`] - code, severity, the JSON-pointer `path` into the timeline,
+  message, value, help - and `MotionError::Engine` carries the code, the message, the location and
+  the most specific help available: the engine's own suggestion, else what `geneva::fix_for`
+  knows about that code in FUNCUT's terms (E302 is clip overlap, W405 is a font the machine
+  lacks - the table is the sidecar's own `geneva guide errors`, said in storyboard words), else
+  `geneva explain <code>`, asked of the sidecar itself.
+
+```rust,ignore
+use concat_motion::geneva::{Breaker, CallLimits, Geneva};
+use std::time::Duration;
+
+// a render that must not take all day
+let geneva = Geneva::discover(None).expect("the sidecar")
+    .with_limits(CallLimits::capped_at(Duration::from_secs(120)));
+match geneva.breaker() {
+    Breaker::Open { failures } => { /* draw natively, or wait a minute */ }
+    Breaker::Closed => { /* call as usual; a hang costs its limit, not the session */ }
+}
+```
+
 ---
 
 ## Sequences: many comps, one render
@@ -430,6 +470,16 @@ A scene's `layers` stack **bottom first**: plates under the comp, and - with `"a
 grain, vignettes, light leaks and foreground cards over it. The short form (`"plate": "back",
 "zoom": 0.04`) is still one layer under the comp and nothing else, exactly what it always was.
 
+**The contract is checked before the bake.** `Storyboard::validate` reads the document the way an
+engine never gets to: every asset a layer, a plate or a bed names must be carried by `assets`;
+every `blend` one of the nine, every `fit` one of the four; every `start`, `hold`, `at` and fade
+non-negative; every zoom, pan, offset, scale, gain and opacity finite (and the two fractions in
+range); a comp a name under the folder, not a route out of it. Every problem is found and returned
+together - one refusal that lists them all, each with its scene and its layer (`scene 2, the layer
+"leak": the blend "glow" is not one of ...`) - and `sequence()` calls it first, so the CLI's `reel`
+verb and the MCP's `motion_reel` tool refuse the same invalid storyboard with the same list, before
+a preset is resolved or an engine is woken.
+
 Every layer moves on its own clock, and that is the whole point: a background drifting four
 percent while a foreground card slides two is parallax, and parallax is what makes a stack of
 stills read as a scene rather than a collage.
@@ -445,7 +495,8 @@ stills read as a scene rather than a collage.
 | `blend` | `normal` (default), `multiply`, `screen`, `overlay`, `darken`, `lighten`, `difference`, `soft-light`, `add` | `screen`/`add` turn a soft radial picture into a light leak; `multiply` shades one into a vignette |
 | `opacity` | steady opacity, 0 to 1 | `0.08` grain over everything |
 | `fade_in` / `fade_out` | fade up and down, seconds (`fadeIn`/`fadeOut` also parse) | held to half the span so the two never cross |
-| `start` / `hold` | its own timing, from the scene's start | a foreground that arrives at `1.2` lands over a scene already running; a layer that outlives its scene is cut to the scene's end |
+| `start` / `hold` / `delay` | its own timing, from the scene's start (`delay` is the choreography's name for `start`) | a foreground that arrives at `1.2` lands over a scene already running; a layer that outlives its scene is cut to the scene's end |
+| `parallax` | how fast it drifts, as a multiple of its own `zoom` and `pan` - or of the classic plate's 4% growth / 3% slide, when it carries none | three layers at `0.5`, `1.0` and `2.0` are three depths of one scene; the rate is applied where the timeline is emitted, so the layer's own numbers stay what they said |
 | `above` | paint over the comp rather than under it | grain, vignettes, light leaks, silhouettes - still under the curtain and under any scene that overlaps this one |
 
 The layers a scene paints, bottom to top: its plates in order, the comp, its overlays in order,
@@ -455,13 +506,29 @@ scene - a missing picture is a mistake to hear about, not one to render around.
 The recipes worth reaching for first:
 
 - **Parallax depth** - `back` at `zoom: 0.04`, `mid` at `pan: [-0.03, 0]` with a slow fade in
-  and out, the comp over both. The differing drift is the depth.
-- **A light leak** - a soft radial picture, `blend: "screen"`, `scale: 0.8`, `offset` into a
-  corner, `above: true`, fading in and out over half the scene.
+  and out, the comp over both. The differing drift is the depth. `parallax` says the same thing
+  as a rate - `back` at `0.5`, `mid` at `1.0`, a foreground at `2.0` - and a layer with no drift
+  of its own is given the classic plate's before the rate is applied, so three bare layers at
+  three rates are a scene already.
+- **A light leak** - a soft radial picture, `blend: "screen"` (the builder's `blend()` is the
+  same as `blending()`), `scale: 0.8`, `offset` into a corner, `above: true`, fading in and out
+  over half the scene.
 - **Film grain** - a grain tile at `opacity: 0.08`, `above: true`, running the whole scene.
 - **A vignette** - a dark radial picture, `blend: "multiply"`, `above: true`.
-- **A foreground card** - `fit: "contain"` or a `scale` under one, `start: 1.2`, `fade_in: 0.3`:
-  it arrives over a scene already running and leaves before the cut.
+- **A foreground card** - `fit: "contain"` or a `scale` under one, `delay: 1.2`, `fade_in: 0.3`:
+  it arrives over a scene already running and leaves before the cut. A stack that arrives one
+  after another - `delay` 0.0, 0.4, 1.2 - is choreography; a stack that arrives at once is a
+  collage.
+
+**Card or scene is a route, not a vibe.** `concat_motion::route::route(duration_secs,
+beat_type)` is the agent's deterministic default: under 5 s is a **card**; a **hook** or a
+**CTA** stays a card until 8 s (both are read at a glance); 5-15 s is a **scene**; over 15 s is
+a **nested** composition - an act, scenes within - except a hook and a CTA, which stay one
+scene however long the slot is. The beat types are the emotion read's acts (hook, setup,
+tension, turn, reveal, proof, cta), the answer carries the rule that fired as its reason, and
+the director's override rides along with the reason it was taken (`Decision::overridden`) -
+because an override nobody can see the why of is a guess with confidence. The full matrix is
+tested; see `concat-motion/src/route.rs`.
 
 Operations: `set-slot`, `set-text`, `set-words`, `set-markup`, `move`, `retime`, `set-track`, `set-track-points`,
 `fade-in`, `slide-to`, `pop`, `add-group`, `add-rect`, `add-text`, `delete`, `set-blend`,

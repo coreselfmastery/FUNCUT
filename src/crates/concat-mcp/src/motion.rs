@@ -790,7 +790,17 @@ pub fn reel(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
         .cloned()
         .ok_or_else(|| ApiError::invalid("invalid arguments: the arguments are an object"))?;
     for key in fields.keys() {
-        if !["project", "storyboard", "name", "frame", "plan", "crf"].contains(&key.as_str()) {
+        if ![
+            "project",
+            "storyboard",
+            "name",
+            "frame",
+            "plan",
+            "crf",
+            "genevaTimeoutSecs",
+        ]
+        .contains(&key.as_str())
+        {
             return Err(ApiError::invalid(format!(
                 "invalid arguments: unknown field `{key}`"
             )));
@@ -816,6 +826,20 @@ pub fn reel(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
     let reel = board.sequence(&project).map_err(ApiError::invalid)?;
 
     let engine = geneva()?;
+    // The tool's own per-call cap, when the caller set one: a render
+    // that outlives it is killed and named, and the quick calls keep
+    // their 60 s unless the cap is tighter than that.
+    let engine = match fields.get("genevaTimeoutSecs").and_then(Value::as_f64) {
+        Some(secs) if (5.0..=3600.0).contains(&secs) => engine.with_limits(
+            concat_motion::CallLimits::capped_at(std::time::Duration::from_secs_f64(secs)),
+        ),
+        Some(secs) => {
+            return Err(ApiError::invalid(format!(
+                "invalid arguments: `genevaTimeoutSecs` is seconds between 5 and 3600, not {secs}"
+            )));
+        }
+        None => engine,
+    };
     let mut planned =
         sequence::plan(&engine, &reel).map_err(|error| ApiError::failed(error.to_string()))?;
     let summary = json!({
@@ -884,9 +908,19 @@ pub fn reel(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
         .map(|name| name.trim().to_owned())
         .unwrap_or_else(|| format!("reel-{hash}.mp4"));
     let out = crate::sense::write_target(backend, Some(&motion_dir(&project)), &name)?;
-    let report = planned
-        .render(&engine, &cache, &out)
-        .map_err(|error| ApiError::failed(error.to_string()))?;
+    // The scene-aware cache: one scene, one entry. The reel renders
+    // scene by scene, each cached by what actually draws it (its own
+    // document, its assets' bytes, the geometry, the engine, the curtain
+    // at its boundaries), so an edit to one scene re-renders that scene
+    // and serves the rest - and an unchanged reel serves the join whole,
+    // byte-identical, rendering nothing.
+    let crf = fields.get("crf").and_then(Value::as_u64).unwrap_or(18) as u8;
+    // The scene cache is shared across reels: a scene identical in two
+    // reels is one entry, drawn once, wherever it appears.
+    let scene_cache = cache_dir(&project).join("scenes");
+    let report =
+        concat_motion::reel::render_reel(&engine, &board, &project, &out, &scene_cache, crf)
+            .map_err(|error| ApiError::failed(error.to_string()))?;
     if !out.is_file() {
         return Err(ApiError::failed(format!(
             "geneva reported success but {} was not written",
@@ -895,7 +929,14 @@ pub fn reel(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
     }
     let mut reply = summary;
     reply["file"] = json!(out.display().to_string());
-    reply["report"] = report;
+    reply["cache"] = json!({
+        "scenesDrawn": report.renders,
+        "scenesServed": report.scenes.len() - report.renders,
+        "joinedFromCache": report.joined_from_cache,
+        "audioRendered": report.audio_rendered,
+        "seconds": report.seconds,
+        "sceneKeys": report.scenes.iter().map(|s| s.key.clone()).collect::<Vec<String>>(),
+    });
     Ok(Outcome::json(reply))
 }
 

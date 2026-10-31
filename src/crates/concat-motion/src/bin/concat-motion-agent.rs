@@ -77,7 +77,7 @@ fn usage() -> serde_json::Value {
             "edit": "agent edit <comp.json> <ops.json|-> [-o out.json]",
             "frame": "agent frame <comp.json> <seconds> [-o frame.png] [--width N]",
             "bake": "agent bake <comp.json> <dir> [--width N] [--height N] [--fps N] [--opaque] [--encode out.mp4|webm|mov] [--crf N]",
-            "reel": "agent reel <storyboard.json> [-o reel.mp4] [--cache DIR] [--frame SECONDS] [--plan]",
+            "reel": "agent reel <storyboard.json> [-o reel.mp4] [--cache DIR] [--frame SECONDS] [--plan] [--geneva-timeout SECONDS]",
             "captions": "agent captions <words.json> [-o storyboard.json] [--words-per-line N] [--max-line S] [--preset ID] [--plate IMG] [--audio WAV|MP3]"
         },
         "ops": [
@@ -141,6 +141,19 @@ fn reel(args: &[String]) -> Result<serde_json::Value, String> {
         .unwrap_or_else(|| PathBuf::from("cache/reel"));
     let at_frame: Option<f64> = flag(args, "--frame").and_then(|value| value.parse().ok());
     let plan_only = args.iter().any(|arg| arg == "--plan");
+    // `--geneva-timeout SECONDS`: no call to the sidecar may run past
+    // this. A render is the long call, so the number is its cap; the
+    // quick calls - plan, one frame - are capped at their own 60 s
+    // default when this is looser than that, and at this when it is
+    // tighter. A call that outlives its cap is killed and named, and a
+    // sidecar that fails three times in a minute is refused with the
+    // fallback story instead of being asked a fourth.
+    let geneva_timeout = flag(args, "--geneva-timeout").and_then(|value| value.parse::<f64>().ok());
+    if let Some(secs) = geneva_timeout
+        && !(5.0..=3600.0).contains(&secs)
+    {
+        return Err("--geneva-timeout is seconds, between 5 and 3600".to_owned());
+    }
 
     let script = Path::new(script_path);
     let text =
@@ -155,6 +168,12 @@ fn reel(args: &[String]) -> Result<serde_json::Value, String> {
     let sequence = board.sequence(&root)?;
 
     let geneva = engine()?;
+    let geneva = match geneva_timeout {
+        Some(secs) => geneva.with_limits(concat_motion::CallLimits::capped_at(
+            std::time::Duration::from_secs_f64(secs),
+        )),
+        None => geneva,
+    };
     let planned =
         concat_motion::sequence::plan(&geneva, &sequence).map_err(|error| error.to_string())?;
     let summary = json!({
@@ -185,16 +204,20 @@ fn reel(args: &[String]) -> Result<serde_json::Value, String> {
     }
 
     let path = out.unwrap_or_else(|| PathBuf::from("reel.mp4"));
-    let started = std::time::Instant::now();
-    let report = planned
-        .render(&geneva, &cache, &path)
+    // The scene-aware cache: one scene, one entry, so an edit to one
+    // scene re-renders that scene and serves the rest. The cache flag's
+    // directory is the cache root.
+    let report = concat_motion::reel::render_reel(&geneva, &board, &root, &path, &cache, 18)
         .map_err(|error| error.to_string())?;
-    let seconds = started.elapsed().as_secs_f64();
     let mut value = summary;
     value["written"] = json!(path.display().to_string());
-    value["seconds"] = json!(seconds);
-    value["frames_per_second"] = json!(planned.duration * board.fps / seconds.max(1e-9));
-    value["report"] = report;
+    value["cache"] = json!({
+        "scenesDrawn": report.renders,
+        "scenesServed": report.scenes.len() - report.renders,
+        "joinedFromCache": report.joined_from_cache,
+        "seconds": report.seconds,
+    });
+    value["report"] = json!({"ok": true});
     Ok(value)
 }
 

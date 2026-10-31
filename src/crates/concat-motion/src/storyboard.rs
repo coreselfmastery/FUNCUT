@@ -45,8 +45,42 @@ use crate::comp::{Asset, Blend, Comp, Fit, Rgba};
 use crate::presets;
 use crate::sequence::{AudioBed, Curtain, Scene, SceneLayer, Sequence};
 
+/// One problem a storyboard carries, found by [`Storyboard::validate`]
+/// before anything is resolved or rendered: which scene it stopped at,
+/// which layer when the problem is a layer's, and what is wrong - in the
+/// storyboard's own words, so the fix is the message.
+///
+/// A refusal that names the scene is the contract every error in this
+/// crate keeps; this one adds the layer, because a twelve-scene
+/// storyboard with six layers a scene is debuggable from a refusal that
+/// says exactly which of the seventy-two is wrong.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct SceneError {
+    /// The scene's index, from 0.
+    pub scene: usize,
+    /// The layer's asset id, when the problem is a layer's.
+    pub layer: Option<String>,
+    /// What is wrong.
+    pub problem: String,
+}
+
+impl std::fmt::Display for SceneError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.layer {
+            Some(layer) => {
+                write!(
+                    f,
+                    "scene {}, the layer {layer:?}: {}",
+                    self.scene, self.problem
+                )
+            }
+            None => write!(f, "scene {}: {}", self.scene, self.problem),
+        }
+    }
+}
+
 /// A storyboard: several scenes, in order, as one render.
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Clone, Debug)]
 pub struct Storyboard {
     /// Frame width.
     #[serde(default = "default_width")]
@@ -77,8 +111,14 @@ pub struct Storyboard {
 
 /// One scene: a preset or a comp file, operations on it, layers stacked
 /// into it, and where and how long it runs.
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Clone, Debug)]
 pub struct SceneCard {
+    /// The scene's own name, when another scene's layer places it as a
+    /// nested composition: `"id": "intro"` and then, elsewhere,
+    /// `"layers": [{"scene": "intro", ...}]`. Two scenes of one
+    /// storyboard cannot share a name.
+    #[serde(default)]
+    pub id: Option<String>,
     /// A preset id from the library.
     #[serde(default)]
     pub preset: Option<String>,
@@ -106,12 +146,22 @@ pub struct SceneCard {
     pub ops: Vec<Json>,
 }
 
-/// One layer of a scene, as a storyboard writes it. Every field but
-/// `asset` is optional; the defaults are [`SceneLayer`]'s own.
-#[derive(serde::Deserialize)]
+/// One layer of a scene, as a storyboard writes it. The source is either
+/// an `asset` id or a named `scene`; every other field is optional, and
+/// the defaults are [`SceneLayer`]'s own.
+#[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
 pub struct LayerCard {
-    /// An asset id from the storyboard's assets.
-    pub asset: String,
+    /// An asset id from the storyboard's assets. Exactly one of `asset`
+    /// and `scene` is written.
+    #[serde(default)]
+    pub asset: Option<String>,
+    /// A named scene of this storyboard, placed as a nested composition:
+    /// the scene renders once as a reusable composition and this layer
+    /// shows it, with this layer's own timing, drift, blend and fades. A
+    /// scene cannot be built from itself, directly or through another -
+    /// the plan refuses the chain by name.
+    #[serde(default)]
+    pub scene: Option<String>,
     /// How much it grows over its span, as a scale delta.
     #[serde(default)]
     pub zoom: Option<f64>,
@@ -147,13 +197,19 @@ pub struct LayerCard {
     /// How long it holds; omitted runs to the scene's end.
     #[serde(default)]
     pub hold: Option<f64>,
+    /// How fast it drifts, as a multiple of its own `zoom` and `pan` (or
+    /// of the classic plate's drift, when it carries none): `2.0` twice
+    /// as fast, `0.5` half - nearer layers move faster, which is
+    /// parallax.
+    #[serde(default)]
+    pub parallax: Option<f64>,
     /// Whether it paints over the comp rather than under it.
     #[serde(default)]
     pub above: Option<bool>,
 }
 
 /// A bed of sound under the whole sequence.
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
 pub struct AudioCard {
     /// An asset id from the storyboard's assets.
     pub asset: String,
@@ -169,7 +225,7 @@ pub struct AudioCard {
 }
 
 /// The dip between scenes, as a storyboard writes it.
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Clone, Debug)]
 pub struct CurtainCard {
     /// The colour dipped through, as hex.
     #[serde(default = "default_curtain")]
@@ -213,6 +269,58 @@ fn default_depth() -> f64 {
     1.0
 }
 
+/// Whether a number is finite and not negative - the shape every timing
+/// field in a storyboard must have. A NaN or an infinity from a program
+/// (JSON itself cannot carry one) and a negative time are both refused by
+/// the same check, so the message names the field and not the parser.
+fn finite_non_negative(value: f64) -> bool {
+    value.is_finite() && value >= 0.0
+}
+
+/// The blend a name stands for, or `None` when it is not one of the nine
+/// the engine blends with.
+fn blend_of(name: &str) -> Option<Blend> {
+    match name {
+        "normal" => Some(Blend::Normal),
+        "multiply" => Some(Blend::Multiply),
+        "screen" => Some(Blend::Screen),
+        "overlay" => Some(Blend::Overlay),
+        "darken" => Some(Blend::Darken),
+        "lighten" => Some(Blend::Lighten),
+        "difference" => Some(Blend::Difference),
+        "soft-light" => Some(Blend::SoftLight),
+        "add" => Some(Blend::Add),
+        _ => None,
+    }
+}
+
+/// What a layer is made of: a picture from the assets, or another named
+/// scene of this storyboard, placed as a nested composition.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum LayerSource {
+    /// An asset id the storyboard carries.
+    Asset(String),
+    /// A named scene of this storyboard.
+    Scene(String),
+}
+
+impl LayerCard {
+    /// The layer's source, refusing a card that names neither an asset
+    /// nor a scene, or both at once.
+    pub fn source(&self) -> Result<LayerSource, String> {
+        match (&self.asset, &self.scene) {
+            (Some(asset), None) => Ok(LayerSource::Asset(asset.clone())),
+            (None, Some(scene)) => Ok(LayerSource::Scene(scene.clone())),
+            (Some(_), Some(_)) => {
+                Err("a layer names both an `asset` and a `scene`; one or the other".to_owned())
+            }
+            (None, None) => {
+                Err("a layer needs an `asset` (an id from `assets`) or a `scene` (a named scene of this storyboard)".to_owned())
+            }
+        }
+    }
+}
+
 impl Storyboard {
     /// Parse a storyboard from its text, refusing what does not make sense
     /// as a document.
@@ -225,6 +333,360 @@ impl Storyboard {
         serde_json::from_value(value.clone()).map_err(|error| format!("the storyboard: {error}"))
     }
 
+    /// Every problem the document carries, checked against the contract
+    /// before anything is resolved or rendered: a missing asset, a blend
+    /// or a fit the engine does not know, a negative time, a number that
+    /// is not finite, an opacity outside its range, a comp path that
+    /// climbs out of the storyboard's folder.
+    ///
+    /// This is the step before the bake: every problem is found and
+    /// returned together - one refusal that lists all of them, each with
+    /// its scene (and its layer, when it is a layer's), instead of a
+    /// render that stops at the first and has to be run again for the
+    /// next. [`Storyboard::sequence`] calls this first, so both doors -
+    /// the CLI's `reel` verb and the MCP's `motion_reel` tool - refuse an
+    /// invalid storyboard with the same list.
+    pub fn validate(&self) -> Result<(), Vec<SceneError>> {
+        let mut problems: Vec<SceneError> = Vec::new();
+        let mut problem = |scene: usize, layer: Option<String>, what: String| {
+            problems.push(SceneError {
+                scene,
+                layer,
+                problem: what,
+            });
+        };
+
+        if self.width == 0 || self.height == 0 {
+            problem(
+                0,
+                None,
+                format!(
+                    "the frame is {}x{}, and neither side may be zero",
+                    self.width, self.height
+                ),
+            );
+        }
+        if !self.fps.is_finite() || self.fps <= 0.0 {
+            problem(
+                0,
+                None,
+                format!(
+                    "the frame rate is {}, and it must be a positive number",
+                    self.fps
+                ),
+            );
+        }
+
+        for (index, card) in self.scenes.iter().enumerate() {
+            // What the scene is drawn from.
+            match (&card.preset, &card.comp) {
+                (None, None) => {
+                    problem(index, None, "the scene needs a `preset` or a `comp`".into())
+                }
+                (Some(_), Some(_)) => problem(
+                    index,
+                    None,
+                    "the scene names both a `preset` and a `comp`; one or the other".into(),
+                ),
+                _ => {}
+            }
+            if let Some(comp) = &card.comp
+                && (comp.starts_with('/') || comp.contains(".."))
+            {
+                problem(
+                    index,
+                    None,
+                    format!(
+                        "the comp {comp:?} is a name under the storyboard's folder, not a path out of it"
+                    ),
+                );
+            }
+            // The scene's own timing.
+            if let Some(at) = card.at
+                && !finite_non_negative(at)
+            {
+                problem(
+                    index,
+                    None,
+                    format!("`at` is {at}, and it cannot be negative"),
+                );
+            }
+            if let Some(hold) = card.hold
+                && !finite_non_negative(hold)
+            {
+                problem(
+                    index,
+                    None,
+                    format!("`hold` is {hold}, and it cannot be negative"),
+                );
+            }
+            // The short form's plate.
+            if let Some(plate) = &card.plate {
+                if !self.assets.contains_key(plate) {
+                    problem(
+                        index,
+                        Some(plate.clone()),
+                        format!(
+                            "the plate names the asset {plate:?}, which the storyboard does not carry"
+                        ),
+                    );
+                }
+                if let Some(zoom) = card.zoom
+                    && !zoom.is_finite()
+                {
+                    problem(
+                        index,
+                        Some(plate.clone()),
+                        format!("the plate's `zoom` is {zoom}, which is not a finite number"),
+                    );
+                }
+            }
+            // Every layer, in full.
+            for layer in &card.layers {
+                let name = layer
+                    .asset
+                    .clone()
+                    .or_else(|| layer.scene.clone())
+                    .unwrap_or_else(|| "?".to_owned());
+                match layer.source() {
+                    Err(why) => problem(index, Some(name.clone()), why),
+                    Ok(LayerSource::Asset(asset)) => {
+                        if !self.assets.contains_key(&asset) {
+                            problem(
+                                index,
+                                Some(name.clone()),
+                                format!(
+                                    "the layer names the asset {asset:?}, which the storyboard does not carry"
+                                ),
+                            );
+                        }
+                    }
+                    Ok(LayerSource::Scene(scene)) => {
+                        // A layer naming a scene: the scene must exist,
+                        // and no chain of them may come back to itself.
+                        let target = self
+                            .scenes
+                            .iter()
+                            .position(|card| card.id.as_deref() == Some(scene.as_str()));
+                        match target {
+                            None => problem(
+                                index,
+                                Some(name.clone()),
+                                format!(
+                                    "the layer names the scene {scene:?}, which this storyboard does not define"
+                                ),
+                            ),
+                            Some(target) => {
+                                if let Some(chain) =
+                                    self.scene_cycle(target, index, &mut Vec::new())
+                                {
+                                    problem(
+                                        index,
+                                        Some(name.clone()),
+                                        format!("a scene cannot be built from itself: {chain}"),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some(blend) = &layer.blend
+                    && blend_of(blend).is_none()
+                {
+                    problem(
+                        index,
+                        Some(name.clone()),
+                        format!(
+                            "the blend {blend:?} is not one of normal, multiply, screen, overlay, darken, lighten, difference, soft-light or add"
+                        ),
+                    );
+                }
+                if let Some(fit) = &layer.fit
+                    && !matches!(fit.as_str(), "cover" | "contain" | "fill" | "none")
+                {
+                    problem(
+                        index,
+                        Some(name.clone()),
+                        format!("the fit {fit:?} is not one of cover, contain, fill or none"),
+                    );
+                }
+                for (field, value) in [
+                    ("zoom", layer.zoom),
+                    ("scale", layer.scale),
+                    ("opacity", layer.opacity),
+                    ("fade_in", layer.fade_in),
+                    ("fade_out", layer.fade_out),
+                    ("start", layer.start),
+                    ("hold", layer.hold),
+                    ("parallax", layer.parallax),
+                ] {
+                    if let Some(value) = value
+                        && !value.is_finite()
+                    {
+                        problem(
+                            index,
+                            Some(name.clone()),
+                            format!("`{field}` is {value}, which is not a finite number"),
+                        );
+                    }
+                }
+                for (field, value) in [("pan", layer.pan), ("offset", layer.offset)] {
+                    if let Some((x, y)) = value
+                        && !(x.is_finite() && y.is_finite())
+                    {
+                        problem(
+                            index,
+                            Some(name.clone()),
+                            format!("`{field}` is [{x}, {y}], and both must be finite numbers"),
+                        );
+                    }
+                }
+                for (field, value) in [
+                    ("start", layer.start),
+                    ("hold", layer.hold),
+                    ("fade_in", layer.fade_in),
+                    ("fade_out", layer.fade_out),
+                ] {
+                    if let Some(value) = value
+                        && value < 0.0
+                    {
+                        problem(
+                            index,
+                            Some(name.clone()),
+                            format!("`{field}` is {value}, and it cannot be negative"),
+                        );
+                    }
+                }
+                if let Some(opacity) = layer.opacity
+                    && opacity.is_finite()
+                    && !(0.0..=1.0).contains(&opacity)
+                {
+                    problem(
+                        index,
+                        Some(name.clone()),
+                        format!("`opacity` is {opacity}, and it is a fraction between 0 and 1"),
+                    );
+                }
+                if let Some(rate) = layer.parallax
+                    && rate.is_finite()
+                    && rate <= 0.0
+                {
+                    problem(
+                        index,
+                        Some(name.clone()),
+                        format!(
+                            "`parallax` is {rate}, and it is a positive multiple of the layer's drift"
+                        ),
+                    );
+                }
+            }
+        }
+
+        // The beds of sound under the whole thing.
+        for bed in &self.audio {
+            if !self.assets.contains_key(&bed.asset) {
+                problem(
+                    0,
+                    Some(bed.asset.clone()),
+                    format!(
+                        "the audio bed names the asset {:?}, which the storyboard does not carry",
+                        bed.asset
+                    ),
+                );
+            }
+            if !bed.gain_db.is_finite() {
+                problem(
+                    0,
+                    Some(bed.asset.clone()),
+                    format!("`gain_db` is {}, which is not a finite number", bed.gain_db),
+                );
+            }
+            for (field, value) in [("fade_in", bed.fade_in), ("fade_out", bed.fade_out)] {
+                if let Some(value) = value
+                    && !finite_non_negative(value)
+                {
+                    problem(
+                        0,
+                        Some(bed.asset.clone()),
+                        format!("`{field}` is {value}, and it cannot be negative"),
+                    );
+                }
+            }
+        }
+
+        // The curtain, when there is one.
+        if let Some(curtain) = &self.curtain {
+            for (field, value) in [
+                ("open", curtain.open),
+                ("close", curtain.close),
+                ("dip", curtain.dip),
+                ("depth", curtain.depth),
+            ] {
+                if !finite_non_negative(value) {
+                    problem(
+                        0,
+                        None,
+                        format!("the curtain's `{field}` is {value}, and it cannot be negative"),
+                    );
+                }
+            }
+            if curtain.depth.is_finite() && !(0.0..=1.0).contains(&curtain.depth) {
+                problem(
+                    0,
+                    None,
+                    format!(
+                        "the curtain's `depth` is {}, and it is a fraction between 0 and 1",
+                        curtain.depth
+                    ),
+                );
+            }
+        }
+
+        if problems.is_empty() {
+            Ok(())
+        } else {
+            Err(problems)
+        }
+    }
+
+    /// Whether the scene at `index` can be reached from itself through
+    /// named scenes, and the chain that closes the loop, as a sentence.
+    /// `from` is the scene whose layer started the walk.
+    fn scene_cycle(&self, index: usize, from: usize, seen: &mut Vec<usize>) -> Option<String> {
+        if seen.contains(&index) || index == from {
+            // The chain reads from the scene that erred: a uses b uses a.
+            let name = |i: usize| {
+                self.scenes
+                    .get(i)
+                    .and_then(|c| c.id.clone())
+                    .unwrap_or_else(|| format!("scene {i}"))
+            };
+            let mut chain = vec![name(from)];
+            chain.extend(seen.iter().map(|i| name(*i)));
+            chain.push(name(index));
+            return Some(chain.join(" uses "));
+        }
+        let card = self.scenes.get(index)?;
+        let uses_scenes: Vec<usize> = card
+            .layers
+            .iter()
+            .filter_map(|l| l.scene.as_ref())
+            .filter_map(|name| {
+                self.scenes
+                    .iter()
+                    .position(|card| card.id.as_deref() == Some(name.as_str()))
+            })
+            .collect();
+        seen.push(index);
+        for next in uses_scenes {
+            if let Some(chain) = self.scene_cycle(next, from, seen) {
+                return Some(chain);
+            }
+        }
+        seen.pop();
+        None
+    }
+
     /// The sequence this storyboard lays out, its assets resolved from
     /// `root`.
     ///
@@ -232,12 +694,25 @@ impl Storyboard {
     /// built, so a storyboard that does not make sense comes back as one
     /// error naming the scene - not as a broken render.
     pub fn sequence(&self, root: &Path) -> Result<Sequence, String> {
+        // The contract first: every problem the document carries, all at
+        // once, before a preset is resolved or a file is read. Both doors
+        // eat the same refusal, and an invalid storyboard never reaches
+        // an engine.
+        if let Err(problems) = self.validate() {
+            let list = problems
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<String>>()
+                .join("; ");
+            return Err(list);
+        }
         let source = self
             .source_dir
             .clone()
             .unwrap_or_else(|| root.to_path_buf());
         let mut sequence = Sequence::new(self.width, self.height, self.fps);
         sequence.source_dir = source.clone();
+        sequence.scene_cards = self.scenes.clone();
         for (id, src) in &self.assets {
             sequence.asset(
                 id.clone(),
@@ -283,7 +758,7 @@ impl SceneCard {
     /// The scene this card describes: its comp resolved, its operations
     /// parsed, its layers stacked. Errors name the scene's index, so a
     /// twelve-scene storyboard is debuggable from one refusal.
-    fn scene(&self, index: usize, root: &Path) -> Result<Scene, String> {
+    pub(crate) fn scene(&self, index: usize, root: &Path) -> Result<Scene, String> {
         let comp = match (&self.preset, &self.comp) {
             (Some(id), _) => presets::build(id)
                 .ok_or_else(|| format!("scene {index}: no preset called {id:?}"))?,
@@ -323,9 +798,22 @@ impl SceneCard {
 }
 
 impl LayerCard {
-    /// The layer this card describes.
+    /// The layer this card describes, for a card whose source is an
+    /// asset; a scene-source layer is placed by the planner, not turned
+    /// into a picture layer.
     fn layer(&self, index: usize) -> Result<SceneLayer, String> {
-        let mut layer = SceneLayer::new(self.asset.clone());
+        // A scene-source layer carries the scene's name as its asset: the
+        // planner reads `scene` off it and places the composition, and
+        // errors name the scene rather than an empty string.
+        let mut layer = SceneLayer::new(
+            self.scene
+                .clone()
+                .or_else(|| self.asset.clone())
+                .unwrap_or_default(),
+        );
+        if let Some(scene) = &self.scene {
+            layer.scene = Some(scene.clone());
+        }
         if let Some(zoom) = self.zoom {
             layer = layer.zooming(zoom);
         }
@@ -395,6 +883,9 @@ impl LayerCard {
         if let Some(hold) = self.hold {
             layer = layer.holding(hold);
         }
+        if let Some(rate) = self.parallax {
+            layer = layer.parallax(rate);
+        }
         if self.above == Some(true) {
             layer = layer.above();
         }
@@ -442,6 +933,7 @@ pub fn hash(document: &Json) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn board(text: &str) -> Storyboard {
         Storyboard::parse(text).expect("a storyboard")
@@ -572,6 +1064,379 @@ mod tests {
         let error = storyboard.sequence(Path::new(".")).expect_err("refused");
         assert!(error.contains("scene 0"), "{error}");
         assert!(error.contains("operation 0"), "{error}");
+    }
+
+    #[test]
+    fn validation_refuses_a_layer_whose_asset_is_not_carried() {
+        let storyboard = board(
+            r##"{ "scenes": [ { "preset": "funcut.chapter.chip",
+                 "layers": [ { "asset": "nowhere" } ] } ] }"##,
+        );
+        let problems = storyboard.validate().expect_err("refused");
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert_eq!(problems[0].scene, 0);
+        assert_eq!(problems[0].layer.as_deref(), Some("nowhere"));
+        assert!(
+            problems[0].problem.contains("nowhere"),
+            "{}",
+            problems[0].problem
+        );
+        // The same refusal through the door a caller actually uses.
+        let error = storyboard.sequence(Path::new(".")).expect_err("refused");
+        assert!(error.contains("scene 0"), "{error}");
+        assert!(error.contains("nowhere"), "{error}");
+    }
+
+    #[test]
+    fn validation_names_every_problem_in_one_refusal() {
+        // Three problems in three scenes: all three are named, so a
+        // storyboard is debugged from one refusal instead of three
+        // render attempts.
+        let storyboard = board(
+            r##"{ "scenes": [
+                 { "preset": "funcut.chapter.chip",
+                   "layers": [ { "asset": "gone" } ] },
+                 { "preset": "funcut.chapter.chip",
+                   "layers": [ { "asset": "gone", "blend": "glow", "start": -1.0 } ] },
+                 { "preset": "funcut.sting.wordmark", "hold": -2.0 }
+               ] }"##,
+        );
+        let problems = storyboard.validate().expect_err("refused");
+        assert!(problems.len() >= 5, "{problems:?}");
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.scene == 2 && p.problem.contains("hold"))
+        );
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.scene == 1 && p.problem.contains("blend") && p.problem.contains("glow"))
+        );
+        assert!(problems.iter().any(|p| p.scene == 1
+            && p.problem.contains("start")
+            && p.problem.contains("negative")));
+    }
+
+    #[test]
+    fn validation_refuses_a_bad_fit_and_an_out_of_range_opacity() {
+        let storyboard = board(
+            r##"{ "scenes": [ { "preset": "funcut.chapter.chip",
+                 "layers": [ { "asset": "a", "fit": "stretch", "opacity": 1.5 } ] } ],
+                 "assets": { "a": "a.png" } }"##,
+        );
+        let problems = storyboard.validate().expect_err("refused");
+        assert!(
+            problems.iter().any(|p| p.problem.contains("fit")),
+            "{problems:?}"
+        );
+        assert!(
+            problems.iter().any(|p| p.problem.contains("opacity")),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn validation_refuses_a_number_that_is_not_finite() {
+        // JSON cannot carry a NaN or an infinity; a program building the
+        // document can, so the check is on the struct a program writes.
+        let mut storyboard = board(
+            r##"{ "scenes": [ { "preset": "funcut.chapter.chip",
+                 "layers": [ { "asset": "a", "scale": 1.0 } ] } ],
+                 "assets": { "a": "a.png" } }"##,
+        );
+        storyboard.scenes[0].layers[0].scale = Some(f64::INFINITY);
+        let problems = storyboard.validate().expect_err("refused");
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.problem.contains("scale") && p.problem.contains("finite")),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn validation_refuses_a_scene_naming_both_a_preset_and_a_comp() {
+        let storyboard = board(
+            r##"{ "scenes": [ { "preset": "funcut.chapter.chip", "comp": "mine.json" } ] }"##,
+        );
+        let problems = storyboard.validate().expect_err("refused");
+        assert!(
+            problems.iter().any(|p| p.problem.contains("both")),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn a_valid_storyboard_validates_clean() {
+        let storyboard = board(
+            r##"{ "width": 1080, "height": 1920, "fps": 30,
+                 "assets": { "back": "assets/back.png", "score": "assets/score.wav" },
+                 "scenes": [
+                   { "preset": "funcut.sting.wordmark", "hold": 4.0,
+                     "layers": [ { "asset": "back", "zoom": 0.04, "blend": "screen",
+                                   "fade_in": 0.4, "start": 0.0, "opacity": 0.9 } ] } ],
+                 "audio": [ { "asset": "score", "gain_db": -2.0 } ] }"##,
+        );
+        assert_eq!(storyboard.validate(), Ok(()));
+    }
+
+    #[test]
+    fn a_scene_can_be_placed_inside_another_scene() {
+        let storyboard = board(
+            r##"{ "assets": { "back": "back.png" },
+                 "scenes": [
+                   { "id": "intro", "preset": "funcut.sting.wordmark", "hold": 3.0,
+                     "layers": [ { "asset": "back", "zoom": 0.04 } ] },
+                   { "preset": "funcut.chapter.chip", "hold": 5.0,
+                     "layers": [ { "scene": "intro", "scale": 0.6, "offset": [0.0, 0.1],
+                                   "start": 1.0, "hold": 2.5, "blend": "screen", "above": true } ] }
+                 ] }"##,
+        );
+        let sequence = storyboard.sequence(Path::new(".")).expect("a sequence");
+        let geneva = crate::geneva::Geneva::at("geneva");
+        let planned = crate::sequence::plan(&geneva, &sequence).expect("a plan");
+        let document = &planned.document;
+        // The named scene is emitted once as a composition, its layers at
+        // relative times.
+        let composition = &document["compositions"]["s0.intro"];
+        assert!(
+            composition.is_object(),
+            "{}",
+            serde_json::to_string(document).unwrap_or_default()
+        );
+        assert_eq!(composition["width"], json!(1920));
+        assert_eq!(composition["background"], json!("transparent"));
+        assert!(
+            !composition["layers"].as_array().unwrap().is_empty(),
+            "the scene's own stack"
+        );
+        // The placing layer is a clip with a composition source, at the
+        // parent's start plus the layer's own.
+        let layers = document["layers"].as_array().unwrap();
+        let placed = layers
+            .iter()
+            .find(|l| l["id"] == json!("s1.overlay"))
+            .expect("the placing layer");
+        let clip = &placed["clips"][0];
+        assert_eq!(clip["source"]["kind"], json!("composition"));
+        assert_eq!(clip["source"]["composition"], json!("s0.intro"));
+        assert_eq!(
+            clip["start"],
+            json!("4s"),
+            "the second scene starts at 3s, the layer at +1s"
+        );
+        assert_eq!(clip["duration"], json!("2.5s"));
+        assert_eq!(clip["blend"], json!("screen"));
+        assert_eq!(clip["transform"]["scale"], json!(0.6));
+    }
+
+    #[test]
+    fn a_scene_cannot_be_built_from_itself_directly_or_through_another() {
+        let direct = board(
+            r##"{ "scenes": [
+                 { "id": "ouroboros", "preset": "funcut.sting.wordmark",
+                   "layers": [ { "scene": "ouroboros" } ] } ] }"##,
+        );
+        let problems = direct.validate().expect_err("refused");
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.problem.contains("cannot be built from itself")),
+            "{problems:?}"
+        );
+        let error = direct
+            .sequence(Path::new("."))
+            .expect_err("refused by sequence too");
+        assert!(error.contains("cannot be built from itself"), "{error}");
+
+        // Through another: a uses b, b uses a.
+        let looped = board(
+            r##"{ "scenes": [
+                 { "id": "a", "preset": "funcut.sting.wordmark",
+                   "layers": [ { "scene": "b" } ] },
+                 { "id": "b", "preset": "funcut.chapter.chip",
+                   "layers": [ { "scene": "a" } ] } ] }"##,
+        );
+        let problems = looped.validate().expect_err("refused");
+        let chain = problems
+            .iter()
+            .find(|p| p.problem.contains("uses"))
+            .expect("the chain is named");
+        assert!(
+            chain.problem.contains("a uses b uses a"),
+            "{}",
+            chain.problem
+        );
+    }
+
+    #[test]
+    fn a_layer_naming_an_undefined_scene_is_refused_by_name() {
+        let storyboard = board(
+            r##"{ "scenes": [ { "preset": "funcut.sting.wordmark",
+                 "layers": [ { "scene": "nowhere" } ] } ] }"##,
+        );
+        let problems = storyboard.validate().expect_err("refused");
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.problem.contains("nowhere") && p.problem.contains("does not define")),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn a_layer_naming_both_an_asset_and_a_scene_is_refused() {
+        let storyboard = board(
+            r##"{ "scenes": [ { "preset": "funcut.sting.wordmark",
+                 "layers": [ { "asset": "back", "scene": "intro" } ] } ],
+                 "assets": { "back": "b.png" } }"##,
+        );
+        let problems = storyboard.validate().expect_err("refused");
+        assert!(
+            problems.iter().any(|p| p.problem.contains("both")),
+            "{problems:?}"
+        );
+    }
+
+    /// Every template in assets/scenes/templates: it parses, it
+    /// validates, and it plans to a timeline a real engine would draw.
+    /// One test per template, each asserting the shape that makes it a
+    /// template and not a one-off.
+    fn template(name: &str) -> crate::sequence::Plan {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../assets/scenes/templates");
+        let text = std::fs::read_to_string(root.join(format!("{name}.json")))
+            .unwrap_or_else(|error| panic!("{name}.json: {error}"));
+        let board = Storyboard::parse(&text).unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert_eq!(
+            board.validate(),
+            Ok(()),
+            "{name} does not hold the contract"
+        );
+        let sequence = board
+            .sequence(Path::new("."))
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        let geneva = crate::geneva::Geneva::at("geneva");
+        crate::sequence::plan(&geneva, &sequence)
+            .unwrap_or_else(|error| panic!("{name} does not plan: {error}"))
+    }
+
+    #[test]
+    fn the_templates_are_all_there() {
+        // Eight templates, the names the docs and the director skill
+        // speak: a template that disappears is a link that breaks.
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../assets/scenes/templates");
+        let mut found: Vec<String> = std::fs::read_dir(root)
+            .expect("the templates directory")
+            .filter_map(|entry| {
+                let path = entry.expect("an entry").path();
+                (path.extension().and_then(|e| e.to_str()) == Some("json"))
+                    .then(|| path.file_stem().unwrap().to_string_lossy().to_string())
+            })
+            .collect();
+        found.sort();
+        assert_eq!(
+            found,
+            vec![
+                "act-transition",
+                "callout",
+                "chart-reveal",
+                "comparison",
+                "quote",
+                "section-opener",
+                "stat-card",
+                "timeline",
+            ],
+            "the template shelf changed; update the docs beside it"
+        );
+    }
+
+    #[test]
+    fn template_stat_card_plans_a_triptych_over_a_drifting_plate() {
+        let planned = template("stat-card");
+        assert!(planned.duration >= 5.0);
+        // The plate drifts, the grain sits over everything.
+        let layers = planned.document["layers"].as_array().unwrap();
+        assert!(layers.iter().any(|l| l["id"] == json!("s0.plate")));
+        assert!(layers.iter().any(|l| l["id"] == json!("s0.overlay")));
+    }
+
+    #[test]
+    fn template_chart_reveal_shades_the_plate_with_a_multiply_vignette() {
+        let planned = template("chart-reveal");
+        let layers = planned.document["layers"].as_array().unwrap();
+        let vignette = layers
+            .iter()
+            .find(|l| l["id"] == json!("s0.overlay"))
+            .expect("the vignette");
+        assert_eq!(vignette["clips"][0]["blend"], json!("multiply"));
+    }
+
+    #[test]
+    fn template_quote_screens_a_leak_over_the_plate() {
+        let planned = template("quote");
+        let layers = planned.document["layers"].as_array().unwrap();
+        let leak = layers
+            .iter()
+            .find(|l| l["id"] == json!("s0.overlay"))
+            .expect("the leak");
+        assert_eq!(leak["clips"][0]["blend"], json!("screen"));
+    }
+
+    #[test]
+    fn template_section_opener_is_two_scenes_under_one_curtain() {
+        let planned = template("section-opener");
+        assert_eq!(planned.scenes, 2);
+        let layers = planned.document["layers"].as_array().unwrap();
+        assert!(
+            layers.iter().any(|l| l["id"] == json!("curtain")),
+            "the dip between the two"
+        );
+    }
+
+    #[test]
+    fn template_act_transition_places_a_scene_inside_a_scene() {
+        let planned = template("act-transition");
+        let document = &planned.document;
+        assert!(
+            document["compositions"]["s0.opener"].is_object(),
+            "the opener is emitted as a composition"
+        );
+        let layers = document["layers"].as_array().unwrap();
+        let placed = layers
+            .iter()
+            .find(|l| l["id"] == json!("s1.overlay"))
+            .expect("the placing layer");
+        assert_eq!(
+            placed["clips"][0]["source"]["composition"],
+            json!("s0.opener")
+        );
+    }
+
+    #[test]
+    fn template_comparison_holds_the_eye_with_a_vignette() {
+        let planned = template("comparison");
+        let layers = planned.document["layers"].as_array().unwrap();
+        assert!(layers.iter().any(|l| l["id"] == json!("s0.overlay")));
+    }
+
+    #[test]
+    fn template_timeline_counts_over_grain() {
+        let planned = template("timeline");
+        let layers = planned.document["layers"].as_array().unwrap();
+        assert!(layers.iter().any(|l| l["id"] == json!("s0.plate")));
+        assert!(layers.iter().any(|l| l["id"] == json!("s0.overlay")));
+    }
+
+    #[test]
+    fn template_callout_arrives_over_a_screened_leak() {
+        let planned = template("callout");
+        let layers = planned.document["layers"].as_array().unwrap();
+        let leak = layers
+            .iter()
+            .find(|l| l["id"] == json!("s0.overlay"))
+            .expect("the leak");
+        assert_eq!(leak["clips"][0]["blend"], json!("screen"));
     }
 
     #[test]

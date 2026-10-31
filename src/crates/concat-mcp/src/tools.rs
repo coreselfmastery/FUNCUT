@@ -1545,9 +1545,10 @@ fn motion_schema(name: &str) -> Option<Value> {
             // by id, audio beds and a curtain.
             let layer = json!({
                 "type": "object",
-                "required": ["asset"],
+                "description": "A layer of the scene: an asset or a named scene, placed with this layer's own timing, drift, blend and fades.",
                 "properties": {
-                    "asset": { "type": "string", "description": "An asset id from the storyboard's assets." },
+                    "asset": { "type": "string", "description": "An asset id from the storyboard's assets. Exactly one of asset and scene." },
+                    "scene": { "type": "string", "description": "A named scene of this storyboard (a scene with an id), placed as a nested composition. Exactly one of asset and scene; a scene cannot be built from itself." },
                     "zoom": { "type": "number", "description": "Growth over the span as a scale delta: 0.04 is four percent." },
                     "pan": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "number" },
                              "description": "Drift over the span as [x, y] fractions of the frame; a cover layer grows by its own travel so the edge never shows." },
@@ -1562,6 +1563,8 @@ fn motion_schema(name: &str) -> Option<Value> {
                     "fade_out": { "type": "number", "minimum": 0, "description": "Fade down to transparent, seconds." },
                     "start": { "type": "number", "minimum": 0, "description": "When it starts, from the scene's own start." },
                     "hold": { "type": "number", "minimum": 0, "description": "How long it holds; omitted runs to the scene's end." },
+                    "parallax": { "type": "number", "exclusiveMinimum": 0,
+                                  "description": "How fast it drifts, as a multiple of its own zoom and pan (or of the classic plate's 4% growth / 3% slide, when it carries none): 0.5 half speed, 2.0 twice - nearer layers move faster, which is depth." },
                     "above": { "type": "boolean", "default": false,
                                "description": "Paint over the comp - grain, vignettes, light leaks, foreground cards - rather than under it." }
                 }
@@ -1569,6 +1572,7 @@ fn motion_schema(name: &str) -> Option<Value> {
             let scene = json!({
                 "type": "object",
                 "properties": {
+                    "id": { "type": "string", "description": "The scene's own name, so another scene's layer can place it as a nested composition." },
                     "preset": { "type": "string", "description": "A preset id from motion_presets." },
                     "comp": { "type": "string", "description": "A comp file under the project's comps/." },
                     "at": { "type": "number", "description": "Where it starts; omitted means after the scene before it." },
@@ -1633,6 +1637,18 @@ fn motion_schema(name: &str) -> Option<Value> {
             properties.insert(
                 "crf".to_owned(),
                 json!({ "type": "integer", "minimum": 0, "maximum": 51, "default": 18 }),
+            );
+            properties.insert(
+                "genevaTimeoutSecs".to_owned(),
+                json!({
+                    "type": "number", "minimum": 5, "maximum": 3600, "default": 300,
+                    "description": "No call to the render sidecar may run past this, in \
+                     seconds; a call that does is killed and named, not hung. The default \
+                     300 covers the long reels; the quick calls (plan, one frame) are \
+                     capped at their own 60 s when this is looser than that. A sidecar \
+                     that fails three times in a minute is refused with the fallback \
+                     story instead of being asked a fourth."
+                }),
             );
             object(properties, &["project", "storyboard"])
         }

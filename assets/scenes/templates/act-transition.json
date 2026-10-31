@@ -1,0 +1,17 @@
+{
+  "_readme": "An act transition: a nested composition - the opener scene placed small over a chapter scene, arriving late and leaving before the cut. Assets: plate, grain. Names the scene 'opener' and places it. Slots: Wordmark, Chapter.",
+  "width": 1920, "height": 1080, "fps": 30,
+  "assets": { "plate": "assets/plate.png", "grain": "assets/grain.png" },
+  "scenes": [
+    { "id": "opener", "preset": "funcut.sting.wordmark", "hold": 2.0,
+      "layers": [ { "asset": "plate", "parallax": 0.4 } ],
+      "ops": [ { "op": "set-slot", "slot": "Wordmark", "value": "MEANWHILE" } ] },
+    { "preset": "funcut.chapter.chip", "hold": 5.0,
+      "layers": [
+        { "asset": "plate", "parallax": 1.0 },
+        { "scene": "opener", "scale": 0.55, "offset": [0.18, 0.12], "start": 1.0, "hold": 2.0, "fade_in": 0.3, "fade_out": 0.3, "above": true },
+        { "asset": "grain", "opacity": 0.06, "above": true }
+      ],
+      "ops": [ { "op": "set-slot", "slot": "Chapter", "value": "03 / MEANWHILE" } ] }
+  ]
+}

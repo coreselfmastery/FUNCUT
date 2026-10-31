@@ -1,0 +1,20 @@
+{
+  "_readme": "A stat card over footage: the triptych preset with three numbers, on a plate that drifts slowly under grain. Assets to carry: plate (a picture), grain (a tile). Slots: Label 1, Number 1, Label 2, Number 2, Label 3, Number 3.",
+  "width": 1920, "height": 1080, "fps": 30,
+  "assets": { "plate": "assets/plate.png", "grain": "assets/grain.png" },
+  "scenes": [
+    { "preset": "funcut.stats.triptych", "hold": 6.0,
+      "layers": [
+        { "asset": "plate", "parallax": 0.6 },
+        { "asset": "grain", "opacity": 0.07, "above": true }
+      ],
+      "ops": [
+        { "op": "set-slot", "slot": "Label 1", "value": "REACH" },
+        { "op": "set-slot", "slot": "Number 1", "value": "2.4M" },
+        { "op": "set-slot", "slot": "Label 2", "value": "WATCH TIME" },
+        { "op": "set-slot", "slot": "Number 2", "value": "81%" },
+        { "op": "set-slot", "slot": "Label 3", "value": "SAVES" },
+        { "op": "set-slot", "slot": "Number 3", "value": "312K" }
+      ] }
+  ]
+}

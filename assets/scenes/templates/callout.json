@@ -1,0 +1,17 @@
+{
+  "_readme": "A lower-third callout arriving over footage: the glass lower third delayed onto a drifting plate, held while the shot breathes, out before the cut. Assets: plate, leak. Slots: Name, Role, Kicker.",
+  "width": 1920, "height": 1080, "fps": 30,
+  "assets": { "plate": "assets/plate.png", "leak": "assets/leak.png" },
+  "scenes": [
+    { "preset": "funcut.lower-third.glass", "hold": 6.0,
+      "layers": [
+        { "asset": "plate", "parallax": 0.9 },
+        { "asset": "leak", "blend": "screen", "scale": 0.9, "offset": [0.2, 0.24], "fade_in": 0.5, "fade_out": 0.5, "above": true }
+      ],
+      "ops": [
+        { "op": "set-slot", "slot": "Name", "value": "Grace Hopper" },
+        { "op": "set-slot", "slot": "Role", "value": "Rear Admiral, US Navy" },
+        { "op": "set-slot", "slot": "Kicker", "value": "ON NAMING THINGS" }
+      ] }
+  ]
+}

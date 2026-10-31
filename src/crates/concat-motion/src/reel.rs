@@ -535,8 +535,19 @@ fn working_dir(path: &Path) -> PathBuf {
     }
 }
 
-/// Join the segments, back to back, in order.
+/// Join the segments, back to back, in order. A reel of one scene is
+/// its own join - the engine's concat takes two inputs or more, and a
+/// copy is faster and exactly the bytes anyway.
 fn join_segments(geneva: &Geneva, segments: &[PathBuf], out: &Path) -> Result<(), MotionError> {
+    if segments.len() == 1 {
+        return std::fs::copy(&segments[0], out)
+            .map(|_| ())
+            .map_err(|source| MotionError::Io {
+                doing: "copying the one scene's segment into place".into(),
+                path: segments[0].clone(),
+                source,
+            });
+    }
     let dir = working_dir(out);
     let mut args: Vec<String> = vec![
         "--format".into(),

@@ -4,6 +4,7 @@
 #   ./install-linux.sh                 AppImage into ~/.local/bin (no root)
 #   ./install-linux.sh --deb           the .deb, through apt (asks for sudo)
 #   ./install-linux.sh --rpm           the .rpm, through dnf (asks for sudo)
+#   ./install-linux.sh --pacman        the Arch package, through pacman (sudo)
 #   ./install-linux.sh --list          show what the releases hold, install nothing
 #   ./install-linux.sh --repo o/r      a fork to prefer over this one
 #   ./install-linux.sh --use-upstream  take Concat's own releases when the fork
@@ -57,6 +58,7 @@ while [ $# -gt 0 ]; do
         --appimage) KIND="appimage" ;;
         --deb) KIND="deb" ;;
         --rpm) KIND="rpm" ;;
+        --pacman) KIND="pacman" ;;
         --list) LIST_ONLY="yes" ;;
         --repo)
             [ $# -ge 2 ] || die "--repo needs OWNER/NAME after it"
@@ -73,7 +75,7 @@ while [ $# -gt 0 ]; do
             esac
             ;;
         -h|--help)
-            sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'
+            sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         *) die "unknown option: $1 (try --help)" ;;
@@ -172,17 +174,27 @@ esac
 # install material either and are skipped on both paths. Data-release
 # tags (sound shelves, sticker and OpenVid indexes, the models mirror)
 # can push the app releases pages deep, so this reads up to five pages
-# of a hundred. Python reads the JSON where there is Python, and grep
-# carves out the download URLs where there is not - each URL names the
-# release it belongs to, so the separators are cut out of them and the
-# two paths print the same shape.
+# of a hundred and stops at the first short one: a full page may have
+# another after it, a short one is the end. Python reads the JSON
+# where there is Python, and grep carves out the download URLs where
+# there is not - each URL names the release it belongs to, so the
+# separators are cut out of them and the two paths print the same
+# shape. A page that will not fetch or parse fails the whole read: a
+# partial list that ends before the fork's own app releases would fall
+# through to upstream, the same program but not this one.
 release_assets() {
-    local repo="$1" auth="${2:-}" page json tmp_tags
+    local repo="$1" auth="${2:-}" page json page_out status count tmp_tags
     tmp_tags=$(mktemp) || return 1
     for page in 1 2 3 4 5; do
+        json=$(fetch "https://api.github.com/repos/$repo/releases?per_page=100&page=$page" - $auth) ||
+            { rm -f "$tmp_tags"; return 1; }
         if command -v python3 >/dev/null 2>&1; then
-            json=$(fetch "https://api.github.com/repos/$repo/releases?per_page=100&page=$page" - $auth) || return 1
-            printf '%s' "$json" | python3 -c '
+            # Exit 2 is a short page - the last one there is; exit 1 is
+            # an answer that is not a list: a refusal or a broken
+            # answer, not an empty shelf, and the whole read fails
+            # rather than half-succeeding into the wrong fallback.
+            status=0
+            page_out=$(printf '%s' "$json" | python3 -c '
 import json, sys
 try:
     releases = json.load(sys.stdin)
@@ -196,9 +208,15 @@ for release in releases:
     print("RELEASE\t" + release.get("tag_name", ""))
     for asset in release.get("assets", []):
         print(asset["name"] + "\t" + asset["browser_download_url"])
-' && return 0
+sys.exit(2 if len(releases) < 100 else 0)
+') || status=$?
+            if [ "$status" -eq 1 ]; then
+                rm -f "$tmp_tags"
+                return 1
+            fi
+            [ -n "$page_out" ] && printf '%s\n' "$page_out"
+            [ "$status" -eq 2 ] && break
         else
-            json=$(fetch "https://api.github.com/repos/$repo/releases?per_page=100&page=$page" - $auth) || return 1
             # Every asset URL carries its release's tag between
             # "download/" and the file name: a change of tag is a change
             # of release, and the separator the python path prints from
@@ -234,11 +252,17 @@ for release in releases:
                         }
                         print $NF, $0
                     }
-                ' && { rm -f "$tmp_tags"; return 0; }
+                ' || true
+            # A page short of a hundred releases is the last page. The
+            # count is of tag_name fields the page carried, drafts and
+            # prereleases included - they hold a place in a page the way
+            # the python path's len(releases) counts them.
+            count=$(printf '%s' "$json" | grep -c '"tag_name"') || true
+            [ "${count:-0}" -lt 100 ] && break
         fi
     done
     rm -f "$tmp_tags"
-    return 1
+    return 0
 }
 
 # The asset to install from a stream of the shape release_assets prints:
@@ -266,6 +290,12 @@ pick_asset() {
                 [ "$kind" = rpm ] || continue
                 case "$name" in
                     *-linux-"$arch".rpm) found="$name"$'\t'"$url" ;;
+                esac
+                ;;
+            *.pkg.tar.zst)
+                [ "$kind" = pacman ] || continue
+                case "$name" in
+                    *-linux-"$arch".pkg.tar.zst) found="$name"$'\t'"$url" ;;
                 esac
                 ;;
         esac
@@ -452,8 +482,14 @@ case "$KIND" in
         # A stable name, whatever the version in the file is: this is
         # what a person types, and what the desktop entry's Exec says.
         DEST="$BIN_DIR/concat"
-        cp "$TMP/$ASSET_NAME" "$DEST"
-        chmod +x "$DEST"
+        # Into place by rename, never by writing over what may be running:
+        # Linux refuses to write an open executable ("text file busy"),
+        # but replaces it beside itself atomically - the running one
+        # keeps its bytes until it ends, and the next start is the new
+        # one.
+        cp "$TMP/$ASSET_NAME" "$DEST.new"
+        chmod +x "$DEST.new"
+        mv -f "$DEST.new" "$DEST"
         # The fork's own name for the same program, for the muscle
         # memory this repository is named for.
         ln -sf concat "$BIN_DIR/funcut"
@@ -484,6 +520,14 @@ case "$KIND" in
         else
             die "no dnf or rpm - try --appimage"
         fi
+        say "installed: /opt/concat/concat (run it as 'concat')"
+        ;;
+    pacman)
+        # The releases carry an Arch package; --list has shown it all
+        # along, and the flag that installs it was missing.
+        command -v sudo >/dev/null 2>&1 || die "installing an Arch package needs sudo, which is not here - try --appimage"
+        command -v pacman >/dev/null 2>&1 || die "no pacman here - try --appimage"
+        sudo pacman -U --noconfirm "$TMP/$ASSET_NAME"
         say "installed: /opt/concat/concat (run it as 'concat')"
         ;;
 esac

@@ -40,3 +40,10 @@ appimage-runtime-aarch64     https://github.com/AppImage/type2-runtime/releases/
 # x86_64 bundle under posing as an Ivy Bridge (AVX, no AVX2): the CPU the
 # bundles promise to start on. See scripts/ci/smoke-linux.sh.
 sde-lin                      https://downloadmirror.intel.com/924984/sde-external-10.13.1-2026-07-28-lin.tar.xz                    94e97d623fec54385686e1e7ba65ebc9941748c05ee451423948334892bf2b50
+
+# The Geneva motion sidecar, which the geneva.yml lane renders the
+# multi-layer example with. The same release - and the same two digests -
+# that install-linux.sh pins for source and tarball installs; changing
+# one row here means changing the installer's GENEVA_SHA256 beside it.
+geneva-linux64      https://github.com/geneva-render/geneva/releases/download/v1.6.0/geneva-v1.6.0-x86_64-unknown-linux-gnu.tar.gz      c2c9d3b2f82621ba6e7cfd36b36a8a3df9d9ba2b7374d06245248e2fb4120e16
+geneva-linuxarm64   https://github.com/geneva-render/geneva/releases/download/v1.6.0/geneva-v1.6.0-aarch64-unknown-linux-gnu.tar.gz   8066d4ff388b5f2557678e168bca1e70c49d9624ee61cedad2bfcf0d008f1243

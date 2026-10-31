@@ -1,0 +1,259 @@
+name: Geneva
+
+# The motion lane. ci.yml proves the whole workspace on a runner that
+# never renders a frame; this workflow proves the other half - the
+# sidecar, the crates that speak to it, and the multi-layer example
+# rendered end to end on a clean machine, with the composite inspected
+# rather than assumed.
+#
+# Two jobs, two questions:
+#
+# - "the example": does the layers example render on a machine that has
+#   nothing but the pinned toolchain and the pinned sidecar? It needs no
+#   FFmpeg, no ONNX Runtime and no libclang - concat-motion is a document
+#   library - so this is the short lane, and it is the one that answers
+#   "the example renders inside CI".
+# - "the dance": does the full dependency recipe - the one a session
+#   once improvised live - live in a file, pinned, and go green on a
+#   runner that has never seen it? Every step is named, every version is
+#   pinned: the toolchain channel from src/rust-toolchain.toml, FFmpeg by
+#   digest in scripts/ci/deps.lock (BtbN's autobuild of a fixed commit),
+#   ONNX Runtime by digest, sherpa-onnx by digest and checked against
+#   Cargo.lock, libclang by major-version package (libclang-18-dev), the
+#   cmake wheel by exact version, and the LLVM resource includes handed
+#   to bindgen explicitly so an extracted libclang works the same way an
+#   apt-installed one does.
+#
+# Every action is pinned to a commit, as ci.yml's are; Dependabot
+# proposes the bumps. The prebuilt libraries are pinned by digest in
+# scripts/ci/deps.lock, which scripts/ci/fetch.sh refuses to mismatch.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: geneva-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # The short lane: toolchain + sidecar + the example, nothing else.
+  example:
+    name: The multi-layer example, rendered and inspected
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The pinned toolchain
+        id: toolchain
+        run: echo "channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' src/rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master (v1), 2026-10-09
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+      # The sidecar, pinned by digest in deps.lock exactly as the
+      # installer pins it, and pointed at through CONCAT_GENEVA_BIN so
+      # nothing has to be on PATH.
+      - name: The Geneva sidecar
+        run: |
+          set -euo pipefail
+          scripts/ci/fetch.sh geneva-linux64 geneva.tar.gz
+          mkdir -p geneva-out "$HOME/.local/bin"
+          tar -xzf geneva.tar.gz -C geneva-out
+          bin=$(find geneva-out -type f -name geneva | head -n 1)
+          cp "$bin" "$HOME/.local/bin/geneva"
+          chmod +x "$HOME/.local/bin/geneva"
+          "$HOME/.local/bin/geneva" --version
+          echo "CONCAT_GENEVA_BIN=$HOME/.local/bin/geneva" >> "$GITHUB_ENV"
+      # The example's pictures, written deterministically from the
+      # standard library: two gridded plates, a radial leak, an LCG grain
+      # tile and the three faces the comps name.
+      - name: The example's assets
+        run: python3 scripts/motion/layers-assets.py check
+      - name: The library's own tests
+        working-directory: src
+        run: cargo test -p concat-motion
+      # The example end to end: the timeline planned, the two inspection
+      # frames, then the whole reel. Each step asserts the sidecar's own
+      # report said ok, because a render nobody checks is a render that
+      # has not happened.
+      - name: The reel, rendered
+        run: |
+          set -euo pipefail
+          cd src
+          cargo run -q -p concat-motion --example layers -- --plan --assets ../check > ../check/plan.json
+          python3 - <<'PY'
+          import json, sys
+          plan = json.load(open("../check/plan.json"))
+          summary, plan = plan[0], plan[1]
+          assert summary["ok"], summary
+          assert summary["scenes"] == 2, summary
+          assert summary["layers"] == 8, summary
+          assert not summary["warnings"], summary["warnings"]
+          print("planned:", summary["scenes"], "scenes,", summary["layers"], "layers, no warnings")
+          PY
+          cargo run -q -p concat-motion --example layers -- --frame 2.0 -o ../check/s1-t2.0.png --assets ../check --cache ../check/cache
+          cargo run -q -p concat-motion --example layers -- --frame 5.5 -o ../check/s2-t5.5.png --assets ../check --cache ../check/cache
+          cargo run -q -p concat-motion --example layers -- --frame 7.0 -o ../check/s2-t7.0.png --assets ../check --cache ../check/cache
+          cargo run -q -p concat-motion --example layers -- -o ../check/layers.mp4 --assets ../check --cache ../check/cache > ../check/render.json
+          python3 - <<'PY'
+          import json, os, sys
+          docs = []
+          text = open("../check/render.json").read()
+          decoder = json.JSONDecoder()
+          at = 0
+          while at < len(text):
+              stripped = text[at:].lstrip()
+              if not stripped:
+                  break
+              at = len(text) - len(stripped)
+              obj, end = decoder.raw_decode(text, at)
+              docs.append(obj)
+              at = end
+          report = docs[-1]
+          assert report.get("ok"), report
+          summary = report.get("summary", {})
+          assert summary.get("errors") == 0, summary
+          assert summary.get("warnings") == 0, summary
+          size = os.path.getsize("../check/layers.mp4")
+          assert size > 500_000, f"the reel is only {size} bytes"
+          print("rendered:", report["output"], f"{size} bytes,", summary)
+          PY
+      # Measurement is not inspection: the pixel claims are asserted -
+      # the card on the scene, the screen blend over the plate - and one
+      # A/B frame (the same frame with the leak layer dropped) is
+      # rendered by the script itself to prove the blend against the
+      # engine rather than against a guess.
+      - name: The frames, inspected
+        run: python3 scripts/motion/inspect-frames.py check
+
+  # The long lane: the whole dependency dance, on a clean runner, every
+  # version pinned. This is the recipe a session once improvised, made a
+  # file; a step that only works on the machine it was written on fails
+  # here, loudly.
+  dance:
+    name: The dependency dance, pinned and green
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      # The version the ort crate is built against; deps.lock pins the
+      # file. See ci.yml's engine job, which this mirrors.
+      ORT_VERSION: 1.28.0
+      # The cmake wheel, exactly: the version whisper.cpp's build was
+      # proven against, rather than whichever cmake the runner's apt
+      # has this quarter.
+      CMAKE_WHEEL: cmake==4.4.4
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: The pinned toolchain
+        id: toolchain
+        run: echo "channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' src/rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master (v1), 2026-10-09
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: src
+          cache-on-failure: true
+
+      # The system libraries, by name where the archive keeps them
+      # stable and by major-version package where it does not:
+      # libclang-18-dev is the bindgen backend this recipe was written
+      # against, and mesa-vulkan-drivers brings lavapipe so nothing here
+      # depends on a hardware GPU being attached to a cloud machine.
+      # ALSA is libasound2-dev - the staging trick a no-root session
+      # needed is only for machines that cannot apt; here apt is honest.
+      - name: System libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libclang-18-dev libasound2-dev libfontconfig1-dev libfreetype6-dev \
+            libxkbcommon-dev libgl1-mesa-dev libgtk-3-dev libvulkan1 mesa-vulkan-drivers
+      # The cmake wheel, pinned exactly, because whisper.cpp's build
+      # asks cmake for more than the runner's packaged one promises.
+      - name: The cmake wheel
+        run: pip install --break-system-packages "$CMAKE_WHEEL"
+      # bindgen needs clang's own resource headers (stddef.h and
+      # friends); an apt-installed libclang usually finds them, an
+      # extracted one never does, so the recipe hands them over
+      # explicitly - which works for both.
+      - name: The LLVM resource includes
+        run: |
+          set -euo pipefail
+          resource=$(find /usr/lib/llvm-18/lib/clang -maxdepth 3 -type d -name include | head -n 1)
+          test -n "$resource"
+          echo "BINDGEN_EXTRA_CLANG_ARGS=-I$resource" >> "$GITHUB_ENV"
+      # FFmpeg by digest: BtbN's GPL shared build of one fixed commit,
+      # named in deps.lock, not `latest`.
+      - name: FFmpeg development libraries
+        run: |
+          set -euo pipefail
+          scripts/ci/fetch.sh ffmpeg-linux64 ffmpeg.tar.xz
+          mkdir -p ffmpeg-dev
+          tar -xf ffmpeg.tar.xz -C ffmpeg-dev --strip-components=1
+          echo "FFMPEG_DIR=$PWD/ffmpeg-dev" >> "$GITHUB_ENV"
+      # ONNX Runtime shared, linked dynamically, as ci.yml links it.
+      - name: ONNX Runtime
+        run: |
+          set -euo pipefail
+          stem="onnxruntime-linux-x64-$ORT_VERSION"
+          scripts/ci/fetch.sh onnxruntime-linux-x64 onnxruntime.tgz
+          tar -xzf onnxruntime.tgz
+          test -f "$stem/lib/libonnxruntime.so.$ORT_VERSION"
+          ln -sf "libonnxruntime.so.$ORT_VERSION" "$stem/lib/libonnxruntime.so"
+          {
+            echo "ORT_LIB_LOCATION=$PWD/$stem/lib"
+            echo "ORT_PREFER_DYNAMIC_LINK=1"
+            echo "LD_LIBRARY_PATH=$PWD/ffmpeg-dev/lib:$PWD/$stem/lib"
+          } >> "$GITHUB_ENV"
+      # sherpa-onnx prebuilt, the version Cargo.lock resolves, checked
+      # against deps.lock as ci.yml checks it.
+      - name: sherpa-onnx libraries
+        run: |
+          set -euo pipefail
+          version=$(grep -A1 'name = "sherpa-onnx-sys"' src/Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p')
+          name=sherpa-onnx-linux-x64-static-lib
+          case "$(scripts/ci/fetch.sh --url "$name")" in
+            */v"$version"/*) ;;
+            *) echo "scripts/ci/deps.lock pins $name for another version than Cargo.lock's $version" >&2; exit 1 ;;
+          esac
+          stem="sherpa-onnx-v$version-linux-x64-static-lib"
+          scripts/ci/fetch.sh "$name" sherpa.tar.bz2
+          mkdir -p sherpa
+          tar -xjf sherpa.tar.bz2 -C sherpa
+          test -d "sherpa/$stem/lib"
+          echo "SHERPA_ONNX_LIB_DIR=$PWD/sherpa/$stem/lib" >> "$GITHUB_ENV"
+      # The sidecar again, for the example this job renders at the end.
+      - name: The Geneva sidecar
+        run: |
+          set -euo pipefail
+          scripts/ci/fetch.sh geneva-linux64 geneva.tar.gz
+          mkdir -p geneva-out "$HOME/.local/bin"
+          tar -xzf geneva.tar.gz -C geneva-out
+          bin=$(find geneva-out -type f -name geneva | head -n 1)
+          cp "$bin" "$HOME/.local/bin/geneva"
+          chmod +x "$HOME/.local/bin/geneva"
+          "$HOME/.local/bin/geneva" --version
+          echo "CONCAT_GENEVA_BIN=$HOME/.local/bin/geneva" >> "$GITHUB_ENV"
+
+      # The crates the motion work touches, built and tested against the
+      # dance: the document library, the timeline model and the MCP
+      # server that drives them all. One job wide and no debug info, the
+      # same memory treatment ci.yml gives itself.
+      - name: The motion stack's tests
+        working-directory: src
+        timeout-minutes: 45
+        env:
+          CARGO_PROFILE_DEV_DEBUG: "0"
+        run: cargo test -p concat-motion -p concat-core -p concat-mcp -j 1
+      # And the example, under the full environment, asserted to exist.
+      - name: The example, rendered under the full environment
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          python3 scripts/motion/layers-assets.py check
+          cd src
+          cargo run -q -p concat-motion --example layers -- -o ../check/layers.mp4 --assets ../check --cache ../check/cache > ../check/render.json
+          test -s ../check/layers.mp4
+          echo "rendered $(stat -c%s ../check/layers.mp4) bytes"

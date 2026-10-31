@@ -1634,6 +1634,18 @@ fn motion_schema(name: &str) -> Option<Value> {
                 "crf".to_owned(),
                 json!({ "type": "integer", "minimum": 0, "maximum": 51, "default": 18 }),
             );
+            properties.insert(
+                "genevaTimeoutSecs".to_owned(),
+                json!({
+                    "type": "number", "minimum": 5, "maximum": 3600, "default": 300,
+                    "description": "No call to the render sidecar may run past this, in \
+                     seconds; a call that does is killed and named, not hung. The default \
+                     300 covers the long reels; the quick calls (plan, one frame) are \
+                     capped at their own 60 s when this is looser than that. A sidecar \
+                     that fails three times in a minute is refused with the fallback \
+                     story instead of being asked a fourth."
+                }),
+            );
             object(properties, &["project", "storyboard"])
         }
         _ => return None,

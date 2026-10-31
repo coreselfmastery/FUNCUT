@@ -664,6 +664,7 @@ pub fn plan(geneva: &Geneva, sequence: &Sequence) -> Result<Plan, MotionError> {
             authoring::apply(&scene.comp, &scene.ops).map_err(|error| MotionError::Engine {
                 code: None,
                 message: format!("scene {index} ({}): {error}", scene.comp.id),
+                path: None,
                 help: Some("the batch is applied to the comp before it is placed".into()),
             })?
         };

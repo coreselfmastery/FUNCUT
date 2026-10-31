@@ -102,6 +102,69 @@ impl EnginePreference {
         }
         self.default
     }
+
+    /// The engine to draw `comp` with, given the sidecar's state *right
+    /// now* - which is [`engine_for`] plus the circuit breaker: a sidecar
+    /// that has failed three times in a minute is treated exactly like a
+    /// missing one for every comp the native engine can draw, and the
+    /// note a caller is asked to log says so, because a fallback nobody
+    /// can see is a fallback nobody can trust.
+    ///
+    /// A markup comp keeps Geneva even on a tripped breaker, for the same
+    /// reason it keeps it on a missing sidecar: the native engine cannot
+    /// draw markup, and the honest answer is the refusal - now a fast
+    /// one, answered by the breaker, rather than a minute spent learning
+    /// the sidecar is not answering.
+    pub fn choose(&self, comp: &Comp, sidecar: Sidecar) -> Choice {
+        match sidecar {
+            Sidecar::Ready => Choice {
+                engine: self.engine_for(comp, true),
+                note: None,
+            },
+            Sidecar::Missing => Choice {
+                engine: self.engine_for(comp, false),
+                note: (!comp.needs_markup() && self.default == EngineKind::Geneva).then(|| {
+                    "the geneva sidecar is not installed; drawing this comp on the native \
+                     engine"
+                        .to_owned()
+                }),
+            },
+            Sidecar::Failing { failures } => Choice {
+                engine: self.engine_for(comp, false),
+                note: (!comp.needs_markup() && self.default == EngineKind::Geneva).then(|| {
+                    format!(
+                        "geneva failed {failures} times in the last minute; drawing this \
+                         comp on the native engine while its circuit breaker is open"
+                    )
+                }),
+            },
+        }
+    }
+}
+
+/// What state the Geneva sidecar is in, for [`EnginePreference::choose`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Sidecar {
+    /// Installed, versioned, and its breaker closed.
+    Ready,
+    /// Not installed, or not the binary it should be.
+    Missing,
+    /// Installed but failing: its circuit breaker is open, after three
+    /// failures in a minute.
+    Failing {
+        /// How many failures tripped it.
+        failures: usize,
+    },
+}
+
+/// An engine choice, with the sentence to log when the choice is a
+/// fallback: a fallback nobody can see is a fallback nobody can trust.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Choice {
+    /// The engine to draw with.
+    pub engine: EngineKind,
+    /// Why, when the choice is news: `None` for the ordinary case.
+    pub note: Option<String>,
 }
 
 /// How a comp is to be baked.
@@ -263,8 +326,33 @@ pub enum MotionError {
         code: Option<String>,
         /// What it said.
         message: String,
+        /// Where in the document it stopped, as the engine names it: a
+        /// JSON pointer into the timeline (`/layers/1/clips/1/start`),
+        /// or a file and line for a markup problem.
+        path: Option<String>,
         /// What it suggested.
         help: Option<String>,
+    },
+    /// An engine call outlived its limit and was killed. The process is
+    /// gone and the call abandoned - nothing hangs, and the caller hears
+    /// which call, and after how long.
+    TimedOut {
+        /// What the call was: `rendering`, `planning`, `probing`...
+        what: String,
+        /// The per-call limit that was reached, in seconds.
+        limit: f64,
+    },
+    /// The circuit breaker around an engine is open: it failed too many
+    /// times too close together, and further calls are refused for a
+    /// while rather than spent on a sidecar that is not answering. The
+    /// message says what to do - a comp the native compositor can draw
+    /// is drawn by it; a markup comp or a reel waits for the breaker to
+    /// close (or for the sidecar to be fixed).
+    CircuitOpen {
+        /// How many failures tripped it.
+        failures: usize,
+        /// The window they happened in, in seconds.
+        window: f64,
     },
     /// A file could not be written or read.
     Io {
@@ -302,17 +390,33 @@ impl std::fmt::Display for MotionError {
             MotionError::Engine {
                 code,
                 message,
+                path,
                 help,
             } => {
                 match code {
                     Some(code) => write!(f, "{code}: {message}")?,
                     None => write!(f, "{message}")?,
                 }
+                if let Some(path) = path {
+                    write!(f, " (at {path})")?;
+                }
                 if let Some(help) = help {
                     write!(f, " ({help})")?;
                 }
                 Ok(())
             }
+            MotionError::TimedOut { what, limit } => write!(
+                f,
+                "geneva did not finish {what} within {limit:.1}s and was killed - the call \
+                 is abandoned, not hung"
+            ),
+            MotionError::CircuitOpen { failures, window } => write!(
+                f,
+                "geneva has failed {failures} times in the last {window:.0}s and its circuit \
+                 breaker is open: calls are refused for a while instead of spent on a sidecar \
+                 that is not answering. A comp without markup is drawn by the native \
+                 engine meanwhile; a markup comp or a reel waits for the breaker to close"
+            ),
             MotionError::Io {
                 doing,
                 path,
@@ -415,5 +519,60 @@ mod tests {
     fn frames_are_named_the_way_the_sequence_writes_them() {
         assert_eq!(Baked::frame_name(1), "0001.png");
         assert_eq!(Baked::frame_name(1200), "1200.png");
+    }
+
+    #[test]
+    fn a_failing_sidecar_is_a_missing_one_for_every_comp_the_native_engine_draws() {
+        let preference = EnginePreference::default();
+        let shapes = comp_with(NodeKind::Rect {
+            width: Length::px(10.0),
+            height: Length::px(10.0),
+            fill: Some(Paint::Solid {
+                color: Rgba::hex("#fff"),
+            }),
+            radius: 0.0,
+        });
+        // Ready: Geneva, and nothing to log.
+        let ready = preference.choose(&shapes, Sidecar::Ready);
+        assert_eq!(ready.engine, EngineKind::Geneva);
+        assert_eq!(ready.note, None);
+        // Missing: native, with a note that says so.
+        let missing = preference.choose(&shapes, Sidecar::Missing);
+        assert_eq!(missing.engine, EngineKind::Native);
+        assert!(
+            missing
+                .note
+                .as_deref()
+                .unwrap_or_default()
+                .contains("not installed")
+        );
+        // Failing: native again, and the note names the failures - a
+        // fallback nobody can see is a fallback nobody can trust.
+        let failing = preference.choose(&shapes, Sidecar::Failing { failures: 3 });
+        assert_eq!(failing.engine, EngineKind::Native);
+        let note = failing.note.expect("the fallback is said");
+        assert!(note.contains("failed 3 times"), "{note}");
+        assert!(note.contains("native engine"), "{note}");
+    }
+
+    #[test]
+    fn a_markup_comp_keeps_geneva_even_when_the_breaker_is_open() {
+        let preference = EnginePreference::default();
+        let markup = comp_with(NodeKind::Html {
+            markup: "<div>x</div>".into(),
+            css: String::new(),
+            width: Length::Auto,
+            height: Length::Auto,
+        });
+        // The native engine cannot draw markup, so the fallback would
+        // quietly draw the wrong thing: the comp stays with Geneva and
+        // the next call is answered by the breaker - fast, with the
+        // fallback story - instead of by another minute of silence.
+        let failing = preference.choose(&markup, Sidecar::Failing { failures: 3 });
+        assert_eq!(failing.engine, EngineKind::Geneva);
+        assert_eq!(failing.note, None);
+        let missing = preference.choose(&markup, Sidecar::Missing);
+        assert_eq!(missing.engine, EngineKind::Geneva);
+        assert_eq!(missing.note, None);
     }
 }

@@ -495,7 +495,8 @@ stills read as a scene rather than a collage.
 | `blend` | `normal` (default), `multiply`, `screen`, `overlay`, `darken`, `lighten`, `difference`, `soft-light`, `add` | `screen`/`add` turn a soft radial picture into a light leak; `multiply` shades one into a vignette |
 | `opacity` | steady opacity, 0 to 1 | `0.08` grain over everything |
 | `fade_in` / `fade_out` | fade up and down, seconds (`fadeIn`/`fadeOut` also parse) | held to half the span so the two never cross |
-| `start` / `hold` | its own timing, from the scene's start | a foreground that arrives at `1.2` lands over a scene already running; a layer that outlives its scene is cut to the scene's end |
+| `start` / `hold` / `delay` | its own timing, from the scene's start (`delay` is the choreography's name for `start`) | a foreground that arrives at `1.2` lands over a scene already running; a layer that outlives its scene is cut to the scene's end |
+| `parallax` | how fast it drifts, as a multiple of its own `zoom` and `pan` - or of the classic plate's 4% growth / 3% slide, when it carries none | three layers at `0.5`, `1.0` and `2.0` are three depths of one scene; the rate is applied where the timeline is emitted, so the layer's own numbers stay what they said |
 | `above` | paint over the comp rather than under it | grain, vignettes, light leaks, silhouettes - still under the curtain and under any scene that overlaps this one |
 
 The layers a scene paints, bottom to top: its plates in order, the comp, its overlays in order,
@@ -505,13 +506,19 @@ scene - a missing picture is a mistake to hear about, not one to render around.
 The recipes worth reaching for first:
 
 - **Parallax depth** - `back` at `zoom: 0.04`, `mid` at `pan: [-0.03, 0]` with a slow fade in
-  and out, the comp over both. The differing drift is the depth.
-- **A light leak** - a soft radial picture, `blend: "screen"`, `scale: 0.8`, `offset` into a
-  corner, `above: true`, fading in and out over half the scene.
+  and out, the comp over both. The differing drift is the depth. `parallax` says the same thing
+  as a rate - `back` at `0.5`, `mid` at `1.0`, a foreground at `2.0` - and a layer with no drift
+  of its own is given the classic plate's before the rate is applied, so three bare layers at
+  three rates are a scene already.
+- **A light leak** - a soft radial picture, `blend: "screen"` (the builder's `blend()` is the
+  same as `blending()`), `scale: 0.8`, `offset` into a corner, `above: true`, fading in and out
+  over half the scene.
 - **Film grain** - a grain tile at `opacity: 0.08`, `above: true`, running the whole scene.
 - **A vignette** - a dark radial picture, `blend: "multiply"`, `above: true`.
-- **A foreground card** - `fit: "contain"` or a `scale` under one, `start: 1.2`, `fade_in: 0.3`:
-  it arrives over a scene already running and leaves before the cut.
+- **A foreground card** - `fit: "contain"` or a `scale` under one, `delay: 1.2`, `fade_in: 0.3`:
+  it arrives over a scene already running and leaves before the cut. A stack that arrives one
+  after another - `delay` 0.0, 0.4, 1.2 - is choreography; a stack that arrives at once is a
+  collage.
 
 Operations: `set-slot`, `set-text`, `set-words`, `set-markup`, `move`, `retime`, `set-track`, `set-track-points`,
 `fade-in`, `slide-to`, `pop`, `add-group`, `add-rect`, `add-text`, `delete`, `set-blend`,

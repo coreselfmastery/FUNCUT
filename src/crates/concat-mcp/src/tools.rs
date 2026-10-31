@@ -1562,6 +1562,8 @@ fn motion_schema(name: &str) -> Option<Value> {
                     "fade_out": { "type": "number", "minimum": 0, "description": "Fade down to transparent, seconds." },
                     "start": { "type": "number", "minimum": 0, "description": "When it starts, from the scene's own start." },
                     "hold": { "type": "number", "minimum": 0, "description": "How long it holds; omitted runs to the scene's end." },
+                    "parallax": { "type": "number", "exclusiveMinimum": 0,
+                                  "description": "How fast it drifts, as a multiple of its own zoom and pan (or of the classic plate's 4% growth / 3% slide, when it carries none): 0.5 half speed, 2.0 twice - nearer layers move faster, which is depth." },
                     "above": { "type": "boolean", "default": false,
                                "description": "Paint over the comp - grain, vignettes, light leaks, foreground cards - rather than under it." }
                 }

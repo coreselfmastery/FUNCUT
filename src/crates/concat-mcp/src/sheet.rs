@@ -111,7 +111,7 @@ mod tests {
     /// uses - the same crate, the same path, no fixtures to carry.
     fn solid(path: &Path, w: u32, h: u32, rgba: [u8; 4]) {
         use png::{ColorType, Encoder};
-        let bytes = vec![rgba[0], rgba[1], rgba[2], rgba[3]].repeat((w * h) as usize);
+        let bytes = [rgba[0], rgba[1], rgba[2], rgba[3]].repeat((w * h) as usize);
         let mut out = Vec::new();
         {
             let mut encoder = Encoder::new(&mut out, w, h);

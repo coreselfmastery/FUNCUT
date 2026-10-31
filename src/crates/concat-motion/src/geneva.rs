@@ -264,7 +264,7 @@ impl Geneva {
     /// believed forever.
     pub fn version(&self) -> Result<String, MotionError> {
         self.gate()?;
-        let output = self.call("probing", &vec!["--version".to_owned()], self.limits.plan)?;
+        let output = self.call("probing", &["--version".to_owned()], self.limits.plan)?;
         let text = String::from_utf8_lossy(&output.stdout);
         // "geneva 1.6.0": the version is the first token that begins as one.
         let version = text.split_whitespace().find(|token| {
@@ -289,7 +289,8 @@ impl Geneva {
                     ),
                     path: None,
                     help: Some(
-                        "the sidecar is geneva-render/geneva; check what answers to its name".into(),
+                        "the sidecar is geneva-render/geneva; check what answers to its name"
+                            .into(),
                     ),
                 })
             }
@@ -618,17 +619,11 @@ impl Geneva {
             None => (None, format!("geneva exited with {}", output.status), None),
         };
         let help = match first {
-            Some(diagnostic) => {
-                let own = diagnostic
-                    .help
-                    .clone()
-                    .or_else(|| code.as_deref().and_then(fix_for).map(str::to_owned))
-                    .or_else(|| {
-                        code.as_deref()
-                            .and_then(|code| self.explain(code))
-                    });
-                own
-            }
+            Some(diagnostic) => diagnostic
+                .help
+                .clone()
+                .or_else(|| code.as_deref().and_then(fix_for).map(str::to_owned))
+                .or_else(|| code.as_deref().and_then(|code| self.explain(code))),
             None => None,
         };
         Err(MotionError::Engine {
@@ -645,12 +640,7 @@ impl Geneva {
     /// chatty child at the buffer's edge), and a child that outlives the
     /// deadline is killed and said so - the one behaviour a caller can
     /// never otherwise get out of a hung sidecar.
-    fn call(
-        &self,
-        what: &str,
-        args: &[String],
-        limit: Duration,
-    ) -> Result<Output, MotionError> {
+    fn call(&self, what: &str, args: &[String], limit: Duration) -> Result<Output, MotionError> {
         self.call_in(what, Path::new("."), args, limit)
     }
 
@@ -722,7 +712,7 @@ impl Geneva {
                         doing: "waiting for geneva".into(),
                         path: self.exe.clone(),
                         source,
-                    })
+                    });
                 }
             }
             if Instant::now() >= deadline {
@@ -860,9 +850,9 @@ pub fn fix_for(code: &str) -> Option<&'static str> {
              built from itself",
         ),
         // Timing: what a storyboard lays out.
-        "E300" => Some(
-            "a time is negative; check the layer's `start` and `hold` and the scene's `at`",
-        ),
+        "E300" => {
+            Some("a time is negative; check the layer's `start` and `hold` and the scene's `at`")
+        }
         "E301" => Some(
             "an empty or inverted range; a layer's `hold` must outlast its fades, and a \
              scene's `at` cannot swallow the scene before it",
@@ -2162,7 +2152,9 @@ mod tests {
 
         #[test]
         fn a_call_that_outlives_its_limit_is_killed_and_named() {
-            let _serial = ONE_AT_A_TIME.lock().unwrap_or_else(|poison| poison.into_inner());
+            let _serial = ONE_AT_A_TIME
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
             let dir = TempDir::new().unwrap();
             let geneva = stub(&dir, "sleepy", "#!/bin/sh\nexec sleep 30\n");
             let started = Instant::now();
@@ -2188,7 +2180,9 @@ mod tests {
 
         #[test]
         fn three_failures_open_the_breaker_and_the_fourth_is_refused_fast() {
-            let _serial = ONE_AT_A_TIME.lock().unwrap_or_else(|poison| poison.into_inner());
+            let _serial = ONE_AT_A_TIME
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
             let dir = TempDir::new().unwrap();
             // A sidecar that answers with nothing parseable and exits
             // badly, three times, then a fourth call that must not reach
@@ -2218,7 +2212,9 @@ mod tests {
 
         #[test]
         fn a_success_closes_the_breaker() {
-            let _serial = ONE_AT_A_TIME.lock().unwrap_or_else(|poison| poison.into_inner());
+            let _serial = ONE_AT_A_TIME
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
             let dir = TempDir::new().unwrap();
             // Two failures, then a call that succeeds: the breaker
             // forgets them, and the next failure is a first failure
@@ -2233,7 +2229,11 @@ mod tests {
                 let _ = std::fs::remove_file(&mood);
                 let _ = geneva.run_in(dir.path(), &[]);
             }
-            assert_eq!(geneva.breaker(), Breaker::Closed, "two failures do not trip it");
+            assert_eq!(
+                geneva.breaker(),
+                Breaker::Closed,
+                "two failures do not trip it"
+            );
             std::fs::write(&mood, "good").unwrap();
             geneva
                 .run_in(dir.path(), &[])
@@ -2250,7 +2250,9 @@ mod tests {
 
         #[test]
         fn a_reported_diagnostic_arrives_whole_with_its_fix() {
-            let _serial = ONE_AT_A_TIME.lock().unwrap_or_else(|poison| poison.into_inner());
+            let _serial = ONE_AT_A_TIME
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
             let dir = TempDir::new().unwrap();
             let geneva = stub(
                 &dir,
@@ -2291,7 +2293,9 @@ mod tests {
 
         #[test]
         fn a_known_code_without_its_own_help_gets_the_funcut_fix() {
-            let _serial = ONE_AT_A_TIME.lock().unwrap_or_else(|poison| poison.into_inner());
+            let _serial = ONE_AT_A_TIME
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
             let dir = TempDir::new().unwrap();
             let geneva = stub(
                 &dir,
@@ -2318,7 +2322,9 @@ mod tests {
 
         #[test]
         fn an_unknown_code_is_explained_by_the_sidecar_itself() {
-            let _serial = ONE_AT_A_TIME.lock().unwrap_or_else(|poison| poison.into_inner());
+            let _serial = ONE_AT_A_TIME
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
             let dir = TempDir::new().unwrap();
             let geneva = stub(
                 &dir,
@@ -2353,16 +2359,18 @@ mod tests {
 
         #[test]
         fn the_fix_table_only_names_codes_the_sidecar_defines() {
-            let _serial = ONE_AT_A_TIME.lock().unwrap_or_else(|poison| poison.into_inner());
+            let _serial = ONE_AT_A_TIME
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
             // The table's codes come from `geneva guide errors`; a code
             // the sidecar has never defined is a typo in the table, and
             // an unknown one falls through to explain(). The shape of
             // the check: every tabled code parses as E/W/N + digits.
             for code in [
-                "E100", "E101", "E102", "E103", "E104", "E105", "E110", "E200", "E201",
-                "E202", "E203", "E206", "E207", "E300", "E301", "E302", "E303", "E305",
-                "E306", "E401", "E402", "E440", "E441", "E442", "E443", "E450", "E451",
-                "E452", "E453", "E501", "E502", "E503", "E504", "W405", "W407", "W440",
+                "E100", "E101", "E102", "E103", "E104", "E105", "E110", "E200", "E201", "E202",
+                "E203", "E206", "E207", "E300", "E301", "E302", "E303", "E305", "E306", "E401",
+                "E402", "E440", "E441", "E442", "E443", "E450", "E451", "E452", "E453", "E501",
+                "E502", "E503", "E504", "W405", "W407", "W440",
             ] {
                 assert!(fix_for(code).is_some(), "{code} is tabled");
                 let digits = &code[1..];
@@ -2374,7 +2382,9 @@ mod tests {
 
         #[test]
         fn a_cap_that_tightens_the_render_limit_tightens_the_plan_less() {
-            let _serial = ONE_AT_A_TIME.lock().unwrap_or_else(|poison| poison.into_inner());
+            let _serial = ONE_AT_A_TIME
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
             let limits = CallLimits::capped_at(Duration::from_secs(30));
             assert_eq!(limits.render, Duration::from_secs(30));
             assert_eq!(limits.plan, Duration::from_secs(30));
@@ -2385,7 +2395,9 @@ mod tests {
 
         #[test]
         fn the_version_is_read_under_the_same_limits() {
-            let _serial = ONE_AT_A_TIME.lock().unwrap_or_else(|poison| poison.into_inner());
+            let _serial = ONE_AT_A_TIME
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
             let dir = TempDir::new().unwrap();
             let geneva = stub(&dir, "versioned", "#!/bin/sh\necho 'geneva 1.6.0'\n");
             assert_eq!(geneva.version().expect("a version"), "1.6.0");

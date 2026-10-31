@@ -836,7 +836,7 @@ pub fn reel(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
         Some(secs) => {
             return Err(ApiError::invalid(format!(
                 "invalid arguments: `genevaTimeoutSecs` is seconds between 5 and 3600, not {secs}"
-            )))
+            )));
         }
         None => engine,
     };

@@ -903,3 +903,40 @@ end to end under the same guard.
 drained), a process-global `Vec<Instant>` for the breaker, and one new
 field on `MotionError::Engine` (`path`) whose in-repo constructors were
 all updated in the same change.
+
+## 19. The contract, checked before the bake
+
+storyboard.rs defined the contract and resolved it; it did not check it.
+A layer naming an asset the storyboard does not carry stopped the plan -
+at plan time, a comp deep in the render; a negative `start` reached the
+engine and came back as E300 in the sidecar's words, not the
+storyboard's; a blend typo was caught one scene at a time.
+
+`Storyboard::validate` is the step before all of that, and it reads the
+document the way an engine never gets to: every asset a layer, a plate
+or a bed names is carried; every blend one of the nine and every fit
+one of the four; every `start`, `hold`, `at` and fade non-negative;
+every zoom, pan, offset, scale, gain and opacity finite (and the two
+fractions in range); a comp a name under the folder, not a route out of
+it; a scene naming exactly one of a preset and a comp. Every problem is
+found and returned together as `Vec<SceneError>` - one refusal that
+lists them all, each with its scene and its layer (`scene 2, the layer
+"leak": the blend "glow" is not one of ...`), because a twelve-scene
+storyboard with six layers a scene is debugged from one refusal that
+says which of the seventy-two is wrong, not from three render attempts.
+
+`sequence()` calls it first, so both doors - the CLI's `reel` verb and
+the MCP's `motion_reel` tool - refuse an invalid storyboard with the
+same list, before a preset is resolved or an engine is woken.
+
+Six tests: the missing asset named per case, the one-refusal list that
+names every problem across three scenes, the bad fit beside the
+out-of-range opacity, the non-finite scale (JSON cannot carry one; the
+check is on the struct a program writes), the scene naming both a
+preset and a comp, and the valid storyboard that validates clean - 133
+tests green in total.
+
+**What it costs:** one pass over the document before the pass that
+resolves it, and nothing else; the checks are the ones the resolver and
+the engine were making one scene at a time, moved to where they cost a
+microsecond instead of a render.

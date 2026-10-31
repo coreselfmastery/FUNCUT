@@ -470,6 +470,16 @@ A scene's `layers` stack **bottom first**: plates under the comp, and - with `"a
 grain, vignettes, light leaks and foreground cards over it. The short form (`"plate": "back",
 "zoom": 0.04`) is still one layer under the comp and nothing else, exactly what it always was.
 
+**The contract is checked before the bake.** `Storyboard::validate` reads the document the way an
+engine never gets to: every asset a layer, a plate or a bed names must be carried by `assets`;
+every `blend` one of the nine, every `fit` one of the four; every `start`, `hold`, `at` and fade
+non-negative; every zoom, pan, offset, scale, gain and opacity finite (and the two fractions in
+range); a comp a name under the folder, not a route out of it. Every problem is found and returned
+together - one refusal that lists them all, each with its scene and its layer (`scene 2, the layer
+"leak": the blend "glow" is not one of ...`) - and `sequence()` calls it first, so the CLI's `reel`
+verb and the MCP's `motion_reel` tool refuse the same invalid storyboard with the same list, before
+a preset is resolved or an engine is woken.
+
 Every layer moves on its own clock, and that is the whole point: a background drifting four
 percent while a foreground card slides two is parallax, and parallax is what makes a stack of
 stills read as a scene rather than a collage.

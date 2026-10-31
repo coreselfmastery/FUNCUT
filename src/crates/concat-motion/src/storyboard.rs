@@ -45,6 +45,40 @@ use crate::comp::{Asset, Blend, Comp, Fit, Rgba};
 use crate::presets;
 use crate::sequence::{AudioBed, Curtain, Scene, SceneLayer, Sequence};
 
+/// One problem a storyboard carries, found by [`Storyboard::validate`]
+/// before anything is resolved or rendered: which scene it stopped at,
+/// which layer when the problem is a layer's, and what is wrong - in the
+/// storyboard's own words, so the fix is the message.
+///
+/// A refusal that names the scene is the contract every error in this
+/// crate keeps; this one adds the layer, because a twelve-scene
+/// storyboard with six layers a scene is debuggable from a refusal that
+/// says exactly which of the seventy-two is wrong.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct SceneError {
+    /// The scene's index, from 0.
+    pub scene: usize,
+    /// The layer's asset id, when the problem is a layer's.
+    pub layer: Option<String>,
+    /// What is wrong.
+    pub problem: String,
+}
+
+impl std::fmt::Display for SceneError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.layer {
+            Some(layer) => {
+                write!(
+                    f,
+                    "scene {}, the layer {layer:?}: {}",
+                    self.scene, self.problem
+                )
+            }
+            None => write!(f, "scene {}: {}", self.scene, self.problem),
+        }
+    }
+}
+
 /// A storyboard: several scenes, in order, as one render.
 #[derive(serde::Deserialize)]
 pub struct Storyboard {
@@ -213,6 +247,31 @@ fn default_depth() -> f64 {
     1.0
 }
 
+/// Whether a number is finite and not negative - the shape every timing
+/// field in a storyboard must have. A NaN or an infinity from a program
+/// (JSON itself cannot carry one) and a negative time are both refused by
+/// the same check, so the message names the field and not the parser.
+fn finite_non_negative(value: f64) -> bool {
+    value.is_finite() && value >= 0.0
+}
+
+/// The blend a name stands for, or `None` when it is not one of the nine
+/// the engine blends with.
+fn blend_of(name: &str) -> Option<Blend> {
+    match name {
+        "normal" => Some(Blend::Normal),
+        "multiply" => Some(Blend::Multiply),
+        "screen" => Some(Blend::Screen),
+        "overlay" => Some(Blend::Overlay),
+        "darken" => Some(Blend::Darken),
+        "lighten" => Some(Blend::Lighten),
+        "difference" => Some(Blend::Difference),
+        "soft-light" => Some(Blend::SoftLight),
+        "add" => Some(Blend::Add),
+        _ => None,
+    }
+}
+
 impl Storyboard {
     /// Parse a storyboard from its text, refusing what does not make sense
     /// as a document.
@@ -225,6 +284,273 @@ impl Storyboard {
         serde_json::from_value(value.clone()).map_err(|error| format!("the storyboard: {error}"))
     }
 
+    /// Every problem the document carries, checked against the contract
+    /// before anything is resolved or rendered: a missing asset, a blend
+    /// or a fit the engine does not know, a negative time, a number that
+    /// is not finite, an opacity outside its range, a comp path that
+    /// climbs out of the storyboard's folder.
+    ///
+    /// This is the step before the bake: every problem is found and
+    /// returned together - one refusal that lists all of them, each with
+    /// its scene (and its layer, when it is a layer's), instead of a
+    /// render that stops at the first and has to be run again for the
+    /// next. [`Storyboard::sequence`] calls this first, so both doors -
+    /// the CLI's `reel` verb and the MCP's `motion_reel` tool - refuse an
+    /// invalid storyboard with the same list.
+    pub fn validate(&self) -> Result<(), Vec<SceneError>> {
+        let mut problems: Vec<SceneError> = Vec::new();
+        let mut problem = |scene: usize, layer: Option<String>, what: String| {
+            problems.push(SceneError {
+                scene,
+                layer,
+                problem: what,
+            });
+        };
+
+        if self.width == 0 || self.height == 0 {
+            problem(
+                0,
+                None,
+                format!(
+                    "the frame is {}x{}, and neither side may be zero",
+                    self.width, self.height
+                ),
+            );
+        }
+        if !self.fps.is_finite() || self.fps <= 0.0 {
+            problem(
+                0,
+                None,
+                format!(
+                    "the frame rate is {}, and it must be a positive number",
+                    self.fps
+                ),
+            );
+        }
+
+        for (index, card) in self.scenes.iter().enumerate() {
+            // What the scene is drawn from.
+            match (&card.preset, &card.comp) {
+                (None, None) => {
+                    problem(index, None, "the scene needs a `preset` or a `comp`".into())
+                }
+                (Some(_), Some(_)) => problem(
+                    index,
+                    None,
+                    "the scene names both a `preset` and a `comp`; one or the other".into(),
+                ),
+                _ => {}
+            }
+            if let Some(comp) = &card.comp
+                && (comp.starts_with('/') || comp.contains(".."))
+            {
+                problem(
+                    index,
+                    None,
+                    format!(
+                        "the comp {comp:?} is a name under the storyboard's folder, not a path out of it"
+                    ),
+                );
+            }
+            // The scene's own timing.
+            if let Some(at) = card.at
+                && !finite_non_negative(at)
+            {
+                problem(
+                    index,
+                    None,
+                    format!("`at` is {at}, and it cannot be negative"),
+                );
+            }
+            if let Some(hold) = card.hold
+                && !finite_non_negative(hold)
+            {
+                problem(
+                    index,
+                    None,
+                    format!("`hold` is {hold}, and it cannot be negative"),
+                );
+            }
+            // The short form's plate.
+            if let Some(plate) = &card.plate {
+                if !self.assets.contains_key(plate) {
+                    problem(
+                        index,
+                        Some(plate.clone()),
+                        format!(
+                            "the plate names the asset {plate:?}, which the storyboard does not carry"
+                        ),
+                    );
+                }
+                if let Some(zoom) = card.zoom
+                    && !zoom.is_finite()
+                {
+                    problem(
+                        index,
+                        Some(plate.clone()),
+                        format!("the plate's `zoom` is {zoom}, which is not a finite number"),
+                    );
+                }
+            }
+            // Every layer, in full.
+            for layer in &card.layers {
+                let name = layer.asset.clone();
+                if !self.assets.contains_key(&layer.asset) {
+                    problem(
+                        index,
+                        Some(name.clone()),
+                        format!(
+                            "the layer names the asset {:?}, which the storyboard does not carry",
+                            layer.asset
+                        ),
+                    );
+                }
+                if let Some(blend) = &layer.blend
+                    && blend_of(blend).is_none()
+                {
+                    problem(
+                        index,
+                        Some(name.clone()),
+                        format!(
+                            "the blend {blend:?} is not one of normal, multiply, screen, overlay, darken, lighten, difference, soft-light or add"
+                        ),
+                    );
+                }
+                if let Some(fit) = &layer.fit
+                    && !matches!(fit.as_str(), "cover" | "contain" | "fill" | "none")
+                {
+                    problem(
+                        index,
+                        Some(name.clone()),
+                        format!("the fit {fit:?} is not one of cover, contain, fill or none"),
+                    );
+                }
+                for (field, value) in [
+                    ("zoom", layer.zoom),
+                    ("scale", layer.scale),
+                    ("opacity", layer.opacity),
+                    ("fade_in", layer.fade_in),
+                    ("fade_out", layer.fade_out),
+                    ("start", layer.start),
+                    ("hold", layer.hold),
+                ] {
+                    if let Some(value) = value
+                        && !value.is_finite()
+                    {
+                        problem(
+                            index,
+                            Some(name.clone()),
+                            format!("`{field}` is {value}, which is not a finite number"),
+                        );
+                    }
+                }
+                for (field, value) in [("pan", layer.pan), ("offset", layer.offset)] {
+                    if let Some((x, y)) = value
+                        && !(x.is_finite() && y.is_finite())
+                    {
+                        problem(
+                            index,
+                            Some(name.clone()),
+                            format!("`{field}` is [{x}, {y}], and both must be finite numbers"),
+                        );
+                    }
+                }
+                for (field, value) in [
+                    ("start", layer.start),
+                    ("hold", layer.hold),
+                    ("fade_in", layer.fade_in),
+                    ("fade_out", layer.fade_out),
+                ] {
+                    if let Some(value) = value
+                        && value < 0.0
+                    {
+                        problem(
+                            index,
+                            Some(name.clone()),
+                            format!("`{field}` is {value}, and it cannot be negative"),
+                        );
+                    }
+                }
+                if let Some(opacity) = layer.opacity
+                    && opacity.is_finite()
+                    && !(0.0..=1.0).contains(&opacity)
+                {
+                    problem(
+                        index,
+                        Some(name.clone()),
+                        format!("`opacity` is {opacity}, and it is a fraction between 0 and 1"),
+                    );
+                }
+            }
+        }
+
+        // The beds of sound under the whole thing.
+        for bed in &self.audio {
+            if !self.assets.contains_key(&bed.asset) {
+                problem(
+                    0,
+                    Some(bed.asset.clone()),
+                    format!(
+                        "the audio bed names the asset {:?}, which the storyboard does not carry",
+                        bed.asset
+                    ),
+                );
+            }
+            if !bed.gain_db.is_finite() {
+                problem(
+                    0,
+                    Some(bed.asset.clone()),
+                    format!("`gain_db` is {}, which is not a finite number", bed.gain_db),
+                );
+            }
+            for (field, value) in [("fade_in", bed.fade_in), ("fade_out", bed.fade_out)] {
+                if let Some(value) = value
+                    && !finite_non_negative(value)
+                {
+                    problem(
+                        0,
+                        Some(bed.asset.clone()),
+                        format!("`{field}` is {value}, and it cannot be negative"),
+                    );
+                }
+            }
+        }
+
+        // The curtain, when there is one.
+        if let Some(curtain) = &self.curtain {
+            for (field, value) in [
+                ("open", curtain.open),
+                ("close", curtain.close),
+                ("dip", curtain.dip),
+                ("depth", curtain.depth),
+            ] {
+                if !finite_non_negative(value) {
+                    problem(
+                        0,
+                        None,
+                        format!("the curtain's `{field}` is {value}, and it cannot be negative"),
+                    );
+                }
+            }
+            if curtain.depth.is_finite() && !(0.0..=1.0).contains(&curtain.depth) {
+                problem(
+                    0,
+                    None,
+                    format!(
+                        "the curtain's `depth` is {}, and it is a fraction between 0 and 1",
+                        curtain.depth
+                    ),
+                );
+            }
+        }
+
+        if problems.is_empty() {
+            Ok(())
+        } else {
+            Err(problems)
+        }
+    }
+
     /// The sequence this storyboard lays out, its assets resolved from
     /// `root`.
     ///
@@ -232,6 +558,18 @@ impl Storyboard {
     /// built, so a storyboard that does not make sense comes back as one
     /// error naming the scene - not as a broken render.
     pub fn sequence(&self, root: &Path) -> Result<Sequence, String> {
+        // The contract first: every problem the document carries, all at
+        // once, before a preset is resolved or a file is read. Both doors
+        // eat the same refusal, and an invalid storyboard never reaches
+        // an engine.
+        if let Err(problems) = self.validate() {
+            let list = problems
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect::<Vec<String>>()
+                .join("; ");
+            return Err(list);
+        }
         let source = self
             .source_dir
             .clone()
@@ -572,6 +910,121 @@ mod tests {
         let error = storyboard.sequence(Path::new(".")).expect_err("refused");
         assert!(error.contains("scene 0"), "{error}");
         assert!(error.contains("operation 0"), "{error}");
+    }
+
+    #[test]
+    fn validation_refuses_a_layer_whose_asset_is_not_carried() {
+        let storyboard = board(
+            r##"{ "scenes": [ { "preset": "funcut.chapter.chip",
+                 "layers": [ { "asset": "nowhere" } ] } ] }"##,
+        );
+        let problems = storyboard.validate().expect_err("refused");
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert_eq!(problems[0].scene, 0);
+        assert_eq!(problems[0].layer.as_deref(), Some("nowhere"));
+        assert!(
+            problems[0].problem.contains("nowhere"),
+            "{}",
+            problems[0].problem
+        );
+        // The same refusal through the door a caller actually uses.
+        let error = storyboard.sequence(Path::new(".")).expect_err("refused");
+        assert!(error.contains("scene 0"), "{error}");
+        assert!(error.contains("nowhere"), "{error}");
+    }
+
+    #[test]
+    fn validation_names_every_problem_in_one_refusal() {
+        // Three problems in three scenes: all three are named, so a
+        // storyboard is debugged from one refusal instead of three
+        // render attempts.
+        let storyboard = board(
+            r##"{ "scenes": [
+                 { "preset": "funcut.chapter.chip",
+                   "layers": [ { "asset": "gone" } ] },
+                 { "preset": "funcut.chapter.chip",
+                   "layers": [ { "asset": "gone", "blend": "glow", "start": -1.0 } ] },
+                 { "preset": "funcut.sting.wordmark", "hold": -2.0 }
+               ] }"##,
+        );
+        let problems = storyboard.validate().expect_err("refused");
+        assert!(problems.len() >= 5, "{problems:?}");
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.scene == 2 && p.problem.contains("hold"))
+        );
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.scene == 1 && p.problem.contains("blend") && p.problem.contains("glow"))
+        );
+        assert!(problems.iter().any(|p| p.scene == 1
+            && p.problem.contains("start")
+            && p.problem.contains("negative")));
+    }
+
+    #[test]
+    fn validation_refuses_a_bad_fit_and_an_out_of_range_opacity() {
+        let storyboard = board(
+            r##"{ "scenes": [ { "preset": "funcut.chapter.chip",
+                 "layers": [ { "asset": "a", "fit": "stretch", "opacity": 1.5 } ] } ],
+                 "assets": { "a": "a.png" } }"##,
+        );
+        let problems = storyboard.validate().expect_err("refused");
+        assert!(
+            problems.iter().any(|p| p.problem.contains("fit")),
+            "{problems:?}"
+        );
+        assert!(
+            problems.iter().any(|p| p.problem.contains("opacity")),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn validation_refuses_a_number_that_is_not_finite() {
+        // JSON cannot carry a NaN or an infinity; a program building the
+        // document can, so the check is on the struct a program writes.
+        let mut storyboard = board(
+            r##"{ "scenes": [ { "preset": "funcut.chapter.chip",
+                 "layers": [ { "asset": "a", "scale": 1.0 } ] } ],
+                 "assets": { "a": "a.png" } }"##,
+        );
+        storyboard.scenes[0].layers[0].scale = Some(f64::INFINITY);
+        let problems = storyboard.validate().expect_err("refused");
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.problem.contains("scale") && p.problem.contains("finite")),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn validation_refuses_a_scene_naming_both_a_preset_and_a_comp() {
+        let storyboard = board(
+            r##"{ "scenes": [ { "preset": "funcut.chapter.chip", "comp": "mine.json" } ] }"##,
+        );
+        let problems = storyboard.validate().expect_err("refused");
+        assert!(
+            problems.iter().any(|p| p.problem.contains("both")),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn a_valid_storyboard_validates_clean() {
+        let storyboard = board(
+            r##"{ "width": 1080, "height": 1920, "fps": 30,
+                 "assets": { "back": "assets/back.png", "score": "assets/score.wav" },
+                 "scenes": [
+                   { "preset": "funcut.sting.wordmark", "hold": 4.0,
+                     "layers": [ { "asset": "back", "zoom": 0.04, "blend": "screen",
+                                   "fade_in": 0.4, "start": 0.0, "opacity": 0.9 } ] } ],
+                 "audio": [ { "asset": "score", "gain_db": -2.0 } ] }"##,
+        );
+        assert_eq!(storyboard.validate(), Ok(()));
     }
 
     #[test]

@@ -36,6 +36,7 @@ says so in every reply, and docs/VLM.md says so in bold.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 import platform
@@ -300,7 +301,21 @@ def _is_local(base: str):
         host = (urllib.parse.urlparse(base).hostname or "").lower()
     except Exception:
         return False
-    return host in ("127.0.0.1", "localhost", "::1", "0.0.0.0") or host.endswith(".local")
+    if not host:
+        return False
+    # The whole of 127.0.0.0/8 - not just .0.0.1 - and every IPv6 form
+    # of loopback are loopback; a host that parses as an address is
+    # settled by the address, not by a name list that only knew four of
+    # them. `0.0.0.0` binds every interface and sends nothing out either.
+    try:
+        return ipaddress.ip_address(host).is_loopback or host == "0.0.0.0"
+    except ValueError:
+        pass
+    return (
+        host in ("localhost", "localhost.")
+        or host.endswith(".local")
+        or host.endswith(".localhost")
+    )
 
 
 def detect(timeout: float = 3.0):
@@ -560,7 +575,15 @@ def _server_alive(base: str):
 def start(profile: str = "mini", port: int = DEFAULT_PORT, progress=None):
     existing = detect()
     if existing:
-        return {**existing, "reused": True}
+        # The reply carries the masked key only: `detect()` keeps the raw
+        # one for this process's own calls, and it has no business landing
+        # in an agent's transcript - the invariant `status()` already
+        # keeps, which the reuse path used to miss.
+        return {
+            **{k: v for k, v in existing.items() if k != "key"},
+            "apiKey": _mask(existing.get("key")),
+            "reused": True,
+        }
     binary = server_binary(progress)
     model, mmproj = model_files(profile, progress)
     log_path = data_dir() / "llama-server.log"
@@ -619,13 +642,19 @@ def ask(prompt: str, images=None, endpoint=None, model=None, timeout=90.0,
     ep = endpoint or detect()
     if not ep:
         raise RuntimeError("no local vision endpoint")
-    base = ep["base"] if isinstance(ep, dict) else str(ep)
+    if isinstance(ep, str):
+        # A bare string is an OpenAI-compatible base URL - the CLI's own
+        # `--spec '{"endpoint": "http://..."}'` feeds one straight in -
+        # and the rest of this function speaks of endpoints as
+        # dictionaries. It used to crash on the first `.get`.
+        ep = {"type": "openai", "base": ep.rstrip("/")}
+    base = ep["base"]
     key = None
-    if isinstance(ep, dict) and ep.get("key"):
+    if ep.get("key"):
         key = ep["key"]
     elif os.environ.get("FUNCUT_VLM_API_KEY"):
         key = os.environ["FUNCUT_VLM_API_KEY"]
-    chosen = model or (ep.get("model") if isinstance(ep, dict) else None) or "local-model"
+    chosen = model or ep.get("model") or "local-model"
     content = [{"type": "text", "text": prompt}]
     for b64 in images or []:
         content.append({

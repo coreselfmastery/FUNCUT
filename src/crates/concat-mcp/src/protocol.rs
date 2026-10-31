@@ -172,16 +172,18 @@ impl Serving {
         }
         if self.read_only && !tool.read_only {
             // The one exception that keeps the creative loop whole: a
-            // read-only agent may still LOOK - motion_reel's plan and
-            // frame halves change nothing outside the project's cache,
-            // and refusing them takes away the only way to see a design
-            // before committing to it.
+            // read-only agent may still LOOK - motion_reel's plan, frame
+            // and sheet halves change nothing outside the project's
+            // cache, and refusing them takes away the only way to see a
+            // design before committing to it.
             let looks = tool.name == "motion_reel"
                 && (arguments.get("plan").and_then(Value::as_bool) == Some(true)
-                    || arguments.get("frame").and_then(Value::as_f64).is_some());
+                    || arguments.get("frame").and_then(Value::as_f64).is_some()
+                    || arguments.get("sheet").and_then(Value::as_bool) == Some(true));
             if !looks {
                 return Err(format!(
-                    "{} changes the project, and this server is read-only                      (CONCAT_MCP_READ_ONLY / --mcp-read-only)",
+                    "{} changes the project, and this server is read-only \
+                     (CONCAT_MCP_READ_ONLY / --mcp-read-only)",
                     tool.name
                 ));
             }
@@ -250,6 +252,30 @@ fn read(
         match std::io::Read::take(&mut input, MAX_LINE).read_until(b'\n', &mut bytes) {
             Ok(0) | Err(_) => return,
             Ok(_) => {}
+        }
+        // A line longer than the cap arrives as a chunk without its
+        // newline: answering it as a message would answer the same
+        // over-long line many times over, once per chunk, each a parse
+        // error about bytes that were never a message at all. It is
+        // answered once, named, and the rest of the line is discarded
+        // up to the newline that ends it - the session resynchronises
+        // instead of drowning.
+        if !bytes.ends_with(b"\n") {
+            // Discard the rest of the over-long line, up to and including
+            // the newline that ends it.
+            let mut rest = Vec::new();
+            let _ = input.read_until(b'\n', &mut rest);
+            output.send(&failure(
+                Value::Null,
+                code::PARSE,
+                &format!(
+                    "not JSON: the line is longer than the {} MiB the protocol carries \
+                     and was discarded",
+                    MAX_LINE / (1024 * 1024)
+                ),
+                None,
+            ));
+            continue;
         }
         // JSON is UTF-8. A line that is not is that line's mistake, not the
         // end of the session: `read_line` would fail the read itself and
@@ -417,7 +443,7 @@ impl Server {
         let scale = std::env::var("CONCAT_MCP_TIMEOUT_SCALE")
             .ok()
             .and_then(|value| value.parse::<f64>().ok())
-            .filter(|scale| (0.0..=1.0).contains(scale))
+            .filter(|scale| scale.is_finite() && *scale > 0.0 && *scale <= 1.0)
             .unwrap_or(1.0);
         let deadline = Duration::from_millis((limit as f64 * scale * 1000.0) as u64);
         let (reply_tx, reply_rx) = mpsc::channel::<Value>();

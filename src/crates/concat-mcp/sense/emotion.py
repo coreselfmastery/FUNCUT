@@ -542,7 +542,17 @@ def _fold_model_scores(ranking):
         label = str(entry.get("label", "")).lower()
         target = MODEL_LABEL_MAP.get(label)
         if target is not None:
-            folded[target] += max(0.0, float(entry.get("score", 0.0)))
+            # A score that is not a finite number - inf, nan, a string -
+            # is no evidence at all rather than an error... and never a
+            # NaN that escapes into json.dumps as invalid JSON the Rust
+            # side then refuses to parse.
+            try:
+                score = float(entry.get("score", 0.0))
+            except (TypeError, ValueError):
+                score = 0.0
+            if not (score == score and score not in (float("inf"), float("-inf"))):
+                score = 0.0
+            folded[target] += max(0.0, score)
     return folded
 
 
@@ -605,10 +615,19 @@ def _normalise_distribution(scores):
     No evidence at all is the definition of neutral: a uniform 1/7 would
     hand the line to whatever label sorts first, which is alphabet, not
     psychology."""
-    total = sum(v for v in scores.values() if v > 0)
-    if total <= 0:
+    # Non-finite scores are dropped rather than divided through: inf/inf
+    # is NaN, and NaN printed by json.dumps is invalid JSON the Rust side
+    # reads as "the tool returned no JSON" - the whole call lost to one
+    # stray model score.
+    finite = {
+        emotion: value
+        for emotion, value in scores.items()
+        if value == value and value not in (float("inf"), float("-inf"))
+    }
+    total = sum(v for v in finite.values() if v > 0)
+    if total <= 0 or not (total == total):
         return {emotion: (1.0 if emotion == "neutral" else 0.0) for emotion in EMOTIONS}
-    return {emotion: max(0.0, v) / total for emotion, v in scores.items()}
+    return {emotion: max(0.0, finite.get(emotion, 0.0)) / total for emotion in EMOTIONS}
 
 
 # ---------------------------------------------------------------------------
@@ -782,13 +801,16 @@ def _collect_lines(spec):
         for entry in spec["lines"]:
             if isinstance(entry, str):
                 lines.append({"text": entry})
-            elif isinstance(entry, dict) and str(entry.get("text", "")).strip():
+            elif isinstance(entry, dict) and str(entry.get("text") or "").strip():
+                # `or ""`, not a default: a `{"text": null}` line used to
+                # read as the literal string "None" and be analysed as a
+                # spoken line.
                 lines.append(entry)
         return lines
     transcript = spec.get("transcript")
     if isinstance(transcript, dict) and isinstance(transcript.get("segments"), list):
         segments = [s for s in transcript["segments"]
-                    if isinstance(s, dict) and str(s.get("text", "")).strip()]
+                    if isinstance(s, dict) and str(s.get("text") or "").strip()]
         if segments:
             return segments
     for key in ("script", "text"):

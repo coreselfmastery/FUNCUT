@@ -492,6 +492,12 @@ fn request(method: &str, mut params: Value) -> Result<concat_api::Request, ApiEr
 /// craft journal - and before this those writes went wherever an agent
 /// (or a prompt-injected agent) pointed them, which the setup table
 /// promises they cannot.
+///
+/// A backend with no roots - the window's - is not a licence for every
+/// path: the writes this layer makes locally are names under the project
+/// the tool was pointed at, never absolute routes, and an absolute path
+/// is refused here rather than clobbering whatever it named. The window's
+/// own refusal never sees these writes - they never leave this process.
 pub(crate) fn write_target(
     backend: &dyn Backend,
     base: Option<&Path>,
@@ -508,6 +514,12 @@ pub(crate) fn write_target(
     {
         return Err(invalid("the write path may not climb with `..`"));
     }
+    let roots = backend.roots();
+    if roots.is_empty() && given.is_absolute() {
+        return Err(invalid(
+            "the write path is a name under the project, not an absolute route out of it",
+        ));
+    }
     let target = if given.is_absolute() {
         given.to_path_buf()
     } else {
@@ -516,7 +528,6 @@ pub(crate) fn write_target(
             None => std::env::current_dir().map_err(failed)?.join(given),
         }
     };
-    let roots = backend.roots();
     if roots.is_empty() {
         return Ok(target);
     }
@@ -992,8 +1003,16 @@ pub fn craft_critique(arguments: Value, backend: &dyn Backend) -> Result<Outcome
         .get("brief")
         .cloned()
         .unwrap_or_else(|| load_brief(fields.get("project").and_then(Value::as_str)));
+    // The sheet arrives two ways: the whole reading object a render
+    // returned, or the bare pngPath string the reel contact sheet's reply
+    // names - the documented loop says the string, and the schema used to
+    // refuse it while the docs said to send it.
+    let sheet = match fields.get("sheet") {
+        Some(Value::String(path)) => json!({ "pngPath": path }),
+        other => other.cloned().unwrap_or(json!({})),
+    };
     let mut spec = json!({
-        "sheet": fields.get("sheet").cloned().unwrap_or(json!({})),
+        "sheet": sheet,
         "brief": brief,
         "autoSetup": fields.get("autoSetup").and_then(Value::as_bool).unwrap_or(false),
         "profile": fields.get("profile").cloned().unwrap_or(json!("mini")),
@@ -1347,10 +1366,18 @@ pub fn emotion(arguments: Value) -> Result<Outcome, ApiError> {
             .get("lines")
             .and_then(Value::as_array)
             .map_or(0, Vec::len);
-        let segments = fields
-            .get("transcript")
-            .and_then(Value::as_array)
-            .map_or(0, Vec::len);
+        // A transcript arrives two ways: a bare array, or the object the
+        // transcribe job returns with its segments inside - both count
+        // their segments, or a dict-shaped transcript of hundreds of
+        // lines was budgeted like an empty one and killed mid-batch.
+        let segments = match fields.get("transcript") {
+            Some(Value::Array(list)) => list.len(),
+            Some(Value::Object(map)) => map
+                .get("segments")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len),
+            _ => 0,
+        };
         90 + 8 * scripted.max(lined).max(segments) as u64
     } else {
         30

@@ -98,8 +98,9 @@ pub fn reading(png_path: &Path, duration: f64, at: &[f64]) -> Json {
         "duration": duration,
         "sampledAt": at,
         "note": "Four stills of the reel, a quarter in to near the end. Feed this to \
-                 craft_critique (its `sheet` takes the pngPath) against the creative \
-                 brief; a score under 7 is a revision, not a shrug.",
+                 craft_critique (its `sheet` takes this whole reading, or the pngPath \
+                 alone) against the creative brief; a score under 7 is a revision, \
+                 not a shrug.",
     })
 }
 

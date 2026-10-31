@@ -866,6 +866,11 @@ pub fn reel(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
     std::fs::create_dir_all(motion_dir(&project))
         .map_err(|error| ApiError::failed(format!("could not create motion/: {error}")))?;
     if let Some(crf) = fields.get("crf").and_then(Value::as_u64) {
+        if crf > 51 {
+            return Err(ApiError::invalid(format!(
+                "invalid arguments: `crf` is 0 to 51, not {crf}"
+            )));
+        }
         sequence_crf(&mut planned, crf as u8);
     }
 
@@ -932,6 +937,13 @@ pub fn reel(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
         );
         std::fs::write(&sheet_path, &bytes)
             .map_err(|error| ApiError::failed(format!("could not write the sheet: {error}")))?;
+        // The four stills were scaffolding for the tile, and the loop this
+        // serves runs again on every revision: a hash apiece, four
+        // full-resolution pictures left behind each time, is not a cache
+        // anyone asked for.
+        for frame in &frames {
+            let _ = std::fs::remove_file(frame);
+        }
         let inline = crate::sense::base64(&bytes);
         let reading = crate::sheet::reading(&sheet_path, planned.duration, &at);
         return Ok(Outcome {
@@ -960,7 +972,15 @@ pub fn reel(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
     // at its boundaries), so an edit to one scene re-renders that scene
     // and serves the rest - and an unchanged reel serves the join whole,
     // byte-identical, rendering nothing.
-    let crf = fields.get("crf").and_then(Value::as_u64).unwrap_or(18) as u8;
+    let crf = match fields.get("crf").and_then(Value::as_u64) {
+        Some(crf) if crf <= 51 => crf as u8,
+        Some(crf) => {
+            return Err(ApiError::invalid(format!(
+                "invalid arguments: `crf` is 0 to 51, not {crf}"
+            )));
+        }
+        None => 18,
+    };
     // The scene cache is shared across reels: a scene identical in two
     // reels is one entry, drawn once, wherever it appears.
     let scene_cache = cache_dir(&project).join("scenes");
@@ -975,6 +995,14 @@ pub fn reel(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
     }
     let mut reply = summary;
     reply["file"] = json!(out.display().to_string());
+    // The reel's own length and its own warnings, not the whole-board
+    // plan's: a board whose scenes overlap is joined flush by the cache,
+    // and the file is as long as the segments made it - the plan's number
+    // would describe a different reel than the one on the disk.
+    reply["duration"] = json!(report.duration);
+    let mut warnings = planned.warnings.clone();
+    warnings.extend(report.warnings.iter().cloned());
+    reply["warnings"] = json!(warnings);
     reply["cache"] = json!({
         "scenesDrawn": report.renders,
         "scenesServed": report.scenes.len() - report.renders,

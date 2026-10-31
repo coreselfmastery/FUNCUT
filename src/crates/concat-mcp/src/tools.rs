@@ -897,19 +897,46 @@ impl Tool {
     /// second time, per call, by the Geneva guard (see docs/MOTION.md),
     /// so a hanging sidecar is killed at its own limit and this table is
     /// the outer answer.
+    ///
+    /// Every limit here sits at or above the tool's own internal
+    /// deadline - the sense scripts' `kill_group` budgets, the VLM
+    /// download, the reel's per-call caps - so a healthy call is never
+    /// answered for at the limit while its work is still legitimately
+    /// running: the inner deadline is what names a stuck call, and this
+    /// is the net under a call whose inner deadline somehow never fires.
     pub fn timeout_secs(&self) -> u64 {
         const TRANSCRIBE: &[&str] = &["transcribe", "analysis_wait"];
-        const EXPORT: &[&str] = &["export_start", "export_wait"];
+        const EXPORT: &[&str] = &[
+            "export_start",
+            "export_wait",
+            // The sense family, whose own budgets are 240-480 s: a
+            // critique, a cut suggestion, a loudness pass, an emotion
+            // read, a contact sheet with its ranking.
+            "craft_critique",
+            "suggest_cuts",
+            "measure_loudness",
+            "emotion",
+            "stock_contact_sheet",
+        ];
         const RENDER: &[&str] = &[
             "motion_reel",
             "motion_bake",
             "motion_frame",
             "captions_animate",
-            "motion_overlay",
             "watch_render",
-            "stock_contact_sheet",
         ];
-        if TRANSCRIBE.contains(&self.name) {
+        const DEEP: &[&str] = &[
+            // The two whose own internal deadline is 900 s: the local
+            // VLM's model download and an overlay encode. Their outer
+            // bound sits above the inner one, so the inner deadline is
+            // what answers a genuinely stuck call - the outer net never
+            // cancels work that is still inside its own budget.
+            "local_vlm",
+            "motion_overlay",
+        ];
+        if DEEP.contains(&self.name) {
+            1200
+        } else if TRANSCRIBE.contains(&self.name) {
             900
         } else if EXPORT.contains(&self.name) {
             600
@@ -1230,7 +1257,10 @@ fn sense_schema(name: &str) -> Option<Value> {
             "profile": string("mini, image or minicpm."),
         }),
         "craft_critique" => json!({
-            "sheet": { "type": "object", "description": "The JSON watch_render or stock_contact_sheet returned; its pngPath is the image to judge." },
+            "sheet": {
+                "type": ["object", "string"],
+                "description": "The JSON watch_render or stock_contact_sheet returned; its pngPath is the image to judge. A bare pngPath string - as motion_reel's sheet reply names it - is accepted too.",
+            },
             "pngB64": string("A base64 PNG contact sheet, when `sheet` is not given."),
             "pngPath": string("A PNG file to judge, overriding the sheet's own pngPath."),
             "brief": { "type": "object", "description": "The creative brief; loaded from `project` when absent." },

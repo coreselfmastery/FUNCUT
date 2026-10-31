@@ -254,6 +254,16 @@ FFMPEG_BUILDS = {
 }
 FFMPEG_URL_BASE = "https://johnvansickle.com/ffmpeg/releases/"
 
+# The digests the bootstrap checks its download against, by asset name.
+# The site's "release" builds are replaced as FFmpeg releases, so a row
+# here is a pin somebody verified on the day they added it - download the
+# asset once, `sha256sum` it, and add the row (or name the digest through
+# FUNCUT_FFMPEG_SHA256 without a code change). An empty row means the
+# download is not digest-pinned; the size cap, the member filter and the
+# `-version` sanity run below still hold, and a mismatch against any
+# digest that IS named is a refusal, never "run it anyway".
+FFMPEG_SHA256 = {}
+
 
 def _app_dir():
     return Path(os.environ.get("FUNCUT_VLM_DIR", str(Path.home() / ".local" / "share" / "app.concat.editor")))
@@ -320,6 +330,21 @@ def _ensure_ffmpeg(spec):
                     raise RuntimeError("the ffmpeg bootstrap passed its size cap without ending")
                 if total:
                     print(f"[sense] ffmpeg: {done/1e6:.0f}/{total/1e6:.0f} MB", file=sys.stderr, flush=True)
+        # The archive's digest is checked before anything is extracted and
+        # executed: the row in FFMPEG_SHA256, or the one the operator
+        # named in FUNCUT_FFMPEG_SHA256 (the form a mirror or a pinned
+        # cache manager uses). A mirror that serves other bytes than the
+        # ones somebody looked at once is refused, and the sense layer
+        # falls back to the PATH ffmpeg - never "run it anyway".
+        import hashlib
+        digest = hashlib.sha256(part.read_bytes()).hexdigest()
+        want = FFMPEG_SHA256.get(asset) or os.environ.get("FUNCUT_FFMPEG_SHA256")
+        if want and digest != want.lower():
+            part.unlink(missing_ok=True)
+            raise RuntimeError(
+                "the ffmpeg bootstrap does not match its pinned sha256 "
+                f"(got {digest}); refusing to run it"
+            )
         part.rename(archive)
     with tarfile.open(archive) as t:
         for member in t.getmembers():
@@ -331,7 +356,18 @@ def _ensure_ffmpeg(spec):
                 dest.write_bytes(src.read())
                 dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     archive.unlink(missing_ok=True)
-    return str(root / "ffmpeg"), str(root / "ffprobe")
+    ffmpeg = str(root / "ffmpeg")
+    # What was extracted must actually be ffmpeg: a page mistaken for an
+    # archive, or a half-written member, stops here and the PATH fallback
+    # answers - the binaries are executed only after they say their own
+    # name, so the bootstrap never chmods-and-runs bytes it has not
+    # checked even once.
+    code, out, _ = _run([ffmpeg, "-version"], 20)
+    if code != 0 or b"ffmpeg version" not in out:
+        for name in ("ffmpeg", "ffprobe"):
+            (root / name).unlink(missing_ok=True)
+        raise RuntimeError("the ffmpeg bootstrap extracted a binary that is not ffmpeg")
+    return ffmpeg, str(root / "ffprobe")
 
 
 def _tools(spec):
@@ -372,6 +408,15 @@ def extract_frame(ff, path, at, w, h):
     if rc != 0 or len(out) < want:
         # Some inputs ignore -ss before -i (e.g. single images); retry output seek.
         cmd = [ff, "-v", "error", "-i", path, "-ss", f"{max(0.0, float(at)):.3f}",
+               "-frames:v", "1", "-vf", vf, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+        rc, out, err = _run(cmd)
+    if len(out) < want:
+        # A still image or a one-frame video decodes nothing at any seek
+        # past zero - both seek forms answer with an empty packet - so the
+        # last resort drops the seek and takes the one frame there is.
+        # Without it, a clip shorter than the default `at` of 1 s fails a
+        # whole contact sheet, and every still image does too.
+        cmd = [ff, "-v", "error", "-i", path,
                "-frames:v", "1", "-vf", vf, "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
         rc, out, err = _run(cmd)
     if len(out) < want:
@@ -940,20 +985,31 @@ def _clamp(v):
         return 5.0
 
 
+def _num(v, default=0.0):
+    """A number out of a caller-supplied JSON field, or the default: a
+    field that is null, a string, or anything else is the default rather
+    than a crash - the sheet is agent-shaped input, not ours."""
+    try:
+        f = float(v)
+        return f if f == f and f not in (float("inf"), float("-inf")) else default
+    except (TypeError, ValueError):
+        return default
+
+
 def heuristic(brief, sheet):
-    c = (sheet or {}).get("craft", {})
+    c = (sheet or {}).get("craft") or {}
     audio = (sheet or {}).get("audio") or {}
     tiles = (sheet or {}).get("tiles") or []
-    n = max(1, c.get("samples", 1))
-    distinct = c.get("distinctShots", n)
+    n = max(1, _num(c.get("samples"), 1))
+    distinct = _num(c.get("distinctShots"), n)
     variety = distinct / n
-    black_pen = c.get("blackFrames", 0) / n
-    bar_pen = c.get("letterboxedFrames", 0) / n
-    flat_pen = c.get("flatFrames", 0) / n
-    dup_pen = c.get("duplicateFrames", 0) / n
-    blown_pen = c.get("overexposedFrames", 0) / n
-    static_pen = c.get("staticTransitions", 0) / max(1, n - 1)
-    mean_sat = c.get("meanSaturation")
+    black_pen = _num(c.get("blackFrames")) / n
+    bar_pen = _num(c.get("letterboxedFrames")) / n
+    flat_pen = _num(c.get("flatFrames")) / n
+    dup_pen = _num(c.get("duplicateFrames")) / n
+    blown_pen = _num(c.get("overexposedFrames")) / n
+    static_pen = _num(c.get("staticTransitions")) / max(1, n - 1)
+    mean_sat = _num(c.get("meanSaturation"), None)
 
     hook = 6.2 + 1.6 * variety - 3.0 * black_pen - 2.0 * flat_pen
     # The hook lives or dies on the OPENING: a first frame that is black,
@@ -962,15 +1018,15 @@ def heuristic(brief, sheet):
     # what a 12-sample sheet can support.
     opening = tiles[0] if tiles else {}
     if opening:
-        if opening.get("blackFraction", 0) > 0.5 or opening.get("barRatio", 0) > 0.6:
+        if _num(opening.get("blackFraction")) > 0.5 or _num(opening.get("barRatio")) > 0.6:
             hook -= 1.5
-        elif opening.get("contrast", 99) < 12:
+        elif _num(opening.get("contrast"), 99) < 12:
             hook -= 0.8
     story = 5.6 + 1.2 * variety - 1.5 * dup_pen - 1.0 * max(0.0, static_pen - 0.5)
-    rhythm = 6.4 - 3.2 * static_pen + 0.5 * min(2.0, c.get("meanCutEnergy", 0))
+    rhythm = 6.4 - 3.2 * static_pen + 0.5 * min(2.0, _num(c.get("meanCutEnergy")))
     shot = 7.4 - 4.0 * black_pen - 2.5 * bar_pen - 2.5 * flat_pen - 1.5 * dup_pen - 2.0 * blown_pen
     design = (
-        6.1 - 2.2 * flat_pen - 1.2 * dup_pen + 0.8 * min(1.0, c.get("meanCutEnergy", 0))
+        6.1 - 2.2 * flat_pen - 1.2 * dup_pen + 0.8 * min(1.0, _num(c.get("meanCutEnergy")))
         - 0.8 * blown_pen
     )
     # Near-zero saturation across the whole sheet reads grey - but a
@@ -981,13 +1037,13 @@ def heuristic(brief, sheet):
     sound = 6.6
     loud = (audio or {}).get("loudness") or {}
     if audio:
-        sound -= 2.5 * max(0.0, audio.get("silenceFraction", 0) - 0.12)
-        sound -= 1.5 * max(0.0, 0.4 - audio.get("dynamicRange", 0.4))
+        sound -= 2.5 * max(0.0, _num(audio.get("silenceFraction")) - 0.12)
+        sound -= 1.5 * max(0.0, 0.4 - _num(audio.get("dynamicRange"), 0.4))
         if loud:
-            sound -= min(2.5, abs(loud.get("lufsError", 0.0)) / 3.0)
+            sound -= min(2.5, abs(_num(loud.get("lufsError"))) / 3.0)
             if not loud.get("platformTargetMet", True):
                 sound -= 0.5
-            if (loud.get("loudnessRangeLu") or 0) > 12.0:
+            if _num(loud.get("loudnessRangeLu")) > 12.0:
                 sound -= 0.5
         else:
             sound = min(sound, 5.5)  # unmeasured loudness is not "compliant"
@@ -1315,17 +1371,20 @@ def rank(spec):
     png_b64 = spec.get("pngB64") or sheet.get("pngB64")
     # Deterministic fallback: reward detail/contrast, punish bars and black,
     # and reward aesthetic/motion metadata when the index supplied it.
+    # Every field is read through `_num`/`or` guards: one metric that
+    # arrives as a string or null must cost its own term, not the whole
+    # ranking - the VLM branch is wrapped in try, this one used not to be.
     scored = []
     for t in tiles:
         m = t.get("metrics") or t
         s = 5.0
-        s += min(2.0, (m.get("detail", 0) or 0) / 6.0)
-        s += min(1.5, (m.get("contrast", 0) or 0) / 40.0)
-        s -= 3.0 * (m.get("barRatio", 0) or 0)
-        s -= 4.0 * (m.get("blackFraction", 0) or 0)
+        s += min(2.0, _num(m.get("detail")) / 6.0)
+        s += min(1.5, _num(m.get("contrast")) / 40.0)
+        s -= 3.0 * _num(m.get("barRatio"))
+        s -= 4.0 * _num(m.get("blackFraction"))
         if m.get("aesthetic") is not None:
-            s += max(-1.0, min(1.5, (float(m["aesthetic"]) - 3.5) / 2.0))
-        scored.append({"index": m.get("index", 0), "score": round(_clamp(s), 2),
+            s += max(-1.0, min(1.5, (_num(m.get("aesthetic"), 3.5) - 3.5) / 2.0))
+        scored.append({"index": int(_num(m.get("index"))), "score": round(_clamp(s), 2),
                        "why": "pixel quality (no vision model available)"})
     scored.sort(key=lambda r: -r["score"])
     base = {

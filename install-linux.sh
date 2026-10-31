@@ -93,27 +93,62 @@ command -v curl >/dev/null 2>&1 && CURL="yes"
 # repository is enough.
 GH_TOKEN_VALUE="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
 
+# The token never rides the command line: argv is world-readable through
+# /proc and `ps`, and a header on argv would leak it for as long as the
+# release listing and the ~100 MB download run. It travels in a config
+# file instead - 600, made once up front, removed by the exit trap -
+# which curl reads with -K and wget through WGETRC. It is made before
+# the first fetch because `fetch` is called inside command substitutions
+# (the release listings), where nothing it set would survive.
+AUTH_CONF=""
+TMP=""
+cleanup() {
+    [ -n "$TMP" ] && rm -rf "$TMP"
+    [ -n "$AUTH_CONF" ] && rm -f "$AUTH_CONF"
+    return 0
+}
+trap cleanup EXIT
+
+if [ -n "$GH_TOKEN_VALUE" ]; then
+    AUTH_CONF=$(mktemp "${TMPDIR:-/tmp}/concat-install.XXXXXX") ||
+        die "could not make a private scratch file for the token"
+    chmod 600 "$AUTH_CONF"
+    {
+        printf 'header = "Authorization: Bearer %s"\n' "$GH_TOKEN_VALUE"
+        printf 'header = "Accept: application/vnd.github+json"\n'
+    } >"$AUTH_CONF"
+fi
+
 # fetch URL DEST [auth] - the file at URL into DEST, or to stdout when
 # DEST is "-". Curl where there is curl, wget where there is not; either
 # way, quiet on success, loud on failure, and three tries at the network.
-# The third word, `auth`, sends the token above with this one request.
+# The third word, `auth`, sends the token above with this one request -
+# through the config file, never through argv.
 fetch() {
-    local auth_header=()
-    if [ "${3:-}" = "auth" ] && [ -n "$GH_TOKEN_VALUE" ]; then
-        auth_header=(-H "Authorization: Bearer $GH_TOKEN_VALUE")
+    local conf=""
+    if [ "${3:-}" = "auth" ] && [ -n "$AUTH_CONF" ]; then
+        conf="$AUTH_CONF"
     fi
     if [ "$2" = "-" ]; then
         if [ -n "$CURL" ]; then
-            curl -fsSL --retry 3 ${auth_header[@]+"${auth_header[@]}"} -H 'Accept: application/vnd.github+json' "$1"
-        elif [ "${3:-}" = "auth" ] && [ -n "$GH_TOKEN_VALUE" ]; then
-            wget -qO- --header="Authorization: Bearer $GH_TOKEN_VALUE" "$1"
+            if [ -n "$conf" ]; then
+                curl -fsSL --retry 3 -K "$conf" "$1"
+            else
+                curl -fsSL --retry 3 -H 'Accept: application/vnd.github+json' "$1"
+            fi
+        elif [ -n "$conf" ]; then
+            WGETRC="$conf" wget -qO- "$1"
         else
             wget -qO- "$1"
         fi
     elif [ -n "$CURL" ]; then
-        curl -fsSL --retry 3 ${auth_header[@]+"${auth_header[@]}"} -H 'Accept: application/vnd.github+json' -o "$2" "$1"
-    elif [ "${3:-}" = "auth" ] && [ -n "$GH_TOKEN_VALUE" ]; then
-        wget -q --header="Authorization: Bearer $GH_TOKEN_VALUE" -O "$2" "$1"
+        if [ -n "$conf" ]; then
+            curl -fsSL --retry 3 -K "$conf" -o "$2" "$1"
+        else
+            curl -fsSL --retry 3 -H 'Accept: application/vnd.github+json' -o "$2" "$1"
+        fi
+    elif [ -n "$conf" ]; then
+        WGETRC="$conf" wget -q -O "$2" "$1"
     else
         wget -q -O "$2" "$1"
     fi
@@ -282,8 +317,10 @@ it may be refused (check its access and expiry), or the network is down"
         if [ "$repo" = "$REPO" ]; then
             say "  its releases could not be read: the anonymous API is
   refused there - a private repository, or a rate-limited network. A
-  token fixes both: GITHUB_TOKEN=github_pat_... $0
-  (a fine-grained token with read access to this repository is enough)"
+  token fixes both: export GITHUB_TOKEN first
+  (a fine-grained token with read access to this repository is enough),
+  then run this installer again - the token is never passed on the
+  command line, where ps and shell history would read it"
         else
             say "  none readable there"
         fi
@@ -364,7 +401,6 @@ say "found: $ASSET_NAME (from $FROM_REPO)"
 
 # ── download, check, install ──────────────────────────────────────────
 TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
 say "downloading ..."
 # The token rides this download when the file belongs to the repository
 # it was found on - a private one refuses the anonymous download too -

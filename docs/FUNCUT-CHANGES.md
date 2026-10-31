@@ -1097,7 +1097,8 @@ exits live - tiles them into one 2x2 image in the server itself (the
 second pass), and returns it as an inline image **and** as `pngPath`
 under the project's `cache/sense/`, which is exactly the argument
 `craft_critique` takes. The loop is then: `motion_reel {sheet: true}`
-→ `craft_critique {sheet: pngPath, brief}` → revise what scores under
+→ `craft_critique {sheet: pngPath, brief}` (the bare path string, or
+the whole reading object - both are accepted) → revise what scores under
 7 → again. The funcut-director skill's design loop says so now, at the
 bake step: never ship an unscored reel.
 

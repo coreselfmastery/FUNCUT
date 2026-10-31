@@ -968,3 +968,35 @@ carries all three.
 **What it costs:** one `Option<f64>` on a struct that is built by hand
 or parsed once, and the rate arithmetic at emission - the layer's
 document stays what its author wrote.
+
+## 21. The card-or-scene router
+
+An agent chose between a motion card and a multi-layer scene by prompt,
+which nothing could test - the choice lived in a sentence a model wrote,
+and a four-second beat could become a five-layer scene nobody can read,
+quietly.
+
+`concat_motion::route` is the deterministic default. `route(duration_secs,
+beat_type)` - the beat types are the emotion read's seven acts - answers
+Card, Scene or Nested: under 5 s is a card; a hook or a CTA stays a card
+until 8 s, both being read at a glance; 5-15 s is a scene; over 15 s is
+a nested composition, an act of scenes within, except the hook and the
+CTA, which are each one beat however long the slot. A span that is not
+a finite positive number routes as the shortest answer rather than as
+whichever branch a NaN comparison fell through.
+
+The answer carries its reason: `Decision::taken_by_default` names the
+rule that fired, and the director's override rides along with the reason
+it was taken (`Decision::overridden`) - an override nobody can see the
+why of is a guess with confidence. The funcut-director skill's design
+loop now routes before it designs, and the override is the only way off
+the default.
+
+The matrix is tested cell by cell - every beat at 0.5, 4.99, 5.0, 7.99,
+8.0, 12.0, 15.0, 15.01 and 30.0 seconds - plus the NaN and the negative
+span, the reasons the rules fire, the override path, and the names the
+plan carries.
+
+**What it costs:** one new module of pure functions, no state, no
+engine; the agent calls it or reads its table, and the table is the
+code.

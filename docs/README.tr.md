@@ -3,16 +3,16 @@
 </p>
 
 <h1 align="center">Concat</h1>
-<h3 align="center">Ücretsiz, açık kaynaklı ve çok platformlu CapCut alternatifi.</h3>
+<h3 align="center">Linux için ücretsiz, açık kaynaklı CapCut alternatifi.</h3>
 
 <div align="center">
 
 <img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/editor.png" alt="Concat editor" width="100%" />
 
 <p align="center">
-  <a href="https://github.com/jub0t/Concat/releases"><img src="https://img.shields.io/github/downloads/jub0t/concat/total?style=flat&logo=github&logoColor=F8F8F8&label=Downloads&labelColor=212123&color=0568FD" alt="Total Downloads" /></a>
-  <a href="https://github.com/jub0t/Concat/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/jub0t/Concat/ci.yml?style=flat&logo=githubactions&logoColor=F8F8F8&label=Build&labelColor=000000" alt="Build Status" /></a>
-  <a href="https://github.com/jub0t/Concat/releases"><img src="https://img.shields.io/badge/Version-0.2.8-0568FD?style=flat&logo=semver&logoColor=F8F8F8&labelColor=212123" alt="Concat Version 0.2.8" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/github/downloads/coreselfmastery/FUNCUT/total?style=flat&logo=github&logoColor=F8F8F8&label=Downloads&labelColor=212123&color=0568FD" alt="Total Downloads" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/coreselfmastery/FUNCUT/ci.yml?style=flat&logo=githubactions&logoColor=F8F8F8&label=Build&labelColor=000000" alt="Build Status" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/badge/Version-0.2.8-0568FD?style=flat&logo=semver&logoColor=F8F8F8&labelColor=212123" alt="Concat Version 0.2.8" /></a>
   <a href="https://discord.gg/DVuPfpXfqP"><img src="https://img.shields.io/badge/Discord-Join%20the%20server-5865F2?style=flat&logo=discord&logoColor=F8F8F8&labelColor=000000" alt="Join Concat Discord" /></a>
   <a href="../LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-0568FD?style=flat&logo=gnu&logoColor=F8F8F8&labelColor=212123" alt="License: AGPL-3.0-or-later" /></a>
 </p>
@@ -26,18 +26,6 @@
 [🇬🇧 English](../README.md) · [🇩🇪 Deutsch](README.de.md) · [🇪🇸 Español](README.es.md) · [🇫🇷 Français](README.fr.md) · [🇮🇹 Italiano](README.it.md) · [🇳🇱 Nederlands](README.nl.md) · [🇵🇱 Polski](README.pl.md) · [🇧🇷 Português (Brasil)](README.pt-BR.md) · [🇷🇺 Русский](README.ru.md) · [🇺🇦 Українська](README.uk.md) · **🇹🇷 Türkçe** · [🇦🇿 Azərbaycanca](README.az.md) · [🇭🇷 Hrvatski](README.hr.md) · [🇮🇩 Bahasa Indonesia](README.id.md) · [🇻🇳 Tiếng Việt](README.vi.md) · [🇹🇭 ไทย](README.th.md) · [🇯🇵 日本語](README.ja.md) · [🇰🇷 한국어](README.ko.md) · [🇨🇳 简体中文](README.zh-Hans.md) · [🇹🇼 繁體中文](README.zh-TW.md) · [🇸🇦 العربية](README.ar.md) · [🇮🇱 עברית](README.he.md) · [🇮🇷 فارسی](README.fa.md) · [🇮🇳 हिन्दी](README.hi.md) · [🇵🇰 اردو](README.ur.md) · [🇧🇩 বাংলা](README.bn.md)
 
 > İngilizce README’den 11 Ekim 2026’da çevrildi. Güncel tutulan sürüm İngilizce olandır.
-
-## Ücretli Sponsorlar
-
-<table width="100%">
-  <tr>
-    <td align="center">
-      <a href="https://proxyon.io/?ref=concat"><img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/proxyon_sponsor_logo.png" alt="Proxyon" width="80" /></a><br />
-      <a href="https://proxyon.io/?ref=concat"><b>Proxyon</b></a><br />
-      <sub>Geliştiriciler için kullandıkça öde proxy’ler<br /><code>JUB0T</code> koduyla %20 indirim</sub>
-    </td>
-  </tr>
-</table>
 
 </div>
 
@@ -75,7 +63,7 @@ Her şey, GPU birleştiricili yerel bir Rust motorunda yerel olarak çalışır.
 İki yol var:
 
 1. **[Web sitesi](https://concatenate.pages.dev/#download)** makineniz için doğru derlemeyi verir. Buradan başlayın.
-2. **[GitHub Releases](https://github.com/jub0t/Concat/releases)** her platform için her derlemeyi kurucular, paketler ve sağlama toplamlarıyla sunar. Kendiniz seçmek istediğinizde.
+2. **[GitHub Releases](https://github.com/coreselfmastery/FUNCUT/releases)** her platform için her derlemeyi kurucular, paketler ve sağlama toplamlarıyla sunar. Kendiniz seçmek istediğinizde.
 
 Concat **beta** aşamasında: çalışıyor, ama hâlâ pürüzleri var. Bir tane bulduğunuzda [söyleyin](https://github.com/jub0t/Concat/issues).
 
@@ -92,7 +80,7 @@ Concat **beta** aşamasında: çalışıyor, ama hâlâ pürüzleri var. Bir tan
 ## Nasıl katkıda bulunulur
 
 > [!IMPORTANT]
-> Katkıda bulunmanın en iyi yolu [Releases](https://github.com/jub0t/Concat/releases) sayfasından bir derleme alıp kullanmaktır: nerede bozulduğunu bulun ve nerede daha iyi olabileceğini söyleyin.
+> Katkıda bulunmanın en iyi yolu [Releases](https://github.com/coreselfmastery/FUNCUT/releases) sayfasından bir derleme alıp kullanmaktır: nerede bozulduğunu bulun ve nerede daha iyi olabileceğini söyleyin.
 >
 > Kod yazmaya hazır mısınız? [CONTRIBUTING.md](../CONTRIBUTING.md) kurulumu, ağacın düzenini, çalıştırılacak denetimleri ve katkıların nasıl lisanslandığını anlatır. Concat’i bir betikten, servisten ya da ajandan mı sürüyorsunuz? [Geliştirici belgeleri](https://concatenate.pages.dev/docs) Concat API’sini ve taşıyıcılarını anlatır: JSON-RPC ve gRPC. Proje [bu tartışmada](https://github.com/jub0t/Concat/discussions/3) duyuruldu.
 > 
@@ -112,4 +100,4 @@ Concat **beta** aşamasında: çalışıyor, ama hâlâ pürüzleri var. Bir tan
 
 ## DMCA
 
-Bu depodaki, sürümlerindeki ya da dağıttığı bir paket veya modeldeki bir şeyin telif hakkınızı ihlal ettiğini düşünüyorsanız [jub0trd@gmail.com](mailto:jub0trd@gmail.com) adresine şunları içeren bir e-posta gönderin: sahibi olduğunuz eserin açıklaması, ihlal eden içeriğin burada göründüğü yerin bağlantısı, iletişim bilgileriniz, kullanıma sizin, temsilcinizin ya da yasanın izin vermediğine iyi niyetle inandığınızı belirten bir beyan ve yalan beyanın cezai sorumluluğunu üstlenerek bildirimin doğru olduğunu ve hak sahibi ya da onun adına hareket etmeye yetkili olduğunuzu belirten, fiziksel veya elektronik imzanızı taşıyan bir beyan. Geçerli bildirimler hızla işleme alınır ve içeriği kaldırılan herkes aynı adrese karşı bildirim gönderebilir.
+If you believe something in this repository, its releases, or a package or model it distributes infringes your copyright, send a notice through [GitHub's DMCA takedown process](https://docs.github.com/en/site-policy/content-removal-policies/dmca-takedown-policy), which covers this repository's content and releases; a valid notice is acted on through that process. Material this repository inherits from upstream Concat can also be reported to upstream at jub0trd@gmail.com, the address upstream's README publishes for the purpose.

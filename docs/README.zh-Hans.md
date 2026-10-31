@@ -3,16 +3,16 @@
 </p>
 
 <h1 align="center">Concat</h1>
-<h3 align="center">免费、开源、跨平台的 CapCut 替代品。</h3>
+<h3 align="center">面向 Linux 的免费、开源 CapCut 替代品。</h3>
 
 <div align="center">
 
 <img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/editor.png" alt="Concat editor" width="100%" />
 
 <p align="center">
-  <a href="https://github.com/jub0t/Concat/releases"><img src="https://img.shields.io/github/downloads/jub0t/concat/total?style=flat&logo=github&logoColor=F8F8F8&label=Downloads&labelColor=212123&color=0568FD" alt="Total Downloads" /></a>
-  <a href="https://github.com/jub0t/Concat/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/jub0t/Concat/ci.yml?style=flat&logo=githubactions&logoColor=F8F8F8&label=Build&labelColor=000000" alt="Build Status" /></a>
-  <a href="https://github.com/jub0t/Concat/releases"><img src="https://img.shields.io/badge/Version-0.2.8-0568FD?style=flat&logo=semver&logoColor=F8F8F8&labelColor=212123" alt="Concat Version 0.2.8" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/github/downloads/coreselfmastery/FUNCUT/total?style=flat&logo=github&logoColor=F8F8F8&label=Downloads&labelColor=212123&color=0568FD" alt="Total Downloads" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/coreselfmastery/FUNCUT/ci.yml?style=flat&logo=githubactions&logoColor=F8F8F8&label=Build&labelColor=000000" alt="Build Status" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/badge/Version-0.2.8-0568FD?style=flat&logo=semver&logoColor=F8F8F8&labelColor=212123" alt="Concat Version 0.2.8" /></a>
   <a href="https://discord.gg/DVuPfpXfqP"><img src="https://img.shields.io/badge/Discord-Join%20the%20server-5865F2?style=flat&logo=discord&logoColor=F8F8F8&labelColor=000000" alt="Join Concat Discord" /></a>
   <a href="../LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-0568FD?style=flat&logo=gnu&logoColor=F8F8F8&labelColor=212123" alt="License: AGPL-3.0-or-later" /></a>
 </p>
@@ -26,18 +26,6 @@
 [🇬🇧 English](../README.md) · [🇩🇪 Deutsch](README.de.md) · [🇪🇸 Español](README.es.md) · [🇫🇷 Français](README.fr.md) · [🇮🇹 Italiano](README.it.md) · [🇳🇱 Nederlands](README.nl.md) · [🇵🇱 Polski](README.pl.md) · [🇧🇷 Português (Brasil)](README.pt-BR.md) · [🇷🇺 Русский](README.ru.md) · [🇺🇦 Українська](README.uk.md) · [🇹🇷 Türkçe](README.tr.md) · [🇦🇿 Azərbaycanca](README.az.md) · [🇭🇷 Hrvatski](README.hr.md) · [🇮🇩 Bahasa Indonesia](README.id.md) · [🇻🇳 Tiếng Việt](README.vi.md) · [🇹🇭 ไทย](README.th.md) · [🇯🇵 日本語](README.ja.md) · [🇰🇷 한국어](README.ko.md) · **🇨🇳 简体中文** · [🇹🇼 繁體中文](README.zh-TW.md) · [🇸🇦 العربية](README.ar.md) · [🇮🇱 עברית](README.he.md) · [🇮🇷 فارسی](README.fa.md) · [🇮🇳 हिन्दी](README.hi.md) · [🇵🇰 اردو](README.ur.md) · [🇧🇩 বাংলা](README.bn.md)
 
 > 译自 2026 年 10 月 11 日的英文 README。以英文版为准，它才是持续更新的版本。
-
-## 付费赞助商
-
-<table width="100%">
-  <tr>
-    <td align="center">
-      <a href="https://proxyon.io/?ref=concat"><img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/proxyon_sponsor_logo.png" alt="Proxyon" width="80" /></a><br />
-      <a href="https://proxyon.io/?ref=concat"><b>Proxyon</b></a><br />
-      <sub>面向开发者的按量付费代理<br />使用代码 <code>JUB0T</code> 享 20 % 折扣</sub>
-    </td>
-  </tr>
-</table>
 
 </div>
 
@@ -75,7 +63,7 @@ Concat 是一款免费、开源的视频编辑器，是 Linux上的 CapCut 替�
 两个入口：
 
 1. **[官网](https://concatenate.pages.dev/#download)** 会给您适合您机器的版本。从这里开始。
-2. **[GitHub Releases](https://github.com/jub0t/Concat/releases)** 有每个平台的每个版本，附带安装程序、软件包和校验和。想自己挑选时用它。
+2. **[GitHub Releases](https://github.com/coreselfmastery/FUNCUT/releases)** 有每个平台的每个版本，附带安装程序、软件包和校验和。想自己挑选时用它。
 
 Concat 处于 **测试版**：能用，但还有毛边。遇到了请 [告诉我们](https://github.com/jub0t/Concat/issues)。
 
@@ -92,7 +80,7 @@ Concat 处于 **测试版**：能用，但还有毛边。遇到了请 [告诉我
 ## 如何贡献
 
 > [!IMPORTANT]
-> 最好的贡献方式是从 [Releases](https://github.com/jub0t/Concat/releases) 页面拿一个版本来用：找到它哪里会坏，说出它哪里可以更好。
+> 最好的贡献方式是从 [Releases](https://github.com/coreselfmastery/FUNCUT/releases) 页面拿一个版本来用：找到它哪里会坏，说出它哪里可以更好。
 >
 > 准备写代码了？[CONTRIBUTING.md](../CONTRIBUTING.md) 介绍了环境搭建、目录结构、要运行的检查以及贡献的许可方式。要从脚本、服务或代理驱动 Concat？[开发者文档](https://concatenate.pages.dev/docs) 介绍了 Concat API 及其传输方式：JSON-RPC 和 gRPC。项目在 [这个 Discussion](https://github.com/jub0t/Concat/discussions/3) 里发布。
 > 
@@ -112,4 +100,4 @@ Concat 处于 **测试版**：能用，但还有毛边。遇到了请 [告诉我
 
 ## DMCA
 
-如果您认为本仓库、其发布版本，或其分发的某个软件包或模型中的内容侵犯了您的版权，请发送邮件至 [jub0trd@gmail.com](mailto:jub0trd@gmail.com)，并附上：对您拥有的作品的描述；侵权内容在此处出现位置的链接；您的联系方式；一份声明，表明您善意地相信该使用未获得您、您的代理人或法律的授权；以及一份在承担伪证罪责任的前提下作出的声明，表明通知内容准确无误，且您是权利人或经授权代表权利人行事，并附有您的手写签名或电子签名。有效的通知会得到及时处理；任何内容被移除的人，都可以向同一地址发送反通知。
+If you believe something in this repository, its releases, or a package or model it distributes infringes your copyright, send a notice through [GitHub's DMCA takedown process](https://docs.github.com/en/site-policy/content-removal-policies/dmca-takedown-policy), which covers this repository's content and releases; a valid notice is acted on through that process. Material this repository inherits from upstream Concat can also be reported to upstream at jub0trd@gmail.com, the address upstream's README publishes for the purpose.

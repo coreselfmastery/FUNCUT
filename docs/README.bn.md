@@ -3,16 +3,16 @@
 </p>
 
 <h1 align="center">Concat</h1>
-<h3 align="center">বিনামূল্যের, ওপেন-সোর্স ও ক্রস-প্ল্যাটফর্ম CapCut-এর বিকল্প।</h3>
+<h3 align="center">লিনাক্সের জন্য বিনামূল্যের, ওপেন-সোর্স CapCut-এর বিকল্প।</h3>
 
 <div align="center">
 
 <img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/editor.png" alt="Concat editor" width="100%" />
 
 <p align="center">
-  <a href="https://github.com/jub0t/Concat/releases"><img src="https://img.shields.io/github/downloads/jub0t/concat/total?style=flat&logo=github&logoColor=F8F8F8&label=Downloads&labelColor=212123&color=0568FD" alt="Total Downloads" /></a>
-  <a href="https://github.com/jub0t/Concat/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/jub0t/Concat/ci.yml?style=flat&logo=githubactions&logoColor=F8F8F8&label=Build&labelColor=000000" alt="Build Status" /></a>
-  <a href="https://github.com/jub0t/Concat/releases"><img src="https://img.shields.io/badge/Version-0.2.8-0568FD?style=flat&logo=semver&logoColor=F8F8F8&labelColor=212123" alt="Concat Version 0.2.8" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/github/downloads/coreselfmastery/FUNCUT/total?style=flat&logo=github&logoColor=F8F8F8&label=Downloads&labelColor=212123&color=0568FD" alt="Total Downloads" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/coreselfmastery/FUNCUT/ci.yml?style=flat&logo=githubactions&logoColor=F8F8F8&label=Build&labelColor=000000" alt="Build Status" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/badge/Version-0.2.8-0568FD?style=flat&logo=semver&logoColor=F8F8F8&labelColor=212123" alt="Concat Version 0.2.8" /></a>
   <a href="https://discord.gg/DVuPfpXfqP"><img src="https://img.shields.io/badge/Discord-Join%20the%20server-5865F2?style=flat&logo=discord&logoColor=F8F8F8&labelColor=000000" alt="Join Concat Discord" /></a>
   <a href="../LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-0568FD?style=flat&logo=gnu&logoColor=F8F8F8&labelColor=212123" alt="License: AGPL-3.0-or-later" /></a>
 </p>
@@ -26,18 +26,6 @@
 [🇬🇧 English](../README.md) · [🇩🇪 Deutsch](README.de.md) · [🇪🇸 Español](README.es.md) · [🇫🇷 Français](README.fr.md) · [🇮🇹 Italiano](README.it.md) · [🇳🇱 Nederlands](README.nl.md) · [🇵🇱 Polski](README.pl.md) · [🇧🇷 Português (Brasil)](README.pt-BR.md) · [🇷🇺 Русский](README.ru.md) · [🇺🇦 Українська](README.uk.md) · [🇹🇷 Türkçe](README.tr.md) · [🇦🇿 Azərbaycanca](README.az.md) · [🇭🇷 Hrvatski](README.hr.md) · [🇮🇩 Bahasa Indonesia](README.id.md) · [🇻🇳 Tiếng Việt](README.vi.md) · [🇹🇭 ไทย](README.th.md) · [🇯🇵 日本語](README.ja.md) · [🇰🇷 한국어](README.ko.md) · [🇨🇳 简体中文](README.zh-Hans.md) · [🇹🇼 繁體中文](README.zh-TW.md) · [🇸🇦 العربية](README.ar.md) · [🇮🇱 עברית](README.he.md) · [🇮🇷 فارسی](README.fa.md) · [🇮🇳 हिन्दी](README.hi.md) · [🇵🇰 اردو](README.ur.md) · **🇧🇩 বাংলা**
 
 > ১১ অক্টোবর ২০২৬ তারিখের ইংরেজি README থেকে অনূদিত। ইংরেজি সংস্করণটিই নিয়মিত হালনাগাদ রাখা হয়।
-
-## পেইড স্পনসর
-
-<table width="100%">
-  <tr>
-    <td align="center">
-      <a href="https://proxyon.io/?ref=concat"><img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/proxyon_sponsor_logo.png" alt="Proxyon" width="80" /></a><br />
-      <a href="https://proxyon.io/?ref=concat"><b>Proxyon</b></a><br />
-      <sub>ডেভেলপারদের জন্য ব্যবহার-অনুযায়ী-মূল্যের প্রক্সি<br /><code>JUB0T</code> কোড ব্যবহার করলে ২০% ছাড়</sub>
-    </td>
-  </tr>
-</table>
 
 </div>
 
@@ -75,7 +63,7 @@ Concat হলো Linux-এর জন্য একটি বিনামূল্
 দুইভাবে পাওয়া যায়:
 
 1. **[ওয়েবসাইট](https://concatenate.pages.dev/#download)** আপনার মেশিনের জন্য ঠিক বিল্ডটি দিয়ে দেয়। এখান থেকেই শুরু করুন।
-2. **[GitHub Releases](https://github.com/jub0t/Concat/releases)** প্রতিটি প্ল্যাটফর্মের সব বিল্ড রাখে, ইনস্টলার, প্যাকেজ আর চেকসামসহ। যখন নিজে বেছে নিতে চান, তখনকার জন্য।
+2. **[GitHub Releases](https://github.com/coreselfmastery/FUNCUT/releases)** প্রতিটি প্ল্যাটফর্মের সব বিল্ড রাখে, ইনস্টলার, প্যাকেজ আর চেকসামসহ। যখন নিজে বেছে নিতে চান, তখনকার জন্য।
 
 Concat এখন **বেটা** পর্যায়ে: কাজ করে, তবে এখনো কিছু খুঁত আছে। কোনোটা পেলে [জানান](https://github.com/jub0t/Concat/issues)।
 
@@ -92,7 +80,7 @@ Concat এখন **বেটা** পর্যায়ে: কাজ করে,
 ## কীভাবে অবদান রাখবেন
 
 > [!IMPORTANT]
-> অবদান রাখার সবচেয়ে ভালো উপায় হলো [Releases](https://github.com/jub0t/Concat/releases) পেজ থেকে একটি বিল্ড নিয়ে ব্যবহার করা: কোথায় ভেঙে পড়ে খুঁজে বের করুন, আর কোথায় আরও ভালো হতে পারে বলুন।
+> অবদান রাখার সবচেয়ে ভালো উপায় হলো [Releases](https://github.com/coreselfmastery/FUNCUT/releases) পেজ থেকে একটি বিল্ড নিয়ে ব্যবহার করা: কোথায় ভেঙে পড়ে খুঁজে বের করুন, আর কোথায় আরও ভালো হতে পারে বলুন।
 >
 > কোড লিখতে প্রস্তুত? [CONTRIBUTING.md](../CONTRIBUTING.md)-এ সেটআপ, সোর্স ট্রির গঠন, কোন চেকগুলো চালাতে হবে, আর অবদানগুলো কোন লাইসেন্সে যায় তা লেখা আছে। স্ক্রিপ্ট, সার্ভিস বা এজেন্ট থেকে Concat চালাতে চান? [ডেভেলপার ডকস](https://concatenate.pages.dev/docs)-এ Concat API আর তার ট্রান্সপোর্টগুলোর কথা আছে: JSON-RPC ও gRPC। [এই Discussion](https://github.com/jub0t/Concat/discussions/3)-এ প্রজেক্টটির ঘোষণা দেওয়া হয়েছিল।
 > 
@@ -112,4 +100,4 @@ Concat এখন **বেটা** পর্যায়ে: কাজ করে,
 
 ## DMCA
 
-আপনি যদি মনে করেন যে এই রিপোজিটরি, এর রিলিজ, অথবা এর বিতরণ করা কোনো প্যাকেজ বা মডেলের কিছু আপনার কপিরাইট লঙ্ঘন করছে, তাহলে [jub0trd@gmail.com](mailto:jub0trd@gmail.com)-এ ইমেইল করুন এবং তাতে দিন: আপনার মালিকানাধীন কাজটির বিবরণ, লঙ্ঘনকারী উপাদান এখানে যেখানে আছে তার লিংক, আপনার যোগাযোগের তথ্য, এই মর্মে একটি বিবৃতি যে আপনি সরল বিশ্বাসে মনে করেন এই ব্যবহার আপনি, আপনার প্রতিনিধি বা আইন অনুমোদন করেনি, এবং মিথ্যা সাক্ষ্যের শাস্তির শর্তে এই মর্মে একটি বিবৃতি যে নোটিশটি সঠিক এবং আপনিই মালিক বা মালিকের পক্ষে কাজ করার জন্য অনুমোদিত, যাতে আপনার হাতে করা বা ইলেকট্রনিক স্বাক্ষর থাকবে। বৈধ নোটিশের ওপর দ্রুত ব্যবস্থা নেওয়া হয়, এবং যার উপাদান সরানো হয়েছে তিনি একই ঠিকানায় পাল্টা নোটিশ (counter-notice) পাঠাতে পারেন।
+If you believe something in this repository, its releases, or a package or model it distributes infringes your copyright, send a notice through [GitHub's DMCA takedown process](https://docs.github.com/en/site-policy/content-removal-policies/dmca-takedown-policy), which covers this repository's content and releases; a valid notice is acted on through that process. Material this repository inherits from upstream Concat can also be reported to upstream at jub0trd@gmail.com, the address upstream's README publishes for the purpose.

@@ -3,16 +3,16 @@
 </p>
 
 <h1 align="center">Concat</h1>
-<h3 align="center">Pengganti CapCut yang gratis, sumber terbuka, dan lintas platform.</h3>
+<h3 align="center">Pengganti CapCut yang gratis dan sumber terbuka untuk Linux.</h3>
 
 <div align="center">
 
 <img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/editor.png" alt="Concat editor" width="100%" />
 
 <p align="center">
-  <a href="https://github.com/jub0t/Concat/releases"><img src="https://img.shields.io/github/downloads/jub0t/concat/total?style=flat&logo=github&logoColor=F8F8F8&label=Downloads&labelColor=212123&color=0568FD" alt="Total Downloads" /></a>
-  <a href="https://github.com/jub0t/Concat/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/jub0t/Concat/ci.yml?style=flat&logo=githubactions&logoColor=F8F8F8&label=Build&labelColor=000000" alt="Build Status" /></a>
-  <a href="https://github.com/jub0t/Concat/releases"><img src="https://img.shields.io/badge/Version-0.2.8-0568FD?style=flat&logo=semver&logoColor=F8F8F8&labelColor=212123" alt="Concat Version 0.2.8" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/github/downloads/coreselfmastery/FUNCUT/total?style=flat&logo=github&logoColor=F8F8F8&label=Downloads&labelColor=212123&color=0568FD" alt="Total Downloads" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/coreselfmastery/FUNCUT/ci.yml?style=flat&logo=githubactions&logoColor=F8F8F8&label=Build&labelColor=000000" alt="Build Status" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/badge/Version-0.2.8-0568FD?style=flat&logo=semver&logoColor=F8F8F8&labelColor=212123" alt="Concat Version 0.2.8" /></a>
   <a href="https://discord.gg/DVuPfpXfqP"><img src="https://img.shields.io/badge/Discord-Join%20the%20server-5865F2?style=flat&logo=discord&logoColor=F8F8F8&labelColor=000000" alt="Join Concat Discord" /></a>
   <a href="../LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-0568FD?style=flat&logo=gnu&logoColor=F8F8F8&labelColor=212123" alt="License: AGPL-3.0-or-later" /></a>
 </p>
@@ -26,18 +26,6 @@
 [🇬🇧 English](../README.md) · [🇩🇪 Deutsch](README.de.md) · [🇪🇸 Español](README.es.md) · [🇫🇷 Français](README.fr.md) · [🇮🇹 Italiano](README.it.md) · [🇳🇱 Nederlands](README.nl.md) · [🇵🇱 Polski](README.pl.md) · [🇧🇷 Português (Brasil)](README.pt-BR.md) · [🇷🇺 Русский](README.ru.md) · [🇺🇦 Українська](README.uk.md) · [🇹🇷 Türkçe](README.tr.md) · [🇦🇿 Azərbaycanca](README.az.md) · [🇭🇷 Hrvatski](README.hr.md) · **🇮🇩 Bahasa Indonesia** · [🇻🇳 Tiếng Việt](README.vi.md) · [🇹🇭 ไทย](README.th.md) · [🇯🇵 日本語](README.ja.md) · [🇰🇷 한국어](README.ko.md) · [🇨🇳 简体中文](README.zh-Hans.md) · [🇹🇼 繁體中文](README.zh-TW.md) · [🇸🇦 العربية](README.ar.md) · [🇮🇱 עברית](README.he.md) · [🇮🇷 فارسی](README.fa.md) · [🇮🇳 हिन्दी](README.hi.md) · [🇵🇰 اردو](README.ur.md) · [🇧🇩 বাংলা](README.bn.md)
 
 > Diterjemahkan dari README bahasa Inggris pada 11 Oktober 2026. Versi bahasa Inggris adalah yang selalu diperbarui.
-
-## Sponsor Berbayar
-
-<table width="100%">
-  <tr>
-    <td align="center">
-      <a href="https://proxyon.io/?ref=concat"><img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/proxyon_sponsor_logo.png" alt="Proxyon" width="80" /></a><br />
-      <a href="https://proxyon.io/?ref=concat"><b>Proxyon</b></a><br />
-      <sub>Proxy bayar sesuai pemakaian untuk pengembang<br />Pakai kode <code>JUB0T</code> untuk diskon 20 %</sub>
-    </td>
-  </tr>
-</table>
 
 </div>
 
@@ -75,7 +63,7 @@ Semuanya berjalan lokal di mesin Rust native dengan kompositor GPU. Pasang, jatu
 Dua jalan masuk:
 
 1. **[Situs web](https://concatenate.pages.dev/#download)** memberi Anda build yang tepat untuk mesin Anda. Mulai dari sini.
-2. **[GitHub Releases](https://github.com/jub0t/Concat/releases)** punya setiap build untuk setiap platform, dengan pemasang, paket, dan checksum. Untuk saat Anda ingin memilih sendiri.
+2. **[GitHub Releases](https://github.com/coreselfmastery/FUNCUT/releases)** punya setiap build untuk setiap platform, dengan pemasang, paket, dan checksum. Untuk saat Anda ingin memilih sendiri.
 
 Concat masih **beta**: ia bekerja, dan masih ada sisi kasarnya. [Beri tahu](https://github.com/jub0t/Concat/issues) saat Anda menemukannya.
 
@@ -92,7 +80,7 @@ Concat masih **beta**: ia bekerja, dan masih ada sisi kasarnya. [Beri tahu](http
 ## Cara berkontribusi
 
 > [!IMPORTANT]
-> Cara terbaik berkontribusi adalah mengambil build dari halaman [Releases](https://github.com/jub0t/Concat/releases) dan memakainya: temukan di mana ia rusak, dan katakan di mana ia bisa lebih baik.
+> Cara terbaik berkontribusi adalah mengambil build dari halaman [Releases](https://github.com/coreselfmastery/FUNCUT/releases) dan memakainya: temukan di mana ia rusak, dan katakan di mana ia bisa lebih baik.
 >
 > Siap menulis kode? [CONTRIBUTING.md](../CONTRIBUTING.md) membahas penyiapan, tata letak pohon, pemeriksaan yang dijalankan, dan bagaimana kontribusi dilisensikan. Mengendalikan Concat dari skrip, layanan, atau agen? [Dokumentasi pengembang](https://concatenate.pages.dev/docs) membahas API Concat dan transportnya: JSON-RPC dan gRPC. [Diskusi ini](https://github.com/jub0t/Concat/discussions/3) adalah tempat proyek diumumkan.
 > 
@@ -112,4 +100,4 @@ Concat masih **beta**: ia bekerja, dan masih ada sisi kasarnya. [Beri tahu](http
 
 ## DMCA
 
-Jika Anda yakin ada sesuatu di repositori ini, di rilisnya, atau di paket maupun model yang didistribusikannya yang melanggar hak cipta Anda, kirim email ke [jub0trd@gmail.com](mailto:jub0trd@gmail.com) berisi deskripsi karya yang Anda miliki, tautan ke tempat materi yang melanggar itu muncul di sini, detail kontak Anda, pernyataan bahwa Anda dengan iktikad baik meyakini penggunaan tersebut tidak diizinkan oleh Anda, kuasa Anda, atau hukum, serta pernyataan, dengan ancaman sanksi atas sumpah palsu, bahwa pemberitahuan itu akurat dan bahwa Anda adalah pemilik atau berwenang bertindak atas nama pemilik, yang ditandatangani dengan tanda tangan fisik atau elektronik Anda. Pemberitahuan yang sah segera ditindaklanjuti, dan siapa pun yang materinya dihapus dapat mengirim pemberitahuan balasan (counter-notice) ke alamat yang sama.
+If you believe something in this repository, its releases, or a package or model it distributes infringes your copyright, send a notice through [GitHub's DMCA takedown process](https://docs.github.com/en/site-policy/content-removal-policies/dmca-takedown-policy), which covers this repository's content and releases; a valid notice is acted on through that process. Material this repository inherits from upstream Concat can also be reported to upstream at jub0trd@gmail.com, the address upstream's README publishes for the purpose.

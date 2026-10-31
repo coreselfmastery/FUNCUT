@@ -3,16 +3,16 @@
 </p>
 
 <h1 align="center">Concat</h1>
-<h3 align="center">התחליף החינמי, בקוד פתוח וחוצה פלטפורמות ל-CapCut.</h3>
+<h3 align="center">התחליף החינמי ובקוד פתוח ל-CapCut עבור לינוקס.</h3>
 
 <div align="center">
 
 <img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/editor.png" alt="Concat editor" width="100%" />
 
 <p align="center">
-  <a href="https://github.com/jub0t/Concat/releases"><img src="https://img.shields.io/github/downloads/jub0t/concat/total?style=flat&logo=github&logoColor=F8F8F8&label=Downloads&labelColor=212123&color=0568FD" alt="Total Downloads" /></a>
-  <a href="https://github.com/jub0t/Concat/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/jub0t/Concat/ci.yml?style=flat&logo=githubactions&logoColor=F8F8F8&label=Build&labelColor=000000" alt="Build Status" /></a>
-  <a href="https://github.com/jub0t/Concat/releases"><img src="https://img.shields.io/badge/Version-0.2.8-0568FD?style=flat&logo=semver&logoColor=F8F8F8&labelColor=212123" alt="Concat Version 0.2.8" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/github/downloads/coreselfmastery/FUNCUT/total?style=flat&logo=github&logoColor=F8F8F8&label=Downloads&labelColor=212123&color=0568FD" alt="Total Downloads" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/coreselfmastery/FUNCUT/ci.yml?style=flat&logo=githubactions&logoColor=F8F8F8&label=Build&labelColor=000000" alt="Build Status" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/badge/Version-0.2.8-0568FD?style=flat&logo=semver&logoColor=F8F8F8&labelColor=212123" alt="Concat Version 0.2.8" /></a>
   <a href="https://discord.gg/DVuPfpXfqP"><img src="https://img.shields.io/badge/Discord-Join%20the%20server-5865F2?style=flat&logo=discord&logoColor=F8F8F8&labelColor=000000" alt="Join Concat Discord" /></a>
   <a href="../LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-0568FD?style=flat&logo=gnu&logoColor=F8F8F8&labelColor=212123" alt="License: AGPL-3.0-or-later" /></a>
 </p>
@@ -26,18 +26,6 @@
 [🇬🇧 English](../README.md) · [🇩🇪 Deutsch](README.de.md) · [🇪🇸 Español](README.es.md) · [🇫🇷 Français](README.fr.md) · [🇮🇹 Italiano](README.it.md) · [🇳🇱 Nederlands](README.nl.md) · [🇵🇱 Polski](README.pl.md) · [🇧🇷 Português (Brasil)](README.pt-BR.md) · [🇷🇺 Русский](README.ru.md) · [🇺🇦 Українська](README.uk.md) · [🇹🇷 Türkçe](README.tr.md) · [🇦🇿 Azərbaycanca](README.az.md) · [🇭🇷 Hrvatski](README.hr.md) · [🇮🇩 Bahasa Indonesia](README.id.md) · [🇻🇳 Tiếng Việt](README.vi.md) · [🇹🇭 ไทย](README.th.md) · [🇯🇵 日本語](README.ja.md) · [🇰🇷 한국어](README.ko.md) · [🇨🇳 简体中文](README.zh-Hans.md) · [🇹🇼 繁體中文](README.zh-TW.md) · [🇸🇦 العربية](README.ar.md) · **🇮🇱 עברית** · [🇮🇷 فارسی](README.fa.md) · [🇮🇳 हिन्दी](README.hi.md) · [🇵🇰 اردو](README.ur.md) · [🇧🇩 বাংলা](README.bn.md)
 
 > תורגם מה-README האנגלי ב-11 באוקטובר 2026. הגרסה האנגלית היא זו שמתעדכנת.
-
-## נותני חסות בתשלום
-
-<table width="100%">
-  <tr>
-    <td align="center">
-      <a href="https://proxyon.io/?ref=concat"><img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/proxyon_sponsor_logo.png" alt="Proxyon" width="80" /></a><br />
-      <a href="https://proxyon.io/?ref=concat"><b>Proxyon</b></a><br />
-      <sub>פרוקסי בתשלום לפי שימוש למפתחים<br />עם הקוד <code>JUB0T</code> מקבלים 20 % הנחה</sub>
-    </td>
-  </tr>
-</table>
 
 </div>
 
@@ -75,7 +63,7 @@ Concat הוא עורך וידאו חינמי בקוד פתוח וחלופה ל-C
 שתי דרכים פנימה:
 
 1. **[האתר](https://concatenate.pages.dev/#download)** נותן לכם את הגרסה הנכונה למחשב שלכם. התחילו כאן.
-2. **[GitHub Releases](https://github.com/jub0t/Concat/releases)** מכיל כל גרסה לכל פלטפורמה, עם מתקינים, חבילות וסכומי ביקורת. למקרה שתרצו לבחור בעצמכם.
+2. **[GitHub Releases](https://github.com/coreselfmastery/FUNCUT/releases)** מכיל כל גרסה לכל פלטפורמה, עם מתקינים, חבילות וסכומי ביקורת. למקרה שתרצו לבחור בעצמכם.
 
 Concat נמצא ב**בטא**: הוא עובד, ועדיין יש לו קצוות. [ספרו](https://github.com/jub0t/Concat/issues) כשתמצאו אחד.
 
@@ -92,7 +80,7 @@ Concat נמצא ב**בטא**: הוא עובד, ועדיין יש לו קצוות
 ## איך לתרום
 
 > [!IMPORTANT]
-> הדרך הטובה ביותר לתרום היא לקחת גרסה מעמוד ה-[Releases](https://github.com/jub0t/Concat/releases) ולהשתמש בה: למצוא איפה היא נשברת, ולומר איפה היא יכולה להיות טובה יותר.
+> הדרך הטובה ביותר לתרום היא לקחת גרסה מעמוד ה-[Releases](https://github.com/coreselfmastery/FUNCUT/releases) ולהשתמש בה: למצוא איפה היא נשברת, ולומר איפה היא יכולה להיות טובה יותר.
 >
 > מוכנים לכתוב קוד? [CONTRIBUTING.md](../CONTRIBUTING.md) מכסה את ההתקנה, מבנה העץ, הבדיקות שצריך להריץ ואת רישוי התרומות. מפעילים את Concat מסקריפט, משירות או מסוכן? [תיעוד המפתחים](https://concatenate.pages.dev/docs) מכסה את ה-API של Concat ואת ערוצי התעבורה שלו: JSON-RPC ו-gRPC. [בדיון הזה](https://github.com/jub0t/Concat/discussions/3) הוכרז הפרויקט.
 > 
@@ -112,4 +100,4 @@ Concat נמצא ב**בטא**: הוא עובד, ועדיין יש לו קצוות
 
 ## DMCA
 
-אם אתם סבורים שמשהו במאגר הזה, בגרסאות שלו, או בחבילה או במודל שהוא מפיץ מפר את זכויות היוצרים שלכם, כתבו ל-[jub0trd@gmail.com](mailto:jub0trd@gmail.com) וצרפו: תיאור של היצירה שבבעלותכם; קישור למקום שבו החומר המפר מופיע כאן; פרטי התקשרות; הצהרה שאתם סבורים בתום לב שהשימוש אינו מורשה על ידיכם, על ידי מי שפועל מטעמכם או על פי דין; והצהרה, בכפוף לעונש על עדות שקר, שההודעה מדויקת ושאתם בעלי הזכויות או מוסמכים לפעול בשמם, חתומה בחתימתכם הידנית או האלקטרונית. הודעות תקפות מטופלות בהקדם, וכל מי שחומר שלו הוסר רשאי לשלוח הודעה נגדית לאותה כתובת.
+If you believe something in this repository, its releases, or a package or model it distributes infringes your copyright, send a notice through [GitHub's DMCA takedown process](https://docs.github.com/en/site-policy/content-removal-policies/dmca-takedown-policy), which covers this repository's content and releases; a valid notice is acted on through that process. Material this repository inherits from upstream Concat can also be reported to upstream at jub0trd@gmail.com, the address upstream's README publishes for the purpose.

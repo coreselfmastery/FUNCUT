@@ -3,16 +3,16 @@
 </p>
 
 <h1 align="center">Concat</h1>
-<h3 align="center">Lựa chọn thay thế CapCut miễn phí, mã nguồn mở và đa nền tảng.</h3>
+<h3 align="center">Lựa chọn thay thế CapCut miễn phí, mã nguồn mở cho Linux.</h3>
 
 <div align="center">
 
 <img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/editor.png" alt="Concat editor" width="100%" />
 
 <p align="center">
-  <a href="https://github.com/jub0t/Concat/releases"><img src="https://img.shields.io/github/downloads/jub0t/concat/total?style=flat&logo=github&logoColor=F8F8F8&label=Downloads&labelColor=212123&color=0568FD" alt="Total Downloads" /></a>
-  <a href="https://github.com/jub0t/Concat/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/jub0t/Concat/ci.yml?style=flat&logo=githubactions&logoColor=F8F8F8&label=Build&labelColor=000000" alt="Build Status" /></a>
-  <a href="https://github.com/jub0t/Concat/releases"><img src="https://img.shields.io/badge/Version-0.2.8-0568FD?style=flat&logo=semver&logoColor=F8F8F8&labelColor=212123" alt="Concat Version 0.2.8" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/github/downloads/coreselfmastery/FUNCUT/total?style=flat&logo=github&logoColor=F8F8F8&label=Downloads&labelColor=212123&color=0568FD" alt="Total Downloads" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/coreselfmastery/FUNCUT/ci.yml?style=flat&logo=githubactions&logoColor=F8F8F8&label=Build&labelColor=000000" alt="Build Status" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/badge/Version-0.2.8-0568FD?style=flat&logo=semver&logoColor=F8F8F8&labelColor=212123" alt="Concat Version 0.2.8" /></a>
   <a href="https://discord.gg/DVuPfpXfqP"><img src="https://img.shields.io/badge/Discord-Join%20the%20server-5865F2?style=flat&logo=discord&logoColor=F8F8F8&labelColor=000000" alt="Join Concat Discord" /></a>
   <a href="../LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-0568FD?style=flat&logo=gnu&logoColor=F8F8F8&labelColor=212123" alt="License: AGPL-3.0-or-later" /></a>
 </p>
@@ -26,18 +26,6 @@
 [🇬🇧 English](../README.md) · [🇩🇪 Deutsch](README.de.md) · [🇪🇸 Español](README.es.md) · [🇫🇷 Français](README.fr.md) · [🇮🇹 Italiano](README.it.md) · [🇳🇱 Nederlands](README.nl.md) · [🇵🇱 Polski](README.pl.md) · [🇧🇷 Português (Brasil)](README.pt-BR.md) · [🇷🇺 Русский](README.ru.md) · [🇺🇦 Українська](README.uk.md) · [🇹🇷 Türkçe](README.tr.md) · [🇦🇿 Azərbaycanca](README.az.md) · [🇭🇷 Hrvatski](README.hr.md) · [🇮🇩 Bahasa Indonesia](README.id.md) · **🇻🇳 Tiếng Việt** · [🇹🇭 ไทย](README.th.md) · [🇯🇵 日本語](README.ja.md) · [🇰🇷 한국어](README.ko.md) · [🇨🇳 简体中文](README.zh-Hans.md) · [🇹🇼 繁體中文](README.zh-TW.md) · [🇸🇦 العربية](README.ar.md) · [🇮🇱 עברית](README.he.md) · [🇮🇷 فارسی](README.fa.md) · [🇮🇳 हिन्दी](README.hi.md) · [🇵🇰 اردو](README.ur.md) · [🇧🇩 বাংলা](README.bn.md)
 
 > Dịch từ README tiếng Anh ngày 11 tháng 10 năm 2026. Bản tiếng Anh là bản được cập nhật thường xuyên.
-
-## Nhà tài trợ trả phí
-
-<table width="100%">
-  <tr>
-    <td align="center">
-      <a href="https://proxyon.io/?ref=concat"><img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/proxyon_sponsor_logo.png" alt="Proxyon" width="80" /></a><br />
-      <a href="https://proxyon.io/?ref=concat"><b>Proxyon</b></a><br />
-      <sub>Proxy trả theo mức dùng cho lập trình viên<br />Dùng mã <code>JUB0T</code> để giảm 20 %</sub>
-    </td>
-  </tr>
-</table>
 
 </div>
 
@@ -75,7 +63,7 @@ Mọi thứ chạy cục bộ trên engine Rust gốc với trình tổng hợp 
 Hai cách:
 
 1. **[Trang web](https://concatenate.pages.dev/#download)** đưa bạn đúng bản dựng cho máy của bạn. Bắt đầu từ đây.
-2. **[GitHub Releases](https://github.com/jub0t/Concat/releases)** có mọi bản dựng cho mọi nền tảng, kèm trình cài đặt, gói và checksum. Khi bạn muốn tự chọn.
+2. **[GitHub Releases](https://github.com/coreselfmastery/FUNCUT/releases)** có mọi bản dựng cho mọi nền tảng, kèm trình cài đặt, gói và checksum. Khi bạn muốn tự chọn.
 
 Concat đang ở giai đoạn **beta**: nó hoạt động, và vẫn còn vài góc cạnh. [Hãy cho biết](https://github.com/jub0t/Concat/issues) khi bạn gặp một lỗi.
 
@@ -92,7 +80,7 @@ Concat đang ở giai đoạn **beta**: nó hoạt động, và vẫn còn vài 
 ## Cách đóng góp
 
 > [!IMPORTANT]
-> Cách đóng góp tốt nhất là lấy một bản dựng từ trang [Releases](https://github.com/jub0t/Concat/releases) và dùng nó: tìm chỗ nó hỏng, và nói chỗ nó có thể tốt hơn.
+> Cách đóng góp tốt nhất là lấy một bản dựng từ trang [Releases](https://github.com/coreselfmastery/FUNCUT/releases) và dùng nó: tìm chỗ nó hỏng, và nói chỗ nó có thể tốt hơn.
 >
 > Sẵn sàng viết mã? [CONTRIBUTING.md](../CONTRIBUTING.md) mô tả cách thiết lập, bố cục cây mã nguồn, các kiểm tra cần chạy và cách cấp phép cho đóng góp. Điều khiển Concat từ script, dịch vụ hay tác nhân? [Tài liệu dành cho nhà phát triển](https://concatenate.pages.dev/docs) mô tả API của Concat và các phương thức truyền tải: JSON-RPC và gRPC. [Thảo luận này](https://github.com/jub0t/Concat/discussions/3) là nơi dự án được công bố.
 > 
@@ -112,4 +100,4 @@ Concat đang ở giai đoạn **beta**: nó hoạt động, và vẫn còn vài 
 
 ## DMCA
 
-Nếu bạn cho rằng nội dung nào đó trong kho mã này, trong các bản phát hành của nó, hoặc trong một gói hay mô hình mà nó phân phối vi phạm bản quyền của bạn, hãy gửi email tới [jub0trd@gmail.com](mailto:jub0trd@gmail.com) kèm theo: mô tả tác phẩm thuộc sở hữu của bạn, liên kết tới nơi tài liệu vi phạm xuất hiện tại đây, thông tin liên hệ của bạn, một tuyên bố rằng bạn tin một cách thiện chí rằng việc sử dụng đó không được bạn, người đại diện của bạn hoặc pháp luật cho phép, và một tuyên bố, chịu hình phạt về tội khai man, rằng thông báo là chính xác và bạn là chủ sở hữu hoặc được ủy quyền hành động thay mặt chủ sở hữu, có chữ ký tay hoặc chữ ký điện tử của bạn. Các thông báo hợp lệ sẽ được xử lý kịp thời, và bất kỳ ai có tài liệu bị gỡ bỏ đều có thể gửi thông báo phản đối (counter-notice) tới cùng địa chỉ này.
+If you believe something in this repository, its releases, or a package or model it distributes infringes your copyright, send a notice through [GitHub's DMCA takedown process](https://docs.github.com/en/site-policy/content-removal-policies/dmca-takedown-policy), which covers this repository's content and releases; a valid notice is acted on through that process. Material this repository inherits from upstream Concat can also be reported to upstream at jub0trd@gmail.com, the address upstream's README publishes for the purpose.

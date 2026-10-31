@@ -22,17 +22,19 @@
 > verified inventory — every tool, page, engine and model, read from the
 > source — is [docs/FEATURES.md](docs/FEATURES.md); the fork's change
 > ledger is [docs/FUNCUT-CHANGES.md](docs/FUNCUT-CHANGES.md), the
-> small-machine notes [docs/FUNCUT.md](docs/FUNCUT.md), and the agent
-> guide [docs/MCP.md](docs/MCP.md).
+> small-machine notes [docs/FUNCUT.md](docs/FUNCUT.md), the agent
+> guide [docs/MCP.md](docs/MCP.md), the small-machine measurements
+> [docs/PERFORMANCE.md](docs/PERFORMANCE.md), and every effect's
+> before-and-after card [docs/EFFECTS-GALLERY.md](docs/EFFECTS-GALLERY.md).
 
 <div align="center">
 
 <img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/editor.png" alt="Concat editor" width="100%" />
 
 <p align="center">
-  <a href="https://github.com/jub0t/Concat/releases"><img src="https://img.shields.io/github/downloads/jub0t/concat/total?style=flat&logo=github&logoColor=F8F8F8&label=Downloads&labelColor=212123&color=0568FD" alt="Total Downloads" /></a>
-  <a href="https://github.com/jub0t/Concat/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/jub0t/Concat/ci.yml?style=flat&logo=githubactions&logoColor=F8F8F8&label=Build&labelColor=000000" alt="Build Status" /></a>
-  <a href="https://github.com/jub0t/Concat/releases"><img src="https://img.shields.io/badge/Version-0.2.8-0568FD?style=flat&logo=semver&logoColor=F8F8F8&labelColor=212123" alt="Concat Version 0.2.8" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/github/downloads/coreselfmastery/FUNCUT/total?style=flat&logo=github&logoColor=F8F8F8&label=Downloads&labelColor=212123&color=0568FD" alt="Total Downloads" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/coreselfmastery/FUNCUT/ci.yml?style=flat&logo=githubactions&logoColor=F8F8F8&label=Build&labelColor=000000" alt="Build Status" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/badge/Version-0.2.8-0568FD?style=flat&logo=semver&logoColor=F8F8F8&labelColor=212123" alt="Concat Version 0.2.8" /></a>
   <a href="https://discord.gg/DVuPfpXfqP"><img src="https://img.shields.io/badge/Discord-Join%20the%20server-5865F2?style=flat&logo=discord&logoColor=F8F8F8&labelColor=000000" alt="Join Concat Discord" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-0568FD?style=flat&logo=gnu&logoColor=F8F8F8&labelColor=212123" alt="License: AGPL-3.0-or-later" /></a>
 </p>
@@ -40,22 +42,9 @@
 <p align="center">
   <a href="https://www.star-history.com/jub0t/concat"><img src="https://api.star-history.com/badge?repo=jub0t/concat&type=rank" alt="Star History Rank" height="62" /></a>
   <a href="https://trendshift.io/repositories/191379?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-191379" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/191379/daily?language=Rust" alt="jub0t%2FConcat | Trendshift" width="250" height="55"/></a>
-  <a href="https://concatenate.pages.dev/#download"><img src="assets/download_button.svg" alt="Download Concat" width="251" /></a>
 </p>
 
 **🇬🇧 English** · [🇩🇪 Deutsch](docs/README.de.md) · [🇪🇸 Español](docs/README.es.md) · [🇫🇷 Français](docs/README.fr.md) · [🇮🇹 Italiano](docs/README.it.md) · [🇳🇱 Nederlands](docs/README.nl.md) · [🇵🇱 Polski](docs/README.pl.md) · [🇧🇷 Português (Brasil)](docs/README.pt-BR.md) · [🇷🇺 Русский](docs/README.ru.md) · [🇺🇦 Українська](docs/README.uk.md) · [🇹🇷 Türkçe](docs/README.tr.md) · [🇦🇿 Azərbaycanca](docs/README.az.md) · [🇭🇷 Hrvatski](docs/README.hr.md) · [🇮🇩 Bahasa Indonesia](docs/README.id.md) · [🇻🇳 Tiếng Việt](docs/README.vi.md) · [🇹🇭 ไทย](docs/README.th.md) · [🇯🇵 日本語](docs/README.ja.md) · [🇰🇷 한국어](docs/README.ko.md) · [🇨🇳 简体中文](docs/README.zh-Hans.md) · [🇹🇼 繁體中文](docs/README.zh-TW.md) · [🇸🇦 العربية](docs/README.ar.md) · [🇮🇱 עברית](docs/README.he.md) · [🇮🇷 فارسی](docs/README.fa.md) · [🇮🇳 हिन्दी](docs/README.hi.md) · [🇵🇰 اردو](docs/README.ur.md) · [🇧🇩 বাংলা](docs/README.bn.md)
-
-## Paid Sponsors
-
-<table width="100%">
-  <tr>
-    <td align="center">
-      <a href="https://proxyon.io/?ref=concat"><img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/proxyon_sponsor_logo.png" alt="Proxyon" width="80" /></a><br />
-      <a href="https://proxyon.io/?ref=concat"><b>Proxyon</b></a><br />
-      <sub>Pay-as-you-go proxies for developers<br />Use code <code>JUB0T</code> for 20% off</sub>
-    </td>
-  </tr>
-</table>
 
 </div>
 
@@ -85,7 +74,7 @@ Everything runs locally on a native Rust engine with a GPU compositor. Install i
 - 📝 **Titles.** Fonts, stroke, shadow, background plate. Presets to start from.
 - 🎙️ **One-switch voice cleanup.** Denoise, enhance voice, level the loudness. Plus chipmunk, robot, telephone and friends.
 - 📤 **Export.** H.264, HEVC, AV1. Up to 4K 60, 10-bit colour.
-- 🦀 **Native Rust engine.** GPU compositor, proxies, hardware decode. 4K scrubs smoothly.
+- 🦀 **Native Rust engine.** GPU compositor, proxies, hardware decode; the small-machine measurements live in [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 - 🤖 **Scriptable.** An MCP server built in, so Claude and other AI agents can edit with it ([one line to set up](docs/MCP.md)), and a JSON-RPC API for scripts. A build from source adds gRPC and a command-line tool. With the [Forge harness](docs/forge/FORGE.md) and the [funcut-director skill](.claude/skills/funcut-director/SKILL.md) an agent directs a whole video from a script - with [maestro](docs/MAESTRO.md), the design-and-motion judgment skill, riding shotgun, and [clip-skills](docs/CLIPSKILLS.md), the editing-craft skill, beside it - and the editor's Forge page starts one with a click.
 - 🖥️ **Linux.** x86_64 and ARM. 26 languages. Same app, same project files.
 
@@ -93,10 +82,10 @@ Everything runs locally on a native Rust engine with a GPU compositor. Install i
 
 Two ways in:
 
-1. **[The website](https://concatenate.pages.dev/#download)** hands you the right build for your machine. Start here.
-2. **[GitHub Releases](https://github.com/jub0t/Concat/releases)** has every build for every architecture, with installers, packages and checksums. For when you want to pick.
+1. **[This repository's releases](https://github.com/coreselfmastery/FUNCUT/releases)** hold the fork's own builds - `.deb`, `.rpm`, `.AppImage` and an Arch package, with checksums - and `./install-linux.sh` from the repo root picks the right one for the machine and checks it. Start here: this fork's builds are the ones the small-machine work is in.
+2. **[Upstream Concat's releases](https://github.com/jub0t/Concat/releases)** carry the same program without the fork's tuning, and upstream's [website](https://concatenate.pages.dev/#download) hands you the right build for your machine.
 
-Concat is in **beta**: it works, and it still has edges. [Say so](https://github.com/jub0t/Concat/issues) when you find one.
+Concat is in **beta**: it works, and it still has edges. [Say so](https://github.com/coreselfmastery/FUNCUT/issues) when you find one.
 
 **Platforms**
 
@@ -134,7 +123,7 @@ If you change text the interface shows, run `python3 scripts/locales.py` from th
 ## How to Contribute
 
 > [!IMPORTANT]
-> The best way to contribute is to grab a build from the [Releases](https://github.com/jub0t/Concat/releases) page and use it: find where it breaks, and say where it could be better.
+> The best way to contribute is to grab a build from the [Releases](https://github.com/coreselfmastery/FUNCUT/releases) page and use it: find where it breaks, and say where it could be better.
 >
 > Ready to write code? [CONTRIBUTING.md](./CONTRIBUTING.md) covers setup, the layout of the tree, the checks to run, and how contributions are licensed. Driving Concat from a script, a service or an agent? [The developer docs](https://concatenate.pages.dev/docs) cover the Concat API and its transports: JSON-RPC and gRPC; [docs/MCP.md](docs/MCP.md) connects an AI agent over MCP. [This Discussion](https://github.com/jub0t/Concat/discussions/3) is where the project was announced.
 > 
@@ -154,4 +143,4 @@ If you change text the interface shows, run `python3 scripts/locales.py` from th
 
 ## DMCA
 
-If you believe something in this repository, its releases, or a package or model it distributes infringes your copyright, email [jub0trd@gmail.com](mailto:jub0trd@gmail.com) with a description of the work you own, a link to where the infringing material appears here, your contact details, a statement that you believe in good faith the use is not authorised by you, your agent, or the law, and a statement, under penalty of perjury, that the notice is accurate and that you are the owner or authorised to act for the owner, signed with your physical or electronic signature; valid notices are acted on promptly, and anyone whose material is removed may send a counter-notice to the same address.
+If you believe something in this repository, its releases, or a package or model it distributes infringes your copyright, send a notice through [GitHub's DMCA takedown process](https://docs.github.com/en/site-policy/content-removal-policies/dmca-takedown-policy), which covers this repository's content and releases; a valid notice is acted on through that process. Material this repository inherits from upstream Concat can also be reported to upstream at jub0trd@gmail.com, the address upstream's README publishes for the purpose.

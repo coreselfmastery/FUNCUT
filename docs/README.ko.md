@@ -3,16 +3,16 @@
 </p>
 
 <h1 align="center">Concat</h1>
-<h3 align="center">무료 오픈 소스 크로스 플랫폼 CapCut 대체재.</h3>
+<h3 align="center">Linux용 무료 오픈 소스 CapCut 대체재.</h3>
 
 <div align="center">
 
 <img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/editor.png" alt="Concat editor" width="100%" />
 
 <p align="center">
-  <a href="https://github.com/jub0t/Concat/releases"><img src="https://img.shields.io/github/downloads/jub0t/concat/total?style=flat&logo=github&logoColor=F8F8F8&label=Downloads&labelColor=212123&color=0568FD" alt="Total Downloads" /></a>
-  <a href="https://github.com/jub0t/Concat/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/jub0t/Concat/ci.yml?style=flat&logo=githubactions&logoColor=F8F8F8&label=Build&labelColor=000000" alt="Build Status" /></a>
-  <a href="https://github.com/jub0t/Concat/releases"><img src="https://img.shields.io/badge/Version-0.2.8-0568FD?style=flat&logo=semver&logoColor=F8F8F8&labelColor=212123" alt="Concat Version 0.2.8" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/github/downloads/coreselfmastery/FUNCUT/total?style=flat&logo=github&logoColor=F8F8F8&label=Downloads&labelColor=212123&color=0568FD" alt="Total Downloads" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/coreselfmastery/FUNCUT/ci.yml?style=flat&logo=githubactions&logoColor=F8F8F8&label=Build&labelColor=000000" alt="Build Status" /></a>
+  <a href="https://github.com/coreselfmastery/FUNCUT/releases"><img src="https://img.shields.io/badge/Version-0.2.8-0568FD?style=flat&logo=semver&logoColor=F8F8F8&labelColor=212123" alt="Concat Version 0.2.8" /></a>
   <a href="https://discord.gg/DVuPfpXfqP"><img src="https://img.shields.io/badge/Discord-Join%20the%20server-5865F2?style=flat&logo=discord&logoColor=F8F8F8&labelColor=000000" alt="Join Concat Discord" /></a>
   <a href="../LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-0568FD?style=flat&logo=gnu&logoColor=F8F8F8&labelColor=212123" alt="License: AGPL-3.0-or-later" /></a>
 </p>
@@ -26,18 +26,6 @@
 [🇬🇧 English](../README.md) · [🇩🇪 Deutsch](README.de.md) · [🇪🇸 Español](README.es.md) · [🇫🇷 Français](README.fr.md) · [🇮🇹 Italiano](README.it.md) · [🇳🇱 Nederlands](README.nl.md) · [🇵🇱 Polski](README.pl.md) · [🇧🇷 Português (Brasil)](README.pt-BR.md) · [🇷🇺 Русский](README.ru.md) · [🇺🇦 Українська](README.uk.md) · [🇹🇷 Türkçe](README.tr.md) · [🇦🇿 Azərbaycanca](README.az.md) · [🇭🇷 Hrvatski](README.hr.md) · [🇮🇩 Bahasa Indonesia](README.id.md) · [🇻🇳 Tiếng Việt](README.vi.md) · [🇹🇭 ไทย](README.th.md) · [🇯🇵 日本語](README.ja.md) · **🇰🇷 한국어** · [🇨🇳 简体中文](README.zh-Hans.md) · [🇹🇼 繁體中文](README.zh-TW.md) · [🇸🇦 العربية](README.ar.md) · [🇮🇱 עברית](README.he.md) · [🇮🇷 فارسی](README.fa.md) · [🇮🇳 हिन्दी](README.hi.md) · [🇵🇰 اردو](README.ur.md) · [🇧🇩 বাংলা](README.bn.md)
 
 > 2026년 10월 11일 기준 영어 README를 번역한 것입니다. 최신 내용은 영어판이 유지합니다.
-
-## 유료 스폰서
-
-<table width="100%">
-  <tr>
-    <td align="center">
-      <a href="https://proxyon.io/?ref=concat"><img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/proxyon_sponsor_logo.png" alt="Proxyon" width="80" /></a><br />
-      <a href="https://proxyon.io/?ref=concat"><b>Proxyon</b></a><br />
-      <sub>개발자를 위한 종량제 프록시<br />코드 <code>JUB0T</code>로 20 % 할인</sub>
-    </td>
-  </tr>
-</table>
 
 </div>
 
@@ -75,7 +63,7 @@ Concat은 Linux용 무료 오픈 소스 비디오 편집기이자 CapCut의 대�
 두 가지 길:
 
 1. **[웹사이트](https://concatenate.pages.dev/#download)** 가 당신의 기기에 맞는 빌드를 건네줍니다. 여기서 시작하세요.
-2. **[GitHub Releases](https://github.com/jub0t/Concat/releases)** 에는 모든 플랫폼의 모든 빌드가 설치 프로그램, 패키지, 체크섬과 함께 있습니다. 직접 고르고 싶을 때.
+2. **[GitHub Releases](https://github.com/coreselfmastery/FUNCUT/releases)** 에는 모든 플랫폼의 모든 빌드가 설치 프로그램, 패키지, 체크섬과 함께 있습니다. 직접 고르고 싶을 때.
 
 Concat은 **베타**입니다: 동작하지만 아직 거친 부분이 있습니다. 발견하면 [알려주세요](https://github.com/jub0t/Concat/issues).
 
@@ -92,7 +80,7 @@ Concat은 **베타**입니다: 동작하지만 아직 거친 부분이 있습니
 ## 기여하는 법
 
 > [!IMPORTANT]
-> 가장 좋은 기여는 [Releases](https://github.com/jub0t/Concat/releases) 페이지에서 빌드를 받아 써 보는 것입니다: 어디서 깨지는지 찾고, 어디가 더 나아질 수 있는지 말해 주세요.
+> 가장 좋은 기여는 [Releases](https://github.com/coreselfmastery/FUNCUT/releases) 페이지에서 빌드를 받아 써 보는 것입니다: 어디서 깨지는지 찾고, 어디가 더 나아질 수 있는지 말해 주세요.
 >
 > 코드를 쓸 준비가 되셨나요? [CONTRIBUTING.md](../CONTRIBUTING.md)에 설정, 트리 구조, 실행할 검사, 기여의 라이선스가 적혀 있습니다. 스크립트, 서비스, 에이전트에서 Concat을 다루시나요? [개발자 문서](https://concatenate.pages.dev/docs)에 Concat API와 전송 방식(JSON-RPC, gRPC)이 있습니다. 프로젝트는 [이 Discussion](https://github.com/jub0t/Concat/discussions/3)에서 공개되었습니다.
 > 
@@ -112,4 +100,4 @@ Concat은 **베타**입니다: 동작하지만 아직 거친 부분이 있습니
 
 ## DMCA
 
-이 저장소나 그 릴리스, 또는 이 저장소가 배포하는 패키지나 모델에 있는 무언가가 귀하의 저작권을 침해한다고 생각되면 [jub0trd@gmail.com](mailto:jub0trd@gmail.com)로 다음 내용을 담아 이메일을 보내 주세요: 귀하가 소유한 저작물에 대한 설명, 침해 자료가 이곳에 나타나는 위치의 링크, 귀하의 연락처, 해당 사용이 귀하나 귀하의 대리인 또는 법률에 의해 허락되지 않았다고 선의로 믿는다는 진술, 그리고 위증 시 처벌을 감수하고 통지 내용이 정확하며 귀하가 권리자이거나 권리자를 대리할 권한이 있다는 진술(귀하의 자필 서명 또는 전자 서명 포함). 유효한 통지는 신속하게 처리되며, 자료가 삭제된 사람은 누구나 같은 주소로 반론 통지(counter-notice)를 보낼 수 있습니다.
+If you believe something in this repository, its releases, or a package or model it distributes infringes your copyright, send a notice through [GitHub's DMCA takedown process](https://docs.github.com/en/site-policy/content-removal-policies/dmca-takedown-policy), which covers this repository's content and releases; a valid notice is acted on through that process. Material this repository inherits from upstream Concat can also be reported to upstream at jub0trd@gmail.com, the address upstream's README publishes for the purpose.

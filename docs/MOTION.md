@@ -218,6 +218,46 @@ cargo run -p concat-motion --example reel -- --assets . --cache cache/reel -o re
 
 Measured here: **1365 frames of 1080p30 in 111 s (12.2 fps, 7.0 MB at crf 18)** on two cores.
 
+`examples/layers.rs` is the multi-layer one: **two scenes, eight timeline layers** - a
+background plate drifting, a midground sliding the other way, a wordmark over both, a
+screen-blended light leak and a grain tile over the lot, and a foreground card that
+arrives late and leaves before the cut. Its pictures are not in the repository:
+`scripts/motion/layers-assets.py` writes them, deterministically, from nothing but the
+standard library - two gridded plates (a dark one and a warm one, gridded so what shows
+under an overlay is identifiable in a diff), a radial light leak, a grain tile from a
+fixed LCG seed, and the three faces the comps name, copied from `assets/fonts/`. The
+same script on two machines writes byte-identical assets, so the example's cache key
+survives a re-run:
+
+```sh
+python3 scripts/motion/layers-assets.py ./check
+cargo run -p concat-motion --example layers -- --frame 2.0 -o check/s1.png --assets ./check
+cargo run -p concat-motion --example layers -- --frame 7.0 -o check/s2.png --assets ./check
+cargo run -p concat-motion --example layers -- -o check/layers.mp4 --assets ./check --cache check/cache
+```
+
+**Look at the frames before believing the composite.** Measurement is not inspection:
+`scripts/motion/inspect-frames.py` does both for the two claims a stack of layers has
+to hold. The card claim, at `--frame 7.0` against `--frame 5.5` (the same scene just
+before the card arrives): the card's centre region differs (measured: mean luma
+difference 58.5, peak 102), the border ring does not (0.0 - the scene was untouched
+around the card), and four samples inside the frame but outside the card still read
+the scene's own tones, so the card is a layer **on** the scene, not a replacement of
+it. The blend claim, at `--frame 2.0` against the same frame rendered with the leak
+layer dropped from the staged timeline: the leak's core region differs (mean 144.8),
+a far corner does not (0.0), the rim is lighter with the leak than without it (mean
+luma 164 against 72) while the plate's grid contrast survives underneath it (46
+against 49) - screened over the ground, lightening it, not covering it. A vision
+model reading the two frames back says the same thing in words: the grid lines and
+the wordmark stay visible through the glow, the card sits over a comp whose own text
+is still readable around it, and the frame reads as one composed scene rather than a
+collage. Re-rendering the reel is byte-identical, and the engine's own report ends at
+zero errors and zero warnings (one note: which x264 built the H.264).
+
+```sh
+python3 scripts/motion/inspect-frames.py ./check   # renders one A/B frame itself
+```
+
 ---
 
 ## Captions: a transcript is the input, not the design

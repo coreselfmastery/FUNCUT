@@ -36,8 +36,8 @@ fn layered(assets: PathBuf) -> Sequence {
     let mut sequence = Sequence::new(1920, 1080, 30.0);
     sequence.source_dir = assets;
     for (id, file) in [
-        ("back", "assets/plate_dark.jpg"),
-        ("mid", "assets/plate_studio.jpg"),
+        ("back", "assets/plate_dark.png"),
+        ("mid", "assets/plate_studio.png"),
         ("leak", "assets/leak.png"),
         ("grain", "assets/grain.png"),
         // The fonts the comps name, as `font` assets: without them the

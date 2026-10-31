@@ -1145,7 +1145,7 @@ impl Library {
         // end: the head and the tail are the same bytes, so the second
         // read is skipped by the starts being equal.
         let head = pos;
-        let tail = pos + size - size.min(TRAILER);
+        let tail = tail_start(pos, size, TRAILER);
         let (first, second) = if source == Source::Other {
             (head, tail)
         } else {
@@ -1171,6 +1171,16 @@ impl Library {
         let Some((file, pos, size, _)) = self.clip_range(id)? else {
             return Err(format!("there is no clip {id} in the OpenVid library"));
         };
+        // The index is digest-checked on its way in, but the fetch still
+        // owes the row a sanity line: the clips are tens of megabytes, and
+        // a row naming gigabytes would ask for them and pre-allocate them
+        // on machines whose whole point is having none to spare.
+        const LARGEST_CLIP: u64 = 512 * 1024 * 1024;
+        if size == 0 || size > LARGEST_CLIP {
+            return Err(format!(
+                "clip {id} is named as {size} bytes, which is not a clip"
+            ));
+        }
         let target = clip_path(&self.dirs, id);
         let folder = target.parent().unwrap_or_else(|| Path::new("."));
         std::fs::create_dir_all(folder)
@@ -1350,9 +1360,23 @@ fn ranged_with(
     length: u64,
 ) -> Result<Vec<u8>, String> {
     let url = format!("{DATASET_URL}/{file}");
+    // The end of the range is computed once and checked, never
+    // `start + length - 1` in the header's own text: a length of zero
+    // underflowed that to u64's ceiling, and a start and length whose
+    // sum passed the ceiling wrapped to a range the Hub would still
+    // answer - from somewhere else entirely. A range that cannot be
+    // said is refused in words instead.
+    let Some(end) = length
+        .checked_sub(1)
+        .and_then(|short| start.checked_add(short))
+    else {
+        return Err(format!(
+            "a read of {length} bytes at {start} is not a range anything can serve"
+        ));
+    };
     let response = agent
         .get(&url)
-        .set("Range", &format!("bytes={start}-{}", start + length - 1))
+        .set("Range", &format!("bytes={start}-{end}"))
         .call()
         .map_err(|error| format!("the Hub did not answer: {error}"))?;
     if response.status() != 206 {
@@ -1368,6 +1392,22 @@ fn ranged_with(
         .read_to_end(&mut bytes)
         .map_err(|error| format!("the bytes did not arrive: {error}"))?;
     Ok(bytes)
+}
+
+/// The start of the last `at_most` bytes of a byte range that begins at
+/// `pos` and runs `size` long: where a trailer read of the *end* of a
+/// clip begins. A clip smaller than the window reads from its own start
+/// - head and tail are the same bytes. Built as a subtraction inside the
+/// guard and a saturating add, never as `pos + size - at_most`: a row
+/// whose numbers pass u64's ceiling wrapped that to an offset at the
+/// file's beginning, and a wrapped offset is a wrong answer the Hub
+/// still serves.
+fn tail_start(pos: u64, size: u64, at_most: u64) -> u64 {
+    if size > at_most {
+        pos.saturating_add(size - at_most)
+    } else {
+        pos
+    }
 }
 
 /// Turns a person's words into the query FTS5 is asked to match: each word
@@ -1632,6 +1672,22 @@ fn fixed(bytes: &[u8]) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The tail read's start, held to arithmetic that cannot wrap. A row
+    /// whose `pos` and `size` pass u64's ceiling used to wrap
+    /// `pos + size - TRAILER` back to the file's beginning, and a
+    /// wrapped offset is a wrong answer the Hub still serves.
+    #[test]
+    fn the_tail_of_a_clip_range_cannot_wrap() {
+        assert_eq!(tail_start(0, 10, 4), 6);
+        assert_eq!(tail_start(100, 64 * 1024, 64 * 1024), 100);
+        // A clip smaller than the window reads from its own start: the
+        // head and the tail are the same bytes.
+        assert_eq!(tail_start(5, 0, 4), 5);
+        assert_eq!(tail_start(5, 4, 4), 5);
+        // Saturates at the ceiling instead of wrapping to the beginning.
+        assert_eq!(tail_start(u64::MAX - 2, 10, 4), u64::MAX);
+    }
 
     /// A caption search must not require the little words a person types.
     /// "rain on a window" used to become four mandatory prefix terms and

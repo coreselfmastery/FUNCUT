@@ -196,9 +196,17 @@ impl Decision {
     /// it was taken. The default is not second-guessed here - a reason
     /// that says nothing ("because") is the director's to answer for -
     /// but the reason cannot be empty, because an override nobody can see
-    /// the why of is exactly what this type exists to prevent.
+    /// the why of is exactly what this type exists to prevent. An empty
+    /// reason is carried as exactly that, in words, rather than refused
+    /// or silently passed over: a caller that reads the decision sees
+    /// what happened either way.
     pub fn overridden(route: Routing, reason: impl Into<String>) -> Decision {
         let reason = reason.into();
+        let reason = if reason.trim().is_empty() {
+            "the director gave no reason".to_owned()
+        } else {
+            reason
+        };
         Decision {
             route,
             reason: format!("overridden by the director: {reason}"),

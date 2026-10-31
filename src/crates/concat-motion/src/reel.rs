@@ -74,6 +74,15 @@ pub struct ReelReport {
     pub seconds: f64,
     /// The file written.
     pub out: PathBuf,
+    /// How long the written reel runs: the segments' own durations added
+    /// up, which is the length of the file and not the whole-board plan's
+    /// number - a board whose scenes overlap is joined flush here, and
+    /// the two disagree by exactly the overlap.
+    pub duration: f64,
+    /// What the cache door could not express exactly: a scene whose `at`
+    /// overlaps the scene before it is joined flush rather than overlaid,
+    /// and that is said here rather than passed over silently.
+    pub warnings: Vec<String>,
 }
 
 /// The FNV-1a the crate's own hashes use: not a security hash, a name.
@@ -104,6 +113,12 @@ fn file_hash(path: &Path) -> Option<u64> {
 /// module docs for the list; the order of the list is the order of the
 /// hash, and a field added to it is a cache miss for every scene once -
 /// which is the honest cost of a key that forgot something.
+///
+/// # Panics
+///
+/// When `index` is past the storyboard's scenes. Every caller inside the
+/// crate walks `0..board.scenes.len()`; the panic is the honest answer for
+/// a caller that does not.
 pub fn scene_key(board: &Storyboard, root: &Path, index: usize) -> String {
     let scene = board.scenes.get(index).expect("the scene exists");
     let mut parts: Vec<Vec<u8>> = Vec::new();
@@ -139,8 +154,13 @@ pub fn scene_key(board: &Storyboard, root: &Path, index: usize) -> String {
     );
 
     // The bytes of every asset the scene names: plate, layers, comp
-    // file. (Fonts a comp names come through the assets map too.)
+    // file. (Fonts a comp names come through the assets map too.) A
+    // nested scene's content is keyed by the referenced scene's own key,
+    // directly in the hash: a hex key is never an asset id, so pushing it
+    // into `named` would drop it on the floor and a re-rendered nested
+    // scene would leave every scene that places it stale.
     let mut named: Vec<String> = Vec::new();
+    let mut nested: Vec<String> = Vec::new();
     if let Some(plate) = &scene.plate {
         named.push(plate.clone());
     }
@@ -155,7 +175,7 @@ pub fn scene_key(board: &Storyboard, root: &Path, index: usize) -> String {
                     .iter()
                     .position(|c| c.id.as_deref() == Some(name.as_str()))
                 {
-                    named.push(scene_key(board, root, at));
+                    nested.push(scene_key(board, root, at));
                 } else {
                     named.push(name.clone());
                 }
@@ -170,6 +190,10 @@ pub fn scene_key(board: &Storyboard, root: &Path, index: usize) -> String {
             parts.push(id.as_bytes().to_vec());
             parts.push(hash.to_le_bytes().to_vec());
         }
+    }
+    for key in &nested {
+        parts.push(b"nested-scene:".to_vec());
+        parts.push(key.as_bytes().to_vec());
     }
     if let Some(comp) = &scene.comp
         && let Some(hash) = file_hash(&root.join(comp))
@@ -198,6 +222,11 @@ fn join_key(keys: &[String], crf: u8, name: &str) -> String {
 }
 
 /// The key of one audio bed: its numbers and its file's bytes.
+///
+/// # Panics
+///
+/// When `index` is past the storyboard's audio. The callers inside the
+/// crate walk `0..board.audio.len()`.
 fn bed_key(board: &Storyboard, root: &Path, index: usize) -> String {
     let bed = board.audio.get(index).expect("the bed exists");
     let mut parts: Vec<Vec<u8>> = vec![serde_json::to_string(bed).unwrap_or_default().into_bytes()];
@@ -211,6 +240,34 @@ fn bed_key(board: &Storyboard, root: &Path, index: usize) -> String {
         "{:016x}",
         fnv(&parts.iter().map(|p| p.as_slice()).collect::<Vec<&[u8]>>())
     )
+}
+
+/// The key of one scene's cached segment: the scene's own key, plus the
+/// gap the scene is placed at inside the segment. The same scene placed
+/// after a different amount of room renders a different file, so the gap
+/// is in the key the way the scene's own document is.
+fn segment_key(board: &Storyboard, root: &Path, index: usize, gap: f64) -> String {
+    let scene = scene_key(board, root, index);
+    format!(
+        "{:016x}",
+        fnv(&[scene.as_bytes(), format!("gap:{gap:.3}").as_bytes()])
+    )
+}
+
+/// The key a segment's marker file names, whatever generation of the
+/// marker wrote it: "<key>" or "<key> <duration>".
+fn marker_key(text: &str) -> Option<String> {
+    text.split_whitespace().next().map(ToString::to_string)
+}
+
+/// The duration a segment's marker names, when it does: the second
+/// field, in seconds. A first-generation marker carries no duration; its
+/// segment is re-rendered to learn one, which is the honest cost of a
+/// marker that forgot it.
+fn marker_duration(segment: &Path) -> Option<f64> {
+    std::fs::read_to_string(segment.with_extension("done"))
+        .ok()
+        .and_then(|text| text.split_whitespace().nth(1)?.parse().ok())
 }
 
 /// Render a storyboard scene by scene, caching each scene by its key.
@@ -253,28 +310,52 @@ pub fn render_reel(
     })?;
 
     // One key per scene, one segment per key. A hit is a manifest that
-    // names the same key and a file that is still there.
+    // names the same key and a file that is still there. Each segment
+    // carries the scene placed at its gap - the room between the scene
+    // before it (or the reel's opening) and this scene's own start - so
+    // the back-to-back join below lands every scene where the whole-board
+    // render puts it, instead of counting every scene's `at` twice and
+    // stretching the reel with dead air.
     let mut outcomes: Vec<SceneOutcome> = Vec::new();
     let mut keys: Vec<String> = Vec::new();
     let mut renders = 0_usize;
+    let mut warnings: Vec<String> = Vec::new();
+    let mut end = 0.0_f64;
     for index in 0..board.scenes.len() {
-        let key = scene_key(board, root, index);
+        let gap = match board.scenes[index].at {
+            Some(at) if at + 1e-9 < end => {
+                warnings.push(format!(
+                    "scene {index} starts at {at:.3} s, before scene {index} would end at \
+                     {end:.3} s; the cache joins it flush rather than overlaying it"
+                ));
+                0.0
+            }
+            Some(at) => (at - end).max(0.0),
+            None => 0.0,
+        };
+        let key = segment_key(board, root, index, gap);
         let segment = segments.join(format!("{key}.mp4"));
         let served = segment.is_file()
             && std::fs::read_to_string(segment.with_extension("done"))
-                .map(|text| text.trim() == key)
+                .map(|text| marker_key(&text) == Some(key.clone()))
                 .unwrap_or(false);
-        if !served {
-            render_scene_segment(geneva, board, root, index, &segment, crf)?;
-            std::fs::write(segment.with_extension("done"), &key).map_err(|source| {
-                MotionError::Io {
-                    doing: "writing the scene's cache marker".into(),
-                    path: segment.with_extension("done"),
-                    source,
-                }
+        let duration = if served {
+            marker_duration(&segment).unwrap_or(0.0)
+        } else {
+            let duration = render_scene_segment(geneva, board, root, index, gap, &segment, crf)?;
+            std::fs::write(
+                segment.with_extension("done"),
+                format!("{key} {duration:.3}"),
+            )
+            .map_err(|source| MotionError::Io {
+                doing: "writing the scene's cache marker".into(),
+                path: segment.with_extension("done"),
+                source,
             })?;
             renders += 1;
-        }
+            duration
+        };
+        end += duration;
         outcomes.push(SceneOutcome {
             index,
             key: key.clone(),
@@ -316,7 +397,8 @@ pub fn render_reel(
 
     // The beds, when there are any: each renders once, audio-only, and
     // mixes over the joined picture, one at a time, the last one landing
-    // back on `out`.
+    // back on `out`. The bed's length is the joined reel's own length,
+    // not a guess at it: the segments have all been measured by now.
     let mut audio_rendered = false;
     if !board.audio.is_empty() {
         let beds = cache.join("beds");
@@ -330,7 +412,7 @@ pub fn render_reel(
             let key = bed_key(board, root, index);
             let bed_audio = beds.join(format!("{key}.m4a"));
             if !bed_audio.is_file() {
-                render_bed(geneva, board, root, index, &bed_audio)?;
+                render_bed(geneva, board, root, index, end.max(1.0), &bed_audio)?;
                 audio_rendered = true;
             }
             let last = index + 1 == board.audio.len();
@@ -360,20 +442,29 @@ pub fn render_reel(
         audio_rendered,
         seconds: started.elapsed().as_secs_f64(),
         out: out.to_path_buf(),
+        duration: end,
+        warnings,
     })
 }
 
 /// Render one scene as a segment: a single-scene sequence with the
 /// curtain marks its boundaries carry - the opening fade when it is
-/// first, a dip at each cut, the closing fade when it is last.
+/// first, a dip at each cut, the closing fade when it is last. The scene
+/// is placed at `gap` - the room between the reel's start (or the scene
+/// before it) and this scene's own start - so that joining the segments
+/// back to back puts every scene where the whole-board render puts it;
+/// a segment that carried the scene's own `at` would count that room
+/// twice. Returns the segment's duration, so the caller can place the
+/// scene after it.
 fn render_scene_segment(
     geneva: &Geneva,
     board: &Storyboard,
     root: &Path,
     index: usize,
+    gap: f64,
     segment: &Path,
     crf: u8,
-) -> Result<(), MotionError> {
+) -> Result<f64, MotionError> {
     let mut sub = Sequence::new(board.width, board.height, board.fps);
     sub.source_dir = root.to_path_buf();
     // The whole storyboard's cards, so a layer naming a scene finds it
@@ -388,7 +479,7 @@ fn render_scene_segment(
             },
         );
     }
-    let scene = board
+    let mut scene = board
         .scenes
         .get(index)
         .expect("the scene exists")
@@ -399,6 +490,9 @@ fn render_scene_segment(
             path: None,
             help: None,
         })?;
+    // The scene's own `at` is where it sits in the whole reel; inside
+    // its own segment it sits at the gap, and nowhere else.
+    scene.at = Some(gap);
     let first = index == 0;
     let last = index + 1 == board.scenes.len();
     if let Some(curtain) = &board.curtain {
@@ -430,35 +524,32 @@ fn render_scene_segment(
     // cache's pair, and the marker is written only after the render's own
     // report said ok - render() has already refused otherwise.
     let _ = std::fs::remove_dir_all(&staged);
-    Ok(())
+    Ok(render.duration)
 }
 
-/// Render one audio bed, audio-only, through a timeline of its own.
+/// Render one audio bed, audio-only, through a timeline of its own. The
+/// bed runs the length of the joined reel the caller measured - not a
+/// guess at it - and its fades carry the same defaults as the whole-board
+/// door's, written at the crate's own three decimals: a fade of
+/// 0.6666666666666666 s is a refusal (E103), not a fade.
 fn render_bed(
     geneva: &Geneva,
     board: &Storyboard,
     root: &Path,
     index: usize,
+    duration: f64,
     bed_audio: &Path,
 ) -> Result<(), MotionError> {
     let bed = board.audio.get(index).expect("the bed exists");
-    let duration: f64 = board
-        .scenes
-        .iter()
-        .enumerate()
-        .map(|(i, card)| {
-            let at = card.at.unwrap_or(0.0);
-            let _ = i;
-            at + card.hold.unwrap_or(6.0)
-        })
-        .fold(f64::MIN, f64::max)
-        .max(1.0);
     let mut document = json!({
         "geneva": crate::geneva::TIMELINE_VERSION,
         "output": {
             "width": board.width, "height": board.height, "fps": board.fps,
             "duration": format!("{duration:.3}s"),
-            "audio": { "codec": "aac" },
+            // No `codec` here: the engine's timeline refuses a field it
+            // does not know (E101), and this document is read by the same
+            // reader as any other - the bed encodes as the output's own
+            // audio does.
         },
         "assets": { bed.asset.clone(): {
             "src": format!("assets/{}", board.assets.get(&bed.asset).cloned().unwrap_or_default()),
@@ -471,8 +562,12 @@ fn render_bed(
                 "start": "0s",
                 "duration": format!("{duration:.3}s"),
                 "gain_db": bed.gain_db,
-                "fade_in": format!("{}s", bed.fade_in.unwrap_or(0.0).min(duration / 3.0)),
-                "fade_out": format!("{}s", bed.fade_out.unwrap_or(0.0).min(duration / 3.0)),
+                "fade_in": crate::sequence::seconds(
+                    bed.fade_in.unwrap_or(0.5).min(duration / 3.0),
+                ),
+                "fade_out": crate::sequence::seconds(
+                    bed.fade_out.unwrap_or(1.0).min(duration / 3.0),
+                ),
             }],
         }],
     });
@@ -516,9 +611,17 @@ fn render_bed(
                 "json".into(),
                 "render".into(),
                 "timeline.json".into(),
-                "--audio-only".into(),
+                // A plain render, not `--audio-only`: the flag renders
+                // the sound *part* of a render that has parts, and a
+                // timeline with no picture to split is refused under it -
+                // while the plain render of a picture-less timeline is
+                // exactly the audio the bed is. Found by driving the real
+                // sidecar, which no test with a stub engine ever did.
+                // The output is named in full: the sidecar runs from the
+                // stage directory, and a relative `-o` would land the bed
+                // inside the scratch that is deleted on the way out.
                 "-o".into(),
-                bed_audio.display().to_string(),
+                crate::sequence::absolute(bed_audio).display().to_string(),
             ],
         )
         .map(|_| ())
@@ -567,10 +670,11 @@ fn join_segments(geneva: &Geneva, segments: &[PathBuf], out: &Path) -> Result<()
 
 /// Mix one bed's audio over the picture.
 fn mix_audio(geneva: &Geneva, video: &Path, audio: &Path, out: &Path) -> Result<(), MotionError> {
-    let dir = out
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
+    // `working_dir`, not `parent()`: a bare relative name's parent is the
+    // empty string, and a child asked to run in the empty string's
+    // directory is refused with the one error that looks like the
+    // executable is missing.
+    let dir = working_dir(out);
     geneva
         .run_in(
             &dir,
@@ -788,6 +892,99 @@ mod tests {
                 before,
                 scene_key(&other, &root, 0),
                 "the frame rate is in the key"
+            );
+        }
+
+        #[test]
+        fn the_room_before_a_scene_is_counted_once() {
+            let _serial = serial();
+            let dir = TempDir::new().unwrap();
+            let geneva = stub_geneva(&dir);
+            let root = dir.path().join("project");
+            std::fs::create_dir_all(&root).unwrap();
+            std::fs::write(root.join("back.png"), b"back-bytes-v1").unwrap();
+            std::fs::write(root.join("card.png"), b"card-bytes-v1").unwrap();
+            // Scene 1 starts a second after scene 0 ends: one second of
+            // room, two of hold. A segment that carried the scene's own
+            // `at` as well counted that room twice and stretched the reel.
+            let board = Storyboard::parse(
+                r##"{
+                  "assets": { "back": "back.png", "card": "card.png" },
+                  "scenes": [
+                    { "preset": "funcut.sting.wordmark", "hold": 2.0,
+                      "layers": [ { "asset": "back", "zoom": 0.04 } ] },
+                    { "preset": "funcut.chapter.chip", "at": 3.0, "hold": 2.0,
+                      "layers": [ { "asset": "card", "parallax": 1.5 } ] }
+                  ]
+                }"##,
+            )
+            .expect("a storyboard");
+            let cache = dir.path().join("cache");
+            let out = dir.path().join("reel.mp4");
+            let report = render_reel(&geneva, &board, &root, &out, &cache, 18).expect("renders");
+            assert_eq!(report.renders, 2, "both scenes draw the first time");
+            assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+            let marker = std::fs::read_to_string(
+                cache
+                    .join("scenes")
+                    .join(format!("{}.done", report.scenes[1].key)),
+            )
+            .expect("the scene's marker");
+            let duration: f64 = marker
+                .split_whitespace()
+                .nth(1)
+                .expect("the marker names a duration")
+                .parse()
+                .expect("a number");
+            assert!(
+                (duration - 3.0).abs() < 1e-6,
+                "the segment is its 1 s of room and its 2 s of hold, not {duration}"
+            );
+        }
+
+        #[test]
+        fn a_nested_scenes_key_is_part_of_the_scene_that_places_it() {
+            let _serial = serial();
+            let dir = TempDir::new().unwrap();
+            // Only the assets matter here: the board is parsed below.
+            let (_, root) = setup(&dir);
+            // Scene 2 places scene 1 by name: editing scene 1 must move
+            // scene 2's key, or every scene that places it is served a
+            // stale segment.
+            let text = r##"{
+              "assets": { "back": "back.png", "card": "card.png" },
+              "scenes": [
+                { "preset": "funcut.sting.wordmark", "hold": 2.0,
+                  "layers": [ { "asset": "back", "zoom": 0.04 } ] },
+                { "id": "sting", "preset": "funcut.chapter.chip", "hold": 2.0 },
+                { "preset": "funcut.sting.wordmark", "hold": 2.0,
+                  "layers": [ { "scene": "sting" } ] }
+              ]
+            }"##;
+            let board = Storyboard::parse(text).expect("a storyboard");
+            let placer_before = scene_key(&board, &root, 2);
+            let other_before = scene_key(&board, &root, 0);
+            // Only the named scene's hold changes.
+            let changed = text.replacen(
+                "{ \"id\": \"sting\", \"preset\": \"funcut.chapter.chip\", \"hold\": 2.0 }",
+                "{ \"id\": \"sting\", \"preset\": \"funcut.chapter.chip\", \"hold\": 9.5 }",
+                1,
+            );
+            let changed = Storyboard::parse(&changed).expect("a storyboard");
+            assert_ne!(
+                scene_key(&changed, &root, 1),
+                scene_key(&board, &root, 1),
+                "the nested scene's own key moves"
+            );
+            assert_ne!(
+                scene_key(&changed, &root, 2),
+                placer_before,
+                "the placing scene's key moves with it"
+            );
+            assert_eq!(
+                scene_key(&changed, &root, 0),
+                other_before,
+                "an unrelated scene's key does not move"
             );
         }
     }

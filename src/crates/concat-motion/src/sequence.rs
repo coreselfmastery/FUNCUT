@@ -557,7 +557,7 @@ impl Plan {
 
 /// A path as the caller meant it: an engine that runs in a render directory
 /// would otherwise resolve a relative output inside that directory.
-fn absolute(path: &Path) -> PathBuf {
+pub(crate) fn absolute(path: &Path) -> PathBuf {
     if path.is_absolute() {
         return path.to_path_buf();
     }
@@ -672,22 +672,9 @@ fn layer_clip(
         clip.insert("transform".into(), Json::Object(transform));
     }
 
-    // Opacity: a steady number, or a fade up, a hold and a fade down. Each
-    // fade is held to half the span so the two never cross, and the hold
-    // key is dropped when they would land on the same time - a track whose
-    // times do not strictly increase is refused by the engine.
-    if layer.fade_in > 1e-9 || layer.fade_out > 1e-9 {
-        let fade_in = layer.fade_in.min(span / 2.0).max(0.0);
-        let fade_out = layer.fade_out.min(span / 2.0).max(0.0);
-        let mut keys = vec![
-            json!([seconds(0.0), 0.0]),
-            json!([seconds(fade_in), round(layer.opacity)]),
-        ];
-        if span - fade_out > fade_in {
-            keys.push(json!([seconds(span - fade_out), round(layer.opacity)]));
-        }
-        keys.push(json!([seconds(span), 0.0]));
-        clip.insert("opacity".into(), json!({ "keyframes": keys }));
+    // Opacity: a steady number, or a fade up, a hold and a fade down.
+    if let Some(opacity) = fade_keys(layer, span) {
+        clip.insert("opacity".into(), opacity);
     } else if (layer.opacity - 1.0).abs() > 1e-9 {
         clip.insert("opacity".into(), json!(round(layer.opacity)));
     }
@@ -698,6 +685,58 @@ fn layer_clip(
         clip.insert("blend".into(), json!(name));
     }
     clip
+}
+
+/// The opacity a layer's fades write over a span of `span` seconds: a
+/// fade up from transparent, a hold at the layer's own opacity, a fade
+/// down at the end. Each fade is held to half the span so the two never
+/// cross, and keys that land on the same time are merged - a track whose
+/// times do not strictly increase is refused by the engine, and a layer
+/// with only one of the two fades used to write two keys at `"0s"` (or
+/// two at the span's end) that stopped the whole render. A layer with
+/// neither fade gets `None`, and its steady opacity instead.
+fn fade_keys(layer: &SceneLayer, span: f64) -> Option<Json> {
+    if layer.fade_in <= 1e-9 && layer.fade_out <= 1e-9 {
+        return None;
+    }
+    let fade_in = layer.fade_in.min(span / 2.0).max(0.0);
+    let fade_out = layer.fade_out.min(span / 2.0).max(0.0);
+    let mut marks: Vec<(f64, f64)> = Vec::new();
+    if fade_in > 1e-9 {
+        marks.push((0.0, 0.0));
+        marks.push((fade_in, round(layer.opacity)));
+    } else {
+        // No fade up: the layer is already there when its span begins.
+        marks.push((0.0, round(layer.opacity)));
+    }
+    let hold_at = span - fade_out;
+    let last_at = marks.last().map(|mark| mark.0).unwrap_or(0.0);
+    if fade_out > 1e-9 && hold_at > last_at {
+        marks.push((hold_at, round(layer.opacity)));
+    }
+    marks.push((
+        span,
+        if fade_out > 1e-9 {
+            0.0
+        } else {
+            round(layer.opacity)
+        },
+    ));
+    // A mark that lands on the one before it is the same key, not a
+    // second: the times must strictly increase or the track is refused.
+    let mut keys: Vec<Json> = Vec::new();
+    for (at, value) in marks {
+        if let Some(last) = keys.last()
+            && last[0]
+                .as_str()
+                .and_then(parse_seconds)
+                .is_some_and(|t| at - t <= 0.001)
+        {
+            keys.pop();
+        }
+        keys.push(json!([seconds(at.max(0.0)), value]));
+    }
+    Some(json!({ "keyframes": keys }))
 }
 
 /// A number the timeline can carry cleanly: three decimals, the same
@@ -713,6 +752,17 @@ fn round(value: f64) -> f64 {
 /// reaching a render. The layers keep the comp's own ids, prefixed with the
 /// scene's index, so two scenes using the same template never collide.
 pub fn plan(geneva: &Geneva, sequence: &Sequence) -> Result<Plan, MotionError> {
+    plan_with_chain(geneva, sequence, &[])
+}
+
+/// The plan, under the compositions already being planned above this
+/// one: `chain` names them, and a scene that places one of them is a
+/// cycle, not a composition.
+fn plan_with_chain(
+    geneva: &Geneva,
+    sequence: &Sequence,
+    chain: &[String],
+) -> Result<Plan, MotionError> {
     let mut warnings = Vec::new();
     let mut layers: Vec<Json> = Vec::new();
     let mut assets: Map<String, Json> = Map::new();
@@ -825,29 +875,60 @@ pub fn plan(geneva: &Geneva, sequence: &Sequence) -> Result<Plan, MotionError> {
                 );
                 clip.insert("start".into(), json!(seconds(start + span_start)));
                 clip.insert("duration".into(), json!(seconds(span)));
+                // The layer's own drift, at its parallax rate, and its
+                // own fades: a scene placed as a layer moves the way the
+                // layer says it does - the same shape the still-layer
+                // clip gets, so a plate and a placed scene read alike.
+                let rate = layer
+                    .parallax
+                    .filter(|rate| rate.is_finite() && *rate > 0.0);
+                let (zoom, pan) = match rate {
+                    Some(rate) => {
+                        let (zoom, pan) = if layer.zoom.abs() < 1e-9 && layer.pan == (0.0, 0.0) {
+                            (0.04, (-0.03, 0.0))
+                        } else {
+                            (layer.zoom, layer.pan)
+                        };
+                        (zoom * rate, (pan.0 * rate, pan.1 * rate))
+                    }
+                    None => (layer.zoom, layer.pan),
+                };
+                let placed = |x: f64, y: f64| {
+                    json!([
+                        round(f64::from(sequence.width) / 2.0 + x * f64::from(sequence.width)),
+                        round(f64::from(sequence.height) / 2.0 + y * f64::from(sequence.height))
+                    ])
+                };
                 let mut transform = Map::new();
-                if layer.offset != (0.0, 0.0) {
+                if pan != (0.0, 0.0) {
                     transform.insert(
                         "position".into(),
-                        json!([
-                            round(
-                                f64::from(sequence.width) / 2.0
-                                    + layer.offset.0 * f64::from(sequence.width)
-                            ),
-                            round(
-                                f64::from(sequence.height) / 2.0
-                                    + layer.offset.1 * f64::from(sequence.height)
-                            )
-                        ]),
+                        json!({ "keyframes": [
+                            [seconds(0.0), placed(layer.offset.0, layer.offset.1)],
+                            [seconds(span), placed(layer.offset.0 + pan.0, layer.offset.1 + pan.1)],
+                        ] }),
                     );
+                } else if layer.offset != (0.0, 0.0) {
+                    transform.insert("position".into(), placed(layer.offset.0, layer.offset.1));
                 }
-                if (layer.scale - 1.0).abs() > 1e-9 && layer.scale > 0.0 {
-                    transform.insert("scale".into(), json!(round(layer.scale)));
+                let base = layer.scale.max(0.0);
+                if zoom.abs() > 1e-9 {
+                    transform.insert(
+                        "scale".into(),
+                        json!({ "keyframes": [
+                            [seconds(0.0), round(base)],
+                            [seconds(span), round(base * (1.0 + zoom))],
+                        ] }),
+                    );
+                } else if (base - 1.0).abs() > 1e-9 {
+                    transform.insert("scale".into(), json!(round(base)));
                 }
                 if !transform.is_empty() {
                     clip.insert("transform".into(), Json::Object(transform));
                 }
-                if layer.opacity < 0.999 {
+                if let Some(opacity) = fade_keys(layer, span) {
+                    clip.insert("opacity".into(), opacity);
+                } else if (layer.opacity - 1.0).abs() > 1e-9 {
                     clip.insert("opacity".into(), json!(round(layer.opacity)));
                 }
                 if !matches!(layer.blend, Blend::Normal)
@@ -1013,11 +1094,12 @@ pub fn plan(geneva: &Geneva, sequence: &Sequence) -> Result<Plan, MotionError> {
 
     let duration = scene_ends.iter().copied().fold(0.0_f64, f64::max);
 
-    // The curtain: over everything, opaque at the ends, dipping at each cut
-    // and clear in between.
-    if let Some(curtain) = sequence.curtain
-        && sequence.scenes.len() > 1
-    {
+    // The curtain: over everything, opaque at the ends, dipping at each
+    // cut and clear in between. A reel of one scene has ends and no
+    // cuts, so it opens and closes and never dips - the reel cache's
+    // one-scene segments depend on exactly that, and refusing the
+    // curtain for them dropped every fade from the cached reels.
+    if let Some(curtain) = sequence.curtain {
         // Both fades are held to a quarter of the reel, as the dips are held
         // to an eighth: a fade that outlasts a short reel would otherwise
         // land its far key at or before zero, where the dedup below takes it
@@ -1101,7 +1183,15 @@ pub fn plan(geneva: &Geneva, sequence: &Sequence) -> Result<Plan, MotionError> {
     // layer that shows it. A composition of a composition nests the same
     // way, one level per name, and the engine holds it to eight.
     let mut compositions: Map<String, Json> = Map::new();
-    collect_compositions(geneva, sequence, &sequence.scene_cards, &mut compositions)?;
+    collect_compositions(
+        geneva,
+        sequence,
+        &sequence.scene_cards,
+        chain,
+        &mut compositions,
+        &mut assets,
+        &mut files,
+    )?;
 
     let mut document = Map::new();
     document.insert("geneva".into(), json!(crate::geneva::TIMELINE_VERSION));
@@ -1133,17 +1223,26 @@ pub fn plan(geneva: &Geneva, sequence: &Sequence) -> Result<Plan, MotionError> {
 /// that itself places a scene brings that composition along, merged
 /// under its own globally-unique name, so nesting is one recursive call
 /// and the names never collide.
+///
+/// `chain` is the compositions being planned above this call: a scene
+/// that places one of them is a cycle, and the plan says so instead of
+/// walking into itself forever. `assets` and `files` receive what the
+/// sub-plan staged for the scene's own comp, under the names the parent
+/// document uses - the whole-board door stages them itself, and the
+/// segment door does not, so the composition's references resolve at
+/// both.
 fn collect_compositions(
     geneva: &Geneva,
     sequence: &Sequence,
     cards: &[crate::storyboard::SceneCard],
+    chain: &[String],
     compositions: &mut Map<String, Json>,
+    assets: &mut Map<String, Json>,
+    files: &mut BTreeMap<String, PathBuf>,
 ) -> Result<(), MotionError> {
     // Only the scenes this sequence's layers actually place: a named
     // scene nobody places is not emitted (an unused composition is a
-    // warning), and - the reason this matters more - a sub-plan of one
-    // named scene does not re-emit that scene, which is where a
-    // careless "every named scene" walked into itself forever.
+    // warning).
     let referenced: std::collections::HashSet<&str> = sequence
         .scenes
         .iter()
@@ -1161,24 +1260,39 @@ fn collect_compositions(
     for (index, card) in named {
         let name = card.id.clone().unwrap_or_default();
         let key = format!("s{index}.{name}");
+        if chain.contains(&key) {
+            return Err(unsupported(&format!(
+                "the scene {name:?} places itself, directly or through the scenes it places"
+            )));
+        }
         if compositions.contains_key(&key) {
             continue;
         }
         // A sub-sequence of this one scene: same frame, same assets, no
-        // curtain, its own layers at relative times.
+        // curtain (a composition is transparent - a `Sequence::new`'s
+        // default curtain would paint black fades into it), its own
+        // layers at relative times.
         let mut sub = Sequence::new(sequence.width, sequence.height, sequence.fps);
         sub.source_dir = sequence.source_dir.clone();
         sub.assets = sequence.assets.clone();
         sub.scene_cards = sequence.scene_cards.clone();
-        sub.push(card.scene(index, &sequence.source_dir).map_err(|message| {
-            MotionError::Engine {
-                code: None,
-                message,
-                path: None,
-                help: None,
-            }
-        })?);
-        let planned = plan(geneva, &sub)?;
+        sub.curtain = None;
+        let mut scene =
+            card.scene(index, &sequence.source_dir)
+                .map_err(|message| MotionError::Engine {
+                    code: None,
+                    message,
+                    path: None,
+                    help: None,
+                })?;
+        // A composition shows the scene at relative times: its own `at`
+        // is where it sits in a whole reel, which is not where it sits
+        // inside the composition that places it.
+        scene.at = None;
+        sub.push(scene);
+        let mut deeper_chain = chain.to_vec();
+        deeper_chain.push(key.clone());
+        let planned = plan_with_chain(geneva, &sub, &deeper_chain)?;
         // Deeper compositions first, so a composition that places a scene
         // has that scene's composition beside it in the document.
         if let Some(deeper) = planned
@@ -1190,17 +1304,68 @@ fn collect_compositions(
                 compositions.insert(deeper_key.clone(), value.clone());
             }
         }
+        // The sub-plan staged the scene's comp assets at its own position
+        // zero (`s0.<id>`); the parent names the same comp `s{index}.<id>`,
+        // so the composition's references are renumbered to the parent's
+        // names and the staged entries hoisted beside them. Without this,
+        // a placed scene that was not the storyboard's first rendered its
+        // pictures from a name the document does not carry (E200) - or
+        // worse, silently reused scene zero's file of the same id.
+        let mut layers = planned.document["layers"].clone();
+        renumber_scene_assets(&mut layers, "s0.", &format!("s{index}."));
+        if let Some(staged) = planned.document.get("assets").and_then(Json::as_object) {
+            for (asset, entry) in staged {
+                let parent_name = match asset.strip_prefix("s0.") {
+                    Some(rest) => format!("s{index}.{rest}"),
+                    None => asset.clone(),
+                };
+                assets.entry(parent_name).or_insert_with(|| entry.clone());
+            }
+        }
+        for (staged, source) in &planned.files {
+            files
+                .entry(staged.clone())
+                .or_insert_with(|| source.clone());
+        }
         compositions.insert(
             key,
             json!({
                 "width": sequence.width,
                 "height": sequence.height,
                 "background": "transparent",
-                "layers": planned.document["layers"].clone(),
+                "layers": layers,
             }),
         );
     }
     Ok(())
+}
+
+/// Rewrite every `source.asset` name under `from` to the same name under
+/// `to`, in a layer list the planner emitted: the compositions a
+/// sub-plan carries were renumbered at their own level and are left
+/// alone - only this level's own layers move.
+fn renumber_scene_assets(value: &mut Json, from: &str, to: &str) {
+    match value {
+        Json::Object(map) => {
+            for (field, item) in map.iter_mut() {
+                if field == "asset" {
+                    if let Json::String(name) = item
+                        && let Some(rest) = name.strip_prefix(from)
+                    {
+                        *name = format!("{to}{rest}");
+                    }
+                } else {
+                    renumber_scene_assets(item, from, to);
+                }
+            }
+        }
+        Json::Array(items) => {
+            for item in items {
+                renumber_scene_assets(item, from, to);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// A name for an asset inside the render directory: one folder, one file,
@@ -1228,8 +1393,10 @@ fn asset_kind(asset: &Asset) -> &'static str {
     crate::geneva::geneva_kind(asset).unwrap_or("image")
 }
 
-/// Seconds as the timeline writes them: `2s`, `0.5s`, `7.2s`.
-fn seconds(value: f64) -> String {
+/// Seconds as the timeline writes them: `2s`, `0.5s`, `7.2s` - three
+/// decimals, shared with the reel cache's own timeline writing, so a
+/// fade one door writes is a fade the other door refuses to read.
+pub(crate) fn seconds(value: f64) -> String {
     let text = format!("{:.3}", value.max(0.0));
     let trimmed = text.trim_end_matches('0').trim_end_matches('.');
     format!("{}s", if trimmed.is_empty() { "0" } else { trimmed })
@@ -1486,7 +1653,7 @@ mod tests {
     }
 
     #[test]
-    fn a_single_scene_needs_no_curtain() {
+    fn a_single_scene_opens_and_closes_but_never_dips() {
         let plan = plan(
             &geneva(),
             &reel(vec![Scene::new(
@@ -1494,11 +1661,20 @@ mod tests {
             )]),
         )
         .expect("plans");
-        assert!(
-            !layers(&plan)
-                .iter()
-                .any(|layer| layer["id"] == json!("curtain"))
-        );
+        let curtain = layers(&plan)
+            .into_iter()
+            .find(|layer| layer["id"] == json!("curtain"))
+            .expect("a single scene still opens and closes");
+        let keys = curtain["clips"][0]["opacity"]["keyframes"]
+            .as_array()
+            .cloned()
+            .expect("keyframes");
+        // No cuts, so no dips: the opening fade, the closing fade, and
+        // nothing in between - exactly the shape a cached segment needs
+        // at every boundary it did not cut at.
+        assert_eq!(keys.len(), 4, "{keys:?}");
+        assert_eq!(keys[0][1], json!(1.0), "{keys:?}");
+        assert_eq!(keys.last().unwrap()[1], json!(1.0), "{keys:?}");
     }
 
     /// A reel shorter than the curtain's fades still opens on the fade up it
@@ -1637,13 +1813,14 @@ mod tests {
             .iter()
             .position(|id| id == "s0.overlay2")
             .expect("overlay two");
-        // Bottom to top: back, mid, the comp, the light leak, the grain.
-        // One scene, so no curtain: it dips between scenes only.
+        // Bottom to top: back, mid, the comp, the light leak, the grain,
+        // and the curtain over everything - one scene, so it opens and
+        // closes and never dips.
         assert!(back_at < mid_at, "{order:?}");
         assert!(mid_at < comp_at, "{order:?}");
         assert!(comp_at < leak_at, "{order:?}");
         assert!(leak_at < grain_at, "{order:?}");
-        assert_eq!(order.last().unwrap(), "s0.overlay2", "{order:?}");
+        assert_eq!(order.last().unwrap(), "curtain", "{order:?}");
     }
 
     #[test]
@@ -2001,5 +2178,66 @@ mod tests {
             mid.zoom, 0.08,
             "the layer's own numbers stay what they said"
         );
+    }
+
+    #[test]
+    fn a_layer_with_only_one_fade_writes_strictly_increasing_keys() {
+        // A fade out with no fade in (and the other way round) used to
+        // write two opacity keys at the same time - "0s" twice, or the
+        // span's end twice - which the engine refuses for the whole
+        // render (E303). Every shape here must strictly increase.
+        for (fade_in, fade_out) in [(0.0, 0.8), (0.5, 0.0), (0.5, 0.8)] {
+            let mut sequence = Sequence::new(1920, 1080, 30.0);
+            sequence.asset(
+                "plate",
+                Asset {
+                    src: "assets/plate_dark.jpg".into(),
+                    kind: None,
+                },
+            );
+            let scene = Scene::new(presets::build("funcut.sting.wordmark").expect("a preset"))
+                .holding(4.0)
+                .layer(SceneLayer::new("plate").fading(fade_in, fade_out));
+            sequence.push(scene);
+            let plan = plan(&geneva(), &sequence).expect("plans");
+            let plate = layers(&plan)
+                .into_iter()
+                .find(|layer| layer["id"] == json!("s0.plate"))
+                .expect("the plate");
+            let keys = plate["clips"][0]["opacity"]["keyframes"]
+                .as_array()
+                .cloned()
+                .expect("keyframes");
+            let times: Vec<f64> = keys
+                .iter()
+                .map(|key| key[0].as_str().and_then(parse_seconds).expect("a time"))
+                .collect();
+            for pair in times.windows(2) {
+                assert!(pair[0] < pair[1], "{keys:?} for ({fade_in}, {fade_out})");
+            }
+        }
+    }
+
+    #[test]
+    fn a_scene_that_places_itself_through_another_is_refused() {
+        // Two scenes, each placing the other: a cycle, not a composition.
+        // The storyboard door refuses it in validate; the plan door says
+        // so too, rather than walking into itself forever.
+        let card = |id: &str, places: &str| {
+            serde_json::from_value(serde_json::json!({
+                "id": id,
+                "preset": "funcut.chapter.chip",
+                "layers": [ { "scene": places } ]
+            }))
+            .expect("a card")
+        };
+        let mut sequence = Sequence::new(1920, 1080, 30.0);
+        sequence.scene_cards = vec![card("a", "b"), card("b", "a")];
+        let scene = sequence.scene_cards[0]
+            .scene(0, Path::new("."))
+            .expect("a scene");
+        sequence.push(scene);
+        let error = plan(&geneva(), &sequence).expect_err("a cycle is refused");
+        assert!(error.to_string().contains("places itself"), "{error}");
     }
 }

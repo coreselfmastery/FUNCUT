@@ -377,6 +377,29 @@ impl Storyboard {
             );
         }
 
+        // Two scenes of one storyboard cannot share a name: a
+        // `{"scene": ...}` layer resolves its name to the first scene
+        // that carries it, so a second scene of the same name is
+        // unplaceable, silently - exactly the kind of problem this
+        // method exists to say out loud.
+        let mut named: Vec<(usize, &str)> = Vec::new();
+        for (index, card) in self.scenes.iter().enumerate() {
+            if let Some(id) = card.id.as_deref() {
+                if let Some((first, _)) = named.iter().find(|(_, seen)| *seen == id) {
+                    problem(
+                        index,
+                        None,
+                        format!(
+                            "the scene's name {id:?} is already scene {first}'s; \
+                             two scenes of one storyboard cannot share a name"
+                        ),
+                    );
+                } else {
+                    named.push((index, id));
+                }
+            }
+        }
+
         for (index, card) in self.scenes.iter().enumerate() {
             // What the scene is drawn from.
             match (&card.preset, &card.comp) {

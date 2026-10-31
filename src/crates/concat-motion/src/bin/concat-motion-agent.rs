@@ -211,6 +211,14 @@ fn reel(args: &[String]) -> Result<serde_json::Value, String> {
         .map_err(|error| error.to_string())?;
     let mut value = summary;
     value["written"] = json!(path.display().to_string());
+    // The reel's own length and its own warnings, not the whole-board
+    // plan's: a board whose scenes overlap is joined flush by the cache,
+    // and the file is as long as the segments made it - the plan's number
+    // would describe a different reel than the one on the disk.
+    value["duration"] = json!(report.duration);
+    let mut warnings = planned.warnings.clone();
+    warnings.extend(report.warnings.iter().cloned());
+    value["warnings"] = json!(warnings);
     value["cache"] = json!({
         "scenesDrawn": report.renders,
         "scenesServed": report.scenes.len() - report.renders,

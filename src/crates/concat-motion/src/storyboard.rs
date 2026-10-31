@@ -1299,6 +1299,146 @@ mod tests {
         );
     }
 
+    /// Every template in assets/scenes/templates: it parses, it
+    /// validates, and it plans to a timeline a real engine would draw.
+    /// One test per template, each asserting the shape that makes it a
+    /// template and not a one-off.
+    fn template(name: &str) -> crate::sequence::Plan {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../assets/scenes/templates");
+        let text = std::fs::read_to_string(root.join(format!("{name}.json")))
+            .unwrap_or_else(|error| panic!("{name}.json: {error}"));
+        let board = Storyboard::parse(&text).unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert_eq!(
+            board.validate(),
+            Ok(()),
+            "{name} does not hold the contract"
+        );
+        let sequence = board
+            .sequence(Path::new("."))
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        let geneva = crate::geneva::Geneva::at("geneva");
+        crate::sequence::plan(&geneva, &sequence)
+            .unwrap_or_else(|error| panic!("{name} does not plan: {error}"))
+    }
+
+    #[test]
+    fn the_templates_are_all_there() {
+        // Eight templates, the names the docs and the director skill
+        // speak: a template that disappears is a link that breaks.
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../assets/scenes/templates");
+        let mut found: Vec<String> = std::fs::read_dir(root)
+            .expect("the templates directory")
+            .filter_map(|entry| {
+                let path = entry.expect("an entry").path();
+                (path.extension().and_then(|e| e.to_str()) == Some("json"))
+                    .then(|| path.file_stem().unwrap().to_string_lossy().to_string())
+            })
+            .collect();
+        found.sort();
+        assert_eq!(
+            found,
+            vec![
+                "act-transition",
+                "callout",
+                "chart-reveal",
+                "comparison",
+                "quote",
+                "section-opener",
+                "stat-card",
+                "timeline",
+            ],
+            "the template shelf changed; update the docs beside it"
+        );
+    }
+
+    #[test]
+    fn template_stat_card_plans_a_triptych_over_a_drifting_plate() {
+        let planned = template("stat-card");
+        assert!(planned.duration >= 5.0);
+        // The plate drifts, the grain sits over everything.
+        let layers = planned.document["layers"].as_array().unwrap();
+        assert!(layers.iter().any(|l| l["id"] == json!("s0.plate")));
+        assert!(layers.iter().any(|l| l["id"] == json!("s0.overlay")));
+    }
+
+    #[test]
+    fn template_chart_reveal_shades_the_plate_with_a_multiply_vignette() {
+        let planned = template("chart-reveal");
+        let layers = planned.document["layers"].as_array().unwrap();
+        let vignette = layers
+            .iter()
+            .find(|l| l["id"] == json!("s0.overlay"))
+            .expect("the vignette");
+        assert_eq!(vignette["clips"][0]["blend"], json!("multiply"));
+    }
+
+    #[test]
+    fn template_quote_screens_a_leak_over_the_plate() {
+        let planned = template("quote");
+        let layers = planned.document["layers"].as_array().unwrap();
+        let leak = layers
+            .iter()
+            .find(|l| l["id"] == json!("s0.overlay"))
+            .expect("the leak");
+        assert_eq!(leak["clips"][0]["blend"], json!("screen"));
+    }
+
+    #[test]
+    fn template_section_opener_is_two_scenes_under_one_curtain() {
+        let planned = template("section-opener");
+        assert_eq!(planned.scenes, 2);
+        let layers = planned.document["layers"].as_array().unwrap();
+        assert!(
+            layers.iter().any(|l| l["id"] == json!("curtain")),
+            "the dip between the two"
+        );
+    }
+
+    #[test]
+    fn template_act_transition_places_a_scene_inside_a_scene() {
+        let planned = template("act-transition");
+        let document = &planned.document;
+        assert!(
+            document["compositions"]["s0.opener"].is_object(),
+            "the opener is emitted as a composition"
+        );
+        let layers = document["layers"].as_array().unwrap();
+        let placed = layers
+            .iter()
+            .find(|l| l["id"] == json!("s1.overlay"))
+            .expect("the placing layer");
+        assert_eq!(
+            placed["clips"][0]["source"]["composition"],
+            json!("s0.opener")
+        );
+    }
+
+    #[test]
+    fn template_comparison_holds_the_eye_with_a_vignette() {
+        let planned = template("comparison");
+        let layers = planned.document["layers"].as_array().unwrap();
+        assert!(layers.iter().any(|l| l["id"] == json!("s0.overlay")));
+    }
+
+    #[test]
+    fn template_timeline_counts_over_grain() {
+        let planned = template("timeline");
+        let layers = planned.document["layers"].as_array().unwrap();
+        assert!(layers.iter().any(|l| l["id"] == json!("s0.plate")));
+        assert!(layers.iter().any(|l| l["id"] == json!("s0.overlay")));
+    }
+
+    #[test]
+    fn template_callout_arrives_over_a_screened_leak() {
+        let planned = template("callout");
+        let layers = planned.document["layers"].as_array().unwrap();
+        let leak = layers
+            .iter()
+            .find(|l| l["id"] == json!("s0.overlay"))
+            .expect("the leak");
+        assert_eq!(leak["clips"][0]["blend"], json!("screen"));
+    }
+
     #[test]
     fn the_hash_is_stable_and_differs_on_a_change() {
         let a = serde_json::json!({ "scenes": [ { "preset": "funcut.chapter.chip" } ] });

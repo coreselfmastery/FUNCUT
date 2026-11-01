@@ -620,6 +620,8 @@
   "settings.unpacking": "פורס…",
   "settings.upToDate": "Concat {0} היא הגרסה האחרונה.",
   "settings.updateAvailable": "Concat {0} יצא. זו גרסה {1}.",
+  "settings.updateDownloaded": "Concat {0} הורד ומוכן — התקינו אותו מהגדרות › גרסה.",
+  "settings.updateFetchFailed": "יצא Concat חדש יותר, אך לא ניתן היה להוריד אותו. עיינו ביומן, או הורידו אותו מהגדרות › גרסה.",
   "settings.version": "גרסה",
   "settings.versionInstalled": "Concat {0} הותקן. Concat מופעל מחדש עכשיו.",
   "settings.violet": "סגול",

@@ -620,6 +620,8 @@
   "settings.unpacking": "در حال بازکردن بسته…",
   "settings.upToDate": "Concat {0} آخرین نسخه است.",
   "settings.updateAvailable": "Concat {0} منتشر شده است. این نسخه {1} است.",
+  "settings.updateDownloaded": "Concat {0} دانلود شده و آماده است — آن را از تنظیمات › نسخه نصب کنید.",
+  "settings.updateFetchFailed": "نسخهٔ جدیدی از Concat منتشر شده اما دانلود نشد. گزارش را ببینید یا آن را از تنظیمات › نسخه بگیرید.",
   "settings.version": "نسخه",
   "settings.versionInstalled": "Concat {0} نصب شد. Concat اکنون دوباره آغاز می‌شود.",
   "settings.violet": "بنفش",

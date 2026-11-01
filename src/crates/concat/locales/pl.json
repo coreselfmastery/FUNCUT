@@ -620,6 +620,8 @@
   "settings.unpacking": "Rozpakowywanie…",
   "settings.upToDate": "Concat {0} to najnowsze wydanie.",
   "settings.updateAvailable": "Dostępny jest Concat {0}. Ta wersja to {1}.",
+  "settings.updateDownloaded": "Concat {0} jest pobrany i gotowy — zainstaluj go z Ustawienia › Wersja.",
+  "settings.updateFetchFailed": "Jest nowszy Concat, ale nie udało się go pobrać. Sprawdź dziennik albo pobierz go z Ustawienia › Wersja.",
   "settings.version": "Wersja",
   "settings.versionInstalled": "Concat {0} jest zainstalowany. Concat uruchamia się teraz ponownie.",
   "settings.violet": "Fiolet",

@@ -338,6 +338,15 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         |studio, _, _, families| studio.system_fonts_known(families),
     );
 
+    // The automatic update check, every three days, in a thread of its
+    // own so it never holds a worker the probes and frames are waiting
+    // on. Not for a smoke run: it exits at the first frame, and a thread
+    // it started would be a thread nobody asked for. See
+    // `watch_updates` for what the check will and will not do.
+    if !smoke {
+        std::thread::spawn(move || watch_updates(dirs_for_updates()));
+    }
+
     // Handed over once, here, and never replaced: a fresh model is a reset,
     // and a reset rebuilds every row that hangs off it.
     {
@@ -2669,6 +2678,92 @@ fn add_pane(state: &mut Studio, kind: PaneKind) {
 
 /// How long a quit waits for an export it cancelled to stop.
 const EXPORT_PATIENCE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Where the app's own folders are, for the update check's marker. `None`
+/// only when the platform will not say - the check needs somewhere to
+/// remember when it last ran, and nowhere to remember it in is the check
+/// quietly off.
+fn dirs_for_updates() -> concat_host::AppDirs {
+    concat_host::AppDirs::locate().unwrap_or_else(|why| {
+        log::warn!("the update check has no folders to remember itself by: {why}");
+        concat_host::AppDirs::under(std::path::Path::new("/tmp"))
+    })
+}
+
+/// The automatic update check: every three days, in this thread alone.
+///
+/// What it will not do is the point as much as what it will. It will not
+/// install anything - the AppImage path downloads the release and leaves
+/// it in the updates folder for the Version page's own Switch Version,
+/// and the package paths only say the release is out, because apt and dnf
+/// are the ones that install. It will not fall back to upstream: a build
+/// of this fork that cannot read the fork's own releases is told so, in
+/// the log, and does nothing - never an update from a build the fork
+/// never made. It will not restart the clock at every launch: the marker
+/// under the data folder counts the three days from the last check that
+/// ran, whichever check it was - this one or the Version page's own.
+fn watch_updates(dirs: concat_host::AppDirs) {
+    // An hour between looks at the clock, so a machine suspended with the
+    // app open still checks on wake and a clock moved backwards is
+    // noticed within the hour rather than at the next launch.
+    const NAP: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+    loop {
+        let now = std::time::SystemTime::now();
+        let last = concat_host::updates::last_checked(&dirs);
+        if concat_host::updates::check_due(last, now) {
+            let action = concat_host::updates::automatic_check(&dirs);
+            // Whatever it said, it ran: the three days start here.
+            concat_host::updates::record_checked(&dirs, std::time::SystemTime::now());
+            announce_update(action);
+            std::thread::sleep(concat_host::updates::CHECK_INTERVAL);
+        } else {
+            // Not due yet: sleep out the remainder an hour at a time.
+            let elapsed = now
+                .duration_since(last.expect("check_due said not due"))
+                .map(|since| since.as_secs())
+                .unwrap_or(0);
+            let remaining = concat_host::updates::CHECK_INTERVAL
+                .as_secs()
+                .saturating_sub(elapsed);
+            std::thread::sleep(NAP.min(std::time::Duration::from_secs(remaining)));
+        }
+    }
+}
+
+/// Says what the automatic check found: in the log, always, and as a toast
+/// when there is a window to toast in. A Skip is a log line and nothing
+/// more - "the releases could not be read" at three in the morning is
+/// something a person reads in the log, not a notification.
+fn announce_update(action: concat_host::updates::AutoAction) {
+    use concat_host::updates::AutoAction;
+    match &action {
+        AutoAction::Skip { why } => {
+            log::info!("update check: {why}");
+            return;
+        }
+        AutoAction::Announce { version } => log::info!("update check: {version} is out"),
+        AutoAction::Downloaded { version, file } => log::info!(
+            "update check: {version} downloaded to {} and waiting for the Version page",
+            file.display()
+        ),
+        AutoAction::Failed { version, why } => {
+            log::warn!("update check: {version} is out but could not be fetched: {why}")
+        }
+    }
+    let message = match &action {
+        AutoAction::Skip { .. } => return,
+        AutoAction::Announce { version } => i18n::tf("settings.updateAvailable", &[version]),
+        AutoAction::Downloaded { version, .. } => i18n::tf("settings.updateDownloaded", &[version]),
+        AutoAction::Failed { .. } => i18n::t("settings.updateFetchFailed"),
+    };
+    let failed = matches!(action, AutoAction::Failed { .. });
+    let _ = slint::invoke_from_event_loop(move || {
+        Shell::with(|shell, app| {
+            shell.studio.borrow_mut().notify(&message, failed);
+            shell.studio.borrow().publish(&app, &shell.models);
+        });
+    });
+}
 
 /// Ends what is still rendering before the process goes, so a quit in the
 /// middle of an export leaves no half-written `.{name}.concat-*` file

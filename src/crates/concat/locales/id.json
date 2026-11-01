@@ -620,6 +620,8 @@
   "settings.unpacking": "Mengekstrak…",
   "settings.upToDate": "Concat {0} adalah rilis terbaru.",
   "settings.updateAvailable": "Concat {0} sudah tersedia. Ini versi {1}.",
+  "settings.updateDownloaded": "Concat {0} telah diunduh dan siap — pasang dari Pengaturan › Versi.",
+  "settings.updateFetchFailed": "Concat versi lebih baru telah rilis, tetapi tidak dapat diunduh. Periksa log, atau ambil dari Pengaturan › Versi.",
   "settings.version": "Versi",
   "settings.versionInstalled": "Concat {0} sudah terinstal. Concat dimulai ulang sekarang.",
   "settings.violet": "Ungu",

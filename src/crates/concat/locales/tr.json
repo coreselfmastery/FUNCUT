@@ -620,6 +620,8 @@
   "settings.unpacking": "Açılıyor…",
   "settings.upToDate": "Concat {0} en son sürüm.",
   "settings.updateAvailable": "Concat {0} çıktı. Bu sürüm {1}.",
+  "settings.updateDownloaded": "Concat {0} indirildi ve hazır — Ayarlar › Sürüm'den yükleyin.",
+  "settings.updateFetchFailed": "Daha yeni bir Concat çıktı ama indirilemedi. Günlüğe bakın ya da Ayarlar › Sürüm'den alın.",
   "settings.version": "Sürüm",
   "settings.versionInstalled": "Concat {0} yüklendi. Concat şimdi yeniden başlıyor.",
   "settings.violet": "Menekşe",

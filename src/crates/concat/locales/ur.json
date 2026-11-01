@@ -620,6 +620,8 @@
   "settings.unpacking": "کھولا جا رہا ہے…",
   "settings.upToDate": "Concat {0} تازہ ترین ورژن ہے۔",
   "settings.updateAvailable": "Concat {0} آ گیا ہے۔ موجودہ ورژن {1} ہے۔",
+  "settings.updateDownloaded": "Concat {0} ڈاؤن لوڈ ہو چکا ہے اور تیار ہے — اسے ترتیبات › ورژن سے انسٹال کریں۔",
+  "settings.updateFetchFailed": "نیا Concat آ گیا ہے، لیکن ڈاؤن لوڈ نہیں ہو سکا۔ لاگ دیکھیں، یا اسے ترتیبات › ورژن سے لیں۔",
   "settings.version": "ورژن",
   "settings.versionInstalled": "Concat {0} انسٹال ہو گیا۔ Concat اب دوبارہ شروع ہو رہا ہے۔",
   "settings.violet": "بنفشی",

@@ -620,6 +620,8 @@
   "settings.unpacking": "আনপ্যাক করা হচ্ছে…",
   "settings.upToDate": "Concat {0} সর্বশেষ রিলিজ।",
   "settings.updateAvailable": "Concat {0} বেরিয়েছে। এটি {1}।",
+  "settings.updateDownloaded": "Concat {0} ডাউনলোড হয়ে প্রস্তুত — সেটিংস › সংস্করণ থেকে ইনস্টল করুন।",
+  "settings.updateFetchFailed": "নতুন Concat বেরিয়েছে, কিন্তু ডাউনলোড করা গেল না। লগ দেখুন, বা সেটিংস › সংস্করণ থেকে নিন।",
   "settings.version": "সংস্করণ",
   "settings.versionInstalled": "Concat {0} ইনস্টল করা হয়েছে। Concat এখন আবার চালু হচ্ছে।",
   "settings.violet": "ভায়োলেট",

@@ -620,6 +620,8 @@
   "settings.unpacking": "Đang giải nén…",
   "settings.upToDate": "Concat {0} là bản phát hành mới nhất.",
   "settings.updateAvailable": "Concat {0} đã được phát hành. Phiên bản hiện tại là {1}.",
+  "settings.updateDownloaded": "Concat {0} đã được tải xuống và sẵn sàng — cài đặt từ Cài đặt › Phiên bản.",
+  "settings.updateFetchFailed": "Đã có bản Concat mới hơn nhưng không tải xuống được. Xem nhật ký, hoặc tải từ Cài đặt › Phiên bản.",
   "settings.version": "Phiên bản",
   "settings.versionInstalled": "Concat {0} đã được cài đặt. Concat sẽ khởi động lại ngay.",
   "settings.violet": "Tím violet",

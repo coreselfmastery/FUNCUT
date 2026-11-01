@@ -598,6 +598,179 @@ fn detach(command: &mut Command) -> Result<(), String> {
         .map_err(|error| format!("could not start {program}: {error}"))
 }
 
+// ── the automatic check ───────────────────────────────────────────────
+//
+// The check on the Version page is the one a person asks for. This is the
+// one the app asks for itself, no more often than every three days, and
+// the whole of it is honest about what it will not do: it never installs
+// anything a person did not choose (an AppImage release is downloaded and
+// left waiting in the updates folder, a package release is only said
+// about, because apt and dnf are the ones that install), it never falls
+// back to upstream (fetch_releases' own line, which a `-funcut.N` build
+// cannot cross), and it leaves a marker so a restart restarts nothing -
+// the three days are counted from the last check that ran, not from the
+// process that happens to be open.
+
+/// How long the app leaves between automatic checks: three days.
+pub const CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(72 * 60 * 60);
+
+/// The file under the data folder that remembers when a check last ran -
+/// automatic or the Version page's own, which both reset the same clock -
+/// so a launch does not ask again what a launch just asked.
+fn checked_marker(dirs: &AppDirs) -> PathBuf {
+    dirs.data.join("update-check")
+}
+
+/// When the last check ran, as the marker wrote it; `None` is never.
+pub fn last_checked(dirs: &AppDirs) -> Option<std::time::SystemTime> {
+    let seconds = std::fs::read_to_string(checked_marker(dirs))
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()?;
+    std::time::SystemTime::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(seconds))
+}
+
+/// Writes `when` as the time of the last check.
+pub fn record_checked(dirs: &AppDirs, when: std::time::SystemTime) {
+    if let Ok(seconds) = when.duration_since(std::time::SystemTime::UNIX_EPOCH) {
+        let _ = std::fs::create_dir_all(&dirs.data);
+        let _ = std::fs::write(checked_marker(dirs), seconds.as_secs().to_string());
+    }
+}
+
+/// Whether a check is due at `now`: never having run is due, and so is a
+/// last check older than [`CHECK_INTERVAL`]. A marker from a clock set
+/// backwards - a last check "in the future" - reads as due rather than
+/// holding the app off until that future arrives, because a machine whose
+/// clock was wrong is a machine whose marker is wrong too.
+pub fn check_due(last: Option<std::time::SystemTime>, now: std::time::SystemTime) -> bool {
+    match last {
+        None => true,
+        Some(last) => match now.duration_since(last) {
+            Ok(elapsed) => elapsed >= CHECK_INTERVAL,
+            Err(_) => true,
+        },
+    }
+}
+
+/// What the automatic check decides, in the order a log line or a toast
+/// can say it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AutoAction {
+    /// Nothing to do, with the reason.
+    Skip {
+        /// The reason, phrased for a log line.
+        why: String,
+    },
+    /// A newer release is out and this machine's package is one a person
+    /// installs (a .deb, an RPM, an Arch package): it is named, and the
+    /// installing is theirs.
+    Announce {
+        /// The release that is out.
+        version: Version,
+    },
+    /// A newer release is out; its AppImage is downloaded and
+    /// digest-checked, waiting at `file` for the Version page's switch.
+    Downloaded {
+        /// The release that was fetched.
+        version: Version,
+        /// Where the checked package landed.
+        file: PathBuf,
+    },
+    /// A newer release is out and its AppImage was the thing to fetch, but
+    /// the fetch or the digest failed: the reason is carried, the person
+    /// is not left guessing.
+    Failed {
+        /// The release that could not be fetched.
+        version: Version,
+        /// Why not.
+        why: String,
+    },
+}
+
+/// Which release the automatic check should act on, if any: the standing
+/// and the install are the whole decision, which is why they are the whole
+/// of this function and the network stays out of it.
+pub fn auto_standing(standing: Standing, installed: Result<PackageKind, Fixed>) -> Option<Version> {
+    let Standing::Behind(version) = standing else {
+        return None;
+    };
+    match installed {
+        // Flatpak updates itself; a build from the tree or a distro
+        // package is switched the way it was installed, not from here.
+        Err(_) => None,
+        Ok(_) => Some(version),
+    }
+}
+
+/// Runs one automatic check: reads the releases the way the Version page
+/// does, and acts on what this machine is. Nothing here installs - the
+/// nearest it comes is the AppImage's download, which lands in the
+/// updates folder and waits for a person's Switch Version.
+pub fn automatic_check(dirs: &AppDirs) -> AutoAction {
+    let current = Version::current();
+    let releases = match fetch_releases() {
+        Ok(releases) => releases,
+        // A private repository with no token, a rate limit, a network
+        // down: all said, none acted on, and never a fall back to
+        // upstream - that is fetch_releases' own line, held for the
+        // automatic check exactly as for the asked-for one.
+        Err(why) => {
+            return AutoAction::Skip {
+                why: format!("could not read the releases: {why}"),
+            };
+        }
+    };
+    let standing = standing(current, &releases);
+    let Some(newer) = auto_standing(standing, installed_as()) else {
+        return AutoAction::Skip {
+            why: match standing {
+                Standing::Latest => "this build is the newest release".to_owned(),
+                Standing::Ahead => {
+                    "this build is newer than any release - a build from the tree".to_owned()
+                }
+                Standing::NoReleases => "no releases to read".to_owned(),
+                Standing::Behind(_) => unreachable!("auto_standing named a Behind"),
+            },
+        };
+    };
+    match installed_as() {
+        Ok(PackageKind::AppImage) => {
+            // The release the standing named is one the list carries;
+            // a list that somehow does not is said, not unwrapped.
+            let release = releases.iter().find(|release| release.version == newer);
+            match release.and_then(|release| fetch_package(release, PackageKind::AppImage).ok()) {
+                Some(package) => {
+                    let quiet = &mut |_received: u64, _total: u64| {};
+                    let off = &AtomicBool::new(false);
+                    match download_package(&package, &folder(dirs), off, quiet) {
+                        Ok(file) => AutoAction::Downloaded {
+                            version: newer,
+                            file,
+                        },
+                        Err(why) => AutoAction::Failed {
+                            version: newer,
+                            why,
+                        },
+                    }
+                }
+                None => AutoAction::Failed {
+                    version: newer,
+                    why: format!(
+                        "the release {}'s manifest did not answer an AppImage for this machine",
+                        newer.tag()
+                    ),
+                },
+            }
+        }
+        Ok(_) => AutoAction::Announce { version: newer },
+        Err(_) => AutoAction::Skip {
+            why: "this build was not installed from a package".to_owned(),
+        },
+    }
+}
+
 /// One GET, read whole as text. GitHub wants a user agent and says so with
 /// a 403 otherwise. A token in the environment (`GITHUB_TOKEN`, or
 /// `GH_TOKEN` - the same two names the installer takes) lifts the
@@ -862,5 +1035,76 @@ mod tests {
     fn the_updates_folder_hangs_off_the_data_directory() {
         let dirs = AppDirs::under(Path::new("/tmp/concat-updates-test"));
         assert_eq!(folder(&dirs), Path::new("/tmp/concat-updates-test/updates"));
+    }
+
+    #[test]
+    fn the_three_day_clock_reads_the_marker_not_the_process() {
+        let now = std::time::SystemTime::now();
+        let hours = |h: u64| std::time::Duration::from_secs(h * 60 * 60);
+        // Never checked: due.
+        assert!(check_due(None, now));
+        // Just checked: not due, and neither is 71 hours after.
+        assert!(!check_due(Some(now), now));
+        assert!(!check_due(Some(now - hours(71)), now));
+        // Three days to the second: due.
+        assert!(check_due(Some(now - CHECK_INTERVAL), now));
+        assert!(check_due(Some(now - hours(73)), now));
+        // A clock set backwards left the marker in the future: due, not
+        // stranded - a machine whose clock was wrong is a machine whose
+        // marker is wrong too.
+        assert!(check_due(Some(now + hours(1)), now));
+    }
+
+    #[test]
+    fn the_marker_round_trips_and_a_garbage_one_reads_as_never() {
+        let root = std::env::temp_dir().join("concat-update-marker-test");
+        let _ = std::fs::remove_dir_all(&root);
+        let dirs = AppDirs::under(&root);
+        assert_eq!(last_checked(&dirs), None, "no marker yet");
+        let when = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        record_checked(&dirs, when);
+        // The marker holds whole seconds - a check's moment to the second
+        // is the moment, and the nanoseconds are not worth the bytes.
+        let round = |time: std::time::SystemTime| {
+            time.duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .map(|since| since.as_secs())
+                .unwrap_or(0)
+        };
+        assert_eq!(round(last_checked(&dirs).unwrap()), round(when));
+        // A hand-edited or truncated marker is never, not a crash.
+        std::fs::write(root.join("update-check"), "not a number").unwrap();
+        assert_eq!(last_checked(&dirs), None);
+        std::fs::write(root.join("update-check"), "").unwrap();
+        assert_eq!(last_checked(&dirs), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_automatic_check_only_acts_on_a_package_it_could_replace() {
+        let behind = |version: Version| Standing::Behind(version);
+        // Not behind: nothing to do, whatever the install.
+        for standing in [Standing::Latest, Standing::Ahead, Standing::NoReleases] {
+            assert_eq!(auto_standing(standing, Ok(PackageKind::AppImage)), None);
+            assert_eq!(auto_standing(standing, Err(Fixed::NotFromPackage)), None);
+        }
+        // Behind and replaceable: the newer version, whatever the package.
+        let newer = Version::new(0, 3, 0);
+        for kind in [
+            Ok(PackageKind::AppImage),
+            Ok(PackageKind::Deb),
+            Ok(PackageKind::Rpm),
+            Ok(PackageKind::Pacman),
+        ] {
+            assert_eq!(auto_standing(behind(newer), kind), Some(newer));
+        }
+        // Behind but fixed in place: a Flatpak updates itself, a build
+        // from the tree is not this app's to replace - and neither is
+        // ever told about a release, because there is nothing they could
+        // do with the telling.
+        assert_eq!(auto_standing(behind(newer), Err(Fixed::Flatpak)), None);
+        assert_eq!(
+            auto_standing(behind(newer), Err(Fixed::NotFromPackage)),
+            None
+        );
     }
 }

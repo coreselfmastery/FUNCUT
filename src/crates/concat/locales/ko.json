@@ -620,6 +620,8 @@
   "settings.unpacking": "압축 해제 중…",
   "settings.upToDate": "Concat {0}이(가) 최신 릴리스입니다.",
   "settings.updateAvailable": "Concat {0}이(가) 나왔습니다. 현재 버전은 {1}입니다.",
+  "settings.updateDownloaded": "Concat {0} 다운로드가 완료되어 준비되었습니다. 설정 › 버전에서 설치하세요.",
+  "settings.updateFetchFailed": "새 Concat이 출시되었지만 다운로드하지 못했습니다. 로그를 확인하거나 설정 › 버전에서 직접 받으세요.",
   "settings.version": "버전",
   "settings.versionInstalled": "Concat {0}이(가) 설치되었습니다. Concat을 다시 시작합니다.",
   "settings.violet": "바이올렛",

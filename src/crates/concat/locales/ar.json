@@ -620,6 +620,8 @@
   "settings.unpacking": "جارٍ فك الحزمة…",
   "settings.upToDate": "Concat {0} هو أحدث إصدار.",
   "settings.updateAvailable": "صدر Concat {0}. الإصدار الحالي {1}.",
+  "settings.updateDownloaded": "تم تنزيل Concat {0} وهو جاهز — ثبّته من الإعدادات › الإصدار.",
+  "settings.updateFetchFailed": "صدر إصدار أحدث من Concat، لكن تعذّر تنزيله. راجع السجل، أو اجلبه من الإعدادات › الإصدار.",
   "settings.version": "الإصدار",
   "settings.versionInstalled": "تم تثبيت Concat {0}. سيبدأ Concat من جديد الآن.",
   "settings.violet": "بنفسجي",

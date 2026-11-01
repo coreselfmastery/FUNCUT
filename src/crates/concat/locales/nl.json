@@ -620,6 +620,8 @@
   "settings.unpacking": "Uitpakken…",
   "settings.upToDate": "Concat {0} is de nieuwste release.",
   "settings.updateAvailable": "Concat {0} is uit. Dit is {1}.",
+  "settings.updateDownloaded": "Concat {0} is gedownload en klaar — installeer het via Instellingen › Versie.",
+  "settings.updateFetchFailed": "Er is een nieuwere Concat, maar die kon niet worden gedownload. Bekijk het logboek, of haal hem via Instellingen › Versie.",
   "settings.version": "Versie",
   "settings.versionInstalled": "Concat {0} is geïnstalleerd. Concat start nu opnieuw.",
   "settings.violet": "Violet",

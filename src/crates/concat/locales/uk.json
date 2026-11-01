@@ -620,6 +620,8 @@
   "settings.unpacking": "Розпакування…",
   "settings.upToDate": "Concat {0} — найновіший випуск.",
   "settings.updateAvailable": "Вийшов Concat {0}. Зараз встановлено {1}.",
+  "settings.updateDownloaded": "Concat {0} завантажено та готово — установіть його з Налаштування › Версія.",
+  "settings.updateFetchFailed": "Вийшов новіший Concat, але завантажити його не вдалося. Перевірте журнал або отримайте його з Налаштування › Версія.",
   "settings.version": "Версія",
   "settings.versionInstalled": "Concat {0} встановлено. Concat зараз перезапуститься.",
   "settings.violet": "Фіалка",

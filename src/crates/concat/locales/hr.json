@@ -620,6 +620,8 @@
   "settings.unpacking": "Raspakiranje…",
   "settings.upToDate": "Concat {0} je najnovije izdanje.",
   "settings.updateAvailable": "Concat {0} je izašao. Ovo je {1}.",
+  "settings.updateDownloaded": "Concat {0} je preuzet i spreman — instaliraj ga iz Postavke › Verzija.",
+  "settings.updateFetchFailed": "Izašao je noviji Concat, ali se nije mogao preuzeti. Pogledaj zapisnik ili ga preuzmi iz Postavke › Verzija.",
   "settings.version": "Verzija",
   "settings.versionInstalled": "Concat {0} je instaliran. Concat se sada ponovno pokreće.",
   "settings.violet": "Ljubičasta",

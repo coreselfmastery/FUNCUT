@@ -620,6 +620,8 @@
   "settings.unpacking": "正在解包…",
   "settings.upToDate": "Concat {0} 已是最新版本。",
   "settings.updateAvailable": "Concat {0} 已发布。当前版本为 {1}。",
+  "settings.updateDownloaded": "Concat {0} 已下载完毕，随时可安装 — 前往 设置 › 版本 安装。",
+  "settings.updateFetchFailed": "有更新的 Concat 已发布，但下载失败。请查看日志，或从 设置 › 版本 手动获取。",
   "settings.version": "版本",
   "settings.versionInstalled": "Concat {0} 已安装。Concat 现在将重新启动。",
   "settings.violet": "紫罗兰",

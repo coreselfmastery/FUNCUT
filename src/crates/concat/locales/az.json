@@ -620,6 +620,8 @@
   "settings.unpacking": "Açılır…",
   "settings.upToDate": "Concat {0} ən son buraxılışdır.",
   "settings.updateAvailable": "Concat {0} çıxıb. Sizdəki versiya: {1}.",
+  "settings.updateDownloaded": "Concat {0} yükləndi və hazırdır — Parametrlər › Versiya bölməsindən quraşdırın.",
+  "settings.updateFetchFailed": "Daha yeni Concat buraxılıb, amma yüklənə bilmədi. Jurnala baxın və ya Parametrlər › Versiya bölməsindən alın.",
   "settings.version": "Versiya",
   "settings.versionInstalled": "Concat {0} quraşdırıldı. Concat indi yenidən açılır.",
   "settings.violet": "Bənövşəyi",

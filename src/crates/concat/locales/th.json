@@ -620,6 +620,8 @@
   "settings.unpacking": "กำลังแตกไฟล์…",
   "settings.upToDate": "Concat {0} เป็นรุ่นล่าสุดแล้ว",
   "settings.updateAvailable": "Concat {0} ออกแล้ว ตอนนี้ใช้ {1}",
+  "settings.updateDownloaded": "ดาวน์โหลด Concat {0} เรียบร้อยและพร้อมติดตั้ง — ติดตั้งจาก การตั้งค่า › เวอร์ชัน",
+  "settings.updateFetchFailed": "มี Concat เวอร์ชันใหม่กว่า แต่ดาวน์โหลดไม่สำเร็จ ดูบันทึก หรือดึงจาก การตั้งค่า › เวอร์ชัน",
   "settings.version": "เวอร์ชัน",
   "settings.versionInstalled": "ติดตั้ง Concat {0} แล้ว Concat จะเริ่มใหม่ตอนนี้",
   "settings.violet": "ม่วง",

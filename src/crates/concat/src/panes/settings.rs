@@ -476,6 +476,14 @@ impl SettingsPane {
                 match result {
                     Ok(releases) => {
                         self.checked = true;
+                        // A check a person asked for is a check that ran:
+                        // it resets the automatic check's three-day clock
+                        // too, so the app does not ask GitHub again for
+                        // what this page just read.
+                        concat_host::updates::record_checked(
+                            &studio.host.dirs,
+                            std::time::SystemTime::now(),
+                        );
                         let current = Version::current();
                         self.update_status = match updates::standing(current, &releases) {
                             Standing::Latest => tf("settings.upToDate", &[&current]),

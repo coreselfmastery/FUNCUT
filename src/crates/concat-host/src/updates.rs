@@ -228,15 +228,40 @@ fn github_message(value: &serde_json::Value) -> String {
 }
 
 /// Asks GitHub for the releases; see [`releases_from_json`]. This fork's
-/// own are preferred, and only a fork that has published none of them -
-/// or whose list would not answer - takes upstream Concat's, the way
-/// `install-linux.sh` falls back at the command line.
+/// own are preferred, and only a build without the fork's own iteration -
+/// upstream's own, or a plain workspace build - ever falls back to
+/// upstream Concat's list: a build tagged `-funcut.N` whose own list
+/// comes back empty (a rate limit, a private flip, a deleted release)
+/// is told so, because an in-app update offered from upstream would
+/// swap the fork's tuning for a build the fork never made.
 pub fn fetch_releases() -> Result<Vec<Release>, String> {
-    let own = get_text(&releases_url(REPO)).and_then(|json| releases_from_json(&json, REPO));
+    let own = own_releases();
     match own {
         Ok(releases) if !releases.is_empty() => Ok(releases),
+        _ if option_env!("FUNCUT_ITERATION").is_some() => Err(format!(
+            "no published releases of {REPO} answered; upstream Concat's are refused, \
+             they would replace this fork with a build it never made"
+        )),
         _ => releases_from_json(&get_text(&releases_url(UPSTREAM_REPO))?, UPSTREAM_REPO),
     }
+}
+
+/// The fork's own releases, paged: a hundred a page covers years of app
+/// releases, but the data shelves share the same release list, and a
+/// page that comes back short is the last one. Three pages is years of
+/// headroom over anything this repo has published so far.
+fn own_releases() -> Result<Vec<Release>, String> {
+    let mut all = Vec::new();
+    for page in 1..=3 {
+        let url = format!("https://api.github.com/repos/{REPO}/releases?per_page=100&page={page}");
+        let page_releases = releases_from_json(&get_text(&url)?, REPO)?;
+        let short = page_releases.len() < 100;
+        all.extend(page_releases);
+        if short {
+            break;
+        }
+    }
+    Ok(all)
 }
 
 /// Where this build sits among the releases.
@@ -574,27 +599,32 @@ fn detach(command: &mut Command) -> Result<(), String> {
 }
 
 /// One GET, read whole as text. GitHub wants a user agent and says so with
-/// a 403 otherwise.
+/// a 403 otherwise. A token in the environment (`GITHUB_TOKEN`, or
+/// `GH_TOKEN` - the same two names the installer takes) lifts the
+/// anonymous sixty-requests-an-hour ceiling a Version-page check can
+/// otherwise hit; it is sent to GitHub only, and only when present.
 fn get_text(url: &str) -> Result<String, String> {
     let agent = crate::net::agent(
         std::time::Duration::from_secs(20),
         std::time::Duration::from_secs(30),
     );
-    let response = agent
+    let mut request = agent
         .get(url)
         .set("User-Agent", &format!("Concat/{}", Version::current()))
-        .set("Accept", "application/vnd.github+json")
-        .call()
-        .map_err(|error| match error {
-            ureq::Error::Status(code, response) => {
-                let body = response.into_string().unwrap_or_default();
-                let said = serde_json::from_str::<serde_json::Value>(&body)
-                    .map(|value| github_message(&value))
-                    .unwrap_or_else(|_| body.chars().take(200).collect());
-                format!("{url} answered {code}: {said}")
-            }
-            other => format!("{url} did not answer: {other}"),
-        })?;
+        .set("Accept", "application/vnd.github+json");
+    if let Ok(token) = std::env::var("GITHUB_TOKEN").or_else(|_| std::env::var("GH_TOKEN")) {
+        request = request.set("Authorization", &format!("Bearer {token}"));
+    }
+    let response = request.call().map_err(|error| match error {
+        ureq::Error::Status(code, response) => {
+            let body = response.into_string().unwrap_or_default();
+            let said = serde_json::from_str::<serde_json::Value>(&body)
+                .map(|value| github_message(&value))
+                .unwrap_or_else(|_| body.chars().take(200).collect());
+            format!("{url} answered {code}: {said}")
+        }
+        other => format!("{url} did not answer: {other}"),
+    })?;
     response
         .into_string()
         .map_err(|error| format!("{url} was cut short: {error}"))

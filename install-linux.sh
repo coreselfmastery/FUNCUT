@@ -220,21 +220,26 @@ sys.exit(2 if len(releases) < 100 else 0)
             # Every asset URL carries its release's tag between
             # "download/" and the file name: a change of tag is a change
             # of release, and the separator the python path prints from
-            # the JSON is printed here from that. Prerelease-ness is not
-            # in a URL, so the flags are read from the JSON in object
-            # order - GitHub's serializer emits one tag_name and one
-            # prerelease flag per release object, in the same order - and
-            # a prerelease's tag is skipped whole.
-            printf '%s' "$json" | grep -oE '"tag_name": *"[^"]+"|"prerelease": *(true|false)' |
-                paste - - |
-                awk -F'\t' '
-                    match($1, /"tag_name": *"[^"]+"/) {
-                        tag = substr($1, RSTART, RLENGTH)
+            # the JSON is printed here from that. Neither draft-ness nor
+            # prerelease-ness is in a URL, so the flags are read from the
+            # JSON in object order - GitHub's serializer emits each
+            # release's tag_name before its draft and prerelease flags -
+            # and a draft's or prerelease's tag is skipped whole. The
+            # python path above skips drafts and prereleases; this path
+            # used to skip only prereleases, so a draft (visible to a
+            # GITHUB_TOKEN call) could be picked and installed.
+            printf '%s' "$json" | grep -oE '"tag_name": *"[^"]+"|"draft": *(true|false)|"prerelease": *(true|false)' |
+                awk '
+                    match($0, /"tag_name": *"[^"]+"/) {
+                        tag = substr($0, RSTART, RLENGTH)
                         gsub(/.*"tag_name": *"|"$/, "", tag)
-                        if ($2 ~ /true/) prerelease[tag] = 1
                         order[++n] = tag
+                        current = tag
+                        next
                     }
-                    END { for (i = 1; i <= n; i++) if (!prerelease[order[i]]) print order[i] }
+                    /"draft": *true/ { hidden[current] = 1 }
+                    /"prerelease": *true/ { hidden[current] = 1 }
+                    END { for (i = 1; i <= n; i++) if (!hidden[order[i]]) print order[i] }
                 ' > "$tmp_tags" || true
             printf '%s' "$json" | grep -oE '"browser_download_url": *"[^"]+"' |
                 sed -E 's/"browser_download_url": *"([^"]+)"/\1/' |
@@ -308,21 +313,32 @@ EOF
 }
 
 # The checksums of the release an asset came from, when it has them.
-# Inside one release the assets sort before SHA256SUMS, so the sum is
-# only known to *follow* the asset: the scan remembers which block the
-# asset was in, and takes the SHA256SUMS of that block - never one from
-# a later release - printing nothing when the block ends without one.
+# The sum and the asset are both assets of one release block, and
+# GitHub's asset order is the order they were uploaded in - the sums
+# file can sit before the asset it covers as easily as after it, so the
+# scan reads the whole block and takes its SHA256SUMS whichever side of
+# the asset it landed on - never one from a later release, printing
+# nothing when the block ends without one.
 checksums_url() {
     printf '%s\n' "$1" | awk -F'\t' -v asset="$2" '
+        function flush() {
+            if (found && sums != "") {
+                print sums
+                done = 1
+            }
+            exit
+        }
         $1 == "RELEASE" {
-            if (found) exit
+            if (in_block && found)
+                flush()
+            in_block = 1
+            found = 0
+            sums = ""
             next
         }
-        $1 == "SHA256SUMS" {
-            if (found) { print $2; exit }
-            next
-        }
-        $1 == asset { found = 1 }
+        $1 == "SHA256SUMS" { sums = $2; next }
+        $1 == asset { found = 1; next }
+        END { if (!done && found && sums != "") print sums }
     '
 }
 

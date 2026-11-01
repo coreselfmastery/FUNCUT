@@ -199,10 +199,16 @@ captions from measured word times), and `motion_reel` (a whole storyboard
 as one reel — scenes with MULTI-LAYER stacks: plates under the comp and
 grain, light leaks, vignettes and foreground cards over it, each on its own
 drift and clock; check one still with `frame: seconds` before rendering). The floor is one designed beat per
-section and at least one per 15 s of runtime; in finance/science/tech every
+section and at least one per 15 s of runtime — and a floor is a floor, not
+a target: a reel where a quarter or more of the segments carry a comp, and
+a longform where an eighth or more do, reads as designed rather than
+assembled. In finance/science/tech every
 number, percentage, comparison or process is a `funcut.ticker.count`,
 `funcut.chart.bars`, `funcut.stats.triptych` or `funcut.compare.split` —
-never a plain text card. Edit every comp: real copy, retimed to its cut, one
+never a plain text card, and never a stock search: there is no footage of
+"73%" or "twice as fast", and the generic-query results for one are the
+same clips every other channel in the niche already uses. Stock is for the
+filmable nouns; comps are for the claims. Edit every comp: real copy, retimed to its cut, one
 element of the preset deleted. The loop is inspect → one validated `ops`
 batch → three `motion_frame`s → `motion_bake` at the cut's size →
 **`motion_overlay` for any transparent comp** (lower thirds, kinetic
@@ -336,11 +342,15 @@ picture covers the canvas and crops the overhang. A letterboxed or
 pillarboxed frame in any verification frame is a blocking defect.
 
 **S — Sound variety.** Never the same sound id twice within 30 s; rotate at
-least three ids per role; alternate soft and hard hits. Map motion to the
-library's own semantics: counters → `data-countup-*`, chart builds →
-`data-bar-grow`/`data-chart-reveal`, money moments → `money-*`, zooms →
-`whoosh-*`, reveals → `impact-*`. One design sound per cut in energetic
-pacing, peak ON the cut.
+least three ids per role; alternate soft and hard hits, and vary the level
+±2 dB between hits of the same role so the ear does not bracket them as
+one repeated event. Map motion to the library's own semantics: counters →
+`data-countup-*`, chart builds → `data-bar-grow`/`data-chart-reveal`, money
+moments → `money-*`, zooms → `whoosh-*`, reveals → `impact-*`. Sound
+carries information, not just emphasis: a design sound goes on the cuts
+that carry a beat of the story, and roughly one cut in four to six lands
+DRY — a sound on every cut of a thirty-cut minute is noise, and the dry
+room is what makes the next hit land. Peak ON the cut.
 
 **Z — One text system.** Four zones, one occupant each at any moment:
 captions in the lower band (~70–80% height, centered), titles the upper

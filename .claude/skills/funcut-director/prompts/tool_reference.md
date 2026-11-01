@@ -187,7 +187,8 @@ height?, rateNum?, rateDen?, codec?, tenBit?, colorRange?, hdr?}` ·
 `creative_brief {path, action: get|set, …}` · `local_vlm {action: status|setup,
 providers|configure|clear, profile?}` · `stock_contact_sheet {query|ids|paths,
 limit?, cols?, rank?, brief?}` · `watch_render {path|project, samples?, times?,
-cols?}` · `craft_critique {sheet|pngB64, brief?}` · `emotion {action:
+cols?, audio?, targetLufs?, targetTruePeakDbtp?}` · `craft_critique {sheet|pngPath|pngB64,
+brief?, autoSetup?, profile?}` · `emotion {action:
 extract|brand|gate|verify|template, project?}` · `measure_loudness {path,
 targetLufs?}` · `suggest_cuts {path, cuts?, minGap?, bpm?}`
 
@@ -208,6 +209,13 @@ targetLufs?}` · `suggest_cuts {path, cuts?, minGap?, bpm?}`
 - `measure_loudness` is the only proof a loudness target was met — EBU R128
   integrated LUFS, true peak and the error against `targetLufs` (−14
   short-form default, −23 broadcast). `export_wait` reports no loudness.
+  `watch_render {audio: true}` measures the same numbers over the whole cut
+  in one pass (the default), with `targetLufs`/`targetTruePeakDbtp` to
+  score against; `{times: [...]}` pins exact frames and skips the audio
+  side. `craft_critique` takes `pngPath` (the sheet a watch or contact
+  sheet wrote — the loop's intended input), `autoSetup: true` to fetch the
+  local critic unattended, and `profile: "minicpm"` for the denser-text
+  local model.
 - `suggest_cuts` is Phase 1's no-Python rhythm path: BPM estimate and
   beat-aligned `cutTimes` from any file with an `ffmpeg` binary — use it
   when the librosa extras are not installed.

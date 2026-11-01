@@ -90,15 +90,15 @@ on each side: the tool always promised "never above 4K for safety", and a
 
 | Id | Category | What it is |
 | --- | --- | --- |
-| `funcut.lower-third.glass` | Lower thirds | avatar, name, role, LIVE badge, growing bar — slot: Name |
+| `funcut.lower-third.glass` | Lower thirds | an editorial lower third — an accent bar that wipes down, a kicker, a name, a role (no avatar block, no LIVE badge) — slot: Name |
 | `funcut.caption.kinetic` | Captions | word-timed caption row with a highlight — slot: Transcript line |
 | `funcut.stats.triptych` | Stats | three stat cards, bars growing |
 | `funcut.chart.bars` | Charts | a bar chart that builds on |
 | `funcut.ticker.count` | Stats | one big number, label, drawn rule |
-| `funcut.sting.wordmark` | Stings | gradient wordmark + drawn rule |
+| `funcut.sting.wordmark` | Stings | solid-ink wordmark with one accent full stop and a rule that draws under it — slots: Wordmark, Subline |
 | `funcut.quote.pull` | Quotes | pull quote with attribution |
 | `funcut.chapter.chip` | Chapters | number, label, underline |
-| `funcut.cta.subscribe` | Calls to action | pulsing subscribe button |
+| `funcut.cta.subscribe` | Calls to action | a typographic ask — one accent word, an outlined button that settles once |
 | `funcut.code.terminal` | Code | terminal window, lines landing on `steps()` |
 | `funcut.compare.split` | Before / after | split frame with a wipe and a knob |
 | `funcut.backdrop.mesh` | Backdrops | mesh gradient + grid light + vignette (opaque) |

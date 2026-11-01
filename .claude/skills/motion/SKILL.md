@@ -237,15 +237,15 @@ kicker) is ~440 lines of pretty-printed JSON and is in the repository as a templ
 
 | Id | Category | Slot | What it is |
 | --- | --- | --- | --- |
-| `funcut.lower-third.glass` | Lower thirds | Name | avatar, name, role, LIVE badge, growing bar |
+| `funcut.lower-third.glass` | Lower thirds | Name | editorial lower third: an accent bar that wipes down, a kicker, a name, a role — no avatar block, no LIVE badge |
 | `funcut.caption.kinetic` | Captions | Transcript line | word-timed caption with a highlight |
 | `funcut.stats.triptych` | Stats | Numbers | three stat cards, bars growing |
 | `funcut.chart.bars` | Charts | Chart title | bar chart building on |
 | `funcut.ticker.count` | Stats | Number | one big counting number + drawn rule |
-| `funcut.sting.wordmark` | Stings | Wordmark | gradient wordmark, drawn underline |
+| `funcut.sting.wordmark` | Stings | Wordmark, Subline | solid-ink wordmark with one accent full stop and a rule that draws under it |
 | `funcut.quote.pull` | Quotes | Quote | pull quote with attribution |
 | `funcut.chapter.chip` | Chapters | Chapter | number, label, underline |
-| `funcut.cta.subscribe` | Calls to action | Headline | pulsing subscribe pill |
+| `funcut.cta.subscribe` | Calls to action | Headline | typographic ask — one accent word, an outlined button that settles once |
 | `funcut.code.terminal` | Code | Window title | terminal window, lines on `steps()` |
 | `funcut.compare.split` | Before / after | After label | split frame, wipe, knob |
 | `funcut.backdrop.mesh` | Backdrops | — | mesh gradient + grid + vignette (opaque) |

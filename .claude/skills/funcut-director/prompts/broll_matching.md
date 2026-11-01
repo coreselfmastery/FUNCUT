@@ -54,6 +54,21 @@ that is all wides is a screensaver; all closes is claustrophobic. Plan
 the ladder per section (the query list implies it: "city skyline" →
 "office floor" → "hands on keyboard" → "close-up of candlestick chart").
 
+## Claims are comps first
+
+A number, a comparison, a process, a definition or an abstract claim is
+NOT a stock search. There is no footage of "73%" or "twice as fast", and
+the generic-query results for one are the same clips every other channel
+in the niche already uses. Plan those segments with a comp
+(`funcut.ticker.count`, `funcut.chart.bars`, `funcut.stats.triptych`,
+`funcut.compare.split`, a terminal, a pull quote) and reach for stock
+only when the script names a thing a camera could actually film. The
+comp is not the fallback; it is the default for exactly the segments
+where stock is weakest. The emotion extract's per-line `queries` are the
+primary source for the filmable nouns — the niche playbooks' query lists
+are starter examples to be replaced with the script's specifics, not
+lists to copy.
+
 ## The fallback ladder
 
 A thin search is a fact, not a failure. In order:
@@ -62,8 +77,9 @@ A thin search is a fact, not a failure. In order:
 2. Synonym the subject ("stock market crash" → "falling chart" / "trading
    floor panic").
 3. Go one abstraction up ("VW Beetle" → "classic car").
-4. Change the *kind* of visual: a `motion_comp` stat card or chart IS a
-   legitimate visual for a claim segment — often the better one.
+4. Change the *kind* of visual: if the segment turned out to be a claim
+   after all, plan a comp for it (see "Claims are comps first" above) —
+   that is a promotion, not a fallback.
 5. A text card (`title_add`, styled, animated) is the last resort — and
    must follow the text zones, not just sit somewhere.
 
@@ -78,7 +94,13 @@ Never invent a clip id. Never leave a segment without a visual.
 
 ## The pacing tie-in
 
-One clip per segment, ~1 clip per 2.5–4 s of runtime at energetic pacing
-(the 4-second law is the cap). `openvid_search` with `minSeconds` /
+One clip per segment is the default, and ~1 clip per 2.5–4 s of runtime
+at energetic pacing (the 4-second law is the cap) is the *center of
+gravity*, not a metronome: a grid of equal-length cuts reads as
+assembled, which is the exact complaint "robotic" names. So break the
+cadence in every section at least once — one strong shot held 6–8 s with
+drift or parallax to breathe, or one montage burst of 0.4–0.8 s cuts —
+and no three consecutive segments share a length within 0.2 s.
+`openvid_search` with `minSeconds` /
 `maxSeconds` near your segment lengths wastes less footage; trim to the
 word, lead the visual 100–200 ms.

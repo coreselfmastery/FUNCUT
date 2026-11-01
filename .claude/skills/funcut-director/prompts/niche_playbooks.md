@@ -70,7 +70,8 @@ generic rules (SKILL.md §3); when two rules collide, the niche wins.
   punches, `impact-*` on claims. Notification dings are a cliché — use
   the data family.
 - **Pacing:** energetic, 16–24 cpm. REEL: 20–30 cpm, punch zoom every
-  3–6 s, 30–60 s. LONGFORM: 90–150 s, hook 20+ cpm → body 14–18 →
+  3–6 s, 30–60 s. LONGFORM: 90 s–20 min (the 8–20 min strategy is its own
+  section in `reels_vs_longform.md`), hook 20+ cpm → body 14–18 →
   re-hook spike at 50–60% → outro 10.
 - **Structure (longform):** cold-open promise → title sting → 3–5 named
   chapters, each a `funcut.chapter.chip` on a downbeat, opened by an
@@ -155,8 +156,9 @@ generic rules (SKILL.md §3); when two rules collide, the niche wins.
 
 The mode decides the shape (see `reels_vs_longform.md`): REEL — 9:16,
 16–60 s, loop ending, word-timed kinetic captions, one accent, 2–4
-transitions per 30 s; LONGFORM — 16:9 or 9:16, 90–180 s, hook → title →
-chapters → re-hook → outro, segment captions, chapter comps. Every clip
+transitions per 30 s; LONGFORM — 16:9 or 9:16, 90 s–20 min (8–20 min
+has its own section there), hook → title → chapters → re-hook → outro,
+segment captions, chapter comps. Every clip
 `clip_frame {framing: "fill"}` on 9:16 (OpenVid holds no vertical
 footage — search landscape, crop to cover). Grade the WHOLE runtime
 (`effect_layer_add {start: 0, duration: <runtime>}` — duration written,

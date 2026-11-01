@@ -533,12 +533,12 @@ mod tests {
 
     /// Every numeric surface a clip can carry, each planted with one NaN
     /// and each expected to refuse the save. `Clip::has_non_finite` is
-    /// the line the whole save path stands on: a surface missing from
-    /// the walker is a surface that saves as null and never opens again,
-    /// so the coverage itself is held here, surface by surface, rather
-    /// than trusted. `VideoSettings` needs no row of its own: its frame
-    /// and rate are integers, which cannot be NaN, and the bin's own two
-    /// floats are covered above.
+    /// the line the whole save path stands on, because a surface missing
+    /// from the walker is a surface that saves as null and never opens
+    /// again; the coverage itself is held here, surface by surface,
+    /// rather than trusted. `VideoSettings` needs no row of its own: its
+    /// frame and rate are integers, which cannot be NaN, and the bin's
+    /// own two floats are covered above.
     #[test]
     fn every_numeric_surface_of_a_clip_refuses_the_save() {
         use crate::model::{

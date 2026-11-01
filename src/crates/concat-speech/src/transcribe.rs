@@ -277,7 +277,7 @@ fn on_speech(start: f64, end: f64, speech: &[(f64, f64)]) -> (f64, f64) {
     let Some(&(first, mut last)) = covered.next() else {
         return (start, end);
     };
-    if let Some(&(_, to)) = covered.last() {
+    if let Some(&(_, to)) = covered.next_back() {
         last = to;
     }
     (start.max(first), end.min(last))

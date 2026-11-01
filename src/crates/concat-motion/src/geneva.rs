@@ -381,6 +381,54 @@ impl Geneva {
             .map(str::to_owned)
     }
 
+    /// What a media file is, as the engine reads it: `geneva probe
+    /// <file>` - the streams, the frame size and rate, the duration, the
+    /// audio's channels and layout, the diagnostics a broken file earns.
+    /// The same reader the renderer will use, asked before anything is
+    /// built on the file, so an agent can check a clip at the MCP
+    /// surface instead of learning it from a failed bake.
+    ///
+    /// A file that is not media comes back as the engine's own refusal,
+    /// its reason carried whole - not as a guess.
+    pub fn probe_media(&self, file: &Path) -> Result<Json, MotionError> {
+        self.run(
+            Path::new("."),
+            &[
+                "--format".to_owned(),
+                "json".to_owned(),
+                "probe".to_owned(),
+                file.display().to_string(),
+            ],
+        )
+    }
+
+    /// The timeline as the engine reads it, checked: `geneva validate
+    /// timeline.json --probe` - the engine's own validator over the
+    /// staged folder, opening every asset to learn it is there and how
+    /// long it runs, and reporting every problem it has with the
+    /// document's own shape in the engine's location-and-fix words. The
+    /// look-before-you-render of the timeline itself: `--probe` is what
+    /// makes it honest, because a timeline whose media the engine has
+    /// never opened is a timeline validated only on paper.
+    ///
+    /// `dir` is the render directory the `timeline.json` lives in, the
+    /// same one a [`Plan::write`](crate::sequence::Plan::write) stages;
+    /// the call is a plan-time one, bounded and counted like every
+    /// other, so a folder of long media costs the plan limit, not the
+    /// session.
+    pub fn validate_timeline(&self, dir: &Path) -> Result<Json, MotionError> {
+        self.run(
+            dir,
+            &[
+                "--format".to_owned(),
+                "json".to_owned(),
+                "validate".to_owned(),
+                "timeline.json".to_owned(),
+                "--probe".to_owned(),
+            ],
+        )
+    }
+
     /// The timeline a comp becomes, and what could not be expressed in it.
     ///
     /// Assets are staged separately (`stage_assets`), so this only invents
@@ -616,7 +664,14 @@ impl Geneva {
                 "stderr": String::from_utf8_lossy(&output.stderr).to_string(),
             })
         });
-        let ok = report.get("ok").and_then(Json::as_bool).unwrap_or(false);
+        let ok = report
+            .get("ok")
+            .and_then(Json::as_bool)
+            // Some doors answer with the fact itself and no verdict
+            // about it - `probe` prints the file's own report, bare -
+            // so an engine that exited well is taken at its word, and
+            // one that exited badly is refused whatever it printed.
+            .unwrap_or(output.status.success());
         if ok && output.status.success() {
             breaker_success();
             return Ok(report);
@@ -636,7 +691,20 @@ impl Geneva {
                 diagnostic.message.clone(),
                 diagnostic.path.clone(),
             ),
-            None => (None, format!("geneva exited with {}", output.status), None),
+            None => {
+                // A refusal that printed no JSON document still said why
+                // on stderr - "probing nope.wav: No such file or
+                // directory" is worth more to a caller than "geneva
+                // exited with 2", so it is the message when there is
+                // one, and the exit status only when there is not.
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                let message = if stderr.is_empty() {
+                    format!("geneva exited with {}", output.status)
+                } else {
+                    stderr
+                };
+                (None, message, None)
+            }
         };
         let help = match first {
             Some(diagnostic) => diagnostic
@@ -2029,6 +2097,57 @@ mod tests {
         if let Some(geneva) = found {
             assert!(geneva.exe().is_file());
         }
+    }
+
+    /// The two inspection doors, held to their calls: a media probe is
+    /// `probe <file>` and a timeline inspection is `validate
+    /// timeline.json --probe`, both under the plan limit, both answering
+    /// one JSON document - the same contract every other call keeps.
+    #[test]
+    fn the_inspection_doors_call_the_engine_with_their_own_verbs() {
+        use std::os::unix::fs::PermissionsExt;
+        // The two successful calls clear the process-wide breaker, so
+        // they belong under the same one-at-a-time lock as every other
+        // test that drives the sidecar - the guard tests' three
+        // failures must not be answered by this test's successes.
+        let _serial = BREAKER_TEST_LOCK.lock().expect("the breaker's test lock");
+        reset_breaker_for_tests();
+        let dir = tempfile::TempDir::new().expect("a scratch dir");
+        let stub = dir.path().join("geneva-stub");
+        std::fs::write(
+            &stub,
+            concat!(
+                "#!/bin/sh\n",
+                "echo \"$*\" >> \"$(dirname \"$0\")/calls.log\"\n",
+                "echo '{\"ok\":true,\"diagnostics\":[],\"summary\":{}}'\n",
+            ),
+        )
+        .expect("the stub is written");
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755))
+            .expect("the stub is executable");
+        let geneva = Geneva::at(&stub);
+        let log = dir.path().join("calls.log");
+
+        // The media probe names the file in full.
+        let media = dir.path().join("clip.mp4");
+        geneva.probe_media(&media).expect("probes");
+        let calls = std::fs::read_to_string(&log).expect("the call was logged");
+        assert!(calls.contains("probe"), "{calls}");
+        assert!(calls.contains(&media.display().to_string()), "{calls}");
+
+        // The timeline inspection runs in the render directory, against
+        // the timeline.json a Plan::write stages there, with the media
+        // opened - validate --probe, the engine's own look-before-
+        // it-renders.
+        let render = dir.path().join("render");
+        std::fs::create_dir_all(&render).expect("the render dir");
+        std::fs::write(render.join("timeline.json"), "{}").expect("a timeline");
+        let _ = std::fs::remove_file(&log);
+        geneva.validate_timeline(&render).expect("validates");
+        let calls = std::fs::read_to_string(&log).expect("the call was logged");
+        assert!(calls.contains("validate"), "{calls}");
+        assert!(calls.contains("timeline.json"), "{calls}");
+        assert!(calls.contains("--probe"), "{calls}");
     }
 
     #[test]

@@ -598,3 +598,185 @@ fn an_agent_lists_models_and_is_refused_a_download_it_cannot_mean() {
 
     agent.end();
 }
+
+/// The sidecar the server would find: the environment's hint, then the
+/// usual places. The look-before-you-render tools are the engine's own
+/// reader, so a machine without the sidecar has nothing true to test
+/// and the test says so and passes.
+fn engine() -> Option<std::path::PathBuf> {
+    if let Some(bin) = std::env::var_os("CONCAT_GENEVA_BIN") {
+        let bin = std::path::PathBuf::from(bin);
+        if bin.is_file() {
+            return Some(bin);
+        }
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        for tail in [".local/bin/geneva", "bin/geneva"] {
+            let bin = std::path::Path::new(&home).join(tail);
+            if bin.is_file() {
+                return Some(bin);
+            }
+        }
+    }
+    if let Some(paths) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&paths) {
+            let bin = dir.join("geneva");
+            if bin.is_file() {
+                return Some(bin);
+            }
+        }
+    }
+    None
+}
+
+/// Half a second of 440 Hz, written by hand: a real file the engine
+/// opens, without ffmpeg or any other tool having to make it.
+fn tone_wav(path: &Path) {
+    use std::io::Write;
+    const RATE: u32 = 44100;
+    let samples = RATE / 2;
+    let data: Vec<u8> = (0..samples)
+        .flat_map(|i| {
+            let t = f64::from(i) / f64::from(RATE);
+            let v = (12000.0 * (2.0 * std::f64::consts::PI * 440.0 * t).sin()) as i16;
+            v.to_le_bytes()
+        })
+        .collect();
+    let mut file = std::fs::File::create(path).expect("the wav is written");
+    let mut write = |chunk: &[u8]| file.write_all(chunk).expect("the wav is written");
+    write(b"RIFF");
+    write(&(36 + data.len() as u32).to_le_bytes());
+    write(b"WAVE");
+    write(b"fmt ");
+    write(&16u32.to_le_bytes());
+    write(&1u16.to_le_bytes());
+    write(&1u16.to_le_bytes());
+    write(&RATE.to_le_bytes());
+    write(&(RATE * 2).to_le_bytes());
+    write(&2u16.to_le_bytes());
+    write(&16u16.to_le_bytes());
+    write(b"data");
+    write(&(data.len() as u32).to_le_bytes());
+    write(&data);
+}
+
+#[test]
+fn an_agent_probes_media_and_reads_the_validated_timeline_before_rendering() {
+    let Some(engine) = engine() else {
+        eprintln!("skipping: no geneva sidecar on this machine");
+        return;
+    };
+    let scratch = tempfile::tempdir().expect("scratch");
+    let home = scratch.path().to_path_buf();
+    let mut agent = Agent::spawn(
+        &home,
+        "headless",
+        &[
+            ("CONCAT_MCP_ROOTS", home.to_string_lossy().into_owned()),
+            ("CONCAT_GENEVA_BIN", engine.to_string_lossy().into_owned()),
+        ],
+    );
+
+    // The media, checked as the renderer will read it before anything
+    // is built on it: the streams, the duration, the audio's own facts.
+    tone_wav(&home.join("tone.wav"));
+    let probed = agent.tool(
+        "motion_probe",
+        json!({ "path": home.join("tone.wav").to_string_lossy() }),
+    );
+    let probe = &probed["structuredContent"]["probe"];
+    assert_eq!(probe["container"], "wav", "{probed}");
+    assert_eq!(probe["duration"], 0.5, "{probed}");
+    assert_eq!(probe["audio"]["sample_rate"], 44100, "{probed}");
+    assert_eq!(probe["audio"]["channels"], 1, "{probed}");
+
+    // A file that is not there is refused outright, before the engine
+    // is ever asked.
+    let (_, reply) = agent.ask(
+        "tools/call",
+        json!({ "name": "motion_probe", "arguments": { "path": "/nowhere/tone.wav" } }),
+    );
+    let refused = reply.get("result").cloned().expect("a result");
+    assert_eq!(refused["isError"], true, "{refused}");
+    let said = refused["content"][0]["text"].as_str().expect("the refusal");
+    assert!(said.contains("no media file"), "{said}");
+
+    // A file that is there but is not media is the engine's own refusal,
+    // which says so in its words rather than a guess.
+    std::fs::write(home.join("note.txt"), "just text").expect("the note");
+    let (_, reply) = agent.ask(
+        "tools/call",
+        json!({ "name": "motion_probe", "arguments": { "path": home.join("note.txt").to_string_lossy() } }),
+    );
+    let refused = reply.get("result").cloned().expect("a result");
+    assert_eq!(refused["isError"], true, "{refused}");
+    let said = refused["content"][0]["text"].as_str().expect("the refusal");
+    assert!(said.contains("Invalid data"), "{said}");
+
+    // The storyboard, laid out and staged, handed to the engine's own
+    // validator with the media opened: a comp scene over an audio bed.
+    agent.tool(
+        "project_create",
+        json!({
+            "location": home.to_string_lossy(),
+            "name": "Read Back",
+            "video": { "width": 320, "height": 180, "rateNum": 30, "rateDen": 1 },
+        }),
+    );
+    let project = home.join("Read Back");
+    tone_wav(&project.join("tone.wav"));
+    let timeline = agent.tool(
+        "scene_timeline",
+        json!({
+            "project": project.to_string_lossy(),
+            "storyboard": {
+                "scenes": [
+                    { "preset": "funcut.sting.wordmark", "hold": 2.0 }
+                ],
+                "assets": { "tone": "tone.wav" },
+                "audio": [ { "asset": "tone", "gain_db": -3.0 } ]
+            }
+        }),
+    );
+    let read = &timeline["structuredContent"];
+    assert_eq!(read["scenes"], 1, "{timeline}");
+    assert_eq!(read["duration"], 2.0, "{timeline}");
+    assert_eq!(read["assets"], 1, "{timeline}");
+    assert!(read["timeline"].is_object(), "{timeline}");
+    let verdict = &read["asTheEngineReadsIt"];
+    assert_eq!(verdict["ok"], true, "{timeline}");
+    assert_eq!(verdict["summary"]["errors"], 0, "{timeline}");
+    // The engine opened the bed: the loudness it measured is a note the
+    // validator only writes for media it has actually read.
+    assert!(
+        verdict["diagnostics"]
+            .as_array()
+            .is_some_and(|notes| notes.iter().any(|note| note["message"]
+                .as_str()
+                .is_some_and(|text| text.contains("LUFS")))),
+        "{timeline}"
+    );
+
+    // A storyboard that cannot be laid out is refused with its scene
+    // named, before the engine is ever asked.
+    let (_, reply) = agent.ask(
+        "tools/call",
+        json!({
+            "name": "scene_timeline",
+            "arguments": {
+                "project": project.to_string_lossy(),
+                "storyboard": {
+                    "scenes": [
+                        { "preset": "funcut.sting.wordmark", "hold": -2.0 }
+                    ]
+                }
+            }
+        }),
+    );
+    let refused = reply.get("result").cloned().expect("a result");
+    assert_eq!(refused["isError"], true, "{refused}");
+    let said = refused["content"][0]["text"].as_str().expect("the refusal");
+    assert!(said.contains("scene 0"), "{said}");
+
+    agent.end();
+}

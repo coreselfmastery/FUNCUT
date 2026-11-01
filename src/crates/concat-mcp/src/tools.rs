@@ -98,6 +98,11 @@ pub enum Action {
     CaptionsAnimate,
     /// A whole storyboard as one reel.
     MotionReel,
+    /// What a media file is, as the engine reads it.
+    MediaProbe,
+    /// The validated timeline a storyboard becomes, printed as the
+    /// engine reads it.
+    SceneTimeline,
     /// Sample a render or the open timeline into a contact sheet.
     WatchRender,
     /// Look at B-roll candidates before choosing them.
@@ -794,6 +799,24 @@ pub fn catalogue() -> Vec<Tool> {
             action: Action::MotionReel,
         },
         Tool {
+            name: "motion_probe",
+            title: "Inspect a media file",
+            description: "What a media file IS, as the motion engine's own reader sees it: the streams, the frame size and rate, the duration, the audio's channels and layout, and the diagnostics a broken or truncated file earns - the same reader the renderer will use, asked before anything is built on the file. Takes a `path` (absolute, or relative to the project when `project` is given) to any picture, video or sound the engine reads. A file that is not there is refused outright, and one that is there but is not media comes back as the engine's own refusal with its diagnostics attached and `geneva explain` already consulted - not as a guess. Use it before pointing a comp, a plate or a bed at a file you have not rendered with before.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::MediaProbe,
+        },
+        Tool {
+            name: "scene_timeline",
+            title: "Print a validated storyboard timeline",
+            description: "The look-before-you-render of a storyboard: lays the whole board out (the same plan motion_reel lays - scenes, layers, transitions, pulse, curtain and beds), stages it into a scratch of its own, and hands it to the engine's own validator - `geneva validate --probe`, which OPENS every asset to learn it is there and how long it runs - then returns the timeline the render would take together with the engine's verdict on it: every diagnostic with its location and a fix, the media's lengths and loudness as the engine itself measured them, and the plan's own warnings. A storyboard that does not validate comes back as the refusal that names the scene, with `geneva explain` already consulted for the first diagnostic's code. Takes `storyboard` (the document itself, an object) or `project` (the project whose plan is checked - optional). Nothing is rendered and nothing is written; use it to check a reel before committing to the render.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::SceneTimeline,
+        },
+        Tool {
             name: "analysis_wait",
             title: "Wait for a job",
             description: "Waits for any job - an analysis, a transcription, a voice, an export - to end, up to `timeoutSeconds` (60 by default, 600 at most), and returns its status; a finished analysis carries its JSON result in the status's `output`. If the job is still running when the time is up, call it again.",
@@ -1137,7 +1160,9 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
         | Action::MotionFrame
         | Action::MotionBake
         | Action::CaptionsAnimate
-        | Action::MotionReel => motion_schema(tool.name),
+        | Action::MotionReel
+        | Action::MediaProbe
+        | Action::SceneTimeline => motion_schema(tool.name),
         Action::WatchRender
         | Action::StockSheet
         | Action::CraftCritique
@@ -1747,6 +1772,97 @@ fn motion_schema(name: &str) -> Option<Value> {
             );
             object(properties, &["project", "storyboard"])
         }
+        "motion_probe" => {
+            let mut properties = Map::new();
+            properties.insert(
+                "path".to_owned(),
+                json!({
+                    "type": "string",
+                    "description": "The media file to inspect: absolute, or a name under the project when `project` is given. Any picture, video or sound the engine reads."
+                }),
+            );
+            properties.insert(
+                "project".to_owned(),
+                json!({
+                    "type": "string",
+                    "description": "The project folder a relative `path` resolves against."
+                }),
+            );
+            object(properties, &["path"])
+        }
+        "scene_timeline" => {
+            // The storyboard's own shape, the same document
+            // motion_reel takes.
+            let storyboard = {
+                let layer = json!({
+                    "type": "object",
+                    "properties": {
+                        "asset": { "type": "string" },
+                        "scene": { "type": "string" },
+                        "zoom": { "type": "number" },
+                        "pan": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "number" } },
+                        "offset": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "number" } },
+                        "scale": { "type": "number" },
+                        "fit": { "type": "string", "enum": ["cover", "contain", "fill", "none"] },
+                        "blend": { "type": "string" },
+                        "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+                        "fadeIn": { "type": "number" },
+                        "fadeOut": { "type": "number" },
+                        "fadeCurve": { "type": "string",
+                                       "description": "A name from the easing library (linear, ease, ease-in, ease-out, ease-in-out, emphasis, spring, spring-pop, typewriter, bounce) or a full curve object." },
+                        "start": { "type": "number" },
+                        "hold": { "type": "number" },
+                        "parallax": { "type": "number" },
+                        "above": { "type": "boolean" }
+                    }
+                });
+                let scene = json!({
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string" },
+                        "preset": { "type": "string" },
+                        "comp": { "type": "string" },
+                        "at": { "type": "number" },
+                        "hold": { "type": "number" },
+                        "plate": { "type": "string" },
+                        "zoom": { "type": "number" },
+                        "layers": { "type": "array", "items": layer },
+                        "ops": { "type": "array", "items": {} },
+                        "transition": { "type": "object",
+                                         "description": "The choreographed cut INTO this scene: whip-pan (direction, seconds), zoom-through, inverse-zoom, rack-focus (radius), velocity-match or stagger-exit (step)." },
+                        "exit": { "type": "object",
+                                  "description": "This scene's own way OUT, when the next scene names no transition of its own." },
+                        "pulse": { "type": "object",
+                                   "description": "The audio-driven keyframes: beats (measured times), driven (scale|opacity|position), amount, release, curve, nodes." }
+                    }
+                });
+                json!({
+                    "type": "object",
+                    "required": ["scenes"],
+                    "properties": {
+                        "width": { "type": "integer", "default": 1920 },
+                        "height": { "type": "integer", "default": 1080 },
+                        "fps": { "type": "number", "default": 30 },
+                        "assets": { "type": "object", "additionalProperties": { "type": "string" } },
+                        "scenes": { "type": "array", "minItems": 1, "items": scene },
+                        "audio": { "type": "array", "items": { "type": "object", "required": ["asset"], "properties": {
+                            "asset": { "type": "string" }, "gain_db": { "type": "number" },
+                            "fade_in": { "type": "number" }, "fade_out": { "type": "number" } } } },
+                        "curtain": { "type": "object" }
+                    }
+                })
+            };
+            let mut properties = Map::new();
+            properties.insert("storyboard".to_owned(), storyboard);
+            properties.insert(
+                "project".to_owned(),
+                json!({
+                    "type": "string",
+                    "description": "The project folder the board's assets resolve against."
+                }),
+            );
+            object(properties, &["storyboard"])
+        }
         _ => return None,
     };
     Some(schema)
@@ -1905,6 +2021,8 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         Action::MotionBake => crate::motion::bake(arguments, backend),
         Action::CaptionsAnimate => crate::motion::captions_animate(arguments, backend),
         Action::MotionReel => crate::motion::reel(arguments, backend),
+        Action::MediaProbe => crate::motion::media_probe(arguments),
+        Action::SceneTimeline => crate::motion::scene_timeline(arguments, backend),
         Action::WatchRender => crate::sense::watch_render(arguments, backend),
         Action::StockSheet => crate::sense::stock_contact_sheet(arguments, backend),
         Action::CraftCritique => crate::sense::craft_critique(arguments, backend),
@@ -3311,6 +3429,24 @@ mod tests {
                 } }),
             ),
             (
+                "motion_probe",
+                json!({ "project": "/tmp/Cut", "path": "assets/back.jpg" }),
+            ),
+            (
+                "scene_timeline",
+                json!({ "project": "/tmp/Cut", "storyboard": {
+                    "scenes": [
+                        { "preset": "funcut.sting.wordmark", "hold": 4.0,
+                          "layers": [
+                              { "asset": "back", "zoom": 0.04 },
+                              { "asset": "leak", "blend": "screen", "scale": 0.8,
+                                "offset": [-0.25, -0.2], "fade_in": 0.4, "fade_out": 0.4, "above": true }
+                          ] }
+                    ],
+                    "assets": { "back": "assets/back.jpg", "leak": "assets/leak.png" }
+                } }),
+            ),
+            (
                 "models_download",
                 json!({ "kind": "tts", "id": "kokoro-int8-multi-lang-v1_0" }),
             ),
@@ -3439,7 +3575,9 @@ mod tests {
                 Action::MotionFrame
                 | Action::MotionBake
                 | Action::CaptionsAnimate
-                | Action::MotionReel => {
+                | Action::MotionReel
+                | Action::MediaProbe
+                | Action::SceneTimeline => {
                     continue;
                 }
                 // The sense tools run Python, ffmpeg or a project; a unit

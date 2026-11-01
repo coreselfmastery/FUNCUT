@@ -1093,6 +1093,145 @@ fn sequence_crf(plan: &mut sequence::Plan, crf: u8) {
     plan.document["output"]["encode"]["video"]["crf"] = json!(crf.min(51));
 }
 
+/// `motion_probe`: what a media file is, as the engine's own reader sees
+/// it - the streams, the frame, the duration, the diagnostics a broken
+/// file earns. The look-before-you-build over the file itself: the same
+/// reader the renderer will use, asked first.
+pub fn media_probe(arguments: Value) -> Result<Outcome, ApiError> {
+    let fields = arguments
+        .as_object()
+        .cloned()
+        .ok_or_else(|| ApiError::invalid("invalid arguments: the arguments are an object"))?;
+    for key in fields.keys() {
+        if !["path", "project"].contains(&key.as_str()) {
+            return Err(ApiError::invalid(format!(
+                "invalid arguments: unknown field `{key}`"
+            )));
+        }
+    }
+    let path = fields
+        .get("path")
+        .and_then(Value::as_str)
+        .filter(|path| !path.trim().is_empty())
+        .ok_or_else(|| ApiError::invalid("invalid arguments: `path` is required"))?;
+    // An absolute path is taken as it stands; a relative one resolves
+    // against the project, and may not climb out of it - the same wall
+    // every other project-relative name is held to.
+    let file = if Path::new(path).is_absolute() {
+        PathBuf::from(path)
+    } else {
+        let project = fields
+            .get("project")
+            .and_then(Value::as_str)
+            .filter(|project| !project.trim().is_empty())
+            .ok_or_else(|| {
+                ApiError::invalid(
+                    "invalid arguments: a relative `path` needs the `project` it resolves against",
+                )
+            })?;
+        if path.contains("..") || path.contains('\\') {
+            return Err(ApiError::invalid(
+                "invalid arguments: `path` is a name under the project, not a path out of it",
+            ));
+        }
+        Path::new(project).join(path)
+    };
+    if !file.is_file() {
+        return Err(ApiError::new(
+            ErrorCode::NotFound,
+            format!("no media file at {}", file.display()),
+        ));
+    }
+    let engine = geneva()?;
+    let report = engine
+        .probe_media(&file)
+        .map_err(|error| ApiError::failed(error.to_string()))?;
+    Ok(Outcome::json(json!({
+        "file": file.display().to_string(),
+        "probe": report,
+    })))
+}
+
+/// `scene_timeline`: the look-before-you-render of a storyboard - the
+/// same plan `motion_reel` lays, staged, handed to the engine's own
+/// validator (`geneva validate --probe`, which opens every asset), and
+/// returned with the timeline the engine would take and the engine's
+/// verdict on it. Nothing renders and nothing is written.
+pub fn scene_timeline(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError> {
+    let fields = arguments
+        .as_object()
+        .cloned()
+        .ok_or_else(|| ApiError::invalid("invalid arguments: the arguments are an object"))?;
+    for key in fields.keys() {
+        if !["project", "storyboard"].contains(&key.as_str()) {
+            return Err(ApiError::invalid(format!(
+                "invalid arguments: unknown field `{key}`"
+            )));
+        }
+    }
+    let project = project_of(&fields, backend)?;
+    let document = fields
+        .get("storyboard")
+        .ok_or_else(|| {
+            ApiError::invalid("invalid arguments: `storyboard` is the storyboard document")
+        })?
+        .clone();
+    // The project is the storyboard's world, exactly as the reel tool
+    // holds it: no source_dir, no path out of the folder.
+    let mut document = document;
+    if let Value::Object(map) = &mut document {
+        map.remove("source_dir");
+    }
+    confine_storyboard(&document, &project)?;
+    let board = storyboard::Storyboard::from_value(&document).map_err(ApiError::invalid)?;
+    let reel = board.sequence(&project).map_err(ApiError::invalid)?;
+
+    let engine = geneva()?;
+    let planned =
+        sequence::plan(&engine, &reel).map_err(|error| ApiError::failed(error.to_string()))?;
+    // The plan is staged into a scratch of its own - the engine's
+    // validator runs against the timeline.json the render would take,
+    // and the scratch leaves nothing behind in the project.
+    let hash = format!("{:016x}", storyboard::hash(&document));
+    let scratch = cache_dir(&project).join(format!("timeline-{hash}"));
+    planned
+        .write(&scratch)
+        .map_err(|error| ApiError::failed(error.to_string()))?;
+    // Whatever the engine says about it - the validation report on the
+    // ok side, the diagnostics and their explanations on the refusal -
+    // is the reply, because what the engine reads is what the caller
+    // asked for.
+    let reply = match engine.validate_timeline(&scratch) {
+        Ok(shown) => json!({
+            "scenes": planned.scenes,
+            "duration": planned.duration,
+            "width": reel.width,
+            "height": reel.height,
+            "fps": reel.fps,
+            "assets": planned.files.len(),
+            "warnings": planned.warnings,
+            "timeline": planned.document,
+            "asTheEngineReadsIt": shown,
+        }),
+        Err(error) => {
+            // The refusal carries its own diagnostics; `geneva explain`
+            // has already been consulted for the first code, because the
+            // engine's words about its own codes are the fix's first
+            // line.
+            json!({
+                "ok": false,
+                "scenes": planned.scenes,
+                "duration": planned.duration,
+                "warnings": planned.warnings,
+                "timeline": planned.document,
+                "error": error.to_string(),
+            })
+        }
+    };
+    let _ = std::fs::remove_dir_all(&scratch);
+    Ok(Outcome::json(reply))
+}
+
 /// Whether the motion tools can reach an engine at all, for the catalogue
 /// to say so in its own words.
 pub fn engine_available() -> bool {

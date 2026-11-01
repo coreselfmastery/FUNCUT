@@ -167,6 +167,20 @@ vocabulary the `concat-motion-agent` CLI speaks):
   under `motion/` ready for `media_import` and `clip_add`. The same
   storyboard document the `concat-motion-agent reel` verb eats; every
   error names the scene it stopped at.
+- `motion_probe` - what a media file IS, as the engine's own reader sees
+  it: streams, frame size and rate, duration, the audio's channels - the
+  same reader the renderer will use, asked **before** anything is built
+  on the file. A file that is not there is refused outright; one that is
+  not media comes back as the engine's own refusal. The look-before-you-
+  build over the file itself, next to `motion_frame`'s over a comp.
+- `scene_timeline` - the look-before-you-render of a whole storyboard:
+  the same plan `motion_reel` lays, staged into a scratch, handed to the
+  engine's own validator (`geneva validate --probe`, which **opens every
+  asset** - lengths, loudness), and returned with the timeline the render
+  would take, the engine's verdict on it and the plan's own warnings.
+  Nothing renders, nothing is written; a board that does not validate is
+  refused with the scene named and `geneva explain` already consulted
+  for the first diagnostic's code.
 
 ## Perception and the creative loop (eight more tools)
 
@@ -351,7 +365,7 @@ Tools are named for what they do, and their argument schemas are generated from 
 | Speech | `transcribe`, `tts_generate`, `models_list`, `models_download` |
 | Anything else | `edit_apply` (any edit command, or a batch of them as one undo step), `edit_undo`, `edit_redo` |
 | Templates | `template_list`, `template_instantiate` |
-| Motion design | `motion_presets`, `motion_inspect`, `motion_frame`, `motion_bake`, `motion_overlay`, `captions_animate`, `motion_reel` |
+| Motion design | `motion_presets`, `motion_inspect`, `motion_frame`, `motion_bake`, `motion_overlay`, `captions_animate`, `motion_reel`, `motion_probe`, `scene_timeline` |
 | Export | `export_start`, `export_status`, `export_wait` (with progress), `export_cancel` |
 | Looking | `preview_frame` (the composited frame as an image) |
 | Perception and the creative loop | `creative_brief`, `stock_contact_sheet`, `watch_render`, `craft_critique`, `suggest_cuts`, `measure_loudness`, `local_vlm`, `emotion` |

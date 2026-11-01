@@ -287,8 +287,7 @@ fn on_speech(start: f64, end: f64, speech: &[(f64, f64)]) -> (f64, f64) {
 /// transcription models the first time it is wanted.
 fn vad_model(dirs: &AppDirs) -> Result<PathBuf, String> {
     let path = models_dir(dirs)?.join("ggml-silero-v6.2.0.bin");
-    let whole = std::fs::metadata(&path)
-        .is_ok_and(|meta| meta.len() == VAD_MODEL.len() as u64);
+    let whole = std::fs::metadata(&path).is_ok_and(|meta| meta.len() == VAD_MODEL.len() as u64);
     if !whole {
         let part = path.with_extension("part");
         std::fs::write(&part, VAD_MODEL)
@@ -874,7 +873,10 @@ mod tests {
             )
             .expect("transcribes");
         for segment in segments {
-            println!("{:7.2} {:7.2}  {}", segment.start, segment.end, segment.text);
+            println!(
+                "{:7.2} {:7.2}  {}",
+                segment.start, segment.end, segment.text
+            );
         }
     }
 

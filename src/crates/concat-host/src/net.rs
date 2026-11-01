@@ -20,17 +20,16 @@
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-/// An agent with these timeouts that trusts the shipped roots and the
-/// system's.
-pub fn agent(connect: Duration, read: Duration) -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout_connect(connect)
-        .timeout_read(read)
-        .tls_config(Arc::clone(tls()))
-        .build()
-}
-
 use crate::route::Route;
+
+/// An agent with these timeouts that trusts the shipped roots and the
+/// system's: for the shelf downloads that still speak to their hosts
+/// directly, without a route and without a manifest vouching for them.
+/// What goes through the proxy, or trusts the shipped roots alone, goes
+/// through [`get`] instead.
+pub fn agent(connect: Duration, read: Duration) -> ureq::Agent {
+    routed(None, connect, read, Trust::System)
+}
 
 /// Which roots a connection trusts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -172,7 +171,7 @@ pub fn get(
     prepare: &dyn Fn(ureq::Request) -> ureq::Request,
 ) -> Result<ureq::Response, Box<Failure>> {
     let send = |route: Option<&Route>| {
-        prepare(agent(route, connect, read, trust).get(url))
+        prepare(routed(route, connect, read, trust).get(url))
             .call()
             .map_err(|error| {
                 let cause = classify(&error, route.is_some());
@@ -200,8 +199,9 @@ pub fn get(
     }
 }
 
-/// An agent with these timeouts, through `route` when there is one.
-fn agent(route: Option<&Route>, connect: Duration, read: Duration, trust: Trust) -> ureq::Agent {
+/// An agent with these timeouts, through `route` when there is one and
+/// trusting what `trust` names.
+fn routed(route: Option<&Route>, connect: Duration, read: Duration, trust: Trust) -> ureq::Agent {
     let tls = match trust {
         Trust::System => tls(),
         Trust::Shipped => shipped_tls(),

@@ -1279,3 +1279,33 @@ else_did`, `the_score_costs_what_the_contact_sheet_names` and the
 three `hue-rotate` tests; `concat-mcp`'s count test holds 91 against
 every document. The tool itself needs the sidecar and the ffmpeg
 headers, so its build is CI's to run.
+
+## 29. The whip's smear: the motion blur the whip pan shipped without
+
+The whip pan shipped with its sweep, its shared window and no blur -
+the dry read, for every whip, whether the scene asked for one or not.
+A whip is a camera move, and a camera that moves that fast smears; the
+sweep alone reads as a slide wearing the whip's name. This change gives
+the whip its smear:
+
+`whip-pan` carries `blur` (default 12 px - enough to smear the sweep,
+not enough to read as a focus pull; `0` is the dry whip, the sweep
+without the smear, which is a legitimate read). Both planes get it on
+both sides: the plates rack through the cut's window - the outgoing
+racking **up** into the boundary and gone into it, the incoming
+resolving **out** of the same radius - and the comp's nodes rack beside
+their slide, so the whole frame smears as one. The plan bakes it as a
+keyframed blur effect on the plate clips and blur tracks on the comp's
+nodes, the same machinery a rack focus rides; a dry whip racks nothing
+at all - no track, no effect, the cut riding on the slide alone. Old
+storyboards need nothing: the field defaults in, an unchanged document
+is a changed read, and the scene keys - which hash the transition's own
+serialisation - miss once, honestly.
+
+Verified: 307 tests in `concat-motion` (was 305), clippy and rustfmt
+clean under the pinned channel - and for real, through the pinned
+Geneva 1.6.0 sidecar: the golden board's whip frame, re-rendered inside
+the shared window, moved on purpose and was `--update`d - only
+`whip.png` changed, every other golden byte-identical - the whip frame
+still renders twice to identical bytes, and every golden frame holds
+at DSSIM 0.00000 against its committed image.

@@ -259,12 +259,12 @@ the moments either side of the boundary do, written on the scene that **enters b
 { "scenes": [
   { "preset": "funcut.sting.wordmark", "hold": 4.0 },
   { "preset": "funcut.chart.bars", "hold": 6.0,
-    "transition": { "kind": "whip-pan", "direction": "left", "seconds": 0.24 } } ] }
+    "transition": { "kind": "whip-pan", "direction": "left", "seconds": 0.24, "blur": 12 } } ] }
 ```
 
 | Cut | What both sides do |
 | --- | --- |
-| `whip-pan` (`direction`, `seconds` 0.24) | the outgoing plates and comp sweep out, accelerating; the incoming sweep in from the opposite side, settling - fast enough to read as one camera move rather than two edits |
+| `whip-pan` (`direction`, `seconds` 0.24, `blur` 12px) | the outgoing plates and comp sweep out, accelerating; the incoming sweep in from the opposite side, settling - and both sides smear through the cut, racking to `blur` pixels at the boundary and resolving off it: the motion blur that sells the whip. `blur: 0` is the dry whip - the sweep without the smear, which is a legitimate read |
 | `zoom-through` (`seconds` 0.35) | the outgoing grows to 135%, the incoming arrives still at 135% and settles - one continuous push |
 | `inverse-zoom` (`seconds` 0.35) | the pull-back reading: the outgoing shrinks to 72%, the incoming starts small and grows - a breath. On a cover-fitted plate the shrink shows the frame's edges for its duration; that is the read of a pull-back |
 | `rack-focus` (`seconds` 0.3, `radius` 16px) | the outgoing blurs out, the incoming resolves in - "same world, new subject" |

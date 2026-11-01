@@ -15,7 +15,10 @@
 //!
 //! ```text
 //! whip pan left:   outgoing plates sweep left out of frame (ease-in),
-//!                  incoming plates sweep in from the right (ease-out)
+//!                  incoming plates sweep in from the right (ease-out),
+//!                  both sides smeared through the cut - the motion
+//!                  blur that sells the whip, racking to `blur` px at
+//!                  the boundary and resolving off it
 //! zoom through:    outgoing grows to 1.35, incoming arrives still at
 //!                  1.35 and settles - both sides carry the same number,
 //!                  which is what makes it one camera move
@@ -80,13 +83,19 @@ impl Direction {
 pub enum Cut {
     /// A horizontal (or vertical) whip: the outgoing scene sweeps out,
     /// the incoming sweeps in from the opposite side, fast enough to
-    /// read as one camera move rather than two edits.
+    /// read as one camera move rather than two edits. Both sides blur
+    /// through the cut - the motion blur that sells the whip - rising
+    /// to `blur` pixels at the boundary and resolving off it.
     WhipPan {
         /// The direction the outgoing scene exits toward.
         direction: Direction,
         /// How long each side of the whip takes.
         #[serde(default = "default_whip")]
         seconds: f64,
+        /// The blur radius at the cut, in pixels. `0` is a dry whip -
+        /// the sweep without the smear - which is a legitimate read.
+        #[serde(default = "default_whip_blur")]
+        blur: f64,
     },
     /// The camera travels *through* the outgoing scene and out the other
     /// side: outgoing grows to 135 percent, incoming lands from 72.
@@ -137,6 +146,12 @@ pub enum Cut {
 
 fn default_whip() -> f64 {
     0.24
+}
+
+/// The whip's motion blur at the cut, in pixels: enough to smear the
+/// sweep, not enough to read as a focus pull.
+fn default_whip_blur() -> f64 {
+    12.0
 }
 fn default_zoom() -> f64 {
     0.35
@@ -251,13 +266,15 @@ pub(crate) fn plate_cut(cut: &Cut, side: Side, drift: (f64, f64), _frame: (f64, 
         Side::Exit => 1.0,
     };
     match cut {
-        Cut::WhipPan { direction, .. } => {
+        Cut::WhipPan {
+            direction, blur, ..
+        } => {
             let (dx, dy) = direction.vector();
             PlateCut {
                 seconds,
                 from: (dx * WHIP_REACH * sign, dy * WHIP_REACH * sign),
                 scale_from: 1.0,
-                blur_from: 0.0,
+                blur_from: *blur,
                 curve: match side {
                     // Out: accelerate away. In: arrive and settle.
                     Side::Exit => Curve::EASE_IN,
@@ -386,7 +403,9 @@ fn enter_node(node: &mut Node, cut: &Cut, span: f64, frame: (f64, f64), drift: (
         return;
     }
     match cut {
-        Cut::WhipPan { direction, .. } => {
+        Cut::WhipPan {
+            direction, blur, ..
+        } => {
             let (dx, dy) = direction.vector();
             slide(
                 node,
@@ -398,6 +417,12 @@ fn enter_node(node: &mut Node, cut: &Cut, span: f64, frame: (f64, f64), drift: (
                 Side::Enter,
                 frame,
             );
+            // The whip's own motion blur: the incoming resolves out of
+            // the smear as it settles. A whip that names `blur: 0` is
+            // the dry read and racks nothing.
+            if *blur > 1e-9 {
+                rack(node, span, 0.0, seconds, *blur, Side::Enter);
+            }
         }
         Cut::ZoomThrough { .. } => {
             scale_to(node, span, 0.0, seconds, ZOOM_PUSH, Side::Enter);
@@ -440,7 +465,9 @@ fn exit_node(node: &mut Node, cut: &Cut, span: f64, stagger: f64, frame: (f64, f
         return;
     }
     match cut {
-        Cut::WhipPan { direction, .. } => {
+        Cut::WhipPan {
+            direction, blur, ..
+        } => {
             let (dx, dy) = direction.vector();
             slide(
                 node,
@@ -452,6 +479,19 @@ fn exit_node(node: &mut Node, cut: &Cut, span: f64, stagger: f64, frame: (f64, f
                 Side::Exit,
                 frame,
             );
+            // And out into the smear: the outgoing racks up to the
+            // boundary and is gone into it, the same radius the
+            // incoming resolves out of - one camera move, one defocus.
+            if *blur > 1e-9 {
+                rack(
+                    node,
+                    span,
+                    span - cut.seconds() - stagger,
+                    cut.seconds(),
+                    *blur,
+                    Side::Exit,
+                );
+            }
         }
         Cut::ZoomThrough { .. } => {
             scale_to(
@@ -758,6 +798,7 @@ mod tests {
         let cut = Cut::WhipPan {
             direction: Direction::Left,
             seconds: 0.24,
+            blur: 12.0,
         };
         let mut outgoing = node_comp(placed_node());
         prepare_comp(&mut outgoing, Side::Exit, &cut, (0.0, 0.0));
@@ -790,6 +831,47 @@ mod tests {
         );
         // In arrives and settles.
         assert_eq!(first.curve, Some(Curve::EASE_OUT));
+
+        // And both sides smear through the cut: the outgoing racks up
+        // into the boundary, the incoming resolves out of it, on the
+        // blur track a rack rides - the motion blur that sells the whip.
+        let smear = &outgoing.nodes[0].tracks["blur"];
+        let last = smear.keys.last().expect("the exit smear key");
+        assert_eq!(last.value, Value::number(12.0));
+        assert!(matches!(
+            outgoing.nodes[0].effects.first(),
+            Some(Effect::Blur { .. })
+        ));
+        let smear = &incoming.nodes[0].tracks["blur"];
+        let first = smear.keys.first().expect("the enter smear key");
+        assert_eq!(first.value, Value::number(12.0));
+        assert!(matches!(
+            incoming.nodes[0].effects.first(),
+            Some(Effect::Blur { .. })
+        ));
+    }
+
+    /// A whip that names `blur: 0` is the dry read: the sweep without
+    /// the smear, and nothing racks - no blur track, no blur effect, the
+    /// cut riding on the slide alone.
+    #[test]
+    fn a_dry_whip_racks_nothing() {
+        let cut = Cut::WhipPan {
+            direction: Direction::Left,
+            seconds: 0.24,
+            blur: 0.0,
+        };
+        let mut outgoing = node_comp(placed_node());
+        prepare_comp(&mut outgoing, Side::Exit, &cut, (0.0, 0.0));
+        assert!(!outgoing.nodes[0].tracks.contains_key("blur"));
+        assert!(outgoing.nodes[0].effects.is_empty());
+        let mut incoming = node_comp(placed_node());
+        prepare_comp(&mut incoming, Side::Enter, &cut, (0.0, 0.0));
+        assert!(!incoming.nodes[0].tracks.contains_key("blur"));
+        assert!(incoming.nodes[0].effects.is_empty());
+        // The plate side stays sharp the same way.
+        let plate = plate_cut(&cut, Side::Enter, (0.0, 0.0), (1920.0, 1080.0));
+        assert_eq!(plate.blur_from, 0.0);
     }
 
     /// A zoom-through grows the outgoing scene and lands the incoming
@@ -939,6 +1021,7 @@ mod tests {
             &Cut::WhipPan {
                 direction: Direction::Left,
                 seconds: 0.24,
+                blur: 0.0,
             },
             (0.0, 0.0),
         );
@@ -956,12 +1039,16 @@ mod tests {
         let whip = Cut::WhipPan {
             direction: Direction::Left,
             seconds: 0.24,
+            blur: 12.0,
         };
         let exit = plate_cut(&whip, Side::Exit, (0.0, 0.0), (1920.0, 1080.0));
         let enter = plate_cut(&whip, Side::Enter, (0.0, 0.0), (1920.0, 1080.0));
         assert_eq!(exit.from, (-WHIP_REACH, 0.0));
         assert_eq!(enter.from, (WHIP_REACH, 0.0));
         assert_eq!(exit.curve, Curve::EASE_IN);
+        // The smear rides the plates the same way it rides the comp.
+        assert_eq!(exit.blur_from, 12.0);
+        assert_eq!(enter.blur_from, 12.0);
 
         // A velocity match spends the drift's own distance, capped.
         let drift = (0.1, 0.0); // a tenth of a frame per second

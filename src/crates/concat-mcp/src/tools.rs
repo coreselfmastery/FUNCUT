@@ -1885,7 +1885,7 @@ fn motion_schema(name: &str) -> Option<Value> {
                         "style": { "type": "string", "enum": ["calm", "punchy", "editorial"],
                                    "description": "The personality the scene wears over its layout: the weight the type carries, the tracking, the easing hand, the tempo - and the colour when no grade is named. One layout, three moods." },
                         "transition": { "type": "object",
-                                         "description": "The choreographed cut INTO this scene: whip-pan (direction, seconds), zoom-through, inverse-zoom, rack-focus (radius), velocity-match or stagger-exit (step)." },
+                                         "description": "The choreographed cut INTO this scene: whip-pan (direction, seconds, blur), zoom-through, inverse-zoom, rack-focus (radius), velocity-match or stagger-exit (step)." },
                         "exit": { "type": "object",
                                   "description": "This scene's own way OUT, when the next scene names no transition of its own." },
                         "act": { "type": "string", "enum": ["hook", "setup", "tension", "turn", "reveal", "proof", "cta"],

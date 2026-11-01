@@ -2701,6 +2701,75 @@ mod tests {
         assert_eq!(keys.as_array().unwrap().len(), 3, "{keys:?}");
     }
 
+    /// A whip pan smears both plates through the cut, not just the comp:
+    /// the outgoing plate racks up into the blur at the boundary and is
+    /// gone into it, the incoming resolves out of the same radius - the
+    /// motion blur that makes a whip read as one camera move and not a
+    /// slide. The plate side is where the plan draws it, so the plan is
+    /// where the test reads it, exactly the way the engine would.
+    #[test]
+    fn a_whip_pan_smears_both_plates_through_the_cut() {
+        let mut sequence = reel(vec![
+            Scene::new(presets::build("funcut.chapter.chip").expect("a preset"))
+                .over("p0", 0.05)
+                .holding(4.0),
+            Scene::new(presets::build("funcut.sting.wordmark").expect("a preset"))
+                .over("p1", 0.05)
+                .holding(4.0),
+        ]);
+        sequence.asset(
+            "p0",
+            Asset {
+                src: "assets/plate.jpg".into(),
+                kind: None,
+            },
+        );
+        sequence.asset(
+            "p1",
+            Asset {
+                src: "assets/plate.jpg".into(),
+                kind: None,
+            },
+        );
+        sequence.with_cut(
+            0,
+            crate::transition::Cut::WhipPan {
+                direction: crate::transition::Direction::Left,
+                seconds: 0.24,
+                blur: 12.0,
+            },
+        );
+        let plan = plan(&geneva(), &sequence).expect("plans");
+        let radius_keys = |id: &str| {
+            let plate = layers(&plan)
+                .into_iter()
+                .find(|layer| layer["id"] == json!(id))
+                .unwrap_or_else(|| panic!("the plate {id}"));
+            let effects = plate["clips"][0]["effects"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            let blur = effects
+                .into_iter()
+                .find(|effect| effect["kind"] == json!("blur"))
+                .unwrap_or_else(|| panic!("the plate {id} carries no blur effect"));
+            blur["radius"]["keyframes"]
+                .as_array()
+                .cloned()
+                .unwrap_or_else(|| panic!("the plate {id} blur is not keyframed"))
+        };
+        let outgoing = radius_keys("s0.plate");
+        let incoming = radius_keys("s1.plate");
+        // Out racks UP into the smear: sharp at rest, the full radius
+        // at the boundary - its last key is the boundary itself.
+        assert_eq!(outgoing.first().unwrap()[1], json!(0.0));
+        assert_eq!(outgoing.last().unwrap()[1], json!(12.0));
+        // In resolves OUT of it: the full radius at its first frame,
+        // sharp again by the time it settles.
+        assert_eq!(incoming.first().unwrap()[1], json!(12.0));
+        assert_eq!(incoming.last().unwrap()[1], json!(0.0));
+    }
+
     // The scene builder's three first-class options, asserted on the
     // emitted timeline: three parallax rates, three blends, three delays,
     // all different, all in the document the engine actually draws.
@@ -3189,6 +3258,7 @@ mod tests {
             crate::transition::Cut::WhipPan {
                 direction: crate::transition::Direction::Left,
                 seconds: 0.24,
+                blur: 12.0,
             },
         );
         sequence.with_cut(1, crate::transition::Cut::ZoomThrough { seconds: 0.35 });

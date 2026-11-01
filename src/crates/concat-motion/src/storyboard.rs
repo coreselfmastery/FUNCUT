@@ -147,8 +147,8 @@ pub struct SceneCard {
     pub ops: Vec<Json>,
     /// The choreographed cut INTO this scene - the boundary between the
     /// scene before it and this one, written on the scene that enters
-    /// by it: `{"kind": "whip-pan", "direction": "left"}` or any
-    /// other [`crate::transition::Cut`]. On the first scene it is the
+    /// by it: `{"kind": "whip-pan", "direction": "left", "blur": 12}` or
+    /// any other [`crate::transition::Cut`]. On the first scene it is the
     /// way the reel opens; nowhere else, it is this scene's own way in.
     #[serde(default)]
     pub transition: Option<crate::transition::Cut>,

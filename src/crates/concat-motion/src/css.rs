@@ -32,13 +32,7 @@ pub struct StaticTransform {
 
 /// The properties that place a layer when written outside `@keyframes`,
 /// and are skipped there: the engine reads them only as animation values.
-const PLACING_PROPERTIES: [&str; 5] = [
-    "transform",
-    "translate",
-    "rotate",
-    "scale",
-    "perspective",
-];
+const PLACING_PROPERTIES: [&str; 5] = ["transform", "translate", "rotate", "scale", "perspective"];
 
 /// Every transform-style declaration in `css` that sits outside a
 /// `@keyframes` block, in document order.

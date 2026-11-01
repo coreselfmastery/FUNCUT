@@ -1188,7 +1188,10 @@ fn plan_with_chain(
             // scene can render without its pulse. Said, not swallowed.
             if landed == 0
                 && pulse.amount > 0.0
-                && pulse.beats.iter().any(|beat| beat.is_finite() && *beat >= 0.0)
+                && pulse
+                    .beats
+                    .iter()
+                    .any(|beat| beat.is_finite() && *beat >= 0.0)
             {
                 warnings.push(format!(
                     "scene {index}: the pulse's beats all fall outside its {:.3} s - \
@@ -2941,22 +2944,14 @@ mod tests {
         // Scene 0 leaves by the cut, scene 1 enters by it, and both are
         // shorter than the cut's own window.
         assert!(
-            planned
-                .warnings
-                .iter()
-                .any(|warning| warning.contains(
-                    "scene 0 leaves by a zoom-through that runs its whole 0.300 s"
-                )),
+            planned.warnings.iter().any(|warning| warning
+                .contains("scene 0 leaves by a zoom-through that runs its whole 0.300 s")),
             "{:?}",
             planned.warnings
         );
         assert!(
-            planned
-                .warnings
-                .iter()
-                .any(|warning| warning.contains(
-                    "scene 1 enters by a zoom-through that runs its whole 0.300 s"
-                )),
+            planned.warnings.iter().any(|warning| warning
+                .contains("scene 1 enters by a zoom-through that runs its whole 0.300 s")),
             "{:?}",
             planned.warnings
         );
@@ -3148,12 +3143,8 @@ mod tests {
         let sequence = storyboard.sequence(Path::new(".")).expect("a sequence");
         let planned = plan(&geneva(), &sequence).expect("a plan");
         assert!(
-            planned
-                .warnings
-                .iter()
-                .any(|warning| warning.contains(
-                    "scene 1: the pulse's beats all fall outside its 4.600 s"
-                )),
+            planned.warnings.iter().any(|warning| warning
+                .contains("scene 1: the pulse's beats all fall outside its 4.600 s")),
             "{:?}",
             planned.warnings
         );

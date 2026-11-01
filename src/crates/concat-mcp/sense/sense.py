@@ -1082,6 +1082,40 @@ def heuristic(brief, sheet):
         )
     if not revisions:
         revisions.append("CALL watch_render again after the next revision and compare craft scores.")
+    # Measured fixes: the same facts the revisions speak of, as the
+    # structured patch operations the scene builder can apply - a fix
+    # names its where, its problem, its change and its op, so the loop
+    # from critique to revision is data the whole way through.
+    fixes = []
+    if black_pen > 0.05:
+        seconds = round(_num(c.get("blackFrames")) / n * _num(c.get("duration"), 30.0), 1)
+        fixes.append({
+            "where": "the opening frames",
+            "problem": f"{_num(c.get('blackFrames'))} of {n} sampled frames are black or empty",
+            "change": f"trim the first {seconds}s of the reel",
+            "op": "retime",
+        })
+    if bar_pen > 0.1:
+        fixes.append({
+            "where": "the letterboxed shots",
+            "problem": f"{_num(c.get('letterboxedFrames'))} of {n} sampled frames carry bars",
+            "change": "reframe to fill the frame (crop or scale up), not pillarbox",
+            "op": "shift",
+        })
+    if static_pen > 0.4:
+        fixes.append({
+            "where": "the consecutive static cuts",
+            "problem": f"{_num(c.get('staticTransitions'))} of {max(1, n - 1)} cuts are static",
+            "change": "choreograph the cuts: a whip-pan or rack-focus transition on the storyboard",
+            "op": "restyle",
+        })
+    if dup_pen > 0.1 or variety < 0.6:
+        fixes.append({
+            "where": "the repeated shots",
+            "problem": f"only {distinct:.0f} of {n:.0f} sampled frames are distinct",
+            "change": "replace the repeats with different footage",
+            "op": "replace",
+        })
     return {
         "engine": "heuristic",
         "scores": {k: round(v, 1) for k, v in scores.items()},
@@ -1090,6 +1124,7 @@ def heuristic(brief, sheet):
         "verdict": "measured pixels, colour and audio only; no vision model reviewed the frames",
         "notes": notes[:10],
         "revisions": revisions[:8],
+        "fixes": fixes[:8],
     }
 
 
@@ -1106,7 +1141,10 @@ MEASURED FACTS (real pixel/audio measurements): {facts}
 Score each axis 0-10 (0 unwatchable, 5 generic, 8 good, 10 excellent):
 hook, story, rhythm, shotChoice, design, sound.
 Judge only what the frames and the measurements support. The sound axis is judged from the measured loudness facts in MEASURED FACTS (LUFS, true peak, silence), never guessed from the picture. Be harsh.
-Reply with a JSON object containing integer "hook","story","rhythm","shotChoice","design","sound" (0-10), a short "verdict", up to 4 "notes" citing frame numbers, and up to 4 "revisions" naming concrete editing tools. No markdown."""
+
+Then name the concrete FIXES, not vague advice: up to 6 patch operations the editor can apply exactly as written. Each fix is {{"where": the element or frames ("the chart in frames 6-8", "the caption on frame 3"), "problem": what is wrong, seen in the frames ("clipped off the right edge", "enters 400ms too early", "unreadable against the background"), "change": the exact change with its number and unit ("shift x by -120px", "start 0.4s later", "scale to 0.9", "ease with spring-pop"), "op": one of retime (timing), shift (position), resize (size/scale), restyle (easing, colour, look) or replace (needs new content)}}. A fix without a number and a unit in its change is advice, not a fix - do not give advice.
+
+Reply with a JSON object containing integer "hook","story","rhythm","shotChoice","design","sound" (0-10), a short "verdict", up to 4 "notes" citing frame numbers, up to 4 "revisions" naming concrete editing tools, and up to 6 "fixes" as the patch operations above. No markdown."""
 
 FLAG_PROMPT = """Look at this frame/contact sheet from a video. Describe only what you can actually SEE in one short sentence; do NOT invent people, objects or a story. Then answer three yes/no questions about the image: are any parts nearly black or empty; are there black letterbox/pillarbox bars; is there readable text/captions on screen."""
 
@@ -1122,9 +1160,29 @@ SCORE_SCHEMA = {
         "verdict": {"type": "string"},
         "notes": {"type": "array", "items": {"type": "string"}},
         "revisions": {"type": "array", "items": {"type": "string"}},
+        "fixes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "where": {"type": "string"},
+                    "problem": {"type": "string"},
+                    "change": {"type": "string"},
+                    "op": {
+                        "type": "string",
+                        "enum": ["retime", "shift", "resize", "restyle", "replace"],
+                    },
+                },
+                "required": ["where", "problem", "change", "op"],
+            },
+        },
     },
     "required": ["hook", "story", "rhythm", "shotChoice", "design", "sound"],
 }
+
+# The ops a fix may name - the scene builder's own vocabulary, so a fix
+# is a patch operation and not a wish.
+FIX_OPS = ("retime", "shift", "resize", "restyle", "replace")
 
 FLAG_SCHEMA = {
     "type": "object",
@@ -1165,6 +1223,33 @@ def _string_list(value, cap=6, per=200):
     if isinstance(value, list):
         return [str(v)[:per] for v in value if isinstance(v, str) and v.strip()][:cap]
     return []
+
+
+def _fix_list(value, cap=8):
+    """A model's `fixes` reply, defended the same way the scores are: each
+    fix needs its four fields, its op must be one of the five the scene
+    builder patches with, and anything malformed is dropped whole rather
+    than half-read - a fix that loses its `where` is advice nobody can
+    apply."""
+    if not isinstance(value, list):
+        return []
+    fixes = []
+    for entry in value[:cap]:
+        if not isinstance(entry, dict):
+            continue
+        op = str(entry.get("op") or "").strip().lower()
+        where = str(entry.get("where") or "").strip()
+        problem = str(entry.get("problem") or "").strip()
+        change = str(entry.get("change") or "").strip()
+        if not (where and problem and change and op in FIX_OPS):
+            continue
+        fixes.append({
+            "where": where[:160],
+            "problem": problem[:240],
+            "change": change[:240],
+            "op": op,
+        })
+    return fixes
 
 
 def _flag_adjustments(flags, base_scores):
@@ -1287,6 +1372,7 @@ def critique(spec):
                 "verdict": str(parsed.get("verdict", ""))[:300],
                 "notes": _string_list(parsed.get("notes"), 6) + base["notes"][:3],
                 "revisions": _string_list(parsed.get("revisions"), 6) or base["revisions"],
+                "fixes": _fix_list(parsed.get("fixes")) or base.get("fixes", []),
                 "measured": base["scores"],
             }
         except Exception as exc:
@@ -1327,6 +1413,7 @@ def critique(spec):
                 "readableText": flags["readableText"],
             },
             "revisions": revisions[:8],
+            "fixes": base.get("fixes", []),
             "measured": base["scores"],
         }
     except Exception as exc:

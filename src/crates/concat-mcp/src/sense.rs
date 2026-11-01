@@ -1070,6 +1070,7 @@ fn record_craft_pass(project: &str, result: &mut Value, backend: &dyn Backend) {
         "scores": result.get("scores").cloned().unwrap_or(Value::Null),
         "notes": result.get("notes").cloned().unwrap_or(Value::Null),
         "revisions": result.get("revisions").cloned().unwrap_or(Value::Null),
+        "fixes": result.get("fixes").cloned().unwrap_or(Value::Null),
     }));
     if history.len() > 20 {
         history.drain(..history.len() - 20);

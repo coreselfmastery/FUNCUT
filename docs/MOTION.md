@@ -313,6 +313,39 @@ curve - calm for the hook (`ease-out`), wound for the tension (`ease-in`), punch
 (`spring-pop`) - and **`sound_starts_at`** places an SFX by its measured `syncAt` so the *peak*
 lands on the entrance, not the file's first sample.
 
+### The critic's fixes, applied
+
+The contact-sheet critic loop runs, and it scores. What it did not produce was a revision an
+editor could apply without translating it by hand - "the chart enters 400ms too early" was a
+sentence, not an operation. `craft_critique` now returns a **`fixes`** array - each fix a
+`{where, problem, change, op}` with the number and unit in its change, and the op from the scene
+builder's own vocabulary - and `critic.rs` is the other half:
+
+```rust,ignore
+use concat_motion::critic::{self, Fix};
+
+let fixes: Vec<Fix> = reply["fixes"].as_array()...
+    .filter_map(|value| Fix::parse(value).ok())
+    .collect();
+let report = critic::apply(&mut comp, &fixes);   // every fix landed or is skipped with its reason
+```
+
+| op | What it patches | The change it parses |
+| --- | --- | --- |
+| `retime` | the node's start | `0.4s later`, `400ms earlier` - the words carry the sign |
+| `shift` | the node's place, and its whole position journey | `x by -120px`, `left 480px`, `down 40px` |
+| `resize` | the node's scale | `to 0.9`, `90%`, `1.2x` |
+| `restyle` | the node's tracks' easing | `ease with spring-pop` - a name from the easing library, the longest match winning |
+| `replace` | nothing automatically | a replacement needs new content the fix does not carry: the one op that is always a skip, said as the escalation it is |
+
+The `where` matches node ids loosely and case-insensitively - the critic writes prose, not ids -
+with the longest id winning when two match, and a comp of one node named by anything at all. A
+fix that cannot be parsed is skipped **with the reason said**, never guessed at: a wrong patch
+applied confidently is worse than a suggestion left on the table. The heuristic engine emits
+measured fixes of its own (black lead-ins, bars, static cuts, repeats), the strong VLM's prompt
+asks for exactly this shape, and every pass - scores, revisions *and* fixes - is journaled to
+`craft-history.json`, so the loop from critique to revision is data the whole way through.
+
 `examples/reel.rs` is a complete one: **thirteen scenes, twelve presets, 45.5 s**, with plates, a
 curtain and a synthesised score.
 

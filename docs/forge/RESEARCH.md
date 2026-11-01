@@ -90,7 +90,8 @@ methodology, which it publishes as `skills/kinocut/SKILL.md`:
 
 What this repo adopted: the plan-first discipline (the funcut-director skill's
 edit plan), the verify-before-done discipline (`preview_frame` checkpoints +
-the review checklist), explicit licensing flags (MAGICK stickers are CC BY-NC),
+the review checklist), explicit licensing flags (MAGICK stickers were CC
+BY-NC then; the flag discipline stayed when the shelf became Fluent Emoji),
 and per-platform export presets in the niche playbooks.
 
 ## 3. The wider landscape — the numbers the skill encodes
@@ -126,7 +127,9 @@ templates, export with progress, `preview_frame`, and now the sense tools
 `watch_render` / `stock_contact_sheet` / `craft_critique` / `creative_brief`
 / `local_vlm`), the OpenVid library
 (937,957 clips), BGM (1,191 tracks), SFX (530 CC0 sounds, 12 categories),
-MAGICK stickers (145,193, CC BY-NC), 327 effect packages (57 filters, 25 audio,
+MAGICK stickers (145,193, CC BY-NC — the shelf this fork shipped at the
+snapshot; since swapped for Fluent Emoji, 1,285, MIT, §25 of the change
+ledger), 327 effect packages (57 filters, 25 audio,
 123 effects, 122 transitions), 31 text presets, Kokoro/Pocket/Chatterbox voices,
 whisper.cpp transcription, window/headless/auto MCP backends, and a Slint UI
 with a free tab slot and a settings dialog with a free page.

@@ -24,7 +24,7 @@ Forge (the harness: reasoning, Model Mesh routing, /workflow parallelism, hooks)
 - **The tools** are the Concat API over MCP - **91 tools** shipped (projects, media, every
   cut, masks, titles, captions, keyframes, effects, batched atomic edits,
   templates, export, libraries: OpenVid 937k clips, BGM 1,191 tracks, 530 SFX,
-  MAGICK stickers). The analysis/speech tools give the agent its senses
+  Fluent Emoji stickers - 1,285, MIT). The analysis/speech tools give the agent its senses
   and voice; `plan_validate` checks director plans before edits and
   `clip_audio_levels_db` makes audio gain units explicit.
 - **The engine** is FUNCUT itself: the Rust + Slint editor, its window open

@@ -184,7 +184,7 @@ fn check_patch(op: &str, patch: &Json) -> Result<(), String> {
                 "a replacement needs new content the patch does not carry: pick the \
                  replacement, then patch it in"
                     .into(),
-            )
+            );
         }
         other => return Err(format!("{other:?} is not a fix op")),
     }
@@ -813,32 +813,34 @@ mod tests {
         let report = apply(&mut comp, &fixes);
         assert!(report.all_applied(), "{:?}", report.skipped);
         let chart = comp.node("chart").expect("the chart");
-        assert!((chart.start - 1.9).abs() < 1e-9, "the patch's start, exactly");
+        assert!(
+            (chart.start - 1.9).abs() < 1e-9,
+            "the patch's start, exactly"
+        );
         assert!(
             (chart.transform.position.expect("placed").x - 1620.0).abs() < 1e-9,
             "the patch's dx, exactly"
         );
         assert!(
-            chart
-                .tracks
-                .values()
-                .all(|track| track
-                    .keys
-                    .first()
-                    .and_then(|key| key.curve.as_ref())
-                    .is_some_and(|curve| matches!(curve, Curve::Spring(_)))),
+            chart.tracks.values().all(|track| track
+                .keys
+                .first()
+                .and_then(|key| key.curve.as_ref())
+                .is_some_and(|curve| matches!(curve, Curve::Spring(_)))),
             "the patch's curve, exactly"
         );
 
         // A relative retime: shift, not start.
         let mut comp = comp_of(vec![chart_node()]);
-        let fixes = vec![Fix::parse(&serde_json::json!({
-            "where": "the chart", "op": "retime",
-            "problem": "enters 400ms too early",
-            "change": "start 0.4s later",
-            "patch": { "shift": 0.4 }
-        }))
-        .expect("a well-formed fix")];
+        let fixes = vec![
+            Fix::parse(&serde_json::json!({
+                "where": "the chart", "op": "retime",
+                "problem": "enters 400ms too early",
+                "change": "start 0.4s later",
+                "patch": { "shift": 0.4 }
+            }))
+            .expect("a well-formed fix"),
+        ];
         let report = apply(&mut comp, &fixes);
         assert!(report.all_applied(), "{:?}", report.skipped);
         assert!(
@@ -887,12 +889,14 @@ mod tests {
         let mut node = chart_node();
         node.start = 2.0;
         let mut comp = comp_of(vec![node]);
-        let fixes = vec![Fix::parse(&serde_json::json!({
-            "where": "the chart", "op": "retime",
-            "problem": "enters 400ms too early",
-            "change": "start 0.4s earlier"
-        }))
-        .expect("a well-formed fix")];
+        let fixes = vec![
+            Fix::parse(&serde_json::json!({
+                "where": "the chart", "op": "retime",
+                "problem": "enters 400ms too early",
+                "change": "start 0.4s earlier"
+            }))
+            .expect("a well-formed fix"),
+        ];
         let report = apply(&mut comp, &fixes);
         assert!(report.all_applied(), "{:?}", report.skipped);
         assert!(
@@ -902,12 +906,14 @@ mod tests {
 
         // And a move that would cross the beginning of the timeline
         // lands on zero, not before it.
-        let fixes = vec![Fix::parse(&serde_json::json!({
-            "where": "the chart", "op": "retime",
-            "problem": "lands before the reel begins",
-            "change": "start 3s earlier"
-        }))
-        .expect("a well-formed fix")];
+        let fixes = vec![
+            Fix::parse(&serde_json::json!({
+                "where": "the chart", "op": "retime",
+                "problem": "lands before the reel begins",
+                "change": "start 3s earlier"
+            }))
+            .expect("a well-formed fix"),
+        ];
         let report = apply(&mut comp, &fixes);
         assert!(report.all_applied(), "{:?}", report.skipped);
         assert_eq!(

@@ -5,12 +5,12 @@
 //! and eighty-five 3D PNGs under the MIT licence, searched in a local
 //! index, fetched one picture at a time.
 //!
-//! The set - [microsoft/fluentui-emoji] on GitHub - is every emoji the
-//! project carries, in its 3D style: rendered at 1024x1024 with real
+//! The set is [microsoft/fluentui-emoji] on GitHub: every emoji the
+//! project carries, in its 3D style, rendered at 1024x1024 with real
 //! transparency, free for commercial and personal use alike, which is
 //! the whole reason this shelf exists. The two shelves it replaces were
-//! not: MAGICK's pictures were CC BY-NC - unusable in a monetized video
-//! - and OpenMoji's were CC BY-SA, and a sticker library that has to be
+//! not: MAGICK's pictures were CC BY-NC, unusable in a monetized video,
+//! and OpenMoji's were CC BY-SA, and a sticker library that has to be
 //! explained before it can be used is a liability wearing a search box.
 //! The swap was the fix, not a bigger warning.
 //!
@@ -392,12 +392,10 @@ impl Library {
                             std::fs::rename(&partial, &target).map_err(|error| {
                                 format!("could not keep {}: {error}", target.display())
                             })?;
-                            if let Err(error) = self.open_index(source) {
-                                // A digest that matched and a parse that
-                                // refused is a build's own argument with
-                                // itself: the file stands, said in words.
-                                return Err(error);
-                            }
+                            // A digest that matched and a parse that
+                            // refused is a build's own argument with
+                            // itself: the file stands, said in words.
+                            self.open_index(source)?;
                             return Ok(());
                         }
                         Err(error) => {

@@ -1137,6 +1137,17 @@ fn plan_with_chain(
                 cut,
                 enter_drift,
             );
+            // A cut whose window is the scene's whole length has no room
+            // to settle in: the entrance is clamped to the span, which
+            // is shorter than the author wrote. Said, not passed over.
+            if cut.seconds() + 1e-9 >= comp.duration {
+                warnings.push(format!(
+                    "scene {index} enters by a {} that runs its whole {:.3} s: \
+                     the entrance is clamped shorter than written",
+                    cut.name(),
+                    comp.duration
+                ));
+            }
         }
         if let Some(cut) = exit_cut {
             crate::transition::prepare_comp(
@@ -1149,6 +1160,18 @@ fn plan_with_chain(
                 warnings.push(format!(
                     "scene {index} leaves by a {} with nothing after it: the reel's closing choreography",
                     cut.name()
+                ));
+            }
+            // The exit side does not clamp: a window as long as the
+            // scene leaves the exit no frame to play over, and the
+            // choreography is skipped whole - the transition appears
+            // missing while the plan stays green. Named here.
+            if cut.seconds() + 1e-9 >= comp.duration {
+                warnings.push(format!(
+                    "scene {index} leaves by a {} that runs its whole {:.3} s: \
+                     the exit has no frame to play over and is skipped",
+                    cut.name(),
+                    comp.duration
                 ));
             }
         }
@@ -2881,6 +2904,62 @@ mod tests {
                 .warnings
                 .iter()
                 .any(|warning| warning.contains("closing choreography")),
+            "{:?}",
+            planned.warnings
+        );
+    }
+
+    /// A cut whose window runs the whole scene has no frame to play
+    /// over: the exit is skipped whole and the entrance clamped, and
+    /// either way the choreography that renders is not the one that was
+    /// written. The plan says so rather than staying quietly green.
+    #[test]
+    fn a_cut_longer_than_its_scene_is_said_not_rendered_short() {
+        let mut sequence = reel(vec![
+            Scene::new(presets::build("funcut.stats.triptych").expect("a preset")).holding(0.3),
+            Scene::new(presets::build("funcut.stats.triptych").expect("a preset")).holding(0.3),
+        ]);
+        sequence.with_cut(0, crate::transition::Cut::ZoomThrough { seconds: 0.35 });
+        let planned = plan(&geneva(), &sequence).expect("a plan");
+        // Scene 0 leaves by the cut, scene 1 enters by it, and both are
+        // shorter than the cut's own window.
+        assert!(
+            planned
+                .warnings
+                .iter()
+                .any(|warning| warning.contains(
+                    "scene 0 leaves by a zoom-through that runs its whole 0.300 s"
+                )),
+            "{:?}",
+            planned.warnings
+        );
+        assert!(
+            planned
+                .warnings
+                .iter()
+                .any(|warning| warning.contains(
+                    "scene 1 enters by a zoom-through that runs its whole 0.300 s"
+                )),
+            "{:?}",
+            planned.warnings
+        );
+    }
+
+    /// And the healthy case stays quiet: a cut that fits its scene says
+    /// nothing, so the warning carries meaning rather than noise.
+    #[test]
+    fn a_cut_that_fits_its_scene_says_nothing() {
+        let mut sequence = reel(vec![
+            Scene::new(presets::build("funcut.stats.triptych").expect("a preset")).holding(4.0),
+            Scene::new(presets::build("funcut.stats.triptych").expect("a preset")).holding(4.0),
+        ]);
+        sequence.with_cut(0, crate::transition::Cut::ZoomThrough { seconds: 0.35 });
+        let planned = plan(&geneva(), &sequence).expect("a plan");
+        assert!(
+            !planned
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("runs its whole")),
             "{:?}",
             planned.warnings
         );

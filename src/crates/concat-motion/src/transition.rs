@@ -16,8 +16,11 @@
 //! ```text
 //! whip pan left:   outgoing plates sweep left out of frame (ease-in),
 //!                  incoming plates sweep in from the right (ease-out)
-//! zoom through:    outgoing grows to 1.35, incoming lands from 0.72
-//! inverse zoom:    outgoing shrinks to 0.72, incoming arrives from 1.35
+//! zoom through:    outgoing grows to 1.35, incoming arrives still at
+//!                  1.35 and settles - both sides carry the same number,
+//!                  which is what makes it one camera move
+//! inverse zoom:    outgoing shrinks to 0.72, incoming arrives still at
+//!                  0.72 and grows to rest
 //! rack focus:      outgoing blurs to 16px, incoming resolves from 16px
 //! velocity match:  the incoming plate enters with the outgoing's own
 //!                  drift velocity, and settles - the cut hides itself

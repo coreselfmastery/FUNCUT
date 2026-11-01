@@ -1008,7 +1008,7 @@ whole ten-scene document rendered again because one layer of one scene
 moved ten pixels. The reel's cache was the storyboard's own hash - all
 or nothing.
 
-`concat-motion::reel` renders a storyboard **run by run** (see §27 for
+`concat-motion::reel` renders a storyboard **run by run** (see §26 for
 why a run, not a scene), and each is cached by a key derived from what
 actually draws it: its scenes' documents (comp or preset, layers,
 timing, operations), the **bytes** of every asset they name - a
@@ -1085,7 +1085,7 @@ document (unused named scenes are not emitted), and the recursive plan
 of each - a plan of a document, not a render, so the cost is
 microseconds.
 
-## 25. The reel contact sheet: the critic loop over the reel's own output
+## 24. The reel contact sheet: the critic loop over the reel's own output
 
 The agent authored scenes blind. `motion_reel` could return one still,
 and the critic - the three-rung ladder behind `craft_critique` - never
@@ -1116,7 +1116,7 @@ cells, not refusals); the tool's argument carried through the schema;
 encode - a quarter of a second of sidecar time on the measured
 machine, once per look.
 
-## 26. The sticker shelf swapped for a permissive set
+## 25. The sticker shelf swapped for a permissive set
 
 The two sticker shelves were a liability wearing a search box: MAGICK's
 145,193 AI-generated cutouts were **CC BY-NC 4.0** - unusable in a
@@ -1147,7 +1147,7 @@ the parse, the search, the URL shapes, the licence field and the
 favourites; the alpha check still refuses anything that is not a
 transparent PNG.
 
-## 27. The four pillars: the cut that shares its window, the noise that carries a seed, the cache that keeps its word
+## 26. The four pillars: the cut that shares its window, the noise that carries a seed, the cache that keeps its word
 
 The motion layer had the vocabulary - six choreographed cuts, five curve
 families, a beat-grid pulse, a critic that returns operations - and the
@@ -1234,7 +1234,7 @@ served); the wobble's 21 keys, ±19 px of wander and the cover growth
 read straight out of the emitted timeline; and every golden frame at
 DSSIM 0.00000 against its committed image.
 
-## 28. The plan's last four gaps, closed
+## 27. The plan's last four gaps, closed
 
 The Geneva integration plan had ten steps, and the audit that re-read
 them against the tree found ten built - and four places where what
@@ -1280,7 +1280,7 @@ three `hue-rotate` tests; `concat-mcp`'s count test holds 91 against
 every document. The tool itself needs the sidecar and the ffmpeg
 headers, so its build is CI's to run.
 
-## 29. The whip's smear: the motion blur the whip pan shipped without
+## 28. The whip's smear: the motion blur the whip pan shipped without
 
 The whip pan shipped with its sweep, its shared window and no blur -
 the dry read, for every whip, whether the scene asked for one or not.

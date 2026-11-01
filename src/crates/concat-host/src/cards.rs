@@ -274,6 +274,58 @@ impl Painter {
         write_card(&frame, path)
     }
 
+    /// The still the painter draws from, swapped for another at the same
+    /// size: a clip's frames come from a plate that moves, so the clip
+    /// recorder retargets the painter frame by frame rather than paying
+    /// for a compositor - or a checkerboard - per frame.
+    pub fn retarget(&mut self, still: &Path) -> Result<(), String> {
+        let (width, height) = (self.still.width(), self.still.height());
+        let mut decoder = Decoder::open(still, &DecodeOptions::default().scaled_to(width, height))
+            .map_err(|error| error.to_string())?;
+        let frame = decoder
+            .next_frame()
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("{} holds no picture", still.display()))?;
+        self.still = Arc::new(frame);
+        self.turned = turned(&self.still).into();
+        Ok(())
+    }
+
+    /// One frame of a clip: the current still through `package`'s pass at
+    /// the parameters in `set`, at `time` seconds into the clip, placed
+    /// by `transform` - the same draw a card gets, at a moment the
+    /// recorder names, with knobs it may be sweeping and a plate it may
+    /// be drifting. The effect's own motion - grain that moves, a pulse
+    /// that beats, a cut that travels - comes from `time`; the plate's
+    /// motion comes from the transform, resampled by the compositor.
+    pub fn effect_frame(
+        &mut self,
+        package: &Package,
+        set: &std::collections::BTreeMap<String, f64>,
+        time: f64,
+        transform: concat_core::timeline::Transform,
+    ) -> Result<Frame, String> {
+        let pass = package
+            .pass(set, None)
+            .ok_or_else(|| format!("{} draws no picture to clip", package.id()))?;
+        let (width, height) = (self.still.width(), self.still.height());
+        let moment = Rational::approximate(time).ok_or("the moment is not a time")?;
+        let ground = PlannedLayer::picture(detached_clip(), Arc::clone(&self.checker));
+        let mut picture = PlannedLayer::picture(detached_clip(), Arc::clone(&self.still));
+        picture.track = 1;
+        picture.transform = transform;
+        picture.effects = vec![pass];
+        let frame = self.compositor.render(&FramePlan {
+            time: moment,
+            layers: vec![ground, picture],
+            ..FramePlan::empty(width, height)
+        });
+        if self.compositor.lost() {
+            return Err("the GPU device was lost".to_owned());
+        }
+        Ok(frame)
+    }
+
     /// `card` drawn, as an opaque frame the still's size.
     pub fn frame(&mut self, card: &Card) -> Result<Frame, String> {
         let (width, height) = (self.still.width(), self.still.height());

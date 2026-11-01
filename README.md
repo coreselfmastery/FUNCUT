@@ -24,8 +24,9 @@
 > ledger is [docs/FUNCUT-CHANGES.md](docs/FUNCUT-CHANGES.md), the
 > small-machine notes [docs/FUNCUT.md](docs/FUNCUT.md), the agent
 > guide [docs/MCP.md](docs/MCP.md), the small-machine measurements
-> [docs/PERFORMANCE.md](docs/PERFORMANCE.md), and every effect's
-> before-and-after card [docs/EFFECTS-GALLERY.md](docs/EFFECTS-GALLERY.md).
+> [docs/PERFORMANCE.md](docs/PERFORMANCE.md), every effect's
+> before-and-after card [docs/EFFECTS-GALLERY.md](docs/EFFECTS-GALLERY.md),
+> and twenty of them in motion [docs/SHADER_GALLERY.md](docs/SHADER_GALLERY.md).
 
 <div align="center">
 

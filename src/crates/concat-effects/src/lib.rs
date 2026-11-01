@@ -37,7 +37,9 @@ mod builtins {
     include!(concat!(env!("OUT_DIR"), "/builtins.rs"));
 }
 
-pub use catalogue::{At, Catalogue, Fixture, Package, Probe, package_folders, package_stamp};
+pub use catalogue::{
+    At, Catalogue, Fixture, INTENSITY, Package, Probe, package_folders, package_stamp,
+};
 pub use manifest::{CardSettings, FORMAT, Kind, Manifest, Param, ParamType, Space};
 pub use shader::{Contract, Shader, TransitionShader};
 

@@ -120,6 +120,45 @@ enum Command {
         /// A package folder, or a folder of package folders.
         path: PathBuf,
     },
+
+    /// Record one effect as a short clip - the effect in motion, at speed:
+    /// a plate drifting under it, the package's own shader drawing every
+    /// frame on the GPU, its animated knobs running at their own clock,
+    /// and an optional knob swept floor to ceiling so a static look is
+    /// seen at speed too. `concat-cli clip concat.vhs --out vhs.mp4` is
+    /// what docs/SHADER_GALLERY.md is built from.
+    Clip {
+        /// The package's catalogue id or alias, e.g. `concat.vhs`.
+        effect: String,
+        /// Where to write the MP4.
+        #[arg(long)]
+        out: PathBuf,
+        /// A still the effect runs over; the bundled card still when
+        /// absent.
+        #[arg(long)]
+        over: Option<PathBuf>,
+        /// Seconds to record.
+        #[arg(long, default_value_t = 2.0)]
+        seconds: f64,
+        /// Frames a second.
+        #[arg(long, default_value_t = 24.0)]
+        fps: f64,
+        /// Clip width in pixels; the picture is scaled before the effect
+        /// runs, so pixel-sized effects look as they will in the clip.
+        #[arg(long, default_value_t = 480)]
+        width: u32,
+        /// Clip height in pixels.
+        #[arg(long, default_value_t = 270)]
+        height: u32,
+        /// A knob to sweep from its floor to its ceiling over the clip,
+        /// so a static look shows at speed: `--sweep bleed`.
+        #[arg(long)]
+        sweep: Option<String>,
+        /// How far the plate drifts over the clip, as a scale delta:
+        /// `0.06` grows six percent, `0` holds the plate still.
+        #[arg(long, default_value_t = 0.06)]
+        drift: f64,
+    },
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -150,6 +189,27 @@ fn main() -> Result<(), Box<dyn Error>> {
             height,
         } => preview(&input, &output, &effect, width, height),
         Command::Check { path } => check(&path),
+        Command::Clip {
+            effect,
+            out,
+            over,
+            seconds,
+            fps,
+            width,
+            height,
+            sweep,
+            drift,
+        } => clip(
+            &effect,
+            &out,
+            over.as_deref(),
+            seconds,
+            fps,
+            width,
+            height,
+            sweep.as_deref(),
+            drift,
+        ),
     }
 }
 
@@ -279,6 +339,113 @@ fn preview(
     let mut painter = concat_host::cards::Painter::new(compositor, input, width, height)?;
     painter.draw_to(&card, output)?;
     println!("{} -> {}", package.id(), output.display());
+    Ok(())
+}
+
+/// `effect` recorded as a short clip: the package's own shader drawing
+/// every frame on the GPU, a plate drifting under it, its animated knobs
+/// running at their own clock, and one knob swept floor to ceiling when
+/// asked, so a static look is seen at speed too. What
+/// docs/SHADER_GALLERY.md is built from - the same draw a card gets, at
+/// every moment of a clip instead of one.
+fn clip(
+    effect: &str,
+    out: &Path,
+    over: Option<&Path>,
+    seconds: f64,
+    fps: f64,
+    width: u32,
+    height: u32,
+    sweep: Option<&str>,
+    drift: f64,
+) -> Result<(), Box<dyn Error>> {
+    let catalogue = concat_effects::Catalogue::builtin();
+    let package = catalogue
+        .get(effect)
+        .ok_or_else(|| format!("no package answers to {effect}"))?;
+    if package.shader().is_none() {
+        return Err(format!("{} draws no picture to clip", package.id()).into());
+    }
+    let fps = fps.clamp(1.0, 120.0);
+    let seconds = seconds.clamp(0.1, 30.0);
+    let frames = ((seconds * fps).round() as u64).max(2);
+    let rate = FrameRate::approximated(fps).ok_or("the frame rate is not a time")?;
+
+    // The swept knob, if there is one: its floor and ceiling, from the
+    // package's own manifest, so the sweep is what the slider really
+    // travels. A knob the package does not carry is refused by name
+    // rather than swept to nothing - except `intensity`, which every
+    // filter answers even when its manifest declares no knob of its
+    // own: 0 to 100, the one every static look sweeps.
+    let (sweep, from, to) = match sweep {
+        Some(key) => {
+            let floor = package.params_at(concat_effects::At::Min);
+            let ceiling = package.params_at(concat_effects::At::Max);
+            let (from, to) = match (floor.get(key), ceiling.get(key)) {
+                (Some(from), Some(to)) => (*from, *to),
+                _ if key == concat_effects::INTENSITY
+                    && package.kind() == concat_effects::Kind::Filter =>
+                {
+                    (0.0, 100.0)
+                }
+                _ => {
+                    return Err(
+                        format!("{} has no knob called {key:?} to sweep", package.id()).into(),
+                    );
+                }
+            };
+            (Some(key), from, to)
+        }
+        None => (None, 0.0, 0.0),
+    };
+
+    // The plate: the caller's still, or the bundled one every card is
+    // drawn from, written to a scratch folder for a decoder to read.
+    let scratch = std::env::temp_dir().join(format!("concat-clip-{}", std::process::id()));
+    std::fs::create_dir_all(&scratch)?;
+    let still = match over {
+        Some(path) => path.to_path_buf(),
+        None => concat_host::cards::still_in(&scratch)?,
+    };
+
+    let compositor =
+        WgpuCompositor::new().ok_or("no GPU or software renderer is available to draw with")?;
+    let mut painter = concat_host::cards::Painter::new(compositor, &still, width, height)?;
+    let mut encoder = Encoder::create(out, width, height, rate, &EncodeOptions::default())?;
+
+    println!(
+        "recording {} as {} frames of {width}x{height} at {fps} fps",
+        package.id(),
+        frames
+    );
+    for index in 0..frames {
+        let time = index as f64 / fps;
+        // The drift: the plate grows by `drift` over the clip and slides
+        // a third as far, so it reads as a camera and not a zoom - the
+        // compositor resamples, the effect treats the moving picture.
+        let progress = if frames > 1 {
+            index as f64 / (frames - 1) as f64
+        } else {
+            0.0
+        };
+        let transform = concat_core::timeline::Transform {
+            scale: 1.0 + drift * progress,
+            offset_x: -drift * progress / 3.0,
+            offset_y: drift * progress / 6.0,
+            ..concat_core::timeline::Transform::IDENTITY
+        };
+        // The knobs: the package's defaults, with the swept one travelling
+        // floor to ceiling over the clip.
+        let mut set = package.params_at(concat_effects::At::Default);
+        if let Some(key) = sweep {
+            set.insert(key.to_owned(), from + (to - from) * progress);
+        }
+        let frame = painter.effect_frame(package, &set, time, transform)?;
+        encoder.write_frame(&frame)?;
+    }
+    encoder.finish()?;
+    let _ = std::fs::remove_dir_all(&scratch);
+    println!("wrote {} frames to {}", encoder.written(), out.display());
     Ok(())
 }
 

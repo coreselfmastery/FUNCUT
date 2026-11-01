@@ -1,4 +1,6 @@
 # The effects gallery: every picture package, before and after
+Twenty of these run as clips - the effects in motion, at speed - in
+[SHADER_GALLERY.md](SHADER_GALLERY.md).
 
 Every card below is the **same reference plate**, drawn through a
 package's own shader at that package's defaults, by the same

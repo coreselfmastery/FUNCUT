@@ -1,18 +1,26 @@
 #!/usr/bin/env python3
 """Pixel evidence for the multi-layer example's overlap frames.
 
-Three claims, each measured rather than eyeballed:
+Four claims, each measured rather than eyeballed:
 
 1. The foreground card sits ON the footage, not INSTEAD of it: at the
    card's frame the region around the card still shows the scene behind
    it (the frame before the card arrives, compared pixel-wise), and the
    card's own region differs - the card is a layer, not a replacement.
+   The comparison is by colour, not brightness alone: the scene's ground
+   is a plate whose luma sits near the card's own, so the claim that
+   would once have been made in luma is made in the channel that moved.
 2. The screen-blended leak lightened the plate under it: the same frame
    rendered with the leak layer dropped differs exactly where the leak
    is, and under the leak's bright core the plate's own grid lines are
    still present (screen keeps the ground; a cover would not).
 3. The grain tile is a whisper over everything: the frame with it and
    the frame without differ by a few counts everywhere and a lot nowhere.
+4. The grades are worn: the first scene cold, the second warm, each
+   rendered again with its grade layer dropped and compared channel by
+   channel - the cold scene's blue rises while its red falls, the warm
+   scene's red rises far above its blue, and the comp's own words sit
+   above the grade and are not tinted by it.
 
 usage: python3 scripts/motion/inspect-frames.py RENDER_DIR
 """
@@ -99,6 +107,45 @@ def diff_map(a, b):
     return out
 
 
+def colour_diff_map(a, b):
+    """Per-pixel absolute colour difference: the largest single channel
+    that moved. Two frames can agree in brightness and disagree utterly
+    in colour - a warm card over a blue plate - and this is the eye that
+    sees it."""
+    width, height, channels, rows_a = a
+    _, _, _, rows_b = b
+    out = []
+    for y in range(height):
+        row_a, row_b = rows_a[y], rows_b[y]
+        line = bytearray(width)
+        for x in range(width):
+            at = x * channels
+            line[x] = max(abs(row_a[at] - row_b[at]),
+                          abs(row_a[at + 1] - row_b[at + 1]),
+                          abs(row_a[at + 2] - row_b[at + 2]))
+        out.append(line)
+    return out
+
+
+def channel_shift(a, b, region=None):
+    """The mean per-channel move from `b` to `a` - graded minus plain -
+    over the whole frame or a rectangle (x0, y0, x1, y1). The sign is
+    the direction the grade pushed each channel."""
+    width, height, channels, rows_a = a
+    _, _, _, rows_b = b
+    x0, y0, x1, y1 = region or (0, 0, width, height)
+    totals = [0, 0, 0]
+    count = 0
+    for y in range(y0, y1):
+        row_a, row_b = rows_a[y], rows_b[y]
+        for x in range(x0, x1):
+            at = x * channels
+            for i in range(3):
+                totals[i] += row_a[at + i] - row_b[at + i]
+            count += 1
+    return [t / max(count, 1) for t in totals]
+
+
 def region_stats(diff, x0, y0, x1, y1):
     """Mean and max of a diff over a rectangle."""
     total = count = 0
@@ -119,11 +166,13 @@ def main():
     # --- 1. the card over the scene, not instead of it -------------------
     before = read_png(os.path.join(render, "s2-t5.5.png"))
     card = read_png(os.path.join(render, "s2-t7.0.png"))
-    diff = diff_map(before, card)
+    diff = colour_diff_map(before, card)
     width, height = before[0], before[1]
     # The card is contain-fitted at 60%: a centre box roughly 40% of the
     # frame's width (contain keeps the 16:9 picture inside the frame) and
-    # 60% of its height. Compare that centre against a border ring.
+    # 60% of its height. Compare that centre against a border ring - by
+    # colour, because the scene's ground is now a plate whose brightness
+    # sits near the card's own and only the channels tell them apart.
     cx0, cx1 = int(width * 0.30), int(width * 0.70)
     cy0, cy1 = int(height * 0.20), int(height * 0.80)
     centre_mean, centre_peak = region_stats(diff, cx0, cy0, cx1, cy1)
@@ -144,7 +193,8 @@ def main():
 
     # The scene's own mark is still drawn under the card's corners: sample
     # four points inside the frame but outside the card box and confirm
-    # they hold the scene's dark plate, not the card's warm studio tone.
+    # they hold the scene's graded dark plate - blue under its warm grade,
+    # as dark plates are - and not the card's warm studio tone.
     card_pixels = read_png(os.path.join(render, "s2-t7.0.png"))
     warm = 0
     samples = [(width // 2, int(height * 0.10)), (width // 2, int(height * 0.92)),
@@ -220,6 +270,101 @@ def main():
     assert mean_a > mean_b + 8, "the leak did not lighten its rim: the blend did nothing"
     assert contrast_a > 0.25 * contrast_b, (
         "the plate's grid is gone under the leak's rim: it was replaced, not screened"
+    )
+
+    # --- 3. the grain is a whisper over everything ------------------------
+    # The frame with the grain tile and the frame without differ by a
+    # few counts everywhere (it is drawn over the whole scene) and a lot
+    # nowhere (it is eight percent opacity, not a texture). The
+    # timeline is read back from disk: claim 2 rewrote its own copy with
+    # the leak dropped, and this one wants the whole document.
+    timeline = json.load(open(os.path.join(cache, "timeline.json")))
+    alt = os.path.join(cache, "timeline-no-grain.json")
+    stripped = [l for l in timeline["layers"] if l["id"] != "s0.overlay2"]
+    doc = dict(timeline)
+    doc["layers"] = stripped
+    json.dump(doc, open(alt, "w"))
+    out = os.path.join(render, "s1-t2.0-no-grain.png")
+    subprocess.run(
+        [geneva, "--format", "json", "frame", os.path.basename(alt),
+         "--at", "2s", "-o", os.path.abspath(out)],
+        cwd=cache, check=True, capture_output=True,
+    )
+    with_grain = read_png(os.path.join(render, "s1-t2.0.png"))
+    without_grain = read_png(out)
+    diff = diff_map(with_grain, without_grain)
+    grain_mean, grain_peak = region_stats(diff, 0, 0, width, height)
+    print(f"grain: luma diff mean {grain_mean:.1f} (peak {grain_peak})")
+    assert grain_mean > 2, "the grain drew nothing: the layer is missing"
+    assert grain_mean < 15, "the grain is not a whisper: it is a texture"
+    assert grain_peak < 60, "the grain shouts somewhere: a lot nowhere it is not"
+
+    # --- 4. the grades are worn, and the words are not --------------------
+    # Each scene's grade layer is dropped from the staged timeline and
+    # the same frame rendered again: the cold scene must have moved blue
+    # up and red down, the warm scene red up far above blue, and the
+    # wordmark - painted above the grade - must have kept its ink.
+    ids = [layer["id"] for layer in timeline["layers"]]
+    for grade_id in ("s0.funcut-grade", "s1.funcut-grade"):
+        assert grade_id in ids, f"the plan baked no {grade_id}: the grade never landed"
+    for scene, frame, at in [
+        ("s0", "s1-t2.0.png", "2s"),      # the hook: cold
+        ("s1", "s2-t7.0.png", "7s"),      # the payoff: warm
+    ]:
+        alt = os.path.join(cache, f"timeline-no-grade-{scene}.json")
+        stripped = [l for l in timeline["layers"]
+                    if l["id"] != f"{scene}.funcut-grade"]
+        doc = dict(timeline)
+        doc["layers"] = stripped
+        json.dump(doc, open(alt, "w"))
+        out = os.path.join(render, f"no-grade-{frame}")
+        subprocess.run(
+            [geneva, "--format", "json", "frame", os.path.basename(alt),
+             "--at", at, "-o", os.path.abspath(out)],
+            cwd=cache, check=True, capture_output=True,
+        )
+        graded = read_png(os.path.join(render, frame))
+        plain = read_png(out)
+        dr, dg, db = channel_shift(graded, plain)
+        temperature = "cold" if scene == "s0" else "warm"
+        print(f"grade {temperature}: dR {dr:+.1f} dG {dg:+.1f} dB {db:+.1f}")
+        if scene == "s0":
+            assert dr < -8 and db > 3, (
+                f"the cold grade did not cool the frame: dR {dr:+.1f} dB {db:+.1f}"
+            )
+            assert db - dr > 10, (
+                f"the cold grade's blue did not rise above its red: dB {db:+.1f} dR {dr:+.1f}"
+            )
+        else:
+            assert dr > 15, f"the warm grade did not warm the frame: dR {dr:+.1f}"
+            assert dr - db > 15, (
+                f"the warm grade's red did not rise above its blue: dR {dr:+.1f} dB {db:+.1f}"
+            )
+    # The comp's own words sit above the grade and keep their ink: the
+    # wordmark's ivory core (the comp's #f4f1ea ink) is as bright with
+    # the grade as without it, give or take the anti-aliasing at its
+    # edges - a count over 235 catches the ink and nothing the dark
+    # plate ever shows.
+    graded = read_png(os.path.join(render, "s1-t2.0.png"))
+    plain = read_png(os.path.join(render, "no-grade-s1-t2.0.png"))
+
+    def ink_count(pixels):
+        width, height, channels, rows = pixels
+        return sum(
+            1
+            for y in range(0, height, 2)
+            for x in range(0, width, 2)
+            if min(rows[y][x * channels + i] for i in range(3)) >= 235
+        )
+
+    ink_with = ink_count(graded)
+    ink_without = ink_count(plain)
+    share = ink_with / ink_without if ink_without else float(ink_with == 0)
+    print(f"wordmark's ivory core: {ink_with} sampled with the grade, "
+          f"{ink_without} without")
+    assert share > 0.97, (
+        f"the grade tinted the comp's own words: {ink_with} ink pixels with, "
+        f"{ink_without} without"
     )
 
     print("ALL PIXEL CLAIMS HOLD")

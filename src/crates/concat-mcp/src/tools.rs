@@ -1828,6 +1828,8 @@ fn motion_schema(name: &str) -> Option<Value> {
                         "zoom": { "type": "number" },
                         "layers": { "type": "array", "items": layer },
                         "ops": { "type": "array", "items": {} },
+                        "grade": { "type": "object",
+                                   "description": "The scene's colour grade: one of the emotion read's temperatures (hot, sickly, cold, warm, balanced, cool, split) with its own tuning, `amount` 0-1 scaling the cast, optional saturate/contrast/brightness overrides, and a brand `tint` as #rrggbb worn instead of the stock cast. Baked in under the comp's own words as backdrop-filter plus a soft-light cast - the LUT approximation a comp carries." },
                         "transition": { "type": "object",
                                          "description": "The choreographed cut INTO this scene: whip-pan (direction, seconds), zoom-through, inverse-zoom, rack-focus (radius), velocity-match or stagger-exit (step)." },
                         "exit": { "type": "object",
@@ -3417,6 +3419,7 @@ mod tests {
                 json!({ "project": "/tmp/Cut", "name": "opening.mp4", "storyboard": {
                     "scenes": [
                         { "preset": "funcut.sting.wordmark", "hold": 4.0,
+                          "grade": { "temperature": "cold" },
                           "layers": [
                               { "asset": "back", "zoom": 0.04 },
                               { "asset": "leak", "blend": "screen", "scale": 0.8,
@@ -3437,6 +3440,7 @@ mod tests {
                 json!({ "project": "/tmp/Cut", "storyboard": {
                     "scenes": [
                         { "preset": "funcut.sting.wordmark", "hold": 4.0,
+                          "grade": { "temperature": "warm", "amount": 0.8 },
                           "layers": [
                               { "asset": "back", "zoom": 0.04 },
                               { "asset": "leak", "blend": "screen", "scale": 0.8,

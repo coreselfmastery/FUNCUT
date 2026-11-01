@@ -313,6 +313,39 @@ curve - calm for the hook (`ease-out`), wound for the tension (`ease-in`), punch
 (`spring-pop`) - and **`sound_starts_at`** places an SFX by its measured `syncAt` so the *peak*
 lands on the entrance, not the file's first sample.
 
+### The grade: colour grading inside the comp
+
+A LUT is a lookup the footage passes through, and a comp cannot carry one - but it can carry the
+CSS that approximates it. `grade.rs` bakes a scene's grade into the comp as its **first paint**:
+a full-bleed box whose `backdrop-filter` (`saturate()`, `contrast()`, `brightness()`) does the
+tonal work and whose translucent tint, blended `soft-light`, does the cast. What the engine has
+under that box - the scene's plate, the layers beneath - is what gets graded; the comp's own
+words stay as inked, which is the whole point of grading inside the comp rather than over the
+render.
+
+```json
+{ "preset": "funcut.sting.wordmark", "hold": 5.0, "plate": "back",
+  "grade": { "temperature": "cold" } }
+```
+
+| Piece | What it does |
+| --- | --- |
+| `temperature` | the seven the emotion read names per line - `hot`, `sickly`, `cold`, `warm`, `balanced`, `cool`, `split` - each a tuned row of tonal moves and a cast; the act a line sits in is the grade its scene wears |
+| `amount` | 0 to 1, how much of the cast is put on; the tonal moves are not scaled by it |
+| `saturate` / `contrast` / `brightness` | explicit overrides of the temperature's moves - a balanced grade with `{"saturate": 1.2}` is a neutral tonal move by name |
+| `tint` | the brand's own colour, `#rrggbb` or `#rrggbbaa`, worn instead of the stock cast - the palette is respected by wearing it |
+
+`split` is the classic two-temperature grade - teal in the shadows, orange in the highs -
+approximated as a top-to-bottom gradient of the two casts. Measured against the engine on a
+neutral grey plate, the warm grade at full amount moves the frame **+40 red and -10 blue** and
+leaves the comp's own text untouched; the CI example wears `cold` on its hook and `warm` on its
+payoff, and `scripts/motion/inspect-frames.py` asserts both shifts channel by channel, and the
+ink, on every run.
+
+A scene whose grade has nothing under its comp - no plate, no lower layer - is told so in the
+plan's warnings: the cast would land on the curtain alone, and a grade nobody can see is a grade
+the author should hear about.
+
 ### The critic's fixes, applied
 
 The contact-sheet critic loop runs, and it scores. What it did not produce was a revision an

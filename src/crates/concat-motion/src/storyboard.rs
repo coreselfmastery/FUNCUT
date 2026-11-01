@@ -163,6 +163,14 @@ pub struct SceneCard {
     /// baked into the comp's nodes as the plan is laid.
     #[serde(default)]
     pub pulse: Option<crate::pulse::Pulse>,
+    /// The scene's colour grade, as a storyboard writes it on the scene:
+    /// `{"temperature": "warm", "amount": 0.8}`, where the temperature is
+    /// one of the emotion read's seven, the amount is how hard the cast
+    /// is worn, and the tonal moves and a brand `tint` come in as
+    /// overrides. Baked into the comp as its first paint, over the plate
+    /// and under the comp's own words.
+    #[serde(default)]
+    pub grade: Option<crate::grade::Grade>,
 }
 
 /// One layer of a scene, as a storyboard writes it. The source is either
@@ -475,6 +483,13 @@ impl Storyboard {
                     None,
                     format!("`at` is {at}, and it cannot be negative"),
                 );
+            }
+            // The scene's grade: every wrong number and every colour that
+            // is not a colour, named here rather than at the bake.
+            if let Some(grade) = &card.grade {
+                for why in grade.problems() {
+                    problem(index, None, format!("the grade: {why}"));
+                }
             }
             if let Some(hold) = card.hold
                 && !finite_non_negative(hold)
@@ -876,6 +891,9 @@ impl SceneCard {
         }
         if let Some(pulse) = &self.pulse {
             scene = scene.pulsing(pulse.clone());
+        }
+        if let Some(grade) = &self.grade {
+            scene = scene.graded(grade.clone());
         }
         Ok(scene)
     }

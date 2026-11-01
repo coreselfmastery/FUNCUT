@@ -70,6 +70,7 @@ pub mod css;
 pub mod curve;
 pub mod engine;
 pub mod geneva;
+pub mod grade;
 pub mod presets;
 pub mod pulse;
 pub mod reel;

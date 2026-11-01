@@ -105,7 +105,7 @@ jobs:
           summary, plan = docs[0], docs[1]
           assert summary["ok"], summary
           assert summary["scenes"] == 2, summary
-          assert summary["layers"] == 8, summary
+          assert summary["layers"] == 11, summary
           assert not summary["warnings"], summary["warnings"]
           print("planned:", summary["scenes"], "scenes,", summary["layers"], "layers, no warnings")
           PY

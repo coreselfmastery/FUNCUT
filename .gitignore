@@ -68,3 +68,9 @@ desktop.ini
 # FFmpeg built for a phone by src/scripts/ffmpeg-mobile.sh: sources,
 # build trees and the installed prefixes, all machine-built.
 /src/vendor/
+
+# The motion example's render scratch: scripts/motion/layers-assets.py
+# writes the assets and the render fills the cache - both are outputs,
+# never inputs, and a warm one on a contributor's machine is not a
+# change to the reel.
+check/

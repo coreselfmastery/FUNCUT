@@ -66,6 +66,13 @@ pub struct Scene {
     /// plan is laid. The grid is measured elsewhere (`suggest_cuts`
     /// reads it from the soundtrack); this is the bake.
     pub pulse: Option<crate::pulse::Pulse>,
+    /// The scene's colour grade, baked into the comp as its first paint:
+    /// a full-bleed box under the comp's own content whose
+    /// `backdrop-filter` and soft-light cast approximate the brand LUT
+    /// over whatever the scene has under the comp - the plate, the
+    /// lower layers. The temperatures are the emotion read's own seven,
+    /// so the act is the grade: a cold hook, a warm payoff.
+    pub grade: Option<crate::grade::Grade>,
 }
 
 /// A still layered into a scene - under its comp as a plate, or over it
@@ -447,6 +454,7 @@ impl Scene {
             hold: None,
             layers: Vec::new(),
             pulse: None,
+            grade: None,
         }
     }
 
@@ -490,6 +498,16 @@ impl Scene {
     /// transient - the video gets a heartbeat.
     pub fn pulsing(mut self, pulse: crate::pulse::Pulse) -> Scene {
         self.pulse = Some(pulse);
+        self
+    }
+
+    /// Give the scene a colour grade, baked into the comp as its first
+    /// paint when the plan is laid: the `backdrop-filter` and soft-light
+    /// cast over whatever sits under the comp, the comp's own words
+    /// untouched. [`crate::grade::Grade::at`] is the shorthand for a
+    /// temperature at its own strength - the cold hook, the warm payoff.
+    pub fn graded(mut self, grade: crate::grade::Grade) -> Scene {
+        self.grade = Some(grade);
         self
     }
 }
@@ -1120,6 +1138,36 @@ fn plan_with_chain(
         // without one rewriting the other.
         if let Some(pulse) = &scene.pulse {
             crate::pulse::apply(&mut comp, pulse);
+        }
+        // The grade, baked in after everything else has had its say: a
+        // full-bleed box at the very bottom of the paint order, under
+        // every node the comp itself paints, over the plate and the
+        // lower layers - so the last thing added to the document is the
+        // first thing drawn in it.
+        if let Some(grade) = &scene.grade {
+            // The grade needs something under the comp to land on: the
+            // plate, a lower layer, a scene this one overlaps. Without
+            // it the cast reaches only the curtain, and a grade nobody
+            // can see is a grade the author should hear about.
+            let has_ground = scene.layers.iter().any(|layer| !layer.above);
+            crate::grade::apply(&mut comp, grade).map_err(|why| {
+                // A grade this wrong was the storyboard's to refuse with
+                // its scene named; a builder can still make one, and the
+                // plan is where it stops.
+                MotionError::Invalid {
+                    diagnostics: vec![crate::comp::Diagnostic {
+                        path: format!("/scenes/{index}/grade"),
+                        message: why,
+                        help: None,
+                    }],
+                }
+            })?;
+            if !grade.is_identity() && !has_ground {
+                warnings.push(format!(
+                    "scene {index}: the grade has nothing under the comp to grade - no plate, \
+                     no lower layer - so the cast lands on the curtain alone"
+                ));
+            }
         }
         let problems = comp.validate();
         if !problems.is_empty() {
@@ -2912,6 +2960,151 @@ mod tests {
         for pair in times.windows(2) {
             assert!(pair[0] < pair[1], "{keys:?}");
         }
+    }
+
+    /// The grade, from a storyboard: the scene wears its act's
+    /// temperature, baked into the plan as the comp's first paint - the
+    /// cold hook over the plate, the comp's own words untouched above
+    /// it, the brand's colour worn when it is named.
+    #[test]
+    fn a_storyboard_grade_bakes_into_the_plan_as_the_first_paint() {
+        let storyboard = crate::storyboard::Storyboard::parse(
+            r##"{ "scenes": [
+                   { "preset": "funcut.sting.wordmark", "hold": 5.0,
+                     "plate": "back",
+                     "grade": { "temperature": "cold" } } ],
+               "assets": { "back": "assets/plate_dark.png" } }"##,
+        )
+        .expect("a storyboard");
+        let sequence = storyboard.sequence(Path::new(".")).expect("a sequence");
+        let planned = plan(&geneva(), &sequence).expect("a plan");
+        // The grade node is the scene's first comp layer: under the
+        // wordmark, over the plate.
+        let layers = planned.document["layers"].as_array().expect("layers");
+        let grade = layers
+            .iter()
+            .find(|layer| layer["id"] == json!("s0.funcut-grade"))
+            .expect("the grade layer");
+        let source = &grade["clips"][0]["source"];
+        assert_eq!(source["kind"], json!("html"));
+        assert_eq!(
+            source["html"].as_str(),
+            Some(r#"<div class="funcut-grade"></div>"#)
+        );
+        let css = source["css"].as_str().expect("the stylesheet");
+        assert!(
+            css.contains("backdrop-filter:saturate(0.88) contrast(1.1) brightness(0.94);"),
+            "{css}"
+        );
+        assert!(css.contains("background:rgba(24,68,102,0.28);"), "{css}");
+        assert!(css.contains("mix-blend-mode:soft-light;"), "{css}");
+        // The paint order is the layer order: the plate, then the grade,
+        // then the comp's own wordmark.
+        let at = |id: &str| {
+            layers
+                .iter()
+                .position(|layer| layer["id"] == json!(id))
+                .unwrap_or_else(|| panic!("no {id}: {layers:?}"))
+        };
+        let plate_at = layers
+            .iter()
+            .position(|layer| {
+                layer["id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("s0.plate"))
+            })
+            .expect("the plate");
+        assert!(
+            plate_at < at("s0.funcut-grade"),
+            "the grade is over the plate"
+        );
+        assert!(
+            at("s0.funcut-grade") < at("s0.mark"),
+            "the grade is under the comp's own words"
+        );
+        // Nothing was warned about: a graded plate is a scene.
+        assert!(
+            planned
+                .warnings
+                .iter()
+                .all(|warning| !warning.contains("grade")),
+            "{:?}",
+            planned.warnings
+        );
+    }
+
+    /// The brand's own colour, worn instead of the temperature's cast:
+    /// the palette is respected by wearing it, not by matching it.
+    #[test]
+    fn a_brand_tint_is_worn_instead_of_the_stock_cast() {
+        let storyboard = crate::storyboard::Storyboard::parse(
+            r##"{ "scenes": [
+                   { "preset": "funcut.sting.wordmark", "hold": 5.0,
+                     "plate": "back",
+                     "grade": { "temperature": "warm", "tint": "#3165a4" } } ],
+               "assets": { "back": "assets/plate_dark.png" } }"##,
+        )
+        .expect("a storyboard");
+        let sequence = storyboard.sequence(Path::new(".")).expect("a sequence");
+        let planned = plan(&geneva(), &sequence).expect("a plan");
+        let grade = planned.document["layers"]
+            .as_array()
+            .expect("layers")
+            .iter()
+            .find(|layer| layer["id"] == json!("s0.funcut-grade"))
+            .expect("the grade layer");
+        let css = grade["clips"][0]["source"]["css"].as_str().expect("css");
+        // The warm tonal moves, the brand's own colour as the cast.
+        assert!(
+            css.contains("backdrop-filter:saturate(1.12) contrast(1.04) brightness(1.02);"),
+            "{css}"
+        );
+        assert!(css.contains("background:rgba(49,101,164,0.22);"), "{css}");
+        assert!(!css.contains("255,178,92"), "the stock cast is gone: {css}");
+    }
+
+    /// A grade with nothing under the comp lands on the curtain alone,
+    /// and the plan says so rather than rendering a grade nobody can
+    /// see.
+    #[test]
+    fn a_grade_with_nothing_under_the_comp_is_said_not_shown() {
+        let storyboard = crate::storyboard::Storyboard::parse(
+            r##"{ "scenes": [
+                   { "preset": "funcut.sting.wordmark", "hold": 5.0,
+                     "grade": { "temperature": "cold" } } ] }"##,
+        )
+        .expect("a storyboard");
+        let sequence = storyboard.sequence(Path::new(".")).expect("a sequence");
+        let planned = plan(&geneva(), &sequence).expect("a plan");
+        assert!(
+            planned
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("nothing under the comp")),
+            "{:?}",
+            planned.warnings
+        );
+    }
+
+    /// A grade that is wrong is refused with the scene it belongs to,
+    /// before any engine is asked.
+    #[test]
+    fn a_storyboard_grade_that_is_wrong_is_refused_with_its_scene_named() {
+        let storyboard = crate::storyboard::Storyboard::parse(
+            r##"{ "scenes": [
+                   { "preset": "funcut.sting.wordmark", "hold": 5.0,
+                     "grade": { "temperature": "warm", "amount": 1.5 } } ] }"##,
+        )
+        .expect("a storyboard");
+        let problems = storyboard
+            .validate()
+            .expect_err("the amount is out of range");
+        assert!(
+            problems
+                .iter()
+                .any(|problem| problem.scene == 0 && problem.problem.contains("`amount` is 1.5")),
+            "{problems:?}"
+        );
     }
 
     #[test]

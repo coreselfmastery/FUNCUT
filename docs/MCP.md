@@ -162,11 +162,17 @@ vocabulary the `concat-motion-agent` CLI speaks):
   it, each with its own `zoom`, `pan`, `offset`, `scale`, `fit`, `blend`,
   `opacity`, `fade_in`/`fade_out`, `start` and `hold`; differing drift
   between layers is what reads as depth - plus shared assets, audio beds
-  and a curtain. `plan: true` lays it out without rendering, `frame:
-  seconds` returns one still as an inline image, and the render lands
-  under `motion/` ready for `media_import` and `clip_add`. The same
-  storyboard document the `concat-motion-agent reel` verb eats; every
-  error names the scene it stopped at.
+  and a curtain. A scene's `grade` is its colour grade inside the comp:
+  one of the emotion read's temperatures (`cold`, `warm`, `cool`, `hot`,
+  `sickly`, `split`, `balanced`), `amount` 0-1, tonal overrides and a
+  brand `tint` - baked under the comp's own words as `backdrop-filter`
+  plus a soft-light cast, the LUT approximation a comp carries, so the
+  act is the grade: a cold hook, a warm payoff. `plan: true` lays it out
+  without rendering, `frame: seconds` returns one still as an inline
+  image, and the render lands under `motion/` ready for `media_import`
+  and `clip_add`. The same storyboard document the
+  `concat-motion-agent reel` verb eats; every error names the scene it
+  stopped at.
 - `motion_probe` - what a media file IS, as the engine's own reader sees
   it: streams, frame size and rate, duration, the audio's channels - the
   same reader the renderer will use, asked **before** anything is built

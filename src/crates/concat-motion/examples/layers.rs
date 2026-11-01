@@ -4,7 +4,9 @@
 //! One multi-layer scene, built the way a project builds one: a background
 //! plate drifting, a midground sliding the other way, a wordmark over both,
 //! a screen-blended light leak and a grain tile over the lot - five layers,
-//! five clocks, one render.
+//! five clocks, one render - and the whole reel wearing the act's own
+//! grade: the first scene cold, the second warm, the arc the emotion read
+//! would ask for made visible in two fields.
 //!
 //! ```sh
 //! # the storyboard, printed as the timeline it becomes
@@ -23,6 +25,7 @@ use std::path::PathBuf;
 
 use concat_motion::comp::{Asset, Blend, Fit};
 use concat_motion::geneva::Geneva;
+use concat_motion::grade::{Grade, Temperature};
 use concat_motion::presets;
 use concat_motion::sequence::{Scene, SceneLayer, Sequence};
 
@@ -58,6 +61,10 @@ fn layered(assets: PathBuf) -> Sequence {
     sequence.push(
         Scene::new(preset("funcut.sting.wordmark"))
             .holding(5.0)
+            // The grade the hook wears: cold - a teal-blue bias, crushed
+            // blacks - baked under the comp's own words, over the plate
+            // and the midground, under the leak and the grain.
+            .graded(Grade::at(Temperature::Cold))
             // The background: the classic plate, drifting five percent.
             .over("back", 0.05)
             // The midground: sliding left three percent while the
@@ -80,9 +87,14 @@ fn layered(assets: PathBuf) -> Sequence {
 
     // A second scene, to show a foreground card arriving late: it starts
     // 1.2 s after its scene does, holds 2.4 s, and leaves before the cut.
+    // Its ground is the dark plate, still (a grade wants something under
+    // the comp to land on), and it wears the payoff's warm grade - the
+    // reel's cool-to-warm arc, in two fields.
     sequence.push(
         Scene::new(preset("funcut.chapter.chip"))
             .holding(5.0)
+            .graded(Grade::at(Temperature::Warm))
+            .over("back", 0.0)
             .layer(
                 SceneLayer::new("mid")
                     .fitted(Fit::Contain)

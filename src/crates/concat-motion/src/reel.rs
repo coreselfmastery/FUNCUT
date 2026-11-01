@@ -125,9 +125,9 @@ pub fn scene_key(board: &Storyboard, root: &Path, index: usize) -> String {
 
     // The scene's own document, canonically written: the same scene, the
     // same bytes, whatever order the author's JSON carried. The cut the
-    // scene enters by and the one it leaves by are part of what draws it
-    // now - a changed choreography is a changed scene, and the cache
-    // must miss for it.
+    // scene enters by, the one it leaves by, and the pulse that drives
+    // it are part of what draws it now - a changed choreography or a
+    // changed grid is a changed scene, and the cache must miss for it.
     let document = json!({
         "scene": {
             "preset": scene.preset,
@@ -140,6 +140,7 @@ pub fn scene_key(board: &Storyboard, root: &Path, index: usize) -> String {
             "ops": scene.ops,
             "transition": scene.transition,
             "exit": scene.exit,
+            "pulse": scene.pulse,
         },
         "geometry": [board.width, board.height, board.fps],
         "format": [crate::geneva::TIMELINE_VERSION, crate::geneva::TESTED_VERSION],

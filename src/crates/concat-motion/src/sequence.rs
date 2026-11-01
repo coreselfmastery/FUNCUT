@@ -61,6 +61,11 @@ pub struct Scene {
     /// multi-layer scene, and the drift each layer gets is what reads as
     /// depth when they differ.
     pub layers: Vec<SceneLayer>,
+    /// The scene's pulse, when the audio drives it: the beat grid, read
+    /// in this scene's own clock, baked into the comp's nodes as the
+    /// plan is laid. The grid is measured elsewhere (`suggest_cuts`
+    /// reads it from the soundtrack); this is the bake.
+    pub pulse: Option<crate::pulse::Pulse>,
 }
 
 /// A still layered into a scene - under its comp as a plate, or over it
@@ -441,6 +446,7 @@ impl Scene {
             at: None,
             hold: None,
             layers: Vec::new(),
+            pulse: None,
         }
     }
 
@@ -475,6 +481,15 @@ impl Scene {
     /// order they are added, bottom first on each side of the comp.
     pub fn layer(mut self, layer: SceneLayer) -> Scene {
         self.layers.push(layer);
+        self
+    }
+
+    /// Give the scene a pulse: the beat grid, read in the scene's own
+    /// clock, baked into the comp's nodes when the plan is laid. A
+    /// chart that grows on the downbeat, a caption that pulses on the
+    /// transient - the video gets a heartbeat.
+    pub fn pulsing(mut self, pulse: crate::pulse::Pulse) -> Scene {
+        self.pulse = Some(pulse);
         self
     }
 }
@@ -1056,6 +1071,13 @@ fn plan_with_chain(
                     cut.name()
                 ));
             }
+        }
+        // The pulse, baked in after the operations and the cuts: the
+        // beat grid's keys merge with the nodes' own tracks, so a fade,
+        // a transition and a heartbeat all ride the same property
+        // without one rewriting the other.
+        if let Some(pulse) = &scene.pulse {
+            crate::pulse::apply(&mut comp, pulse);
         }
         let problems = comp.validate();
         if !problems.is_empty() {
@@ -2793,6 +2815,52 @@ mod tests {
         // the curve - before, it stayed the fade-in's landing key and
         // the way out travelled a straight line.
         assert_eq!(keys[1][2], json!({ "steps": [8, "jump-end"] }), "{keys:?}");
+    }
+
+    /// The pulse, from a storyboard: the measured grid lands in the plan
+    /// as keyframes the comp's nodes carry, in the scene's own clock -
+    /// the chart that grows on the downbeat.
+    #[test]
+    fn a_storyboard_pulse_bakes_into_the_plan() {
+        let storyboard = crate::storyboard::Storyboard::parse(
+            r##"{ "scenes": [
+                   { "preset": "funcut.chart.bars", "hold": 5.0,
+                     "pulse": { "beats": [0.98, 1.94, 2.91],
+                                "driven": "scale", "amount": 0.05,
+                                "release": 0.32 } } ] }"##,
+        )
+        .expect("a storyboard");
+        let sequence = storyboard.sequence(Path::new(".")).expect("a sequence");
+        let planned = plan(&geneva(), &sequence).expect("a plan");
+        // The comp's own layers carry the pulse: the sheet node's scale
+        // track holds a bump at every beat and a settle after each.
+        let sheet = planned.document["layers"]
+            .as_array()
+            .expect("layers")
+            .iter()
+            .find(|layer| layer["id"] == json!("s0.sheet"))
+            .expect("the chart's sheet");
+        let keys = sheet["clips"][0]["transform"]["scale"]["keyframes"]
+            .as_array()
+            .expect("the pulse landed")
+            .clone();
+        assert!(keys.len() >= 6, "rest + three bumps and settles: {keys:?}");
+        // The first beat, as the timeline carries it: 0.98s into the
+        // scene, the scale up by the amount.
+        assert_eq!(keys[0][0], json!("0s"));
+        assert!(keys.iter().any(|key| key[0] == json!("0.98s")), "{keys:?}");
+        assert!(
+            keys.iter().any(|key| key[1].as_f64() == Some(1.05)),
+            "the bump: {keys:?}"
+        );
+        // And the plan validates: strictly increasing, in range.
+        let times: Vec<f64> = keys
+            .iter()
+            .map(|key| key[0].as_str().and_then(parse_seconds).expect("a time"))
+            .collect();
+        for pair in times.windows(2) {
+            assert!(pair[0] < pair[1], "{keys:?}");
+        }
     }
 
     #[test]

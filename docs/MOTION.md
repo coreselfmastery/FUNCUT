@@ -283,6 +283,36 @@ The scene-aware reel cache carries the cuts into each cached segment and stands 
 dip down at a choreographed boundary, so the segmented cache and the one-shot render agree frame
 for frame - and a changed choreography is a changed scene, so the cache key carries the cuts too.
 
+### The pulse: audio-driven keyframes, baked into the document
+
+The engine computes every frame from its timestamp, so a keyframe is just a value at a time - and
+the values at times are exactly what a beat grid, an SFX transient and an emotion read already
+are. `pulse.rs` is the arithmetic between them:
+
+```json
+{ "preset": "funcut.chart.bars", "hold": 5.0,
+  "pulse": { "beats": [0.98, 1.94, 2.91], "driven": "scale",
+             "amount": 0.05, "release": 0.32 } }
+```
+
+| Piece | What it does |
+| --- | --- |
+| `beats` | the measured grid, in seconds from the scene's own start - `suggest_cuts` reads it from the soundtrack, the recogniser times the words; nothing here trusts a guess |
+| `driven` | `scale` (the chart grows on the downbeat), `opacity` (the caption pulses on the transient - a full-opacity node dips, because brightening nowhere is not a pulse), or `position` (the card takes the beat) |
+| `amount` / `release` | the bump's size and its settle - the tail that makes a hit read as a hit rather than a flicker |
+| `curve` | how the bump decays: the library's `spring-pop` is the drum read |
+| `nodes` | the ids the pulse drives; empty is every node the comp carries |
+
+The keys **merge** with the nodes' own tracks - an authored fade, a choreographed transition and a
+heartbeat all ride the same property without one rewriting the other, sorted by time, the beat
+winning its own moment. Beats outside a node's own window do not reach it; a node that starts at
+2 s does not pulse at 0.5 s.
+
+Two more pieces of the same idea: **`curve_for_act`** maps the emotion read's act to its easing
+curve - calm for the hook (`ease-out`), wound for the tension (`ease-in`), punchy for the payoff
+(`spring-pop`) - and **`sound_starts_at`** places an SFX by its measured `syncAt` so the *peak*
+lands on the entrance, not the file's first sample.
+
 `examples/reel.rs` is a complete one: **thirteen scenes, twelve presets, 45.5 s**, with plates, a
 curtain and a synthesised score.
 

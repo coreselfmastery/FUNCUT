@@ -70,6 +70,7 @@ pub mod curve;
 pub mod engine;
 pub mod geneva;
 pub mod presets;
+pub mod pulse;
 pub mod reel;
 pub mod route;
 pub mod sequence;
@@ -86,6 +87,7 @@ pub use engine::{
     Sidecar,
 };
 pub use geneva::{Breaker, CallLimits, Diagnostic, Geneva, fix_for};
+pub use pulse::{BeatGrid, Driven, Pulse, curve_for_act, sound_starts_at};
 pub use reel::{ReelReport, SceneOutcome, render_reel, scene_key};
 pub use route::{BeatType, Decision, Routing, route};
 pub use track::{Key, Track, Tracks, Value};

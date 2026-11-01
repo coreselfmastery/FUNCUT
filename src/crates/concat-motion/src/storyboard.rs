@@ -158,6 +158,11 @@ pub struct SceneCard {
     /// the entering scene's `transition` wins the shared boundary.
     #[serde(default)]
     pub exit: Option<crate::transition::Cut>,
+    /// The scene's pulse, when the audio drives it: the beat grid as
+    /// measured times (`suggest_cuts` reads them from the soundtrack),
+    /// baked into the comp's nodes as the plan is laid.
+    #[serde(default)]
+    pub pulse: Option<crate::pulse::Pulse>,
 }
 
 /// One layer of a scene, as a storyboard writes it. The source is either
@@ -868,6 +873,9 @@ impl SceneCard {
         }
         for layer in &self.layers {
             scene = scene.layer(layer.layer(index)?);
+        }
+        if let Some(pulse) = &self.pulse {
+            scene = scene.pulsing(pulse.clone());
         }
         Ok(scene)
     }

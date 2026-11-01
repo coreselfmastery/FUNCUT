@@ -234,7 +234,16 @@ fn sequence_script(frames_dir: &Path, fps: f64) -> Option<String> {
     if names.is_empty() {
         return None;
     }
-    names.sort();
+    // Numeric order, not lexicographic: the bake names frames with four
+    // zero-padded digits, which a bake past 9 999 frames outgrows, and
+    // "10000.png" sorts before "9999.png" as strings - so the tail of a
+    // long bake would play out of order in the exported clip. Anything
+    // that is not a bare number sorts to the end, where it sat before.
+    names.sort_by_key(|name| {
+        name.strip_suffix(".png")
+            .and_then(|stem| stem.parse::<u64>().ok())
+            .unwrap_or(u64::MAX)
+    });
     let rate = format!("{fps}");
     let duration = format!("{:.6}", 1.0 / fps);
     let mut text = String::from("ffconcat version 1.0\n");

@@ -4067,4 +4067,149 @@ mod tests {
                 .is_err()
         );
     }
+
+    /// The number of tools this server carries, as every document that
+    /// states one is held to it. The count is computed from
+    /// [`catalogue`] itself - the only source that cannot drift - and the
+    /// README, FEATURES and the Forge allowlist are read from the
+    /// repository this test runs in, so a tool added without its numbers
+    /// caught up fails here rather than shipping a wrong claim. This is
+    /// the guard the count's history asked for: 87 became 88, 88 became
+    /// 89, 89 became 90, each change landing with the documents behind
+    /// it and none of them noticed until the count was made a test.
+    #[test]
+    fn the_documents_tool_count_is_the_catalogues_own() {
+        /// The repository root, by the one file only it carries. `None`
+        /// when the crate is built outside a checkout - published alone,
+        /// vendored - where the documents are not there to be read.
+        fn repository() -> Option<std::path::PathBuf> {
+            let mut dir = std::env::current_dir().ok()?;
+            loop {
+                if dir.join(".forge").join("mcp.toml").is_file() {
+                    return Some(dir);
+                }
+                if !dir.pop() {
+                    return None;
+                }
+            }
+        }
+        let Some(root) = repository() else {
+            // Not a checkout: nothing to hold. CI and every clone carry
+            // the marker file, so this is the standalone-crate case.
+            return;
+        };
+        let count = catalogue().len();
+        let read = |relative: &str| {
+            std::fs::read_to_string(root.join(relative))
+                .unwrap_or_else(|why| panic!("reading {relative}: {why}"))
+        };
+
+        // The README's badge line: "**90 tools**" is the shape it takes,
+        // wrapped over as many lines as the sentence needs.
+        let readme = read("README.md");
+        let stated: Vec<&str> = readme
+            .split("**")
+            .filter(|piece| piece.trim_end().ends_with(" tools"))
+            .collect();
+        assert!(
+            !stated.is_empty(),
+            "the README states no tool count; it should, as **{count} tools**"
+        );
+        for piece in stated {
+            // The badge wraps, so the piece between the markers carries
+            // the line's own newline and quote marker beside the number:
+            // the digits are the number, and only they are.
+            let digits: String = piece.chars().filter(|c| c.is_ascii_digit()).collect();
+            let said: usize = digits.parse().unwrap_or(usize::MAX);
+            assert_eq!(
+                said, count,
+                "the README says {said} tools; catalogue() carries {count}"
+            );
+        }
+
+        // FEATURES.md: the inventory table's row, the prose's bold count
+        // and the crate map's bracket.
+        let features = read("docs/FEATURES.md");
+        for piece in features.split("**") {
+            if !piece.trim_end().ends_with(" tools") {
+                continue;
+            }
+            let digits: String = piece.chars().filter(|c| c.is_ascii_digit()).collect();
+            let said: usize = digits.parse().unwrap_or(usize::MAX);
+            assert_eq!(
+                said, count,
+                "FEATURES.md says {said} tools; catalogue() carries {count}"
+            );
+        }
+        for line in features.lines() {
+            if let Some(rest) = line.strip_prefix("| MCP tools | **") {
+                let said: &str = rest.split("**").next().unwrap_or("");
+                let said: usize = said.trim().parse().unwrap_or(usize::MAX);
+                assert_eq!(
+                    said, count,
+                    "FEATURES.md's inventory table says {said}; catalogue() carries {count}"
+                );
+            }
+            if let Some(before) = line.split(" tools, senses").next()
+                && before != line
+            {
+                let said: usize = before
+                    .rsplit(|c: char| !c.is_ascii_digit())
+                    .find(|word| !word.is_empty())
+                    .and_then(|word| word.parse().ok())
+                    .unwrap_or(usize::MAX);
+                assert_eq!(
+                    said, count,
+                    "FEATURES.md's crate map says {said} tools; catalogue() carries {count}"
+                );
+            }
+        }
+
+        // The Forge allowlist: every name it carries must be a tool this
+        // build serves, and the director's paste-ready list must leave
+        // out exactly the two tools its comment names - no more, so a
+        // tool like motion_probe cannot ship unlisted, and no fewer, so
+        // the list cannot quietly drop a tool the loop wants. The list
+        // is a comment (a bare NAME=value line is not TOML, and a strict
+        // parser would refuse the whole file), so it is read from behind
+        // its `# `.
+        let forge = read(".forge/mcp.toml");
+        let allow: Vec<&str> = forge
+            .lines()
+            .filter_map(|line| line.strip_prefix("# CONCAT_MCP_ALLOW="))
+            .next_back()
+            .expect("the paste-ready allowlist")
+            .split(',')
+            .collect();
+        let names: Vec<&str> = catalogue().iter().map(|tool| tool.name).collect();
+        for name in &allow {
+            assert!(
+                names.contains(name),
+                "the Forge allowlist names {name}, which catalogue() does not carry"
+            );
+        }
+        let mut left_off: Vec<&str> = names
+            .iter()
+            .filter(|name| !allow.contains(name))
+            .copied()
+            .collect();
+        left_off.sort_unstable();
+        assert_eq!(
+            left_off,
+            ["export_cancel", "project_close"],
+            "the paste-ready allowlist leaves out exactly the two its comment names"
+        );
+        // And the count the comment claims: "88 of the 90 tools".
+        if let Some(rest) = forge.split(" of the ").nth(1) {
+            let said: usize = rest
+                .split(|c: char| !c.is_ascii_digit())
+                .find(|word| !word.is_empty())
+                .and_then(|word| word.parse().ok())
+                .unwrap_or(usize::MAX);
+            assert_eq!(
+                said, count,
+                "the Forge allowlist says the catalogue carries {said}; it carries {count}"
+            );
+        }
+    }
 }

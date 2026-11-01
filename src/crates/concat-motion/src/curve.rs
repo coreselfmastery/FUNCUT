@@ -267,8 +267,17 @@ impl Curve {
 /// The bezier a spring reads as in CSS: the overshoot of the damped
 /// oscillator, spent on the bezier's first control point.
 fn spring_css(spring: &Spring) -> String {
-    let natural = (spring.stiffness / spring.mass).max(1e-9).sqrt();
-    let ratio = (spring.damping / (2.0 * natural)).clamp(0.0, 1.0);
+    // The damping ratio computed the way the solver computes it - damping
+    // over 2*sqrt(stiffness*mass), with the inputs clamped the same way -
+    // rather than over 2*sqrt(stiffness/mass), which agrees only at
+    // mass 1. Every preset carries mass 1, so the two read the same
+    // there; a document that carries anything else was told its markup
+    // springs and its timeline springs disagree - an over-damped one
+    // bouncing in the markup, a bouncy one settling - the exact
+    // disagreement this crate exists to not have.
+    let stiffness = spring.stiffness.max(1e-6);
+    let mass = spring.mass.max(1e-6);
+    let ratio = (spring.damping.max(0.0) / (2.0 * (stiffness * mass).sqrt())).clamp(0.0, 1.0);
     // A damping ratio of 0.95 already overshoots by less than a hundredth
     // of a percent - imperceptible - so everything from there up is the
     // settle curve, and only a real overshoot writes one.
@@ -538,6 +547,32 @@ mod tests {
             "{}",
             Curve::bounce().css()
         );
+    }
+
+    /// The bezier a spring reads as accounts for its mass the way the
+    /// solver does, so the markup's overshoot and the timeline's are
+    /// the same amount whatever the mass. At mass 1 the two formulas
+    /// agree - which is why every preset read fine - and away from it
+    /// they did not: mass 2 settled in the markup while it bounced on
+    /// the timeline, mass 0.3 the other way round.
+    #[test]
+    fn a_springs_css_accounts_for_its_mass() {
+        // Mass 2: a damping ratio of 0.71, a four-percent overshoot -
+        // where the mass-blind ratio clamped to 1 and settled.
+        let heavy = Curve::Spring(Spring {
+            stiffness: 170.0,
+            damping: 26.0,
+            mass: 2.0,
+        });
+        assert_eq!(heavy.css(), "cubic-bezier(0.3, 1.04, 0.6, 1)");
+        // Mass 0.3: over-damped at 1.82, it settles - where the
+        // mass-blind ratio read 0.55 and bounced.
+        let light = Curve::Spring(Spring {
+            stiffness: 170.0,
+            damping: 26.0,
+            mass: 0.3,
+        });
+        assert_eq!(light.css(), "cubic-bezier(0.16, 1, 0.3, 1)");
     }
 
     /// A typewriter holds and jumps: eight clacks, the value never ahead

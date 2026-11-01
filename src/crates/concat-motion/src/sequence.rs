@@ -870,8 +870,21 @@ fn fade_keys(layer: &SceneLayer, span: f64) -> Option<Json> {
     }
     let hold_at = span - fade_out;
     let last_at = marks.last().map(|mark| mark.0).unwrap_or(0.0);
-    if fade_out > 1e-9 && hold_at > last_at {
-        marks.push((hold_at, round(layer.opacity), true));
+    if fade_out > 1e-9 {
+        if hold_at > last_at + 1e-9 {
+            marks.push((hold_at, round(layer.opacity), true));
+        } else if (hold_at - last_at).abs() <= 1e-9
+            && let Some(last) = marks.last_mut()
+        {
+            // The fade-out starts exactly where the last mark stands -
+            // the fade-in's end, the two fades meeting in the middle of
+            // the span, which the half-span clamp makes the one shape
+            // this can be - so that mark is the key that starts the
+            // fade-out's segment, and the layer's curve rides it. Left
+            // unflagged, the mark stayed the fade-in's landing key and
+            // the way out travelled a straight line.
+            last.2 = true;
+        }
     }
     marks.push((
         span,
@@ -2761,6 +2774,25 @@ mod tests {
             sequence.opening.is_none(),
             "the first scene names no way in"
         );
+    }
+
+    /// A layer whose fades meet in the middle of its span - the way out
+    /// starting exactly where the way in ends - still carries its curve
+    /// on the way out: the shared key starts the fade-out's segment, and
+    /// the curve rides it rather than dying with the fade-in's landing.
+    #[test]
+    fn a_layer_whose_fades_meet_keeps_the_curve_on_the_way_out() {
+        let layer = SceneLayer::new("plate")
+            .fading(0.6, 0.6)
+            .eased(Curve::TYPEWRITER);
+        let keys = fade_keys(&layer, 1.2).expect("keyframes");
+        let keys = keys["keyframes"].as_array().expect("keys");
+        // Three keys: the fade-in from 0, the shared middle, the end.
+        assert_eq!(keys.len(), 3, "{keys:?}");
+        // The middle key starts the fade-out's segment, so it carries
+        // the curve - before, it stayed the fade-in's landing key and
+        // the way out travelled a straight line.
+        assert_eq!(keys[1][2], json!({ "steps": [8, "jump-end"] }), "{keys:?}");
     }
 
     #[test]

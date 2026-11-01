@@ -232,35 +232,69 @@ pub fn karaoke(words: &[Word], span: f64, id: &str, style: &TextNode, kinetic: &
 
 // ------------------------------------------------------------- the builders
 
-/// The units a stagger walks: the words of the text, or its characters.
-fn units_of(text: &str, stagger: Stagger) -> Vec<String> {
+/// One unit of a stagger: a run of text, or the word boundary a
+/// character stagger keeps visible.
+#[derive(Clone, PartialEq, Debug)]
+enum Unit {
+    /// A word, or a single character.
+    Text(String),
+    /// A run of whitespace between words, folded to one boundary. A
+    /// character stagger walks the characters but must not swallow the
+    /// spaces between the words they spell: `M a k e   i t` reads as two
+    /// words, `M a k e i t` reads as one word wearing wide tracking -
+    /// and the typewriter preset, the character stagger's advertised
+    /// home, is the one that loses them.
+    Space,
+}
+
+/// The units a stagger walks: the words of the text, or its characters
+/// with the word boundaries kept as spacers of their own.
+fn units_of(text: &str, stagger: Stagger) -> Vec<Unit> {
     match stagger {
         Stagger::Word => text
             .split_whitespace()
-            .map(str::to_owned)
+            .map(|word| Unit::Text(word.to_owned()))
             .collect::<Vec<_>>(),
-        Stagger::Char => text
-            .chars()
-            .filter(|character| !character.is_whitespace())
-            .map(|character| character.to_string())
-            .collect::<Vec<_>>(),
+        Stagger::Char => {
+            let mut units: Vec<Unit> = Vec::new();
+            for character in text.chars() {
+                if character.is_whitespace() {
+                    if units.last().is_some_and(|unit| *unit != Unit::Space) {
+                        units.push(Unit::Space);
+                    }
+                } else {
+                    units.push(Unit::Text(character.to_string()));
+                }
+            }
+            units
+        }
     }
 }
 
 /// One span per unit, each carrying its own animation with its own
 /// delay: `i * delay`, written inline so nothing depends on `calc()`,
-/// custom properties or cascade order the engine may not share.
-fn staggered_spans(units: &[String], kinetic: &Kinetic, rule: &str) -> String {
+/// custom properties or cascade order the engine may not share. A word
+/// boundary is a beat in the rhythm - the index counts it, so the
+/// character after it arrives one delay later, the way a typewriter's
+/// carriage passes over the space - but it is never animated: there is
+/// nothing to reveal, and its width is what makes the boundary read,
+/// a gap and a half beyond the letter gap the flex row already gives.
+fn staggered_spans(units: &[Unit], kinetic: &Kinetic, rule: &str) -> String {
     let mut spans = String::new();
     for (index, unit) in units.iter().enumerate() {
-        spans.push_str(&format!(
-            "<span style=\"animation: {} {:.3}s {} {:.3}s both\">{}</span>",
-            rule,
-            kinetic.seconds,
-            kinetic.curve.css(),
-            index as f64 * kinetic.delay,
-            escape(unit)
-        ));
+        match unit {
+            Unit::Space => {
+                spans.push_str("<span style=\"width: 0.39em\"></span>");
+            }
+            Unit::Text(text) => spans.push_str(&format!(
+                "<span style=\"animation: {} {:.3}s {} {:.3}s both\">{}</span>",
+                rule,
+                kinetic.seconds,
+                kinetic.curve.css(),
+                index as f64 * kinetic.delay,
+                escape(text)
+            )),
+        }
     }
     spans
 }
@@ -357,6 +391,11 @@ fn entrance_keyframes(kinetic: &Kinetic) -> String {
 /// the base colour - the highlight is a data-driven colour trip, not an
 /// effect stacked on top.
 fn karaoke_keyframes(style: &TextNode) -> String {
+    // The lit word's weight stays inside the 100..900 every face carries:
+    // the base plus the pop, clamped - a style at 800 or 900 would
+    // otherwise ask for 1000 or 1100, a `font-weight` CSS refuses and
+    // the renderer drops, and the karaoke pop is silently gone while
+    // the caption reads as if it never had one.
     let spoken = style
         .highlight
         .as_ref()
@@ -367,7 +406,8 @@ fn karaoke_keyframes(style: &TextNode) -> String {
         .highlight
         .as_ref()
         .and_then(|highlight| highlight.weight)
-        .unwrap_or(style.weight.max(400) + 200);
+        .map(|weight| weight.clamp(100, 900))
+        .unwrap_or_else(|| (style.weight.max(400) + 200).min(900));
     format!(
         "@keyframes kk-word {{\n\
          \x20 0% {{ opacity: 0; translate: 0 0.3em; color: {spoken}; font-weight: {pop} }}\n\
@@ -485,6 +525,63 @@ mod tests {
     fn a_char_stagger_walks_the_characters() {
         let node = headline("headline", "Go", &style(), &Kinetic::chars());
         assert_eq!(markup_of(&node).matches("<span").count(), 2);
+    }
+
+    /// A character stagger keeps the word boundaries: the space is a
+    /// spacer of its own, counted in the rhythm but never animated, so
+    /// "Make it" reads as two words - the typewriter preset, the
+    /// character stagger's advertised home, is the one that needs them.
+    #[test]
+    fn a_char_stagger_keeps_the_word_boundaries() {
+        let node = headline("headline", "Make it", &style(), &Kinetic::chars());
+        let markup = markup_of(&node);
+        // Six characters and one spacer; runs of whitespace fold.
+        assert_eq!(markup.matches("<span").count(), 7, "{markup}");
+        assert_eq!(markup.matches("width: 0.39em").count(), 1, "{markup}");
+        // The spacer is a beat in the rhythm: the "i" of "it" is the
+        // sixth unit, not the fifth.
+        assert!(markup.contains("0.225s both"), "{markup}");
+        // And the spacer carries no animation of its own: there is
+        // nothing in it to reveal.
+        let spacer = markup
+            .split("<span")
+            .find(|span| span.contains("width: 0.39em"))
+            .expect("the spacer");
+        assert!(!spacer.contains("animation"), "{spacer}");
+    }
+
+    /// The karaoke pop stays inside the range a face carries: a caption
+    /// styled at 900 asks for 1100 the way the arithmetic reads, which
+    /// CSS refuses and the renderer drops - the pop clamps at 900, and
+    /// the highlight keeps its weight.
+    #[test]
+    fn a_heavy_caption_pops_inside_the_range_a_face_carries() {
+        let mut heavy = style();
+        heavy.weight = 900;
+        heavy.highlight = None;
+        let words = vec![Word {
+            text: "Heavy".into(),
+            start: 0.0,
+            end: Some(0.4),
+        }];
+        let node = karaoke(&words, 1.0, "caption", &heavy, &Kinetic::words());
+        let css = css_of(&node);
+        assert!(css.contains("font-weight: 900"), "{css}");
+        assert!(!css.contains("font-weight: 1100"), "{css}");
+        assert!(!css.contains("font-weight: 1000"), "{css}");
+        // A highlight weight past the range is clamped, not passed
+        // through: the style is a document's to write.
+        let mut loud = style();
+        loud.highlight = Some(crate::comp::TextStyle {
+            color: None,
+            fill: None,
+            weight: Some(1200),
+            scale: None,
+        });
+        let node = karaoke(&words, 1.0, "caption", &loud, &Kinetic::words());
+        let css = css_of(&node);
+        assert!(css.contains("font-weight: 900"), "{css}");
+        assert!(!css.contains("font-weight: 1200"), "{css}");
     }
 
     /// The variable-weight flex: `font-variation-settings` animated

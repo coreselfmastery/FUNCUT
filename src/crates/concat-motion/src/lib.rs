@@ -65,6 +65,7 @@
 pub mod authoring;
 pub mod captions;
 pub mod comp;
+pub mod css;
 pub mod curve;
 pub mod engine;
 pub mod geneva;

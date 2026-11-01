@@ -934,6 +934,34 @@ impl Comp {
                     format!("no asset called {asset:?}"),
                 ));
             }
+            // The stylesheet a markup node carries is read for the one
+            // thing the engine stays quiet about: a transform as a base
+            // style is skipped, not drawn, and everything built on it is
+            // then wrong while looking valid. `css::static_transforms`
+            // names the rule and the property, and the comp is refused
+            // here - before the bake - with the pointer to fix it.
+            if let NodeKind::Html { markup, css, .. } = &node.kind {
+                for hit in crate::css::static_transforms(css)
+                    .into_iter()
+                    .chain(style_blocks(markup).flat_map(crate::css::static_transforms))
+                {
+                    found.push(
+                        Diagnostic::new(
+                            format!("/nodes/{i}/css"),
+                            format!(
+                                "the rule for {:?} sets {:?} outside a @keyframes block, \
+                                 and the markup engine skips a static transform",
+                                hit.selector, hit.property
+                            ),
+                        )
+                        .with_help(
+                            "move the transform into a @keyframes rule the node's animation \
+                             plays, or place the layer with the node's own transform, which \
+                             the timeline carries first-class",
+                        ),
+                    );
+                }
+            }
             for (name, track) in &node.tracks {
                 if track.is_empty() {
                     found.push(Diagnostic::new(
@@ -996,6 +1024,22 @@ impl Comp {
         }
         hash
     }
+}
+
+/// The `<style>` blocks of a markup string, as stylesheet text: the comp's
+/// own `css` field is applied *after* these, but the engine reads both, so
+/// a static transform hiding in either is the same skipped layer.
+fn style_blocks(markup: &str) -> impl Iterator<Item = &str> {
+    let mut rest = markup;
+    std::iter::from_fn(move || {
+        let open = rest.find("<style")?;
+        let after_tag = rest[open..].find('>')? + open + 1;
+        let body = &rest[after_tag..];
+        let close = body.find("</style>")?;
+        let css = &body[..close];
+        rest = &body[close + "</style>".len()..];
+        Some(css)
+    })
 }
 
 #[cfg(test)]
@@ -1075,6 +1119,60 @@ mod tests {
                 .iter()
                 .any(|d| d.message.contains("no asset"))
         );
+    }
+
+    /// The one trap the engine never reports: a transform as a base style
+    /// is skipped, not drawn. The comp is refused here, naming the rule
+    /// and the property, with the pointer a fix needs.
+    #[test]
+    fn a_static_transform_in_a_stylesheet_is_refused_and_named() {
+        let mut comp = rect_comp();
+        comp.nodes[0].kind = NodeKind::Html {
+            markup: "<div class=\"layer\"></div>".into(),
+            css: ".layer { transform: translateX(120px); }".into(),
+            width: Length::Auto,
+            height: Length::Auto,
+        };
+        let found = comp.validate();
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "/nodes/0/css");
+        assert!(found[0].message.contains(".layer"), "{:?}", found[0]);
+        assert!(found[0].message.contains("transform"), "{:?}", found[0]);
+        assert!(found[0].message.contains("@keyframes"), "{:?}", found[0]);
+        assert!(found[0].help.is_some(), "the fix is said, not guessed");
+    }
+
+    /// The same trap inside a `<style>` block of the markup itself, which
+    /// the engine reads exactly as it reads the stylesheet field.
+    #[test]
+    fn a_static_transform_inside_a_style_block_is_refused_too() {
+        let mut comp = rect_comp();
+        comp.nodes[0].kind = NodeKind::Html {
+            markup: "<style>.layer { translate: -100% 0; }</style><div></div>".into(),
+            css: String::new(),
+            width: Length::Auto,
+            height: Length::Auto,
+        };
+        let found = comp.validate();
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].message.contains("translate"), "{:?}", found[0]);
+    }
+
+    /// The library's answer to the trap: the transform inside the
+    /// `@keyframes` rule the animation plays is the right way, and a comp
+    /// written that way validates clean.
+    #[test]
+    fn the_same_transform_inside_keyframes_validates_clean() {
+        let mut comp = rect_comp();
+        comp.nodes[0].kind = NodeKind::Html {
+            markup: "<div class=\"layer\"></div>".into(),
+            css: ".layer { animation: slide 0.5s ease-out; }\n\
+                  @keyframes slide { from { translate: -100% 0 } to { translate: 0 0 } }"
+                .into(),
+            width: Length::Auto,
+            height: Length::Auto,
+        };
+        assert!(comp.validate().is_empty(), "{:?}", comp.validate());
     }
 
     #[test]

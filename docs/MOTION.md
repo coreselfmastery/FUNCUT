@@ -376,10 +376,32 @@ in `.claude/skills/motion/SKILL.md` so an author does not walk into it:
 | `conic-gradient` | draws nothing | use a linear or a radial gradient |
 | `radial-gradient(62% 74% at …)` | draws nothing | `radial-gradient(circle at 50% 60%, …)` works |
 | a key time with >9 decimals | `E103` | times are written to **milliseconds** |
+| **`transform` as a base style** (and `translate`/`rotate`/`scale`) | **silently skipped** — the layer is reported by name and drawn at its default position | `Comp::validate` **refuses the comp**, naming the rule and the property |
 
-The last row was a real bug: a track key at a fraction of a node's span divides into seventeen digits,
+The last-but-one row was a real bug: a track key at a fraction of a node's span divides into seventeen digits,
 and one such key made the render refuse the whole timeline. `seconds()` now writes three decimals,
 which is finer than any frame the renderer draws, and a test holds it there.
+
+The last row is the trap that never reports itself, so it gets its own guard. Geneva animates
+`transform` — and the individual `translate`, `rotate` and `scale` properties — only inside
+`@keyframes`; written as a base style the declaration is skipped without a diagnostic, and every
+motion feature built on top of it is wrong while the comp looks perfectly valid. `css::static_transforms`
+reads every stylesheet a markup node carries — its `css` field and any `<style>` block in its markup,
+comments stripped, strings kept whole — and `Comp::validate` refuses the comp with the rule, the
+property and a JSON pointer, **before** anything is staged or rendered:
+
+```text
+.layer { transform: translateX(120px); }              ← refused: "the rule for '.layer'
+                                                          sets 'transform' outside a @keyframes block"
+@keyframes slide { from { translate: -100% 0 } to { translate: 0 0 } }
+.layer { animation: slide 0.5s ease-out; }            ← the right way, validates clean
+```
+
+A layer that must *sit* somewhere rather than *move* there is placed with the node's own
+`transform` (position, scale, rotation), which the timeline carries first-class — that path never
+had the trap. The audit that added the guard (`grep -rn "transform:" src/crates/concat-motion/src/`
+beside every `@keyframes`) found the library's own stylesheets already clean; the guard is what
+keeps them that way, for a designer, a template or an agent editing the CSS next.
 
 ---
 

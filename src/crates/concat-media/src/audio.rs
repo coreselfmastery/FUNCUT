@@ -482,9 +482,25 @@ pub fn mix_to_file(clips: &[AudioClip], duration: f64, destination: &Path) -> Re
         .map_err(|error| ffi::fail("buffer sink", destination, error))?;
 
     // The plan's `[out]` lands on the encoder's own format before the sink.
+    // A `.wav` is written as PCM - 16-bit, packed, no bitrate to set and
+    // blocks rather than the codec's own frame size - so the file Concat
+    // saves is a file Concat can open again; everything else is AAC as it
+    // always was. (Upstream 638b0432, #544.)
+    let wav = destination
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("wav"));
+    let (codec_name, mix_format) = if wav {
+        (
+            "pcm_s16le",
+            Sample::I16(ffmpeg::util::format::sample::Type::Packed),
+        )
+    } else {
+        ("aac", MIX_FORMAT)
+    };
     let graph_spec = mix_graph_from(clips, &leads)?;
     let spec = format!(
-        "{graph_spec};[out]aformat=sample_fmts=fltp:sample_rates={MIX_RATE}:channel_layouts=stereo[sink]"
+        "{graph_spec};[out]aformat=sample_fmts={}:sample_rates={MIX_RATE}:channel_layouts=stereo[sink]",
+        mix_format.name()
     );
     let mut parser = graph
         .input("sink", 0)
@@ -502,9 +518,9 @@ pub fn mix_to_file(clips: &[AudioClip], duration: f64, destination: &Path) -> Re
         .map_err(|error| ffi::fail("filter graph", destination, error))?;
 
     // The encoder, and the file it writes into.
-    let codec = encoder::find_by_name("aac").ok_or_else(|| Error::Missing {
+    let codec = encoder::find_by_name(codec_name).ok_or_else(|| Error::Missing {
         what: "encoder",
-        name: "aac".to_owned(),
+        name: codec_name.to_owned(),
     })?;
     let mut output = ffmpeg::format::output(destination)
         .map_err(|error| ffi::fail("create", destination, error))?;
@@ -517,9 +533,11 @@ pub fn mix_to_file(clips: &[AudioClip], duration: f64, destination: &Path) -> Re
         .audio()
         .map_err(|error| ffi::fail("audio encoder", destination, error))?;
     audio.set_rate(MIX_RATE as i32);
-    audio.set_format(MIX_FORMAT);
+    audio.set_format(mix_format);
     audio.set_ch_layout(ChannelLayout::STEREO);
-    audio.set_bit_rate(192_000);
+    if !wav {
+        audio.set_bit_rate(192_000);
+    }
     audio.set_time_base(ffmpeg::Rational::new(1, MIX_RATE as i32));
     if global_header {
         audio.set_flags(ffmpeg::codec::Flags::GLOBAL_HEADER);
@@ -527,7 +545,13 @@ pub fn mix_to_file(clips: &[AudioClip], duration: f64, destination: &Path) -> Re
     let mut encoder = audio
         .open()
         .map_err(|error| ffi::fail("open encoder", destination, error))?;
-    let frame_size = encoder.frame_size().max(1);
+    // PCM accepts variable-size frames. Use blocks rather than one sample
+    // per packet; the mix's own end keeps the final block's exact count.
+    let frame_size = if wav {
+        1024
+    } else {
+        encoder.frame_size().max(1)
+    };
     {
         let mut stream = output
             .add_stream(codec)
@@ -1298,5 +1322,70 @@ mod tests {
         ] {
             assert!(validate_chain(good).is_ok(), "{good:?} should be fine");
         }
+    }
+
+    /// A 440 Hz tone at half scale, stereo 16-bit, as a WAV of `seconds`.
+    fn tone_wav(path: &Path, seconds: f64) {
+        let count = (seconds * f64::from(MIX_RATE)) as usize;
+        let mut data = Vec::with_capacity(count * 4);
+        for index in 0..count {
+            let t = index as f64 / f64::from(MIX_RATE);
+            let value = (0.5 * (2.0 * std::f64::consts::PI * 440.0 * t).sin() * 32767.0) as i16;
+            data.extend_from_slice(&value.to_le_bytes());
+            data.extend_from_slice(&value.to_le_bytes());
+        }
+        let mut bytes = Vec::with_capacity(44 + data.len());
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&(36 + data.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(b"WAVEfmt ");
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes());
+        bytes.extend_from_slice(&2u16.to_le_bytes());
+        bytes.extend_from_slice(&MIX_RATE.to_le_bytes());
+        bytes.extend_from_slice(&(MIX_RATE * 4).to_le_bytes());
+        bytes.extend_from_slice(&4u16.to_le_bytes());
+        bytes.extend_from_slice(&16u16.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&data);
+        std::fs::write(path, bytes).expect("writes the wav");
+    }
+
+    /// A mix saved as `.wav` is PCM a player and Concat can open again,
+    /// with the exact sample count even when the final block is partial,
+    /// and the tone audible through the cut (#544, upstream 638b0432).
+    #[test]
+    fn saving_audio_as_wav_writes_pcm_of_the_exact_sample_count() {
+        use crate::{AudioDecoder, AudioOptions};
+        let dir = std::env::temp_dir().join(format!("concat-save-wav-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("creates a folder");
+        let source = dir.join("tone.wav");
+        tone_wav(&source, 1.0);
+        // A partial final encoder block must not add or discard samples.
+        let duration = 6007.0 / f64::from(MIX_RATE);
+        let piece = AudioClip {
+            path: source,
+            duration,
+            ..clip("")
+        };
+        let output = dir.join("saved.wav");
+        mix_to_file(&[piece], duration, &output).expect("saves the WAV");
+        {
+            let input = ffmpeg::format::input(&output).expect("opens the saved file");
+            let stream = input
+                .streams()
+                .best(ffmpeg::media::Type::Audio)
+                .expect("has audio");
+            assert_eq!(stream.parameters().id(), ffmpeg::codec::Id::PCM_S16LE);
+        }
+        let mut decoder = AudioDecoder::open(&output, &AudioOptions::default())
+            .expect("Concat opens the saved WAV");
+        let mut samples: Vec<i16> = Vec::new();
+        while let Some(frame) = decoder.next_i16().expect("Concat decodes the WAV") {
+            samples.extend(frame);
+        }
+        assert_eq!(samples.len(), 6007 * 2, "exact stereo sample count");
+        assert!(samples.iter().any(|sample| i32::from(*sample).abs() > 1000));
+        std::fs::remove_dir_all(dir).expect("removes test files");
     }
 }

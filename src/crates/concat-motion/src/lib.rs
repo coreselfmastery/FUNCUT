@@ -63,14 +63,18 @@
 //! ```
 
 pub mod authoring;
+pub mod cache;
 pub mod captions;
 pub mod comp;
 pub mod critic;
 pub mod css;
 pub mod curve;
+pub mod discipline;
 pub mod engine;
+pub mod farm;
 pub mod geneva;
 pub mod grade;
+pub mod noise;
 pub mod presets;
 pub mod pulse;
 pub mod reel;

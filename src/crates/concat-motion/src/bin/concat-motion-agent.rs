@@ -79,7 +79,7 @@ fn usage() -> serde_json::Value {
             "frame": "agent frame <comp.json> <seconds> [-o frame.png] [--width N]",
             "bake": "agent bake <comp.json> <dir> [--width N] [--height N] [--fps N] [--opaque] [--encode out.mp4|webm|mov] [--crf N]",
             "reel": "agent reel <storyboard.json> [-o reel.mp4] [--cache DIR] [--frame SECONDS] [--plan] [--geneva-timeout SECONDS]",
-            "render": "agent render <storyboard.json> [-o out.mp4] [--parts N] [--frame SECONDS] [--plan] [--geneva-timeout SECONDS] - the whole board in one pass; --parts N renders through geneva farm, the parallel path for long reels",
+            "render": "agent render <storyboard.json> [-o out.mp4] [--parts N] [--farm DIR] [--frame SECONDS] [--plan] [--geneva-timeout SECONDS] - the whole board in one pass; --parts N renders through geneva farm, the parallel path for long reels; --farm DIR renders in resumable parts that survive a failed run and serve on the way back",
             "captions": "agent captions <words.json> [-o storyboard.json] [--words-per-line N] [--max-line S] [--preset ID] [--plate IMG] [--audio WAV|MP3]"
         },
         "ops": [
@@ -92,6 +92,7 @@ fn usage() -> serde_json::Value {
             {"op": "set-track", "node": "card", "property": "scale",
              "keys": [[0.0, 0.9, {"kind": "spring", "stiffness": 260, "damping": 15, "mass": 1}], [0.6, 1.0, null]]},
             {"op": "set-track-points", "node": "card", "keys": [[0.0, 240, 540, null], [0.7, 960, 540, {"kind": "spring", "stiffness": 170, "damping": 26, "mass": 1}]]},
+            {"op": "set-noise-track", "node": "card", "property": "scale", "seed": 7, "amount": 0.05, "rate": 10},
             {"op": "fade-in", "node": "card", "seconds": 0.8, "curve": {"kind": "steps", "count": 6, "position": "jump-end"}},
             {"op": "slide-to", "node": "card", "x": 960, "y": 540, "seconds": 0.7},
             {"op": "pop", "node": "card", "from": 0.9, "seconds": 0.5},
@@ -242,6 +243,17 @@ fn reel(args: &[String]) -> Result<serde_json::Value, String> {
 /// cores to spare, and the door to workers on other machines (see
 /// PERFORMANCE.md's "the farm" for what the flag pays for).
 ///
+/// `--farm DIR` is the other farm - the resumable one
+/// ([`concat_motion::farm`]): the engine's own `plan` verb chooses the
+/// boundaries, every part renders with a plain `--frames` call and lands
+/// in DIR marked done, and the parts **survive their own failure**. A
+/// run that dies at part seven serves parts one to six on the way back
+/// and draws only what is missing; an unchanged plan serves every part
+/// and joins. The staged folder is self-contained, so a part is also the
+/// unit of work a worker elsewhere renders whole (sync the folder, run
+/// the one command back) - and the reply reports, part by part, what
+/// drew and what was served.
+///
 /// The storyboard is the same contract `reel` takes; a scene's
 /// transitions and pulse are baked exactly as the cache would bake them,
 /// so the two doors agree frame for frame.
@@ -258,6 +270,14 @@ fn render(args: &[String]) -> Result<serde_json::Value, String> {
         && !(1..=64).contains(&parts)
     {
         return Err("--parts is between 1 and 64".to_owned());
+    }
+    // The resumable farm: parts that live in DIR, marked done one by
+    // one, and served on the way back. `--parts` is the ceiling the
+    // engine's own plan is asked for; without it the farm asks for four
+    // and honours whatever the plan answers.
+    let farm_dir = flag(args, "--farm").map(PathBuf::from);
+    if farm_dir.is_some() && parts.is_some() && args.iter().any(|arg| arg == "--frame") {
+        return Err("--farm renders the whole board; --frame is one still".to_owned());
     }
     let geneva_timeout = flag(args, "--geneva-timeout").and_then(|value| value.parse::<f64>().ok());
     if let Some(secs) = geneva_timeout
@@ -314,13 +334,26 @@ fn render(args: &[String]) -> Result<serde_json::Value, String> {
     }
 
     let path = out.unwrap_or_else(|| PathBuf::from("render.mp4"));
-    let report = match parts {
-        Some(parts) => planned
-            .render_parts(&geneva, &cache, &path, parts)
-            .map_err(|error| error.to_string())?,
-        None => planned
-            .render(&geneva, &cache, &path)
-            .map_err(|error| error.to_string())?,
+    let report = if let Some(farm) = farm_dir {
+        let parts = parts.unwrap_or(4);
+        let farmed = concat_motion::farm::render(&geneva, &planned, &cache, &farm, &path, parts)
+            .map_err(|error| error.to_string())?;
+        let mut value = summary;
+        value["written"] = json!(path.display().to_string());
+        value["parts"] = json!(farmed.parts.len());
+        value["farm"] = json!(farm.display().to_string());
+        value["farmReport"] = concat_motion::farm::report_json(&farmed);
+        value["report"] = json!({ "ok": true, "summary": { "errors": 0, "warnings": 0 } });
+        return Ok(value);
+    } else {
+        match parts {
+            Some(parts) => planned
+                .render_parts(&geneva, &cache, &path, parts)
+                .map_err(|error| error.to_string())?,
+            None => planned
+                .render(&geneva, &cache, &path)
+                .map_err(|error| error.to_string())?,
+        }
     };
     let mut value = summary;
     value["written"] = json!(path.display().to_string());

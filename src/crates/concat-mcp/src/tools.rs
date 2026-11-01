@@ -1503,7 +1503,8 @@ fn motion_schema(name: &str) -> Option<Value> {
         json!({
             "type": "array",
             "description": "Authoring operations applied before anything else: set-slot, \
-             set-text, set-words, move, retime, set-track, set-track-points, fade-in, \
+             set-text, set-words, set-markup, move, retime, set-track, set-track-points, \
+             set-noise-track (seeded organic drift: seed, amount, rate), fade-in, \
              slide-to, pop, add-group, add-rect, add-text, set-blend, set-opacity, \
              set-duration, set-background, delete.",
             "items": { "type": "object" }
@@ -1831,6 +1832,16 @@ fn motion_schema(name: &str) -> Option<Value> {
                         "start": { "type": "number" },
                         "hold": { "type": "number" },
                         "parallax": { "type": "number" },
+                        "wobble": {
+                            "type": "object",
+                            "description": "Organic drift on a seeded noise field, folded onto the layer's drift: seed (the whole of the randomness - deterministic), amount (reach, fractions of the frame), rate (keys a second).",
+                            "properties": {
+                                "seed": { "type": "integer" },
+                                "amount": { "type": "number", "minimum": 0, "maximum": 0.5 },
+                                "rate": { "type": "number", "minimum": 1, "maximum": 30 }
+                            },
+                            "required": ["seed"]
+                        },
                         "above": { "type": "boolean" }
                     }
                 });

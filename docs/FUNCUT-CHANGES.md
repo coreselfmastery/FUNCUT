@@ -1001,26 +1001,27 @@ plan carries.
 engine; the agent calls it or reads its table, and the table is the
 code.
 
-## 22. The scene-aware reel cache: one scene, one entry
+## 22. The scene-aware reel cache: one run, one entry
 
 A reel re-rendered on every edit is a reel nobody iterates on: the
 whole ten-scene document rendered again because one layer of one scene
 moved ten pixels. The reel's cache was the storyboard's own hash - all
 or nothing.
 
-`concat-motion::reel` renders a storyboard **scene by scene**, and each
-scene is cached by a key derived from what actually draws it: its own
-document (comp or preset, layers, timing, operations), the **bytes** of
-every asset it names - a re-saved picture misses, a renamed one does not
-have to - the geometry, the engine and its version, and the curtain at
-its boundaries. An edit to scene seven does not move scene three's key,
-and scene three's segment is served untouched. The joined reel is cached
-by its ordered scene keys, so an unchanged reel serves the join whole -
-byte-identical, rendering nothing - and a one-scene change re-renders
-that scene, re-joins, and nothing else. Audio beds render once,
-audio-only, cached by their own numbers and their file's bytes, and mix
-over the joined picture at the end. The scene cache is shared across
-reels: a scene identical in two reels is one entry, drawn once.
+`concat-motion::reel` renders a storyboard **run by run** (see §27 for
+why a run, not a scene), and each is cached by a key derived from what
+actually draws it: its scenes' documents (comp or preset, layers,
+timing, operations), the **bytes** of every asset they name - a
+re-saved picture misses, a renamed one does not have to - the geometry,
+the engine and its version, and the curtain at the run's boundaries. An
+edit to scene seven does not move scene three's key, and scene three's
+run is served untouched. The joined reel is cached by its ordered run
+keys, so an unchanged reel serves the join whole - byte-identical,
+rendering nothing - and a one-run change re-renders that run, re-joins,
+and nothing else. Audio beds render once, audio-only, cached by their
+own numbers and their file's bytes, and mix over the joined picture at
+the end. The run cache is shared across reels: a run identical in two
+reels is one entry, drawn once.
 
 Both doors eat it - `motion_reel` reports `cache: {scenesDrawn,
 scenesServed, joinedFromCache, ...}` and the agent CLI's `reel` the same
@@ -1145,3 +1146,90 @@ transparency-checked) runs green in `concat-host`; 11 unit tests hold
 the parse, the search, the URL shapes, the licence field and the
 favourites; the alpha check still refuses anything that is not a
 transparent PNG.
+
+## 27. The four pillars: the cut that shares its window, the noise that carries a seed, the cache that keeps its word
+
+The motion layer had the vocabulary - six choreographed cuts, five curve
+families, a beat-grid pulse, a critic that returns operations - and the
+roadmap said what it lacked. This change is that audit implemented whole:
+
+**The cut, choreographed in time.** A whip pan played as an exit, a
+splice and an entrance, because the incoming scene started *at* the cut:
+both halves animated, no frame ever held them both. The plan now lays a
+scene entering by an overlapping cut `cut.seconds` **before** the scene
+before it ends - the outgoing still on screen and sweeping out while
+the incoming arrives - which is the whole read of one camera move. The
+`stagger-exit` is the deliberate exception (its elements are gone
+exactly *at* the cut; the reveal must never share the window), and a cut
+longer than the scene before it can spare is clamped and said. The
+shared window forced the reel cache's granularity to tell the truth:
+scenes tied by an overlapping boundary are **one render unit** - a
+composite no concat expresses - so the cache renders and keys them as
+one *run*, while every plain boundary keeps its per-scene granularity.
+
+**Noise with a seed.** `noise.rs` is a seeded simplex field - 2-D, 3-D,
+fractal - a pure function of its seed, so the one randomness the
+determinism contract allows is a function of the document. Two doors eat
+it: a layer's `wobble` (`seed`, `amount` as a fraction of the frame,
+`rate` as keys a second) folds the field onto the drift, baked into the
+position keys at plan time (a cover layer grows to cover its own
+wobble; a cut's sweep is never chopped into samples), and the
+`set-noise-track` operation wanders a node's own property - position in
+pixels (placed nodes only), scale, rotation, opacity around the resting
+value. No seed is never a silently-picked one.
+
+**The cache that keeps its word.** Three correctness bugs fixed and a
+lifecycle added (`cache.rs`): the comp bake key covered the document but
+not the **files it names** - "changed the logo, still the old logo" -
+so every asset's bytes are streamed into the bake key now
+(`manifest.json`'s `assets`); the file hash read whole files into RAM,
+so it streams a megabyte at a time and answers *exactly* the old number
+(no key in the wild missed); and every cache entry lands beside its
+place and is renamed in, with the `.done` marker - written after the
+rename, atomically itself - as the sentinel no half-written entry can
+slip past. Every `render_reel` then sweeps its own cache root under a
+2 GiB budget: least-recently-used *complete* entries go, serving counts
+as a use, junk (orphan markers, stale temp files) goes first, and the
+report says what went.
+
+**The farm that remembers.** `--parts N` parallelised a render and
+forgot it. `--farm DIR` (`farm.rs`, agent verb) asks the engine's own
+`plan` verb where the good boundaries are, renders each part with a
+plain `--frames` call, lands it in DIR marked `.done`, and joins with
+the timeline's audio without a re-encode - so a run that dies at part
+seven serves one to six on the way back and draws only the missing, and
+the reply's `farmReport` says part by part what drew and what served.
+The parts are keyed by the staged timeline's bytes: an edit re-renders
+every part, an unchanged plan serves the lot.
+
+**The discipline, as a lint instead of a mood.** `discipline.rs` audits
+every planned scene and rides the plan's warnings: an entrance that
+creeps in on `ease-in` or a straight line, an exit that hangs in the
+doorway on `ease-out`, a bounce on a scene that never asked to be
+playful (the `punchy` style is the ask, and it is honoured; `steps()` is
+exempt as the mechanical reveal it is). Advice, not refusal.
+
+**The determinism contract, published and enforced.**
+`docs/DETERMINISM.md` writes the guarantee - same comp, same asset
+bytes, same geometry, same engine build: bit-identical frames - and the
+code holds it: `Comp::validate` refuses a markup that fetches
+(`url(http://…)`, remote `src=`/`href=`), imports a stylesheet, or asks
+the clock or an unseeded random for a value, with the token and a JSON
+pointer. `scripts/motion/golden.py` proves it per run in CI: the
+committed board renders at five fixed instants - one of them inside the
+whip pan's shared window, both plates on screen - and is held to
+committed goldens with a pure-Python DSSIM, plus one frame rendered
+**twice and held to identical bytes** on the spot. The Geneva lane runs
+it after the scene-quality floors; an intended change is `--update`,
+said in the commit that moved the frames.
+
+Verified: 305 tests in `concat-motion` (was 263), clippy and rustfmt
+clean under the pinned channel - and for real, through the pinned
+Geneva 1.6.0 sidecar: the whip-pan reel's boundary frames measured
+pixel by pixel (left third the outgoing plate, centre and right the
+incoming, at the shared window's middle); the run cache serving an
+unchanged reel in under a millisecond; the farm's 317 frames in four
+parts, resumed after one marker was deleted (one part drawn, four
+served); the wobble's 21 keys, ±19 px of wander and the cover growth
+read straight out of the emitted timeline; and every golden frame at
+DSSIM 0.00000 against its committed image.

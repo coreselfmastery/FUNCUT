@@ -989,6 +989,34 @@ impl Comp {
                         ),
                     );
                 }
+                // The determinism contract, held on the document: a fetch
+                // the render would make, a stylesheet it would import, or a
+                // value the clock or an unseeded random would be asked for -
+                // any of them makes the render's bytes the machine's mood,
+                // not the document's. Refused before the bake, with the
+                // token that broke the promise.
+                for hit in crate::css::network_refs(css)
+                    .into_iter()
+                    .chain(style_blocks(markup).flat_map(crate::css::network_refs))
+                    .chain(crate::css::network_refs(&markup_outside_styles(markup)))
+                {
+                    found.push(
+                        Diagnostic::new(
+                            format!("/nodes/{i}/markup"),
+                            format!(
+                                "the markup carries {} ({:?}), and the determinism \
+                                 contract refuses it: the same comp must be the same \
+                                 bytes on every machine, at any time, online or not",
+                                hit.kind, hit.text
+                            ),
+                        )
+                        .with_help(
+                            "stage the file as an asset the comp names by id, inline it \
+                             as a data: URL, or bake the numbers into the document - \
+                             set-noise-track carries a seed for exactly this",
+                        ),
+                    );
+                }
             }
             for (name, track) in &node.tracks {
                 if track.is_empty() {
@@ -1068,6 +1096,33 @@ fn style_blocks(markup: &str) -> impl Iterator<Item = &str> {
         rest = &body[close + "</style>".len()..];
         Some(css)
     })
+}
+
+/// The markup with its `<style>` blocks blanked to whitespace, so the
+/// attribute and script scan reads the document *around* the styles -
+/// the styles themselves are scanned as CSS, once, on their own.
+fn markup_outside_styles(markup: &str) -> String {
+    let mut out = String::with_capacity(markup.len());
+    let mut rest = markup;
+    loop {
+        let Some(open) = rest.find("<style") else {
+            out.push_str(rest);
+            return out;
+        };
+        let after_tag = rest[open..]
+            .find('>')
+            .map(|at| open + at + 1)
+            .unwrap_or(open);
+        out.push_str(&rest[..after_tag]);
+        let body = &rest[after_tag..];
+        let Some(close) = body.find("</style>") else {
+            out.push_str(body);
+            return out;
+        };
+        out.push_str(&" ".repeat(close));
+        out.push_str("</style>");
+        rest = &body[close + "</style>".len()..];
+    }
 }
 
 #[cfg(test)]

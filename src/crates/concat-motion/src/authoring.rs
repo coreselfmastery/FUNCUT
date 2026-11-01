@@ -125,6 +125,33 @@ pub enum Op {
         /// The keys, each `(at, x, y, curve)`.
         keys: Vec<(f64, f64, f64, Option<Curve>)>,
     },
+    /// Give a node organic drift on a seeded noise field: the property
+    /// wanders around the value the node already holds, the keys baked
+    /// from [`crate::noise::Noise`] as the operation is applied - so the
+    /// document carries only numbers, and the render needs no randomness
+    /// of any kind. Deterministic by construction: the seed is the whole
+    /// of it.
+    ///
+    /// `position` wanders in pixels (the node must be placed); `scale`,
+    /// `rotation` and `opacity` wander in their own units around the
+    /// node's own resting value, opacity held inside 0 to 1.
+    SetNoiseTrack {
+        /// The node.
+        node: String,
+        /// The property to wander: `position`, `scale`, `rotation` or
+        /// `opacity`.
+        property: String,
+        /// The noise field's seed: the whole of the randomness.
+        seed: u64,
+        /// How far the wander reaches, each side of the resting value -
+        /// pixels for a position, ones for everything else.
+        amount: f64,
+        /// Keys a second the field is sampled at, one knob for the feel:
+        /// a higher rate samples finer *and* wanders faster. Held to
+        /// 1..=30 whatever the document says.
+        #[serde(default = "default_noise_rate")]
+        rate: f64,
+    },
     /// Fade a node in over the first `seconds` of its span.
     FadeIn {
         /// The node.
@@ -422,6 +449,105 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
                 .sort_by(|a, b| a.at.partial_cmp(&b.at).unwrap_or(std::cmp::Ordering::Equal));
             let entry = node_mut(&mut comp, node)?;
             entry.tracks.insert("position".into(), track);
+            Ok(comp)
+        }
+        Op::SetNoiseTrack {
+            node,
+            property,
+            seed,
+            amount,
+            rate,
+        } => {
+            if !matches!(
+                property.as_str(),
+                "position" | "scale" | "rotation" | "opacity"
+            ) {
+                return Err(fail(
+                    format!("{property:?} is not a property the noise wanders"),
+                    "use position (pixels, placed nodes only), scale, rotation or opacity",
+                ));
+            }
+            if !amount.is_finite() || *amount <= 0.0 {
+                return Err(fail(
+                    format!("the amount {amount} is not a positive number"),
+                    "name how far the wander reaches, each side of the node's resting value",
+                ));
+            }
+            let span = span_of(&comp, node)?;
+            // A node with no position has nowhere to wander from: the
+            // transitions hold the same line - inventing one would move
+            // the node - and an operation that moved a node by accident
+            // would be worse than one that refused.
+            if property == "position"
+                && comp
+                    .node(node)
+                    .is_some_and(|node| node.transform.position.is_none())
+            {
+                return Err(fail(
+                    "the node has no position to wander around".to_string(),
+                    "place it first (move / set-track-points), then let it drift",
+                ));
+            }
+            let rate = if rate.is_finite() && *rate > 0.0 {
+                rate.clamp(1.0, 30.0)
+            } else {
+                default_noise_rate()
+            };
+            let noise = crate::noise::Noise::from_seed(*seed);
+            // The resting values, read before the node is taken mutably:
+            // what the property wanders *around* is the value the node
+            // already holds.
+            let resting = {
+                let base = comp.node(node).ok_or_else(|| {
+                    fail(
+                        format!("no node called {node:?}"),
+                        "list the comp first: motion.get returns its nodes",
+                    )
+                })?;
+                (
+                    base.transform.position,
+                    base.transform.scale,
+                    base.transform.rotation,
+                    base.opacity,
+                )
+            };
+            let steps = ((span * rate).ceil().min(600.0)) as usize;
+            let mut track = Track::default();
+            for step in 0..=steps {
+                let fraction = if steps == 0 {
+                    0.0
+                } else {
+                    f64::from(u32::try_from(step).unwrap_or(0))
+                        / f64::from(u32::try_from(steps).unwrap_or(1))
+                };
+                // The field is read at one cycle per ten keys, matching the
+                // layer wobble's clock: the same feel at the same rate.
+                let (x, y) = noise.drift(fraction * span * rate / 10.0, 0);
+                let value = match property.as_str() {
+                    "position" => {
+                        let placed = resting.0.expect("checked above");
+                        Value::Point {
+                            x: placed.x + x * amount,
+                            y: placed.y + y * amount,
+                        }
+                    }
+                    "scale" => Value::number(resting.1 + x * amount),
+                    "rotation" => Value::number(resting.2 + x * amount),
+                    _ => Value::number((resting.3 + x * amount).clamp(0.0, 1.0)),
+                };
+                track
+                    .keys
+                    .push(Key::new((fraction * 1000.0).round() / 1000.0, value));
+            }
+            // A wobble's keys are its own: the op replaces the property's
+            // track, the way set-track does - an op that meant to keep the
+            // old motion can apply both.
+            track
+                .keys
+                .sort_by(|a, b| a.at.partial_cmp(&b.at).unwrap_or(std::cmp::Ordering::Equal));
+            track.keys.dedup_by(|a, b| (a.at - b.at).abs() <= 1e-9);
+            let entry = node_mut(&mut comp, node)?;
+            entry.tracks.insert(property.clone(), track);
             Ok(comp)
         }
         Op::FadeIn {
@@ -894,6 +1020,13 @@ fn span_of(comp: &Comp, id: &str) -> Result<f64, MotionError> {
         })
 }
 
+/// The keys a second a `set-noise-track` operation samples at, when the
+/// document does not name a rate: the same default the layer wobble
+/// carries, so an unsaid rate reads the same in both places.
+fn default_noise_rate() -> f64 {
+    8.0
+}
+
 fn push(comp: &mut Comp, id: &str) -> Result<(), MotionError> {
     if comp.node(id).is_some() {
         return Err(fail(
@@ -1253,6 +1386,165 @@ mod tests {
                 x: 1920.0,
                 y: 400.0
             }
+        );
+    }
+
+    /// The noise op bakes a seeded field into a track: deterministic, dense
+    /// enough to read as motion, and bounded by the amount the operation
+    /// named - with the comp it leaves behind still validating.
+    #[test]
+    fn a_noise_track_bakes_a_seeded_field_into_the_keys() {
+        let comp = lower_third();
+        let edited = apply(
+            &comp,
+            &[Op::SetNoiseTrack {
+                node: "card".into(),
+                property: "scale".into(),
+                seed: 77,
+                amount: 0.05,
+                rate: 10.0,
+            }],
+        )
+        .expect("applies");
+        let card = edited.node("card").expect("the card");
+        let track = card.tracks.get("scale").expect("a scale track");
+        // Dense: ten keys a second over the node's own span.
+        assert!(
+            track.keys.len() >= 25,
+            "sampled at about the rate: {} keys",
+            track.keys.len()
+        );
+        // Bounded: the wander stays inside the resting value ± the amount.
+        for key in &track.keys {
+            let value = key.value.as_number().expect("a number");
+            assert!(
+                (0.95..=1.05).contains(&value),
+                "the scale wandered past its amount: {value}"
+            );
+        }
+        // Deterministic: the same seed answers the same track, byte for
+        // byte, and a different seed is a different path.
+        let again = apply(
+            &comp,
+            &[Op::SetNoiseTrack {
+                node: "card".into(),
+                property: "scale".into(),
+                seed: 77,
+                amount: 0.05,
+                rate: 10.0,
+            }],
+        )
+        .expect("applies");
+        assert_eq!(
+            again.node("card").expect("the card").tracks.get("scale"),
+            Some(track),
+            "the same seed answers the same keys"
+        );
+        let other = apply(
+            &comp,
+            &[Op::SetNoiseTrack {
+                node: "card".into(),
+                property: "scale".into(),
+                seed: 78,
+                amount: 0.05,
+                rate: 10.0,
+            }],
+        )
+        .expect("applies");
+        assert_ne!(
+            other.node("card").expect("the card").tracks.get("scale"),
+            Some(track),
+            "a different seed is a different path"
+        );
+        assert!(edited.validate().is_empty(), "the wobbled comp validates");
+    }
+
+    /// Opacity wanders inside its contract: a value that dipped below
+    /// zero or climbed past one would be a comp that cannot render, so
+    /// the op holds the wander inside the range whatever the field says.
+    #[test]
+    fn an_opacity_wander_stays_inside_zero_and_one() {
+        let comp = lower_third();
+        let edited = apply(
+            &comp,
+            &[Op::SetNoiseTrack {
+                node: "card".into(),
+                property: "opacity".into(),
+                seed: 9,
+                amount: 2.0,
+                rate: 6.0,
+            }],
+        )
+        .expect("applies");
+        let card = edited.node("card").expect("the card");
+        let track = card.tracks.get("opacity").expect("an opacity track");
+        for key in &track.keys {
+            let value = key.value.as_number().expect("a number");
+            assert!(
+                (0.0..=1.0).contains(&value),
+                "opacity wandered out of range: {value}"
+            );
+        }
+    }
+
+    /// A position wander needs a position to wander around: an unplaced
+    /// node (the lower third's card is laid out by its markup) is refused
+    /// with the reason, never silently given a place of the operation's
+    /// own choosing.
+    #[test]
+    fn a_position_wander_needs_a_place_to_wander_around() {
+        let comp = lower_third();
+        let error = apply(
+            &comp,
+            &[Op::SetNoiseTrack {
+                node: "card".into(),
+                property: "position".into(),
+                seed: 1,
+                amount: 4.0,
+                rate: 8.0,
+            }],
+        )
+        .expect_err("refused");
+        assert!(
+            error.to_string().contains("no position"),
+            "the error names what is missing: {error}"
+        );
+    }
+
+    /// An unknown property is refused with the list, and a non-positive
+    /// amount likewise - a wander that reaches nowhere is not a wander.
+    #[test]
+    fn the_noise_op_refuses_what_it_cannot_say() {
+        let comp = lower_third();
+        let error = apply(
+            &comp,
+            &[Op::SetNoiseTrack {
+                node: "card".into(),
+                property: "blur".into(),
+                seed: 1,
+                amount: 1.0,
+                rate: 8.0,
+            }],
+        )
+        .expect_err("refused");
+        assert!(
+            error.to_string().contains("blur"),
+            "the error names the property: {error}"
+        );
+        let error = apply(
+            &comp,
+            &[Op::SetNoiseTrack {
+                node: "card".into(),
+                property: "scale".into(),
+                seed: 1,
+                amount: 0.0,
+                rate: 8.0,
+            }],
+        )
+        .expect_err("refused");
+        assert!(
+            error.to_string().contains("positive"),
+            "the error names the amount: {error}"
         );
     }
 

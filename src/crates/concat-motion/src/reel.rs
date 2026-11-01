@@ -1,36 +1,49 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
-//! The scene-aware reel cache: one scene, one entry.
+//! The scene-aware reel cache: one run, one entry.
 //!
 //! A reel re-rendered on every edit is a reel nobody iterates on: the
 //! whole ten-scene document renders again because one layer of one scene
-//! moved ten pixels. This module renders a storyboard **scene by scene**,
-//! and caches each scene by a key derived from what actually draws it:
+//! moved ten pixels. This module renders a storyboard **run by run**, and
+//! caches each run by a key derived from what actually draws it:
 //!
-//! - the scene's own JSON - its comp or preset, its layers, its timing,
-//!   its operations;
-//! - the **bytes** of every asset it names - the footage, the comps, the
-//!   fonts - hashed, so a re-saved picture with the same name misses;
-//! - the geometry it renders at - width, height, frame rate;
-//! - the engine and its version, and the timeline format version;
-//! - the curtain at its boundaries - the opening fade for the first
-//!   scene, the dip depth at each cut, the closing fade for the last.
+//! - the scenes' own JSON - their comps or presets, layers, timing and
+//!   operations, in order;
+//! - the **bytes** of every asset they name - the footage, the comps, the
+//!   fonts - hashed as they are read, a megabyte at a time, so a re-saved
+//!   picture with the same name misses and a 2 GB plate costs a megabyte
+//!   of RAM and not the whole file;
+//! - the geometry, the engine and its version, the timeline format;
+//! - the curtain at the run's boundaries, the room it is placed at, the
+//!   board-time its clock starts from, and the cut it leaves by.
 //!
-//! Nothing else enters the key: an edit to scene seven does not change
-//! scene three's key, and scene three's segment is served from the cache
+//! A **run** is the scenes an overlapping choreographed boundary ties
+//! together. A whip pan is not two edits: it is one camera move played
+//! over a window both scenes share, and the plan lays the incoming scene
+//! `cut.seconds` before the outgoing one ends for exactly that reason.
+//! No concat expresses that composite, so both sides of the boundary
+//! render as one segment - an edit inside a run re-renders the run,
+//! never the reel. A boundary without an overlapping cut is where one
+//! run ends and the next begins, and the cache keeps its per-scene
+//! granularity there: an edit to scene seven does not touch scene
+//! three's key, and scene three's segment serves from the cache
 //! untouched. The joined reel is cached by the ordered list of its
-//! scenes' keys, so a re-render where nothing changed copies the joined
-//! file - byte-identical, in no time at all - and a re-render where one
-//! scene changed re-renders that scene, re-joins, and nothing else.
+//! runs' keys, so a re-render where nothing changed copies the joined
+//! file - byte-identical, in no time at all.
 //!
 //! Audio beds are reel-level, not scene-level: each bed renders once
 //! (audio-only, cached by its own key - the bed's numbers and its
 //! file's bytes) and is mixed over the joined picture at the end.
 //!
+//! The render also **sweeps** its own cache root under a size budget
+//! (see [`crate::cache`]): the least-recently-used complete entries go,
+//! junk goes first, and the entries this render just wrote never do.
+//!
 //! ```text
-//! render twice, unchanged     →  every scene served, the join served: 0 renders
-//! change one layer of scene 3 →  scene 3 renders; 1, 2, 4..n serve; the join re-runs
+//! render twice, unchanged     →  every run served, the join served: 0 renders
+//! change one layer of scene 3 →  scene 3's run renders; the other runs serve; the join re-runs
+//! whip-pan between 4 and 5   →  one run holds 4 and 5; an edit to either re-renders both
 //! ```
 
 use std::path::{Path, PathBuf};
@@ -83,6 +96,10 @@ pub struct ReelReport {
     /// overlaps the scene before it is joined flush rather than overlaid,
     /// and that is said here rather than passed over silently.
     pub warnings: Vec<String>,
+    /// What the sweep that held the cache under its budget found and did.
+    /// A cache that eats itself is a cache the caller should hear about,
+    /// and the entries it evicted are decisions a render owns.
+    pub sweep: crate::cache::Sweep,
 }
 
 /// The FNV-1a the crate's own hashes use: not a security hash, a name.
@@ -103,10 +120,12 @@ fn fnv(bytes: &[&[u8]]) -> u64 {
 
 /// The bytes of a file, hashed: the *content* an asset carries, not the
 /// name it answers to - a re-saved picture misses, a renamed one does
-/// not have to.
+/// not have to. Read a megabyte at a time by [`crate::cache::stream_hash`]
+/// (which answers exactly this number), so hashing a 2 GB plate costs
+/// a megabyte of RAM and not the whole file - the OOM the whole-file
+/// read guaranteed on the 4 GB machine a long reel renders on.
 fn file_hash(path: &Path) -> Option<u64> {
-    let bytes = std::fs::read(path).ok()?;
-    Some(fnv(&[&bytes]))
+    crate::cache::stream_hash("concat-motion/reel-cache/1", path)
 }
 
 /// The key of one scene: everything that draws it, hashed. See the
@@ -257,15 +276,72 @@ fn bed_key(board: &Storyboard, root: &Path, index: usize) -> String {
     )
 }
 
-/// The key of one scene's cached segment: the scene's own key, plus the
-/// gap the scene is placed at inside the segment. The same scene placed
-/// after a different amount of room renders a different file, so the gap
-/// is in the key the way the scene's own document is.
-fn segment_key(board: &Storyboard, root: &Path, index: usize, gap: f64) -> String {
-    let scene = scene_key(board, root, index);
+/// The runs the board's scenes fall into, as inclusive `(from, to)`
+/// pairs: a scene that enters by an **overlapping** cut joins the run of
+/// the scene before it - both sides of a whip pan are one composite, and
+/// no concat expresses a composite - so a choreographed boundary lives
+/// inside a segment, and a plain one is where a segment ends. The
+/// partition is a pure function of the cuts the board carries: an edit
+/// that adds or removes an overlapping cut changes where the runs
+/// break, and the run keys change with it.
+fn runs_of(board: &Storyboard) -> Vec<(usize, usize)> {
+    let mut runs = Vec::new();
+    let mut start = 0;
+    for index in 1..board.scenes.len() {
+        let overlaps = board.scenes[index]
+            .transition
+            .as_ref()
+            .is_some_and(|cut| cut.overlaps() && cut.seconds() > 1e-9);
+        if !overlaps {
+            runs.push((start, index - 1));
+            start = index;
+        }
+    }
+    if !board.scenes.is_empty() {
+        runs.push((start, board.scenes.len() - 1));
+    }
+    runs
+}
+
+/// The key of one run's cached segment: its scenes' own keys, in order,
+/// plus everything the window itself adds - the gap the run is placed
+/// at, the board-time its local clock starts from (an internal card's
+/// authored `at` is board-absolute, and slides when anything before the
+/// run changes length), the run's place at the reel's ends, and the cut
+/// the run leaves by, whose exit keys land on its last scene's nodes
+/// whoever wrote the boundary.
+///
+/// The scenes' own keys each carry their document, their assets' bytes,
+/// the geometry, the timeline format and the curtain's values, so the
+/// run key covers everything that draws the run except what the window
+/// adds - which is exactly what is folded in here.
+fn run_key(
+    board: &Storyboard,
+    root: &Path,
+    from: usize,
+    to: usize,
+    gap: f64,
+    origin: f64,
+) -> String {
+    let mut parts: Vec<Vec<u8>> = Vec::new();
+    for index in from..=to {
+        parts.push(scene_key(board, root, index).into_bytes());
+    }
+    parts.push(format!("gap:{gap:.3}").into_bytes());
+    parts.push(format!("origin:{origin:.3}").into_bytes());
+    parts.push(vec![u8::from(from == 0)]);
+    parts.push(vec![u8::from(to + 1 == board.scenes.len())]);
+    if let Some(cut) = board
+        .scenes
+        .get(to + 1)
+        .and_then(|card| card.transition.clone())
+        .or_else(|| board.scenes[to].exit.clone())
+    {
+        parts.push(serde_json::to_string(&cut).unwrap_or_default().into_bytes());
+    }
     format!(
         "{:016x}",
-        fnv(&[scene.as_bytes(), format!("gap:{gap:.3}").as_bytes()])
+        fnv(&parts.iter().map(|p| p.as_slice()).collect::<Vec<&[u8]>>())
     )
 }
 
@@ -285,13 +361,15 @@ fn marker_duration(segment: &Path) -> Option<f64> {
         .and_then(|text| text.split_whitespace().nth(1)?.parse().ok())
 }
 
-/// Render a storyboard scene by scene, caching each scene by its key.
+/// Render a storyboard scene by scene, caching each scene by its key,
+/// under the default cache budget.
 ///
 /// `cache` is the directory segments and joins live in (created when
 /// missing); `out` is the reel file written. The engine is asked for a
 /// scene only when its segment is not there; the join is copied from the
 /// cache when every scene in it was served and the joined file for
-/// exactly these keys exists.
+/// exactly these keys exists. See [`render_reel_budgeted`] for the same
+/// render with an explicit cache budget.
 pub fn render_reel(
     geneva: &Geneva,
     board: &Storyboard,
@@ -299,6 +377,30 @@ pub fn render_reel(
     out: &Path,
     cache: &Path,
     crf: u8,
+) -> Result<ReelReport, MotionError> {
+    render_reel_budgeted(
+        geneva,
+        board,
+        root,
+        out,
+        cache,
+        crf,
+        crate::cache::DEFAULT_BUDGET_BYTES,
+    )
+}
+
+/// [`render_reel`], with the cache's size budget named: the sweep that
+/// runs after the render holds the cache root under `budget` bytes by
+/// evicting its least-recently-used complete entries, and the report
+/// carries what it did.
+pub fn render_reel_budgeted(
+    geneva: &Geneva,
+    board: &Storyboard,
+    root: &Path,
+    out: &Path,
+    cache: &Path,
+    crf: u8,
+    budget: u64,
 ) -> Result<ReelReport, MotionError> {
     let started = Instant::now();
     board.validate().map_err(|problems| MotionError::Engine {
@@ -324,90 +426,120 @@ pub fn render_reel(
         source,
     })?;
 
-    // One key per scene, one segment per key. A hit is a manifest that
-    // names the same key and a file that is still there. Each segment
-    // carries the scene placed at its gap - the room between the scene
-    // before it (or the reel's opening) and this scene's own start - so
-    // the back-to-back join below lands every scene where the whole-board
-    // render puts it, instead of counting every scene's `at` twice and
-    // stretching the reel with dead air.
+    // One key per run, one segment per key. A **run** is the scenes an
+    // overlapping choreographed boundary ties together: a whip pan is one
+    // camera move played over a window both scenes share, and no concat
+    // can express a composite - so the scenes either side of one render
+    // as one unit, and an edit inside a run re-renders the run, never the
+    // reel. A boundary without an overlapping cut is where one run ends
+    // and the next begins, and the cache keeps its per-scene granularity
+    // there. Each segment carries its first scene placed at its gap -
+    // the room between the run before it (or the reel's opening) and
+    // this run's own start - so the back-to-back join below lands every
+    // run where the whole-board render puts it, instead of counting the
+    // first scene's `at` twice and stretching the reel with dead air.
     let mut outcomes: Vec<SceneOutcome> = Vec::new();
     let mut keys: Vec<String> = Vec::new();
+    let mut run_paths: Vec<PathBuf> = Vec::new();
     let mut renders = 0_usize;
     let mut warnings: Vec<String> = Vec::new();
     let mut end = 0.0_f64;
-    for index in 0..board.scenes.len() {
-        let gap = match board.scenes[index].at {
+    for (from, to) in runs_of(board) {
+        let gap = match board.scenes[from].at {
             Some(at) if at + 1e-9 < end => {
                 warnings.push(format!(
-                    "scene {index} starts at {at:.3} s, before scene {index} would end at \
-                     {end:.3} s; the cache joins it flush rather than overlaying it"
+                    "scene {from} starts at {at:.3} s, before the scene before it would end \
+                     at {end:.3} s; the cache joins it flush rather than overlaying it"
                 ));
                 0.0
             }
             Some(at) => (at - end).max(0.0),
             None => 0.0,
         };
-        let key = segment_key(board, root, index, gap);
+        // The origin is the board-time this run's local clock starts at:
+        // an internal card's authored `at` is board-absolute, and the
+        // run renders it at `at - origin`. The origin is part of the
+        // run's key exactly because of that - a longer hold in an
+        // earlier run slides every authored `at` after it, and a key
+        // that forgot the slide would serve the old window.
+        let origin = end;
+        let key = run_key(board, root, from, to, gap, origin);
         let segment = segments.join(format!("{key}.mp4"));
         let served = segment.is_file()
             && std::fs::read_to_string(segment.with_extension("done"))
                 .map(|text| marker_key(&text) == Some(key.clone()))
                 .unwrap_or(false);
         let duration = if served {
+            // A served entry counts as used: the sweep that holds the
+            // cache under its budget evicts what nothing has read lately,
+            // and reading is exactly what this is.
+            crate::cache::touch(&segment);
             marker_duration(&segment).unwrap_or(0.0)
         } else {
-            let duration = render_scene_segment(geneva, board, root, index, gap, &segment, crf)?;
-            std::fs::write(
-                segment.with_extension("done"),
-                format!("{key} {duration:.3}"),
-            )
-            .map_err(|source| MotionError::Io {
-                doing: "writing the scene's cache marker".into(),
-                path: segment.with_extension("done"),
+            // The segment is rendered beside its own place and renamed in:
+            // a concurrent render of the same reel never reads a
+            // half-written file, and the `.done` marker - written after
+            // the rename, atomically itself - is the sentinel that says
+            // the entry is whole.
+            let part = crate::cache::part_path(&segment);
+            let duration = render_run(geneva, board, root, from, to, gap, origin, &part, crf)?;
+            crate::cache::publish(&part, &segment).map_err(|source| MotionError::Io {
+                doing: "publishing the run's segment into the cache".into(),
+                path: segment.clone(),
                 source,
+            })?;
+            crate::cache::mark_done(&segment, &key, duration).map_err(|source| {
+                MotionError::Io {
+                    doing: "writing the run's cache marker".into(),
+                    path: segment.with_extension("done"),
+                    source,
+                }
             })?;
             renders += 1;
             duration
         };
         end += duration;
-        outcomes.push(SceneOutcome {
-            index,
-            key: key.clone(),
-            cached: served,
-        });
+        // One outcome per scene, so the report an agent reads still names
+        // every scene - with the run's own key on the first of them, and
+        // the run's served flag on all of them.
+        for index in from..=to {
+            outcomes.push(SceneOutcome {
+                index,
+                key: if index == from {
+                    key.clone()
+                } else {
+                    scene_key(board, root, index)
+                },
+                cached: served,
+            });
+        }
         keys.push(key);
+        run_paths.push(segment);
     }
 
     // The join: served whole when exactly these keys were joined before
-    // and every scene in them was served.
+    // and every run in them was served.
     let name = out
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
     let joined_key = join_key(&keys, crf, &name);
     let joined_cache = joins.join(format!("{joined_key}.mp4"));
-    let every_scene_served = outcomes.iter().all(|o| o.cached);
+    let every_scene_served = !outcomes.is_empty() && outcomes.iter().all(|o| o.cached);
     let mut joined_from_cache = false;
     if every_scene_served && joined_cache.is_file() {
         // The join is served, not re-run: byte-identical by construction,
-        // because it is the same file.
-        std::fs::copy(&joined_cache, out).map_err(|source| MotionError::Io {
+        // because it is the same file - and published in one piece, so a
+        // concurrent render never copies a join out from under a sweep.
+        crate::cache::publish_copy(&joined_cache, out).map_err(|source| MotionError::Io {
             doing: "serving the joined reel from the cache".into(),
             path: joined_cache.clone(),
             source,
         })?;
         joined_from_cache = true;
     } else {
-        join_segments(
-            geneva,
-            &outcomes
-                .iter()
-                .map(|o| segments.join(format!("{}.mp4", o.key)))
-                .collect::<Vec<PathBuf>>(),
-            out,
-        )?;
-        let _ = std::fs::copy(out, &joined_cache);
+        join_segments(geneva, &run_paths, out)?;
+        let _ = crate::cache::publish_copy(out, &joined_cache);
     }
 
     // The beds, when there are any: each renders once, audio-only, and
@@ -427,7 +559,15 @@ pub fn render_reel(
             let key = bed_key(board, root, index);
             let bed_audio = beds.join(format!("{key}.m4a"));
             if !bed_audio.is_file() {
-                render_bed(geneva, board, root, index, end.max(1.0), &bed_audio)?;
+                // A bed renders beside its place and is renamed in, for the
+                // same reason a segment is: a bed is a cache entry too.
+                let part = crate::cache::part_path(&bed_audio);
+                render_bed(geneva, board, root, index, end.max(1.0), &part)?;
+                crate::cache::publish(&part, &bed_audio).map_err(|source| MotionError::Io {
+                    doing: "publishing the audio bed into the cache".into(),
+                    path: bed_audio.clone(),
+                    source,
+                })?;
                 audio_rendered = true;
             }
             let last = index + 1 == board.audio.len();
@@ -450,6 +590,12 @@ pub fn render_reel(
         })?;
     }
 
+    // The sweep: hold the cache root under its budget now that this
+    // render has had its say. Everything this render wrote - or served -
+    // carries the newest clocks in the root and is never the entry the
+    // sweep takes; what goes is what nothing has read for the longest.
+    let sweep = crate::cache::sweep(cache, budget);
+
     Ok(ReelReport {
         scenes: outcomes,
         renders,
@@ -459,24 +605,32 @@ pub fn render_reel(
         out: out.to_path_buf(),
         duration: end,
         warnings,
+        sweep,
     })
 }
 
-/// Render one scene as a segment: a single-scene sequence with the
-/// curtain marks its boundaries carry - the opening fade when it is
-/// first, a dip at each cut, the closing fade when it is last. The scene
-/// is placed at `gap` - the room between the reel's start (or the scene
-/// before it) and this scene's own start - so that joining the segments
-/// back to back puts every scene where the whole-board render puts it;
-/// a segment that carried the scene's own `at` would count that room
-/// twice. Returns the segment's duration, so the caller can place the
-/// scene after it.
-fn render_scene_segment(
+/// Render one **run** as a segment: the run's scenes, in order, with the
+/// choreographed cuts between them, laid out exactly the way the
+/// whole-board plan lays the same window - which is what keeps the
+/// segmented cache and the one-shot render frame-for-frame identical:
+/// the same cards, the same cuts, the same curtain marks, one window.
+///
+/// The run's first scene is placed at `gap` - the room between the reel's
+/// start (or the run before it) and this run's own start - so that
+/// joining the segments back to back puts every scene where the
+/// whole-board render puts it; a segment that carried the scene's own
+/// `at` would count that room twice. An internal scene's authored `at`
+/// is board-absolute and lands at `at - origin`, the run's own clock
+/// standing in for the board's. Returns the segment's duration, so the
+/// caller can place the run after it.
+fn render_run(
     geneva: &Geneva,
     board: &Storyboard,
     root: &Path,
-    index: usize,
+    from: usize,
+    to: usize,
     gap: f64,
+    origin: f64,
     segment: &Path,
     crf: u8,
 ) -> Result<f64, MotionError> {
@@ -494,51 +648,75 @@ fn render_scene_segment(
             },
         );
     }
-    let mut scene = board
-        .scenes
-        .get(index)
-        .expect("the scene exists")
-        .scene(index, root)
-        .map_err(|message| MotionError::Engine {
-            code: None,
-            message,
-            path: None,
-            help: None,
-        })?;
-    // The scene's own `at` is where it sits in the whole reel; inside
-    // its own segment it sits at the gap, and nowhere else.
-    scene.at = Some(gap);
-    // The choreographed cuts this scene sits between, carried into the
-    // segment so the cache renders what the whole board would: the cut
-    // it enters by (the card's own `transition`), and the cut it leaves
-    // by (the next card's `transition`, or its own `exit`).
-    if let Some(cut) = &board.scenes[index].transition {
+    for index in from..=to {
+        let mut scene = board
+            .scenes
+            .get(index)
+            .expect("the scene exists")
+            .scene(index, root)
+            .map_err(|message| MotionError::Engine {
+                code: None,
+                message,
+                path: None,
+                help: None,
+            })?;
+        if index == from {
+            // The run's own `at` is where it sits in the whole reel;
+            // inside its own segment it sits at the gap, and nowhere else.
+            scene.at = Some(gap);
+        } else {
+            // An internal scene's authored `at` is board-absolute: the
+            // run's clock starts `origin` seconds before the board's, so
+            // the card lands where the whole board puts it. A card that
+            // names no `at` follows the one before it - cut by the
+            // overlap its entering cut is played over, exactly as the
+            // whole-board plan does.
+            scene.at = scene.at.map(|at| (at - origin).max(0.0));
+        }
+        sub.push(scene);
+        // The choreographed cuts *inside* the run, so the cache renders
+        // what the whole board would: this card's entrance, on the
+        // boundary after the card before it.
+        if index > from
+            && let Some(cut) = &board.scenes[index].transition
+        {
+            sub.with_cut(index - from - 1, cut.clone());
+        }
+    }
+    // The run's own entrance: the cut its first scene enters by - the
+    // reel's opening on the first run, and a non-overlapping cut (a
+    // staggered exit arriving plainly) everywhere else, matching the
+    // whole board's mapping of a card's `transition` to the boundary
+    // before it.
+    if let Some(cut) = &board.scenes[from].transition {
         sub.opens_with(cut.clone());
     }
+    // The cut the run leaves by: the next card's `transition`, or the
+    // last card's own `exit` when nothing follows.
     let leaving = board
         .scenes
-        .get(index + 1)
+        .get(to + 1)
         .and_then(|card| card.transition.clone())
-        .or_else(|| board.scenes[index].exit.clone());
+        .or_else(|| board.scenes[to].exit.clone());
     if let Some(cut) = leaving {
-        sub.with_cut(0, cut);
+        sub.with_cut(to - from, cut);
     }
-    let first = index == 0;
-    let last = index + 1 == board.scenes.len();
+    let first = from == 0;
+    let last = to + 1 == board.scenes.len();
     // A choreographed side stands the curtain's dip at that boundary
     // down, exactly as the whole-board plan does - the segmented cache
     // and the one-shot render must agree frame for frame.
-    let enters_choreographed = board.scenes[index].transition.is_some();
+    let enters_choreographed = board.scenes[from].transition.is_some();
     let leaves_choreographed = board
         .scenes
-        .get(index + 1)
+        .get(to + 1)
         .and_then(|card| card.transition.as_ref())
         .is_some()
-        || board.scenes[index].exit.is_some();
+        || board.scenes[to].exit.is_some();
     if let Some(curtain) = &board.curtain {
         sub.curtain = Some(Curtain {
             color: crate::comp::Rgba::hex(&curtain.color),
-            // A middle scene dips at both ends; the first opens, the last
+            // A middle run dips at both ends; the first opens, the last
             // closes, and a choreographed side clears instantly - the
             // motion is the transition, not a wash of colour.
             open: if first {
@@ -559,7 +737,6 @@ fn render_scene_segment(
             depth: curtain.depth,
         });
     }
-    sub.push(scene);
     let planned = crate::sequence::plan(geneva, &sub)?;
     let mut document = planned.document;
     document["output"]["encode"]["video"]["crf"] = json!(crf);
@@ -569,7 +746,7 @@ fn render_scene_segment(
         files: planned.files,
         warnings: planned.warnings,
         duration: planned.duration,
-        scenes: 1,
+        scenes: to - from + 1,
         source_root: root.to_path_buf(),
     };
     render.render(geneva, &staged, segment)?;
@@ -915,6 +1092,82 @@ mod tests {
             assert!(second.scenes[0].cached, "scene 0 is served");
             assert!(!second.scenes[1].cached, "scene 1 is drawn");
             assert!(!second.joined_from_cache, "the join re-runs");
+        }
+
+        /// The runs break where the shared windows end: an overlapping cut
+        /// couples its two scenes, a staggered exit keeps them apart - its
+        /// elements are gone exactly at the cut, so the reveal must never
+        /// share the window with the leaving.
+        #[test]
+        fn the_runs_break_where_no_overlapping_cut_is() {
+            let plain = Storyboard::parse(&board_text()).expect("a storyboard");
+            assert_eq!(runs_of(&plain), vec![(0, 0), (1, 1)]);
+
+            let whip = Storyboard::parse(&board_text().replace(
+                "funcut.chapter.chip\", \"hold\": 2.0",
+                "funcut.chapter.chip\", \"hold\": 2.0, \"transition\": { \"kind\": \"whip-pan\", \"direction\": \"left\", \"seconds\": 0.24 }",
+            ))
+            .expect("a storyboard with a whip pan");
+            assert_eq!(runs_of(&whip), vec![(0, 1)], "the whip couples both scenes");
+
+            let stagger = Storyboard::parse(&board_text().replace(
+                "funcut.chapter.chip\", \"hold\": 2.0",
+                "funcut.chapter.chip\", \"hold\": 2.0, \"transition\": { \"kind\": \"stagger-exit\", \"seconds\": 0.22, \"step\": 0.06 }",
+            ))
+            .expect("a storyboard with a staggered exit");
+            assert_eq!(
+                runs_of(&stagger),
+                vec![(0, 0), (1, 1)],
+                "a staggered exit stays sequential"
+            );
+        }
+
+        /// A whip pan's shared window is a composite no concat can
+        /// express: both sides of the boundary render as **one** segment,
+        /// cached by one key - and an edit to either scene re-renders the
+        /// run, never the reel.
+        #[test]
+        fn a_whip_pan_couples_its_scenes_into_one_run() {
+            let _serial = serial();
+            let dir = TempDir::new().unwrap();
+            let geneva = stub_geneva(&dir);
+            let (_, root) = setup(&dir);
+            let whipped = Storyboard::parse(&board_text().replace(
+                "funcut.chapter.chip\", \"hold\": 2.0",
+                "funcut.chapter.chip\", \"hold\": 2.0, \"transition\": { \"kind\": \"whip-pan\", \"direction\": \"left\", \"seconds\": 0.24 }",
+            ))
+            .expect("a storyboard with a whip pan");
+            let cache = dir.path().join("cache");
+            let out = dir.path().join("reel.mp4");
+
+            let first = render_reel(&geneva, &whipped, &root, &out, &cache, 18).expect("renders");
+            assert_eq!(first.renders, 1, "both scenes, one run, one render");
+            assert_eq!(first.scenes.len(), 2, "the report still names every scene");
+            assert!(
+                first.scenes.iter().all(|scene| !scene.cached),
+                "nothing serves on the first pass"
+            );
+            // The run is shorter than its two scenes by the shared window.
+            assert!(
+                (first.duration - 3.76).abs() < 0.01,
+                "2 s + 2 s - 0.24 s of shared window = 3.76 s, measured {:.3}",
+                first.duration
+            );
+
+            let second = render_reel(&geneva, &whipped, &root, &out, &cache, 18).expect("renders");
+            assert_eq!(second.renders, 0, "the run serves whole");
+            assert!(second.joined_from_cache, "and so does the join");
+
+            // An edit to scene 0 - the *outgoing* side of the cut - is an
+            // edit to the run, and the whole run re-renders: scene 1's
+            // segment cannot survive a change to the window it shares.
+            std::fs::write(root.join("back.png"), b"back-bytes-v2").unwrap();
+            let third = render_reel(&geneva, &whipped, &root, &out, &cache, 18).expect("renders");
+            assert_eq!(third.renders, 1, "the run re-renders as one");
+            assert!(
+                third.scenes.iter().all(|scene| !scene.cached),
+                "both scenes ride the run's re-render"
+            );
         }
 
         #[test]

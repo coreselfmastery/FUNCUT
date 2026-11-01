@@ -234,6 +234,17 @@ pub struct Baked {
     pub fps: f64,
     /// The comp's content hash, which is also the cache key.
     pub hash: u64,
+    /// The content key of every **file** the bake consumed, when it
+    /// consumed any: the comp's own hash covers the document, this covers
+    /// the bytes it points at. A comp whose `logo.png` was re-saved under
+    /// the same name is a different bake - the "changed logo, still the
+    /// old logo" bug is a cache key that forgot the file. `None` on a
+    /// comp with no assets, and on every manifest written before the
+    /// field existed - which are exactly the asset-free entries it would
+    /// otherwise have matched, so no cache in the wild misses for the
+    /// upgrade.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assets: Option<u64>,
     /// Which engine drew it.
     pub engine: EngineKind,
     /// Which version of that engine, so a cache entry can be invalidated when

@@ -13,6 +13,13 @@
 //! [`static_transforms`] here, so the comp is refused with the rule and the
 //! property in the message rather than rendered wrong.
 //!
+//! The same door also carries the **determinism contract**'s half of the
+//! markup ([`network_refs`]): a comp that fetches a URL, imports a
+//! stylesheet or asks the clock for a value is a comp that cannot promise
+//! the same bytes twice, and the contract refuses it here - before the
+//! bake, with the token that broke it - instead of rendering a timeline
+//! that happens to be different on a machine without a network.
+//!
 //! The scan is deliberately small: comments out, strings kept whole so a
 //! `content: "transform: x"` cannot false-positive, blocks tracked with a
 //! stack so `@keyframes` marks everything nested inside it, and every
@@ -144,6 +151,113 @@ fn without_comments(css: &str) -> String {
     out
 }
 
+/// One reference the determinism contract refuses, and the token that
+/// broke it: a fetch the render would make, or a value the clock or an
+/// unseeded random would be asked for - either way, a render that is not
+/// the same bytes twice.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct NetworkRef {
+    /// The kind of refusal, in the words the message carries:
+    /// `a mid-render fetch`, `a stylesheet import`, `an unseeded random`
+    /// or `the wall clock`.
+    pub kind: &'static str,
+    /// The token as it was found, trimmed: `url(https://…/logo.png)`,
+    /// `@import "…"`, `Math.random(`, `Date.now(`, `new Date(`.
+    pub text: String,
+}
+
+/// Every reference in `text` - a stylesheet or a markup document, either
+/// scans the same - that the determinism contract refuses:
+///
+/// - `url(http://…)`, `url(https://…)` and `url(//…)`: a fetch the render
+///   would make, whose answer is the network's to give. `data:` URLs are
+///   inline bytes and stage-free: welcome. Relative paths are the staged
+///   assets' own names: welcome too.
+/// - `@import`, of anything: a whole stylesheet read at render time that
+///   the document did not stage, local or remote.
+/// - `src=`/`href=` attributes pointing off-machine (`<img src="https://…">`).
+/// - `Math.random(`, `Date.now(`, `new Date(`: a value the render would
+///   ask for that no seed and no clock can answer the same way twice.
+///
+/// The scan is case-insensitive and comment-blind, because a fetch that
+/// is commented out is not a fetch and a capital `URL(` still is one.
+pub fn network_refs(text: &str) -> Vec<NetworkRef> {
+    let text = without_comments(text);
+    let lowercase = text.to_ascii_lowercase();
+    let mut found = Vec::new();
+    // url(...) whose target is off-machine. Byte offsets in the lowercase
+    // copy line up with the original, so a find in one finds in both.
+    let mut at = 0;
+    while let Some(open) = lowercase[at..].find("url(") {
+        let open = at + open;
+        let after = open + 4;
+        let close = lowercase[after..].find(')').map(|offset| after + offset);
+        let Some(close) = close else { break };
+        let inner = lowercase[after..close].trim();
+        let target = inner.trim_start_matches(['"', '\'']);
+        let off_machine = target.starts_with("http:")
+            || target.starts_with("https://")
+            || target.starts_with("//");
+        if off_machine {
+            found.push(NetworkRef {
+                kind: "a mid-render fetch",
+                text: text[open..close + 1].trim().to_owned(),
+            });
+        }
+        at = close + 1;
+    }
+    for (needle, kind) in [
+        ("@import", "a stylesheet import"),
+        ("math.random(", "an unseeded random"),
+        ("date.now(", "the wall clock"),
+        ("new date(", "the wall clock"),
+    ] {
+        let mut at = 0;
+        while let Some(hit) = lowercase[at..].find(needle) {
+            let hit = at + hit;
+            let end = (hit + needle.len()).min(text.len());
+            found.push(NetworkRef {
+                kind,
+                text: text[hit..end].trim().to_owned(),
+            });
+            at = end;
+        }
+    }
+    // src= and href= attributes pointing off-machine: an <img>, <source>,
+    // <script>, <link> that fetches what the document did not stage.
+    for attribute in ["src=", "href="] {
+        let mut at = 0;
+        while let Some(hit) = lowercase[at..].find(attribute) {
+            let value_at = at + hit + attribute.len();
+            let rest = &text[value_at..];
+            let quoted = rest.trim_start().starts_with('"') || rest.trim_start().starts_with('\'');
+            let value = if quoted {
+                let quote = rest.trim_start().chars().next().unwrap_or('"');
+                rest.trim_start()[1..]
+                    .split(quote)
+                    .next()
+                    .unwrap_or_default()
+            } else {
+                rest.split([' ', '>', '\n', '\t'])
+                    .next()
+                    .unwrap_or_default()
+            };
+            let target = value.trim();
+            if target.starts_with("http:")
+                || target.starts_with("https://")
+                || target.starts_with("//")
+            {
+                found.push(NetworkRef {
+                    kind: "a mid-render fetch",
+                    text: format!("{attribute}\"{target}\""),
+                });
+            }
+            at = value_at + value.len().max(1);
+        }
+    }
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,5 +346,128 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The determinism contract's half: every kind of refusuable reference
+    /// is found, named and trimmed, and the references the contract
+    /// welcomes (a staged file, a `data:` URL) are left alone.
+    #[test]
+    fn a_fetching_stylesheet_is_named_token_by_token() {
+        let css = ".logo { background: url(https://cdn.example.com/logo.png); } \
+                   .local { background: url(assets/logo.png); } \
+                   .inline { background: url(data:image/png;base64,AAAA); }";
+        let hits = network_refs(css);
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(hits[0].kind, "a mid-render fetch");
+        assert_eq!(hits[0].text, "url(https://cdn.example.com/logo.png)");
+    }
+
+    /// `@import` is refused whatever it imports - local or remote, the
+    /// stylesheet was never staged, so the render reads a file the
+    /// document does not own. An import *by URL* is named twice over - it
+    /// is both an import and a fetch - and twice is honest.
+    #[test]
+    fn an_import_is_refused_whatever_it_imports() {
+        let hits =
+            network_refs("@import \"theme.css\"; @import url('https://cdn.example.com/x.css');");
+        assert_eq!(hits.len(), 3, "{hits:?}");
+        let kinds: Vec<&str> = hits.iter().map(|hit| hit.kind).collect();
+        assert!(kinds.contains(&"a stylesheet import"));
+        assert!(kinds.contains(&"a mid-render fetch"));
+        assert_eq!(
+            kinds
+                .iter()
+                .filter(|kind| **kind == "a stylesheet import")
+                .count(),
+            2,
+            "both imports are named: {kinds:?}"
+        );
+    }
+
+    /// The clock and the unseeded random: values a document cannot promise
+    /// to reproduce, in markup or in a stylesheet, found in either case.
+    #[test]
+    fn the_clock_and_the_unseeded_random_are_refused() {
+        let markup = "<script>const jitter = Math.random(); const now = Date.now();</script>";
+        let hits = network_refs(markup);
+        assert_eq!(hits.len(), 2, "{hits:?}");
+        let kinds: Vec<&str> = hits.iter().map(|hit| hit.kind).collect();
+        assert_eq!(kinds, ["an unseeded random", "the wall clock"]);
+        // And the constructor form of the clock reads the same.
+        assert_eq!(network_refs("const t = new Date();").len(), 1);
+    }
+
+    /// An `<img>` (or a `<script>`, or a `<link>`) pointing off-machine is
+    /// a fetch the render would make; one pointing at a staged name is
+    /// the asset the comp meant to name.
+    #[test]
+    fn a_remote_src_attribute_is_a_fetch_a_staged_one_is_not() {
+        let markup = "<div class=\"row\"><img src=\"https://cdn.example.com/face.png\">\
+                      <img src=\"assets/face.png\"></div>";
+        let hits = network_refs(markup);
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(hits[0].text, "src=\"https://cdn.example.com/face.png\"");
+    }
+
+    /// A commented-out fetch is not a fetch, and a capitalised one still
+    /// is: the scan reads the sheet the way the engine would.
+    #[test]
+    fn a_commented_fetch_is_not_a_fetch_and_case_does_not_hide_one() {
+        assert!(
+            network_refs(".a { background: /* url(https://x.example.com/p.png) */ #fff; }")
+                .is_empty()
+        );
+        assert_eq!(
+            network_refs(".a { background: URL(https://x.example.com/p.png); }").len(),
+            1
+        );
+    }
+
+    /// The library's own comps hold the contract: a preset that fetched or
+    /// asked the clock would render differently per machine, and the whole
+    /// cache - bake, reel, farm, golden frames - is built on the promise
+    /// that none of them does.
+    #[test]
+    fn the_librarys_own_comps_carry_no_network_or_clock_references() {
+        for preset in crate::presets::ALL {
+            let comp = crate::presets::build(preset.id).expect("the preset builds");
+            for node in &comp.nodes {
+                if let crate::comp::NodeKind::Html { markup, css, .. } = &node.kind {
+                    assert!(
+                        crate::css::network_refs(css).is_empty(),
+                        "{}: the node {:?} stylesheet carries a refused reference",
+                        preset.id,
+                        node.id
+                    );
+                    assert!(
+                        crate::css::network_refs(markup).is_empty(),
+                        "{}: the node {:?} markup carries a refused reference",
+                        preset.id,
+                        node.id
+                    );
+                }
+            }
+        }
+    }
+
+    /// The comp is refused with a pointer into the document - the agent's
+    /// edit is one hop away, not a render failure to decode.
+    #[test]
+    fn a_comp_that_fetches_is_refused_with_its_pointer() {
+        let mut comp = crate::presets::build("funcut.chapter.chip").expect("the preset");
+        let node = comp.nodes.first_mut().expect("a node");
+        if let crate::comp::NodeKind::Html { markup, .. } = &mut node.kind {
+            *markup =
+                "<div class=\"chip\"><img src=\"https://cdn.example.com/logo.png\"></div>".into();
+        }
+        let problems = comp.validate();
+        assert!(
+            problems
+                .iter()
+                .any(|problem| problem.path == "/nodes/0/markup"
+                    && problem.message.contains("determinism")
+                    && problem.message.contains("https://cdn.example.com")),
+            "the refusal names the promise and the token: {problems:?}"
+        );
     }
 }

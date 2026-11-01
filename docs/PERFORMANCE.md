@@ -96,11 +96,14 @@ re-encode** — the join is a stream copy, so the seam is invisible by
 construction rather than by luck.
 
 ```sh
-# the everyday door: the scene-aware cache, one scene per entry
+# the everyday door: the scene-aware cache, one run per entry
 concat-motion-agent reel storyboard.json -o reel.mp4
 
 # the long-reel door: the whole board in one pass, cut into four
 concat-motion-agent render storyboard.json -o reel.mp4 --parts 4
+
+# the long-reel door that remembers: parts that survive their own failure
+concat-motion-agent render storyboard.json -o reel.mp4 --farm farm/ --parts 4
 ```
 
 Even on a single machine `--parts` improves CPU utilization — four
@@ -130,5 +133,66 @@ route back to your project. `Plan::write` makes that copy; the render
 directory is the contract.
 
 `--parts` is between 1 and 64; the everyday reel verb (`reel`) does not
-take it, because the scene-aware cache already renders a long reel scene
-by scene — the farm pays where one *scene* is itself long.
+take it, because the scene-aware cache already renders a long reel run
+by run — the farm pays where one *scene* is itself long.
+
+### The resumable farm: `--farm DIR`
+
+`--parts` parallelises a render; `--farm DIR` **remembers** one. The
+engine's own `plan` verb chooses the part boundaries (it refuses parts
+shorter than two seconds and never cuts a frame in half), and the
+resumable farm renders each part with a plain `--frames` call, lands it
+in DIR marked `.done`, and joins them with the timeline's audio,
+without a re-encode. What makes it a different door from `--parts`:
+
+- **A failed run costs only its own parts.** A render that dies at part
+  seven of ten serves parts one to six on the way back and draws only
+  what is missing — a worker that failed, a machine that slept, a
+  pipeline that was cancelled — where `--parts` starts again at part
+  one.
+- **A part is a unit of work anywhere.** The render directory is
+  self-contained (`Plan::write` stages every asset), so DIR plus the
+  staged folder is all a worker on another machine needs: sync the
+  folder, run the one part command, run the join back — and the reply's
+  `farmReport` says part by part what drew and what was served.
+- **The key is the timeline's bytes.** A changed plan — a re-graded
+  scene, a moved layer — is a changed key, and every part re-renders;
+  an unchanged one serves the lot and joins in no time.
+
+The reply's `farmReport` carries each part's frame range and whether
+this call drew it, the counts an agent reads at a glance, and the
+seconds the whole call took. A `--parts` ceiling is a ceiling: the
+engine's plan decides the real number and says so in a note.
+
+### The cache's own lifecycle: hashed in chunks, published in one piece, held to a budget
+
+The caches work because their keys are honest, and three rules keep
+them that way (`cache.rs`, `reel.rs`, `geneva.rs`):
+
+- **Content, hashed in chunks.** A key covers the comp's JSON *and the
+  bytes of every file it names* — a re-saved logo under the same name is
+  a new bake, which is the whole answer to "changed the logo, still the
+  old logo". Files are hashed a megabyte at a time
+  (`cache::stream_hash`), so hashing a 2 GB plate costs a megabyte of
+  RAM and not the whole file — the difference between a key and an OOM
+  on the 4 GB machine this renders on. The chunked hash answers exactly
+  the whole-file number, so no key in the wild missed on the upgrade.
+- **Published in one piece.** Every cache entry lands beside its place
+  and is renamed in — a concurrent render (another process, another
+  agent) never reads a half-written segment — and the `.done` marker,
+  written after the rename and atomically itself, is the sentinel: a
+  marker that exists promises an entry that is whole. A bake's
+  `manifest.json` is its sentinel, written last the same way.
+- **Held to a budget.** Every `render_reel` sweeps its own cache root
+  under **2 GiB** (`cache::DEFAULT_BUDGET_BYTES`; `render_reel_budgeted`
+  takes the number): the least-recently-used *complete* entries go
+  first — serving one counts as a use — and junk (orphan markers,
+  markerless entries, a crashed render's stale temp files) goes before
+  anything useful does. The report carries what the sweep did.
+
+The GPU compositor behind the project's own preview and render is the
+`wgpu` path: optional, off by default, behind concat-render's `gpu`
+feature (Vulkan, Metal or DX12 — whichever the machine has), sharing a
+device with the window's renderer so a preview frame never leaves the
+GPU. Engine-only work never pays for the dependency tree: the feature
+is opt-in exactly because the tree is heavy.

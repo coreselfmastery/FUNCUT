@@ -236,6 +236,13 @@ pub struct LayerCard {
     /// parallax.
     #[serde(default)]
     pub parallax: Option<f64>,
+    /// Organic drift: a seeded noise field the layer wanders over, folded
+    /// onto its drift - `seed` the field, `amount` the reach in fractions
+    /// of the frame, `rate` the keys a second it is sampled at. The seed
+    /// is the whole of the randomness, so the same storyboard wobbles the
+    /// same way on every machine.
+    #[serde(default)]
+    pub wobble: Option<crate::sequence::Wobble>,
     /// The easing the layer's fades travel, as a name from the library
     /// (`"typewriter"`, `"bounce"`, `"ease-out"`, `"spring-pop"`, ...) or
     /// a full curve object. A header can settle while the body bounces.
@@ -639,6 +646,23 @@ impl Storyboard {
                         );
                     }
                 }
+                // The wobble's numbers are checked the same way its drift
+                // is: a NaN reach or a rate that is not finite is a
+                // refusal that names the scene and the layer, not a
+                // wander that goes wherever an unnumbered frame does.
+                if let Some(wobble) = &layer.wobble {
+                    for (field, value) in [("amount", wobble.amount), ("rate", wobble.rate)] {
+                        if !value.is_finite() {
+                            problem(
+                                index,
+                                Some(name.clone()),
+                                format!(
+                                    "`wobble.{field}` is {value}, which is not a finite number"
+                                ),
+                            );
+                        }
+                    }
+                }
                 for (field, value) in [
                     ("start", layer.start),
                     ("hold", layer.hold),
@@ -1021,6 +1045,9 @@ impl LayerCard {
         }
         if let Some(rate) = self.parallax {
             layer = layer.parallax(rate);
+        }
+        if let Some(wobble) = self.wobble {
+            layer = layer.wobbling(wobble);
         }
         if let Some(curve) = &self.fade_curve {
             layer = layer.eased(curve.clone());

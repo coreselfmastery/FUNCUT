@@ -279,9 +279,24 @@ cut's keys would land keeps what it wrote; a node that is never placed keeps its
 out - the fallback when the next scene names none, and the only way to choreograph the last scene's
 leaving (a staggered exit at the reel's end is the credits rolling out).
 
-The scene-aware reel cache carries the cuts into each cached segment and stands the segment's own
-dip down at a choreographed boundary, so the segmented cache and the one-shot render agree frame
-for frame - and a changed choreography is a changed scene, so the cache key carries the cuts too.
+**The two sides share the window.** A scene that enters by an overlapping cut starts *before the
+scene before it ends* - by the cut's own `seconds`, the plan lays them that way - so the outgoing
+is still on screen, sweeping out, while the incoming is already arriving: one frame holds both,
+which is what makes the whip read as one camera move and the rack as one focus pull instead of an
+exit, a splice and an entrance. Without the overlap every choreographed cut degrades to a plain
+cut, however beautiful its two halves. The `stagger-exit` is the deliberate exception: its
+elements are gone *exactly at* the cut, so the incoming's first frame is the reveal and the two
+never share a window. A cut longer than the scene before it can spare is clamped to the overlap
+that fits, and the plan says so.
+
+The scene-aware reel cache carries the cuts into each cached segment, and the shared window makes
+that a rule of the layout: the scenes an overlapping boundary ties together are **one render
+unit** - a composite no concat can express - so the segmented cache renders them as one *run*,
+cached by one key (an edit to either scene re-renders the run, never the reel). A boundary
+without an overlapping cut is where one run ends and the next begins, so the per-scene
+cache granularity survives everywhere else. The segmented cache and the one-shot render agree
+frame for frame, and a changed choreography is a changed scene, so the cache key carries the cuts
+too. The `whip` golden frame is this made visible: both plates on screen inside the window.
 
 ### The pulse: audio-driven keyframes, baked into the document
 
@@ -312,6 +327,34 @@ Two more pieces of the same idea: **`curve_for_act`** maps the emotion read's ac
 curve - calm for the hook (`ease-out`), wound for the tension (`ease-in`), punchy for the payoff
 (`spring-pop`) - and **`sound_starts_at`** places an SFX by its measured `syncAt` so the *peak*
 lands on the entrance, not the file's first sample.
+
+### Organic motion: noise with a seed, not a mood
+
+A pan is a sentence a layer says once; a **wobble** is a voice - motion that never repeats, never
+resolves, and never reads as keyframed, because it was not. It is `noise.rs`'s seeded simplex
+field, sampled into the position keys when the plan is laid, folded onto the drift the layer
+already carries. The determinism contract holds exactly: the **seed is the whole of the
+randomness**, so the same layer wobbles identically on every machine, in every render, forever
+(see `docs/DETERMINISM.md`) - and two layers on one seed read two channels of one field, never
+wobbling in step.
+
+```json
+{ "asset": "back", "zoom": 0.04,
+  "wobble": { "seed": 2026, "amount": 0.008, "rate": 8 } }
+```
+
+| Piece | What it does | The read |
+| --- | --- | --- |
+| `seed` | the noise field - the one randomness the contract allows, because it is a function of the document | `0.008` is a plate breathing; `0.02` is a hand-held read |
+| `amount` | the reach, in fractions of the frame each side of the drift, like `pan` | a cover-fitted layer grows to cover its own wobble, the way it grows for a pan |
+| `rate` | keys a second the field is sampled at - and how fast it is read (one cycle per ten keys): one knob, one feel | held to 1..=30 whatever the document says |
+
+A cut's own windows are never chopped into samples: the sweep keeps its two keys and its curve,
+the wander folded underneath, so a whip pan over a wobbling plate still eases exactly the way a
+plain layer's does. Inside a comp, the `set-noise-track` operation is the same idea on a node -
+`{"op": "set-noise-track", "node": "glow", "property": "scale", "seed": 7, "amount": 0.05,
+"rate": 10}` bakes the field into the node's own track (position in pixels, placed nodes only;
+scale, rotation and opacity around the node's resting value, opacity held inside 0 to 1).
 
 ### The grade: colour grading inside the comp
 
@@ -744,6 +787,7 @@ ignored: a typo forgiven is a layer animating on the wrong curve.
 | `fade_curve` | the easing the fades travel - a name from the easing library, or a full curve object (`fadeCurve` also parses) | `"typewriter"` for a mechanical reveal, `"bounce"` for a bounce, `"spring-pop"` for a settle; the curve rides the key that starts each fade's segment, so the hold between them stays straight |
 | `start` / `hold` / `delay` | its own timing, from the scene's start (`delay` is the choreography's name for `start`) | a foreground that arrives at `1.2` lands over a scene already running; a layer that outlives its scene is cut to the scene's end |
 | `parallax` | how fast it drifts, as a multiple of its own `zoom` and `pan` - or of the classic plate's 4% growth / 3% slide, when it carries none | three layers at `0.5`, `1.0` and `2.0` are three depths of one scene; the rate is applied where the timeline is emitted, so the layer's own numbers stay what they said |
+| `wobble` | organic drift on a seeded noise field, folded onto the layer's own drift and baked into the position keys - `seed`, `amount` (fractions of the frame), `rate` (keys a second) | `{ "seed": 7, "amount": 0.01, "rate": 8 }` is a plate that breathes; the seed is the whole of the randomness, so the same storyboard wobbles the same way on every machine |
 | `above` | paint over the comp rather than under it | grain, vignettes, light leaks, silhouettes - still under the curtain and under any scene that overlaps this one |
 
 The layers a scene paints, bottom to top: its plates in order, the comp, its overlays in order,
@@ -778,7 +822,7 @@ because an override nobody can see the why of is a guess with confidence. The fu
 tested; see `concat-motion/src/route.rs`.
 
 Operations: `set-slot`, `set-text`, `set-words`, `set-markup`, `move`, `retime`, `set-track`, `set-track-points`,
-`fade-in`, `slide-to`, `pop`, `add-group`, `add-rect`, `add-text`, `delete`, `set-blend`,
+`set-noise-track`, `fade-in`, `slide-to`, `pop`, `add-group`, `add-rect`, `add-text`, `delete`, `set-blend`,
 `set-opacity`, `set-duration`, `set-background`.
 
 `set-markup` hands a markup node whole new HTML - the op a data-driven comp needs, where the words
@@ -847,3 +891,10 @@ Lottie engine, and the native engine's `CompEngine` impl.
 5. **Alpha is the contract**: a comp meant to sit over footage must not paint a background.
 6. **Bake at the size you cut at**, not at 4K "for safety" — the compositor samples it.
 7. **Nothing is silent**: an unsupported feature is reported by node id, never drawn as something else.
+8. **The same bytes twice**: a comp that fetches, imports or asks the clock is refused — see
+   `docs/DETERMINISM.md` — and the golden frames hold the render to it in CI.
+
+Rules 2 and 3 are not left to the mood, either: `discipline.rs` audits every planned scene and
+rides its findings in the plan's warnings — an entrance that creeps in on `ease-in` or a straight
+line, an exit that hangs in the doorway on `ease-out`, a bounce on a scene that never asked to be
+playful. Advice, not refusal: the `punchy` style is the ask, and it is honoured.

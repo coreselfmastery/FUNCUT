@@ -65,6 +65,14 @@ Linux-only, so there is no "ignored on macOS" class to carry.
   `scripts/motion/quality-manifest.json`. A change that makes a scene
   render worse - while every test stays green - fails there; a floor
   moved on purpose is `--refresh`, with the reason said in the commit.
+- **The golden frames** (`scripts/motion/golden.py`, same lane): the
+  committed board rendered at five fixed instants - including the whip
+  pan's shared window, both scenes on screen at once - and compared
+  against committed golden images with DSSIM, plus one frame rendered
+  **twice and held to identical bytes** on the spot: the determinism
+  contract proven per run, not asserted in prose (see
+  `docs/DETERMINISM.md`). A frame that moved on purpose is `--update`,
+  said in the commit that moved it.
 - **The engine lane is long** (about two hours) and its concurrency group
   cancels the older run when pushes land quickly, so the freshest green
   number on `main` can lag the tip by a few commits. The run's own log -

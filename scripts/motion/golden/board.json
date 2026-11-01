@@ -1,0 +1,105 @@
+{
+  "width": 640,
+  "height": 360,
+  "fps": 30,
+  "assets": {
+    "grid_a": "grid_a.png",
+    "grid_b": "grid_b.png",
+    "type_inter": "Inter.ttf",
+    "type_archivo": "Archivo.ttf"
+  },
+  "curtain": {
+    "color": "#05060aff",
+    "open": 0.4,
+    "close": 0.4,
+    "dip": 0.2,
+    "depth": 1.0
+  },
+  "scenes": [
+    {
+      "preset": "funcut.chapter.chip",
+      "hold": 2.0,
+      "layers": [
+        {
+          "asset": "grid_a",
+          "zoom": 0.02,
+          "wobble": {
+            "seed": 2026,
+            "amount": 0.01,
+            "rate": 8
+          }
+        }
+      ],
+      "pulse": {
+        "beats": [
+          0.9,
+          1.5
+        ],
+        "driven": "scale",
+        "amount": 0.04,
+        "release": 0.3
+      },
+      "ops": [
+        {
+          "op": "set-slot",
+          "slot": "Chapter",
+          "value": "01 / GOLDEN"
+        }
+      ]
+    },
+    {
+      "preset": "funcut.sting.wordmark",
+      "hold": 2.0,
+      "transition": {
+        "kind": "whip-pan",
+        "direction": "left",
+        "seconds": 0.24
+      },
+      "layers": [
+        {
+          "asset": "grid_b",
+          "zoom": 0.02
+        }
+      ],
+      "ops": [
+        {
+          "op": "set-slot",
+          "slot": "Wordmark",
+          "value": "GOLDEN"
+        },
+        {
+          "op": "set-slot",
+          "slot": "Subline",
+          "value": "the frame the suite holds"
+        }
+      ]
+    },
+    {
+      "preset": "funcut.stats.triptych",
+      "hold": 2.0,
+      "transition": {
+        "kind": "rack-focus",
+        "seconds": 0.3,
+        "radius": 12
+      },
+      "layers": [
+        {
+          "asset": "grid_a",
+          "zoom": 0.02,
+          "wobble": {
+            "seed": 7,
+            "amount": 0.008,
+            "rate": 10
+          }
+        }
+      ],
+      "ops": [
+        {
+          "op": "set-slot",
+          "slot": "Number 1",
+          "value": "100"
+        }
+      ]
+    }
+  ]
+}

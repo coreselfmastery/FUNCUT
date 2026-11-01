@@ -1042,19 +1042,59 @@ pub fn fix_for(code: &str) -> Option<&'static str> {
     }
 }
 
+/// The content key of every file a comp points at: the comp's own hash
+/// covers the document, this covers its bytes. Each asset's content is
+/// hashed by [`crate::cache::stream_hash`], a megabyte at a time - a
+/// 2 GB plate hashes without ever being loaded, which on the 4 GB
+/// machine a long reel renders on is the difference between a hash and
+/// an OOM. A file that is not there hashes as `missing`, because a bake
+/// that could not read an asset is a bake a later re-render with the
+/// file present must not be served in place of.
+fn bake_assets_key(comp: &Comp, source_dir: &Path) -> Option<u64> {
+    if comp.assets.is_empty() {
+        return None;
+    }
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut eat = |bytes: &[u8]| {
+        for byte in bytes {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    };
+    eat(b"concat-motion/bake-assets/1");
+    for (id, asset) in &comp.assets {
+        eat(id.as_bytes());
+        eat(b"\0");
+        match crate::cache::stream_hash("concat-motion/bake-assets/1", &source_dir.join(&asset.src))
+        {
+            Some(file) => eat(&file.to_le_bytes()),
+            None => eat(b"missing"),
+        }
+    }
+    Some(hash)
+}
+
 /// A bake that already sits in `dir`, when its manifest matches the comp,
-/// the engine, the engine's version, the size, the rate and the alpha -
-/// and the frames it promises are actually still on disk. The comp's hash
-/// is the cache key, so "an unchanged comp re-renders nothing" stops being
-/// a promise the bake loop quietly broke on every call.
+/// the **assets the comp points at**, the engine, the engine's version,
+/// the size, the rate and the alpha - and the frames it promises are
+/// actually still on disk. The comp's hash is the document's key and the
+/// assets key is the files' key; neither alone is enough, because an
+/// unchanged document over changed bytes is exactly the stale bake this
+/// check exists to refuse.
 fn bake_cache_hit(dir: &Path, comp: &Comp, request: &BakeRequest, version: &str) -> Option<Baked> {
     if request.frames.is_some() {
         // A ranged (parallel) bake is not a full cache entry; render it.
         return None;
     }
+    let source_dir = if request.source_dir.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        request.source_dir.clone()
+    };
     let manifest: Baked =
         serde_json::from_str(&std::fs::read_to_string(dir.join("manifest.json")).ok()?).ok()?;
     if manifest.hash != comp.hash()
+        || manifest.assets != bake_assets_key(comp, &source_dir)
         || manifest.engine != EngineKind::Geneva
         || manifest.engine_version != version
         || manifest.width != request.width(comp)
@@ -1173,16 +1213,30 @@ impl CompEngine for Geneva {
             height: request.height(comp),
             fps: request.fps(comp),
             hash: comp.hash(),
+            assets: bake_assets_key(comp, &source_dir),
             engine: EngineKind::Geneva,
             engine_version: version,
             alpha: request.alpha,
             cached: false,
         };
         let manifest = serde_json::to_string_pretty(&baked).unwrap_or_default();
-        std::fs::write(dir.join("manifest.json"), manifest).map_err(|source| MotionError::Io {
+        // The manifest is the bake's sentinel: written after the frames,
+        // and renamed in from a temp file, so a concurrent render - another
+        // process, another agent - either sees no manifest or a whole one,
+        // and never half a promise.
+        let manifest_path = dir.join("manifest.json");
+        let manifest_part = crate::cache::part_path(&manifest_path);
+        std::fs::write(&manifest_part, manifest).map_err(|source| MotionError::Io {
             doing: "writing the bake manifest".into(),
-            path: dir.join("manifest.json"),
+            path: manifest_path.clone(),
             source,
+        })?;
+        crate::cache::publish(&manifest_part, &manifest_path).map_err(|source| {
+            MotionError::Io {
+                doing: "publishing the bake manifest".into(),
+                path: manifest_path.clone(),
+                source,
+            }
         })?;
         Ok(baked)
     }
@@ -2195,6 +2249,7 @@ mod tests {
             height: comp.height,
             fps: comp.fps,
             hash: comp.hash(),
+            assets: None,
             engine: EngineKind::Geneva,
             engine_version: "1.6.0".to_owned(),
             alpha: true,
@@ -2252,6 +2307,127 @@ mod tests {
             "a cache that lost its frames must miss"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The stale-logo bug, held shut: a comp whose **file** changed under
+    /// it is a different bake, whatever its document hash says - and an
+    /// asset-carrying comp never matches the pre-fingerprint manifests,
+    /// because those never knew what the files contained.
+    #[test]
+    fn a_changed_logo_under_the_same_name_is_a_changed_bake() {
+        let scratch = tempfile::tempdir().expect("a scratch dir");
+        std::fs::write(scratch.path().join("logo.png"), b"logo-bytes-v1").expect("the logo");
+        let mut comp = crate::presets::build("funcut.chapter.chip").expect("a preset");
+        comp.assets.insert(
+            "logo".into(),
+            Asset {
+                src: "logo.png".into(),
+                kind: None,
+            },
+        );
+        let dir = scratch.path().join("cache/bake");
+        let frames = dir.join("frames");
+        std::fs::create_dir_all(&frames).expect("the frames dir");
+        std::fs::write(frames.join("0001.png"), b"a frame").expect("a frame");
+        fn write_manifest(dir: &Path, comp: &Comp, frames: &Path, assets: Option<u64>) {
+            let manifest = Baked {
+                dir: frames.to_path_buf(),
+                frames: 1,
+                width: comp.width,
+                height: comp.height,
+                fps: comp.fps,
+                hash: comp.hash(),
+                assets,
+                engine: EngineKind::Geneva,
+                engine_version: "1.6.0".to_owned(),
+                alpha: true,
+                cached: false,
+            };
+            std::fs::write(
+                dir.join("manifest.json"),
+                serde_json::to_string(&manifest).expect("the manifest serialises"),
+            )
+            .expect("the manifest is written");
+        }
+        let request = BakeRequest {
+            alpha: true,
+            source_dir: scratch.path().to_path_buf(),
+            ..BakeRequest::default()
+        };
+
+        // A pre-fingerprint manifest never matches a comp with assets:
+        // it did not know what the files were.
+        write_manifest(&dir, &comp, &frames, None);
+        assert!(
+            bake_cache_hit(&dir, &comp, &request, "1.6.0").is_none(),
+            "a manifest that never hashed the files cannot promise them"
+        );
+
+        // The fingerprint the files answer to, written: a hit.
+        let key = bake_assets_key(&comp, scratch.path()).expect("the comp has assets");
+        write_manifest(&dir, &comp, &frames, Some(key));
+        assert!(
+            bake_cache_hit(&dir, &comp, &request, "1.6.0").is_some(),
+            "the same files, the same key: a hit"
+        );
+
+        // The same name, new bytes: the one thing the old key could not
+        // see, and the whole reason this one exists.
+        std::fs::write(scratch.path().join("logo.png"), b"logo-bytes-v2").expect("the new logo");
+        assert!(
+            bake_cache_hit(&dir, &comp, &request, "1.6.0").is_none(),
+            "a re-saved logo must miss, not render the old one"
+        );
+
+        // And an asset-free comp still matches the manifests it always
+        // did: an upgrade that invalidated every asset-free bake would be
+        // a cache forgotten for nothing. (The document changed too - a
+        // cleared assets map is a new hash - so the manifest is written
+        // for the new document, as a real bake would have been.)
+        comp.assets.clear();
+        write_manifest(&dir, &comp, &frames, None);
+        assert!(
+            bake_cache_hit(&dir, &comp, &request, "1.6.0").is_some(),
+            "an asset-free comp keeps its old cache"
+        );
+    }
+
+    /// The assets key is the *content*: two files of the same bytes under
+    /// different names answer one key per id, and the same id over
+    /// different bytes answers a different one - order is the BTreeMap's
+    /// own, so the key is a pure function of the document and its files.
+    #[test]
+    fn the_assets_key_reads_the_bytes_not_the_names() {
+        let scratch = tempfile::tempdir().expect("a scratch dir");
+        std::fs::write(scratch.path().join("a.png"), b"same-bytes").expect("a");
+        std::fs::write(scratch.path().join("b.png"), b"same-bytes").expect("b");
+        let mut left = crate::presets::build("funcut.chapter.chip").expect("a preset");
+        left.assets.insert(
+            "logo".into(),
+            Asset {
+                src: "a.png".into(),
+                kind: None,
+            },
+        );
+        let mut right = left.clone();
+        right.assets.insert(
+            "logo".into(),
+            Asset {
+                src: "b.png".into(),
+                kind: None,
+            },
+        );
+        assert_eq!(
+            bake_assets_key(&left, scratch.path()),
+            bake_assets_key(&right, scratch.path()),
+            "same bytes, same key, whatever the file is called"
+        );
+        std::fs::write(scratch.path().join("b.png"), b"other-bytes").expect("b, changed");
+        assert_ne!(
+            bake_assets_key(&left, scratch.path()),
+            bake_assets_key(&right, scratch.path()),
+            "changed bytes, changed key, whatever the file is called"
+        );
     }
 
     // The guard: per-call limits, the circuit breaker, and the

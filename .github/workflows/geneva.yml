@@ -172,6 +172,18 @@ jobs:
           (cd src && cargo build -q -p concat-motion --bin concat-motion-agent)
           python3 scripts/motion/scene-quality.py --agent src/target/debug/concat-motion-agent
 
+      # The golden frames: the committed board, rendered at five fixed
+      # instants and compared against committed golden images with DSSIM -
+      # the visual regression suite that proves the engine's determinism
+      # the way the contract promises it (one frame is rendered twice and
+      # held to identical bytes on the spot). The whip frame is the
+      # temporal overlap made visible: both scenes on screen inside the
+      # cut's shared window. An intended change is --update, said in the
+      # commit that made the frames move.
+      - name: The golden frames, held with DSSIM
+        timeout-minutes: 15
+        run: python3 scripts/motion/golden.py --agent src/target/debug/concat-motion-agent
+
   # The long lane: the whole dependency dance, on a clean runner, every
   # version pinned. This is the recipe a session once improvised, made a
   # file; a step that only works on the machine it was written on fails

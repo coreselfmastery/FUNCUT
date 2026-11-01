@@ -35,6 +35,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as Json, json};
 
 use crate::authoring::{self, Op};
@@ -78,6 +79,48 @@ pub struct Scene {
     /// move with, the tempo its animations run at - and, when no grade
     /// is named, the colour it is graded. One layout, three moods.
     pub style: Option<crate::style::Style>,
+}
+
+/// Organic drift, deterministic: a seeded noise field the layer wanders
+/// over, baked into its position keys when the plan is laid.
+///
+/// A pan is a sentence a layer says once; a wobble is a voice - motion that
+/// never repeats, never resolves, and never reads as keyframed, because
+/// it was not: it is [`crate::noise::Noise`] read at `rate` keys a second
+/// and folded onto the drift the layer already carries. The determinism
+/// contract holds exactly: the **seed** is the whole of the randomness,
+/// so the same layer wobbles identically on every machine, in every
+/// render, forever - a cache key it belongs in, not a gamble.
+///
+/// The field is read one cycle per ten keys, so one knob shapes the feel:
+/// a higher `rate` samples finer *and* wanders faster, and a lower one is
+/// a lazier drift. The `amount` is in fractions of the frame, like `pan` -
+/// `0.008` is a plate breathing; `0.02` is a hand-held read.
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+pub struct Wobble {
+    /// The noise field's seed: the whole of the randomness, and the one
+    /// field a determinism contract can allow. Two layers on one seed
+    /// read two channels of one field and never wobble in step.
+    pub seed: u64,
+    /// How far the wander reaches, in fractions of the frame each side of
+    /// the drift. A cover-fitted layer grows to cover its own wobble, the
+    /// way it grows for a pan.
+    #[serde(default = "default_wobble_amount")]
+    pub amount: f64,
+    /// How many keys a second the field is sampled at - also how fast the
+    /// field is read, one cycle per ten keys. Held to 1..=30 in the
+    /// emission, whatever the document says: a rate of zero would freeze
+    /// the layer and a rate of a thousand would be a track, not a drift.
+    #[serde(default = "default_wobble_rate")]
+    pub rate: f64,
+}
+
+fn default_wobble_amount() -> f64 {
+    0.008
+}
+
+fn default_wobble_rate() -> f64 {
+    8.0
 }
 
 /// A still layered into a scene - under its comp as a plate, or over it
@@ -152,6 +195,11 @@ pub struct SceneLayer {
     /// slide) before the rate is applied, so `parallax` alone moves a
     /// layer.
     pub parallax: Option<f64>,
+    /// Organic drift, when the layer carries it: a seeded noise field
+    /// folded onto the drift, baked into the position keys at plan time.
+    /// `None` (the default) is the layer as every storyboard wrote it
+    /// before the field existed.
+    pub wobble: Option<Wobble>,
 }
 
 impl SceneLayer {
@@ -175,6 +223,7 @@ impl SceneLayer {
             scene: None,
             parallax: None,
             fade_curve: None,
+            wobble: None,
         }
     }
 
@@ -232,6 +281,14 @@ impl SceneLayer {
     /// 1.0, and the emitted keyframes are the ones the engine draws.
     pub fn parallax(mut self, rate: f64) -> SceneLayer {
         self.parallax = Some(rate);
+        self
+    }
+
+    /// Wander on a seeded noise field, folded onto the drift: the organic
+    /// motion a keyframe cannot write by hand. The seed is the whole of
+    /// the randomness - see [`Wobble`] for what that buys.
+    pub fn wobbling(mut self, wobble: Wobble) -> SceneLayer {
+        self.wobble = Some(wobble);
         self
     }
 
@@ -435,18 +492,50 @@ impl Sequence {
     ///
     /// A scene that names no start follows the one before it, so a reel is
     /// written in order without arithmetic; a scene that names no hold is as
-    /// long as its comp.
+    /// long as its comp. A scene that enters by an **overlapping** cut
+    /// starts before the one before it ends - by the cut's own seconds, the
+    /// window both scenes share - because a choreographed cut is a
+    /// composite, not a splice: without the overlap, the whip pan renders
+    /// as two edits.
     fn layout(&self) -> Vec<(usize, f64, f64)> {
         let mut out = Vec::with_capacity(self.scenes.len());
         let mut clock = 0.0;
+        let mut previous_hold = 0.0;
         for (index, scene) in self.scenes.iter().enumerate() {
-            let start = scene.at.unwrap_or(clock);
+            let start = scene
+                .at
+                .unwrap_or_else(|| clock - enter_overlap(self, index, previous_hold));
             let length = scene.hold.unwrap_or(scene.comp.duration).max(0.1);
             out.push((index, start, start + length));
             clock = start + length;
+            previous_hold = length;
         }
         out
     }
+}
+
+/// How far scene `index` starts before the scene before it ends: the
+/// temporal window the cut it enters by plays over, with the scene
+/// before it still leaving on screen. The window is the cut's own
+/// seconds, clamped so the scene before keeps at least a tenth of a
+/// second of itself - a cut longer than the scene it leaves plays as
+/// the sequential exit it is, and the plan says so rather than pulling
+/// the incoming scene under the whole of the outgoing one.
+///
+/// An authored `at` overrides this exactly as it always did: the author
+/// placed the scene, and the placement is theirs.
+fn enter_overlap(sequence: &Sequence, index: usize, previous_hold: f64) -> f64 {
+    if index == 0 {
+        // The opening cut has nothing before it to share a window with.
+        return 0.0;
+    }
+    let Some(cut) = sequence.transitions.get(&(index - 1)) else {
+        return 0.0;
+    };
+    if !cut.overlaps() || cut.seconds() <= 1e-9 {
+        return 0.0;
+    }
+    cut.seconds().min((previous_hold - 0.1).max(0.0))
 }
 
 impl Scene {
@@ -696,6 +785,93 @@ pub(crate) fn absolute(path: &Path) -> PathBuf {
         .unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// The position path of a wobbling layer, as keyframe marks: the drift and
+/// the noise field folded into one path, sampled `rate` times a second -
+/// with the cut's windows at the edges kept **whole**, so a whip pan still
+/// eases exactly the way a plain layer's does. A choreographed sweep is
+/// two keys and a curve; chopping it into noise samples would flatten the
+/// ease into a polyline, so the windows keep their own two keys each,
+/// the wander folded into them too - the path never steps at a window's
+/// edge, the sweep simply rides on top of it.
+///
+/// The field is read at one cycle per ten keys (`rate / 10` cycles a
+/// second), so one knob shapes the whole feel; the keys between the
+/// samples are linear - at eight to thirty keys a second and a fraction
+/// of a percent of reach, linear *is* smooth.
+fn wobble_marks<'a>(
+    wobble: Wobble,
+    span: f64,
+    offset: (f64, f64),
+    pan: (f64, f64),
+    enter: Option<&'a crate::transition::PlateCut>,
+    enter_seconds: f64,
+    exit: Option<&'a crate::transition::PlateCut>,
+    exit_seconds: f64,
+) -> Vec<(f64, (f64, f64), Option<&'a Curve>)> {
+    let noise = crate::noise::Noise::from_seed(wobble.seed);
+    let rate = wobble.rate.clamp(1.0, 30.0);
+    let amount = wobble.amount;
+    // The drift's linear journey, folded with the field's wander at the
+    // same moment: one path, both motions in it, continuous everywhere.
+    let path_at = |t: f64| {
+        let u = if span > 1e-9 { t / span } else { 0.0 };
+        let (x, y) = noise.drift(t * rate / 10.0, 0);
+        (
+            offset.0 + pan.0 * u + x * amount,
+            offset.1 + pan.1 * u + y * amount,
+        )
+    };
+    // The windows that carry position motion: a cut whose `from` is zero
+    // (a rack focus) moves nothing here, and its window is no window.
+    let enter = enter.filter(|cut| cut.from != (0.0, 0.0));
+    let exit = exit.filter(|cut| cut.from != (0.0, 0.0));
+    let mut marks: Vec<(f64, (f64, f64), Option<&Curve>)> = Vec::new();
+    if let Some(cut) = enter {
+        let from = path_at(0.0);
+        marks.push((
+            0.0,
+            (from.0 + cut.from.0, from.1 + cut.from.1),
+            Some(&cut.curve),
+        ));
+        marks.push((enter_seconds, path_at(enter_seconds), None));
+    }
+    // The samples: strictly inside the windows' remainders. A sample that
+    // lands on a window's edge is the same key the window wrote - the
+    // dedup below takes the pair of them as one, whichever came first.
+    let start = if enter.is_some() { enter_seconds } else { 0.0 };
+    let end = if exit.is_some() {
+        span - exit_seconds
+    } else {
+        span
+    };
+    let steps = (((end - start).max(0.0)) * rate).ceil().min(600.0) as usize;
+    for step in 0..=steps {
+        let t = if steps == 0 {
+            start
+        } else {
+            start
+                + (end - start) * f64::from(u32::try_from(step).unwrap_or(0))
+                    / f64::from(u32::try_from(steps).unwrap_or(1))
+        };
+        marks.push((t, path_at(t), None));
+    }
+    if let Some(cut) = exit {
+        let to = path_at(span);
+        marks.push((
+            span - exit_seconds,
+            path_at(span - exit_seconds),
+            Some(&cut.curve),
+        ));
+        marks.push((span, (to.0 + cut.from.0, to.1 + cut.from.1), None));
+    }
+    // One time order, no duplicates within a millisecond - a track whose
+    // keys do not strictly increase is refused whole (E303), and a wobble
+    // that collided with a window edge would trip it.
+    marks.sort_by(|a, b| a.0.total_cmp(&b.0));
+    marks.dedup_by(|a, b| (a.0 - b.0).abs() <= 0.001);
+    marks
+}
+
 /// A layer's timeline id: the first plate is `s0.plate`, the second
 /// `s0.plate2`, and overlays number the same way on their own side of the
 /// comp - so a timeline read by a person says what each layer is.
@@ -791,49 +967,84 @@ fn layer_clip(
         ])
     };
 
-    // The least scale that keeps a cover picture covering while it drifts.
+    // The least scale that keeps a cover picture covering while it drifts
+    // - and while it wobbles, which is a drift it did not write down: the
+    // wobble's amount is spent per axis exactly as the pan's reach is.
     let reach = |from: f64, to: f64| from.abs().max(to.abs());
+    let wobble_amount = layer
+        .wobble
+        .filter(|wobble| {
+            wobble.amount.is_finite()
+                && wobble.amount > 0.0
+                && wobble.rate.is_finite()
+                && wobble.rate > 0.0
+        })
+        .map(|wobble| wobble.amount)
+        .unwrap_or(0.0);
     let mut base = layer.scale.max(0.0);
     if matches!(layer.fit, Fit::Cover) && base >= 1.0 {
-        let travel = 2.0 * reach(offset.0, offset.0 + pan.0).max(reach(offset.1, offset.1 + pan.1));
+        let travel = 2.0
+            * (reach(offset.0, offset.0 + pan.0) + wobble_amount)
+                .max(reach(offset.1, offset.1 + pan.1) + wobble_amount);
         base = base.max(1.0 + travel);
     }
 
     // Position: the cut's windows at the edges, the layer's own drift
-    // between them - one list of marks, in time order by construction:
+    // between them - and, when the layer wobbles, the noise field the
+    // drift rides on, sampled to keys (see [`wobble_marks`]; the cut
+    // still owns its own window, edge to edge, unchopped).
+    // One list of marks, in time order by construction:
     // 0 < enter_seconds <= span - exit_seconds < span.
     let rest = offset;
     let drift_end = (offset.0 + pan.0, offset.1 + pan.1);
     let mut position_marks: Vec<(f64, (f64, f64), Option<&Curve>)> = Vec::new();
-    if let Some(cut) = enter
-        && enter_seconds > 0.0
-        && cut.from != (0.0, 0.0)
-    {
-        position_marks.push((
-            0.0,
-            (offset.0 + cut.from.0, offset.1 + cut.from.1),
-            Some(&cut.curve),
-        ));
-        position_marks.push((enter_seconds, rest, None));
-    } else if pan != (0.0, 0.0) {
-        position_marks.push((0.0, rest, None));
-    }
-    if let Some(cut) = exit
-        && exit_seconds > 0.0
-        && cut.from != (0.0, 0.0)
-    {
-        // The exit's curve rides the key that starts the exit's segment -
-        // Geneva's `ease` shapes the segment starting at its keyframe, so a
-        // curve on the boundary's last key would shape nothing and the
-        // sweep would travel a straight line.
-        position_marks.push((span - exit_seconds, drift_end, Some(&cut.curve)));
-        position_marks.push((
+    if let Some(wobble) = layer.wobble.filter(|wobble| {
+        wobble.amount.is_finite()
+            && wobble.amount > 0.0
+            && wobble.rate.is_finite()
+            && wobble.rate > 0.0
+    }) {
+        position_marks = wobble_marks(
+            wobble,
             span,
-            (drift_end.0 + cut.from.0, drift_end.1 + cut.from.1),
-            None,
-        ));
-    } else if pan != (0.0, 0.0) {
-        position_marks.push((span, drift_end, None));
+            offset,
+            pan,
+            enter.filter(|_| enter_seconds > 0.0),
+            enter_seconds,
+            exit.filter(|_| exit_seconds > 0.0),
+            exit_seconds,
+        );
+    } else {
+        if let Some(cut) = enter
+            && enter_seconds > 0.0
+            && cut.from != (0.0, 0.0)
+        {
+            position_marks.push((
+                0.0,
+                (offset.0 + cut.from.0, offset.1 + cut.from.1),
+                Some(&cut.curve),
+            ));
+            position_marks.push((enter_seconds, rest, None));
+        } else if pan != (0.0, 0.0) {
+            position_marks.push((0.0, rest, None));
+        }
+        if let Some(cut) = exit
+            && exit_seconds > 0.0
+            && cut.from != (0.0, 0.0)
+        {
+            // The exit's curve rides the key that starts the exit's segment -
+            // Geneva's `ease` shapes the segment starting at its keyframe, so a
+            // curve on the boundary's last key would shape nothing and the
+            // sweep would travel a straight line.
+            position_marks.push((span - exit_seconds, drift_end, Some(&cut.curve)));
+            position_marks.push((
+                span,
+                (drift_end.0 + cut.from.0, drift_end.1 + cut.from.1),
+                None,
+            ));
+        } else if pan != (0.0, 0.0) {
+            position_marks.push((span, drift_end, None));
+        }
     }
 
     let mut transform = Map::new();
@@ -1091,6 +1302,7 @@ fn plan_with_chain(
     }
 
     let mut scene_ends: Vec<f64> = Vec::new();
+    let mut holds: Vec<f64> = Vec::new();
     for (index, scene) in sequence.scenes.iter().enumerate() {
         let mut comp = if scene.ops.is_empty() {
             scene.comp.clone()
@@ -1135,6 +1347,20 @@ fn plan_with_chain(
         // override it, not the other way round.
         if let Some(style) = scene.style {
             crate::style::restyle(&mut comp, style);
+        }
+        // The motion principles, audited while the comp is still the
+        // author's: the choreography and the pulse write their own curves
+        // after this (correct by construction, and policed by their own
+        // tests), so what the lint reads here is what was authored - an
+        // entrance that creeps in, an exit that hangs in the doorway, a
+        // bounce on a scene that never asked to be playful. The `punchy`
+        // style is that ask, and it is honoured; everything else is a
+        // finding that rides the plan's warnings, where a critic or an
+        // agent can act on it - advice, not refusal, because a comp that
+        // breaks a principle on purpose is a comp that should render.
+        let playful = scene.style == Some(crate::style::Style::Punchy);
+        for note in crate::discipline::audit(&comp, playful) {
+            warnings.push(format!("scene {index}: {note}"));
         }
         let enter_cut = if index == 0 {
             sequence.opening.as_ref()
@@ -1262,11 +1488,31 @@ fn plan_with_chain(
                 diagnostics: problems,
             });
         }
+        // The placement: an authored `at` is the author's; otherwise the
+        // scene follows the one before it, less the window its entering cut
+        // shares with that scene - the temporal overlap without which a
+        // whip pan renders as an exit, a splice, and an entrance.
+        let hold = scene.hold.unwrap_or(comp.duration).max(0.1);
+        let previous_hold = holds.last().copied().unwrap_or(0.0);
+        let overlap = enter_overlap(sequence, index, previous_hold);
         let start = scene
             .at
-            .unwrap_or_else(|| scene_ends.last().copied().unwrap_or(0.0));
-        let hold = scene.hold.unwrap_or(comp.duration).max(0.1);
+            .unwrap_or_else(|| scene_ends.last().copied().unwrap_or(0.0) - overlap);
+        if scene.at.is_none()
+            && let Some(cut) = enter_cut
+            && cut.overlaps()
+            && cut.seconds() - overlap > 1e-9
+        {
+            warnings.push(format!(
+                "scene {index} enters by a {} that overlaps only {overlap:.3} s of the \
+                 {:.3} s the scene before it holds: the rest of the cut plays as a plain \
+                 cut, and the boundary shows",
+                cut.name(),
+                previous_hold
+            ));
+        }
         scene_ends.push(start + hold);
+        holds.push(hold);
 
         // The scene's own layers: plates under the comp, overlays over it,
         // each with its own drift, blend and span. A layer naming an asset
@@ -2587,6 +2833,156 @@ mod tests {
         );
     }
 
+    /// The wobble, held to its three contracts: deterministic (the same
+    /// seed answers the same path, and the plan is byte-stable), bounded
+    /// (the wander stays inside the amount the layer named) and sampled
+    /// densely enough to read as motion - and never so densely a cut's
+    /// own window is chopped into it.
+    #[test]
+    fn a_wobbling_layer_reads_a_seeded_field_into_its_keys() {
+        let wobble_layer = || {
+            SceneLayer::new("back")
+                .panning(-0.03, 0.0)
+                .wobbling(Wobble {
+                    seed: 2026,
+                    amount: 0.012,
+                    rate: 10.0,
+                })
+        };
+        let mut sequence = reel(vec![
+            Scene::new(presets::build("funcut.sting.wordmark").expect("a preset"))
+                .holding(4.0)
+                .layer(wobble_layer()),
+        ]);
+        sequence.asset(
+            "back",
+            Asset {
+                src: "back.png".into(),
+                kind: None,
+            },
+        );
+        let planned = plan(&geneva(), &sequence).expect("a plan");
+        let clip = &planned.document["layers"][0]["clips"][0];
+        let keys = clip["transform"]["position"]["keyframes"]
+            .as_array()
+            .expect("the wobble writes a position track");
+        // Dense: ten keys a second over four seconds, plus the ends.
+        assert!(
+            keys.len() >= 38 && keys.len() <= 45,
+            "sampled at about the rate: {} keys",
+            keys.len()
+        );
+        // Strictly increasing, and the track starts and ends on the span.
+        let times: Vec<f64> = keys
+            .iter()
+            .map(|key| parse_seconds(key[0].as_str().expect("a time")).expect("a time"))
+            .collect();
+        for pair in times.windows(2) {
+            assert!(pair[0] < pair[1], "strictly increasing: {times:?}");
+        }
+        assert_eq!(times.first().copied(), Some(0.0));
+        // Bounded: the wander plus the pan never leaves the reach the
+        // layer named, frame-wise, of the centre.
+        for key in keys {
+            let x = key[1][0].as_f64().expect("pixels");
+            let y = key[1][1].as_f64().expect("pixels");
+            assert!(
+                (960.0 - (0.03 + 0.012) * 1920.0..=960.0 + 0.012 * 1920.0).contains(&x),
+                "x wandered past its reach: {x}"
+            );
+            assert!(
+                (540.0 - 0.012 * 1080.0..=540.0 + 0.012 * 1080.0).contains(&y),
+                "y wandered past its reach: {y}"
+            );
+        }
+        // Deterministic: the same seed, the same path, byte for byte.
+        let mut again = reel(vec![
+            Scene::new(presets::build("funcut.sting.wordmark").expect("a preset"))
+                .holding(4.0)
+                .layer(wobble_layer()),
+        ]);
+        again.asset(
+            "back",
+            Asset {
+                src: "back.png".into(),
+                kind: None,
+            },
+        );
+        let replanned = plan(&geneva(), &again).expect("a plan");
+        assert_eq!(
+            replanned.document["layers"][0]["clips"][0]["transform"]["position"],
+            clip["transform"]["position"],
+            "the same seed answers the same path"
+        );
+    }
+
+    /// A different seed is a different world, and the seed is the only
+    /// difference: two layers on one field read two channels of it and
+    /// never wobble in step, which is the point of a channel number.
+    #[test]
+    fn a_different_seed_wobbles_a_different_path() {
+        let layer_of = |seed: u64| {
+            let mut sequence = reel(vec![
+                Scene::new(presets::build("funcut.sting.wordmark").expect("a preset"))
+                    .holding(4.0)
+                    .layer(SceneLayer::new("back").wobbling(Wobble {
+                        seed,
+                        amount: 0.012,
+                        rate: 10.0,
+                    })),
+            ]);
+            sequence.asset(
+                "back",
+                Asset {
+                    src: "back.png".into(),
+                    kind: None,
+                },
+            );
+            let planned = plan(&geneva(), &sequence).expect("a plan");
+            planned.document["layers"][0]["clips"][0]["transform"]["position"].clone()
+        };
+        assert_ne!(layer_of(1), layer_of(2), "two seeds, two paths");
+    }
+
+    /// A cover layer grows to cover its own wobble, the way it grows for a
+    /// pan: an edge that shows behind a wandering plate is the one thing
+    /// the fit promised never to do.
+    #[test]
+    fn a_cover_layer_grows_to_cover_its_own_wobble() {
+        let layer_of = |wobble: Option<Wobble>| {
+            let mut layer = SceneLayer::new("back");
+            if let Some(wobble) = wobble {
+                layer = layer.wobbling(wobble);
+            }
+            let mut sequence = reel(vec![
+                Scene::new(presets::build("funcut.sting.wordmark").expect("a preset"))
+                    .holding(4.0)
+                    .layer(layer),
+            ]);
+            sequence.asset(
+                "back",
+                Asset {
+                    src: "back.png".into(),
+                    kind: None,
+                },
+            );
+            let planned = plan(&geneva(), &sequence).expect("a plan");
+            planned.document["layers"][0]["clips"][0].clone()
+        };
+        let plain = layer_of(None);
+        let wobbling = layer_of(Some(Wobble {
+            seed: 5,
+            amount: 0.02,
+            rate: 8.0,
+        }));
+        let plain_scale = plain["transform"]["scale"].as_f64().unwrap_or(1.0);
+        let wobble_scale = wobbling["transform"]["scale"].as_f64().unwrap_or(1.0);
+        assert!(
+            wobble_scale >= plain_scale + 2.0 * 0.02 - 1e-9,
+            "the wobble's reach is grown into the base scale: {plain_scale} -> {wobble_scale}"
+        );
+    }
+
     #[test]
     fn three_blends_and_three_delays_land_in_the_timeline() {
         let mut sequence = reel(vec![
@@ -2828,8 +3224,14 @@ mod tests {
         );
 
         // Scene 1's plate sweeps in from the right over its first 0.24s:
-        // the enter key sits at the clip's own start (the boundary, 4s
-        // absolute), its position right of centre, on the settling curve.
+        // the enter key sits at the clip's own start, its position right
+        // of centre, on the settling curve. The clip itself starts
+        // **0.24 s before the cut** - at 3.76 s, while scene 0 is still
+        // sweeping out - because a choreographed cut is a composite, not
+        // a splice: the whole point of the window is that one frame holds
+        // both scenes, the outgoing leaving and the incoming arriving,
+        // which is what makes the whip read as one camera move. The
+        // two clips overlap in time by exactly the cut's own seconds.
         let incoming = read("s1.plate");
         let keys = &incoming["transform"]["position"]["keyframes"];
         let first = keys
@@ -2838,7 +3240,26 @@ mod tests {
             .first()
             .expect("the enter key");
         assert_eq!(first[0], json!("0s"), "{keys:?}");
-        assert_eq!(incoming["start"], json!("4s"), "the clip starts at the cut");
+        assert_eq!(
+            incoming["start"],
+            json!("3.76s"),
+            "the clip starts inside the cut's shared window, not at the cut"
+        );
+        let incoming_end: f64 = parse_seconds(incoming["duration"].as_str().expect("a span"))
+            .expect("a duration")
+            + parse_seconds(incoming["start"].as_str().expect("a start")).expect("a start");
+        let mid_window = 3.9_f64;
+        let outgoing_covers = outgoing["start"].as_str().map(parse_seconds) == Some(Some(0.0))
+            && parse_seconds(outgoing["duration"].as_str().expect("a span")) > Some(mid_window);
+        assert!(
+            outgoing_covers,
+            "the outgoing scene is still on screen in the shared window"
+        );
+        assert!(
+            parse_seconds(incoming["start"].as_str().expect("a start")) <= Some(mid_window)
+                && incoming_end > mid_window,
+            "the incoming scene is already on screen in the shared window"
+        );
         let x = first[1][0].as_f64().expect("pixels");
         assert!(x > 960.0 + 0.5 * 1920.0, "swept in from the right: {x}");
         assert_eq!(

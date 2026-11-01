@@ -182,6 +182,22 @@ impl Cut {
             Cut::StaggerExit { .. } => "stagger-exit",
         }
     }
+
+    /// Whether the cut is played over a window where **both scenes are on
+    /// screen**: the outgoing leaving while the incoming arrives, the
+    /// two sharing the cut's own seconds. That temporal overlap is what
+    /// makes a whip pan one camera move and a rack focus one focus pull
+    /// instead of an exit, a splice, and an entrance - without it every
+    /// choreographed cut degrades to a plain cut, however beautiful its
+    /// two halves, because no frame ever holds them both.
+    ///
+    /// The staggered exit is the deliberate exception: its elements are
+    /// gone *exactly at* the cut - the last one leaves on the frame the
+    /// boundary lands on - and the incoming scene's first frame is the
+    /// reveal, so the two must never share the window.
+    pub fn overlaps(&self) -> bool {
+        !matches!(self, Cut::StaggerExit { .. })
+    }
 }
 
 /// How far a whip carries, as a fraction of the frame: sixty percent

@@ -57,8 +57,9 @@ pub enum Driven {
     /// The node's opacity: `0.08` brightens on the transient - the
     /// caption that pulses when the sound lands.
     Opacity,
-    /// The node's position: `1.0` pops up by a fraction of the frame -
-    /// the whole card, taking the beat.
+    /// The node's position: `1.0` pops up by 30 px at 1080p, scaled to
+    /// the comp's own height - the same pop is the same fraction of the
+    /// frame at 4K and at 540p - the whole card, taking the beat.
     Position,
 }
 
@@ -70,8 +71,8 @@ pub struct Pulse {
     pub beats: Vec<f64>,
     /// What the beat drives, and by how much.
     pub driven: Driven,
-    /// The bump's size: a scale delta, an opacity delta, or a fraction
-    /// of the frame for a position pop.
+    /// The bump's size: a scale delta, an opacity delta, or - for a
+    /// position pop - px at 1080p, scaled to the comp's own height.
     pub amount: f64,
     /// How long the bump takes to settle, in seconds - the tail that
     /// makes a hit read as a hit rather than a flicker.
@@ -178,6 +179,12 @@ pub(crate) fn apply(comp: &mut Comp, pulse: &Pulse) -> usize {
     // Whether each beat reaches any node at all, so a grid that lands
     // nowhere can be named rather than silently dropped.
     let mut reached = vec![false; beats.len()];
+    // A position pop is sized by the frame it happens in: the 30 px a
+    // unit of `amount` moves at 1080p is scaled to the comp's own
+    // height, so the same pulse pops the same fraction of the frame at
+    // 4K and at 540p - a fixed pixel count would shrink on the big frame
+    // and shout on the small one.
+    let pop_unit = 30.0 * f64::from(comp.height) / 1080.0;
     for node in &mut comp.nodes {
         if !pulse.nodes.is_empty() && !pulse.nodes.contains(&node.id) {
             continue;
@@ -223,7 +230,7 @@ pub(crate) fn apply(comp: &mut Comp, pulse: &Pulse) -> usize {
                     continue;
                 }
                 if let Some(base) = node.transform.position {
-                    let pop = Point::new(base.x, base.y - pulse.amount * 30.0);
+                    let pop = Point::new(base.x, base.y - pulse.amount * pop_unit);
                     bump_point(node, &beats, span, base, pop, pulse);
                 }
             }
@@ -288,10 +295,12 @@ fn bump_number(
             continue;
         }
         keys.push(Key::eased(at, Value::number(bump), pulse.curve.clone()));
+        // The settle lands inside the node even when the release runs
+        // past its end: clamped to the node's last moment, the property
+        // settles as far as it can rather than staying bumped for
+        // whatever of the node is left.
         let back = at + pulse.release / span;
-        if back <= 1.0 {
-            keys.push(Key::new(back.min(1.0), Value::number(local(back))));
-        }
+        keys.push(Key::new(back.min(1.0), Value::number(local(back))));
     }
     merge(node, property, keys, Value::number(rest));
 }
@@ -310,16 +319,16 @@ fn bump_point(node: &mut Node, beats: &[f64], span: f64, rest: Point, pop: Point
             Value::Point { x: pop.x, y: pop.y },
             pulse.curve.clone(),
         ));
+        // As in `bump_number`: a release that outruns the node settles
+        // as far as it reaches, not never.
         let back = at + pulse.release / span;
-        if back <= 1.0 {
-            keys.push(Key::new(
-                back.min(1.0),
-                Value::Point {
-                    x: rest.x,
-                    y: rest.y,
-                },
-            ));
-        }
+        keys.push(Key::new(
+            back.min(1.0),
+            Value::Point {
+                x: rest.x,
+                y: rest.y,
+            },
+        ));
     }
     merge(
         node,

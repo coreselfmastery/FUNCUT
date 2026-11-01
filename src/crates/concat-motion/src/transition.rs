@@ -546,9 +546,13 @@ fn slide(
     append_keys(node, "position", span, &keys);
 }
 
-/// Scale a node between `from` and its resting scale over `seconds`
-/// starting `at` into its span: an enter arrives from `from` and
-/// settles, an exit rests and travels to `from`.
+/// Scale a node between `from` times its resting scale and that rest
+/// over `seconds` starting `at` into its span: an enter arrives from
+/// `from`-times-rest and settles, an exit rests and travels to it. The
+/// multiplier - not an absolute scale - is what the plate side's cuts
+/// multiply into the drift's own end scale, and an absolute 1.35 would
+/// jump a node authored at 0.8 to a 69% shove instead of the 35% the
+/// zoom cuts promise.
 fn scale_to(node: &mut Node, span: f64, at: f64, seconds: f64, from: f64, side: Side) {
     let rest = node.transform.scale;
     let curve = match side {
@@ -557,13 +561,13 @@ fn scale_to(node: &mut Node, span: f64, at: f64, seconds: f64, from: f64, side: 
     };
     let keys = match side {
         Side::Enter => [
-            (at, Value::number(from), Some(curve)),
+            (at, Value::number(rest * from), Some(curve)),
             (at + seconds, Value::number(rest), None),
         ],
         // The curve starts the segment it shapes; see `slide`.
         Side::Exit => [
             (at, Value::number(rest), Some(curve)),
-            (at + seconds, Value::number(from), None),
+            (at + seconds, Value::number(rest * from), None),
         ],
     };
     append_keys(node, "scale", span, &keys);

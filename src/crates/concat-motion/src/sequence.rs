@@ -767,9 +767,20 @@ fn layer_clip(
     let offset = layer.offset;
 
     // The cut's windows, held to a third of the span each so the two
-    // sides of one boundary never meet inside a single layer's span.
-    let enter_seconds = enter.map(|cut| cut.seconds.min(span / 3.0)).unwrap_or(0.0);
-    let exit_seconds = exit.map(|cut| cut.seconds.min(span / 3.0)).unwrap_or(0.0);
+    // sides of one boundary never meet inside a single layer's span. A
+    // window that lands at or under a millisecond is not a cut - its two
+    // keys would round to one time, and a track whose keys do not
+    // strictly increase is refused whole (E303) - so it is dropped
+    // rather than performed, the way the comp side refuses a
+    // zero-length cut.
+    let enter_seconds = enter
+        .map(|cut| cut.seconds.min(span / 3.0))
+        .filter(|seconds| *seconds > 0.001)
+        .unwrap_or(0.0);
+    let exit_seconds = exit
+        .map(|cut| cut.seconds.min(span / 3.0))
+        .filter(|seconds| *seconds > 0.001)
+        .unwrap_or(0.0);
 
     // Where the layer sits, in pixels from the frame's corner: the centre,
     // plus its offset as a fraction of the frame, plus its drift.
@@ -795,6 +806,7 @@ fn layer_clip(
     let drift_end = (offset.0 + pan.0, offset.1 + pan.1);
     let mut position_marks: Vec<(f64, (f64, f64), Option<&Curve>)> = Vec::new();
     if let Some(cut) = enter
+        && enter_seconds > 0.0
         && cut.from != (0.0, 0.0)
     {
         position_marks.push((
@@ -807,6 +819,7 @@ fn layer_clip(
         position_marks.push((0.0, rest, None));
     }
     if let Some(cut) = exit
+        && exit_seconds > 0.0
         && cut.from != (0.0, 0.0)
     {
         // The exit's curve rides the key that starts the exit's segment -
@@ -846,6 +859,7 @@ fn layer_clip(
     let drift_scale = base * (1.0 + zoom);
     let mut scale_marks: Vec<(f64, f64, Option<&Curve>)> = Vec::new();
     if let Some(cut) = enter
+        && enter_seconds > 0.0
         && (cut.scale_from - 1.0).abs() > 1e-9
     {
         scale_marks.push((0.0, rest_scale * cut.scale_from, Some(&cut.curve)));
@@ -854,6 +868,7 @@ fn layer_clip(
         scale_marks.push((0.0, rest_scale, None));
     }
     if let Some(cut) = exit
+        && exit_seconds > 0.0
         && (cut.scale_from - 1.0).abs() > 1e-9
     {
         // As the position above: the curve starts the segment, or it
@@ -885,12 +900,14 @@ fn layer_clip(
     // up to the cut on the way out, down from it on the way in.
     let mut blur_marks: Vec<(f64, f64, Option<&Curve>)> = Vec::new();
     if let Some(cut) = enter
+        && enter_seconds > 0.0
         && cut.blur_from > 1e-9
     {
         blur_marks.push((0.0, cut.blur_from, Some(&cut.curve)));
         blur_marks.push((enter_seconds, 0.0, None));
     }
     if let Some(cut) = exit
+        && exit_seconds > 0.0
         && cut.blur_from > 1e-9
     {
         // And the same once more: the rack's curve belongs to the key
@@ -1560,7 +1577,10 @@ fn plan_with_chain(
         let open = curtain.open.min(duration / 4.0);
         let close = curtain.close.min(duration / 4.0);
         let mut marks: Vec<(f64, f64)> = vec![(0.0, 1.0), (open, 0.0)];
-        for (index, end) in scene_ends[..scene_ends.len() - 1].iter().enumerate() {
+        for (index, end) in scene_ends[..scene_ends.len().saturating_sub(1)]
+            .iter()
+            .enumerate()
+        {
             // A choreographed cut replaces the dip at its boundary: a
             // whip pan and a colour wash at the same frame is two
             // transitions fighting, and the choreography wins.

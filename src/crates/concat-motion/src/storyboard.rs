@@ -432,6 +432,18 @@ impl Storyboard {
                 ),
             );
         }
+        // An empty storyboard is nothing to render, and saying so here
+        // beats what it would otherwise do downstream: a reel planned
+        // from zero scenes has no boundaries to dip at, and the sequence
+        // planner would rather refuse a storyboard with a named problem
+        // than be handed one it cannot say anything about.
+        if self.scenes.is_empty() {
+            problem(
+                0,
+                None,
+                "a storyboard needs at least one scene - an empty reel is nothing to render".into(),
+            );
+        }
 
         // Two scenes of one storyboard cannot share a name: a
         // `{"scene": ...}` layer resolves its name to the first scene

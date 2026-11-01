@@ -39,6 +39,7 @@ use serde_json::{Map, Value as Json, json};
 
 use crate::authoring::{self, Op};
 use crate::comp::{Asset, Blend, Comp, Fit, Rgba};
+use crate::curve::Curve;
 use crate::engine::{BakeRequest, MotionError};
 use crate::geneva::Geneva;
 
@@ -113,6 +114,13 @@ pub struct SceneLayer {
     /// vignettes, light leaks, foreground silhouettes. It still paints
     /// under the curtain and under any scene that overlaps this one.
     pub above: bool,
+    /// The easing its fades travel, when they travel one: the library's
+    /// own curves - `Curve::named("bounce")`, `steps(8)`, any bezier, a
+    /// spring - attached to the segment each fade starts, so the header
+    /// can arrive on the settle curve while the body bounces in under
+    /// it. `None` (the default) is the straight fade every layer shipped
+    /// with, and a layer that does not fade does not carry one at all.
+    pub fade_curve: Option<Curve>,
     /// The named scene this layer places, when its source is a scene
     /// rather than an asset: the scene is emitted once as a reusable
     /// composition and this layer shows it. `None` is the ordinary
@@ -149,6 +157,7 @@ impl SceneLayer {
             above: false,
             scene: None,
             parallax: None,
+            fade_curve: None,
         }
     }
 
@@ -247,6 +256,15 @@ impl SceneLayer {
     /// Paint over the comp rather than under it.
     pub fn above(mut self) -> SceneLayer {
         self.above = true;
+        self
+    }
+
+    /// Ease the fades: the curve each fade's segment travels, from the
+    /// library by name or built whole - `steps(8)` for a mechanical
+    /// reveal, `linear(0, 1.4, 0.9, 1)` for a bounce, a spring for a
+    /// settle. The header and the body no longer share a curve.
+    pub fn eased(mut self, curve: Curve) -> SceneLayer {
+        self.fade_curve = Some(curve);
         self
     }
 }
@@ -695,24 +713,30 @@ fn layer_clip(
 /// with only one of the two fades used to write two keys at `"0s"` (or
 /// two at the span's end) that stopped the whole render. A layer with
 /// neither fade gets `None`, and its steady opacity instead.
+///
+/// A fade curve, when the layer carries one, rides on the key that
+/// *starts* each fade's segment - the third element of the keyframe,
+/// exactly the way a comp track's keys carry theirs - so the segment
+/// itself travels the curve and the hold between the fades does not.
 fn fade_keys(layer: &SceneLayer, span: f64) -> Option<Json> {
     if layer.fade_in <= 1e-9 && layer.fade_out <= 1e-9 {
         return None;
     }
     let fade_in = layer.fade_in.min(span / 2.0).max(0.0);
     let fade_out = layer.fade_out.min(span / 2.0).max(0.0);
-    let mut marks: Vec<(f64, f64)> = Vec::new();
+    // Each mark: `(at, value, starts_a_fade)`.
+    let mut marks: Vec<(f64, f64, bool)> = Vec::new();
     if fade_in > 1e-9 {
-        marks.push((0.0, 0.0));
-        marks.push((fade_in, round(layer.opacity)));
+        marks.push((0.0, 0.0, true));
+        marks.push((fade_in, round(layer.opacity), false));
     } else {
         // No fade up: the layer is already there when its span begins.
-        marks.push((0.0, round(layer.opacity)));
+        marks.push((0.0, round(layer.opacity), false));
     }
     let hold_at = span - fade_out;
     let last_at = marks.last().map(|mark| mark.0).unwrap_or(0.0);
     if fade_out > 1e-9 && hold_at > last_at {
-        marks.push((hold_at, round(layer.opacity)));
+        marks.push((hold_at, round(layer.opacity), true));
     }
     marks.push((
         span,
@@ -721,11 +745,12 @@ fn fade_keys(layer: &SceneLayer, span: f64) -> Option<Json> {
         } else {
             round(layer.opacity)
         },
+        false,
     ));
     // A mark that lands on the one before it is the same key, not a
     // second: the times must strictly increase or the track is refused.
     let mut keys: Vec<Json> = Vec::new();
-    for (at, value) in marks {
+    for (at, value, starts_a_fade) in marks {
         if let Some(last) = keys.last()
             && last[0]
                 .as_str()
@@ -734,7 +759,13 @@ fn fade_keys(layer: &SceneLayer, span: f64) -> Option<Json> {
         {
             keys.pop();
         }
-        keys.push(json!([seconds(at.max(0.0)), value]));
+        let key = match (&layer.fade_curve, starts_a_fade) {
+            (Some(curve), true) => {
+                json!([seconds(at.max(0.0)), value, crate::geneva::ease(curve)])
+            }
+            _ => json!([seconds(at.max(0.0)), value]),
+        };
+        keys.push(key);
     }
     Some(json!({ "keyframes": keys }))
 }
@@ -2178,6 +2209,113 @@ mod tests {
             mid.zoom, 0.08,
             "the layer's own numbers stay what they said"
         );
+    }
+
+    /// The easing library, exposed: a scene authored with `steps(8)` for a
+    /// typewriter reveal, `linear(0, 1.4, 0.9, 1)` for a bounce, and a
+    /// different curve per layer - the header and the body no longer
+    /// share one. The engine plays every one of them as written; what was
+    /// missing was a way to say it.
+    #[test]
+    fn per_layer_easing_lands_in_the_timeline_as_written() {
+        let mut sequence = reel(vec![
+            Scene::new(presets::build("funcut.sting.wordmark").expect("a preset"))
+                .holding(4.0)
+                .layer(
+                    SceneLayer::new("header")
+                        .fading(0.6, 0.6)
+                        .eased(Curve::TYPEWRITER),
+                )
+                .layer(
+                    SceneLayer::new("body")
+                        .fading(0.6, 0.6)
+                        .eased(Curve::bounce()),
+                ),
+        ]);
+        for id in ["header", "body"] {
+            sequence.asset(
+                id,
+                Asset {
+                    src: format!("{id}.png"),
+                    kind: None,
+                },
+            );
+        }
+        let planned = plan(&geneva(), &sequence).expect("a plan");
+        let read = |id: &str| {
+            planned.document["layers"]
+                .as_array()
+                .expect("layers")
+                .iter()
+                .find(|layer| layer["id"] == json!(id))
+                .unwrap_or_else(|| panic!("no layer {id}"))["clips"][0]["opacity"]["keyframes"]
+                .as_array()
+                .expect("keyframes")
+                .clone()
+        };
+        let header = read("s0.plate");
+        let body = read("s0.plate2");
+        // The typewriter's clacks: steps(8, jump-end) on the key that
+        // starts each fade's segment.
+        assert_eq!(
+            header[0][2],
+            json!({ "steps": [8, "jump-end"] }),
+            "{header:?}"
+        );
+        // The bounce's overshoot: linear(0, 1.4, 0.9, 1) as its stops.
+        assert_eq!(
+            body[0][2]["linear"][1],
+            json!([0.3333333333333333, 1.4]),
+            "{body:?}"
+        );
+        assert_eq!(body[0][2]["linear"].as_array().map(Vec::len), Some(4));
+        // And the two layers really do carry different curves.
+        assert_ne!(header[0][2], body[0][2]);
+        // The holds between the fades carry no curve at all.
+        assert_eq!(header[1].as_array().map(Vec::len), Some(2), "{header:?}");
+    }
+
+    /// A layer with no fade curve writes the keys it always wrote: the
+    /// straight fade, two values and no third element.
+    #[test]
+    fn a_layer_without_a_curve_writes_the_plain_fade_it_always_did() {
+        let layer = SceneLayer::new("plate").fading(0.5, 0.5);
+        let keys = fade_keys(&layer, 4.0).expect("keyframes");
+        let keys = keys["keyframes"].as_array().expect("keys");
+        assert!(
+            keys.iter()
+                .all(|key| key.as_array().map(Vec::len) == Some(2)),
+            "{keys:?}"
+        );
+    }
+
+    /// A storyboard names the easing by its library name, and the name
+    /// lands on the layer the plan carries.
+    #[test]
+    fn a_storyboard_names_a_layers_easing_from_the_library() {
+        let storyboard = crate::storyboard::Storyboard::parse(
+            r##"{ "assets": { "back": "b.png" },
+                 "scenes": [ { "preset": "funcut.sting.wordmark", "hold": 4.0,
+                   "layers": [ { "asset": "back", "fadeIn": 0.6, "fadeOut": 0.6,
+                                 "fadeCurve": "bounce" } ] } ] }"##,
+        )
+        .expect("a storyboard");
+        let sequence = storyboard.sequence(Path::new(".")).expect("a sequence");
+        assert_eq!(
+            sequence.scenes[0].layers[0].fade_curve,
+            Some(Curve::bounce()),
+            "the name is the curve"
+        );
+        // An unknown name is refused with the library spelled out, not
+        // silently ignored as a plain fade.
+        let refused = crate::storyboard::Storyboard::parse(
+            r##"{ "assets": { "back": "b.png" },
+                 "scenes": [ { "preset": "funcut.sting.wordmark",
+                   "layers": [ { "asset": "back", "fadeCurve": "wobbly" } ] } ] }"##,
+        )
+        .expect_err("an unknown curve name is refused");
+        assert!(refused.contains("wobbly"), "{refused}");
+        assert!(refused.contains("typewriter"), "{refused}");
     }
 
     #[test]

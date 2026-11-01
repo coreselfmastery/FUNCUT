@@ -151,6 +151,64 @@ impl Curve {
         damping: 15.0,
         mass: 1.0,
     });
+    /// A typewriter: `steps(8, jump-end)` - eight mechanical holds, the
+    /// reveal arriving in clacks rather than a slide. The curve a
+    /// per-character stagger was born to carry.
+    pub const TYPEWRITER: Curve = Curve::Steps {
+        count: 8,
+        position: StepPosition::JumpEnd,
+    };
+
+    /// A bounce without JavaScript: `linear(0, 1.4, 0.9, 1)` - the CSS
+    /// `linear()` ramp that overshoots by 40 percent and settles back,
+    /// which is a whole bounce in one timing function. The four plain
+    /// values are the even inputs of `linear(0, 1.4, 0.9, 1)`, spelled
+    /// as the stops the model carries. A function, not a constant,
+    /// because the stops are an allocation.
+    pub fn bounce() -> Curve {
+        Curve::Points {
+            stops: vec![(0.0, 0.0), (1.0 / 3.0, 1.4), (2.0 / 3.0, 0.9), (1.0, 1.0)],
+        }
+    }
+
+    /// The curve a document names - the easing library, exposed as a
+    /// vocabulary instead of five structs' worth of construction.
+    ///
+    /// Every name is what `Curve::css()` writes or what a storyboard, an
+    /// MCP call or an agent's JSON carries: `"ease-out"`, `"spring-pop"`,
+    /// `"typewriter"`, `"bounce"`, and the rest of the list below. An
+    /// unknown name is `None`, so a caller says it in its own words
+    /// rather than guessing a default.
+    pub fn named(name: &str) -> Option<Curve> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "linear" => Some(Curve::Linear),
+            "ease" => Some(Curve::EASE),
+            "ease-in" => Some(Curve::EASE_IN),
+            "ease-out" => Some(Curve::EASE_OUT),
+            "ease-in-out" => Some(Curve::EASE_IN_OUT),
+            "emphasis" => Some(Curve::EMPHASIS),
+            "spring" => Some(Curve::SPRING),
+            "spring-pop" => Some(Curve::SPRING_POP),
+            "typewriter" => Some(Curve::TYPEWRITER),
+            "bounce" => Some(Curve::bounce()),
+            _ => None,
+        }
+    }
+
+    /// The names the easing library answers to, in the order a gallery
+    /// would show them.
+    pub const NAMES: [&str; 10] = [
+        "linear",
+        "ease",
+        "ease-in",
+        "ease-out",
+        "ease-in-out",
+        "emphasis",
+        "spring",
+        "spring-pop",
+        "typewriter",
+        "bounce",
+    ];
 
     /// The eased fraction for a linear one, at `t` in `0..=1`.
     ///
@@ -224,6 +282,24 @@ fn spring_css(spring: &Spring) -> String {
         // for the same spring, and a cache key does not see jitter.
         let peak = ((1.0 + overshoot) * 100.0).round() / 100.0;
         format!("cubic-bezier(0.3, {peak}, 0.6, 1)")
+    }
+}
+
+/// A curve from the JSON a storyboard or an agent carries: a name from
+/// the easing library (`"bounce"`, `"typewriter"`, `"ease-out"`), or a
+/// full curve object (`{"kind": "steps", "count": 8}`). A name that is
+/// not in the library is an error naming the ones that are, because a
+/// typo silently ignored is a layer that animates on the wrong curve.
+pub fn from_json(value: &serde_json::Value) -> Result<Curve, String> {
+    match value {
+        serde_json::Value::String(name) => Curve::named(name).ok_or_else(|| {
+            format!(
+                "{name:?} is not a curve the library knows; the names are {}",
+                Curve::NAMES.join(", ")
+            )
+        }),
+        other => serde_json::from_value(other.clone())
+            .map_err(|error| format!("a curve is a name or a curve object: {error}")),
     }
 }
 
@@ -430,6 +506,66 @@ mod tests {
         // The pop spring overshoots: 260/15/1 is a damping ratio of 0.465,
         // whose first peak is e^(-0.465π/√(1-0.465²)) ≈ 0.19 above the mark.
         assert_eq!(Curve::SPRING_POP.css(), "cubic-bezier(0.3, 1.19, 0.6, 1)");
+    }
+
+    /// The named library: every name answers, every curve is reachable
+    /// by the name a document carries, and the two new ones are what
+    /// their use says - a typewriter's clacks and a bounce's overshoot.
+    #[test]
+    fn the_easing_library_answers_to_its_names() {
+        for name in Curve::NAMES {
+            assert!(Curve::named(name).is_some(), "{name} is not in the library");
+        }
+        assert!(Curve::named("nope").is_none());
+        assert_eq!(Curve::named("typewriter"), Some(Curve::TYPEWRITER));
+        assert_eq!(Curve::named("bounce"), Some(Curve::bounce()));
+        // Case and padding are the document's, not the library's.
+        assert_eq!(Curve::named("  Ease-Out "), Some(Curve::EASE_OUT));
+    }
+
+    /// A bounce overshoots and lands: `linear(0, 1.4, 0.9, 1)` is above
+    /// 1 on the way and exactly 1 at the end - a whole bounce in one
+    /// timing function, no JavaScript in sight.
+    #[test]
+    fn a_bounce_overshoots_and_lands() {
+        assert!((Curve::bounce().apply(1.0) - 1.0).abs() < 1e-9);
+        let peak = Curve::bounce().apply(1.0 / 3.0);
+        assert!(peak > 1.2, "the bounce must overshoot, not slide: {peak}");
+        let settle = Curve::bounce().apply(0.9);
+        assert!(settle > 0.9 && settle < 1.0, "the settle reads: {settle}");
+        assert!(
+            Curve::bounce().css().starts_with("linear("),
+            "{}",
+            Curve::bounce().css()
+        );
+    }
+
+    /// A typewriter holds and jumps: eight clacks, the value never ahead
+    /// of the step it is in.
+    #[test]
+    fn a_typewriter_holds_then_jumps() {
+        assert_eq!(Curve::TYPEWRITER.apply(0.01), 0.0);
+        assert_eq!(Curve::TYPEWRITER.apply(0.2), 0.125);
+        assert_eq!(Curve::TYPEWRITER.apply(1.0), 1.0);
+    }
+
+    /// The JSON a storyboard carries: a name, a curve object, and a
+    /// refusal that names the library rather than guessing.
+    #[test]
+    fn a_curve_comes_from_json_as_a_name_or_an_object() {
+        use serde_json::json;
+        assert_eq!(
+            from_json(&json!("bounce")).expect("the name is in the library"),
+            Curve::bounce()
+        );
+        assert_eq!(
+            from_json(&json!({"kind": "steps", "count": 8, "position": "jump-end"}))
+                .expect("a curve object"),
+            Curve::TYPEWRITER
+        );
+        let error = from_json(&json!("nope")).expect_err("the name is unknown");
+        assert!(error.contains("nope"), "{error}");
+        assert!(error.contains("bounce"), "{error}");
     }
 
     #[test]

@@ -42,6 +42,7 @@ use serde_json::Value as Json;
 
 use crate::authoring::Op;
 use crate::comp::{Asset, Blend, Comp, Fit, Rgba};
+use crate::curve::Curve;
 use crate::presets;
 use crate::sequence::{AudioBed, Curtain, Scene, SceneLayer, Sequence};
 
@@ -203,9 +204,32 @@ pub struct LayerCard {
     /// parallax.
     #[serde(default)]
     pub parallax: Option<f64>,
+    /// The easing the layer's fades travel, as a name from the library
+    /// (`"typewriter"`, `"bounce"`, `"ease-out"`, `"spring-pop"`, ...) or
+    /// a full curve object. A header can settle while the body bounces.
+    /// (`fadeCurve` also parses, for a hand that types camelCase.)
+    #[serde(default, alias = "fadeCurve", deserialize_with = "curve_from_json")]
+    pub fade_curve: Option<Curve>,
     /// Whether it paints over the comp rather than under it.
     #[serde(default)]
     pub above: Option<bool>,
+}
+
+/// A layer card's `fadeCurve`: a name from the easing library, or a full
+/// curve object - both of them a [`Curve`], or `None` when the field is
+/// absent. An unknown name is the error that names the library, because
+/// a typo silently ignored is a layer that animates on the wrong curve.
+fn curve_from_json<'de, D>(deserializer: D) -> Result<Option<Curve>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value: Option<serde_json::Value> = serde::Deserialize::deserialize(deserializer)?;
+    match value {
+        None => Ok(None),
+        Some(value) => crate::curve::from_json(&value)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+    }
 }
 
 /// A bed of sound under the whole sequence.
@@ -908,6 +932,9 @@ impl LayerCard {
         }
         if let Some(rate) = self.parallax {
             layer = layer.parallax(rate);
+        }
+        if let Some(curve) = &self.fade_curve {
+            layer = layer.eased(curve.clone());
         }
         if self.above == Some(true) {
             layer = layer.above();

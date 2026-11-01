@@ -549,7 +549,23 @@ a preset is resolved or an engine is woken.
 
 Every layer moves on its own clock, and that is the whole point: a background drifting four
 percent while a foreground card slides two is parallax, and parallax is what makes a stack of
-stills read as a scene rather than a collage.
+stills read as a scene rather than a collage. And every layer *eases* on its own curve, which is
+the other half of the point: the header settles in on `"emphasis"` while the body bounces in on
+`"bounce"`, in one storyboard:
+
+```json
+{ "layers": [
+  { "asset": "header", "fadeIn": 0.6, "fadeOut": 0.6, "fadeCurve": "emphasis" },
+  { "asset": "body",   "fadeIn": 0.6, "fadeOut": 0.6, "fadeCurve": "bounce" } ] }
+```
+
+The easing library is ten names, every one of them a curve the engine already plays exactly as
+written - `linear`, `ease`, `ease-in`, `ease-out`, `ease-in-out`, `emphasis` (the settle curve the
+presets share), `spring`, `spring-pop`, **`typewriter`** (`steps(8, jump-end)` - the reveal in
+clacks) and **`bounce`** (`linear(0, 1.4, 0.9, 1)` - a whole bounce in one timing function, no
+JavaScript). A full curve object parses too (`{"kind": "steps", "count": 12, "position":
+"jump-none"}`), and an unknown name is refused with the library spelled out rather than silently
+ignored: a typo forgiven is a layer animating on the wrong curve.
 
 | Field | What it does | The read |
 | --- | --- | --- |
@@ -562,6 +578,7 @@ stills read as a scene rather than a collage.
 | `blend` | `normal` (default), `multiply`, `screen`, `overlay`, `darken`, `lighten`, `difference`, `soft-light`, `add` | `screen`/`add` turn a soft radial picture into a light leak; `multiply` shades one into a vignette |
 | `opacity` | steady opacity, 0 to 1 | `0.08` grain over everything |
 | `fade_in` / `fade_out` | fade up and down, seconds (`fadeIn`/`fadeOut` also parse) | held to half the span so the two never cross |
+| `fade_curve` | the easing the fades travel - a name from the easing library, or a full curve object (`fadeCurve` also parses) | `"typewriter"` for a mechanical reveal, `"bounce"` for a bounce, `"spring-pop"` for a settle; the curve rides the key that starts each fade's segment, so the hold between them stays straight |
 | `start` / `hold` / `delay` | its own timing, from the scene's start (`delay` is the choreography's name for `start`) | a foreground that arrives at `1.2` lands over a scene already running; a layer that outlives its scene is cut to the scene's end |
 | `parallax` | how fast it drifts, as a multiple of its own `zoom` and `pan` - or of the classic plate's 4% growth / 3% slide, when it carries none | three layers at `0.5`, `1.0` and `2.0` are three depths of one scene; the rate is applied where the timeline is emitted, so the layer's own numbers stay what they said |
 | `above` | paint over the comp rather than under it | grain, vignettes, light leaks, silhouettes - still under the curtain and under any scene that overlaps this one |

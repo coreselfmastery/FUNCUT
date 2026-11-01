@@ -1274,7 +1274,7 @@ fn keyframes(track: &Track, kind: Kind, span: f64, warnings: &mut Vec<String>) -
 
 /// A curve as Geneva writes it: a CSS ease name, `cubic-bezier()`, `steps()`,
 /// `linear()`, or a spring.
-fn ease(curve: &Curve) -> Json {
+pub(crate) fn ease(curve: &Curve) -> Json {
     match curve {
         Curve::Linear => json!("linear"),
         Curve::Bezier { x1, y1, x2, y2 } => json!({ "cubic-bezier": [x1, y1, x2, y2] }),

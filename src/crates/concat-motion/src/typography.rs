@@ -133,6 +133,20 @@ impl Kinetic {
         }
     }
 
+    /// A typewriter: character by character, each held and jumped by
+    /// `steps(8)` - the reveal arriving in clacks rather than a slide.
+    /// This is the easing library's `Curve::TYPEWRITER` spent where it
+    /// was born to be.
+    pub fn typewriter() -> Kinetic {
+        Kinetic {
+            stagger: Stagger::Char,
+            delay: 0.045,
+            seconds: 0.4,
+            curve: Curve::TYPEWRITER,
+            ..Kinetic::default()
+        }
+    }
+
     /// Set the delay between units.
     pub fn delay(mut self, seconds: f64) -> Kinetic {
         self.delay = seconds.max(0.0);

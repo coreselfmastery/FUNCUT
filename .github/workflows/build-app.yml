@@ -156,6 +156,25 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "Building Concat $version for ${{ matrix.target }}"
 
+      # The version this build must call itself, the same arithmetic the
+      # build step's FUNCUT_ITERATION case uses: a ref cut from one of the
+      # fork's own tags - v0.2.8-funcut.6 - answers `0.2.8-funcut.6`, any
+      # other ref answers the bare number. The smoke steps assert this
+      # string against every bundle's own `--version`, so a bundle that
+      # answers as anything else - a stale binary, an untagged build -
+      # fails the release instead of shipping.
+      - name: The version this build must answer with
+        id: answers
+        shell: bash
+        env:
+          BUILD_REF: ${{ inputs.ref || github.ref_name }}
+        run: |
+          suffix=""
+          case "$BUILD_REF" in
+            v[0-9]*-funcut.[0-9]*) suffix="-funcut.${BUILD_REF##*-funcut.}" ;;
+          esac
+          echo "version=${{ steps.version.outputs.version }}${suffix}" >> "$GITHUB_OUTPUT"
+
       # ── Linux ──────────────────────────────────────────────────────────
       # Slint's Skia renderer links fontconfig and freetype; cpal links
       # ALSA; bindgen needs libclang; whisper.cpp is built by cmake; the
@@ -399,6 +418,7 @@ jobs:
         timeout-minutes: 15
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          EXPECT_VERSION: ${{ steps.answers.outputs.version }}
         run: |
           set -euo pipefail
           sudo apt-get install -y xvfb xauth strace libgl1-mesa-dri mesa-vulkan-drivers
@@ -556,6 +576,7 @@ jobs:
         timeout-minutes: 25
         env:
           VERSION: ${{ steps.version.outputs.version }}
+          EXPECT_VERSION: ${{ steps.answers.outputs.version }}
         run: |
           set -euo pipefail
           for image in ubuntu:22.04 debian:12; do

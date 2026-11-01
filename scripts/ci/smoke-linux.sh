@@ -7,14 +7,15 @@
 #   smoke-linux.sh [--sde SDE64] DIR
 #       The staged folder (DIR/concat beside DIR/lib), on this machine:
 #       every library resolves from the folder alone; `concat --version`
-#       exits 0; `concat --smoke` (start-up through the first frame of the
-#       window, then out) exits 0 under Xvfb, and does not so much as try
-#       to open the NVIDIA driver's CUDA or NVENC libraries, which nothing
-#       should touch before a person asks for a hardware export. With
-#       --sde, `--version` again under Intel's emulator posing as an Ivy
-#       Bridge (AVX, no AVX2), the oldest CPU the x86_64 bundle promises,
-#       and `--whisper-cpu`, loading whisper's CPU kernels, posing as a
-#       Sandy Bridge.
+#       exits 0 AND answers with the version EXPECT_VERSION names when the
+#       environment carries it; `concat --smoke` (start-up through the first
+#       frame of the window, then out) exits 0 under Xvfb, and does not so
+#       much as try to open the NVIDIA driver's CUDA or NVENC libraries,
+#       which nothing should touch before a person asks for a hardware
+#       export. With --sde, `--version` again under Intel's emulator posing
+#       as an Ivy Bridge (AVX, no AVX2), the oldest CPU the x86_64 bundle
+#       promises, and `--whisper-cpu`, loading whisper's CPU kernels, posing
+#       as a Sandy Bridge.
 #
 #   smoke-linux.sh --container IMAGE DEB APPIMAGE
 #       The packages, in a clean IMAGE (ubuntu:22.04, debian:12) through
@@ -57,6 +58,36 @@ expect_ok() {
   fi
 }
 
+# The version this bundle was built to call itself, when the caller knows
+# it: the release's number with the fork's own iteration on the end
+# (`0.2.8-funcut.6`), EXPECT_VERSION in the environment. A bundle that
+# answers --version with some other number - a stale binary in the folder,
+# an upstream build where this fork's was meant to be, a tag that did not
+# reach the compiler - ships silently without this check, which is why
+# `--version` is asserted, not just run.
+expect_version() {
+  local what=$1 secs=$2 out status=0 expected=${EXPECT_VERSION:-}
+  shift 2
+  out=$(timeout --kill-after=10 "$secs" "$@" --version 2>&1) || status=$?
+  printf '%s\n' "$out" | tail -n 60
+  if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+    fail "$what: still running after ${secs}s"
+  elif [ "$status" -ne 0 ]; then
+    fail "$what: exited with $status"
+  fi
+  if [ -n "$expected" ]; then
+    # The binary prints `concat <version>`; the whole word is matched so
+    # 0.2.8 does not satisfy an expectation of 0.2.8-funcut.6 (nor of
+    # 0.2.80, should there ever be one).
+    if ! grep -q "concat ${expected}\( \|$\)" <<<"$out"; then
+      fail "$what: --version said '$(head -n1 <<<"$out")', expected 'concat $expected'"
+    fi
+    say "version answers concat $expected"
+  else
+    say "EXPECT_VERSION not set: --version ran but its answer was not checked"
+  fi
+}
+
 host() {
   local sde="" dir
   if [ "${1:-}" = "--sde" ]; then sde=$2; shift 2; fi
@@ -78,7 +109,7 @@ host() {
   fi
 
   say "concat --version"
-  HOME=$(fresh_home) expect_ok "concat --version" 60 "$bin" --version
+  HOME=$(fresh_home) expect_version "concat --version" 60 "$bin"
 
   say "concat --smoke"
   local trace
@@ -105,7 +136,7 @@ host() {
     say "concat --version on an emulated Ivy Bridge"
     # The emulator stops the program at the first instruction the chip
     # it poses as does not have, and says which.
-    HOME=$(fresh_home) expect_ok "concat --version under SDE -ivb" 600 "$sde" -ivb -- "$bin" --version
+    HOME=$(fresh_home) expect_version "concat --version under SDE -ivb" 600 "$sde" -ivb -- "$bin"
 
     # whisper's CPU kernels, one module per CPU generation: ggml opens
     # every one to score it against the CPU before it keeps the best, so
@@ -126,6 +157,7 @@ container() {
   [ -f "$appimage" ] || fail "$appimage is not there"
   say "in a clean $image"
   docker run --rm \
+    -e "EXPECT_VERSION=${EXPECT_VERSION:-}" \
     -v "$here/smoke-linux.sh:/ci/smoke-linux.sh:ro" \
     -v "$deb:/pkg/concat.deb:ro" \
     -v "$appimage:/pkg/concat.AppImage:ro" \
@@ -145,7 +177,7 @@ inside() {
     "$deb" xvfb xauth libgl1-mesa-dri mesa-vulkan-drivers fonts-dejavu-core > /dev/null
 
   say "concat --version (the package)"
-  HOME=$(fresh_home) expect_ok "concat --version from the .deb" 60 concat --version
+  HOME=$(fresh_home) expect_version "concat --version from the .deb" 60 concat
   say "concat --smoke (the package)"
   HOME=$(fresh_home) expect_ok "concat --smoke from the .deb" 180 \
     xvfb-run -a -s "-screen 0 1920x1080x24" concat --smoke
@@ -153,7 +185,7 @@ inside() {
   # No FUSE in a container: the AppImage unpacks itself and runs.
   export APPIMAGE_EXTRACT_AND_RUN=1
   say "concat --version (the AppImage)"
-  HOME=$(fresh_home) expect_ok "concat --version from the AppImage" 120 "$appimage" --version
+  HOME=$(fresh_home) expect_version "concat --version from the AppImage" 120 "$appimage"
   say "concat --smoke (the AppImage)"
   HOME=$(fresh_home) expect_ok "concat --smoke from the AppImage" 240 \
     xvfb-run -a -s "-screen 0 1920x1080x24" "$appimage" --smoke

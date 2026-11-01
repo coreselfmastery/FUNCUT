@@ -74,7 +74,7 @@ Everything runs locally on a native Rust engine with a GPU compositor. Install i
 - 📝 **Titles.** Fonts, stroke, shadow, background plate. Presets to start from.
 - 🎙️ **One-switch voice cleanup.** Denoise, enhance voice, level the loudness. Plus chipmunk, robot, telephone and friends.
 - 📤 **Export.** H.264, HEVC, AV1. Up to 4K 60, 10-bit colour.
-- 🦀 **Native Rust engine.** GPU compositor, proxies, hardware decode; the small-machine measurements live in [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+- 🦀 **Native Rust engine.** GPU compositor, proxies, hardware decode; the small-machine measurements live in [docs/PERFORMANCE.md](docs/PERFORMANCE.md). Measured on a 4 GB machine with no GPU at all: 1080p scrubs answer in about half a second, a 1080p30 export runs at 8.9 frames/s (a five-minute video in about seventeen minutes), and the heaviest phase peaks at 1.0 GiB of RAM — a quarter of what the machine has.
 - 🤖 **Scriptable.** An MCP server built in, so Claude and other AI agents can edit with it ([one line to set up](docs/MCP.md)), and a JSON-RPC API for scripts. A build from source adds gRPC and a command-line tool. With the [Forge harness](docs/forge/FORGE.md) and the [funcut-director skill](.claude/skills/funcut-director/SKILL.md) an agent directs a whole video from a script - with [maestro](docs/MAESTRO.md), the design-and-motion judgment skill, riding shotgun, and [clip-skills](docs/CLIPSKILLS.md), the editing-craft skill, beside it - and the editor's Forge page starts one with a click.
 - 🖥️ **Linux.** x86_64 and ARM. 26 languages. Same app, same project files.
 

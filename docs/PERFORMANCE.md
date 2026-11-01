@@ -54,17 +54,35 @@ It prints a markdown block; paste it under Results below.
 
 ## Results
 
-| Machine | Scrub | Export (300 frames) | Peak RSS | Run |
-| --- | --- | --- | --- | --- |
-| *not yet measured* | — | — | — | this row is replaced by the first run |
+First measurement, 2026-11-01, on a 2 vCPU cloud VM (Intel Xeon) with
+4.1 GB of RAM and **no GPU at all**: the compositor ran on Mesa's
+lavapipe software Vulkan renderer, so every number below is CPU-only —
+the very machine the fork's small-machine work is for. The build is a
+release `concat-cli` from this tree; the machine's own words, as the
+script read them:
 
-No measurement of this fork has been published yet. The claim the fork
-makes is the design facts above — the caches size themselves to the
-machine, and the fixed sizes that made a 4 GB laptop swap are gone — and
-the words "runs on a potato laptop" elsewhere in these docs are that
-design intent, not a measured result. When you run the benchmark on your
-machine, the block it prints is your answer, and this table is where it
-goes.
+| Measurement | Result |
+| --- | --- |
+| Machine | Intel(R) Xeon(R) Processor, 4259396 kB RAM, kernel 5.10.134-013.15.kangaroo.al8.x86_64 |
+| Source | a generated 60 s 1080p30 testsrc2 clip |
+| Scrub: 120 random instants, `preview.frame` | **1.9 frames/s** (63.2 s in all) |
+| Export: `concat-cli render`, 300 frames | **33.8 s** (8.9 frames/s) |
+| Peak RSS while scrubbing | **657.3 MiB** |
+| Peak RSS while rendering | **1019.6 MiB** |
+
+Read plainly: with 4 GB and no GPU, a paused 1080p monitor answers a
+random scrub in about half a second, a 1080p30 export runs at 8.9
+frames a second — a five-minute video renders in about seventeen
+minutes — and the heaviest phase, the export, peaks at 1.0 GiB, a
+quarter of the machine's RAM. That is what the caches sizing
+themselves to the machine buy: on this VM the whole edit stayed inside
+its 4 GB with room to spare. A laptop with even a modest GPU moves the
+compositor's work off the CPU entirely, so these numbers are the
+floor, not the ceiling.
+
+A number from your own machine belongs beside these: run
+[`scripts/benchmark.py`](benchmark.py) and paste what it prints under
+the row above, labelled with what it ran on.
 
 ## The farm: parallel motion renders, `--parts N`
 

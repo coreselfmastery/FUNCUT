@@ -218,6 +218,15 @@ pub(crate) fn apply(comp: &mut Comp, pulse: &Pulse) {
 /// curve the pulse names) and a key back at the rest, merged with the
 /// track's own keys - the author's fade and the beat's pulse are both
 /// kept, sorted by time, the beat winning its own moment.
+///
+/// The rest each beat bumps from is the authored motion's own value at
+/// that moment, sampled from the track as it stands - a pulse keyed to
+/// the node's static rest would fight an authored zoom or fade rather
+/// than ride it: a chart growing through an authored zoom would shrink
+/// on the beat instead, a caption fading out would flash bright on it.
+/// The settle returns to the authored value at its own moment the same
+/// way, so the beat is a bump *on* the motion and not a jump back to
+/// where the motion started.
 fn bump_number(
     node: &mut Node,
     beats: &[f64],
@@ -227,23 +236,14 @@ fn bump_number(
     amount: f64,
     pulse: &Pulse,
 ) {
-    let bump = match property {
-        // Opacity is clamped to what a frame can carry: a node already
-        // at full opacity brightens nowhere, so its pulse dips - a
-        // blink reads as a pulse reads - and a dimmed node brightens.
-        "opacity" => {
-            let up = rest + amount;
-            if up <= 1.0 {
-                up
-            } else {
-                (rest - amount).max(0.0)
-            }
-        }
-        _ => rest + amount,
+    let existing = node.tracks.get(property);
+    let local = |at: f64| -> f64 {
+        existing
+            .and_then(|track| track.sample(at))
+            .and_then(|value| value.as_number())
+            .filter(|value| value.is_finite())
+            .unwrap_or(rest)
     };
-    if (bump - rest).abs() <= 1e-9 {
-        return;
-    }
     let mut keys: Vec<Key> = Vec::new();
     for beat in beats {
         let at = (beat - node.start) / span;
@@ -251,10 +251,28 @@ fn bump_number(
             // A beat outside the node's own window does not reach it.
             continue;
         }
+        let from = local(at);
+        let bump = match property {
+            // Opacity is clamped to what a frame can carry: a node already
+            // at full opacity brightens nowhere, so its pulse dips - a
+            // blink reads as a pulse reads - and a dimmed node brightens.
+            "opacity" => {
+                let up = from + amount;
+                if up <= 1.0 {
+                    up
+                } else {
+                    (from - amount).max(0.0)
+                }
+            }
+            _ => from + amount,
+        };
+        if (bump - from).abs() <= 1e-9 {
+            continue;
+        }
         keys.push(Key::eased(at, Value::number(bump), pulse.curve.clone()));
         let back = at + pulse.release / span;
         if back <= 1.0 {
-            keys.push(Key::new(back.min(1.0), Value::number(rest)));
+            keys.push(Key::new(back.min(1.0), Value::number(local(back))));
         }
     }
     merge(node, property, keys, Value::number(rest));
@@ -323,9 +341,13 @@ fn merge(node: &mut Node, property: &str, keys: Vec<Key>, rest: Value) {
         merged.push(key);
     }
     // A track that starts mid-span needs its rest first: a key at 0.9
-    // with nothing before it animates nothing until it lands.
+    // with nothing before it animates nothing until it lands. The rest
+    // it needs is the one the track was already holding - an authored
+    // track holds its own first value from the start, and the pulse
+    // must not swap that for the node's static one.
+    let hold = existing.sample(0.0).unwrap_or(rest);
     if merged.first().is_some_and(|first| first.at > 1e-9) {
-        merged.insert(0, Key::new(0.0, rest));
+        merged.insert(0, Key::new(0.0, hold));
     }
     node.tracks.insert(property.into(), Track::new(merged));
 }
@@ -432,6 +454,85 @@ mod tests {
         for pair in keys.windows(2) {
             assert!(pair[0].at < pair[1].at, "{keys:?}");
         }
+    }
+
+    /// The bump rides the authored motion, not the static rest: a chart
+    /// growing through an authored zoom grows *more* on the beat, rather
+    /// than shrinking to what the node's untouched scale would say.
+    #[test]
+    fn a_beat_bumps_the_authored_motion_where_it_stands() {
+        let mut node = placed_node("chart");
+        node.tracks.insert(
+            "scale".into(),
+            Track::new(vec![
+                Key::new(0.0, Value::number(1.0)),
+                Key::new(1.0, Value::number(1.4)),
+            ]),
+        );
+        let mut comp = node_comp(node);
+        // A beat at 2s of a 4s span: the authored zoom stands at 1.2
+        // there, and the bump is 5 percent on top of that.
+        apply(&mut comp, &Pulse::scale(vec![2.0], 0.05));
+        let keys = &comp.nodes[0].tracks["scale"].keys;
+        let bump = keys
+            .iter()
+            .find(|key| (key.at - 0.5).abs() < 1e-9)
+            .expect("the beat's key");
+        assert_eq!(bump.value, Value::number(1.25), "{keys:?}");
+        // And the settle returns to the authored zoom's own value at its
+        // moment - 1.232 at 0.58 - not to the 1.0 the node rests at.
+        let settle = keys
+            .iter()
+            .find(|key| (key.at - 0.58).abs() < 1e-9)
+            .expect("the settle");
+        assert_eq!(settle.value, Value::number(1.232), "{keys:?}");
+        for pair in keys.windows(2) {
+            assert!(pair[0].at < pair[1].at, "{keys:?}");
+        }
+    }
+
+    /// A dimmed caption brightens on the beat by the amount, from the
+    /// dimness it is actually in - a pulse keyed to the node's static
+    /// full opacity would have blinked it dark instead.
+    #[test]
+    fn a_dimmed_caption_brightens_from_where_it_is() {
+        let mut node = placed_node("caption");
+        node.tracks.insert(
+            "opacity".into(),
+            Track::new(vec![
+                Key::new(0.0, Value::number(0.5)),
+                Key::new(1.0, Value::number(0.5)),
+            ]),
+        );
+        let mut comp = node_comp(node);
+        apply(&mut comp, &Pulse::opacity(vec![1.0], 0.08));
+        let keys = &comp.nodes[0].tracks["opacity"].keys;
+        let bump = keys
+            .iter()
+            .find(|key| (key.at - 0.25).abs() < 1e-9)
+            .expect("the beat's key");
+        assert_eq!(bump.value, Value::number(0.58), "{keys:?}");
+    }
+
+    /// An authored track that starts mid-span holds its own first value
+    /// from the start; a pulse landing before it does not swap that hold
+    /// for the node's static rest.
+    #[test]
+    fn an_authored_track_keeps_its_own_hold_before_a_pulse() {
+        let mut node = placed_node("card");
+        node.tracks.insert(
+            "opacity".into(),
+            Track::new(vec![Key::new(0.9, Value::number(0.4))]),
+        );
+        let mut comp = node_comp(node);
+        // The beat at 1s lands at 0.25, before the authored 0.9 key.
+        apply(&mut comp, &Pulse::opacity(vec![1.0], 0.08));
+        let keys = &comp.nodes[0].tracks["opacity"].keys;
+        assert_eq!(keys[0].at, 0.0, "{keys:?}");
+        assert_eq!(keys[0].value, Value::number(0.4), "{keys:?}");
+        // And the beat itself still bumps from the 0.4 the track holds.
+        let bumped = keys[1].value.as_number().expect("a number");
+        assert!((bumped - 0.48).abs() < 1e-9, "{keys:?}");
     }
 
     /// A beat outside a node's own window does not reach it; a pulse

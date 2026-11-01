@@ -39,6 +39,22 @@ use crate::feed;
 use crate::ffi;
 use crate::hardware::{self, Device, HwDevice, HwPolicy, Seat};
 
+/// Whether the linked FFmpeg's `scale` filter knows the colour-management
+/// terms - `in_primaries`, `in_transfer`, `intent` - that carry a wide
+/// picture into BT.709 whole: FFmpeg 8's swscale rewrite, libavfilter 11.
+/// The README's floor is FFmpeg 7, whose `scale` has the matrix and range
+/// terms only, so the wide conversion there names what 7 takes and
+/// converts the curve as if it were BT.709's, rather than refusing the
+/// graph outright on an option 7 has never heard of.
+const COLOR_TERMS: bool = ffmpeg::ffi::LIBAVFILTER_VERSION_MAJOR >= 11;
+
+/// The `scale` filter's one spelling of BT.2020's matrix that FFmpeg 7
+/// and 8 both accept: `bt2020`. FFmpeg 8 also reads `bt2020nc`; 7's
+/// option table knows no such constant and answers `Invalid argument`
+/// to the whole graph. `bt2020c`, the CL matrix, is refused as an input
+/// by both - CL is a matrix swscale does not take.
+const BT2020_MATRIX: &str = "bt2020";
+
 /// How [`Decoder::open_codec`] opens the codec.
 enum Codec<'a> {
     /// libavcodec's own decoder for the stream, on the CPU.
@@ -444,6 +460,30 @@ impl ColorSignal {
     /// since FFmpeg 7.1, so it costs no library the bundles lack.
     fn bt709_args(self) -> String {
         use ffmpeg::color::{Primaries, Range, Space, TransferCharacteristic as Transfer};
+        let matrix = match self.matrix {
+            Space::BT2020NCL | Space::BT2020CL => BT2020_MATRIX,
+            Space::BT709 => "bt709",
+            _ => "auto",
+        };
+        let range = match self.range {
+            Range::MPEG => "tv",
+            Range::JPEG => "pc",
+            _ => "auto",
+        };
+        if !COLOR_TERMS {
+            // FFmpeg 7, the README's floor: `scale` has the matrix and
+            // range terms only - `in_primaries`, `in_transfer` and
+            // `intent` are the swscale rewrite of FFmpeg 8 - and it
+            // spells BT.2020's matrix `bt2020`, not `bt2020nc`, a
+            // constant its option table has never heard of. The wide
+            // picture still comes across - matrix and range named,
+            // BT.709 out - but its curve is converted as if it were
+            // BT.709's: no perceptual tone map, where 8 maps it whole.
+            return format!(
+                ":in_color_matrix={matrix}:in_range={range}\
+                 :out_color_matrix=bt709:out_range=tv"
+            );
+        }
         let primaries = match self.primaries {
             Primaries::BT2020 => "bt2020",
             Primaries::BT709 => "bt709",
@@ -456,17 +496,6 @@ impl ColorSignal {
             Transfer::BT2020_10 => "bt2020-10",
             Transfer::BT2020_12 => "bt2020-12",
             Transfer::BT709 => "bt709",
-            _ => "auto",
-        };
-        let matrix = match self.matrix {
-            Space::BT2020NCL => "bt2020nc",
-            Space::BT2020CL => "bt2020c",
-            Space::BT709 => "bt709",
-            _ => "auto",
-        };
-        let range = match self.range {
-            Range::MPEG => "tv",
-            Range::JPEG => "pc",
             _ => "auto",
         };
         format!(
@@ -495,10 +524,14 @@ impl ColorSignal {
     /// transfer are left as they are, for the GPU to convert.
     fn native_args(self) -> String {
         use ffmpeg::color::{Range, Space};
+        // `bt2020` is the one spelling FFmpeg 7 and 8 both take for the
+        // NCL matrix - 8 also reads `bt2020nc`, 7 has never heard of it -
+        // and CL has no spelling at all: swscale refuses it as an input
+        // matrix on both, so it rides NCL's, a matrix no encoder emits.
         let matrix = match self.matrix {
-            Space::BT2020CL => "bt2020c",
+            Space::BT2020CL | Space::BT2020NCL => BT2020_MATRIX,
             Space::BT709 => "bt709",
-            _ => "bt2020nc",
+            _ => BT2020_MATRIX,
         };
         let range = match self.range {
             Range::JPEG => "pc",
@@ -1517,8 +1550,21 @@ mod tests {
         };
         assert!(hdr.is_wide() && hdr.is_hdr());
         let spec = video_filter(0, &options, 640, 360, Some(&hdr));
-        assert!(spec.starts_with("scale=640:360:flags=bilinear:in_primaries=bt2020:in_transfer=smpte2084:in_color_matrix=bt2020nc:in_range=tv:out_primaries=bt709"), "{spec}");
-        assert!(spec.contains("intent=perceptual,format=rgba"), "{spec}");
+        if COLOR_TERMS {
+            assert!(spec.starts_with("scale=640:360:flags=bilinear:in_primaries=bt2020:in_transfer=smpte2084:in_color_matrix=bt2020:in_range=tv:out_primaries=bt709"), "{spec}");
+            assert!(spec.contains("intent=perceptual,format=rgba"), "{spec}");
+        } else {
+            // FFmpeg 7's floor: matrix and range named, BT.709 out, and
+            // no primaries, transfer or intent terms - `scale` there has
+            // none of the three.
+            assert!(
+                spec.starts_with(
+                    "scale=640:360:flags=bilinear:in_color_matrix=bt2020:in_range=tv\
+                     :out_color_matrix=bt709:out_range=tv"
+                ),
+                "{spec}"
+            );
+        }
         // wide gamut with an SDR curve converts too, and the untagged
         // half of it is left to the frames
         let wide = ColorSignal {
@@ -1529,10 +1575,14 @@ mod tests {
             implied: false,
         };
         assert!(wide.is_wide() && !wide.is_hdr());
-        assert!(
+        assert!(if COLOR_TERMS {
             video_filter(0, &options, 64, 64, Some(&wide))
                 .contains(":in_transfer=auto:in_color_matrix=auto:in_range=auto:")
-        );
+        } else {
+            video_filter(0, &options, 64, 64, Some(&wide))
+                .contains(":in_color_matrix=auto:in_range=auto:")
+                && !video_filter(0, &options, 64, 64, Some(&wide)).contains("in_primaries")
+        });
     }
 
     /// With no tag and no override, the codec's convention names the

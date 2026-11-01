@@ -49,7 +49,16 @@ use crate::curve::Curve;
 /// One fix, as the critic writes it: a where, a problem, a change with
 /// its number and unit, and an op from the five the scene builder
 /// patches with.
-#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+///
+/// A fix may also carry a **patch**: the exact numbers of its change as
+/// JSON, in the shape its op reads - `{"start": 1.9}` for a retime,
+/// `{"dx": -180, "dy": 0}` for a shift, `{"factor": 1.2}` for a
+/// resize, `{"curve": "spring-pop"}` for a restyle. A patch is applied
+/// as written, no sentence parsed; the prose `change` stays beside it
+/// for the human reading the report. A fix with both is a fix an agent
+/// can apply without interpreting a single word, which is the loop the
+/// critic exists to close.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Fix {
     /// The element or frames the fix names - "the chart in frames 6-8",
     /// "the caption on frame 3". Matched against node ids, loosely and
@@ -62,12 +71,20 @@ pub struct Fix {
     /// The patch operation: `retime`, `shift`, `resize`, `restyle` or
     /// `replace`.
     pub op: String,
+    /// The same change as exact JSON, when the critic computed one -
+    /// see the struct docs for each op's shape. Validated at parse:
+    /// a patch that does not match its op is a refusal, because a
+    /// machine-applied wrong number is worse than a sentence a human
+    /// reads.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch: Option<Json>,
 }
 
 impl Fix {
     /// A fix from the critic's JSON, refused when it is not one: the op
-    /// must be one of the five, and every field must be there - a fix
-    /// that lost its `where` is advice nobody can apply.
+    /// must be one of the five, every field must be there - a fix that
+    /// lost its `where` is advice nobody can apply - and a patch, when
+    /// it carries one, must be the shape its op reads.
     pub fn parse(value: &Json) -> Result<Fix, String> {
         let fix: Fix = serde_json::from_value(value.clone())
             .map_err(|error| format!("a fix is where/problem/change/op: {error}"))?;
@@ -84,15 +101,101 @@ impl Fix {
         {
             return Err("a fix carries its where, its problem and its change".into());
         }
+        if let Some(patch) = &fix.patch {
+            check_patch(&fix.op, patch)?;
+        }
         Ok(fix)
     }
+}
+
+/// Whether a patch is the shape its op reads: the one place the shapes
+/// are named, so the parser, the applier and the docs cannot drift
+/// apart. Strict on purpose - an extra key is a typo in a number a
+/// machine is about to trust.
+fn check_patch(op: &str, patch: &Json) -> Result<(), String> {
+    let number = |key: &str| -> Result<f64, String> {
+        patch
+            .get(key)
+            .and_then(Json::as_f64)
+            .filter(|value| value.is_finite())
+            .ok_or_else(|| format!("the patch's {key} is not a finite number"))
+    };
+    let keys = patch
+        .as_object()
+        .map(|map| map.keys().cloned().collect::<Vec<_>>())
+        .unwrap_or_default();
+    let only = |wanted: &[&str]| {
+        if !keys.iter().all(|key| wanted.contains(&key.as_str())) {
+            Err(format!(
+                "a {op} patch carries only {}; got {keys:?}",
+                wanted.join(", ")
+            ))
+        } else {
+            Ok(())
+        }
+    };
+    match op {
+        "retime" => {
+            only(&["start", "shift"])?;
+            let starts = keys.iter().filter(|key| key.as_str() == "start").count();
+            let shifts = keys.iter().filter(|key| key.as_str() == "shift").count();
+            if starts + shifts != 1 {
+                return Err(
+                    "a retime patch carries exactly one of start (absolute) or shift \
+                     (relative), in seconds"
+                        .into(),
+                );
+            }
+            if starts == 1 {
+                number("start")?;
+            } else {
+                number("shift")?;
+            }
+        }
+        "shift" => {
+            only(&["dx", "dy"])?;
+            number("dx")?;
+            number("dy")?;
+        }
+        "resize" => {
+            only(&["factor"])?;
+            let factor = number("factor")?;
+            if factor <= 0.0 {
+                return Err("a resize factor is positive".into());
+            }
+        }
+        "restyle" => {
+            only(&["curve"])?;
+            let name = patch
+                .get("curve")
+                .and_then(Json::as_str)
+                .ok_or("a restyle patch's curve is a name from the easing library")?;
+            if Curve::named(name).is_none() {
+                return Err(format!(
+                    "a restyle patch's curve {name:?} is not one the library knows; \
+                     the names are {}",
+                    Curve::NAMES.join(", ")
+                ));
+            }
+        }
+        // A replacement needs content the patch does not carry either.
+        "replace" => {
+            return Err(
+                "a replacement needs new content the patch does not carry: pick the \
+                 replacement, then patch it in"
+                    .into(),
+            )
+        }
+        other => return Err(format!("{other:?} is not a fix op")),
+    }
+    Ok(())
 }
 
 /// What came of applying a batch of fixes: every fix either landed as a
 /// patch or was skipped with the reason said - and the reasons are the
 /// half an agent needs, because a fix that cannot be applied is a thing
 /// to escalate, not to lose.
-#[derive(Clone, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, PartialEq, Debug, Default)]
 pub struct Report {
     /// The fixes that landed, with the patch each became.
     pub applied: Vec<(Fix, String)>,
@@ -187,30 +290,75 @@ fn clipped(comp: &Comp, node: &Node) -> bool {
 }
 
 /// One fix, applied - or the reason it cannot be.
+///
+/// A fix with a patch is applied from the patch's own numbers, exactly
+/// as written: no sentence is parsed, no unit guessed at. A fix without
+/// one falls back to the prose `change`, whose number and unit the
+/// parsers below read - the older half of the contract, kept because a
+/// critic that writes good sentences and no JSON is still a critic
+/// worth applying.
 fn apply_one(comp: &mut Comp, fix: &Fix) -> Result<String, String> {
     let node = find_node(comp, &fix.r#where)
         .ok_or_else(|| format!("no node the fix's where ({:?}) names", fix.r#where))?;
     let node = node.to_owned();
     match fix.op.as_str() {
         "retime" => {
-            let seconds = parse_seconds(&fix.change)
-                .ok_or_else(|| format!("no time with a unit in {:?}", fix.change))?;
-            let start = (node.start + seconds).max(0.0);
+            // The new start, however it was said: absolute from a
+            // patch's `start`, relative from its `shift`, and relative
+            // from the prose too - a sentence carries a move ("0.4s
+            // earlier"), never a place on the timeline, because the
+            // critic that wrote it was reading where the node already
+            // is. All three land on zero at the earliest.
+            let start = match fix.patch.as_ref().and_then(|patch| patch.get("start")) {
+                Some(start) => {
+                    let start = start.as_f64().ok_or_else(|| {
+                        format!("the patch's start is not a number: {start:?}")
+                    })?;
+                    start.max(0.0)
+                }
+                _ => {
+                    let shift = fix
+                        .patch
+                        .as_ref()
+                        .and_then(|patch| patch.get("shift"))
+                        .and_then(Json::as_f64);
+                    let seconds = match shift {
+                        Some(shift) => shift,
+                        None => parse_seconds(&fix.change).ok_or_else(|| {
+                            format!("no time with a unit in {:?}", fix.change)
+                        })?,
+                    };
+                    (node.start + seconds).max(0.0)
+                }
+            };
             let node = comp
                 .nodes
                 .iter_mut()
                 .find(|candidate| candidate.id == node.id)
                 .expect("the node was found");
+            let moved = start - node.start;
             node.start = start;
             Ok(format!(
-                "moved {:?} to {start:.3}s ({}{seconds:.3}s)",
+                "moved {:?} to {start:.3}s ({}{moved:.3}s)",
                 node.id,
-                if seconds >= 0.0 { "+" } else { "" }
+                if moved >= 0.0 { "+" } else { "" }
             ))
         }
         "shift" => {
-            let (dx, dy) = parse_pixels(&fix.change)
-                .ok_or_else(|| format!("no distance with a unit in {:?}", fix.change))?;
+            let (dx, dy) = match (
+                fix.patch
+                    .as_ref()
+                    .and_then(|patch| patch.get("dx"))
+                    .and_then(Json::as_f64),
+                fix.patch
+                    .as_ref()
+                    .and_then(|patch| patch.get("dy"))
+                    .and_then(Json::as_f64),
+            ) {
+                (Some(dx), Some(dy)) => (dx, dy),
+                _ => parse_pixels(&fix.change)
+                    .ok_or_else(|| format!("no distance with a unit in {:?}", fix.change))?,
+            };
             let base = placed_at(&node).ok_or_else(|| {
                 format!("the node {:?} is never placed, so there is nothing to shift", node.id)
             })?;
@@ -240,8 +388,16 @@ fn apply_one(comp: &mut Comp, fix: &Fix) -> Result<String, String> {
             ))
         }
         "resize" => {
-            let factor = parse_factor(&fix.change)
-                .ok_or_else(|| format!("no size with a unit in {:?}", fix.change))?;
+            let factor = match fix
+                .patch
+                .as_ref()
+                .and_then(|patch| patch.get("factor"))
+                .and_then(Json::as_f64)
+            {
+                Some(factor) => factor,
+                None => parse_factor(&fix.change)
+                    .ok_or_else(|| format!("no size with a unit in {:?}", fix.change))?,
+            };
             let node = comp
                 .nodes
                 .iter_mut()
@@ -255,15 +411,25 @@ fn apply_one(comp: &mut Comp, fix: &Fix) -> Result<String, String> {
             ))
         }
         "restyle" => {
-            // The restyle an agent can apply exactly: a curve from the
-            // easing library, named in the change.
-            let lowered = fix.change.to_ascii_lowercase();
-            // The longest name that appears wins: "ease with spring-pop"
-            // names the spring-pop, not the ease the sentence leads with.
-            let named = Curve::NAMES
-                .iter()
-                .filter(|name| lowered.contains(*name))
-                .max_by_key(|name| name.len());
+            // The restyle an agent can apply exactly: the patch names a
+            // curve from the library, or the change's prose does - the
+            // longest library name that appears in it, so "ease with
+            // spring-pop" names the spring-pop and not the ease the
+            // sentence leads with.
+            let named = fix
+                .patch
+                .as_ref()
+                .and_then(|patch| patch.get("curve"))
+                .and_then(Json::as_str)
+                .map(|name| name.to_owned())
+                .or_else(|| {
+                    let lowered = fix.change.to_ascii_lowercase();
+                    Curve::NAMES
+                        .iter()
+                        .filter(|name| lowered.contains(*name))
+                        .max_by_key(|name| name.len())
+                        .map(|name| (*name).to_owned())
+                });
             let Some(name) = named else {
                 return Err(format!(
                     "no curve from the easing library named in {:?} (the names are {})",
@@ -271,7 +437,7 @@ fn apply_one(comp: &mut Comp, fix: &Fix) -> Result<String, String> {
                     Curve::NAMES.join(", ")
                 ));
             };
-            let curve = Curve::named(name).expect("the name is in the library");
+            let curve = Curve::named(&name).expect("the name is in the library");
             let node = comp
                 .nodes
                 .iter_mut()
@@ -598,6 +764,157 @@ mod tests {
         // And the floor: five clipped elements cannot score -10.
         let many = (0..5).map(|_| chart_node()).collect();
         assert_eq!(score(&comp_of(many)), 0.0, "the floor is 0");
+    }
+
+    /// A patch is applied as written, and a wrong patch is refused at
+    /// the door: the loop an agent trusts with numbers must not accept
+    /// numbers that do not parse, keys that do not belong, or a curve
+    /// the library does not carry.
+    #[test]
+    fn a_patch_applies_exactly_and_a_wrong_one_is_refused() {
+        let mut comp = comp_of(vec![chart_node()]);
+        // The chart needs a track for the restyle to ease; the scene the
+        // critic criticises always has one.
+        comp.nodes[0].tracks.insert(
+            "scale".into(),
+            crate::track::Track {
+                keys: vec![
+                    crate::track::Key::eased(0.0, crate::track::Value::number(0.9), Curve::EASE_IN),
+                    crate::track::Key::new(0.6, crate::track::Value::number(1.0)),
+                ],
+            },
+        );
+
+        // The exact patch: a start, a shift, a factor and a curve, each
+        // landing as written without a sentence being read.
+        let fixes = vec![
+            Fix::parse(&serde_json::json!({
+                "where": "the chart", "op": "retime",
+                "problem": "enters 400ms too early",
+                "change": "start 0.4s later",
+                "patch": { "start": 1.9 }
+            }))
+            .expect("a well-formed fix"),
+            Fix::parse(&serde_json::json!({
+                "where": "the chart", "op": "shift",
+                "problem": "clipped off the right edge",
+                "change": "shift x by -480px",
+                "patch": { "dx": -480.0, "dy": 0.0 }
+            }))
+            .expect("a well-formed fix"),
+            Fix::parse(&serde_json::json!({
+                "where": "the chart", "op": "restyle",
+                "problem": "arrives on a dead start",
+                "change": "ease with spring-pop",
+                "patch": { "curve": "spring-pop" }
+            }))
+            .expect("a well-formed fix"),
+        ];
+        let report = apply(&mut comp, &fixes);
+        assert!(report.all_applied(), "{:?}", report.skipped);
+        let chart = comp.node("chart").expect("the chart");
+        assert!((chart.start - 1.9).abs() < 1e-9, "the patch's start, exactly");
+        assert!(
+            (chart.transform.position.expect("placed").x - 1620.0).abs() < 1e-9,
+            "the patch's dx, exactly"
+        );
+        assert!(
+            chart
+                .tracks
+                .values()
+                .all(|track| track
+                    .keys
+                    .first()
+                    .and_then(|key| key.curve.as_ref())
+                    .is_some_and(|curve| matches!(curve, Curve::Spring(_)))),
+            "the patch's curve, exactly"
+        );
+
+        // A relative retime: shift, not start.
+        let mut comp = comp_of(vec![chart_node()]);
+        let fixes = vec![Fix::parse(&serde_json::json!({
+            "where": "the chart", "op": "retime",
+            "problem": "enters 400ms too early",
+            "change": "start 0.4s later",
+            "patch": { "shift": 0.4 }
+        }))
+        .expect("a well-formed fix")];
+        let report = apply(&mut comp, &fixes);
+        assert!(report.all_applied(), "{:?}", report.skipped);
+        assert!(
+            (comp.node("chart").expect("the chart").start - 0.4).abs() < 1e-9,
+            "the shift moved it 0.4s from its own 0"
+        );
+
+        // The refusals: both a start and a shift, an unknown curve, a
+        // replace that carries a patch it cannot use, and a key no op
+        // reads. Each names what it wanted.
+        for broken in [
+            serde_json::json!({
+                "where": "the chart", "op": "retime", "problem": "p", "change": "c",
+                "patch": { "start": 1.0, "shift": 0.4 }
+            }),
+            serde_json::json!({
+                "where": "the chart", "op": "restyle", "problem": "p", "change": "c",
+                "patch": { "curve": "wobbly" }
+            }),
+            serde_json::json!({
+                "where": "the chart", "op": "replace", "problem": "p", "change": "c",
+                "patch": { "text": "new words" }
+            }),
+            serde_json::json!({
+                "where": "the chart", "op": "shift", "problem": "p", "change": "c",
+                "patch": { "dx": -480.0, "rotation": 12.0 }
+            }),
+        ] {
+            let error = Fix::parse(&broken)
+                .expect_err("a wrong patch is refused")
+                .to_string();
+            assert!(
+                error.contains("patch") || error.contains("replacement"),
+                "the refusal names the patch: {error}"
+            );
+        }
+    }
+
+    /// The prose path keeps the contract it always had: its time is a
+    /// move from where the node already is, clamped at the beginning
+    /// of the timeline - "0.4s earlier" of a node at 2s is 1.6s, and a
+    /// move that would cross zero lands on it, not before it. The
+    /// patch's `start` is the one absolute time the vocabulary carries.
+    #[test]
+    fn the_prose_retime_stays_a_move_and_never_crosses_zero() {
+        let mut node = chart_node();
+        node.start = 2.0;
+        let mut comp = comp_of(vec![node]);
+        let fixes = vec![Fix::parse(&serde_json::json!({
+            "where": "the chart", "op": "retime",
+            "problem": "enters 400ms too early",
+            "change": "start 0.4s earlier"
+        }))
+        .expect("a well-formed fix")];
+        let report = apply(&mut comp, &fixes);
+        assert!(report.all_applied(), "{:?}", report.skipped);
+        assert!(
+            (comp.node("chart").expect("the chart").start - 1.6).abs() < 1e-9,
+            "0.4s earlier of 2s is 1.6s, not an absolute 0.4s"
+        );
+
+        // And a move that would cross the beginning of the timeline
+        // lands on zero, not before it.
+        let fixes = vec![Fix::parse(&serde_json::json!({
+            "where": "the chart", "op": "retime",
+            "problem": "lands before the reel begins",
+            "change": "start 3s earlier"
+        }))
+        .expect("a well-formed fix")];
+        let report = apply(&mut comp, &fixes);
+        assert!(report.all_applied(), "{:?}", report.skipped);
+        assert_eq!(
+            comp.node("chart").expect("the chart").start,
+            0.0,
+            "a move past the beginning lands on it"
+        );
     }
 
     /// The word forms the critic actually writes: "left 120px" is

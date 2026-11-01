@@ -14,6 +14,8 @@
 //! agent inspect comps/funcut.lower-third.glass.json
 //! # change it: a batch of operations, validated before anything is written
 //! agent edit comps/lower-third.json ops.json -o edited.json
+//! # apply a critic's fixes: a patch is applied as written, a skip is said
+//! agent fix edited.json fixes.json -o fixed.json
 //! # see one frame (tens of milliseconds) and the whole comp
 //! agent frame edited.json 1.5 -o still.png
 //! agent bake edited.json cache/lower-third
@@ -27,6 +29,7 @@ use std::path::{Path, PathBuf};
 
 use concat_motion::authoring::{CompSummary, apply_json};
 use concat_motion::comp::{Asset, Comp};
+use concat_motion::critic::Fix;
 use concat_motion::engine::{BakeRequest, CompEngine, EnginePreference};
 use concat_motion::geneva::Geneva;
 use concat_motion::presets;
@@ -45,6 +48,7 @@ fn main() {
         "list" => list(),
         "inspect" => inspect(&args),
         "edit" => edit(&args),
+        "fix" => fix(&args),
         "frame" => frame(&args),
         "bake" => bake(&args),
         "reel" => reel(&args),
@@ -76,6 +80,7 @@ fn usage() -> serde_json::Value {
             "list": "agent list - every preset in the motion library",
             "inspect": "agent inspect <comp.json>",
             "edit": "agent edit <comp.json> <ops.json|-> [-o out.json]",
+            "fix": "agent fix <comp.json> <fixes.json|-> [-o out.json] - apply a critic's fixes (where/problem/change/op, and a patch when the number was measured); a patch is applied as written, a skip is said",
             "frame": "agent frame <comp.json> <seconds> [-o frame.png] [--width N]",
             "bake": "agent bake <comp.json> <dir> [--width N] [--height N] [--fps N] [--opaque] [--encode out.mp4|webm|mov] [--crf N]",
             "reel": "agent reel <storyboard.json> [-o reel.mp4] [--cache DIR] [--frame SECONDS] [--plan] [--geneva-timeout SECONDS]",
@@ -593,6 +598,83 @@ fn edit(args: &[String]) -> Result<serde_json::Value, String> {
         "written": out.map(|path| path.display().to_string()),
         "hash": format!("{:016x}", edited.hash()),
         "comp": CompSummary::of(&edited),
+    }))
+}
+
+/// `agent fix <comp.json> <fixes.json|-> [-o out.json]`
+///
+/// The other half of the critic loop: the fixes a critique returned,
+/// applied to the comp they critiqued. The fixes file is the `fixes`
+/// array a critic writes - `[{where, problem, change, op}, ...]`, or the
+/// `{"fixes": [...]}` object that wraps it - and a fix may carry a
+/// `patch` with the exact numbers of its change as JSON
+/// (`{"start": 1.9}`, `{"dx": -180, "dy": 0}`, `{"factor": 1.2}`,
+/// `{"curve": "spring-pop"}`), which is applied as written: no
+/// sentence parsed, no unit guessed at. A fix that cannot be applied -
+/// no node its `where` names, no number in its change, a patch that is
+/// not the shape its op reads - is skipped with the reason said,
+/// because a wrong patch applied confidently is worse than a
+/// suggestion left on the table. What landed, what was skipped and
+/// why, and the problems the edited comp still has, all come back in
+/// the one JSON document.
+fn fix(args: &[String]) -> Result<serde_json::Value, String> {
+    let comp_path = args.first().ok_or("fix needs a comp file")?;
+    let fixes_path = args
+        .get(1)
+        .ok_or("fix needs a fixes file (or - for stdin)")?;
+    let out = flag(args, "-o").map(PathBuf::from);
+
+    let mut comp = load(comp_path)?;
+    let document: serde_json::Value = if fixes_path == "-" {
+        let mut text = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)
+            .map_err(|error| format!("reading stdin: {error}"))?;
+        serde_json::from_str(&text).map_err(|error| format!("stdin: {error}"))?
+    } else {
+        let text = std::fs::read_to_string(fixes_path)
+            .map_err(|error| format!("{fixes_path}: {error}"))?;
+        serde_json::from_str(&text).map_err(|error| format!("{fixes_path}: {error}"))?
+    };
+    let list = match &document {
+        serde_json::Value::Array(list) => list.clone(),
+        serde_json::Value::Object(map) => match map.get("fixes") {
+            Some(serde_json::Value::Array(list)) => list.clone(),
+            _ => return Err("the fixes are an array, or an object with a `fixes` array".into()),
+        },
+        _ => return Err("the fixes are an array, or an object with a `fixes` array".into()),
+    };
+
+    // A fix that is not one is skipped with its reason, never guessed
+    // at: the report carries it so the caller can escalate.
+    let mut fixes = Vec::new();
+    let mut unparsed = Vec::new();
+    for (index, entry) in list.iter().enumerate() {
+        match Fix::parse(entry) {
+            Ok(fix) => fixes.push(fix),
+            Err(reason) => unparsed.push(json!({ "index": index, "reason": reason })),
+        }
+    }
+    let report = concat_motion::critic::apply(&mut comp, &fixes);
+    if let Some(path) = &out {
+        write_comp(&comp, path)?;
+    }
+    Ok(json!({
+        "ok": true,
+        "written": out.map(|path| path.display().to_string()),
+        "hash": format!("{:016x}", comp.hash()),
+        "allApplied": report.all_applied() && unparsed.is_empty(),
+        "applied": report.applied.iter().map(|(fix, message)| json!({
+            "where": fix.r#where, "op": fix.op, "change": fix.change,
+            "patch": fix.patch, "message": message
+        })).collect::<Vec<_>>(),
+        "skipped": report.skipped.iter().map(|(fix, reason)| json!({
+            "where": fix.r#where, "op": fix.op, "change": fix.change,
+            "reason": reason
+        })).collect::<Vec<_>>(),
+        "unparsed": unparsed,
+        "problems": comp.validate().iter().map(|problem| json!({
+            "path": problem.path, "message": problem.message, "help": problem.help
+        })).collect::<Vec<_>>(),
     }))
 }
 

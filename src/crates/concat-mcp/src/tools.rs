@@ -789,7 +789,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "captions_animate",
             title: "Caption a transcript word by word",
-            description: "A word-timed transcript in, one caption video out: words as [text, start, end] triples (or objects), broken into lines by the caption rules (word count, sentence ends, silences), each line one kinetic caption comp, the whole thing baked and encoded under the project's motion/ ready for media_import and clip_add at the voiceover's start. Word times must be measured (whisper segments with per-word estimates will not do); 1080x1920 30fps by default. Optional: preset (default funcut.caption.kinetic), wordsPerLine, maxLineSeconds, gapSeconds, leadSeconds, tailSeconds, width, height, fps, plate (a still the captions render over), name, curtain (true default; false gives hard cuts between lines, which read better when the reel sits over a voiceover), and kinetic (false default: the preset's own text node; true or an object {stagger: word|char, delay, entrance: blur-in|slide-up|scale-in, seconds, curve, flex-seconds, weight: {from, to}} rebuilds the caption as markup whose per-word spans appear, light and settle on the recogniser's own word times - the karaoke highlight as a designed moment, weight flexing 100..900 when the project carries a variable font).",
+            description: "A word-timed transcript in, one caption video out: words as [text, start, end] triples (or objects), broken into lines by the caption rules (word count, sentence ends, silences), each line one kinetic caption comp, the whole thing baked and encoded under the project's motion/ ready for media_import and clip_add at the voiceover's start. Word times must be measured (whisper segments with per-word estimates will not do); 1080x1920 30fps by default. Optional: preset (default funcut.caption.kinetic), wordsPerLine, maxLineSeconds, gapSeconds, leadSeconds, tailSeconds, width, height, fps, plate (a still the captions render over), name, curtain (true default; false gives hard cuts between lines, which read better when the reel sits over a voiceover), and kinetic (false default: the preset's own text node; true or an object {stagger: word|char, delay, entrance: blur-in|slide-up|scale-in, seconds, curve, weight: {from, to}} rebuilds the caption as markup whose per-word spans appear, light and settle on the recogniser's own word times - the karaoke highlight as a designed moment, the words' weights ramping from..to as a static font-weight per word, the crescendo the engine draws).",
             read_only: false,
             destructive: false,
             idempotent: false,
@@ -1657,16 +1657,15 @@ fn motion_schema(name: &str) -> Option<Value> {
                         "kinetic",
                         json!({
                             "type": ["boolean", "object"], "default": false,
-                            "description": "The kinetic typography hand: true takes the word-staggered default (80 ms, slide-up, the settle curve); an object spells it out - stagger (word|char), delay seconds, entrance (blur-in|slide-up|scale-in), seconds, curve, flex-seconds, weight {from, to} for the variable-font flex. The caption becomes markup whose per-word spans appear, light and settle on the recogniser's own word times.",
+                            "description": "The kinetic typography hand: true takes the word-staggered default (80 ms, slide-up, the settle curve); an object spells it out - stagger (word|char), delay seconds, entrance (blur-in|slide-up|scale-in), seconds, curve, weight {from, to} for a static weight ramp across the words (the engine cannot animate a weight: a static font-weight per word is the one it draws). The caption becomes markup whose per-word spans appear, light and settle on the recogniser's own word times.",
                             "properties": {
                                 "stagger": { "type": "string", "enum": ["word", "char"], "default": "word" },
                                 "delay": { "type": "number", "minimum": 0, "default": 0.08 },
                                 "entrance": { "type": "string", "enum": ["blur-in", "slide-up", "scale-in"], "default": "slide-up" },
                                 "seconds": { "type": "number", "minimum": 0, "default": 0.5 },
-                                "flex-seconds": { "type": "number", "minimum": 0, "default": 0.9 },
                                 "weight": {
                                     "type": "object",
-                                    "description": "The variable-weight flex, 100..900; needs a variable font carried as a font asset.",
+                                    "description": "A static weight ramp across the units, 100..900: the first at from, the last at to, interpolated between - drawn per word as a static font-weight, the crescendo the engine renders.",
                                     "properties": {
                                         "from": { "type": "integer", "minimum": 100, "maximum": 900 },
                                         "to": { "type": "integer", "minimum": 100, "maximum": 900 }
@@ -4162,8 +4161,7 @@ mod tests {
                         && piece.chars().any(|c| c.is_ascii_digit())
                 })
                 .map(|piece| {
-                    let digits: String =
-                        piece.chars().filter(|c| c.is_ascii_digit()).collect();
+                    let digits: String = piece.chars().filter(|c| c.is_ascii_digit()).collect();
                     digits.parse().unwrap_or(usize::MAX)
                 })
                 .collect()

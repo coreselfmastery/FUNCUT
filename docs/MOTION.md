@@ -572,16 +572,21 @@ dip stays the default for a standalone caption reel.
 
 ## Kinetic typography: the builder the engine's facts were waiting for
 
-Geneva animates `font-variation-settings`, times an `animation-delay` to
-the millisecond, and plays `@keyframes` exactly as written. `typography.rs`
-is the builder that turns those facts into a node — the arithmetic a model
-gets wrong and a human will not do twice:
+Geneva plays `@keyframes` exactly as written and times an `animation-delay` to
+the millisecond. What it cannot do is animate a **weight**: `font-variation-settings`
+is not drawn at all (W450 as a base style, E442 inside keyframes — a variable
+font's axis is never read) and `font-weight` inside keyframes is E442 too;
+its keyframes also take `px` and `%` lengths only, not `em`. All three facts
+were measured against the pinned 1.6.0, and the third was found the hard way:
+the first cut of this builder wrote `translate: 0 0.3em` and the engine
+refused the bake. `typography.rs` is the builder that turns those facts into
+a node — the arithmetic a model gets wrong and a human will not do twice:
 
 ```rust
 use concat_motion::comp::TextNode;
 use concat_motion::typography::{self, Entrance, Kinetic};
 
-// A headline: three words, eighty milliseconds apart, weight flexing 100→900.
+// A headline: three words, eighty milliseconds apart, weights ramping 100→900.
 let kinetic = Kinetic::words().delay(0.08).entrance(Entrance::BlurIn)
     .flexing_weight(100, 900);
 let style = TextNode { font: "Archivo, Inter".into(), size: 148.0,
@@ -595,9 +600,9 @@ let caption = typography::karaoke(&words, 2.4, "caption", &style, &kinetic);
 | Piece | What it builds |
 | --- | --- |
 | `Stagger` — `Word` \| `Char` | one `<span>` per unit, each with its own inline `animation` and `animation-delay: i × delay` — no `calc()`, no custom properties, no cascade order to trust |
-| `Entrance` — `blur-in` \| `slide-up` \| `scale-in` | the three named entrance presets, as `@keyframes` with the individual `translate`/`scale` **inside** the rule (the static-transform guard reads the output) |
-| `WeightFlex` — `flexing_weight(100, 900)` | `@keyframes` animating `font-variation-settings: 'wght'`, played on the wrapper while the units stagger beneath it — needs a variable font carried as a `font` asset (`assets/fonts/Archivo-Variable.ttf`, `Inter-Variable.ttf`) |
-| `karaoke(&words, …)` | the word-synced caption: each word one animation that appears it, holds it **lit** in the highlight colour for most of its own length, and settles it back — the Whisper word times wired straight into the CSS |
+| `Entrance` — `blur-in` \| `slide-up` \| `scale-in` | the three named entrance presets, as `@keyframes` with the individual `translate`/`scale` **inside** the rule (the static-transform guard reads the output), the rises in **pixels** computed from the style's own font size — the engine's keyframes take `px` and `%` only, and an `em` there is E442 |
+| `WeightFlex` — `flexing_weight(100, 900)` | a **static `font-weight` per unit**, the first at `from`, the last at `to`, interpolated between — the engine snaps a static weight to the family's own instances and draws it (measured: 100 against 900 is 1.74× the ink through this very builder), which is the one weight it draws; the animation this was once written as (`font-variation-settings` in `@keyframes`) is refused by the engine, and `css::refused_weights` refuses it at `validate` now, naming the fix |
+| `karaoke(&words, …)` | the word-synced caption: each word one animation that appears it, holds it **lit** in the highlight colour for most of its own length, and settles it back — the Whisper word times wired straight into the CSS; the highlight is a colour trip, the engine being unable to animate a weight |
 | `Kinetic::curved(curve)` | any of the five curve families, as the CSS timing function — `Curve::css()` writes `steps()`, `linear()` and `cubic-bezier()` natively, and approximates a spring by the overshoot its own damping ratio dictates |
 
 In `captions_animate`, **`kinetic: true`** (or an object spelling out the
@@ -608,9 +613,10 @@ flag: the line breaking, the re-anchoring to the frame and the guard all
 stay the code they already were.
 
 `examples/typography.rs` is the done-when as a runnable comp: a
-variable-weight headline, three words staggered 80 ms apart, and a
-karaoke caption from a transcript — validated, mapped to a timeline, and
-written as a document.
+weight-ramped headline, three words staggered 80 ms apart, and a
+karaoke caption from a transcript — validated, mapped to a timeline,
+baked by the pinned engine (90 frames of 1080p), and written as a
+document.
 
 ---
 
@@ -654,12 +660,15 @@ in `.claude/skills/motion/SKILL.md` so an author does not walk into it:
 | `radial-gradient(62% 74% at …)` | draws nothing | `radial-gradient(circle at 50% 60%, …)` works |
 | a key time with >9 decimals | `E103` | times are written to **milliseconds** |
 | **`transform` as a base style** (and `translate`/`rotate`/`scale`/`perspective`) | **silently skipped** — the layer is reported by name and drawn at its default position | `Comp::validate` **refuses the comp**, naming the rule and the property |
+| **`font-variation-settings`** (base style) | **W450, not drawn** — a variable font's axis is never read; the text renders at the family's default instance | `Comp::validate` refuses it (`css::refused_weights`): write a static `font-weight`, which the engine snaps to the family's own instances |
+| **`font-variation-settings` or `font-weight` in `@keyframes`** | **E442, refused at the bake** — the engine cannot animate a weight at all | same guard, same fix: a static `font-weight` per element — a ramp across staggered units is what `typography::flexing_weight` builds |
+| **an `em` length in `@keyframes`** (`translate: 0 0.3em`) | **E442** — keyframes take `px` and `%` only | `typography` computes the rise in pixels from the style's own font size |
 
-The last-but-one row was a real bug: a track key at a fraction of a node's span divides into seventeen digits,
+The `key time` row was a real bug: a track key at a fraction of a node's span divides into seventeen digits,
 and one such key made the render refuse the whole timeline. `seconds()` now writes three decimals,
 which is finer than any frame the renderer draws, and a test holds it there.
 
-The last row is the trap that never reports itself, so it gets its own guard. Geneva animates
+The `transform` row is the trap that never reports itself, so it gets its own guard. Geneva animates
 `transform` — and the individual `translate`, `rotate`, `scale` and `perspective` properties — only
 inside `@keyframes`; written as a base style the declaration is skipped without a diagnostic, and
 every
@@ -680,6 +689,15 @@ A layer that must *sit* somewhere rather than *move* there is placed with the no
 had the trap. The audit that added the guard (`grep -rn "transform:" src/crates/concat-motion/src/`
 beside every `@keyframes`) found the library's own stylesheets already clean; the guard is what
 keeps them that way, for a designer, a template or an agent editing the CSS next.
+
+The three weight rows are the mirror trap, and they were found the hard way: the first
+cut of `typography.rs` wrote `font-variation-settings` inside `@keyframes` on the strength
+of a claim nobody had rendered, and the comp — valid, mapped, green in every test that
+never woke the engine — was refused only at the bake, with E442. `css::refused_weights`
+is the guard that came out of it, reading the same stylesheets the same way and refusing
+both the animation the engine will not play and the base style it will not draw, with the
+static `font-weight` that works as the fix. The `em` row was found the same hour, by the
+same method: render it, then write down what the engine said.
 
 ---
 

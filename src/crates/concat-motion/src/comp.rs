@@ -989,6 +989,39 @@ impl Comp {
                         ),
                     );
                 }
+                // The weight trap, found the same way: the engine cannot
+                // animate a weight (font-variation-settings and
+                // font-weight in a @keyframes rule are E442) and does not
+                // draw font-variation-settings at all (W450), so a comp
+                // that either asks for one is refused here - before the
+                // bake - with the one weight that works in the message.
+                for hit in crate::css::refused_weights(css)
+                    .into_iter()
+                    .chain(style_blocks(markup).flat_map(crate::css::refused_weights))
+                {
+                    let where_it_sits = if hit.animated {
+                        format!(
+                            "the rule {} sets {:?} inside a @keyframes block, \
+                             and the markup engine refuses to animate a weight",
+                            hit.selector, hit.property
+                        )
+                    } else {
+                        format!(
+                            "the rule for {:?} sets font-variation-settings as a base \
+                             style, and the markup engine does not draw it: a variable \
+                             font's axis is never read",
+                            hit.selector
+                        )
+                    };
+                    found.push(
+                        Diagnostic::new(format!("/nodes/{i}/css"), where_it_sits).with_help(
+                            "write the weight as a static font-weight on the element - \
+                             the engine snaps it to the family's own instances and draws \
+                             it; a ramp across staggered units is what typography's \
+                             flexing_weight builds",
+                        ),
+                    );
+                }
                 // The determinism contract, held on the document: a fetch
                 // the render would make, a stylesheet it would import, or a
                 // value the clock or an unseeded random would be asked for -
@@ -1252,6 +1285,79 @@ mod tests {
             css: ".layer { animation: slide 0.5s ease-out; }\n\
                   @keyframes slide { from { translate: -100% 0 } to { translate: 0 0 } }"
                 .into(),
+            width: Length::Auto,
+            height: Length::Auto,
+        };
+        assert!(comp.validate().is_empty(), "{:?}", comp.validate());
+    }
+
+    /// The weight trap: a `font-variation-settings` inside a `@keyframes`
+    /// rule is refused by the engine only at the bake (E442), after the
+    /// comp validated everywhere else. The comp is refused here, naming
+    /// the rule and the property, with the static weight that works as
+    /// the fix.
+    #[test]
+    fn an_animated_weight_in_a_stylesheet_is_refused_and_named() {
+        let mut comp = rect_comp();
+        comp.nodes[0].kind = NodeKind::Html {
+            markup: "<div class=\"headline\"></div>".into(),
+            css: ".headline { animation: flex 0.9s both; }\n\
+                  @keyframes flex { from { font-variation-settings: 'wght' 100 } \
+                  to { font-variation-settings: 'wght' 900 } }"
+                .into(),
+            width: Length::Auto,
+            height: Length::Auto,
+        };
+        let found = comp.validate();
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "/nodes/0/css");
+        assert!(
+            found[0].message.contains("@keyframes flex"),
+            "{:?}",
+            found[0]
+        );
+        assert!(
+            found[0].message.contains("font-variation-settings"),
+            "{:?}",
+            found[0]
+        );
+        assert!(found[0].help.is_some(), "the fix is said, not guessed");
+    }
+
+    /// The quieter half of the same trap: a `font-variation-settings` as
+    /// a base style is not drawn at all (W450), so the variable axis is
+    /// never read and the text renders at the family's default instance
+    /// while the comp looks exactly as authored.
+    #[test]
+    fn a_base_style_variation_setting_is_refused_too() {
+        let mut comp = rect_comp();
+        comp.nodes[0].kind = NodeKind::Html {
+            markup: "<div class=\"word\"></div>".into(),
+            css: ".word { font-variation-settings: 'wght' 650; }".into(),
+            width: Length::Auto,
+            height: Length::Auto,
+        };
+        let found = comp.validate();
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(
+            found[0].message.contains("font-variation-settings"),
+            "{:?}",
+            found[0]
+        );
+    }
+
+    /// The answer to the trap: a static `font-weight`, which the engine
+    /// snaps to the family's own instances and draws, validates clean -
+    /// and it is the very thing `typography::flexing_weight` writes per
+    /// staggered unit.
+    #[test]
+    fn a_static_font_weight_validates_clean() {
+        let mut comp = rect_comp();
+        comp.nodes[0].kind = NodeKind::Html {
+            markup: "<div class=\"headline\"><span style=\"font-weight: 100\">Make</span>\
+                     <span style=\"font-weight: 900\">move</span></div>"
+                .into(),
+            css: String::new(),
             width: Length::Auto,
             height: Length::Auto,
         };

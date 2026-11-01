@@ -1,17 +1,29 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
-//! A stylesheet read for the one thing the markup engine stays quiet about.
+//! A stylesheet read for the two things the markup engine stays quiet
+//! about - or says too late.
 //!
-//! Geneva animates `transform` - and the individual `translate`, `rotate`,
-//! `scale` and `perspective` properties - only inside `@keyframes`. A
-//! transform set as a
+//! Geneva animates `transform` - and the individual `translate`,
+//! `rotate`, `scale` and `perspective` properties - only inside
+//! `@keyframes`. A transform set as a
 //! base style is silently skipped: the layer is reported by name and drawn
 //! at its default position, and every motion feature built on top of it is
 //! then wrong while looking perfectly valid. The engine does not say so;
 //! [`crate::comp::Comp::validate`] says so instead, using
 //! [`static_transforms`] here, so the comp is refused with the rule and the
 //! property in the message rather than rendered wrong.
+//!
+//! The mirror trap is **weight**: `font-variation-settings` is not drawn
+//! at all (the engine's W450, so a variable font's axis is never read)
+//! and `font-weight` cannot be animated (E442) - a comp that puts either
+//! inside a `@keyframes` rule is refused by the engine only at the bake,
+//! after it validated everywhere else, and one that sets
+//! `font-variation-settings` as a base style renders at the family's
+//! default instance while looking exactly as authored. [`refused_weights`]
+//! names both, so the comp is refused here with the fix - a static
+//! `font-weight` per element, which the engine snaps to the family's own
+//! instances and draws.
 //!
 //! The same door also carries the **determinism contract**'s half of the
 //! markup ([`network_refs`]): a comp that fetches a URL, imports a
@@ -23,9 +35,9 @@
 //! The scan is deliberately small: comments out, strings kept whole so a
 //! `content: "transform: x"` cannot false-positive, blocks tracked with a
 //! stack so `@keyframes` marks everything nested inside it, and every
-//! declaration checked for exactly the four property names. It is a lint
-//! over authored CSS, not a parser: a stylesheet this crate cannot read
-//! is left to the engine's own `E451` to refuse.
+//! declaration checked for exactly the property names each guard reads. It
+//! is a lint over authored CSS, not a parser: a stylesheet this crate
+//! cannot read is left to the engine's own `E451` to refuse.
 
 /// One static transform declaration found where the engine will skip it.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -50,11 +62,131 @@ const PLACING_PROPERTIES: [&str; 5] = ["transform", "translate", "rotate", "scal
 /// @keyframes rise { from { translate: 0 -14px } }  -> clean (inside keyframes)
 /// ```
 pub fn static_transforms(css: &str) -> Vec<StaticTransform> {
-    let text = without_comments(css);
     let mut found = Vec::new();
+    declarations(css, &mut |declaration, stack| {
+        let inside_keyframes = stack.last().is_some_and(|(_, keyframes)| *keyframes);
+        if inside_keyframes {
+            return;
+        }
+        // The property is what stands before the first colon; a value may
+        // carry colons of its own (`url(data:image/png,...)`) and a string in
+        // a value may carry anything, and neither is the property.
+        let Some((property, _)) = declaration.split_once(':') else {
+            return;
+        };
+        let property = property.trim();
+        if PLACING_PROPERTIES.contains(&property) {
+            found.push(StaticTransform {
+                selector: stack
+                    .last()
+                    .map(|(selector, _)| selector.as_str())
+                    .unwrap_or_default()
+                    .to_owned(),
+                property: property.to_owned(),
+            });
+        }
+    });
+    found
+}
+
+/// One weight declaration the engine refuses or does not draw, found
+/// where an author would put one on purpose.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct RefusedWeight {
+    /// The `@keyframes` rule (named) or the base-style rule (its
+    /// selector) the declaration sits in, as written.
+    pub selector: String,
+    /// The property: `font-variation-settings` or `font-weight`.
+    pub property: String,
+    /// Whether the declaration sits inside a `@keyframes` rule - where
+    /// the engine refuses to animate either property (E442) - or is a
+    /// base style, where `font-variation-settings` is not drawn at all
+    /// (W450) and a static `font-weight` is the one weight that works.
+    pub animated: bool,
+}
+
+/// The properties that carry a weight. `font-weight` is drawn as a base
+/// style (snapped to the family's own instances) but refused inside
+/// `@keyframes`; `font-variation-settings` is not drawn anywhere (W450)
+/// and refused inside `@keyframes` too (E442).
+const WEIGHT_PROPERTIES: [&str; 2] = ["font-variation-settings", "font-weight"];
+
+/// Every weight declaration the engine cannot honour, in document order:
+///
+/// ```text
+/// @keyframes flex { from { font-variation-settings: 'wght' 100 } }  -> named (E442)
+/// @keyframes pop  { to { font-weight: 900 } }                      -> named (E442)
+/// .layer { font-variation-settings: 'wght' 650 }                    -> named (W450)
+/// .layer { font-weight: 700 }                                       -> clean (drawn, snapped)
+/// ```
+pub fn refused_weights(css: &str) -> Vec<RefusedWeight> {
+    let mut found = Vec::new();
+    declarations(css, &mut |declaration, stack| {
+        let inside_keyframes = stack.last().is_some_and(|(_, keyframes)| *keyframes);
+        let Some((property, _)) = declaration.split_once(':') else {
+            return;
+        };
+        let property = property.trim();
+        if !WEIGHT_PROPERTIES.contains(&property) {
+            return;
+        }
+        // `font-weight` as a base style is the one weight the engine
+        // draws; everything else here is refused or not drawn.
+        if !inside_keyframes && property == "font-weight" {
+            return;
+        }
+        // Inside `@keyframes` the report names the rule, not the offset:
+        // the fix is about the property, and `from`/`to` is where it
+        // already is.
+        let selector = if inside_keyframes {
+            stack
+                .iter()
+                .rev()
+                .find(|(selector, keyframes)| {
+                    *keyframes
+                        && selector
+                            .trim_start()
+                            .to_ascii_lowercase()
+                            .starts_with("@keyframes")
+                })
+                .map(|(selector, _)| selector.trim().to_owned())
+                .unwrap_or_default()
+        } else {
+            stack
+                .last()
+                .map(|(selector, _)| selector.trim().to_owned())
+                .unwrap_or_default()
+        };
+        found.push(RefusedWeight {
+            selector,
+            property: property.to_owned(),
+            animated: inside_keyframes,
+        });
+    });
+    // One report per rule and property: a `@keyframes` rule that sets the
+    // same property at `from` and at `to` is one problem with one fix,
+    // not two.
+    found.dedup_by(|a, b| a.selector == b.selector && a.property == b.property);
+    found
+}
+
+/// One open block of a stylesheet, as the declaration walker holds it:
+/// the selector it opened with, and whether it is a `@keyframes`
+/// context - which everything nested inside one is.
+type Block = (String, bool);
+
+/// Walk every declaration in the stylesheet - comments out, strings kept
+/// whole - handing each one to `visit` with the block stack it sits in:
+/// one entry per open block, the selector it opened with and whether it
+/// is a `@keyframes` context, which everything nested inside one is. A
+/// declaration is `property: value`, up to a `;` or the block's closing
+/// `}`; the token is drained before `visit` runs, so a visitor cannot
+/// read the next one by accident.
+fn declarations(css: &str, visit: &mut dyn FnMut(&str, &[Block])) {
+    let text = without_comments(css);
     // One entry per open block: the selector it opened with, and whether
     // it is a @keyframes context - which everything nested inside it is.
-    let mut stack: Vec<(String, bool)> = Vec::new();
+    let mut stack: Vec<Block> = Vec::new();
     let mut token = String::new();
     let mut in_string: Option<char> = None;
     for character in text.chars() {
@@ -81,49 +213,20 @@ pub fn static_transforms(css: &str) -> Vec<StaticTransform> {
                 stack.push((selector.trim().to_owned(), keyframes));
             }
             '}' => {
-                check_declaration(&mut token, &stack, &mut found);
+                let declaration = std::mem::take(&mut token);
+                if !declaration.trim().is_empty() {
+                    visit(&declaration, &stack);
+                }
                 stack.pop();
-                token.clear();
             }
             ';' => {
-                check_declaration(&mut token, &stack, &mut found);
-                token.clear();
+                let declaration = std::mem::take(&mut token);
+                if !declaration.trim().is_empty() {
+                    visit(&declaration, &stack);
+                }
             }
             _ => token.push(character),
         }
-    }
-    found
-}
-
-/// Whether a declaration token sets a placing property, and the block it
-/// sits in is not a `@keyframes` one. `token` is drained either way: a
-/// declaration is checked once.
-fn check_declaration(
-    token: &mut String,
-    stack: &[(String, bool)],
-    found: &mut Vec<StaticTransform>,
-) {
-    let declaration = std::mem::take(token);
-    let inside_keyframes = stack.last().is_some_and(|(_, keyframes)| *keyframes);
-    if inside_keyframes {
-        return;
-    }
-    // The property is what stands before the first colon; a value may
-    // carry colons of its own (`url(data:image/png,...)`) and a string in
-    // a value may carry anything, and neither is the property.
-    let Some((property, _)) = declaration.split_once(':') else {
-        return;
-    };
-    let property = property.trim();
-    if PLACING_PROPERTIES.contains(&property) {
-        found.push(StaticTransform {
-            selector: stack
-                .last()
-                .map(|(selector, _)| selector.as_str())
-                .unwrap_or_default()
-                .to_owned(),
-            property: property.to_owned(),
-        });
     }
 }
 
@@ -268,6 +371,65 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].selector, ".layer");
         assert_eq!(hits[0].property, "transform");
+    }
+
+    /// The weight traps, both directions: a weight inside `@keyframes`
+    /// (the engine's E442) and a `font-variation-settings` as a base
+    /// style (W450 - not drawn, so the variable axis is never read).
+    /// A rule that sets the same property at `from` and at `to` is one
+    /// report, not two: one problem, one fix.
+    #[test]
+    fn a_weight_inside_keyframes_is_named_with_its_rule() {
+        let css = "@keyframes flex { from { font-variation-settings: 'wght' 100 } \
+                   to { font-variation-settings: 'wght' 900 } }";
+        let hits = refused_weights(css);
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(hits[0].selector, "@keyframes flex", "{hits:?}");
+        assert_eq!(hits[0].property, "font-variation-settings");
+        assert!(hits[0].animated);
+    }
+
+    #[test]
+    fn two_rules_are_two_reports() {
+        let css =
+            "@keyframes a { to { font-weight: 900 } } @keyframes b { to { font-weight: 100 } }";
+        let hits = refused_weights(css);
+        assert_eq!(hits.len(), 2, "{hits:?}");
+        let selectors: Vec<&str> = hits.iter().map(|hit| hit.selector.as_str()).collect();
+        assert_eq!(selectors, ["@keyframes a", "@keyframes b"]);
+    }
+
+    #[test]
+    fn an_animated_font_weight_is_named_too() {
+        let css = "@keyframes pop { from { opacity: 0 } to { opacity: 1; font-weight: 900 } }";
+        let hits = refused_weights(css);
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(hits[0].property, "font-weight");
+        assert!(hits[0].animated);
+        assert_eq!(hits[0].selector, "@keyframes pop", "{hits:?}");
+    }
+
+    #[test]
+    fn a_base_style_variation_setting_is_named_but_a_font_weight_is_not() {
+        let css = ".a { font-variation-settings: 'wght' 650; } .b { font-weight: 700; }";
+        let hits = refused_weights(css);
+        assert_eq!(hits.len(), 1, "{hits:?}");
+        assert_eq!(hits[0].property, "font-variation-settings");
+        assert!(!hits[0].animated);
+        assert_eq!(hits[0].selector, ".a", "{hits:?}");
+    }
+
+    #[test]
+    fn a_weight_inside_a_string_is_not_named() {
+        assert!(refused_weights(".a::after { content: \"font-weight: x\"; }").is_empty());
+    }
+
+    #[test]
+    fn a_commented_out_weight_is_not_named() {
+        assert!(
+            refused_weights(".a { /* font-variation-settings: 'wght' 700 */ opacity: 1; }")
+                .is_empty()
+        );
     }
 
     #[test]

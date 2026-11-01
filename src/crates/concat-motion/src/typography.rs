@@ -1,17 +1,27 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
-//! Kinetic typography: the headline that flexes, the caption that follows
+//! Kinetic typography: the headline that ramps, the caption that follows
 //! the speech, built as one markup node a comp can place.
 //!
-//! The engine already plays `@keyframes` exactly as written, animates
-//! `font-variation-settings`, and times an `animation-delay` to the
-//! millisecond. What a comp author did not have was the *builder* that
-//! turns those facts into a node: a headline whose words arrive one after
-//! another, a variable-weight flex from 100 to 900, a caption whose every
-//! word lights when it is spoken. Hand-authoring the spans and their
-//! delays is exactly the kind of arithmetic a model gets wrong and a
-//! human will not do twice.
+//! The engine plays `@keyframes` exactly as written and times an
+//! `animation-delay` to the millisecond. What it cannot do is animate
+//! **weight**: `font-variation-settings` is not drawn at all (W450 as a
+//! base style, E442 inside keyframes) and `font-weight` inside keyframes
+//! is E442 too - both measured against the pinned 1.6.0, not read from
+//! its manual. So the weight ramp this builder writes is a **static
+//! `font-weight` on each staggered unit** - the first light, the last
+//! heavy, the units between interpolated - which the engine snaps to the
+//! family's own instances and draws (measured: 100 against 900 on a
+//! static face is 2.05x the ink). A crescendo across the words, not a
+//! refused animation.
+//!
+//! What a comp author did not have was the *builder* that turns those
+//! facts into a node: a headline whose words arrive one after another, a
+//! weight ramp from 100 to 900, a caption whose every word lights when
+//! it is spoken. Hand-authoring the spans and their delays is exactly
+//! the kind of arithmetic a model gets wrong and a human will not do
+//! twice.
 //!
 //! Everything here emits CSS the engine can play and the
 //! static-transform guard can read: every `translate`/`scale` lives
@@ -22,7 +32,8 @@
 //! use concat_motion::comp::{Node, TextNode, Word};
 //! use concat_motion::typography::{Entrance, Kinetic, Stagger};
 //!
-//! // A headline: three words, eighty milliseconds apart, weight flexing.
+//! // A headline: three words, eighty milliseconds apart, the weights
+//! // ramping 100 to 900 across them.
 //! let kinetic = Kinetic::words()
 //!     .delay(0.08)
 //!     .entrance(Entrance::BlurIn)
@@ -70,15 +81,19 @@ pub enum Entrance {
     ScaleIn,
 }
 
-/// A variable-weight flex, as the two ends of `font-variation-settings`
-/// the headline travels between. Needs a variable font face carried as a
-/// `font` asset - the library's `Archivo-Variable.ttf` and
-/// `Inter-Variable.ttf` are exactly that.
+/// A weight ramp across the stagger: the first unit at `from`, the last
+/// at `to`, the units between interpolated. Written as a static
+/// `font-weight` on each unit, because Geneva 1.6.0 cannot animate
+/// weight at all - `font-variation-settings` is not drawn (W450) and
+/// `font-weight` in a keyframe is refused (E442) - while a static
+/// `font-weight` is snapped to the family's own instances and drawn: a
+/// real crescendo across the words, not an animation the engine rejects
+/// after the comp looked valid.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct WeightFlex {
-    /// The weight it starts at, 100 to 900.
+    /// The weight it ramps from, 100 to 900.
     pub from: u32,
-    /// The weight it flexes to, 100 to 900.
+    /// The weight it ramps to, 100 to 900.
     pub to: u32,
 }
 
@@ -96,11 +111,10 @@ pub struct Kinetic {
     pub seconds: f64,
     /// How the entrance travels.
     pub curve: Curve,
-    /// The variable-weight flex the whole line plays, when it plays one.
+    /// The weight ramp across the stagger's units, when there is one:
+    /// the first unit at `from`, the last at `to`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weight: Option<WeightFlex>,
-    /// How long the weight flex takes, in seconds.
-    pub flex_seconds: f64,
 }
 
 impl Default for Kinetic {
@@ -112,7 +126,6 @@ impl Default for Kinetic {
             seconds: 0.5,
             curve: Curve::EMPHASIS,
             weight: None,
-            flex_seconds: 0.9,
         }
     }
 }
@@ -165,7 +178,9 @@ impl Kinetic {
         self
     }
 
-    /// Flex the variable font's weight from `from` to `to` over the line.
+    /// Ramp the units' weights from `from` to `to` across the line: the
+    /// first unit light, the last heavy - static `font-weight` values the
+    /// engine draws, because Geneva 1.6.0 cannot animate weight at all.
     pub fn flexing_weight(mut self, from: u32, to: u32) -> Kinetic {
         self.weight = Some(WeightFlex {
             from: from.clamp(100, 900),
@@ -176,21 +191,16 @@ impl Kinetic {
 }
 
 /// A headline as one markup node: the units staggered `kinetic.delay`
-/// apart on `kinetic.entrance`, the whole line optionally flexing its
-/// variable weight.
+/// apart on `kinetic.entrance`, the line's weights ramping from `from`
+/// to `to` across its units when [`Kinetic::flexing_weight`] set one.
 ///
 /// The node's box is content-sized; place it with its
 /// [`crate::comp::Transform`] the way any text node is placed.
 pub fn headline(id: &str, text: &str, style: &TextNode, kinetic: &Kinetic) -> Node {
     let units = units_of(text, kinetic.stagger);
     let spans = staggered_spans(&units, kinetic, "kt-in");
-    let markup = format!(
-        "<div class=\"kt\"{}>{}</div>",
-        flex_attribute(kinetic),
-        spans
-    );
-    let mut css = stylesheet(style) + &entrance_keyframes(kinetic);
-    css.push_str(&flex_keyframes(kinetic));
+    let markup = format!("<div class=\"kt\">{}</div>", spans);
+    let css = stylesheet(style) + &entrance_keyframes(kinetic, style);
     html_node(id, &markup, &css)
 }
 
@@ -203,7 +213,7 @@ pub fn headline(id: &str, text: &str, style: &TextNode, kinetic: &Kinetic) -> No
 /// last word (`end: None`) is closed at.
 pub fn karaoke(words: &[Word], span: f64, id: &str, style: &TextNode, kinetic: &Kinetic) -> Node {
     let mut spans = String::new();
-    for word in words {
+    for (index, word) in words.iter().enumerate() {
         // An open-ended word holds until the caption's own end, the same
         // rule the timeline's text source applies.
         let end = word.end.unwrap_or(span.max(word.start + 0.1));
@@ -211,22 +221,23 @@ pub fn karaoke(words: &[Word], span: f64, id: &str, style: &TextNode, kinetic: &
         // The word arrives at its spoken moment, lit, and holds the lit
         // colour for most of its own length - the karaoke highlight is a
         // colour trip inside the one animation, not an effect stacked on
-        // top of the entrance.
+        // top of the entrance. Its weight rides the ramp statically when
+        // there is one: the engine cannot animate a weight (E442), and a
+        // static one it draws.
+        let weight = unit_weight(kinetic, index, words.len())
+            .map(|weight| format!("; font-weight: {weight}"))
+            .unwrap_or_default();
         spans.push_str(&format!(
-            "<span style=\"animation: kk-word {:.3}s {} {:.3}s both\">{}</span>",
+            "<span style=\"animation: kk-word {:.3}s {} {:.3}s both{}\">{}</span>",
             spoken,
             kinetic.curve.css(),
             word.start.max(0.0),
+            weight,
             escape(&word.text)
         ));
     }
-    let markup = format!(
-        "<div class=\"kt kk\"{}>{}</div>",
-        flex_attribute(kinetic),
-        spans
-    );
-    let mut css = stylesheet(style) + &karaoke_keyframes(style) + &entrance_keyframes(kinetic);
-    css.push_str(&flex_keyframes(kinetic));
+    let markup = format!("<div class=\"kt kk\">{}</div>", spans);
+    let css = stylesheet(style) + &karaoke_keyframes(style) + &entrance_keyframes(kinetic, style);
     html_node(id, &markup, &css)
 }
 
@@ -279,50 +290,54 @@ fn units_of(text: &str, stagger: Stagger) -> Vec<Unit> {
 /// carriage passes over the space - but it is never animated: there is
 /// nothing to reveal, and its width is what makes the boundary read,
 /// a gap and a half beyond the letter gap the flex row already gives.
+/// A unit the weight ramp covers carries its weight statically: the
+/// engine snaps a static `font-weight` to the family's own instances,
+/// which is the one weight it draws.
 fn staggered_spans(units: &[Unit], kinetic: &Kinetic, rule: &str) -> String {
+    let texts = units
+        .iter()
+        .filter(|unit| matches!(unit, Unit::Text(_)))
+        .count();
+    let mut drawn = 0usize;
     let mut spans = String::new();
     for (index, unit) in units.iter().enumerate() {
         match unit {
             Unit::Space => {
                 spans.push_str("<span style=\"width: 0.39em\"></span>");
             }
-            Unit::Text(text) => spans.push_str(&format!(
-                "<span style=\"animation: {} {:.3}s {} {:.3}s both\">{}</span>",
-                rule,
-                kinetic.seconds,
-                kinetic.curve.css(),
-                index as f64 * kinetic.delay,
-                escape(text)
-            )),
+            Unit::Text(text) => {
+                let weight = unit_weight(kinetic, drawn, texts)
+                    .map(|weight| format!("; font-weight: {weight}"))
+                    .unwrap_or_default();
+                drawn += 1;
+                spans.push_str(&format!(
+                    "<span style=\"animation: {} {:.3}s {} {:.3}s both{}\">{}</span>",
+                    rule,
+                    kinetic.seconds,
+                    kinetic.curve.css(),
+                    index as f64 * kinetic.delay,
+                    weight,
+                    escape(text)
+                ));
+            }
         }
     }
     spans
 }
 
-/// The wrapper's variable-weight attribute, when there is a flex: the
-/// whole line flexes together while its units stagger in beneath it.
-fn flex_attribute(kinetic: &Kinetic) -> String {
-    match kinetic.weight {
-        Some(_) => format!(
-            " style=\"animation: kt-flex {:.3}s {} both\"",
-            kinetic.flex_seconds,
-            kinetic.curve.css()
-        ),
-        None => String::new(),
+/// The weight one unit of `total` carries in the ramp: the first at
+/// `from`, the last at `to`, the units between interpolated - rounded to
+/// the nearest weight, because `font-weight` is an integer. A line of
+/// one unit cannot ramp anywhere and lands at `to`, the ramp's own
+/// emphasis. `None` when no ramp was asked for.
+fn unit_weight(kinetic: &Kinetic, index: usize, total: usize) -> Option<u32> {
+    let WeightFlex { from, to } = kinetic.weight?;
+    if total <= 1 {
+        return Some(to);
     }
-}
-
-/// The variable-weight flex as its `@keyframes` rule:
-/// `font-variation-settings` animated from one weight to the other, the
-/// one property a variable font carries that a static face cannot.
-fn flex_keyframes(kinetic: &Kinetic) -> String {
-    match kinetic.weight {
-        Some(WeightFlex { from, to }) => format!(
-            "@keyframes kt-flex {{ from {{ font-variation-settings: 'wght' {from} }} \
-             to {{ font-variation-settings: 'wght' {to} }} }}\n"
-        ),
-        None => String::new(),
-    }
+    let share = index as f64 / (total - 1) as f64;
+    let weight = from as f64 + (to as f64 - from as f64) * share;
+    Some(weight.round() as u32)
 }
 
 /// The shared base stylesheet: the line's own type, in the style a text
@@ -367,21 +382,30 @@ fn stylesheet(style: &TextNode) -> String {
 
 /// The entrance a stagger plays, as its `@keyframes` rule. The transform
 /// is the individual `translate`/`scale`, inside the rule where the
-/// engine animates it - the one place it belongs.
-fn entrance_keyframes(kinetic: &Kinetic) -> String {
+/// engine animates it - the one place it belongs. The rise is written in
+/// **pixels**, computed from the style's own font size, because the
+/// engine's keyframes take `px` and `%` and nothing else (E442: `0.3em`
+/// is an invalid length there) - the em arithmetic a hand author would
+/// get wrong is done here, where the size is known.
+fn entrance_keyframes(kinetic: &Kinetic, style: &TextNode) -> String {
     let body = match kinetic.entrance {
         Entrance::BlurIn => {
-            "from { opacity: 0; filter: blur(14px); translate: 0 0.3em }\n\
-                             to { opacity: 1; filter: blur(0px); translate: 0 0 }"
+            format!(
+                "from {{ opacity: 0; filter: blur(14px); translate: 0 {:.1}px }}\n\
+                 to {{ opacity: 1; filter: blur(0px); translate: 0 0 }}",
+                0.3 * style.size
+            )
         }
         Entrance::SlideUp => {
-            "from { opacity: 0; translate: 0 0.4em }\n\
-                              to { opacity: 1; translate: 0 0 }"
+            format!(
+                "from {{ opacity: 0; translate: 0 {:.1}px }}\n\
+                 to {{ opacity: 1; translate: 0 0 }}",
+                0.4 * style.size
+            )
         }
-        Entrance::ScaleIn => {
-            "from { opacity: 0; scale: 0.84 }\n\
+        Entrance::ScaleIn => "from { opacity: 0; scale: 0.84 }\n\
                               to { opacity: 1; scale: 1 }"
-        }
+            .to_owned(),
     };
     format!("@keyframes kt-in {{ {body} }}\n")
 }
@@ -389,34 +413,27 @@ fn entrance_keyframes(kinetic: &Kinetic) -> String {
 /// The karaoke word's one animation: it appears lit at its spoken moment,
 /// holds the lit colour for most of its own length, and settles back to
 /// the base colour - the highlight is a data-driven colour trip, not an
-/// effect stacked on top.
+/// effect stacked on top. Weight is deliberately absent: the engine
+/// cannot animate it (E442), so the lit word's extra weight lives in the
+/// span's own static style when a ramp asked for one. The rise is in
+/// pixels for the same reason the entrance's is: the engine's keyframes
+/// take `px` and `%` only.
 fn karaoke_keyframes(style: &TextNode) -> String {
-    // The lit word's weight stays inside the 100..900 every face carries:
-    // the base plus the pop, clamped - a style at 800 or 900 would
-    // otherwise ask for 1000 or 1100, a `font-weight` CSS refuses and
-    // the renderer drops, and the karaoke pop is silently gone while
-    // the caption reads as if it never had one.
     let spoken = style
         .highlight
         .as_ref()
         .and_then(|highlight| highlight.color)
         .map(|color| color.to_hex())
         .unwrap_or_else(|| crate::presets::ACCENT.to_owned());
-    let pop = style
-        .highlight
-        .as_ref()
-        .and_then(|highlight| highlight.weight)
-        .map(|weight| weight.clamp(100, 900))
-        .unwrap_or_else(|| (style.weight.max(400) + 200).min(900));
     format!(
         "@keyframes kk-word {{\n\
-         \x20 0% {{ opacity: 0; translate: 0 0.3em; color: {spoken}; font-weight: {pop} }}\n\
-         \x20 12% {{ opacity: 1; translate: 0 0; color: {spoken}; font-weight: {pop} }}\n\
-         \x20 75% {{ color: {spoken}; font-weight: {pop} }}\n\
-         \x20 100% {{ opacity: 1; color: {base}; font-weight: {base_weight} }}\n\
+         \x20 0% {{ opacity: 0; translate: 0 {:.1}px; color: {spoken} }}\n\
+         \x20 12% {{ opacity: 1; translate: 0 0; color: {spoken} }}\n\
+         \x20 75% {{ color: {spoken} }}\n\
+         \x20 100% {{ opacity: 1; color: {base} }}\n\
          }}\n",
+        0.3 * style.size,
         base = style.color.to_hex(),
-        base_weight = style.weight,
     )
 }
 
@@ -550,12 +567,13 @@ mod tests {
         assert!(!spacer.contains("animation"), "{spacer}");
     }
 
-    /// The karaoke pop stays inside the range a face carries: a caption
-    /// styled at 900 asks for 1100 the way the arithmetic reads, which
-    /// CSS refuses and the renderer drops - the pop clamps at 900, and
-    /// the highlight keeps its weight.
+    /// A heavy caption stays inside the range a face carries: the base
+    /// style carries the style's own weight, and the karaoke rule animates
+    /// colour and opacity only - the engine cannot animate a weight (E442),
+    /// so no weight, however heavy the style or its highlight asks, reaches
+    /// a keyframe.
     #[test]
-    fn a_heavy_caption_pops_inside_the_range_a_face_carries() {
+    fn a_heavy_caption_stays_inside_the_range_a_face_carries() {
         let mut heavy = style();
         heavy.weight = 900;
         heavy.highlight = None;
@@ -566,11 +584,19 @@ mod tests {
         }];
         let node = karaoke(&words, 1.0, "caption", &heavy, &Kinetic::words());
         let css = css_of(&node);
+        // The base style carries the style's own weight, drawn statically.
         assert!(css.contains("font-weight: 900"), "{css}");
-        assert!(!css.contains("font-weight: 1100"), "{css}");
-        assert!(!css.contains("font-weight: 1000"), "{css}");
-        // A highlight weight past the range is clamped, not passed
-        // through: the style is a document's to write.
+        // And the karaoke rule animates colour and opacity only: a weight
+        // inside a @keyframes rule is E442, so however heavy the style or
+        // its highlight asks to pop, no weight reaches the animation.
+        assert!(
+            crate::css::refused_weights(&css).is_empty(),
+            "an unplayable weight in the karaoke rule: {:?}",
+            crate::css::refused_weights(&css)
+        );
+        // A highlight weight past the range never reaches the stylesheet
+        // at all: the pop it once named is the one thing the engine cannot
+        // animate, so the highlight reads as colour alone.
         let mut loud = style();
         loud.highlight = Some(crate::comp::TextStyle {
             color: None,
@@ -580,25 +606,75 @@ mod tests {
         });
         let node = karaoke(&words, 1.0, "caption", &loud, &Kinetic::words());
         let css = css_of(&node);
-        assert!(css.contains("font-weight: 900"), "{css}");
         assert!(!css.contains("font-weight: 1200"), "{css}");
+        assert!(!css.contains("font-weight: 1000"), "{css}");
     }
 
-    /// The variable-weight flex: `font-variation-settings` animated
-    /// inside `@keyframes`, on the wrapper the units stagger beneath.
+    /// The weight ramp: a static `font-weight` per unit, the first at
+    /// `from` and the last at `to` - and never a `font-variation-settings`
+    /// or a `font-weight` inside a `@keyframes` rule, either of which the
+    /// engine refuses (E442) after the comp looked valid. The wrapper
+    /// carries no animation of its own: the ramp is the units' own
+    /// static style, and the entrance is the only thing animated.
     #[test]
-    fn a_headline_flexes_its_variable_weight_from_100_to_900() {
+    fn a_headline_ramps_its_weight_across_the_words() {
+        let kinetic = Kinetic::words().flexing_weight(100, 900);
+        let node = headline("headline", "Make it move", &style(), &kinetic);
+        let css = css_of(&node);
+        assert!(!css.contains("font-variation-settings"), "{css}");
+        assert!(!css.contains("@keyframes kt-flex"), "{css}");
+        let markup = markup_of(&node);
+        assert!(!markup.contains("animation: kt-flex"), "{markup}");
+        // Three words: the first light, the middle halfway, the last heavy.
+        assert!(markup.contains("font-weight: 100"), "{markup}");
+        assert!(markup.contains("font-weight: 500"), "{markup}");
+        assert!(markup.contains("font-weight: 900"), "{markup}");
+        // And no keyframe in the stylesheet animates a weight.
+        assert!(
+            crate::css::refused_weights(&css).is_empty(),
+            "an unplayable weight in the stylesheet: {:?}",
+            crate::css::refused_weights(&css)
+        );
+    }
+
+    /// A ramp over a character stagger interpolates across the characters
+    /// and never puts a weight on the word-boundary spacers, which draw
+    /// nothing and so carry nothing.
+    #[test]
+    fn a_character_stagger_ramps_across_the_letters_only() {
+        let kinetic = Kinetic::chars().flexing_weight(300, 700);
+        let node = headline("headline", "ab cd", &style(), &kinetic);
+        let markup = markup_of(&node);
+        // Four characters: 300, 433, 567, 700 - and the spacer span
+        // between the words carries only its width.
+        assert!(markup.contains("font-weight: 300"), "{markup}");
+        assert!(markup.contains("font-weight: 700"), "{markup}");
+        assert!(
+            markup.contains("<span style=\"width: 0.39em\"></span>"),
+            "{markup}"
+        );
+        let spacer: String = markup
+            .lines()
+            .flat_map(|line| line.split("</span>"))
+            .find(|part| part.contains("width: 0.39em"))
+            .unwrap_or_default()
+            .chars()
+            .rev()
+            .take_while(|c| *c != '>')
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        assert!(!spacer.contains("font-weight"), "{spacer}");
+    }
+
+    /// A line of one word cannot ramp anywhere and lands at `to`.
+    #[test]
+    fn a_one_word_ramp_lands_at_its_emphasis() {
         let kinetic = Kinetic::words().flexing_weight(100, 900);
         let node = headline("headline", "Make", &style(), &kinetic);
-        let css = css_of(&node);
-        assert!(css.contains("@keyframes kt-flex"), "{css}");
-        assert!(css.contains("font-variation-settings: 'wght' 100"), "{css}");
-        assert!(css.contains("font-variation-settings: 'wght' 900"), "{css}");
         let markup = markup_of(&node);
-        assert!(
-            markup.contains("animation: kt-flex"),
-            "the wrapper carries the flex: {markup}"
-        );
+        assert!(markup.contains("font-weight: 900"), "{markup}");
     }
 
     /// All three entrances emit their own keyframes, and every transform
@@ -615,12 +691,16 @@ mod tests {
                 "{}: {css}",
                 entrance_debug(entrance)
             );
+            // The rises are in pixels - 0.3em and 0.4em of the style's own
+            // 96 px - because the engine's keyframes take `px` and `%`
+            // only: an `em` there is E442.
             let expected = match entrance {
-                Entrance::BlurIn => "filter: blur(14px)",
-                Entrance::SlideUp => "translate: 0 0.4em",
+                Entrance::BlurIn => "filter: blur(14px); translate: 0 28.8px",
+                Entrance::SlideUp => "translate: 0 38.4px",
                 Entrance::ScaleIn => "scale: 0.84",
             };
             assert!(css.contains(expected), "{:?}: {css}", entrance);
+            assert!(!css.contains("em }"), "{:?}: {css}", entrance);
         }
     }
 
@@ -657,10 +737,47 @@ mod tests {
         assert!(markup.contains("0.450s both"), "{markup}");
         assert!(markup.contains("animation: kk-word 0.750s"), "{markup}");
         assert!(markup.contains("0.850s both"), "{markup}");
-        // And the highlight is the style's own: accent colour, weight 800.
+        // And the highlight is the style's own: the accent colour, held
+        // through the lit stretch of the word's own animation. A weight
+        // is deliberately absent from the keyframes - the engine cannot
+        // animate one (E442) - so the highlight reads as colour alone.
         let css = css_of(&node);
         assert!(css.contains("#d9a441"), "{css}");
-        assert!(css.contains("font-weight: 800"), "{css}");
+        assert!(
+            crate::css::refused_weights(&css).is_empty(),
+            "an unplayable weight in the karaoke rule: {:?}",
+            crate::css::refused_weights(&css)
+        );
+    }
+
+    /// The karaoke caption carries the ramp too, word by word - the
+    /// spoken order is the ramp's order.
+    #[test]
+    fn a_karaoke_caption_ramps_across_its_words() {
+        let words = vec![
+            Word {
+                text: "Make".into(),
+                start: 0.0,
+                end: Some(0.45),
+            },
+            Word {
+                text: "it".into(),
+                start: 0.45,
+                end: Some(0.85),
+            },
+            Word {
+                text: "move.".into(),
+                start: 0.85,
+                end: None,
+            },
+        ];
+        let kinetic = Kinetic::words().flexing_weight(100, 900);
+        let node = karaoke(&words, 1.6, "caption", &style(), &kinetic);
+        let markup = markup_of(&node);
+        assert!(markup.contains("font-weight: 100"), "{markup}");
+        assert!(markup.contains("font-weight: 500"), "{markup}");
+        assert!(markup.contains("font-weight: 900"), "{markup}");
+        assert!(!markup.contains("font-variation-settings"), "{markup}");
     }
 
     /// A transcript's words can carry the characters HTML reads.

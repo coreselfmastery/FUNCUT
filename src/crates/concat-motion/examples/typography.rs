@@ -3,10 +3,13 @@
 
 //! The designed moment: the typography step's done-when, as a comp.
 //!
-//! A variable-weight headline flexing from 100 to 900 while its three
-//! words stagger in eighty milliseconds apart, and a karaoke caption
-//! whose words light when a Whisper transcript says they are spoken -
-//! one comp, validated, mapped onto a Geneva timeline, and written as a
+//! A headline whose three words stagger in eighty milliseconds apart
+//! with their weights ramping from 100 to 900 across them - a static
+//! `font-weight` per word, the crescendo the engine draws, because it
+//! cannot animate a weight at all (font-variation-settings is W450,
+//! font-weight in a keyframe is E442) - and a karaoke caption whose
+//! words light when a Whisper transcript says they are spoken - one
+//! comp, validated, mapped onto a Geneva timeline, and written as a
 //! document a project can place.
 //!
 //! ```sh

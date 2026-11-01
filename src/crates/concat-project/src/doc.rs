@@ -543,7 +543,7 @@ mod tests {
     fn every_numeric_surface_of_a_clip_refuses_the_save() {
         use crate::model::{
             AppliedFilter, Background, BrushTool, ClipKey, ClipMask, Crop, Cutout, KeyEase,
-            KeyProperty, ParamKey, ShapeStyle, Stroke, Stabilize, Transition,
+            KeyProperty, ParamKey, ShapeStyle, Stabilize, Stroke, Transition,
         };
         use std::collections::BTreeMap;
 
@@ -561,14 +561,13 @@ mod tests {
             params,
         };
         // One filter in a clip's chain, with params and keys to hand.
-        let filter = |params: BTreeMap<String, f64>, keys: BTreeMap<String, Vec<ParamKey>>| {
-            AppliedFilter {
+        let filter =
+            |params: BTreeMap<String, f64>, keys: BTreeMap<String, Vec<ParamKey>>| AppliedFilter {
                 id: "blur".to_owned(),
                 params,
                 enabled: true,
                 keys,
-            }
-        };
+            };
         // One key of a filter's parameter.
         let param_key = |value: f64, ease: KeyEase| ParamKey {
             at: 0.5,
@@ -580,128 +579,207 @@ mod tests {
         // everything else at its default, so a refusal can only be the
         // walker naming that surface.
         let cases: Vec<(&str, Clip)> = vec![
-            ("the mask's feather", Clip {
-                mask: Some(ClipMask { feather: f64::NAN, ..ClipMask::default() }),
-                ..Clip::default()
-            }),
-            ("the crop", Clip {
-                crop: Some(Crop { left: f64::NAN, ..Crop::default() }),
-                ..Clip::default()
-            }),
-            ("a stroke's size", Clip {
-                cutout: Some(Cutout {
-                    strokes: vec![stroke(f64::NAN, Vec::new(), None)],
-                    ..Cutout::auto()
-                }),
-                ..Clip::default()
-            }),
-            ("a stroke's point", Clip {
-                cutout: Some(Cutout {
-                    strokes: vec![stroke(8.0, vec![[0.0, f64::NAN]], None)],
-                    ..Cutout::auto()
-                }),
-                ..Clip::default()
-            }),
-            ("a stroke's time", Clip {
-                cutout: Some(Cutout {
-                    strokes: vec![stroke(8.0, Vec::new(), Some(f64::NAN))],
-                    ..Cutout::auto()
-                }),
-                ..Clip::default()
-            }),
-            ("the cutout's feather", Clip {
-                cutout: Some(Cutout { feather: f64::NAN, ..Cutout::auto() }),
-                ..Clip::default()
-            }),
-            ("the transition's duration", Clip {
-                transition_in: Some(transition(f64::NAN, BTreeMap::new())),
-                ..Clip::default()
-            }),
-            ("the transition's params", Clip {
-                transition_in: Some(transition(
-                    0.5,
-                    BTreeMap::from([("amount".to_owned(), f64::NAN)]),
-                )),
-                ..Clip::default()
-            }),
-            ("the shape's size", Clip {
-                shape: Some(ShapeStyle { size: f64::NAN, ..ShapeStyle::default() }),
-                ..Clip::default()
-            }),
-            ("the shape's stroke", Clip {
-                shape: Some(ShapeStyle { stroke_width: f64::NAN, ..ShapeStyle::default() }),
-                ..Clip::default()
-            }),
-            ("the stabilize", Clip {
-                stabilize: Some(Stabilize { smoothness: f64::NAN, ..Stabilize::default() }),
-                ..Clip::default()
-            }),
-            ("a filter's params", Clip {
-                filters: vec![filter(
-                    BTreeMap::from([("amount".to_owned(), f64::NAN)]),
-                    BTreeMap::new(),
-                )],
-                ..Clip::default()
-            }),
-            ("a filter key's value", Clip {
-                filters: vec![filter(
-                    BTreeMap::new(),
-                    BTreeMap::from([(
-                        "amount".to_owned(),
-                        vec![param_key(f64::NAN, KeyEase::default())],
-                    )]),
-                )],
-                ..Clip::default()
-            }),
-            ("a filter key's ease", Clip {
-                filters: vec![filter(
-                    BTreeMap::new(),
-                    BTreeMap::from([(
-                        "amount".to_owned(),
-                        vec![param_key(1.0, KeyEase([0.0, f64::NAN, 1.0, 1.0]))],
-                    )]),
-                )],
-                ..Clip::default()
-            }),
-            ("a clip key", Clip {
-                keys: vec![ClipKey {
-                    property: KeyProperty::Scale,
-                    at: 0.5,
-                    value: f64::NAN,
-                    ease: KeyEase::default(),
-                }],
-                ..Clip::default()
-            }),
-            ("a clip key's ease", Clip {
-                keys: vec![ClipKey {
-                    property: KeyProperty::Scale,
-                    at: 0.5,
-                    value: 1.0,
-                    ease: KeyEase([f64::NAN, 0.0, 1.0, 1.0]),
-                }],
-                ..Clip::default()
-            }),
-            ("the speed curve's slope", Clip {
-                speed_curve: Some(vec![crate::model::SpeedPoint {
-                    at: 0.5,
-                    speed: 1.0,
-                    slope: Some(f64::NAN),
-                }]),
-                ..Clip::default()
-            }),
-            ("the text style", Clip {
-                text: Some(crate::model::TextStyle {
-                    font_size: f64::NAN,
-                    ..crate::model::TextStyle::default()
-                }),
-                ..Clip::default()
-            }),
-            ("the background's blur", Clip {
-                background: Some(Background::Blur { amount: f64::NAN }),
-                ..Clip::default()
-            }),
+            (
+                "the mask's feather",
+                Clip {
+                    mask: Some(ClipMask {
+                        feather: f64::NAN,
+                        ..ClipMask::default()
+                    }),
+                    ..Clip::default()
+                },
+            ),
+            (
+                "the crop",
+                Clip {
+                    crop: Some(Crop {
+                        left: f64::NAN,
+                        ..Crop::default()
+                    }),
+                    ..Clip::default()
+                },
+            ),
+            (
+                "a stroke's size",
+                Clip {
+                    cutout: Some(Cutout {
+                        strokes: vec![stroke(f64::NAN, Vec::new(), None)],
+                        ..Cutout::auto()
+                    }),
+                    ..Clip::default()
+                },
+            ),
+            (
+                "a stroke's point",
+                Clip {
+                    cutout: Some(Cutout {
+                        strokes: vec![stroke(8.0, vec![[0.0, f64::NAN]], None)],
+                        ..Cutout::auto()
+                    }),
+                    ..Clip::default()
+                },
+            ),
+            (
+                "a stroke's time",
+                Clip {
+                    cutout: Some(Cutout {
+                        strokes: vec![stroke(8.0, Vec::new(), Some(f64::NAN))],
+                        ..Cutout::auto()
+                    }),
+                    ..Clip::default()
+                },
+            ),
+            (
+                "the cutout's feather",
+                Clip {
+                    cutout: Some(Cutout {
+                        feather: f64::NAN,
+                        ..Cutout::auto()
+                    }),
+                    ..Clip::default()
+                },
+            ),
+            (
+                "the transition's duration",
+                Clip {
+                    transition_in: Some(transition(f64::NAN, BTreeMap::new())),
+                    ..Clip::default()
+                },
+            ),
+            (
+                "the transition's params",
+                Clip {
+                    transition_in: Some(transition(
+                        0.5,
+                        BTreeMap::from([("amount".to_owned(), f64::NAN)]),
+                    )),
+                    ..Clip::default()
+                },
+            ),
+            (
+                "the shape's size",
+                Clip {
+                    shape: Some(ShapeStyle {
+                        size: f64::NAN,
+                        ..ShapeStyle::default()
+                    }),
+                    ..Clip::default()
+                },
+            ),
+            (
+                "the shape's stroke",
+                Clip {
+                    shape: Some(ShapeStyle {
+                        stroke_width: f64::NAN,
+                        ..ShapeStyle::default()
+                    }),
+                    ..Clip::default()
+                },
+            ),
+            (
+                "the stabilize",
+                Clip {
+                    stabilize: Some(Stabilize {
+                        smoothness: f64::NAN,
+                        ..Stabilize::default()
+                    }),
+                    ..Clip::default()
+                },
+            ),
+            (
+                "a filter's params",
+                Clip {
+                    filters: vec![filter(
+                        BTreeMap::from([("amount".to_owned(), f64::NAN)]),
+                        BTreeMap::new(),
+                    )],
+                    ..Clip::default()
+                },
+            ),
+            (
+                "a filter key's value",
+                Clip {
+                    filters: vec![filter(
+                        BTreeMap::new(),
+                        BTreeMap::from([(
+                            "amount".to_owned(),
+                            vec![param_key(f64::NAN, KeyEase::default())],
+                        )]),
+                    )],
+                    ..Clip::default()
+                },
+            ),
+            (
+                "a filter key's ease",
+                Clip {
+                    filters: vec![filter(
+                        BTreeMap::new(),
+                        BTreeMap::from([(
+                            "amount".to_owned(),
+                            vec![param_key(1.0, KeyEase([0.0, f64::NAN, 1.0, 1.0]))],
+                        )]),
+                    )],
+                    ..Clip::default()
+                },
+            ),
+            (
+                "a clip key",
+                Clip {
+                    keys: vec![ClipKey {
+                        property: KeyProperty::Scale,
+                        at: 0.5,
+                        value: f64::NAN,
+                        ease: KeyEase::default(),
+                    }],
+                    ..Clip::default()
+                },
+            ),
+            (
+                "a clip key's ease",
+                Clip {
+                    keys: vec![ClipKey {
+                        property: KeyProperty::Scale,
+                        at: 0.5,
+                        value: 1.0,
+                        ease: KeyEase([f64::NAN, 0.0, 1.0, 1.0]),
+                    }],
+                    ..Clip::default()
+                },
+            ),
+            (
+                "the speed curve's slope",
+                Clip {
+                    speed_curve: Some(vec![crate::model::SpeedPoint {
+                        at: 0.5,
+                        speed: 1.0,
+                        slope: Some(f64::NAN),
+                    }]),
+                    ..Clip::default()
+                },
+            ),
+            (
+                "the text style",
+                Clip {
+                    text: Some(crate::model::TextStyle {
+                        font_size: f64::NAN,
+                        ..crate::model::TextStyle::default()
+                    }),
+                    ..Clip::default()
+                },
+            ),
+            (
+                "the background's blur",
+                Clip {
+                    background: Some(Background::Blur { amount: f64::NAN }),
+                    ..Clip::default()
+                },
+            ),
         ];
-        assert_eq!(cases.len(), 19, "one row per surface, added to as fields are");
+        assert_eq!(
+            cases.len(),
+            19,
+            "one row per surface, added to as fields are"
+        );
         for (surface, clip) in cases {
             let project = project_with(clip);
             let error = match to_document(&settings(), &project) {

@@ -2197,10 +2197,6 @@ pub enum StockShelf {
     /// as a local index; its clips carry no licence field, author, or
     /// release record.
     Openvid,
-    /// The sticker page's two shelves: MAGICK's overlays, which are
-    /// CC BY-NC - not commercial use - and OpenMoji, which is CC-BY 4.0,
-    /// attribution required.
-    Stickers,
 }
 
 impl StockShelf {
@@ -2209,7 +2205,6 @@ impl StockShelf {
     fn id(self) -> &'static str {
         match self {
             StockShelf::Openvid => "openvid",
-            StockShelf::Stickers => "stickers",
         }
     }
 }
@@ -2626,7 +2621,6 @@ impl Studio {
         };
         let message = match shelf {
             StockShelf::Openvid => t("stock.openvidLicence"),
-            StockShelf::Stickers => t("stock.stickersLicence"),
         };
         crate::ui::NoticeData {
             open: true,
@@ -9021,16 +9015,10 @@ impl Studio {
                 self.music = pane;
             }
             crate::panes::Msg::Magick(msg) => {
-                // The sticker page's two licences - MAGICK's NC overlays,
-                // OpenMoji's CC-BY - are said the same way, before the
-                // page's first use.
-                if matches!(msg, crate::panes::magick::MagickMsg::Shown(true))
-                    && !self
-                        .prefs
-                        .stock_licence_acknowledged(StockShelf::Stickers.id())
-                {
-                    self.notice = Some(StockShelf::Stickers);
-                }
+                // The sticker shelf is MIT - free for commercial and
+                // personal use - so the page is not gated: the licence
+                // is a line on the page itself, not a notice to get
+                // past.
                 let mut pane = std::mem::take(&mut self.magick);
                 pane.update(msg, self);
                 self.magick = pane;
@@ -11786,37 +11774,26 @@ impl Studio {
         {
             let page = app.global::<crate::ui::Magick>();
             page.set_state(self.magick.combined());
-            let percent = [
-                concat_host::magick::Source::Magick,
-                concat_host::magick::Source::Openmoji,
-            ]
-            .into_iter()
-            .filter_map(|source| self.magick.library_status(source).percent_of_load())
-            .max()
-            .unwrap_or(0);
+            let percent = concat_host::magick::Source::ALL
+                .into_iter()
+                .filter_map(|source| self.magick.library_status(source).percent_of_load())
+                .max()
+                .unwrap_or(0);
             page.set_percent(percent as i32);
-            let error = [
-                (concat_host::magick::Source::Magick, "MAGICK"),
-                (concat_host::magick::Source::Openmoji, "OpenMoji"),
-            ]
-            .into_iter()
-            .filter_map(|(source, shelf)| match self.magick.library_status(source) {
-                concat_host::magick::Status::Failed(error) => Some(format!("{shelf}: {error}")),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("; ");
+            let error = concat_host::magick::Source::ALL
+                .into_iter()
+                .filter_map(|source| match self.magick.library_status(source) {
+                    concat_host::magick::Status::Failed(error) => {
+                        Some(format!("{}: {error}", t("magick.stickers")))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
             page.set_error(SharedString::from(error.as_str()));
             page.set_magick_rows(
                 self.magick
-                    .shelf_rows(concat_host::magick::Source::Magick)
-                    .map_or_else(SharedString::default, |rows| {
-                        SharedString::from(thousands(rows).as_str())
-                    }),
-            );
-            page.set_openmoji_rows(
-                self.magick
-                    .shelf_rows(concat_host::magick::Source::Openmoji)
+                    .shelf_rows(concat_host::magick::Source::Fluent)
                     .map_or_else(SharedString::default, |rows| {
                         SharedString::from(thousands(rows).as_str())
                     }),

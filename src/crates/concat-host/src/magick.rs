@@ -1,104 +1,81 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
-//! The sticker library: two shelves of transparent PNGs, none of them in
-//! the repository or the app, fetched one picture at a time.
+//! The sticker shelf: Microsoft's Fluent Emoji, one thousand two hundred
+//! and eighty-five 3D PNGs under the MIT licence, searched in a local
+//! index, fetched one picture at a time.
 //!
-//! *MAGICK* is OneOverZero's MAGICK (CVPR 2024): 148,193 captioned
-//! single-subject 1024x1024 RGBA images, chroma-keyed out of their
-//! backgrounds - people, animals, objects, gestures - each one a caption
-//! a search reads and a URL the Hugging Face Hub serves as one plain
-//! HTTPS GET. What the page and the agent need once is the dataset's own
-//! TSV index, ~16 MB of `page_id` and caption: it is published as a
+//! The set - [microsoft/fluentui-emoji] on GitHub - is every emoji the
+//! project carries, in its 3D style: rendered at 1024x1024 with real
+//! transparency, free for commercial and personal use alike, which is
+//! the whole reason this shelf exists. The two shelves it replaces were
+//! not: MAGICK's pictures were CC BY-NC - unusable in a monetized video
+//! - and OpenMoji's were CC BY-SA, and a sticker library that has to be
+//! explained before it can be used is a liability wearing a search box.
+//! The swap was the fix, not a bigger warning.
+//!
+//! What the page and the agent need once is the index: ~135 KB of TSV -
+//! every emoji's codepoints, its CLDR name, its keywords, its group, its
+//! licence and the path of its PNG in the repository - published as a
 //! release asset of this repository, checked against a digest baked into
-//! the build, and parsed into memory once. The 3,000 rows the index
-//! itself marks not-safe-for-work are left out at parse; the shelf that
-//! remains is 145,193 pictures. The pictures carry OneOverZero's own
-//! CC BY-NC 4.0 licence: fine in personal and non-commercial video,
-//! never in monetized work (see THIRD_PARTY_NOTICES and docs/MAGICK.md);
-//! OpenMoji, the other shelf, is CC-BY 4.0 and the one a commercial
-//! edit reaches for.
+//! the build, and parsed into memory once by
+//! [scripts/fluent-emoji-index.py]'s own output. The pictures themselves
+//! stay where Microsoft keeps them: one plain HTTPS GET each, from
+//! raw.githubusercontent.com with jsDelivr's mirror behind it.
 //!
-//! *OpenMoji* is the OpenMoji project's colour set (hfg-gmuend, CC-BY
-//! 4.0): 4,565 emoji at 618x618, each a palette PNG whose `tRNS` carries
-//! the transparency. Its index is the project's own `openmoji.json`
-//! (~2 MB, annotation and tags per entry), read once from the project's
-//! repository and cached; a picture is one plain GET of its own PNG. A
-//! living upstream rather than a frozen dataset, so the index is cached
-//! rather than digest-pinned - the way the sound library's manifest is.
+//! The search reads the words the set's own metadata says: the CLDR name
+//! and the keywords together, so "party" finds the popper and "smile"
+//! the grinning face. The engine is the one the sticker page always
+//! had: terms ANDed and prefix-matched, ranked by where and how rarely
+//! the words landed, the whole phrase as one run counting most.
 //!
-//! The search is one engine over both shelves: the query's words are
-//! lowercased and cut at anything that is not a letter or a digit, the
-//! glue that only holds a sentence together ("a", "the", "for", ...) is
-//! dropped, and the words are ANDed - every word must match somewhere in
-//! a caption, as a whole word or the front of one. A caption scores by
-//! where its matches landed and how rare the matched words are: the
-//! query's whole phrase said as one run of words counts most (+100),
-//! then each word (+20 whole, +12 as a prefix) scaled by how few
-//! captions share it, less a small penalty for rambling captions, so a
-//! terse caption that says the thing outranks a sprawling one that says
-//! it among other things. The page's field and the API's `magick.search`
-//! ask the same engine, so a person and an agent are answered by the
-//! same list.
+//! Two doors lead here. The library pane's Stickers page is the person's:
+//! a search field, cards with names and groups, a click to preview, a
+//! plus to lay an emoji over the video at the playhead, a heart to keep
+//! it on the list. The API's `magick.*` methods are the agent's - the
+//! names stayed for compatibility, and reach the same index - so an
+//! agent can pick an emoji by its words without a window, then import
+//! and place it in one call.
 //!
-//! Nothing here touches a project. A picture put on the timeline is
-//! copied into that project's own folder by the window, as a sound or a
-//! stock clip is, and fetched into `<data>/magick/images/` first - once;
-//! a picture fetched twice is fetched once. Beside the pictures,
-//! `favourites.json` keeps the ones the heart was pressed on, ids of
-//! either shelf, so a favourite survives the cache being cleared.
+//! [microsoft/fluentui-emoji]: https://github.com/microsoft/fluentui-emoji
+//! [scripts/fluent-emoji-index.py]: ../../scripts/fluent-emoji-index.py
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
 use crate::AppDirs;
 
-/// Where the MAGICK index is published: a release asset on this
+/// Where the Fluent Emoji index is published: a release asset on this
 /// repository, so the download needs no account and no token. The digest
 /// beside it is baked into this build; a new index is a new release tag
-/// and a new constant.
-pub const INDEX_URL: &str =
-    "https://github.com/coreselfmastery/FUNCUT/releases/download/magick-index-v1/magick_index.tsv";
+/// and a new constant, and a file whose bytes disagree is re-downloaded.
+pub const INDEX_URL: &str = "https://github.com/coreselfmastery/FUNCUT/releases/download/fluent-emoji-index-v1/fluent_index.tsv";
 
-/// The MAGICK index file's SHA-256, lowercase hex. A download that does
-/// not match is deleted, not installed.
-pub const INDEX_SHA256: &str = "b9b3be5c72bb14faf85d6ef1d0f05db2fc4476c9cd1eab88846ce36bf34c4417";
+/// The index file's SHA-256, lowercase hex. A download that does not
+/// match is deleted, not installed.
+pub const INDEX_SHA256: &str = "bd12802847f2ec64787a89c17e46a792abbaa9fee7152b9e943a50600545cc8a";
 
-/// The same index, straight from the Hub, for when GitHub's downloads do
-/// not reach this machine; and hf-mirror.com carries what the Hub does,
-/// which is how the shelf reaches mainland China.
-pub const INDEX_URL_HF: &str =
-    "https://huggingface.co/datasets/OneOverZero/MAGICK/resolve/main/magick_index.tsv";
+/// The repository the shelf's pictures live in. A picture is one plain
+/// GET of `…/main/<its path in the repository>`, the path exactly as the
+/// index carries it.
+pub const ASSET_URL: &str = "https://raw.githubusercontent.com/microsoft/fluentui-emoji/main";
 
-/// The dataset the MAGICK shelf's pictures live in. A picture is one
-/// plain GET of `…/images/{first two of the id}/{id}.png`.
-pub const DATASET_URL: &str =
-    "https://huggingface.co/datasets/OneOverZero/MAGICK/resolve/main/images";
+/// The same pictures through jsDelivr's mirror of the repository, for
+/// when raw.githubusercontent.com does not reach this machine - the same
+/// bytes, and the PNG check below is what either is believed by.
+pub const ASSET_MIRROR: &str = "https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main";
 
-/// The OpenMoji index, as the project's repository serves it: every
-/// entry's `hexcode`, `annotation` and `tags`. Read once, cached beside
-/// the pictures; a living upstream, so no digest is pinned.
-pub const OPENMOJI_INDEX: &str =
-    "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/data/openmoji.json";
+/// How big the index is, for the download's progress bar: ~135 KB.
+const INDEX_BYTES: u64 = 140_000;
 
-/// The OpenMoji colour PNGs, at the size meant for use: one plain GET of
-/// `…/color/618x618/{hexcode}.png`.
-pub const OPENMOJI_PNG: &str =
-    "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/618x618";
-
-/// How big the MAGICK index is, for the download's progress bar: ~16 MB.
-const INDEX_BYTES: u64 = 17_000_000;
-
-/// How big the OpenMoji index is, for the same reason: ~2 MB.
-const OPENMOJI_BYTES: u64 = 3_000_000;
-
-/// Where the page's own files live: `<data>/magick/`, the indexes beside
-/// the pictures and the favourites. `data` is large state by the app's
-/// convention, which is right for both.
+/// Where the page's own files live: `<data>/magick/`, the index beside
+/// the pictures and the favourites - the folder keeps the name the two
+/// shelves it replaces wrote, so a machine that held the old library
+/// does not carry two. `data` is large state by the app's convention,
+/// which is right for both.
 pub fn dir(dirs: &AppDirs) -> PathBuf {
     dirs.data.join("magick")
 }
@@ -108,15 +85,15 @@ pub fn dir(dirs: &AppDirs) -> PathBuf {
 /// word has stopped being the ask.
 const MOST_WORDS: usize = 12;
 
-/// The two shelves, as a filter names them and a result carries them.
+/// The shelf, as a filter names it and a result carries it. One shelf:
+/// the enum stays because the API's words and the pane's state were
+/// shaped around it, and the names a caller may still say - `magick`,
+/// `openmoji`, `emoji` - all mean this one now.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Source {
-    /// OneOverZero's MAGICK: 145,193 captioned AI-generated pictures,
-    /// chroma-keyed to transparency.
-    Magick,
-    /// The OpenMoji colour set: 4,565 emoji, CC-BY 4.0.
-    Openmoji,
+    /// Microsoft's Fluent Emoji: 1,285 3D PNGs, MIT.
+    Fluent,
 }
 
 impl Source {
@@ -124,62 +101,68 @@ impl Source {
     /// it.
     pub fn name(self) -> &'static str {
         match self {
-            Source::Magick => "magick",
-            Source::Openmoji => "openmoji",
+            Source::Fluent => "fluent",
         }
     }
 
-    /// The shelf a name means; `None` for one that is no shelf's.
+    /// The shelf a name means; `None` for one that is no shelf's. The
+    /// old shelves' names still answer - a script or an agent that says
+    /// `magick` or `openmoji` is pointed at the one shelf rather than
+    /// refused, because the shelf a name means is a fact about this
+    /// build, not about the caller's history.
     pub fn parse(name: &str) -> Option<Source> {
         match name.to_ascii_lowercase().as_str() {
-            "magick" => Some(Source::Magick),
-            "openmoji" | "emoji" => Some(Source::Openmoji),
+            "fluent" | "fluent-emoji" | "magick" | "openmoji" | "emoji" => Some(Source::Fluent),
             _ => None,
         }
     }
 
     /// The shelf's seat among the library's per-shelf arrays: a
-    /// download, and its progress, are a shelf's own, not the whole
-    /// library's - the pane loads both shelves at once, and one flag
-    /// shared between them would have the loser's `prepare` say
-    /// "nothing to do" and return a success it never earned.
+    /// download, and its progress, are a shelf's own. One shelf, one
+    /// seat; the array stays because the pane's polling was shaped
+    /// around it.
     fn seat(self) -> usize {
         match self {
-            Source::Magick => 0,
-            Source::Openmoji => 1,
+            Source::Fluent => 0,
         }
     }
 
-    /// Both shelves, in the order the page lists them.
-    pub const ALL: [Source; 2] = [Source::Magick, Source::Openmoji];
+    /// The shelf, in the order the page lists it.
+    pub const ALL: [Source; 1] = [Source::Fluent];
 }
 
-/// One picture of the library, as a search result carries it and as the
-/// API reports it. The caption is what the search read; the bytes
+/// One picture of the shelf, as a search result carries it and as the
+/// API reports it. The subject is what the search read; the bytes
 /// themselves arrive only when the picture is picked.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Sticker {
-    /// The picture's id in its dataset - MAGICK's `page_id`, OpenMoji's
-    /// `hexcode` - and the id every verb takes back.
+    /// The picture's id - its codepoints, `1f389` for the popper, a
+    /// hyphen-joined run for a sequence - and the id every verb takes
+    /// back.
     pub id: String,
     /// Which shelf it is on.
     pub source: Source,
-    /// What the picture shows, in the dataset's own words: the caption
-    /// the search read. Short for an emoji ("grinning face"), a sentence
-    /// for a MAGICK picture.
+    /// What the picture shows, in the set's own words: the CLDR name,
+    /// "party popper".
     pub subject: String,
+    /// The licence the picture carries, as the index read it: `MIT`.
+    /// Carried per picture rather than assumed of the shelf, so the
+    /// answer to "can I put this in a monetized video" is a field, not
+    /// a footnote.
+    pub license: String,
 }
 
 /// What a search asks for. Every field is optional; an all-`None` search
-/// is "show me stickers", the shelves as they come. The same type serves
+/// is "show me stickers", the shelf as it comes. The same type serves
 /// the window's page and the API's `magick.search`, so the two cannot
 /// disagree about what a filter means.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Query {
-    /// Words to find in captions. Terms are ANDed and match the front of
-    /// a word: `red balloon` finds captions holding both a word starting
-    /// "red" and one starting "balloon", ranked by relevance.
+    /// Words to find in the names and keywords. Terms are ANDed and
+    /// match the front of a word: `party popper` finds the emoji holding
+    /// both a word starting "party" and one starting "popper", ranked by
+    /// relevance.
     pub text: Option<String>,
     /// Only this shelf.
     pub source: Option<Source>,
@@ -192,8 +175,8 @@ pub struct Query {
 }
 
 /// What a search found: the stickers, best first, and how many match in
-/// all - the count so the page can say "1,234 stickers" without fetching
-/// a thousand cards.
+/// all - the count so the page can say "42 stickers" without fetching
+/// forty-two cards.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Found {
     /// The stickers, `limit` of them from `offset`.
@@ -202,7 +185,7 @@ pub struct Found {
     pub total: u64,
 }
 
-/// Where a shelf stands, as the page and the API report it. Cheap to
+/// Where the shelf stands, as the page and the API report it. Cheap to
 /// ask: a file's presence and a lock, no I/O to speak of, so the page
 /// can poll it while a download runs.
 #[derive(Clone, Debug, PartialEq)]
@@ -229,35 +212,36 @@ impl Status {
     }
 }
 
-/// One row of a parsed index: the picture's id, its caption as a card
-/// shows it, and the same caption lowercased - with the OpenMoji tags
-/// folded in - which is the one string the search reads, precomputed
-/// once so a search never lowercases per row.
+/// One row of a parsed index: the picture's id, its CLDR name as a card
+/// shows it, the same name with the keywords and the group folded in -
+/// which is the one string the search reads, precomputed once so a
+/// search never lowercases per row - and the path and licence a fetch
+/// and an answer need.
 #[derive(Clone, Debug)]
 struct Row {
     id: String,
     subject: String,
     lowered: String,
+    path: String,
+    license: String,
 }
 
-/// Both shelves' parsed indexes, held by the one library per process.
+/// The shelf's parsed index, held by the one library per process.
 #[derive(Default)]
 struct Shelves {
-    magick: Vec<Row>,
-    openmoji: Vec<Row>,
+    fluent: Vec<Row>,
 }
 
 impl Shelves {
     /// The rows of one shelf.
     fn of(&self, source: Source) -> &Vec<Row> {
         match source {
-            Source::Magick => &self.magick,
-            Source::Openmoji => &self.openmoji,
+            Source::Fluent => &self.fluent,
         }
     }
 }
 
-/// The whole library in one place: its indexes' state, their parsed rows
+/// The whole library in one place: its index's state, its parsed rows
 /// and the pictures on disk. One per process, reached through
 /// [`shared`], because the window and its embedded API server are one
 /// process and a download started twice would race itself; a *separate*
@@ -266,21 +250,20 @@ impl Shelves {
 /// atomic rename.
 pub struct Library {
     dirs: AppDirs,
-    /// The parsed indexes, once opened. Opened once and kept: parsing
-    /// 16 MB of TSV per keystroke would be absurd, and per search
+    /// The parsed index, once opened. Opened once and kept: parsing
+    /// 135 KB of TSV per keystroke would be absurd, and per search
     /// merely wasteful.
     shelves: OnceLock<Mutex<Shelves>>,
-    /// Where each shelf's download stands, as a per-cent 0-100. An
+    /// Where the shelf's download stands, as a per-cent 0-100. An
     /// atomic rather than the shelves' mutex, so a download's worker
     /// can tick it without taking a lock a search is reading.
-    progress: [AtomicU32; 2],
-    /// Set while a download is running in *this* process, per shelf,
-    /// so a second `prepare` of the same shelf - from the pane and the
-    /// window's API server at once, say - cannot start a second one,
-    /// while the other shelf's prepare runs alongside it. Across
-    /// processes, the partial file's name carries the pid, so two
-    /// downloaders never write the same file either.
-    running: [AtomicBool; 2],
+    progress: [AtomicU32; 1],
+    /// Set while a download is running in *this* process, so a second
+    /// `prepare` - from the pane and the window's API server at once,
+    /// say - cannot start a second one. Across processes, the partial
+    /// file's name carries the pid, so two downloaders never write the
+    /// same file either.
+    running: [AtomicBool; 1],
     /// The heart's list, loaded once and written through on every
     /// change.
     favourites: Mutex<Option<Vec<String>>>,
@@ -292,8 +275,8 @@ pub fn shared(dirs: &AppDirs) -> &'static Library {
     LIBRARY.get_or_init(|| Library {
         dirs: dirs.clone(),
         shelves: OnceLock::new(),
-        progress: [AtomicU32::new(0), AtomicU32::new(0)],
-        running: [AtomicBool::new(false), AtomicBool::new(false)],
+        progress: [AtomicU32::new(0)],
+        running: [AtomicBool::new(false)],
         favourites: Mutex::new(None),
     })
 }
@@ -329,7 +312,7 @@ impl Library {
         }
     }
 
-    /// How many pictures a shelf holds, once ready.
+    /// How many pictures the shelf holds, once ready.
     pub fn rows(&self, source: Source) -> Option<u64> {
         self.shelves
             .get()
@@ -337,13 +320,12 @@ impl Library {
             .map(|held| held.of(source).len() as u64)
     }
 
-    /// Brings a shelf's index in: downloaded once - MAGICK's from the
-    /// release, then the Hub, then hf-mirror.com, checked against
-    /// [`INDEX_SHA256`] whichever answered; OpenMoji's from its own
-    /// repository - and parsed. Blocks - run it on a worker - and
-    /// reports its per-cent through the status the page is already
-    /// polling. A download already running in this process is not an
-    /// error, just nothing to do.
+    /// Brings the shelf's index in: downloaded once - from this
+    /// repository's release, checked against [`INDEX_SHA256`] - and
+    /// parsed. Blocks - run it on a worker - and reports its per-cent
+    /// through the status the page is already polling. A download
+    /// already running in this process is not an error, just nothing
+    /// to do.
     pub fn prepare(&self, source: Source, cancel: &AtomicBool) -> Result<(), String> {
         if index_path(&self.dirs, source).is_file() {
             // Present, but perhaps not parseable; the caller's status
@@ -390,10 +372,7 @@ impl Library {
         };
         let mut last = String::new();
         for url in index_sources(source) {
-            let estimate = match source {
-                Source::Magick => INDEX_BYTES,
-                Source::Openmoji => OPENMOJI_BYTES,
-            };
+            let estimate = INDEX_BYTES;
             match crate::models::download(
                 &url,
                 &partial,
@@ -403,42 +382,23 @@ impl Library {
                 &mut report,
             ) {
                 Ok(_) => {
-                    let checked = match source {
-                        // The MAGICK index is a frozen dataset: whatever
-                        // source answered, the bytes must be the ones
-                        // this build was built against.
-                        Source::Magick => crate::models::verify(&partial, INDEX_SHA256)
-                            .map_err(|error| format!("the MAGICK index did not verify: {error}")),
-                        // OpenMoji is a living upstream: the JSON is
-                        // parsed below, and a parse that fails is
-                        // refused there.
-                        Source::Openmoji => Ok(()),
-                    };
+                    // The index is a frozen build: whatever source
+                    // answered, the bytes must be the ones this build
+                    // was built against.
+                    let checked = crate::models::verify(&partial, INDEX_SHA256)
+                        .map_err(|error| format!("the Fluent Emoji index did not verify: {error}"));
                     match checked {
                         Ok(()) => {
                             std::fs::rename(&partial, &target).map_err(|error| {
                                 format!("could not keep {}: {error}", target.display())
                             })?;
-                            match self.open_index(source) {
-                                Ok(()) => return Ok(()),
-                                Err(error) => {
-                                    // An OpenMoji index that will not
-                                    // parse - the living upstream's JSON,
-                                    // with no digest to have checked - is
-                                    // taken back off the shelf rather
-                                    // than left as a file every later
-                                    // `prepare` refuses on sight: the
-                                    // next attempt downloads it again.
-                                    // MAGICK's digest has already said
-                                    // these bytes are the build's own,
-                                    // so its file stands to be argued
-                                    // with in words instead.
-                                    if let Source::Openmoji = source {
-                                        let _ = std::fs::remove_file(&target);
-                                    }
-                                    return Err(error);
-                                }
+                            if let Err(error) = self.open_index(source) {
+                                // A digest that matched and a parse that
+                                // refused is a build's own argument with
+                                // itself: the file stands, said in words.
+                                return Err(error);
                             }
+                            return Ok(());
                         }
                         Err(error) => {
                             let _ = std::fs::remove_file(&partial);
@@ -456,11 +416,8 @@ impl Library {
         Err(last)
     }
 
-    /// Parses a shelf's index into the shelves, if they are not open
-    /// already. The MAGICK TSV is the dataset's own - `page_id` to
-    /// `picked`, a header row, the not-safe-for-work rows left out - and
-    /// the OpenMoji JSON is the project's own list of annotations and
-    /// tags. A second opener - the pane and the API server at once -
+    /// Parses the shelf's index into the shelves, if it is not open
+    /// already. A second opener - the pane and the API server at once -
     /// keeps the first one's rows: both parsed the same file, and the
     /// one that arrives second is simply dropped.
     fn open_index(&self, source: Source) -> Result<(), String> {
@@ -476,25 +433,22 @@ impl Library {
         let bytes = std::fs::read(index_path(&self.dirs, source))
             .map_err(|error| format!("could not read the index: {error}"))?;
         let parsed = match source {
-            Source::Magick => parse_magick(&bytes)?,
-            Source::Openmoji => parse_openmoji(&bytes)?,
+            Source::Fluent => parse_fluent(&bytes)?,
         };
         let mut held = shelves
             .lock()
             .map_err(|_| "the sticker library's index is busy".to_owned())?;
         if held.of(source).is_empty() {
             match source {
-                Source::Magick => held.magick = parsed,
-                Source::Openmoji => held.openmoji = parsed,
+                Source::Fluent => held.fluent = parsed,
             }
         }
         Ok(())
     }
 
-    /// Runs a query against the shelves. Every filter is optional; a
+    /// Runs a query against the shelf. Every filter is optional; a
     /// search against a shelf that is not ready is refused with the
-    /// words that say what to do about it, and a search with no shelf
-    /// named is refused only when neither is ready.
+    /// words that say what to do about it.
     pub fn search(&self, query: &Query) -> Result<Found, String> {
         let shelves = self.shelves.get_or_init(|| Mutex::new(Shelves::default()));
         // Open what a cached index left unopened; a shelf with no index
@@ -517,10 +471,8 @@ impl Library {
         let held = shelves
             .lock()
             .map_err(|_| "the sticker library's index is busy".to_owned())?;
-        let wanted = query.source.unwrap_or(Source::Magick);
-        let fallback = query.source.is_none();
-        let ready = |source: Source| !held.of(source).is_empty();
-        if !ready(wanted) && !(fallback && (ready(Source::Magick) || ready(Source::Openmoji))) {
+        let wanted = query.source.unwrap_or(Source::Fluent);
+        if held.of(wanted).is_empty() {
             // The shelf's own status, asked for its words - after the
             // lock above is let go, because opening an index takes the
             // same lock a second time.
@@ -541,14 +493,6 @@ impl Library {
                 ),
             });
         }
-        let sources: Vec<Source> = if fallback {
-            Source::ALL
-                .into_iter()
-                .filter(|source| ready(*source))
-                .collect()
-        } else {
-            vec![wanted]
-        };
         // The heart's list, read once when it narrows the search; and
         // the ask's own words, cut and de-glued.
         let hearts = query.favourites.then(|| self.favourite_ids());
@@ -567,19 +511,17 @@ impl Library {
         // the one caption in hand.
         let mut seen: Vec<u32> = vec![0; words.len()];
         let mut rows_searched = 0u32;
-        for source in &sources {
-            for row in held.of(*source) {
-                if hearts
-                    .as_ref()
-                    .is_some_and(|hearts| !hearts.contains(&row.id))
-                {
-                    continue;
-                }
-                rows_searched += 1;
-                for (at, word) in words.iter().enumerate() {
-                    if lands(word, &row.lowered) {
-                        seen[at] += 1;
-                    }
+        for row in held.of(wanted) {
+            if hearts
+                .as_ref()
+                .is_some_and(|hearts| !hearts.contains(&row.id))
+            {
+                continue;
+            }
+            rows_searched += 1;
+            for (at, word) in words.iter().enumerate() {
+                if lands(word, &row.lowered) {
+                    seen[at] += 1;
                 }
             }
         }
@@ -590,38 +532,36 @@ impl Library {
         // share is worth about half again. The whole phrase said as one
         // run of words is worth +100, and a caption pays a fifth of a
         // point a character for its sprawl.
-        let mut scored: Vec<(i64, &Row, Source)> = Vec::new();
-        for source in &sources {
-            for row in held.of(*source) {
-                if hearts
-                    .as_ref()
-                    .is_some_and(|hearts| !hearts.contains(&row.id))
-                {
-                    continue;
-                }
-                if words.is_empty() {
-                    scored.push((0, row, *source));
-                    continue;
-                }
-                let mut score: i64 = 0;
-                let mut matched_all = true;
-                for (at, word) in words.iter().enumerate() {
-                    let Some(points) = lands_how(word, &row.lowered) else {
-                        matched_all = false;
-                        break;
-                    };
-                    let rare = ((rows_searched as f64 + 1.0) / (seen[at] as f64 + 1.0)).ln() / 10.0;
-                    score += (points as f64 * (0.5 + rare)) as i64;
-                }
-                if !matched_all {
-                    continue;
-                }
-                if !phrase.is_empty() && row.lowered.contains(&phrase) {
-                    score += 100;
-                }
-                score -= (row.lowered.chars().count() as i64) / 5;
-                scored.push((score, row, *source));
+        let mut scored: Vec<(i64, &Row)> = Vec::new();
+        for row in held.of(wanted) {
+            if hearts
+                .as_ref()
+                .is_some_and(|hearts| !hearts.contains(&row.id))
+            {
+                continue;
             }
+            if words.is_empty() {
+                scored.push((0, row));
+                continue;
+            }
+            let mut score: i64 = 0;
+            let mut matched_all = true;
+            for (at, word) in words.iter().enumerate() {
+                let Some(points) = lands_how(word, &row.lowered) else {
+                    matched_all = false;
+                    break;
+                };
+                let rare = ((rows_searched as f64 + 1.0) / (seen[at] as f64 + 1.0)).ln() / 10.0;
+                score += (points as f64 * (0.5 + rare)) as i64;
+            }
+            if !matched_all {
+                continue;
+            }
+            if !phrase.is_empty() && row.lowered.contains(&phrase) {
+                score += 100;
+            }
+            score -= (row.lowered.chars().count() as i64) / 5;
+            scored.push((score, row));
         }
         if !words.is_empty() {
             // Best first; the sort is stable, so captions that score the
@@ -633,16 +573,17 @@ impl Library {
             .into_iter()
             .skip(query.offset as usize)
             .take(query.limit.clamp(1, 100) as usize)
-            .map(|(_, row, source)| Sticker {
+            .map(|(_, row)| Sticker {
                 id: row.id.clone(),
-                source,
+                source: wanted,
                 subject: row.subject.clone(),
+                license: row.license.clone(),
             })
             .collect();
         Ok(Found { stickers, total })
     }
 
-    /// One picture by id, from whichever shelf was named.
+    /// One picture by id.
     pub fn sticker(&self, source: Source, id: &str) -> Option<Sticker> {
         if self.shelves.get().is_none() && index_path(&self.dirs, source).is_file() {
             // An index on disk that no search opened yet: opened here,
@@ -657,35 +598,29 @@ impl Library {
                 id: row.id.clone(),
                 source,
                 subject: row.subject.clone(),
+                license: row.license.clone(),
             })
     }
 
-    /// One picture by id, from whichever shelf holds it. The ids never
-    /// overlap - MAGICK's are ten mixed-case alphanumerics, OpenMoji's
-    /// are upper-case hex - so one id names one picture without saying
-    /// its shelf.
+    /// One picture by id, from whichever shelf holds it - one shelf now,
+    /// so this is the one - kept for the callers that never cared which.
     pub fn find(&self, id: &str) -> Option<Sticker> {
-        self.sticker(Source::Magick, id)
-            .or_else(|| self.sticker(Source::Openmoji, id))
+        self.sticker(Source::Fluent, id)
     }
 
     /// Where a picture is kept once fetched: `images/{id}.png`, or
-    /// `None` when it is not on this machine. The id is the dataset's
-    /// own - MAGICK's `page_id`, OpenMoji's `hexcode` - stable for as
-    /// long as the dataset is, so a picture fetched twice is fetched
-    /// once; both shelves share the one folder, since the ids never
-    /// overlap.
+    /// `None` when it is not on this machine. The id is the set's own -
+    /// its codepoints - stable for as long as the set is, so a picture
+    /// fetched twice is fetched once.
     pub fn fetched(&self, id: &str) -> Option<PathBuf> {
         let path = image_path(&self.dirs, id);
         path.is_file().then_some(path)
     }
 
     /// Fetches a picture into the cache - one plain GET of its own PNG,
-    /// ~1 MB for a MAGICK picture, a few KB for an emoji - and says
-    /// where it landed. The bytes are checked to be a PNG that can hold
-    /// transparency before they are kept: colour type 6 (RGBA), which is
-    /// what MAGICK serves, or a palette PNG that carries a `tRNS`, which
-    /// is what OpenMoji serves. Blocks: a worker's.
+    /// a few hundred KB of rendered 3D - and says where it landed. The
+    /// bytes are checked to be a PNG that can hold transparency before
+    /// they are kept. Blocks: a worker's.
     pub fn fetch(
         &self,
         source: Source,
@@ -697,9 +632,27 @@ impl Library {
         if target.is_file() {
             return Ok(target);
         }
-        let Some(url) = image_url(source, id) else {
-            return Err(format!("there is no picture {id}"));
+        // The path comes from the index the digest has already vouched
+        // for, but a fetch refuses an id the index never said all the
+        // same: the guard is cheap and the alternative is a request
+        // shaped by whatever an id carried in. `sticker` first, because
+        // it is the one that opens an index a search has not run
+        // against yet.
+        self.sticker(source, id)
+            .ok_or_else(|| format!("there is no picture {id}"))?;
+        let path = {
+            let held = self
+                .shelves
+                .get()
+                .and_then(|shelves| shelves.lock().ok())
+                .ok_or_else(|| "the sticker library's index is busy".to_owned())?;
+            held.of(source)
+                .iter()
+                .find(|row| row.id == id)
+                .map(|row| row.path.clone())
+                .ok_or_else(|| format!("there is no picture {id}"))?
         };
+        let urls = asset_urls(&path).ok_or_else(|| format!("{id} has no usable path"))?;
         let folder = images_dir(&self.dirs);
         std::fs::create_dir_all(&folder)
             .map_err(|error| format!("could not create {}: {error}", folder.display()))?;
@@ -709,12 +662,9 @@ impl Library {
         );
         let partial = folder.join(format!("{name}.partial-{}", std::process::id()));
         let mut last = String::new();
-        // The Hub first, hf-mirror.com behind it: the same bytes, and
-        // the check below is what either is believed by.
-        for url in [url.clone()]
-            .into_iter()
-            .chain(crate::models::hf_mirror(&url))
-        {
+        // raw.githubusercontent.com first, jsDelivr behind it: the same
+        // bytes, and the check below is what either is believed by.
+        for url in urls {
             match crate::models::download(&url, &partial, 0, cancel, "cancelled", progress) {
                 Ok(_) => {
                     let bytes = std::fs::read(&partial)
@@ -740,7 +690,7 @@ impl Library {
     }
 
     /// The heart's list, as ids: every picture the heart was pressed on,
-    /// whichever shelf it is on, newest first.
+    /// newest first.
     pub fn favourite_ids(&self) -> Vec<String> {
         let mut held = self
             .favourites
@@ -796,77 +746,69 @@ impl Library {
     }
 }
 
-/// Where a shelf's index is kept.
+/// Where the shelf's index is kept.
 fn index_path(dirs: &AppDirs, source: Source) -> PathBuf {
     match source {
-        Source::Magick => dir(dirs).join("magick_index.tsv"),
-        Source::Openmoji => dir(dirs).join("openmoji.json"),
+        Source::Fluent => dir(dirs).join("fluent_index.tsv"),
     }
 }
 
-/// The pictures' folder, both shelves' together: the id is the dataset's
-/// own and never overlaps - MAGICK's are ten mixed-case alphanumerics,
-/// OpenMoji's are upper-case hex.
+/// The pictures' folder.
 fn images_dir(dirs: &AppDirs) -> PathBuf {
     dir(dirs).join("images")
 }
 
-/// Where one picture is kept once fetched. Both shelves share the one
-/// folder: the id is the dataset's own and never overlaps.
+/// Where one picture is kept once fetched.
 fn image_path(dirs: &AppDirs, id: &str) -> PathBuf {
     images_dir(dirs).join(format!("{id}.png"))
 }
 
-/// Where to fetch a picture from: MAGICK's PNG sits two folders deep -
-/// the id's first two characters, then the id - and OpenMoji's sits by
-/// its hexcode. `None` for an id that cannot be one, so a fetch refuses
-/// rather than asking the dataset for a file that cannot exist.
-fn image_url(source: Source, id: &str) -> Option<String> {
-    let plain = |id: &str| {
-        !id.is_empty()
-            && id.len() < 64
-            && id
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    };
-    if !plain(id) {
+/// Where to fetch a picture from, in order: the repository itself, then
+/// jsDelivr's mirror of it. `None` for a path that cannot be one, so a
+/// fetch refuses rather than asking for a file that cannot exist.
+fn asset_urls(path: &str) -> Option<Vec<String>> {
+    // The index's paths are `assets/<name>/3D/<file>_3d.png`; the guard
+    // keeps a path that is anything else - a climb out, an absolute
+    // path, an empty one - from ever reaching a URL.
+    if !path.starts_with("assets/")
+        || !path.ends_with("_3d.png")
+        || path.contains("..")
+        || path.contains('\\')
+    {
         return None;
     }
-    match source {
-        Source::Magick if id.len() >= 2 => Some(format!("{DATASET_URL}/{}/{id}.png", &id[..2])),
-        Source::Magick => None,
-        Source::Openmoji => Some(format!("{OPENMOJI_PNG}/{id}.png")),
-    }
-}
-
-/// Where a shelf's index download tries, in order. Every source that
-/// could hold the index is in the list once; a mirror that cannot be
-/// reached - a proxy that blocks a host, a release still being
-/// published, a region that cannot see it - costs a retry rather than a
-/// shelf.
-fn index_sources(source: Source) -> Vec<String> {
-    match source {
-        Source::Magick => {
-            // The Hub's own copy behind the release, with hf-mirror.com
-            // behind that: the same bytes, the digest the judge of
-            // whichever answers.
-            let mut urls = vec![INDEX_URL.to_owned()];
-            urls.extend(crate::models::hf_mirror(INDEX_URL_HF));
-            urls.push(INDEX_URL_HF.to_owned());
-            urls
+    let mut encoded = String::with_capacity(path.len());
+    for byte in path.bytes() {
+        match byte {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'/' => {
+                encoded.push(byte as char)
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
         }
-        Source::Openmoji => vec![OPENMOJI_INDEX.to_owned()],
     }
+    Some(vec![
+        format!("{ASSET_URL}/{encoded}"),
+        format!("{ASSET_MIRROR}/{encoded}"),
+    ])
 }
 
-/// The MAGICK index, as the dataset ships it: a header row, then a row a
-/// picture - `page_id`, `sim_score`, `color`, `nsfw`, `subject`,
-/// `tag_idk`, `picked`. The rows the index itself marks
-/// not-safe-for-work are left out here, once, at parse: a sticker shelf
-/// is not where they belong, and 145,193 of the 148,193 remain.
-fn parse_magick(bytes: &[u8]) -> Result<Vec<Row>, String> {
+/// Where the index download tries, in order. Every source that could
+/// hold the index is in the list once; a mirror that cannot be reached
+/// costs a retry rather than a shelf.
+fn index_sources(_source: Source) -> Vec<String> {
+    vec![INDEX_URL.to_owned()]
+}
+
+/// The Fluent Emoji index, as [scripts/fluent-emoji-index.py] writes it:
+/// a header row, then a row an emoji - `unicode`, `cldr`, `keywords`,
+/// `group`, `license`, `path`. The licence column is read, not assumed:
+/// a row that says something other than MIT is still a row, and the
+/// answer to "which licence" is the field, not the shelf's reputation.
+///
+/// [scripts/fluent-emoji-index.py]: ../../scripts/fluent-emoji-index.py
+fn parse_fluent(bytes: &[u8]) -> Result<Vec<Row>, String> {
     let text =
-        std::str::from_utf8(bytes).map_err(|_| "the MAGICK index is not UTF-8".to_owned())?;
+        std::str::from_utf8(bytes).map_err(|_| "the Fluent Emoji index is not UTF-8".to_owned())?;
     let mut rows = Vec::new();
     for line in text.split('\n').skip(1) {
         let line = line.strip_suffix('\r').unwrap_or(line);
@@ -874,7 +816,8 @@ fn parse_magick(bytes: &[u8]) -> Result<Vec<Row>, String> {
             continue;
         }
         let mut parts = line.split('\t');
-        let (Some(id), Some(_), Some(_), Some(nsfw), Some(subject)) = (
+        let (Some(id), Some(subject), Some(keywords), Some(_group), Some(license), Some(path)) = (
+            parts.next(),
             parts.next(),
             parts.next(),
             parts.next(),
@@ -883,56 +826,21 @@ fn parse_magick(bytes: &[u8]) -> Result<Vec<Row>, String> {
         ) else {
             continue;
         };
-        if id.is_empty() || nsfw.trim() != "0" {
-            continue;
-        }
         let subject = subject.trim();
-        if subject.is_empty() {
+        if id.trim().is_empty() || subject.is_empty() {
             continue;
         }
+        let lowered = format!("{} {}", subject.to_lowercase(), keywords.to_lowercase());
         rows.push(Row {
-            id: id.to_owned(),
+            id: id.trim().to_owned(),
             subject: subject.to_owned(),
-            lowered: subject.to_lowercase(),
+            lowered,
+            path: path.trim().to_owned(),
+            license: license.trim().to_owned(),
         });
     }
     if rows.is_empty() {
-        return Err("the MAGICK index holds no pictures".to_owned());
-    }
-    Ok(rows)
-}
-
-/// The OpenMoji index, as the project's own `openmoji.json` has it. The
-/// caption a card shows is the annotation - "grinning face" - and the
-/// words a search reads are the annotation and the tags together, so
-/// "smile" finds what the tags say even though the annotation does not.
-fn parse_openmoji(bytes: &[u8]) -> Result<Vec<Row>, String> {
-    #[derive(Deserialize)]
-    struct Entry {
-        #[serde(default)]
-        hexcode: String,
-        #[serde(default)]
-        annotation: String,
-        #[serde(default)]
-        tags: String,
-    }
-    let entries: Vec<Entry> = serde_json::from_slice(bytes)
-        .map_err(|error| format!("the OpenMoji index is not readable: {error}"))?;
-    let rows: Vec<Row> = entries
-        .into_iter()
-        .filter(|entry| !entry.hexcode.is_empty())
-        .map(|entry| {
-            let subject = entry.annotation.trim().to_owned();
-            let lowered = format!("{} {}", subject.to_lowercase(), entry.tags.to_lowercase());
-            Row {
-                id: entry.hexcode,
-                subject,
-                lowered,
-            }
-        })
-        .collect();
-    if rows.is_empty() {
-        return Err("the OpenMoji index holds no pictures".to_owned());
+        return Err("the Fluent Emoji index holds no pictures".to_owned());
     }
     Ok(rows)
 }
@@ -982,9 +890,9 @@ fn lands_how(word: &str, caption: &str) -> Option<i64> {
 
 /// Whether `bytes` is a PNG that can hold transparency: the signature,
 /// a header whose width and height are real, and either colour type 6
-/// (truecolour with an alpha channel, what MAGICK serves) or colour
-/// type 3 with a `tRNS` chunk (a palette PNG that says which of its
-/// colours are see-through, what OpenMoji serves).
+/// (truecolour with an alpha channel, what the 3D style renders) or
+/// colour type 3 with a `tRNS` chunk (a palette PNG that says which of
+/// its colours are see-through).
 fn is_png_with_alpha(bytes: &[u8]) -> bool {
     const SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
     if bytes.len() < 33 || bytes[..8] != SIGNATURE || &bytes[12..16] != b"IHDR" {
@@ -1033,7 +941,7 @@ mod tests {
         dir
     }
 
-    /// A library over a scratch folder, its shelves parsed in - the
+    /// A library over a scratch folder, its shelf parsed in - the
     /// shape an open index leaves behind - ready to search.
     fn made(name: &str, rows: Shelves) -> (Library, PathBuf) {
         let dir = scratch(name);
@@ -1041,89 +949,70 @@ mod tests {
             Library {
                 dirs: AppDirs::under(&dir),
                 shelves: OnceLock::from(Mutex::new(rows)),
-                progress: [AtomicU32::new(0), AtomicU32::new(0)],
-                running: [AtomicBool::new(false), AtomicBool::new(false)],
+                progress: [AtomicU32::new(0)],
+                running: [AtomicBool::new(false)],
                 favourites: Mutex::new(None),
             },
             dir,
         )
     }
 
-    /// A little of both shelves to search, in the shape each index has.
+    /// A little of the shelf to search, in the shape the index has.
     fn shelves() -> Shelves {
         Shelves {
-            magick: vec![
+            fluent: vec![
                 Row {
-                    id: "QlhA9gJbNR".into(),
-                    subject:
-                        "close up of a middle age girl with ginger short hair tattoos waving"
-                            .into(),
-                    lowered:
-                        "close up of a middle age girl with ginger short hair tattoos waving"
-                            .into(),
+                    id: "1f44b".into(),
+                    subject: "waving hand".into(),
+                    lowered: "waving hand hand wave waving".into(),
+                    path: "assets/Waving hand/3D/waving_hand_3d.png".into(),
+                    license: "MIT".into(),
                 },
                 Row {
-                    id: "3z3KUvfhPP".into(),
-                    subject: "middle age soccer player girl with strawberry blonde afro hair blue eyes sunglasses wearing dress waving".into(),
-                    lowered: "middle age soccer player girl with strawberry blonde afro hair blue eyes sunglasses wearing dress waving".into(),
-                },
-                Row {
-                    id: "abcdRedBall".into(),
-                    subject: "a red balloon floating over a party".into(),
-                    lowered: "a red balloon floating over a party".into(),
-                },
-            ],
-            openmoji: vec![
-                Row {
-                    id: "1F600".into(),
-                    subject: "grinning face".into(),
-                    lowered: "grinning face cheerful, cheery, face, grin, grinning, happy, laugh, nice, smile, smiling, teeth".into(),
-                },
-                Row {
-                    id: "1F389".into(),
+                    id: "1f389".into(),
                     subject: "party popper".into(),
-                    lowered: "party popper celebration, congrats, party, tada".into(),
+                    lowered: "party popper celebration congrats party tada".into(),
+                    path: "assets/Party popper/3D/party_popper_3d.png".into(),
+                    license: "MIT".into(),
+                },
+                Row {
+                    id: "1f600".into(),
+                    subject: "grinning face".into(),
+                    lowered: "grinning face cheerful cheery face grin happy smile".into(),
+                    path: "assets/Grinning face/3D/grinning_face_3d.png".into(),
+                    license: "MIT".into(),
+                },
+                Row {
+                    id: "1f5a4".into(),
+                    subject: "black heart".into(),
+                    lowered: "black heart black heart".into(),
+                    path: "assets/Black heart/3D/black_heart_3d.png".into(),
+                    license: "MIT".into(),
                 },
             ],
         }
     }
 
-    /// The TSV as the dataset ships it - header, columns, a
-    /// not-safe-for-work row among the rest - parses into rows without
-    /// the row the index itself refuses, its captions lowercased for the
-    /// search.
+    /// The TSV as the build script writes it - header, six columns - parses
+    /// into rows whose search words are the CLDR name and the keywords
+    /// together, and whose licence and path are carried as fields.
     #[test]
-    fn the_magick_index_parses_and_drops_the_refused() {
-        let tsv = "page_id\tsim_score\tcolor\tnsfw\tsubject\ttag_idk\tpicked\n\
-                   wvuRmfeuim\t0.987\tgreen\t0\tstressed out asian woman, plugs ears\t0\t\n\
-                   7KWBoDICUI\t0.983\tgreen\t0\tBlack sorceress woman WAVING\t0\t\n\
-                   5bH7lMfQgi\t0.99\tgreen\t1\tscared businesswoman, waving no\t0\t\n\
-                   \t0.1\tgreen\t0\tan id that is not one\t0\t\n";
-        let rows = parse_magick(tsv.as_bytes()).expect("parses");
-        assert_eq!(rows.len(), 2, "the nsfw row is left out");
-        assert_eq!(rows[0].id, "wvuRmfeuim");
-        assert_eq!(rows[1].lowered, "black sorceress woman waving");
+    fn the_fluent_index_parses_its_own_shape() {
+        let tsv = "unicode\tcldr\tkeywords\tgroup\tlicense\tpath\n\
+                   1f44b\twaving hand\thand wave waving\tPeople & Body\tMIT\tassets/Waving hand/3D/waving_hand_3d.png\n\
+                   1f600\tgrinning face\tcheerful smile\tSmileys & Emotion\tMIT\tassets/Grinning face/3D/grinning_face_3d.png\n\
+                   \t\t\t\t\t\n\
+                   1f947\t1st place medal\tfirst gold medal\tActivities\tMIT\tassets/1st place medal/3D/1st_place_medal_3d.png\n";
+        let rows = parse_fluent(tsv.as_bytes()).expect("parses");
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].id, "1f44b");
+        assert_eq!(rows[0].subject, "waving hand");
+        assert!(rows[0].lowered.starts_with("waving hand"));
+        assert!(rows[0].lowered.contains("wave"));
+        assert_eq!(rows[0].license, "MIT");
+        assert!(rows[0].path.ends_with("_3d.png"));
         assert!(
-            parse_magick(b"page_id\tbroken\n").is_err(),
-            "an index with no rows refuses"
-        );
-    }
-
-    /// The OpenMoji index parses into rows whose caption is the
-    /// annotation and whose search words are the annotation and the tags
-    /// together.
-    #[test]
-    fn the_openmoji_index_reads_the_annotation_and_the_tags() {
-        let json = r#"[{"hexcode":"1F600","annotation":"grinning face","tags":"cheerful, smile"},
-                       {"hexcode":"","annotation":"no id","tags":""},{"annotation":"no id either","tags":""}]"#;
-        let rows = parse_openmoji(json.as_bytes()).expect("parses");
-        assert_eq!(rows.len(), 1, "the id-less entries are left out");
-        assert_eq!(rows[0].id, "1F600");
-        assert_eq!(rows[0].subject, "grinning face");
-        assert!(rows[0].lowered.starts_with("grinning face"));
-        assert!(rows[0].lowered.contains("smile"));
-        assert!(
-            parse_openmoji(b"[]").is_err(),
+            parse_fluent(b"unicode\tbroken\n").is_err(),
             "an index with no rows refuses"
         );
     }
@@ -1146,18 +1035,13 @@ mod tests {
                 .map(|sticker| sticker.id)
                 .collect()
         };
-        assert_eq!(ids("waving").len(), 2);
-        assert_eq!(
-            ids("a middle age girl waving").len(),
-            2,
-            "glue dropped, prefix matched"
-        );
-        assert_eq!(ids("waving afro"), vec!["3z3KUvfhPP".to_owned()]);
+        assert_eq!(ids("party"), vec!["1f389".to_owned()]);
+        // The keywords are read beside the name: "tada" finds the popper
+        // by a word the name alone does not say.
+        assert_eq!(ids("tada"), vec!["1f389".to_owned()]);
+        // And "smile" the grinning face.
+        assert_eq!(ids("smile"), vec!["1f600".to_owned()]);
         assert!(ids("spaceship").is_empty());
-        // The emoji shelf reads its tags: "smile" finds the grinning
-        // face by a word the annotation alone does not say.
-        assert_eq!(ids("smile"), vec!["1F600".to_owned()]);
-        assert_eq!(ids("party").len(), 2, "the balloon and the popper");
         // Nothing asked is the shelf as it comes.
         assert_eq!(
             library
@@ -1168,7 +1052,7 @@ mod tests {
                 .unwrap()
                 .stickers
                 .len(),
-            5
+            4
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1181,51 +1065,44 @@ mod tests {
         let (library, dir) = made("ranked", shelves());
         let found = library
             .search(&Query {
-                text: Some("waving girl".into()),
+                text: Some("waving hand".into()),
                 limit: 100,
                 ..Query::default()
             })
             .unwrap();
-        assert_eq!(found.stickers[0].id, "QlhA9gJbNR", "the shorter caption");
-        let found = library
-            .search(&Query {
-                text: Some("middle age girl with ginger short hair tattoos waving".into()),
-                limit: 100,
-                ..Query::default()
-            })
-            .unwrap();
-        assert_eq!(found.stickers[0].id, "QlhA9gJbNR", "the phrase, said whole");
+        assert_eq!(found.stickers[0].id, "1f44b", "the phrase, said whole");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The shelf filter narrows before the words, and a search against a
-    /// shelf with no index is a refusal with the words that say what to
-    /// do about it, not a quiet empty page.
+    /// A search against a shelf with no index is a refusal with the
+    /// words that say what to do about it, not a quiet empty page.
     #[test]
-    fn a_shelf_is_a_filter_and_an_empty_one_a_refusal() {
-        let (library, dir) = made("shelves", shelves());
-        let emoji = library
-            .search(&Query {
-                text: Some("party".into()),
-                source: Some(Source::Openmoji),
-                limit: 100,
-                ..Query::default()
-            })
-            .unwrap();
-        assert_eq!(emoji.stickers.len(), 1);
-        assert_eq!(emoji.stickers[0].id, "1F389");
-        // A library whose shelves were never opened refuses, with the
-        // words that say what to do about it.
+    fn an_unopened_shelf_is_a_refusal() {
         let (fresh, fresh_dir) = made("refused", Shelves::default());
         let error = fresh
             .search(&Query {
-                source: Some(Source::Openmoji),
+                source: Some(Source::Fluent),
                 ..Query::default()
             })
             .unwrap_err();
         assert!(error.contains("magick.prepare"), "{error}");
-        let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&fresh_dir);
+    }
+
+    /// Every result carries the licence its row read, so the answer to
+    /// "can I ship this" is a field on the sticker.
+    #[test]
+    fn every_result_carries_its_licence() {
+        let (library, dir) = made("licence", shelves());
+        let found = library
+            .search(&Query {
+                text: Some("party".into()),
+                ..Query::default()
+            })
+            .unwrap();
+        assert_eq!(found.stickers.len(), 1);
+        assert_eq!(found.stickers[0].license, "MIT");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The limit and offset page through what a search found, and the
@@ -1241,7 +1118,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(found.stickers.len(), 2);
-        assert_eq!(found.total, 5);
+        assert_eq!(found.total, 4);
         let found = library
             .search(&Query {
                 limit: 0,
@@ -1256,25 +1133,27 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The picture URLs are the datasets' own shapes, and an id that
-    /// cannot be one is refused rather than asked for.
+    /// The picture URLs are the repository's own shape - the path the
+    /// index carries, percent-encoded, from the repository and its
+    /// jsDelivr mirror - and a path that cannot be one is refused rather
+    /// than asked for.
     #[test]
-    fn the_picture_urls_are_the_datasets_own() {
+    fn the_picture_urls_are_the_repositorys_own() {
+        let urls = asset_urls("assets/1st place medal/3D/1st_place_medal_3d.png")
+            .expect("a real path answers");
         assert_eq!(
-            image_url(Source::Magick, "7KWBoDICUI").as_deref(),
-            Some(
-                "https://huggingface.co/datasets/OneOverZero/MAGICK/resolve/main/images/7K/7KWBoDICUI.png"
-            )
+            urls[0],
+            "https://raw.githubusercontent.com/microsoft/fluentui-emoji/main/assets/1st%20place%20medal/3D/1st_place_medal_3d.png"
         );
         assert_eq!(
-            image_url(Source::Openmoji, "1F389").as_deref(),
-            Some(
-                "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/618x618/1F389.png"
-            )
+            urls[1],
+            "https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets/1st%20place%20medal/3D/1st_place_medal_3d.png"
         );
-        assert!(image_url(Source::Magick, "7").is_none());
-        assert!(image_url(Source::Magick, "../escape").is_none());
-        assert!(image_url(Source::Openmoji, "../escape").is_none());
+        assert!(asset_urls("../escape").is_none());
+        assert!(asset_urls("assets/../escape.png").is_none());
+        assert!(asset_urls("/absolute.png").is_none());
+        assert!(asset_urls("assets/colour.png").is_none(), "not a 3D png");
+        assert!(asset_urls("assets/emoji\\back.png").is_none());
     }
 
     /// Only PNGs that can hold transparency are believed: truecolour
@@ -1318,39 +1197,76 @@ mod tests {
         let library = Library {
             dirs: dirs.clone(),
             shelves: OnceLock::new(),
-            progress: [AtomicU32::new(0), AtomicU32::new(0)],
-            running: [AtomicBool::new(false), AtomicBool::new(false)],
+            progress: [AtomicU32::new(0)],
+            running: [AtomicBool::new(false)],
             favourites: Mutex::new(None),
         };
-        assert!(!library.is_favourite("QlhA9gJbNR"));
-        assert!(library.toggle_favourite("QlhA9gJbNR").unwrap());
-        assert!(library.toggle_favourite("1F600").unwrap());
-        assert!(library.is_favourite("1F600"));
+        assert!(!library.is_favourite("1f44b"));
+        assert!(library.toggle_favourite("1f44b").unwrap());
+        assert!(library.toggle_favourite("1f389").unwrap());
+        assert!(library.is_favourite("1f389"));
         assert_eq!(
             library.favourite_ids(),
-            vec!["1F600".to_owned(), "QlhA9gJbNR".to_owned()],
+            vec!["1f389".to_owned(), "1f44b".to_owned()],
             "newest first"
         );
-        assert!(!library.toggle_favourite("1F600").unwrap());
-        assert!(!library.is_favourite("1F600"));
+        assert!(!library.toggle_favourite("1f389").unwrap());
+        assert!(!library.is_favourite("1f389"));
         let reread = Library {
             dirs,
             shelves: OnceLock::new(),
-            progress: [AtomicU32::new(0), AtomicU32::new(0)],
-            running: [AtomicBool::new(false), AtomicBool::new(false)],
+            progress: [AtomicU32::new(0)],
+            running: [AtomicBool::new(false)],
             favourites: Mutex::new(None),
         };
-        assert_eq!(reread.favourite_ids(), vec!["QlhA9gJbNR".to_owned()]);
+        assert_eq!(reread.favourite_ids(), vec!["1f44b".to_owned()]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The real shelves answer: the MAGICK index down from the release
-    /// (then the Hub, then hf-mirror.com), the OpenMoji index from its
-    /// own repository, a search over each, and one picture of each
-    /// fetched through its own plain GET and checked to be a PNG that
-    /// can hold transparency before it is kept - the second fetch of the
-    /// same picture the same file, fetched once. Marked `ignore` because
-    /// it moves real bytes and needs the network; run it with
+    /// The favourites filter narrows a search to the heart's list.
+    #[test]
+    fn the_hearts_filter_narrows_a_search() {
+        let (library, dir) = made("hearts", shelves());
+        library.toggle_favourite("1f389").unwrap();
+        let found = library
+            .search(&Query {
+                favourites: true,
+                limit: 100,
+                ..Query::default()
+            })
+            .unwrap();
+        assert_eq!(found.stickers.len(), 1);
+        assert_eq!(found.stickers[0].id, "1f389");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The index as this build reads it, on the fixture cut from the
+    /// real one's head: the shape of every column, the licence read
+    /// rather than assumed, and the search words the name and the
+    /// keywords together.
+    #[test]
+    fn the_index_fixture_parses() {
+        let bytes = include_bytes!("../fixtures/fluent-index-head.tsv");
+        let rows = parse_fluent(bytes).expect("the fixture parses");
+        assert_eq!(rows.len(), 20);
+        assert!(rows.iter().all(|row| row.license == "MIT"));
+        assert!(
+            rows.iter()
+                .all(|row| row.lowered.starts_with(&row.subject.to_lowercase()))
+        );
+        assert!(
+            rows.iter()
+                .all(|row| row.path.starts_with("assets/") && row.path.ends_with("_3d.png"))
+        );
+    }
+
+    /// The real shelf answers: the index down from the release and
+    /// verified against the digest baked into this build, parsed into
+    /// 1,285 rows, a search over it, and one picture fetched through its
+    /// own plain GET and checked to be a PNG that can hold transparency
+    /// before it is kept - the second fetch of the same picture the same
+    /// file, fetched once. Marked `ignore` because it moves real bytes
+    /// and needs the network; run it with
     /// `cargo test -p concat-host magick -- --ignored` when a source or
     /// this module changes.
     #[test]
@@ -1361,108 +1277,44 @@ mod tests {
         let library = shared(&dirs);
         let cancel = AtomicBool::new(false);
 
-        // MAGICK: the index arrives, verifies against the digest baked
-        // into this build, and parses into 145,193 rows.
+        // The index arrives, verifies, and parses into the 1,285 emoji
+        // this build was built against.
         library
-            .prepare(Source::Magick, &cancel)
-            .expect("the MAGICK index arrives");
+            .prepare(Source::Fluent, &cancel)
+            .expect("the Fluent Emoji index arrives");
         assert_eq!(
-            library.rows(Source::Magick),
-            Some(145_193),
+            library.rows(Source::Fluent),
+            Some(1_285),
             "the shelf this build was built against"
         );
 
-        // OpenMoji: the project's own list arrives and parses.
-        library
-            .prepare(Source::Openmoji, &cancel)
-            .expect("the OpenMoji index arrives");
-        let emoji_rows = library.rows(Source::Openmoji).unwrap_or_default();
-        assert!(emoji_rows > 4_500, "the colour set holds {emoji_rows}");
-
-        // A search over both shelves at once finds what either says.
+        // A search finds what the words say.
         let found = library
             .search(&Query {
-                text: Some("waving".to_owned()),
+                text: Some("party".to_owned()),
                 limit: 5,
                 ..Query::default()
             })
             .expect("searches");
-        assert!(!found.stickers.is_empty(), "somebody is waving");
+        assert!(!found.stickers.is_empty(), "somebody is partying");
         assert!(
             found
                 .stickers
                 .iter()
-                .all(|sticker| sticker.subject.to_lowercase().contains("waving"))
+                .all(|sticker| sticker.license == "MIT")
         );
 
-        // A MAGICK picture: fetched, checked, cached; fetched again from
-        // the cache, the same file.
-        let magick = found.stickers[0].clone();
+        // A picture: fetched, checked, cached; fetched again from the
+        // cache, the same file.
+        let sticker = found.stickers[0].clone();
         let path = library
-            .fetch(magick.source, &magick.id, &cancel, &mut |_, _| {})
+            .fetch(sticker.source, &sticker.id, &cancel, &mut |_, _| {})
             .expect("the picture arrives");
         assert!(path.is_file());
         let again = library
-            .fetch(magick.source, &magick.id, &cancel, &mut |_, _| {})
+            .fetch(sticker.source, &sticker.id, &cancel, &mut |_, _| {})
             .expect("the picture is kept");
         assert_eq!(again, path, "fetched once");
-        let _ = std::fs::remove_file(&path);
-
-        // An emoji of the other shelf, by the words its tags say.
-        let party = library
-            .search(&Query {
-                text: Some("party".to_owned()),
-                source: Some(Source::Openmoji),
-                limit: 5,
-                ..Query::default()
-            })
-            .expect("searches the emoji shelf");
-        assert!(!party.stickers.is_empty());
-        let emoji = party.stickers[0].clone();
-        let emoji_path = library
-            .fetch(emoji.source, &emoji.id, &cancel, &mut |_, _| {})
-            .expect("the emoji arrives");
-        assert!(emoji_path.is_file());
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// The favourites filter narrows a search to the heart's list.
-    #[test]
-    fn the_hearts_filter_narrows_a_search() {
-        let (library, dir) = made("hearts", shelves());
-        library.toggle_favourite("1F389").unwrap();
-        let found = library
-            .search(&Query {
-                favourites: true,
-                limit: 100,
-                ..Query::default()
-            })
-            .unwrap();
-        assert_eq!(found.stickers.len(), 1);
-        assert_eq!(found.stickers[0].id, "1F389");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    /// The index as this build reads it, on the fixture cut from the
-    /// real one's head, refused rows and all: the shape of every
-    /// column, a not-safe-for-work row among the rest to prove the
-    /// parse leaves it out, and captions lowercased for the search.
-    #[test]
-    fn the_index_fixture_parses_and_drops_the_refused() {
-        let bytes = include_bytes!("../fixtures/magick-index-head.tsv");
-        let rows = parse_magick(bytes).expect("the fixture parses");
-        assert_eq!(rows.len(), 25, "27 rows less the 2 refused");
-        assert!(
-            rows.iter().all(|row| row.id != "5bH7lMfQgi"),
-            "the nsfw rows are left out"
-        );
-        assert!(
-            rows.iter()
-                .all(|row| row.lowered == row.subject.to_lowercase())
-        );
-        assert!(
-            rows[0].subject.starts_with("stressed out asian woman"),
-            "the columns land where the parse reads them"
-        );
     }
 }

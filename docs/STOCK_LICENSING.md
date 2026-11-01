@@ -5,10 +5,11 @@ not a rights-cleared commercial stock subscription. An edit can be
 technically excellent and still be unusable. Know what you are shipping.
 
 Since `v0.2.8-funcut.6` this note is also said where it matters: a
-blocking notice comes up on the stock page's and the sticker page's first
-use — the research-dataset facts on the first, MAGICK's CC BY-NC and
-OpenMoji's CC-BY 4.0 on the second — acknowledged once per machine and
-then never again. This page remains the full account.
+blocking notice comes up on the stock page's first use — the
+research-dataset facts — acknowledged once per machine and then never
+again. The sticker page carries no gate: its shelf is Fluent Emoji, MIT,
+free for commercial and personal use, and the page says the licence on
+itself instead. This page remains the full account.
 
 ## What OpenVid actually is
 
@@ -68,9 +69,11 @@ implemented here**.
 - `sounds_search` / `bgm_search` serve the repository's own CC0 sound and
   music collections. CC0 means no attribution is required, but check the
   individual asset's metadata if you redistribute the raw files.
-- `magick_search` overlays are CC BY-NC in the source catalogue. **NC is
-  not commercial use.** The audit's advice stands: for commercial work,
-  prefer CC0/CC BY shelves or your own graphics.
+- `magick_search` overlays are Microsoft's Fluent Emoji, **MIT licence**
+  — free for commercial and personal use, no attribution required, and
+  every search result carries the licence in its `license` field. The
+  shelves this replaced (MAGICK's CC BY-NC pictures, OpenMoji's CC BY-SA
+  colour set) are gone from the app.
 - Anything produced by `motion_bake`, `captions_animate` or
   `motion_overlay` is derived from comps in this repository (AGPL-3.0)
   plus whatever assets you supplied. The rendered output is yours; the

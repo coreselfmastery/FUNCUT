@@ -12,20 +12,19 @@ changed against upstream, number by number, is in
 
 ## The sticker library
 
-The library's **Stickers** page puts 149,758 transparent PNGs beside the
+The library's **Stickers** page puts 1,285 rendered 3D emoji beside the
 stock clips and the music, none of them in the repository or the app:
-**MAGICK** - OneOverZero's dataset of 145,193 captioned AI-generated
-pictures with the backgrounds already taken away - and **OpenMoji**, the
-colour emoji set (4,565, CC-BY 4.0). The indexes download once, ~18 MB;
-a picture's PNG arrives only when it is picked, one plain GET, and a
+**Fluent Emoji** - Microsoft's fluentui-emoji set, MIT licence, free for
+commercial and personal use. The index downloads once, ~135 KB; a
+picture's PNG arrives only when it is picked, one plain GET, and a
 plus lays it *over* the video at the playhead, never beneath it. The
-search reads captions the way the sound library reads names - words
-ANDed, ranked by where and how rarely they matched - and the same
+search reads names and keywords the way the sound library reads names -
+words ANDed, ranked by where and how rarely they matched - and the same
 engine answers the window and the five `magick` MCP tools
 (`magick_status`, `magick_prepare`, `magick_search`, `magick_fetch`,
-`magick_add`) the AI agent drives. The honest words - the pictures are
-AI-generated, MAGICK is CC BY-NC 4.0 (personal and non-commercial use,
-not commercial) - are in [MAGICK.md](MAGICK.md).
+`magick_add`) the AI agent drives. Every result carries its `license`
+field, and the page carries the licence as a line rather than a gate;
+the honest words are in [MAGICK.md](MAGICK.md).
 
 ## The voiceover's pause removal
 

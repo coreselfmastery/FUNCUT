@@ -1653,7 +1653,7 @@ impl Api {
         sticker_library::shared(&self.dirs)
     }
 
-    /// [`Request::MagickStatus`]: both shelves, each in its own word.
+    /// [`Request::MagickStatus`]: the shelf, in its own word.
     pub fn magick_state(&self) -> MagickState {
         let library = self.stickers();
         let word = |source: sticker_library::Source| match library.status(source) {
@@ -1662,43 +1662,32 @@ impl Api {
             sticker_library::Status::Ready => "ready".to_owned(),
             sticker_library::Status::Failed(error) => format!("failed: {error}"),
         };
-        let magick = word(sticker_library::Source::Magick);
-        let openmoji = word(sticker_library::Source::Openmoji);
-        let percent = [
-            sticker_library::Source::Magick,
-            sticker_library::Source::Openmoji,
-        ]
-        .into_iter()
-        .filter_map(|source| match library.status(source) {
-            sticker_library::Status::Downloading(percent) => Some(percent),
-            _ => None,
-        })
-        .max()
-        .unwrap_or(0);
-        let error = [
-            (sticker_library::Source::Magick, &magick),
-            (sticker_library::Source::Openmoji, &openmoji),
-        ]
-        .into_iter()
-        .filter(|(_, word)| word.starts_with("failed"))
-        .map(|(source, word)| format!("{}: {}", source.name(), word.trim_start_matches("failed: ")))
-        .reduce(|both, one| format!("{both}; {one}"));
+        let magick = word(sticker_library::Source::Fluent);
+        let percent = sticker_library::Source::ALL
+            .into_iter()
+            .filter_map(|source| match library.status(source) {
+                sticker_library::Status::Downloading(percent) => Some(percent),
+                _ => None,
+            })
+            .max()
+            .unwrap_or(0);
+        let error = magick
+            .strip_prefix("failed: ")
+            .map(|words| format!("{}: {words}", sticker_library::Source::Fluent.name()));
         MagickState {
             magick,
-            openmoji,
             percent,
-            magick_rows: library.rows(sticker_library::Source::Magick),
-            openmoji_rows: library.rows(sticker_library::Source::Openmoji),
+            magick_rows: library.rows(sticker_library::Source::Fluent),
             error,
         }
     }
 
-    /// [`Request::MagickPrepare`]: both shelves' one-time index
-    /// downloads, started on their own threads because they are a few
-    /// MB and a parse follows them; a caller should not wait for them.
-    /// Their progress is what `magick.status` reports; a second call
-    /// while they run is a no-op, and the window's own page starting one
-    /// is the same download.
+    /// [`Request::MagickPrepare`]: the shelf's one-time index download,
+    /// started on its own thread because it is a few hundred KB and a
+    /// parse follows it; a caller should not wait for it. Its progress
+    /// is what `magick.status` reports; a second call while it runs is a
+    /// no-op, and the window's own page starting one is the same
+    /// download.
     pub fn magick_prepare(&self) {
         let library = self.stickers();
         for source in sticker_library::Source::ALL {
@@ -1738,7 +1727,8 @@ impl Api {
             Some(Some(source)) => Some(source),
             Some(None) => {
                 return Err(ApiError::invalid(
-                    "the source must be magick or openmoji, not whatever was given",
+                    "the source must be fluent (or one of the old names, magick or openmoji), \
+                     not whatever was given",
                 ));
             }
             None => None,
@@ -2987,7 +2977,6 @@ mod tests {
             _ => panic!("the status is the status"),
         };
         assert_eq!(state.magick, "missing");
-        assert_eq!(state.openmoji, "missing");
         assert_eq!(state.percent, 0);
         assert!(state.error.is_none());
         let refused = err(api.dispatch(Request::MagickSearch {

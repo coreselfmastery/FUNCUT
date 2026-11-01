@@ -443,7 +443,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "magick_status",
             "Sticker library status",
-            "Where the sticker library stands, shelf by shelf: `magick` (MAGICK: 145,193 captioned AI-generated transparent PNGs cut out of their backgrounds - people, animals, objects, gestures) and `openmoji` (4,565 transparent emoji, CC-BY 4.0) are each \"missing\" (call `magick_prepare` once, ~18 MB, then poll this), \"downloading\" (with `percent`), \"ready\" (with `magickRows`/`openmojiRows`) or \"failed\" (with `error`). 149,758 overlays in all; none in the repository - a picture's PNG moves only when picked.",
+            "Where the sticker shelf stands: Microsoft's Fluent Emoji (MIT - free for commercial and personal use), 1,285 rendered 3D PNGs, is \"missing\" (call `magick_prepare` once, ~135 KB, then poll this), \"downloading\" (with `percent`), \"ready\" (with `magickRows`) or \"failed\" (with `error`). None of the pictures live in the repository - a picture's PNG moves only when picked.",
             "magick.status",
             Raw,
         )
@@ -451,7 +451,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "magick_prepare",
             "Load the sticker library",
-            "Starts both shelves' one-time index downloads (~16 MB MAGICK, digest-checked; ~2 MB OpenMoji) and returns at once; poll `magick_status` until both are \"ready\". Nothing else downloads anything: every other `magick` tool refuses until the shelf it reads is ready.",
+            "Starts the shelf's one-time index download (~135 KB, digest-checked) and returns at once; poll `magick_status` until it is \"ready\". Nothing else downloads anything: every other `magick` tool refuses until the shelf is ready.",
             "magick.prepare",
             Raw,
         )
@@ -459,7 +459,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "magick_search",
             "Search stickers",
-            "Searches 149,758 transparent-PNG overlays - MAGICK's 145,193 captioned AI-generated pictures and OpenMoji's 4,565 emoji - by what their captions say: each match carries `id`, `source` (magick/openmoji), `subject` (the caption) and `localPath` when the PNG is already on this machine. `query` words are ANDed and prefix-matched - the emoji read their words and tags both - ranked by where and how rarely the words matched, the whole phrase as one run counting most: \"red balloon\" finds a red balloon, \"party\" the popper emoji. `source` narrows the shelf, `favourites` the heart's list, `limit` (1-100, default 20) and `offset` page. `magick_add` places one by id.",
+            "Searches the sticker shelf - Microsoft's Fluent Emoji (MIT), 1,285 rendered 3D PNGs - by what the set's own names and keywords say: each match carries `id`, `source` (fluent), `subject` (the CLDR name), `license` (MIT) and `localPath` when the PNG is already on this machine. `query` words are ANDed and prefix-matched, ranked by where and how rarely the words matched, the whole phrase as one run counting most: \"party\" finds the popper, \"smile\" the grinning face. `source` narrows the shelf (the old names magick/openmoji still answer), `favourites` the heart's list, `limit` (1-100, default 20) and `offset` page. `magick_add` places one by id.",
             "magick.search",
             Raw,
         )
@@ -467,7 +467,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "magick_fetch",
             "Fetch a sticker",
-            "Fetches one picture's PNG into the app's cache - one plain GET (~1 MB MAGICK, a few KB emoji), checked to be a PNG that can hold transparency - and returns it with `localPath`, its absolute path here. Adds nothing to any project; `magick_add` is what puts one in an edit.",
+            "Fetches one emoji's PNG into the app's cache - one plain GET from the repository (or its jsDelivr mirror), checked to be a PNG that can hold transparency - and returns it with `localPath`, its absolute path here. Adds nothing to any project; `magick_add` is what puts one in an edit.",
             "magick.fetch",
             Raw,
         )

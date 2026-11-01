@@ -18,7 +18,7 @@
 > editing craft riding beside it, and a Forge page
 > in the editor that starts a whole faceless video with one click. Stock
 > (937,957 clips), music (1,191 CC0 tracks), sounds (530, incl. a 100-sound Hollywood trailer pack) and stickers
-> (149,758) are all searched locally and fetched per use. The complete
+> (1,285 MIT-licensed Fluent Emoji) are all searched locally and fetched per use. The complete
 > verified inventory — every tool, page, engine and model, read from the
 > source — is [docs/FEATURES.md](docs/FEATURES.md); the fork's change
 > ledger is [docs/FUNCUT-CHANGES.md](docs/FUNCUT-CHANGES.md), the

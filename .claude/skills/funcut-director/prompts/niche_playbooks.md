@@ -163,7 +163,7 @@ segment captions, chapter comps. Every clip
 footage — search landscape, crop to cover). Grade the WHOLE runtime
 (`effect_layer_add {start: 0, duration: <runtime>}` — duration written,
 the default is 5 s). One accent, one text system, entrances and exits on
-every element. MAGICK = CC BY-NC (openmoji is the safe shelf). TTS
+every element. Stickers are Fluent Emoji, MIT — commercial-safe. TTS
 Kokoro int8 (voice per niche: warm 2/af_bella for history-luxury, crisp
 8/af_river for tech-science, deep 14/am_fenrir or 17/am_onyx for
 horror-motivation-finance). Record platform loudness goals but measure

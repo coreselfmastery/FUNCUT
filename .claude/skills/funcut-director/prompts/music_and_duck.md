@@ -65,5 +65,5 @@ One track can carry eight minutes, but it should not carry them flat:
 
 Both shelves are whole-track CC0 (FreePD is Kevin MacLeod's public
 domain library; Lo-Fi is Moby's MobyGratis instrumentals). Attribution
-welcome, never required. MAGICK stickers are the ones with the NC clause
-— those are pictures, not music, but the same rule applies there.
+welcome, never required. Stickers are Fluent Emoji, MIT — usable in
+commercial work; every magick_search result says so in its license field.

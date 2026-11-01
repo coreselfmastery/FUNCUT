@@ -1,33 +1,25 @@
 # Third-party notices
 
-## The sticker library (MAGICK and OpenMoji)
+## The sticker shelf (Fluent Emoji)
 
-The library's Stickers page serves 149,758 transparent-PNG overlays from
-two shelves, neither of them redistributed by this repository; what a
-user's machine fetches is kept in that machine's own cache, one picture
-at a time. See `docs/MAGICK.md`.
+The library's Stickers page serves 1,285 rendered 3D emoji from
+Microsoft's Fluent Emoji, none of them redistributed by this repository;
+what a user's machine fetches is kept in that machine's own cache, one
+picture at a time. See `docs/MAGICK.md`.
 
-**MAGICK** (145,193 pictures after the index's own not-safe-for-work
-rows are left out) is the OneOverZero MAGICK dataset, presented at CVPR
-2024 ("MAGICK: A Large-scale Captioned Dataset Matting Generated Images
-using Chroma Keying", Burgert, Price, Kuen, Li, Ryoo), hosted at
-https://huggingface.co/datasets/OneOverZero/MAGICK and licensed **CC
-BY-NC 4.0** (https://creativecommons.org/licenses/by-nc/4.0/, the
-project page's own link): the pictures are AI-generated and may be used
-for personal and non-commercial video, not commercial video. The
-dataset's small TSV index (page ids and captions, ~16 MB) is mirrored as
-the `magick-index-v1` release asset of this repository so the app's one
-download is digest-checked against this build; the pictures themselves
-are fetched only from the Hub.
+**Fluent Emoji** is the fluentui-emoji set,
+https://github.com/microsoft/fluentui-emoji, by Microsoft, licensed **MIT**
+- free for commercial and personal use. The shelf's small TSV index
+(every emoji's codepoints, CLDR name, keywords, group, licence and PNG
+path, ~135 KB) is published as the `fluent-emoji-index-v1` release asset
+of this repository and digest-checked by the app; the pictures themselves
+are fetched only from Microsoft's repository (raw.githubusercontent.com,
+with jsDelivr as the mirror behind it).
 
-**OpenMoji** (4,565 emoji) is the OpenMoji project's colour set,
-https://openmoji.org, by the HfG Schwäbisch Gmünd and contributors,
-licensed **CC-BY 4.0**
-(https://creativecommons.org/licenses/by/4.0/). Its index (the project's
-own `openmoji.json`, annotations and tags) and its pictures (the
-618x618 colour PNGs) are fetched from the project's GitHub repository;
-the licence's one condition, attribution, is met by this notice and by
-`docs/MAGICK.md`.
+The two shelves this one replaced were not usable in commercial work and
+were removed rather than warned about: MAGICK (CC BY-NC 4.0, OneOverZero)
+and OpenMoji (CC-BY-SA 4.0, HfG Schwäbisch Gmünd) served their last
+picture before this notice was written.
 
 ## FFmpeg
 

@@ -1114,3 +1114,34 @@ cells, not refusals); the tool's argument carried through the schema;
 **What it costs:** four frame renders at preview size and one PNG
 encode - a quarter of a second of sidecar time on the measured
 machine, once per look.
+
+## 26. The sticker shelf swapped for a permissive set
+
+The two sticker shelves were a liability wearing a search box: MAGICK's
+145,193 AI-generated cutouts were **CC BY-NC 4.0** - unusable in a
+monetized video - and OpenMoji's 4,565 colour emoji were **CC BY-SA
+4.0**, whose share-alike term reaches into whatever it is layered on.
+The fork had answered that with a blocking licence notice before the
+page's first use; the honest fix was to stop shipping shelves that need
+one.
+
+**What changed:** the shelf is Microsoft's **Fluent Emoji**
+(fluentui-emoji), 1,285 rendered 3D PNGs under the **MIT licence** -
+free for commercial and personal use. The index is built by
+`scripts/fluent-emoji-index.py` from the repository's own tree (one row
+an emoji: codepoints, CLDR name, keywords, group, licence, PNG path) and
+published as the `fluent-emoji-index-v1` release asset, digest-checked
+by the build. Pictures fetch one plain GET each from
+raw.githubusercontent.com with jsDelivr behind it. The `magick` tool
+names stayed for compatibility - `source` accepts the old shelf names
+and points them at the one shelf - and every result now carries a
+`license` field, with the licence shown on the tile and as a line on
+the page instead of a gate before it. The index is ~135 KB against the
+old ~18 MB, and the first usable sticker arrives one download sooner.
+
+Verified: the live end-to-end test (index down from the release, digest
+checked, 1,285 rows parsed, a search, a real PNG fetched and
+transparency-checked) runs green in `concat-host`; 11 unit tests hold
+the parse, the search, the URL shapes, the licence field and the
+favourites; the alpha check still refuses anything that is not a
+transparent PNG.

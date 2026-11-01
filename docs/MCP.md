@@ -70,25 +70,23 @@ undoable step. `surprise` as the sort is the shuffle that picks when you
 cannot; a track whose length is unknown is passed by a duration filter
 rather than guessed at.
 
-### Stickers (MAGICK and OpenMoji)
+### Stickers (Fluent Emoji)
 
-The `magick` tools search 149,758 transparent-PNG overlays on two
-shelves and fetch only what is used. MAGICK is OneOverZero's dataset of
-145,193 captioned AI-generated pictures with the backgrounds already
-taken away (people, animals, objects, gestures); OpenMoji is the
-project's colour emoji set (4,565, CC-BY 4.0, and its tags are searched:
-"smile" finds the grinning face). Nothing is bundled: `magick_prepare`
-fetches both indexes once (~18 MB; poll `magick_status` until both are
-`ready`), and a picture's PNG arrives only when it is picked - one plain
-GET, ~1 MB for a MAGICK picture, a few KB for an emoji, checked to be a
-PNG that can hold transparency before it is kept. A typical run:
-`magick_search` with words ("red balloon", `source: "magick"`) →
-`magick_add` with `id`, `start` and a placement (`scale: 0.3,
-offsetX: 0.2`, `duration: 3`), which lays the picture *over* the video -
-the first free lane above the highest occupied, never beneath it - as
-one undoable step beside the clip's own. MAGICK's pictures are
-AI-generated and CC BY-NC 4.0: fine for personal video, not for
-commercial use; OpenMoji is CC-BY 4.0. The window's Stickers page
+The `magick` tools search Microsoft's Fluent Emoji - 1,285 rendered 3D
+transparent PNGs, **MIT licence**, free for commercial and personal use -
+and fetch only what is used. The set's own CLDR names and keywords are
+searched together ("smile" finds the grinning face by a word the name
+alone does not say). Nothing is bundled: `magick_prepare` fetches the
+index once (~135 KB; poll `magick_status` until it is `ready`), and a
+picture's PNG arrives only when it is picked - one plain GET from
+Microsoft's repository (jsDelivr behind it), checked to be a PNG that can
+hold transparency before it is kept. A typical run: `magick_search` with
+words ("party", `source: "fluent"` - the old names `magick`/`openmoji`
+still answer) → `magick_add` with `id`, `start` and a placement
+(`scale: 0.3, offsetX: 0.2`, `duration: 3`), which lays the picture
+*over* the video - the first free lane above the highest occupied, never
+beneath it - as one undoable step beside the clip's own. Every result
+carries its `license` field, so "can this ship" is answered by the data. The window's Stickers page
 searches the same engine, and its heart button keeps the favourites the
 `favourites` filter narrows by.
 

@@ -28,7 +28,7 @@ with one click.
 | Bundled CC0 sounds | 530 (16 MB, 12 categories; 100 of them the designed Hollywood pack) | `audio/` |
 | BGM library | 1,191 CC0 tracks (FreePD 1,025 + MobyGratis 166) | fetched on demand |
 | Stock clips (OpenVid) | 937,957 | ~435 MB local index, fetched per clip |
-| Stickers | 149,758 (MAGICK 145,193 + OpenMoji 4,565) | ~18 MB indexes, fetched per sticker |
+| Stickers | 1,285 (Fluent Emoji, MIT) | ~135 KB index, fetched per sticker |
 | Bundled fonts | 41 title faces + 6 script fallbacks + UI face | `src/crates/concat-text/src/lib.rs` |
 | UI languages | 26 | `src/crates/concat/src/i18n.rs` |
 | Rebindable keyboard actions | 28 | `src/crates/concat/src/keymap.rs` |
@@ -137,9 +137,9 @@ Nothing here is bundled whole; indexes download once, media arrives per pick.
 - **Sounds — 530 CC0 effects** bundled in the repo (12 categories), each
   with a description, use-for lines and `syncAt` (where its peak lands),
   ranked 6-field search. See [docs/AUDIO_LIBRARY.md](AUDIO_LIBRARY.md).
-- **Stickers — 149,758 transparent PNGs**: MAGICK (145,193 captioned
-  AI-generated, CC BY-NC — personal use) and OpenMoji (4,565, CC-BY 4.0),
-  with favourites. See [docs/MAGICK.md](MAGICK.md).
+- **Stickers — 1,285 rendered 3D emoji**: Microsoft's Fluent Emoji, MIT
+  licence — free for commercial and personal use, every result carrying
+  its `license` field, with favourites. See [docs/MAGICK.md](MAGICK.md).
 - **Templates.** Any project saves as a template (folder + assets + poster);
   slots are placeholder media a later `FillSlot` swaps for the user's file
   in place, across all timelines.

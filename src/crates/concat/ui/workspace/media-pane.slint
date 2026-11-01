@@ -2492,18 +2492,6 @@ export component MediaPane inherits Rectangle {
                             current: Magick.source == 0 && !Magick.favourites;
                             clicked => { Magick.source = 0; Magick.favourites = false; Magick.search(Magick.query, Magick.source, Magick.favourites); }
                         }
-                        if root.magick-shelves-open: CategoryRow {
-                            height: 24px;
-                            label: "MAGICK";
-                            current: Magick.source == 1 && !Magick.favourites;
-                            clicked => { Magick.source = 1; Magick.favourites = false; Magick.search(Magick.query, Magick.source, Magick.favourites); }
-                        }
-                        if root.magick-shelves-open: CategoryRow {
-                            height: 24px;
-                            label: "OpenMoji";
-                            current: Magick.source == 2 && !Magick.favourites;
-                            clicked => { Magick.source = 2; Magick.favourites = false; Magick.search(Magick.query, Magick.source, Magick.favourites); }
-                        }
                         CategoryRow {
                             height: 24px;
                             label: I18n.t("magick.favourites");

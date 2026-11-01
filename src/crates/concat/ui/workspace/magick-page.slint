@@ -5,16 +5,15 @@ import { I18n } from "../i18n.slint";
 import { Theme, Glyph, Icon } from "../primitives/primitives.slint";
 import { SourcePreview } from "source-preview.slint";
 
-// The library's Stickers page: 149,758 transparent PNGs over two shelves -
-// MAGICK (OneOverZero's captioned AI-generated pictures, chroma-keyed out of
-// their backgrounds) and OpenMoji (the colour emoji set, CC-BY 4.0) -
-// searched in a local index, fetched one picture at a time.
+// The library's Stickers page: Microsoft's Fluent Emoji, 1,285 rendered 3D
+// PNGs under the MIT licence, searched in a local index, fetched one
+// picture at a time.
 //
 // A picture's bytes never arrive until they are asked for - a click previews
 // one through the source preview, a plus lays it over the picture at the
-// playhead - and what the page needs once is the two indexes, ~18 MB, which
-// the status card offers to load and then keeps out of the way. A card shows
-// the picture itself once its PNG is on this machine, and a glyph until then:
+// playhead - and what the page needs once is the index, ~135 KB, which the
+// status card offers to load and then keeps out of the way. A card shows the
+// picture itself once its PNG is on this machine, and a glyph until then:
 // fetching a page of thumbnails would cost a page of megabytes, which is not
 // what a search is for.
 //
@@ -29,7 +28,9 @@ export struct MagickCardData {
     id: string,
     /// What the picture shows, in the dataset's own words.
     subject: string,
-    /// Which shelf it is on, as the corner's word: "MAGICK" or "OpenMoji".
+    /// The licence the picture carries, as the corner's word: "MIT" for
+    /// every emoji in the set - said on the tile, so the answer to "can
+    /// this ship" is where the eye already is.
     shelf: string,
     /// The picture itself, once its PNG is on this machine; an empty image
     /// until then, so the tile draws its glyph.
@@ -47,21 +48,21 @@ export global Magick {
     /// The search field's words, held here so the page's controls and the
     /// Rust side read one thing.
     in-out property <string> query;
-    /// The shelves: 0 both, 1 MAGICK, 2 OpenMoji.
+    /// The shelf: 0 the one shelf. The tabs it once filtered are gone;
+    /// the property stays, so the search callback keeps its shape.
     in-out property <int> source;
     /// Only the heart's list.
     in-out property <bool> favourites;
-    /// 0 the indexes are not on this machine yet, 1 a download running,
-    /// 2 a shelf ready, 3 both failed, with `error` saying why.
+    /// 0 the index is not on this machine yet, 1 a download running,
+    /// 2 the shelf ready, 3 failed, with `error` saying why.
     in property <int> state;
     /// How far the download has got, 0-100.
     in property <int> percent;
     /// The words that go with a state that is not ready.
     in property <string> error;
-    /// How many pictures each shelf holds, once ready, with their
-    /// thousands separated: "145,193" and "4,565".
+    /// How many pictures the shelf holds, once ready, with its thousands
+    /// separated: "1,285".
     in property <string> magick-rows;
-    in property <string> openmoji-rows;
     /// A search is running.
     in property <bool> searching;
     /// The pictures on the page, in the order the search ranked them.
@@ -301,6 +302,13 @@ export component MagickStatus inherits Rectangle {
                 wrap: word-wrap;
                 horizontal-alignment: center;
             }
+            Text {
+                text: I18n.t("magick.licenceHint");
+                color: Theme.fg-muted;
+                font-size: Theme.fs-sm;
+                wrap: word-wrap;
+                horizontal-alignment: center;
+            }
             if Magick.state == 3: Text {
                 text: Magick.error;
                 color: Theme.danger;
@@ -354,7 +362,7 @@ export component MagickStatus inherits Rectangle {
                 }
             }
             Text {
-                text: "\{Magick.percent}% · MAGICK \{Magick.magick-rows} · OpenMoji \{Magick.openmoji-rows}";
+                text: "\{Magick.percent}% · \{Magick.magick-rows}";
                 color: Theme.fg-muted;
                 font-family: Theme.font-technical;
                 font-size: Theme.fs-sm;

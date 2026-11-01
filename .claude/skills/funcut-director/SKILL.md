@@ -374,8 +374,8 @@ contrast, no text touching frame edges, `offsetY` ≈ 0.35 default.
 changes land on downbeats when `analyze_beats` gives a grid, and the piece
 ends on a downbeat.
 
-**N — MAGICK stickers are CC BY-NC: never in monetized/commercial videos.**
-OpenMoji (CC-BY) is the safe shelf.
+**N — Stickers are MIT (Fluent Emoji): safe in monetized/commercial videos.**
+No licence warning is needed; every `magick_search` result carries `license: "MIT"`.
 
 ## 4. Hard rules
 

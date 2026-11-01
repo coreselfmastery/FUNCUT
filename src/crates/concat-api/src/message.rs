@@ -446,41 +446,42 @@ pub enum Request {
         track: Option<String>,
     },
 
-    /// The sticker library's state: whether each shelf's index is on this
+    /// The sticker shelf's state: whether its index is on this
     /// machine yet, how far along it is while it comes down, and how many
     /// pictures it holds when it is ready. The one `magick` method that
-    /// works before the indexes are down; every other one refuses until
-    /// they are, with words that say so.
+    /// works before the index is down; every other one refuses until it
+    /// is, with words that say so.
     #[serde(rename = "magick.status")]
     MagickStatus,
 
-    /// Starts the sticker shelves' one-time index downloads in the
+    /// Starts the sticker shelf's one-time index download in the
     /// background and returns at once; `magick.status` reports how far
-    /// they have got. The MAGICK index is ~16 MB checked against a
-    /// digest; OpenMoji's is ~2 MB. Nothing is downloaded by any other
-    /// method: they refuse until the shelf they read is ready.
+    /// it has got. The index is ~135 KB checked against a digest baked
+    /// into the build. Nothing is downloaded by any other method: they
+    /// refuse until the shelf is ready.
     #[serde(rename = "magick.prepare")]
     MagickPrepare,
 
-    /// Searches the sticker library - two shelves of transparent PNGs:
-    /// MAGICK's 145,193 captioned AI-generated pictures (people, animals,
-    /// objects, gestures, chroma-keyed out of their backgrounds) and
-    /// OpenMoji's 4,565 emoji - and returns the best matches with
+    /// Searches the sticker shelf - Microsoft's Fluent Emoji, 1,285 3D
+    /// PNGs under the MIT licence - and returns the best matches with
     /// everything an agent needs to pick one without seeing it: the
     /// caption, the shelf, and whether the picture's PNG is already on
     /// this machine. `query` words are ANDed and prefix-matched against
-    /// the captions (the emoji's own words and tags both), ranked by
-    /// where the words matched and how rare they are, with the whole
-    /// phrase said as one run of words counting most; `source` narrows
-    /// to "magick" or "openmoji", `favourites` to the heart's list, and
-    /// `limit` (1-100, 20 when absent) and `offset` page through them.
+    /// the names and keywords together, ranked by where the words
+    /// matched and how rare they are, with the whole phrase said as one
+    /// run of words counting most; `source` narrows to "fluent" (the
+    /// old names, "magick" and "openmoji", still answer), `favourites`
+    /// to the heart's list, and `limit` (1-100, 20 when absent) and
+    /// `offset` page through them. Every result carries the licence
+    /// its picture carries - `MIT` for the whole set.
     #[serde(rename = "magick.search")]
     MagickSearch {
         /// Words to find in captions, ANDed and prefix-matched, best
         /// match first.
         #[serde(default)]
         query: Option<String>,
-        /// Only this shelf: "magick" or "openmoji"; both when absent.
+        /// Only this shelf: "fluent" (the old names, "magick" and
+        /// "openmoji", still answer); the one shelf when absent.
         #[serde(default)]
         source: Option<String>,
         /// Only the pictures the heart was pressed on.
@@ -1182,27 +1183,20 @@ pub struct BgmImport {
 }
 
 /// The sticker library's state, as `magick.status` reports it and
-/// `magick.prepare` starts it towards. Both shelves, because a search
-/// with no shelf named reads both.
+/// `magick.prepare` starts it towards. The one shelf, in the field the
+/// wire has always carried.
 #[derive(Clone, PartialEq, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MagickState {
-    /// The MAGICK shelf (OneOverZero's captioned AI-generated pictures):
-    /// "missing", "downloading" (with `percent`), "ready" or "failed"
-    /// (with `error`).
+    /// The sticker shelf - Microsoft's Fluent Emoji, 1,285 3D PNGs under
+    /// the MIT licence: "missing", "downloading" (with `percent`),
+    /// "ready" or "failed" (with `error`).
     pub magick: String,
-    /// The OpenMoji shelf (the colour emoji set): "missing",
-    /// "downloading" (with `percent`), "ready" or "failed" (with
-    /// `error`).
-    pub openmoji: String,
-    /// How far the shelf still downloading has got, 0-100.
+    /// How far the shelf's download has got, 0-100.
     pub percent: u32,
-    /// How many pictures the MAGICK shelf holds, when it is ready.
+    /// How many pictures the shelf holds, when it is ready.
     pub magick_rows: Option<u64>,
-    /// How many pictures the OpenMoji shelf holds, when it is ready.
-    pub openmoji_rows: Option<u64>,
-    /// Why a shelf is not usable, when it is not. The shelf's own name
-    /// prefixes the words.
+    /// Why the shelf is not usable, when it is not.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -1226,11 +1220,15 @@ pub struct MagickEntry {
     /// The picture's id in the library, and the id every verb takes
     /// back.
     pub id: String,
-    /// Which shelf it is on: "magick" or "openmoji".
+    /// Which shelf it is on: "fluent".
     pub source: String,
-    /// What the picture shows, in the dataset's own words: the caption
+    /// What the picture shows, in the set's own words: the CLDR name
     /// the search read.
     pub subject: String,
+    /// The licence the picture carries, as the index read it: "MIT" for
+    /// every emoji in the set. A field, not a footnote, so the answer
+    /// to "can this ship" travels with the result.
+    pub license: String,
     /// Where the picture's PNG is on this machine, once fetched.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub local_path: Option<String>,
@@ -1247,11 +1245,11 @@ impl MagickEntry {
         MagickEntry {
             id: sticker.id.clone(),
             source: match sticker.source {
-                concat_host::magick::Source::Magick => "magick",
-                concat_host::magick::Source::Openmoji => "openmoji",
+                concat_host::magick::Source::Fluent => "fluent",
             }
             .to_owned(),
             subject: sticker.subject.clone(),
+            license: sticker.license.clone(),
             local_path: local.map(|path| path.to_string_lossy().into_owned()),
         }
     }

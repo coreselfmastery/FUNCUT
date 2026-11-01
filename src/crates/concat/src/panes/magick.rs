@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
-//! The library's Stickers page: 149,758 transparent PNGs over two
-//! shelves - MAGICK (OneOverZero's captioned AI-generated pictures) and
-//! OpenMoji (the colour emoji set) - searched in a local index, fetched
-//! one picture at a time.
+//! The library's Stickers page: Microsoft's Fluent Emoji, 1,285
+//! rendered 3D PNGs under the MIT licence, searched in a local index,
+//! fetched one picture at a time.
 //!
-//! Neither shelf is in the repository or the app: the indexes arrive
-//! once, ~18 MB, and a picture's own bytes move only when the picture is
+//! The set is not in the repository or the app: the index arrives once,
+//! ~135 KB, and a picture's own bytes move only when the picture is
 //! picked - a click previews one, a plus lays it over the video at the
 //! playhead, a heart keeps it on the list. The search engine, the index
-//! downloads and the transparency check are `concat_host::magick`'s; see
+//! download and the transparency check are `concat_host::magick`'s; see
 //! there for how the whole thing stays off the network until a picture
 //! is picked.
 //!
@@ -86,9 +85,8 @@ pub enum MagickMsg {
 pub struct MagickPane {
     /// A library pane is showing the page.
     pub shown: bool,
-    /// The shelves as the pane last read them.
-    pub magick: library::Status,
-    pub openmoji: library::Status,
+    /// The shelf as the pane last read it.
+    pub shelf: library::Status,
     /// The pictures on the page, in the order the search ranked them.
     pub results: Vec<library::Sticker>,
     /// How many pictures match in all, this page aside.
@@ -129,8 +127,7 @@ impl MagickPane {
     pub fn open(dirs: &AppDirs) -> MagickPane {
         MagickPane {
             shown: false,
-            magick: library::shared(dirs).status(Source::Magick),
-            openmoji: library::shared(dirs).status(Source::Openmoji),
+            shelf: library::shared(dirs).status(Source::Fluent),
             results: Vec::new(),
             total: 0,
             searching: false,
@@ -170,11 +167,11 @@ impl MagickPane {
         let ready = |status: &library::Status| matches!(status, library::Status::Ready);
         let loading = |status: &library::Status| matches!(status, library::Status::Downloading(_));
         let failed = |status: &library::Status| matches!(status, library::Status::Failed(_));
-        if loading(&self.magick) || loading(&self.openmoji) {
+        if loading(&self.shelf) {
             1
-        } else if ready(&self.magick) || ready(&self.openmoji) {
+        } else if ready(&self.shelf) {
             2
-        } else if failed(&self.magick) && failed(&self.openmoji) {
+        } else if failed(&self.shelf) {
             3
         } else {
             0
@@ -201,8 +198,7 @@ impl MagickPane {
                 let search = Query {
                     text: (!query.trim().is_empty()).then(|| query.clone()),
                     source: match source {
-                        1 => Some(Source::Magick),
-                        2 => Some(Source::Openmoji),
+                        1 => Some(Source::Fluent),
                         _ => None,
                     },
                     favourites,
@@ -264,13 +260,10 @@ impl MagickPane {
                 let Some(dirs) = self.dirs.clone() else {
                     return;
                 };
-                if matches!(self.magick, library::Status::Downloading(_))
-                    || matches!(self.openmoji, library::Status::Downloading(_))
-                {
+                if matches!(self.shelf, library::Status::Downloading(_)) {
                     return;
                 }
-                self.magick = library::Status::Downloading(0);
-                self.openmoji = library::Status::Downloading(0);
+                self.shelf = library::Status::Downloading(0);
                 // The poll: the loads tick the shelves' own counters, and
                 // the page reads them four times a second until they end.
                 self.timer.start(
@@ -284,45 +277,31 @@ impl MagickPane {
                     },
                 );
                 let cancel = Arc::clone(&self.cancel);
-                for source in Source::ALL {
-                    // Each spawn takes its own copy: the loop's second
-                    // iteration cannot borrow what the first moved.
-                    let dirs = dirs.clone();
-                    let cancel = Arc::clone(&cancel);
-                    crate::host::spawn(
-                        move || library::shared(&dirs).prepare(source, &cancel),
-                        move |studio, _, _, result| {
-                            // The verdict before the words: the words
-                            // consume the result, and a half-moved value
-                            // cannot be asked what it was.
-                            let failed = result.is_err();
-                            let words = match result {
-                                Ok(()) => match source {
-                                    Source::Magick => t("magick.magickReady"),
-                                    Source::Openmoji => t("magick.openmojiReady"),
-                                },
-                                Err(error) => format!(
-                                    "{}: {error}",
-                                    match source {
-                                        Source::Magick => t("magick.magick"),
-                                        Source::Openmoji => t("magick.openmoji"),
-                                    }
-                                ),
-                            };
-                            studio.notify(&words, failed);
-                        },
-                    );
-                }
+                let source = Source::Fluent;
+                crate::host::spawn(
+                    move || library::shared(&dirs).prepare(source, &cancel),
+                    move |studio, _, _, result| {
+                        // The verdict before the words: the words
+                        // consume the result, and a half-moved value
+                        // cannot be asked what it was.
+                        let failed = result.is_err();
+                        let words = match result {
+                            Ok(()) => t("magick.fluentReady"),
+                            Err(error) => {
+                                format!("{}: {error}", t("magick.stickers"))
+                            }
+                        };
+                        studio.notify(&words, failed);
+                    },
+                );
             }
             MagickMsg::Tick => {
                 let Some(library) = self.library() else {
                     self.timer.stop();
                     return;
                 };
-                self.magick = library.status(Source::Magick);
-                self.openmoji = library.status(Source::Openmoji);
-                let loading = matches!(self.magick, library::Status::Downloading(_))
-                    || matches!(self.openmoji, library::Status::Downloading(_));
+                self.shelf = library.status(Source::Fluent);
+                let loading = matches!(self.shelf, library::Status::Downloading(_));
                 if !loading {
                     self.timer.stop();
                     self.refresh();
@@ -366,8 +345,7 @@ impl MagickPane {
         let Some(library) = self.library() else {
             return;
         };
-        self.magick = library.status(Source::Magick);
-        self.openmoji = library.status(Source::Openmoji);
+        self.shelf = library.status(Source::Fluent);
         // The heart's list, read here so the tiles light up as they are
         // laid out rather than after the first press.
         self.hearts = library.favourite_ids();
@@ -437,7 +415,7 @@ impl MagickPane {
         let source = library
             .find(&id)
             .map(|sticker| sticker.source)
-            .unwrap_or(Source::Magick);
+            .unwrap_or(Source::Fluent);
         crate::host::spawn(
             move || {
                 let mut progress = |_, _| {};
@@ -481,8 +459,7 @@ impl MagickPane {
                     id: sticker.id.as_str().into(),
                     subject: sticker.subject.as_str().into(),
                     shelf: match sticker.source {
-                        Source::Magick => "MAGICK",
-                        Source::Openmoji => "OpenMoji",
+                        Source::Fluent => sticker.license.as_str(),
                     }
                     .into(),
                     image: picture,
@@ -499,8 +476,7 @@ impl Default for MagickPane {
     fn default() -> Self {
         MagickPane {
             shown: false,
-            magick: library::Status::Missing,
-            openmoji: library::Status::Missing,
+            shelf: library::Status::Missing,
             results: Vec::new(),
             total: 0,
             searching: false,

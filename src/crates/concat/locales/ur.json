@@ -68,6 +68,7 @@
   "clipInspector.blend": "بلینڈ",
   "clipInspector.bringsClipBroadcastLevel": "فیڈر کو بار بار ہلائے بغیر کلپ کو براڈکاسٹ لیول پر لے آتا ہے۔",
   "clipInspector.brush": "برش",
+  "clipInspector.bypass": "Bypass {0}",
   "clipInspector.canvasHelp": "جہاں یہ تصویر نہیں پہنچتی وہاں فریم کو کیا بھرتا ہے، جیسے عمودی فریم میں چوڑے شاٹ کے ساتھ کی پٹیاں۔ یہ صرف مرکزی لین کی تصویروں کے لیے ہے۔ سب پر لاگو کرنے سے مرکزی لین کی ہر تصویر کو اس کلپ کا پس منظر ملتا ہے۔",
   "clipInspector.chainRunsTopBottom": "زنجیر اوپر سے نیچے چلتی ہے — تیروں سے اس کی ترتیب بدلیں۔ آنکھ ایک کڑی کو بائی پاس کرتی ہے اور اس میں سیٹ کی گئی قدریں ضائع نہیں ہوتیں۔",
   "clipInspector.changePitchWithSpeed": "رفتار کے ساتھ پچ بدلیں",
@@ -76,6 +77,7 @@
   "clipInspector.customRemoval": "حسبِ منشا ہٹانا",
   "clipInspector.darken": "گہرا کریں",
   "clipInspector.effectLibrary": "ایفیکٹ لائبریری",
+  "clipInspector.enable": "Enable {0}",
   "clipInspector.enhanceAfter": "بعد · {0}% شدت",
   "clipInspector.enhanceAgain": "دوبارہ بہتر بنائیں",
   "clipInspector.enhanceAuto": "خودکار ({0})",
@@ -97,6 +99,7 @@
   "clipInspector.fadeIn": "فیڈ اِن",
   "clipInspector.fadeOut": "فیڈ آؤٹ",
   "clipInspector.fades": "فیڈز",
+  "clipInspector.favourites": "Favourites",
   "clipInspector.feather": "کنارے نرم کریں",
   "clipInspector.fetchingTheModel": "ماڈل حاصل کیا جا رہا ہے… {0}%",
   "clipInspector.fill": "بھریں",
@@ -1077,7 +1080,5 @@
   "voices.styles": "انداز",
   "voices.stylesHint": "انداز ایفیکٹس والی صوت ہے۔ اس میں لکھنے کے لیے کوئی ایک چنیں: ایفیکٹس تقریر کی کلپ پر لگتے ہیں، جہاں آپ انہیں بدل سکتے ہیں۔",
   "voices.voices": "صوتیں",
-  "voices.yours": "آپ کی صوتیں",
-  "export.photosNotAllowed": "Concat کو Photos میں شامل کرنے کی اجازت نہیں؛ ترتیبات › Concat › Photos میں اسے اجازت دیں",
-  "start.safeModePhone": "Concat ایک بار شروع ہوتے ہوئے بند ہو گیا تھا، اس لیے یہ اگلی اپڈیٹ تک Vulkan کی جگہ OpenGL ES سے ڈرا کرتا ہے۔"
+  "voices.yours": "آپ کی صوتیں"
 }

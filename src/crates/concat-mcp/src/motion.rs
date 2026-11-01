@@ -265,7 +265,11 @@ pub fn frame(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiErro
         .cloned()
         .ok_or_else(|| ApiError::invalid("invalid arguments: the arguments are an object"))?;
     for key in fields.keys() {
-        if !["preset", "comp", "project", "ops", "at", "width", "height"].contains(&key.as_str()) {
+        // No `height` here, on purpose: the frame draws at the comp's own
+        // aspect, and a height the engine cannot honour is a promise the
+        // tool must not make - `motion_bake` takes one because it renders
+        // a whole clip at the project's frame; this draws one frame.
+        if !["preset", "comp", "project", "ops", "at", "width"].contains(&key.as_str()) {
             return Err(ApiError::invalid(format!(
                 "invalid arguments: unknown field `{key}`"
             )));

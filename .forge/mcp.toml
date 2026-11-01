@@ -8,11 +8,17 @@
 #
 # call_timeout_secs is the CLIENT-side bound, and it stays one number:
 # the SERVER bounds each tool by its own limit instead (concat-mcp's
-# Tool::timeout_secs - the VLM download and the overlay encode 1200 s,
-# transcribe 900 s, exports and the sense family 600 s, the renders and
-# the watches 300 s, everything else 60 s), so 900 s is the ceiling over
-# all of them rather than the answer for each. A tool that outlives its
-# own limit is cancelled and answered for at the deadline.
+# Tool::timeout_secs - the VLM download, the overlay encode and a reel
+# render 1200 s, transcribe 900 s, exports, the sense family and the
+# network-bound library tools 600 s, the renders and the watches 300 s,
+# everything else 60 s), so 900 s is the ceiling over all of them rather
+# than the answer for each. A tool that outlives its own limit is
+# cancelled and answered for at the deadline.
+#
+# This file is valid TOML: the CONCAT_MCP_ALLOW lines below are the
+# environment variable's documentation, kept as comments - a bare
+# `NAME=value` line is not TOML, and a strict parser would refuse the
+# whole file (and with it the server declaration above).
 
 call_timeout_secs = 900
 
@@ -33,7 +39,8 @@ args = ["--mcp", "auto"]
 #       concat-mcp auto --mcp-allow timeline_read,clip_add,...
 #   - the environment, for this window's server (which `concat --mcp`
 #     runs) and for anything else that starts it:
-CONCAT_MCP_ALLOW=analysis_wait,analyze_beats,analyze_scenes,analyze_silence,bgm_fetch,bgm_import,bgm_prepare,bgm_search,bgm_status,captions_add,captions_animate,clip_add,clip_audio_levels_db,clip_cut_spans,clip_frame,clip_mask,clip_speed,clip_stabilize,clip_transform,clip_trim,clip_update,clips_add_sequence,clips_move,clips_remove,clips_split,collision_check,concat_version,craft_critique,creative_brief,edit_apply,edit_redo,edit_undo,effect_key_set,effect_layer_add,effects_list,emotion,export_start,export_status,export_wait,keyframe_clear,keyframe_set,local_vlm,magick_add,magick_fetch,magick_prepare,magick_search,magick_status,measure_loudness,media_import,media_probe,models_list,motion_bake,motion_frame,motion_inspect,motion_overlay,motion_presets,motion_reel,openvid_fetch,openvid_get,openvid_import,openvid_prepare,openvid_search,openvid_search_batch,openvid_status,plan_validate,preview_frame,project_create,project_get,project_list,project_open,project_save,project_set_video,sounds_add,sounds_search,stock_contact_sheet,suggest_cuts,template_instantiate,template_list,timeline_background,timeline_read,title_add,track_add,transcribe,tts_generate,watch_render
+#
+# CONCAT_MCP_ALLOW=analysis_wait,analyze_beats,analyze_scenes,analyze_silence,bgm_fetch,bgm_import,bgm_prepare,bgm_search,bgm_status,captions_add,captions_animate,clip_add,clip_audio_levels_db,clip_cut_spans,clip_frame,clip_mask,clip_speed,clip_stabilize,clip_transform,clip_trim,clip_update,clips_add_sequence,clips_move,clips_remove,clips_split,collision_check,concat_version,craft_critique,creative_brief,edit_apply,edit_redo,edit_undo,effect_key_set,effect_layer_add,effects_list,emotion,export_start,export_status,export_wait,keyframe_clear,keyframe_set,local_vlm,magick_add,magick_fetch,magick_prepare,magick_search,magick_status,measure_loudness,media_import,media_probe,models_list,models_download,motion_bake,motion_frame,motion_inspect,motion_overlay,motion_presets,motion_reel,openvid_fetch,openvid_get,openvid_import,openvid_prepare,openvid_search,openvid_search_batch,openvid_status,plan_validate,preview_frame,project_create,project_get,project_list,project_open,project_save,project_set_video,sounds_add,sounds_search,stock_contact_sheet,suggest_cuts,template_instantiate,template_list,timeline_background,timeline_read,title_add,track_add,transcribe,tts_generate,watch_render
 #
 # A tool not on the list is refused as if it were not there - its
 # description still lists it, but the surface served is what the operator
@@ -42,13 +49,16 @@ CONCAT_MCP_ALLOW=analysis_wait,analyze_beats,analyze_scenes,analyze_silence,bgm_
 # motion_reel's plan, frame and sheet halves, which are how an agent looks.
 #
 # The list this repository means is the director's creative loop, ready
-# to paste: 86 of the 89 tools, the three left off being the ones a
-# harness never needs by surprise - models_download (gigabytes, on its
-# own say-so), project_close (drops the session's whole project) and
-# export_cancel (cancels a render someone else is watching). Take one
-# back by naming it; take more off the same way.
+# to paste: 86 of the 88 tools, the two left off being the ones a harness
+# never needs by surprise - project_close (drops the session's whole
+# project) and export_cancel (cancels a render someone else is watching).
+# models_download is ON the list: the director skill names it as the
+# headless remedy for a missing voice or transcriber, and an overnight
+# queue that hits one should not dead-end - it is a job, it is
+# idempotent, and a model already on disk ends at once. Take it back off
+# by deleting it; take more back by naming them.
 #
-CONCAT_MCP_ALLOW=analysis_wait,analyze_beats,analyze_scenes,analyze_silence,bgm_fetch,bgm_import,bgm_prepare,bgm_search,bgm_status,captions_add,captions_animate,clip_add,clip_audio_levels_db,clip_cut_spans,clip_frame,clip_mask,clip_speed,clip_stabilize,clip_transform,clip_trim,clip_update,clips_add_sequence,clips_move,clips_remove,clips_split,collision_check,concat_version,craft_critique,creative_brief,edit_apply,edit_redo,edit_undo,effect_key_set,effect_layer_add,effects_list,emotion,export_start,export_status,export_wait,keyframe_clear,keyframe_set,local_vlm,magick_add,magick_fetch,magick_prepare,magick_search,magick_status,measure_loudness,media_import,media_probe,models_list,motion_bake,motion_frame,motion_inspect,motion_overlay,motion_presets,motion_reel,openvid_fetch,openvid_get,openvid_import,openvid_prepare,openvid_search,openvid_search_batch,openvid_status,plan_validate,preview_frame,project_create,project_get,project_list,project_open,project_save,project_set_video,sounds_add,sounds_search,stock_contact_sheet,suggest_cuts,template_instantiate,template_list,timeline_background,timeline_read,title_add,track_add,transcribe,tts_generate,watch_render
+# CONCAT_MCP_ALLOW=analysis_wait,analyze_beats,analyze_scenes,analyze_silence,bgm_fetch,bgm_import,bgm_prepare,bgm_search,bgm_status,captions_add,captions_animate,clip_add,clip_audio_levels_db,clip_cut_spans,clip_frame,clip_mask,clip_speed,clip_stabilize,clip_transform,clip_trim,clip_update,clips_add_sequence,clips_move,clips_remove,clips_split,collision_check,concat_version,craft_critique,creative_brief,edit_apply,edit_redo,edit_undo,effect_key_set,effect_layer_add,effects_list,emotion,export_start,export_status,export_wait,keyframe_clear,keyframe_set,local_vlm,magick_add,magick_fetch,magick_prepare,magick_search,magick_status,measure_loudness,media_import,media_probe,models_list,models_download,motion_bake,motion_frame,motion_inspect,motion_overlay,motion_presets,motion_reel,openvid_fetch,openvid_get,openvid_import,openvid_prepare,openvid_search,openvid_search_batch,openvid_status,plan_validate,preview_frame,project_create,project_get,project_list,project_open,project_save,project_set_video,sounds_add,sounds_search,stock_contact_sheet,suggest_cuts,template_instantiate,template_list,timeline_background,timeline_read,title_add,track_add,transcribe,tts_generate,watch_render
 
 [allow]
 servers = ["funcut"]

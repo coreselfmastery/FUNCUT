@@ -33,9 +33,12 @@ use crate::summary;
 const PREVIEW_SIDE: f64 = 960.0;
 /// How often a wait asks how an export stands.
 const POLL: Duration = Duration::from_millis(250);
-/// How long `export_wait` waits when told nothing, and at most.
+/// How long `export_wait` waits when told nothing, and at most. Kept
+/// under the tool's own 600 s outer limit so the wait's own answer -
+/// "still running, call again" - is what a caller at the maximum gets,
+/// not the watcher's cancellation at the deadline.
 const WAIT_DEFAULT: f64 = 60.0;
-const WAIT_LONGEST: f64 = 600.0;
+const WAIT_LONGEST: f64 = 590.0;
 /// How many stages an export has, for one progress figure across them.
 const STAGES: usize = 5;
 
@@ -672,7 +675,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "export_wait",
             title: "Wait for an export",
-            description: "Waits for an export job to end, up to `timeoutSeconds` (60 by default, 600 at most), reporting progress as it goes, and returns its status as `export_status` does. If it is still running when the time is up, call it again.",
+            description: "Waits for an export job to end, up to `timeoutSeconds` (60 by default, 590 at most), reporting progress as it goes, and returns its status as `export_status` does. If it is still running when the time is up, call it again.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -689,7 +692,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "preview_frame",
             title: "Preview a frame",
-            description: "Renders the true composited frame at `time` seconds on an open project's timeline and returns it as an image to look at - titles, effects and transforms included. Without `width` and `height` it fits within 1280 pixels, a file as much as an inline picture; give both for another size (8192 at most). With `output` (a .png path) the picture is written there instead - a file write, held to this session's write roots, which is why the tool is not marked read-only.",
+            description: "Renders the true composited frame at `time` seconds on an open project's timeline and returns it as an image to look at - titles, effects and transforms included. Without `width` and `height` it fits within 960 pixels, a file as much as an inline picture; give both for another size (8192 at most). With `output` (a .png path) the picture is written there instead - a file write, held to this session's write roots, which is why the tool is not marked read-only.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -736,7 +739,8 @@ pub fn catalogue() -> Vec<Tool> {
             "Every voice (tts) and transcriber (whisper) model this build knows, with each one's download size and whether it is on disk - the ids are what models_download takes and what tts_generate's and transcribe's model arguments accept.",
             "models.list",
             Raw,
-        ),
+        )
+        .reading(),
         method(
             "models_download",
             "Download a speech model",
@@ -765,7 +769,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "motion_frame",
             title: "Draw one motion frame",
-            description: "One frame of a motion comp at `at` seconds - tens of milliseconds, no bake - returned as an INLINE IMAGE you can actually look at, and also written under the project's motion/. The look-before-you-bake of the design loop: mid-entrance, settled, mid-exit. Check legibility, contrast, safe margins and timing before baking. Takes `preset` or `comp` (+ `project`), optional `ops`, and `width`/`height` to draw at another size.",
+            description: "One frame of a motion comp at `at` seconds - tens of milliseconds, no bake - returned as an INLINE IMAGE you can actually look at, and also written under the project's motion/. The look-before-you-bake of the design loop: mid-entrance, settled, mid-exit. Check legibility, contrast, safe margins and timing before baking. Takes `preset` or `comp` (+ `project`), optional `ops`, and `width` to draw at another size.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -940,9 +944,16 @@ impl Tool {
             "measure_loudness",
             "emotion",
             "stock_contact_sheet",
+            // The library work whose cost is the network's: a semantic
+            // stock search runs a 240 s rerank budget inside it, and an
+            // import fetches and copies up to twenty items - a slow link
+            // is not a stuck call, and the 60 s default would cancel
+            // healthy work mid-flight.
+            "openvid_search",
+            "openvid_import",
+            "bgm_import",
         ];
         const RENDER: &[&str] = &[
-            "motion_reel",
             "motion_bake",
             "motion_frame",
             "captions_animate",
@@ -956,6 +967,11 @@ impl Tool {
             // cancels work that is still inside its own budget.
             "local_vlm",
             "motion_overlay",
+            // A reel render's own ceiling (genevaTimeoutSecs, 1140 at
+            // most) has to sit under the outer bound too, or a caller
+            // asking for the documented maximum is cancelled by the
+            // net rather than named by the deadline.
+            "motion_reel",
         ];
         if DEEP.contains(&self.name) {
             1200
@@ -1761,10 +1777,12 @@ fn motion_schema(name: &str) -> Option<Value> {
             properties.insert(
                 "genevaTimeoutSecs".to_owned(),
                 json!({
-                    "type": "number", "minimum": 5, "maximum": 3600, "default": 300,
+                    "type": "number", "minimum": 5, "maximum": 1140, "default": 300,
                     "description": "No call to the render sidecar may run past this, in \
                      seconds; a call that does is killed and named, not hung. The default \
-                     300 covers the long reels; the quick calls (plan, one frame) are \
+                     300 covers the long reels; the ceiling 1140 sits under the tool's own \
+                     1200 s outer bound, so a call at the maximum is named by this deadline \
+                     and not cancelled by the net. The quick calls (plan, one frame) are \
                      capped at their own 60 s when this is looser than that. A sidecar \
                      that fails three times in a minute is refused with the fallback \
                      story instead of being asked a fourth."

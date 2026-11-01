@@ -132,8 +132,9 @@ carries its JSON result in the status's `output`:
   status.
 
 The motion layer - the design door the director skill's Phase 5b assumes -
-is six more tools, thin wrappers over the `concat-motion` crate (the same
-vocabulary the `concat-motion-agent` CLI speaks):
+is seven tools: six thin wrappers over the `concat-motion` crate here (the same
+vocabulary the `concat-motion-agent` CLI speaks), plus `motion_overlay`, the
+compositing path over real footage, documented with the perception tools below:
 
 - `motion_presets` - the twelve motion-graphics presets (lower thirds,
   kinetic captions, stat cards, wordmark stings, pull quotes, chapter
@@ -192,7 +193,7 @@ vocabulary the `concat-motion-agent` CLI speaks):
   refused with the scene named and `geneva explain` already consulted
   for the first diagnostic's code.
 
-## Perception and the creative loop (eight more tools)
+## Perception and the creative loop (nine more tools)
 
 An agent that gets a PNG *path* back cannot see the picture. These tools
 return MCP `type: image` content blocks, so the model can actually look:

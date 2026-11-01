@@ -965,7 +965,13 @@ mod tests {
         assert_eq!(limit("analysis_wait"), 900);
         assert_eq!(limit("export_start"), 600);
         assert_eq!(limit("export_wait"), 600);
-        assert_eq!(limit("motion_reel"), 300);
+        // A reel render sits with the deep calls, not the render ones: its
+        // own ceiling (genevaTimeoutSecs, 1140 at most) has to stay under
+        // the tool's outer bound, or a caller asking for the documented
+        // maximum is cancelled by the net rather than named by the
+        // deadline - the reason it moved out of the 300 s bucket.
+        assert_eq!(limit("motion_reel"), 1200);
+        assert_eq!(limit("openvid_search"), 600);
         assert_eq!(limit("motion_bake"), 300);
         assert_eq!(limit("watch_render"), 300);
         assert_eq!(limit("timeline_read"), 60);

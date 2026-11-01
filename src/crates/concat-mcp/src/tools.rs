@@ -3596,6 +3596,10 @@ mod tests {
                 json!({ "path": "/tmp/music.wav", "cuts": 8 }),
             ),
             ("measure_loudness", json!({ "path": "/tmp/render.mp4" })),
+            (
+                "track_subject",
+                json!({ "path": "/tmp/clip.mp4", "aspect": "9:16" }),
+            ),
             ("local_vlm", json!({ "action": "status" })),
             (
                 "emotion",

@@ -514,11 +514,13 @@ mod tests {
         // blur field named in the storyboard schema's transition -
         // together 1.6 kB over the last cap: the catalogue's 91st tool
         // and a field an agent writes reels by, neither of them a
-        // schema an agent can defer. Raised again, ahead of the
-        // measurement this time: one day added four tools at once
-        // (track_subject, the title word-styling pair, timeline_linkage),
-        // and the cap follows the catalogue so the lane holds green
-        // while CI's next run of this prints the number to hold it to.
+        // schema an agent can defer. Measured once more after the day
+        // that added four tools at once - track_subject, the title
+        // word-styling pair, timeline_linkage - and grew five schemas
+        // that already stood (edit_apply +5.4 kB for the new edit ops,
+        // title_add and captions_add +2.8 kB each for the word styles,
+        // clip_update for the patch fields, craft_critique for the
+        // patch verb): 253,800 at 95 tools, and the cap follows it.
         let toolbox = crate::tools::Toolbox::new();
         let sizes: Vec<(String, usize)> = toolbox
             .list()
@@ -526,7 +528,7 @@ mod tests {
             .map(|tool| (tool["name"].to_string(), tool.to_string().len()))
             .collect();
         let total: usize = sizes.iter().map(|(_, size)| size).sum();
-        assert!(total < 250_000, "{total}: {sizes:?}");
+        assert!(total < 262_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }

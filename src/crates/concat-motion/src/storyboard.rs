@@ -171,6 +171,12 @@ pub struct SceneCard {
     /// and under the comp's own words.
     #[serde(default)]
     pub grade: Option<crate::grade::Grade>,
+    /// The personality the scene wears over its layout: `"calm"`,
+    /// `"punchy"` or `"editorial"` - the weight the type carries, the
+    /// tracking, the easing hand, the tempo, and the colour when no
+    /// `grade` is named. One layout, three moods.
+    #[serde(default)]
+    pub style: Option<crate::style::Style>,
 }
 
 /// One layer of a scene, as a storyboard writes it. The source is either
@@ -894,6 +900,9 @@ impl SceneCard {
         }
         if let Some(grade) = &self.grade {
             scene = scene.graded(grade.clone());
+        }
+        if let Some(style) = self.style {
+            scene = scene.styled(style);
         }
         Ok(scene)
     }

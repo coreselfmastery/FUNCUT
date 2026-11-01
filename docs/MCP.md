@@ -167,7 +167,11 @@ vocabulary the `concat-motion-agent` CLI speaks):
   `sickly`, `split`, `balanced`), `amount` 0-1, tonal overrides and a
   brand `tint` - baked under the comp's own words as `backdrop-filter`
   plus a soft-light cast, the LUT approximation a comp carries, so the
-  act is the grade: a cold hook, a warm payoff. `plan: true` lays it out
+  act is the grade: a cold hook, a warm payoff. A scene's `style` is
+  the personality it wears over the layout - `calm`, `punchy` or
+  `editorial`: the weight the type carries, the tracking, the easing
+  hand, the tempo, and the colour when no `grade` is named. One layout,
+  three moods. `plan: true` lays it out
   without rendering, `frame: seconds` returns one still as an inline
   image, and the render lands under `motion/` ready for `media_import`
   and `clip_add`. The same storyboard document the

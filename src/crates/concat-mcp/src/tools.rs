@@ -1830,6 +1830,8 @@ fn motion_schema(name: &str) -> Option<Value> {
                         "ops": { "type": "array", "items": {} },
                         "grade": { "type": "object",
                                    "description": "The scene's colour grade: one of the emotion read's temperatures (hot, sickly, cold, warm, balanced, cool, split) with its own tuning, `amount` 0-1 scaling the cast, optional saturate/contrast/brightness overrides, and a brand `tint` as #rrggbb worn instead of the stock cast. Baked in under the comp's own words as backdrop-filter plus a soft-light cast - the LUT approximation a comp carries." },
+                        "style": { "type": "string", "enum": ["calm", "punchy", "editorial"],
+                                   "description": "The personality the scene wears over its layout: the weight the type carries, the tracking, the easing hand, the tempo - and the colour when no grade is named. One layout, three moods." },
                         "transition": { "type": "object",
                                          "description": "The choreographed cut INTO this scene: whip-pan (direction, seconds), zoom-through, inverse-zoom, rack-focus (radius), velocity-match or stagger-exit (step)." },
                         "exit": { "type": "object",
@@ -3441,6 +3443,7 @@ mod tests {
                     "scenes": [
                         { "preset": "funcut.sting.wordmark", "hold": 4.0,
                           "grade": { "temperature": "warm", "amount": 0.8 },
+                          "style": "punchy",
                           "layers": [
                               { "asset": "back", "zoom": 0.04 },
                               { "asset": "leak", "blend": "screen", "scale": 0.8,

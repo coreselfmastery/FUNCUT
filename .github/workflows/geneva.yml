@@ -144,6 +144,19 @@ jobs:
       - name: The frames, inspected
         run: python3 scripts/motion/inspect-frames.py check
 
+      # The style axis: the same stat-card layout as calm, punchy and
+      # editorial - three stills at the settled moment and three at the
+      # rising one, measured rather than eyeballed. The style example
+      # needs nothing the layers assets did not already make.
+      - name: The styles, rendered
+        run: |
+          set -euo pipefail
+          cd src
+          cargo run -q -p concat-motion --example style -- --still 1.5 -o ../check/style.png --assets ../check --cache ../check/cache-style > ../check/style-plan.json
+          cargo run -q -p concat-motion --example style -- --still 0.6 -o ../check/rise.png --assets ../check --cache ../check/cache-style > /dev/null
+      - name: The styles, inspected
+        run: python3 scripts/motion/inspect-styles.py check
+
   # The long lane: the whole dependency dance, on a clean runner, every
   # version pinned. This is the recipe a session once improvised, made a
   # file; a step that only works on the machine it was written on fails

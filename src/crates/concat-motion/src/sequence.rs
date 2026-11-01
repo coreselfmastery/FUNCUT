@@ -73,6 +73,11 @@ pub struct Scene {
     /// lower layers. The temperatures are the emotion read's own seven,
     /// so the act is the grade: a cold hook, a warm payoff.
     pub grade: Option<crate::grade::Grade>,
+    /// The personality the scene wears over its layout: the weight the
+    /// type carries, how tightly it tracks, the hand its eased segments
+    /// move with, the tempo its animations run at - and, when no grade
+    /// is named, the colour it is graded. One layout, three moods.
+    pub style: Option<crate::style::Style>,
 }
 
 /// A still layered into a scene - under its comp as a plate, or over it
@@ -455,6 +460,7 @@ impl Scene {
             layers: Vec::new(),
             pulse: None,
             grade: None,
+            style: None,
         }
     }
 
@@ -508,6 +514,14 @@ impl Scene {
     /// temperature at its own strength - the cold hook, the warm payoff.
     pub fn graded(mut self, grade: crate::grade::Grade) -> Scene {
         self.grade = Some(grade);
+        self
+    }
+
+    /// Give the scene a personality to wear over its layout - the
+    /// typography, the easing hand, the tempo, and the colour when no
+    /// grade is named. The layout keeps its geometry and its words.
+    pub fn styled(mut self, style: crate::style::Style) -> Scene {
+        self.style = Some(style);
         self
     }
 }
@@ -1099,6 +1113,12 @@ fn plan_with_chain(
         // validated or emitted, riding on top of the authored tracks.
         // A velocity match reads the *outgoing* scene's drift, so the
         // enter side is handed the scene before this one's.
+        // Before them, the style: the personality is the default hand,
+        // and the choreography - the cut, then the pulse - is allowed to
+        // override it, not the other way round.
+        if let Some(style) = scene.style {
+            crate::style::restyle(&mut comp, style);
+        }
         let enter_cut = if index == 0 {
             sequence.opening.as_ref()
         } else {
@@ -1144,11 +1164,18 @@ fn plan_with_chain(
         // every node the comp itself paints, over the plate and the
         // lower layers - so the last thing added to the document is the
         // first thing drawn in it.
-        if let Some(grade) = &scene.grade {
-            // The grade needs something under the comp to land on: the
-            // plate, a lower layer, a scene this one overlaps. Without
-            // it the cast reaches only the curtain, and a grade nobody
-            // can see is a grade the author should hear about.
+        // The grade the scene wears: its own when it names one, and its
+        // style's when it does not - the personality's colour treatment
+        // is a grade like any other, and an explicit grade still wins.
+        // The grade needs something under the comp to land on: the
+        // plate, a lower layer, a scene this one overlaps. Without it
+        // the cast reaches only the curtain, and a grade nobody can see
+        // is a grade the author should hear about.
+        let worn = scene
+            .grade
+            .clone()
+            .or_else(|| scene.style.map(|style| style.grade()));
+        if let Some(grade) = &worn {
             let has_ground = scene.layers.iter().any(|layer| !layer.above);
             crate::grade::apply(&mut comp, grade).map_err(|why| {
                 // A grade this wrong was the storyboard's to refuse with
@@ -3105,6 +3132,90 @@ mod tests {
                 .any(|problem| problem.scene == 0 && problem.problem.contains("`amount` is 1.5")),
             "{problems:?}"
         );
+    }
+
+    /// The style, from a storyboard: the same layout wearing a
+    /// personality - the type and the motion restyled, the personality's
+    /// grade worn when the scene names none of its own.
+    #[test]
+    fn a_storyboard_style_restyles_the_layout_and_wears_its_colour() {
+        let storyboard = crate::storyboard::Storyboard::parse(
+            r##"{ "scenes": [
+                   { "preset": "funcut.sting.wordmark", "hold": 5.0,
+                     "plate": "back", "style": "punchy" } ],
+               "assets": { "back": "assets/plate_dark.png" } }"##,
+        )
+        .expect("a storyboard");
+        let sequence = storyboard.sequence(Path::new(".")).expect("a sequence");
+        let planned = plan(&geneva(), &sequence).expect("a plan");
+        // The wordmark's own stylesheet took the personality: the
+        // heaviest weight, the tight tracking, the overshoot.
+        let mark = planned.document["layers"]
+            .as_array()
+            .expect("layers")
+            .iter()
+            .find(|layer| layer["id"] == json!("s0.mark"))
+            .expect("the wordmark");
+        let css = mark["clips"][0]["source"]["css"].as_str().expect("css");
+        assert!(css.contains("font-weight: 900"), "{css}");
+        assert!(css.contains("letter-spacing: -0.04em"), "{css}");
+        assert!(css.contains("cubic-bezier(0.3, 1.6, 0.5, 1)"), "{css}");
+        // The layout keeps its geometry and its words.
+        assert!(css.contains("font-size: 190px"), "{css}");
+        let markup = mark["clips"][0]["source"]["html"].as_str().expect("markup");
+        assert!(markup.contains("FUNCUT"), "{markup}");
+        // And the personality's colour is worn: punchy's hot grade, under
+        // the comp's own words.
+        let grade = planned.document["layers"]
+            .as_array()
+            .expect("layers")
+            .iter()
+            .find(|layer| layer["id"] == json!("s0.funcut-grade"))
+            .expect("the style's grade landed");
+        let grade_css = grade["clips"][0]["source"]["css"].as_str().expect("css");
+        assert!(
+            grade_css.contains("background:rgba(255,120,60,0.26);"),
+            "{grade_css}"
+        );
+    }
+
+    /// The scene's own grade beats the style's colour: the personality
+    /// dresses the type and the motion, and the brand's grade is still
+    /// the grade.
+    #[test]
+    fn a_scene_grade_wins_over_the_styles_colour() {
+        let storyboard = crate::storyboard::Storyboard::parse(
+            r##"{ "scenes": [
+                   { "preset": "funcut.sting.wordmark", "hold": 5.0,
+                     "plate": "back", "style": "punchy",
+                     "grade": { "temperature": "cold" } } ],
+               "assets": { "back": "assets/plate_dark.png" } }"##,
+        )
+        .expect("a storyboard");
+        let sequence = storyboard.sequence(Path::new(".")).expect("a sequence");
+        let planned = plan(&geneva(), &sequence).expect("a plan");
+        let layers = planned.document["layers"].as_array().expect("layers");
+        // Exactly one grade box, and it is the cold one.
+        let grades: Vec<&Json> = layers
+            .iter()
+            .filter(|layer| {
+                layer["id"]
+                    .as_str()
+                    .is_some_and(|id| id.contains("funcut-grade"))
+            })
+            .collect();
+        assert_eq!(grades.len(), 1, "{layers:?}");
+        let css = grades[0]["clips"][0]["source"]["css"]
+            .as_str()
+            .expect("css");
+        assert!(css.contains("background:rgba(24,68,102,0.28);"), "{css}");
+        // And the type still wears the personality.
+        let mark = layers
+            .iter()
+            .find(|layer| layer["id"] == json!("s0.mark"))
+            .expect("the wordmark");
+        let mark_css = mark["clips"][0]["source"]["css"].as_str().expect("css");
+        assert!(mark_css.contains("font-weight: 900"), "{mark_css}");
     }
 
     #[test]

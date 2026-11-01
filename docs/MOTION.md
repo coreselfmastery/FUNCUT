@@ -346,6 +346,36 @@ A scene whose grade has nothing under its comp - no plate, no lower layer - is t
 plan's warnings: the cast would land on the curtain alone, and a grade nobody can see is a grade
 the author should hear about.
 
+### The style: one layout, three personalities
+
+A layout template says where things sit; a style says how the same layout feels. `style.rs` is
+the restyle: it swaps the weights, the tracking, the leading, the timing tokens and the tempo of
+the comp's own stylesheet in place, and the easing curves of the comp's own keyframes, and leaves
+the geometry, the structure and the words exactly as the template wrote them. The colour comes
+back as a grade - the personality's own when the scene names none - so a scene's `grade` still
+wins the colour.
+
+```json
+{ "preset": "funcut.stats.triptych", "hold": 5.0, "plate": "back", "style": "punchy" }
+```
+
+| | calm | punchy | editorial |
+| --- | --- | --- | --- |
+| weight | 500 | 900 | 600 |
+| tracking | 0.02em, open | -0.04em, tight | 0.08em, wide |
+| leading | 1.6 | 1.08 | 1.45 |
+| the hand | the long settle | an overshoot past the landing | even in, even out |
+| tempo | 1.4x, slower | 0.72x, hurried | 1.0x, as written |
+| colour | cool at 0.6 | hot | a crisp neutral, contrast 1.06 |
+
+Nothing a style does is a guess: a typewriter's `steps()`, a ticker's `linear` count and a
+spring keep their meaning - only the eased segments take the personality - and the choreographed
+cuts and the pulse apply after the style, so the velocity match and the heartbeat win their own
+moments. The example (`cargo run -p concat-motion --example style`) renders the same stat-card
+layout as all three over the same plate, and `scripts/motion/inspect-styles.py` measures that
+they are three visibly different scenes - pairwise, in the rising moment and the settled one -
+that the colour runs the way the personalities say, and that punchy lands first.
+
 ### The critic's fixes, applied
 
 The contact-sheet critic loop runs, and it scores. What it did not produce was a revision an

@@ -68,6 +68,7 @@
   "clipInspector.blend": "混合",
   "clipInspector.bringsClipBroadcastLevel": "无需手动推拉推子，即可将片段调整到广播电平。",
   "clipInspector.brush": "画笔",
+  "clipInspector.bypass": "旁路 {0}",
   "clipInspector.canvasHelp": "画面覆盖不到的地方用什么填充，比如竖屏中横向镜头两侧的边。只有主轨上的画面才有。“应用到全部”会让主轨上的每个画面都使用这个片段的背景。",
   "clipInspector.chainRunsTopBottom": "效果链自上而下运行——可用箭头调整顺序。眼睛图标可跳过某一环节，而不会丢失你为它调好的数值。",
   "clipInspector.changePitchWithSpeed": "音调随速度变化",
@@ -76,6 +77,7 @@
   "clipInspector.customRemoval": "自定义移除",
   "clipInspector.darken": "变暗",
   "clipInspector.effectLibrary": "效果库",
+  "clipInspector.enable": "启用 {0}",
   "clipInspector.enhanceAfter": "增强后 · 强度 {0}%",
   "clipInspector.enhanceAgain": "重新增强",
   "clipInspector.enhanceAuto": "自动（{0}）",
@@ -97,6 +99,7 @@
   "clipInspector.fadeIn": "淡入",
   "clipInspector.fadeOut": "淡出",
   "clipInspector.fades": "淡入淡出",
+  "clipInspector.favourites": "收藏",
   "clipInspector.feather": "羽化",
   "clipInspector.fetchingTheModel": "正在获取模型… {0}%",
   "clipInspector.fill": "填充",
@@ -1077,7 +1080,5 @@
   "voices.styles": "风格",
   "voices.stylesHint": "风格就是加了效果的嗓音。选一个用它来写：效果会加在语音片段上，之后可以修改。",
   "voices.voices": "嗓音",
-  "voices.yours": "你的嗓音",
-  "export.photosNotAllowed": "Concat 无权添加到“照片”；请在“设置 › Concat › 照片”中允许",
-  "start.safeModePhone": "Concat 上次在启动时关闭，因此在下次更新前改用 OpenGL ES 而不是 Vulkan 绘制。"
+  "voices.yours": "你的嗓音"
 }

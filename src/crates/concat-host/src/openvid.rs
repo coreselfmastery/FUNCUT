@@ -802,7 +802,7 @@ impl Library {
                 let Some((file, pos, size, source)) = range else {
                     return Ok(None);
                 };
-                let agent = crate::net::agent(
+                let agent = crate::net::plain_agent(
                     std::time::Duration::from_secs(20),
                     std::time::Duration::from_secs(60),
                 );
@@ -998,7 +998,7 @@ impl Library {
         // One agent, shared by the readers: the census is one burst of
         // small reads, and a connection each is the difference between
         // seconds and tens of them.
-        let agent = crate::net::agent(
+        let agent = crate::net::plain_agent(
             std::time::Duration::from_secs(20),
             std::time::Duration::from_secs(60),
         );
@@ -1189,7 +1189,7 @@ impl Library {
         // The clips are small - the largest is tens of megabytes - so one
         // ranged GET is the whole fetch; the models downloader's resume
         // machinery is for the index, not for these.
-        let agent = crate::net::agent(
+        let agent = crate::net::plain_agent(
             std::time::Duration::from_secs(20),
             std::time::Duration::from_secs(60),
         );

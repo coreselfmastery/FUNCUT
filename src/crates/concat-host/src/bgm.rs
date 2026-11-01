@@ -634,7 +634,7 @@ struct ArchiveFile {
 /// Fetches the FreePD listing and turns it into the shelf's tracks.
 /// Fails - rather than half-loads - when the listing cannot be read.
 fn prepare_freepd(dirs: &AppDirs, shelf: &Shelf) -> Result<Vec<Track>, String> {
-    let agent = crate::net::agent(
+    let agent = crate::net::plain_agent(
         std::time::Duration::from_secs(20),
         std::time::Duration::from_secs(60),
     );
@@ -807,7 +807,7 @@ struct ZipEntry {
 /// measures every track's start and length from its own headers: the
 /// one-time census, the only part of a Lo-Fi prepare that takes seconds.
 fn prepare_lofi(dirs: &AppDirs, shelf: &Shelf, cancel: &AtomicBool) -> Result<Vec<Track>, String> {
-    let agent = crate::net::agent(
+    let agent = crate::net::plain_agent(
         std::time::Duration::from_secs(20),
         std::time::Duration::from_secs(60),
     );
@@ -1105,7 +1105,7 @@ fn fetch_lofi(
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(u64, u64),
 ) -> Result<(), String> {
-    let agent = crate::net::agent(
+    let agent = crate::net::plain_agent(
         std::time::Duration::from_secs(20),
         std::time::Duration::from_secs(90),
     );

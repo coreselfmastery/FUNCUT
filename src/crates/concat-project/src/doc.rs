@@ -446,6 +446,7 @@ mod tests {
                 ..crate::model::Track::default()
             }],
             clips: vec![Arc::new(clip)],
+            linkage: true,
             extra: Map::new(),
         })];
         project
@@ -511,6 +512,7 @@ mod tests {
             background: Default::default(),
             tracks: Vec::new(),
             clips: vec![Arc::new(clip)],
+            linkage: true,
             extra: Map::new(),
         }));
         let error = to_document(&settings(), &project).expect_err("refused");

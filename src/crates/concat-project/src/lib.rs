@@ -117,7 +117,7 @@ mod tests {
         assert_eq!((styled.runs[0].start, styled.runs[0].end), (10, 13));
         assert_eq!(styled.runs[0].style.font_weight, Some(800.0));
 
-        let document = editor.to_document(&settings());
+        let document = editor.to_document(&settings()).expect("writes");
         let restored = Editor::from_document(&document).expect("loads");
         assert_eq!(restored.project(), editor.project());
 
@@ -179,7 +179,6 @@ mod tests {
         assert!(style.italic);
         assert_eq!(style.font_weight, 500.0);
     }
->>>>>>> 20dcd9aa (feat: add text case and typography style controls)
 
     use crate::commands::{
         ClipMove, ClipPatch, Command, NewMedia, PlayheadSide, TrackFlag, TrimEdge,

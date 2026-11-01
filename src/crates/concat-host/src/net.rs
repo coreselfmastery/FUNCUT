@@ -5,7 +5,6 @@
 //! and the manifests that vouch for a download all go through [`get`],
 //! which also says why a request failed in terms a person can act on
 //! ([`Cause`]).
->>>>>>> c2847c16 (fix(net): downloads go through the system's proxy, say why they failed, and a model fetched in the browser can be chosen instead)
 //!
 //! An HTTPS connection is trusted when its certificate chains to a root
 //! Concat ships (Mozilla's list, as webpki-roots carries it) or to a root
@@ -22,13 +21,12 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 /// An agent with these timeouts that trusts the shipped roots and the
-/// system's.
-pub fn agent(connect: Duration, read: Duration) -> ureq::Agent {
-    ureq::AgentBuilder::new()
-        .timeout_connect(connect)
-        .timeout_read(read)
-        .tls_config(Arc::clone(tls()))
-        .build()
+/// system's, outside [`get`]'s proxy routing: for the readers that
+/// fetch a response in ranges of their own choosing. Everything that
+/// can go through [`get`] should - it is the one that tries the proxy
+/// the system names and falls back to a direct connection.
+pub fn plain_agent(connect: Duration, read: Duration) -> ureq::Agent {
+    agent(None, connect, read, Trust::System)
 }
 
 use crate::route::Route;
@@ -299,7 +297,6 @@ fn shipped_tls() -> &'static Arc<rustls::ClientConfig> {
     })
 }
 
->>>>>>> c2847c16 (fix(net): downloads go through the system's proxy, say why they failed, and a model fetched in the browser can be chosen instead)
 /// The TLS configuration every agent shares. Built once: reading the
 /// system's store takes a keychain query on macOS and a registry walk on
 /// Windows, which is not worth paying per request.

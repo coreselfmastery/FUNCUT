@@ -108,7 +108,13 @@ def human(bytes_):
         return "?"
     for unit in ("B", "KiB", "MiB", "GiB"):
         if bytes_ < 1024 or unit == "GiB":
-            return f"{bytes_:.0f} {unit}" if unit == "B" else f"{bytes_ / 1024:.1f} {unit}"
+            # The loop has already divided `bytes_` down to `unit`: the
+            # number is printed as it stands, not divided again. The
+            # division that was here turned every reading into a
+            # thousandth of itself - a 700 MiB peak printed as "0.7 MiB",
+            # a 1.0 GiB one as "0.0 GiB" - and every table pasted from it
+            # lied by 1024.
+            return f"{bytes_:.0f} {unit}" if unit == "B" else f"{bytes_:.1f} {unit}"
         bytes_ /= 1024
     return f"{bytes_} B"
 

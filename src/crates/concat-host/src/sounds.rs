@@ -526,7 +526,6 @@ pub fn fetch_catalogue(dirs: &AppDirs) -> Result<Option<Catalogue>, String> {
     use std::io::Read;
     let response = match crate::net::get(
         crate::models::SOUNDS_MANIFEST,
->>>>>>> c2847c16 (fix(net): downloads go through the system's proxy, say why they failed, and a model fetched in the browser can be chosen instead)
         std::time::Duration::from_secs(15),
         std::time::Duration::from_secs(30),
         crate::net::Trust::Shipped,

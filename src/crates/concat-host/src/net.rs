@@ -5,7 +5,6 @@
 //! and the manifests that vouch for a download all go through [`get`],
 //! which also says why a request failed in terms a person can act on
 //! ([`Cause`]).
->>>>>>> c2847c16 (fix(net): downloads go through the system's proxy, say why they failed, and a model fetched in the browser can be chosen instead)
 //!
 //! An HTTPS connection is trusted when its certificate chains to a root
 //! Concat ships (Mozilla's list, as webpki-roots carries it) or to a root
@@ -299,7 +298,6 @@ fn shipped_tls() -> &'static Arc<rustls::ClientConfig> {
     })
 }
 
->>>>>>> c2847c16 (fix(net): downloads go through the system's proxy, say why they failed, and a model fetched in the browser can be chosen instead)
 /// The TLS configuration every agent shares. Built once: reading the
 /// system's store takes a keychain query on macOS and a registry walk on
 /// Windows, which is not worth paying per request.

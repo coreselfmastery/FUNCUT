@@ -1273,8 +1273,7 @@ mod tests {
     #[test]
     fn a_trimmed_program_stream_clip_mixes_from_its_first_sample() {
         use crate::{AudioDecoder, AudioOptions, SampleFormat};
-        let output =
-            std::env::temp_dir().join(format!("concat-mix-ps-{}.m4a", std::process::id()));
+        let output = std::env::temp_dir().join(format!("concat-mix-ps-{}.m4a", std::process::id()));
         let source = format!(
             "{}/fixtures/sound-behind-the-picture.mpg",
             env!("CARGO_MANIFEST_DIR")
@@ -1306,10 +1305,7 @@ mod tests {
             .position(|sample| sample.abs() > 0.05)
             .expect("the tone is in the mix") as f64
             / 8_000.0;
-        assert!(
-            onset < 0.03,
-            "the tone starts {onset:.3} s in, not at once"
-        );
+        assert!(onset < 0.03, "the tone starts {onset:.3} s in, not at once");
         let _ = std::fs::remove_file(&output);
     }
 

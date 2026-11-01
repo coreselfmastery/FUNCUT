@@ -660,7 +660,11 @@ fn on_gpu(file: &Path) -> Option<Enhancer> {
         concat_render::upscale::Upscaler::new(&layers, net.scale as u32, vision::WINDOW)?;
     log::info!(
         "enhance: on the GPU{}",
-        if upscaler.half() { ", in half floats" } else { "" }
+        if upscaler.half() {
+            ", in half floats"
+        } else {
+            ""
+        }
     );
     Some(Enhancer::with(Box::new(GpuWindows(upscaler))))
 }
@@ -823,7 +827,12 @@ mod tests {
         let pixels: Vec<u8> = (0..width * height)
             .flat_map(|at| {
                 let (x, y) = (at % width, at / width);
-                [(x * 255 / width) as u8, (y * 2) as u8, ((x ^ y) & 0xff) as u8, 255]
+                [
+                    (x * 255 / width) as u8,
+                    (y * 2) as u8,
+                    ((x ^ y) & 0xff) as u8,
+                    255,
+                ]
             })
             .collect();
         let frame = Frame::from_rgba(width, height, pixels).expect("a frame");

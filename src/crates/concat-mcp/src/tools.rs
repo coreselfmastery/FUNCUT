@@ -4125,12 +4125,17 @@ mod tests {
     /// The number of tools this server carries, as every document that
     /// states one is held to it. The count is computed from
     /// [`catalogue`] itself - the only source that cannot drift - and the
-    /// README, FEATURES and the Forge allowlist are read from the
-    /// repository this test runs in, so a tool added without its numbers
-    /// caught up fails here rather than shipping a wrong claim. This is
-    /// the guard the count's history asked for: 87 became 88, 88 became
-    /// 89, 89 became 90, each change landing with the documents behind
-    /// it and none of them noticed until the count was made a test.
+    /// README, FEATURES, FUNCUT, the Forge architecture note and the
+    /// Forge allowlist are read from the repository this test runs in,
+    /// so a tool added without its numbers caught up fails here rather
+    /// than shipping a wrong claim. This is the guard the count's
+    /// history asked for: 87 became 88, 88 became 89, 89 became 90, each
+    /// change landing with the documents behind it and none of them
+    /// noticed until the count was made a test - and 91 shipped with a
+    /// stale "instead of 87" in FUNCUT.md and an "88 of them" in the
+    /// architecture note, because the guard read only three documents.
+    /// Every document that states the count now states it in the
+    /// badge's own bold shape, and every one of them is held here.
     #[test]
     fn the_documents_tool_count_is_the_catalogues_own() {
         let Some(root) = repository() else {
@@ -4144,23 +4149,35 @@ mod tests {
                 .unwrap_or_else(|why| panic!("reading {relative}: {why}"))
         };
 
+        // Every bold "**N tools**" a document states, in the shape the
+        // README's badge made canonical: wrapped over as many lines as
+        // the sentence needs, the digits the number and only they are.
+        // A bold phrase that merely ends in " tools" - "**The tools**"
+        // as a label, say - carries no digit and is not a count, so it
+        // is left alone rather than read as one.
+        fn bold_counts(text: &str) -> Vec<usize> {
+            text.split("**")
+                .filter(|piece| {
+                    piece.trim_end().ends_with(" tools")
+                        && piece.chars().any(|c| c.is_ascii_digit())
+                })
+                .map(|piece| {
+                    let digits: String =
+                        piece.chars().filter(|c| c.is_ascii_digit()).collect();
+                    digits.parse().unwrap_or(usize::MAX)
+                })
+                .collect()
+        }
+
         // The README's badge line: "**91 tools**" is the shape it takes,
         // wrapped over as many lines as the sentence needs.
         let readme = read("README.md");
-        let stated: Vec<&str> = readme
-            .split("**")
-            .filter(|piece| piece.trim_end().ends_with(" tools"))
-            .collect();
+        let stated = bold_counts(&readme);
         assert!(
             !stated.is_empty(),
             "the README states no tool count; it should, as **{count} tools**"
         );
-        for piece in stated {
-            // The badge wraps, so the piece between the markers carries
-            // the line's own newline and quote marker beside the number:
-            // the digits are the number, and only they are.
-            let digits: String = piece.chars().filter(|c| c.is_ascii_digit()).collect();
-            let said: usize = digits.parse().unwrap_or(usize::MAX);
+        for said in stated {
             assert_eq!(
                 said, count,
                 "the README says {said} tools; catalogue() carries {count}"
@@ -4170,12 +4187,7 @@ mod tests {
         // FEATURES.md: the inventory table's row, the prose's bold count
         // and the crate map's bracket.
         let features = read("docs/FEATURES.md");
-        for piece in features.split("**") {
-            if !piece.trim_end().ends_with(" tools") {
-                continue;
-            }
-            let digits: String = piece.chars().filter(|c| c.is_ascii_digit()).collect();
-            let said: usize = digits.parse().unwrap_or(usize::MAX);
+        for said in bold_counts(&features) {
             assert_eq!(
                 said, count,
                 "FEATURES.md says {said} tools; catalogue() carries {count}"
@@ -4201,6 +4213,26 @@ mod tests {
                 assert_eq!(
                     said, count,
                     "FEATURES.md's crate map says {said} tools; catalogue() carries {count}"
+                );
+            }
+        }
+
+        // FUNCUT.md and the architecture note: the two a stale count
+        // shipped in at 91 - "42 MCP tools instead of 87" in the one,
+        // "88 of them" in the other - because neither was read here.
+        // Both now state the count in the badge's own bold shape, and
+        // both are held: every "**N tools**" either carries is the
+        // catalogue's own.
+        for document in ["docs/FUNCUT.md", "docs/forge/ARCHITECTURE.md"] {
+            let stated = bold_counts(&read(document));
+            assert!(
+                !stated.is_empty(),
+                "{document} states no tool count; it should, as **{count} tools**"
+            );
+            for said in stated {
+                assert_eq!(
+                    said, count,
+                    "{document} says {said} tools; catalogue() carries {count}"
                 );
             }
         }

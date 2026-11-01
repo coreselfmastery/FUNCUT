@@ -64,9 +64,9 @@ The script looks for a release **on this fork first**, and falls back to
 Concat's own releases when the fork has none yet. The fallback is a working
 editor, but it is not this one: upstream carries none of FUNCUT's own work -
 no OpenVid, sticker or sound shelves, no Forge page, 42 MCP tools instead of
-87 - so if the fork has a published release, that is the one you want. (A
-release the workflows build starts as a draft, and a draft is invisible to
-this script; see the note below.)
+the **91 tools** this build carries - so if the fork has a published
+release, that is the one you want. (A release the workflows build starts as
+a draft, and a draft is invisible to this script; see the note below.)
 
 > **A private repository needs a token.** While this repository is private,
 > the anonymous GitHub API cannot see its releases at all - the script would

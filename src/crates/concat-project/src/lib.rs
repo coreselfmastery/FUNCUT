@@ -117,7 +117,7 @@ mod tests {
         assert_eq!((styled.runs[0].start, styled.runs[0].end), (10, 13));
         assert_eq!(styled.runs[0].style.font_weight, Some(800.0));
 
-        let document = editor.to_document(&settings());
+        let document = editor.to_document(&settings()).expect("serialises");
         let restored = Editor::from_document(&document).expect("loads");
         assert_eq!(restored.project(), editor.project());
 

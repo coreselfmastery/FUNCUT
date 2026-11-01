@@ -438,6 +438,7 @@ mod tests {
             name: "Timeline 1".to_owned(),
             video: VideoSettings::default(),
             background: Default::default(),
+            linkage: true,
             // A lane with a real id, or `from_document`'s settle step
             // drops it, then the timeline for having none, and the
             // read-back below has nothing to read.
@@ -509,6 +510,7 @@ mod tests {
             name: "Timeline 2".to_owned(),
             video: VideoSettings::default(),
             background: Default::default(),
+            linkage: true,
             tracks: Vec::new(),
             clips: vec![Arc::new(clip)],
             extra: Map::new(),

@@ -158,15 +158,26 @@ pub fn sound_starts_at(moment: f64, sync_at: Option<f64>) -> f64 {
 /// already animate there. The beats are read in the scene's own clock
 /// and spent in each node's own fractions, so a comp pulsed here keeps
 /// its pulse wherever it is placed.
-pub(crate) fn apply(comp: &mut Comp, pulse: &Pulse) {
+///
+/// Returns how many of the grid's beats landed inside at least one
+/// node's own window. A grid that lands none - the signature of a
+/// project-time grid fed to a scene that reads its own clock - is the
+/// caller's to say, not this bake's to swallow.
+pub(crate) fn apply(comp: &mut Comp, pulse: &Pulse) -> usize {
     if pulse.beats.is_empty() || pulse.amount <= 0.0 {
-        return;
+        return 0;
     }
     // The grid in order, whatever order it arrived in: a track whose
     // keys do not strictly increase is refused by the engine.
     let mut beats = pulse.beats.clone();
     beats.retain(|beat: &f64| beat.is_finite() && *beat >= 0.0);
     beats.sort_by(|a: &f64, b: &f64| a.total_cmp(b));
+    if beats.is_empty() {
+        return 0;
+    }
+    // Whether each beat reaches any node at all, so a grid that lands
+    // nowhere can be named rather than silently dropped.
+    let mut reached = vec![false; beats.len()];
     for node in &mut comp.nodes {
         if !pulse.nodes.is_empty() && !pulse.nodes.contains(&node.id) {
             continue;
@@ -178,6 +189,12 @@ pub(crate) fn apply(comp: &mut Comp, pulse: &Pulse) {
         };
         if span <= 1e-9 {
             continue;
+        }
+        for (index, beat) in beats.iter().enumerate() {
+            let at = (beat - node.start) / span;
+            if (0.0..=1.0).contains(&at) {
+                reached[index] = true;
+            }
         }
         match pulse.driven {
             Driven::Scale => bump_number(
@@ -212,6 +229,7 @@ pub(crate) fn apply(comp: &mut Comp, pulse: &Pulse) {
             }
         }
     }
+    reached.into_iter().filter(|landed| *landed).count()
 }
 
 /// A numeric bump on a property: every beat a key up by `amount` (the

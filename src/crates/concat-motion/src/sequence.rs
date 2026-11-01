@@ -1180,7 +1180,24 @@ fn plan_with_chain(
         // a transition and a heartbeat all ride the same property
         // without one rewriting the other.
         if let Some(pulse) = &scene.pulse {
-            crate::pulse::apply(&mut comp, pulse);
+            let landed = crate::pulse::apply(&mut comp, pulse);
+            // The grid is read in the scene's own clock, from its own
+            // start - a grid measured against the whole voiceover and
+            // fed here unshifted lands every beat outside the scene and
+            // pulses nothing, which is the one silent way a beat-driven
+            // scene can render without its pulse. Said, not swallowed.
+            if landed == 0
+                && pulse.amount > 0.0
+                && pulse.beats.iter().any(|beat| beat.is_finite() && *beat >= 0.0)
+            {
+                warnings.push(format!(
+                    "scene {index}: the pulse's beats all fall outside its {:.3} s - \
+                     the grid is read in the scene's own clock, from its own start; \
+                     a grid measured against the whole reel must be shifted by the \
+                     scene's own start before it is written",
+                    comp.duration
+                ));
+            }
         }
         // The grade, baked in after everything else has had its say: a
         // full-bleed box at the very bottom of the paint order, under
@@ -3066,6 +3083,101 @@ mod tests {
         for pair in times.windows(2) {
             assert!(pair[0] < pair[1], "{keys:?}");
         }
+    }
+
+    /// A pulse rides with its scene wherever the scene is placed: the
+    /// grid is read in the scene's own clock, so the same scene pulses
+    /// at the same moments of itself whether it opens the reel or sits
+    /// fourth. This is the drift question - a keyframe baked against the
+    /// scene's project start would move with the placement, and the
+    /// chart would grow on the wrong frame.
+    #[test]
+    fn a_pulse_rides_with_its_scene_wherever_it_is_placed() {
+        let storyboard = crate::storyboard::Storyboard::parse(
+            r##"{ "scenes": [
+                   { "preset": "funcut.chapter.chip", "hold": 4.0 },
+                   { "preset": "funcut.chart.bars", "hold": 5.0,
+                     "pulse": { "beats": [0.98, 1.94],
+                                "driven": "scale", "amount": 0.05,
+                                "release": 0.32 } } ] }"##,
+        )
+        .expect("a storyboard");
+        let sequence = storyboard.sequence(Path::new(".")).expect("a sequence");
+        let planned = plan(&geneva(), &sequence).expect("a plan");
+        // The chart scene sits second, starting at 4.0 s in the reel.
+        let sheet = planned.document["layers"]
+            .as_array()
+            .expect("layers")
+            .iter()
+            .find(|layer| layer["id"] == json!("s1.sheet"))
+            .expect("the second scene's chart");
+        let clip = &sheet["clips"][0];
+        let start = clip["start"].as_str().expect("a start");
+        assert_eq!(start, "4s", "the scene sits second, after a 4 s opener");
+        // And the pulse's keys are the clip's own: 0.98 s into the
+        // scene - which is 4.98 s in the reel - not the project time a
+        // grid measured against the whole reel would have written.
+        let keys = clip["transform"]["scale"]["keyframes"]
+            .as_array()
+            .expect("the pulse landed");
+        assert!(
+            keys.iter().any(|key| key[0] == json!("0.98s")),
+            "the beat rides the scene's own clock: {keys:?}"
+        );
+        assert!(
+            !keys.iter().any(|key| key[0] == json!("4.98s")),
+            "the beat is clip-local, not project-baked: {keys:?}"
+        );
+    }
+
+    /// A grid whose every beat falls outside its scene - the signature
+    /// of a project-time grid fed to a scene that reads its own clock -
+    /// is named in the plan's warnings rather than silently pulsing
+    /// nothing.
+    #[test]
+    fn a_pulse_whose_beats_all_miss_its_scene_is_said() {
+        let storyboard = crate::storyboard::Storyboard::parse(
+            r##"{ "scenes": [
+                   { "preset": "funcut.chapter.chip", "hold": 4.0 },
+                   { "preset": "funcut.chart.bars", "hold": 5.0,
+                     "pulse": { "beats": [4.98, 5.94],
+                                "driven": "scale", "amount": 0.05,
+                                "release": 0.32 } } ] }"##,
+        )
+        .expect("a storyboard");
+        let sequence = storyboard.sequence(Path::new(".")).expect("a sequence");
+        let planned = plan(&geneva(), &sequence).expect("a plan");
+        assert!(
+            planned
+                .warnings
+                .iter()
+                .any(|warning| warning.contains(
+                    "scene 1: the pulse's beats all fall outside its 4.600 s"
+                )),
+            "{:?}",
+            planned.warnings
+        );
+        // And the healthy neighbour stays quiet: the same grid shifted
+        // into the scene's own clock pulses and says nothing.
+        let storyboard = crate::storyboard::Storyboard::parse(
+            r##"{ "scenes": [
+                   { "preset": "funcut.chapter.chip", "hold": 4.0 },
+                   { "preset": "funcut.chart.bars", "hold": 5.0,
+                     "pulse": { "beats": [0.98, 1.94],
+                                "driven": "scale", "amount": 0.05,
+                                "release": 0.32 } } ] }"##,
+        )
+        .expect("a storyboard");
+        let sequence = storyboard.sequence(Path::new(".")).expect("a sequence");
+        let planned = plan(&geneva(), &sequence).expect("a plan");
+        assert!(
+            !planned
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("beats all fall outside")),
+            "{:?}",
+            planned.warnings
+        );
     }
 
     /// The grade, from a storyboard: the scene wears its act's

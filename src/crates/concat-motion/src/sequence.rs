@@ -743,11 +743,15 @@ fn layer_clip(
     if let Some(cut) = exit
         && cut.from != (0.0, 0.0)
     {
-        position_marks.push((span - exit_seconds, drift_end, None));
+        // The exit's curve rides the key that starts the exit's segment -
+        // Geneva's `ease` shapes the segment starting at its keyframe, so a
+        // curve on the boundary's last key would shape nothing and the
+        // sweep would travel a straight line.
+        position_marks.push((span - exit_seconds, drift_end, Some(&cut.curve)));
         position_marks.push((
             span,
             (drift_end.0 + cut.from.0, drift_end.1 + cut.from.1),
-            Some(&cut.curve),
+            None,
         ));
     } else if pan != (0.0, 0.0) {
         position_marks.push((span, drift_end, None));
@@ -786,8 +790,10 @@ fn layer_clip(
     if let Some(cut) = exit
         && (cut.scale_from - 1.0).abs() > 1e-9
     {
-        scale_marks.push((span - exit_seconds, drift_scale, None));
-        scale_marks.push((span, drift_scale * cut.scale_from, Some(&cut.curve)));
+        // As the position above: the curve starts the segment, or it
+        // shapes nothing.
+        scale_marks.push((span - exit_seconds, drift_scale, Some(&cut.curve)));
+        scale_marks.push((span, drift_scale * cut.scale_from, None));
     } else if zoom.abs() > 1e-9 {
         scale_marks.push((span, drift_scale, None));
     }
@@ -821,8 +827,10 @@ fn layer_clip(
     if let Some(cut) = exit
         && cut.blur_from > 1e-9
     {
-        blur_marks.push((span - exit_seconds, 0.0, None));
-        blur_marks.push((span, cut.blur_from, Some(&cut.curve)));
+        // And the same once more: the rack's curve belongs to the key
+        // the blur rises from.
+        blur_marks.push((span - exit_seconds, 0.0, Some(&cut.curve)));
+        blur_marks.push((span, cut.blur_from, None));
     }
     if !blur_marks.is_empty() {
         clip.insert(
@@ -2629,14 +2637,23 @@ mod tests {
 
         // Scene 0's plate sweeps out to the left over its last 0.24s:
         // the exit key sits at the scene's end (4s), its position left
-        // of centre, on the accelerating curve.
+        // of centre. The accelerating curve rides the key that *starts*
+        // the exit's segment - Geneva's `ease` shapes the segment
+        // starting at its keyframe, so a curve on the boundary's own
+        // last key would shape nothing and the sweep would run straight.
         let outgoing = read("s0.plate");
         let keys = &outgoing["transform"]["position"]["keyframes"];
-        let last = keys.as_array().expect("keys").last().expect("the exit key");
+        let keys = keys.as_array().expect("keys");
+        let last = keys.last().expect("the exit key");
         assert_eq!(last[0], json!("4s"), "{keys:?}");
         let x = last[1][0].as_f64().expect("pixels");
         assert!(x < 960.0 - 0.5 * 1920.0, "swept left of centre: {x}");
-        assert_eq!(last[2], json!({ "cubic-bezier": [0.42, 0.0, 1.0, 1.0] }));
+        let exit_start = keys[keys.len() - 2].clone();
+        assert_eq!(exit_start[0], json!("3.76s"), "{keys:?}");
+        assert_eq!(
+            exit_start[2],
+            json!({ "cubic-bezier": [0.42, 0.0, 1.0, 1.0] })
+        );
 
         // Scene 1's plate sweeps in from the right over its first 0.24s:
         // the enter key sits at the clip's own start (the boundary, 4s

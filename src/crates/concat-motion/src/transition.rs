@@ -518,6 +518,9 @@ fn slide(
                 None,
             ),
         ],
+        // The curve starts the segment - Geneva's `ease` shapes the
+        // segment starting at its keyframe, so a curve on the segment's
+        // last key shapes nothing and the exit slides a straight line.
         Side::Exit => [
             (
                 at,
@@ -525,7 +528,7 @@ fn slide(
                     x: base.x,
                     y: base.y,
                 },
-                None,
+                Some(curve),
             ),
             (
                 at + seconds,
@@ -533,7 +536,7 @@ fn slide(
                     x: away.x,
                     y: away.y,
                 },
-                Some(curve),
+                None,
             ),
         ],
     };
@@ -554,9 +557,10 @@ fn scale_to(node: &mut Node, span: f64, at: f64, seconds: f64, from: f64, side: 
             (at, Value::number(from), Some(curve)),
             (at + seconds, Value::number(rest), None),
         ],
+        // The curve starts the segment it shapes; see `slide`.
         Side::Exit => [
-            (at, Value::number(rest), None),
-            (at + seconds, Value::number(from), Some(curve)),
+            (at, Value::number(rest), Some(curve)),
+            (at + seconds, Value::number(from), None),
         ],
     };
     append_keys(node, "scale", span, &keys);
@@ -583,9 +587,10 @@ fn rack(node: &mut Node, span: f64, at: f64, seconds: f64, radius: f64, side: Si
             (at, Value::number(radius), Some(curve)),
             (at + seconds, Value::number(rest), None),
         ],
+        // The curve starts the segment it shapes; see `slide`.
         Side::Exit => [
-            (at, Value::number(rest), None),
-            (at + seconds, Value::number(radius), Some(curve)),
+            (at, Value::number(rest), Some(curve)),
+            (at + seconds, Value::number(radius), None),
         ],
     };
     append_keys(node, "blur", span, &keys);
@@ -594,13 +599,14 @@ fn rack(node: &mut Node, span: f64, at: f64, seconds: f64, radius: f64, side: Si
 /// Fade a node out over `seconds` starting `at` into its span.
 fn fade_out(node: &mut Node, span: f64, at: f64, seconds: f64) {
     let rest = node.opacity;
+    // The curve starts the segment it shapes; see `slide`.
     append_keys(
         node,
         "opacity",
         span,
         &[
-            (at, Value::number(rest), None),
-            (at + seconds, Value::number(0.0), Some(Curve::EASE_IN)),
+            (at, Value::number(rest), Some(Curve::EASE_IN)),
+            (at + seconds, Value::number(0.0), None),
         ],
     );
 }
@@ -741,8 +747,12 @@ mod tests {
                 y: 540.0
             }
         );
-        // Out accelerates away.
-        assert_eq!(last.curve, Some(Curve::EASE_IN));
+        // Out accelerates away - and the curve that accelerates it rides
+        // the key the segment starts from, for Geneva's `ease` shapes the
+        // segment starting at its keyframe: on the exit's last key it
+        // would shape nothing, and the sweep would run straight.
+        let first = track.keys.first().expect("the segment's start");
+        assert_eq!(first.curve, Some(Curve::EASE_IN));
 
         let mut incoming = node_comp(placed_node());
         prepare_comp(&mut incoming, Side::Enter, &cut, (0.0, 0.0));

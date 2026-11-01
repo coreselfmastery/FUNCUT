@@ -141,6 +141,15 @@ pub fn scene_key(board: &Storyboard, root: &Path, index: usize) -> String {
             "transition": scene.transition,
             "exit": scene.exit,
             "pulse": scene.pulse,
+            // The grade paints a full-bleed box into the comp and the
+            // style retypes its stylesheet and its curves, so a changed
+            // grade or a changed style is a changed picture: the cache
+            // must miss for them, exactly as it does for a changed pulse.
+            // A key that skipped them served the old segment - a graded
+            // or restyled scene that rendered exactly as it did before,
+            // which is the stale-cache bug this entry follows.
+            "grade": scene.grade,
+            "style": scene.style,
         },
         "geometry": [board.width, board.height, board.fps],
         "format": [crate::geneva::TIMELINE_VERSION, crate::geneva::TESTED_VERSION],
@@ -906,6 +915,79 @@ mod tests {
             assert!(second.scenes[0].cached, "scene 0 is served");
             assert!(!second.scenes[1].cached, "scene 1 is drawn");
             assert!(!second.joined_from_cache, "the join re-runs");
+        }
+
+        #[test]
+        fn a_changed_grade_re_renders_its_scene() {
+            let _serial = serial();
+            let dir = TempDir::new().unwrap();
+            let geneva = stub_geneva(&dir);
+            let (board, root) = setup(&dir);
+            let cache = dir.path().join("cache");
+            let out = dir.path().join("reel.mp4");
+            render_reel(&geneva, &board, &root, &out, &cache, 18).expect("renders");
+
+            // Scene 1 grows a grade: the full-bleed box it paints into the
+            // comp is a changed picture, and a cache that served the old
+            // segment would grade nothing - the stale-cache bug the
+            // scene-key entry follows.
+            let key0_before = scene_key(&board, &root, 0);
+            let key1_before = scene_key(&board, &root, 1);
+            let text = board_text().replace(
+                "funcut.chapter.chip\", \"hold\": 2.0",
+                "funcut.chapter.chip\", \"hold\": 2.0, \"grade\": { \"temperature\": \"cold\" }",
+            );
+            let changed = Storyboard::parse(&text).expect("a storyboard with a grade");
+            assert_eq!(
+                scene_key(&changed, &root, 0),
+                key0_before,
+                "scene 0's key does not move"
+            );
+            assert_ne!(
+                scene_key(&changed, &root, 1),
+                key1_before,
+                "a graded scene is a changed scene"
+            );
+
+            let second = render_reel(&geneva, &changed, &root, &out, &cache, 18).expect("renders");
+            assert_eq!(second.renders, 1, "only the graded scene draws");
+            assert!(second.scenes[0].cached, "scene 0 is served");
+            assert!(!second.scenes[1].cached, "scene 1 is drawn with its grade");
+        }
+
+        #[test]
+        fn a_changed_style_re_renders_its_scene() {
+            let _serial = serial();
+            let dir = TempDir::new().unwrap();
+            let geneva = stub_geneva(&dir);
+            let (board, root) = setup(&dir);
+            let cache = dir.path().join("cache");
+            let out = dir.path().join("reel.mp4");
+            render_reel(&geneva, &board, &root, &out, &cache, 18).expect("renders");
+
+            // Scene 1 takes a style: the retype of its stylesheet and its
+            // curves is a changed picture the same way.
+            let key0_before = scene_key(&board, &root, 0);
+            let key1_before = scene_key(&board, &root, 1);
+            let text = board_text().replace(
+                "funcut.chapter.chip\", \"hold\": 2.0",
+                "funcut.chapter.chip\", \"hold\": 2.0, \"style\": \"punchy\"",
+            );
+            let changed = Storyboard::parse(&text).expect("a storyboard with a style");
+            assert_eq!(
+                scene_key(&changed, &root, 0),
+                key0_before,
+                "scene 0's key does not move"
+            );
+            assert_ne!(
+                scene_key(&changed, &root, 1),
+                key1_before,
+                "a restyled scene is a changed scene"
+            );
+
+            let second = render_reel(&geneva, &changed, &root, &out, &cache, 18).expect("renders");
+            assert_eq!(second.renders, 1, "only the restyled scene draws");
+            assert!(!second.scenes[1].cached, "scene 1 is drawn in its style");
         }
 
         #[test]

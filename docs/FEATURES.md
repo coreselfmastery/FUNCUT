@@ -188,7 +188,7 @@ Nothing here is bundled whole; indexes download once, media arrives per pick.
 | Speech | `transcribe`, `tts_generate`, `models_list`, `models_download` |
 | Batches & history | `edit_apply` (any command or atomic batch), `edit_undo`, `edit_redo` |
 | Templates | `template_list`, `template_instantiate` |
-| Motion design | `motion_presets`, `motion_inspect`, `motion_frame`, `motion_bake`, `motion_overlay` |
+| Motion design | `motion_presets`, `motion_inspect`, `motion_probe`, `scene_timeline`, `motion_frame`, `motion_bake`, `motion_overlay`, `captions_animate`, `motion_reel` (with per-scene colour grades and the calm/punchy/editorial style axis) |
 | Export | `export_start`, `export_status`, `export_wait`, `export_cancel` |
 | Looking | `preview_frame` (an image the model can see) |
 | Perception & the creative loop | `creative_brief`, `stock_contact_sheet`, `watch_render`, `craft_critique`, `suggest_cuts`, `measure_loudness`, `local_vlm`, `emotion` |

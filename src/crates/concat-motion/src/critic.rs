@@ -160,8 +160,11 @@ fn check_patch(op: &str, patch: &Json) -> Result<(), String> {
         "resize" => {
             only(&["factor"])?;
             let factor = number("factor")?;
-            if factor <= 0.0 {
-                return Err("a resize factor is positive".into());
+            // The same envelope the prose path clamps to - a resize is
+            // a nudge, not a disappearance, and not a machine-applied
+            // million either.
+            if !(0.05..=20.0).contains(&factor) {
+                return Err("a resize factor is between 0.05 and 20".into());
             }
         }
         "restyle" => {
@@ -437,7 +440,16 @@ fn apply_one(comp: &mut Comp, fix: &Fix) -> Result<String, String> {
                     Curve::NAMES.join(", ")
                 ));
             };
-            let curve = Curve::named(&name).expect("the name is in the library");
+            // The prose path can only name a curve the library knows,
+            // but a patch can name anything a machine wrote - so the
+            // lookup is answered for, not expected, the way every other
+            // machine-supplied value in this module is.
+            let Some(curve) = Curve::named(&name) else {
+                return Err(format!(
+                    "a restyle patch's curve {name:?} is not one the library knows; the names are {}",
+                    Curve::NAMES.join(", ")
+                ));
+            };
             let node = comp
                 .nodes
                 .iter_mut()

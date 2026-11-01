@@ -65,3 +65,52 @@ the words "runs on a potato laptop" elsewhere in these docs are that
 design intent, not a measured result. When you run the benchmark on your
 machine, the block it prints is your answer, and this table is where it
 goes.
+
+## The farm: parallel motion renders, `--parts N`
+
+A motion reel renders as **one document** — every scene, every layer, the
+curtain and the beds — so the whole-board render is the one place a long
+reel pays serially. `geneva farm` is the engine's own answer to that, and
+`concat-motion-agent render <storyboard.json> -o reel.mp4 --parts N` is
+FUNCUT's door onto it: the render is cut into `N` parts, each part drawn
+by its own worker process, and the parts are joined **without a
+re-encode** — the join is a stream copy, so the seam is invisible by
+construction rather than by luck.
+
+```sh
+# the everyday door: the scene-aware cache, one scene per entry
+concat-motion-agent reel storyboard.json -o reel.mp4
+
+# the long-reel door: the whole board in one pass, cut into four
+concat-motion-agent render storyboard.json -o reel.mp4 --parts 4
+```
+
+Even on a single machine `--parts` improves CPU utilization — four
+workers fill four cores that one render leaves half idle — and the parts
+are sized by the engine from the timeline's own frame count. A render
+that cannot be split comes back as the engine's own `E504` refusal with
+its diagnostics attached, not as a wrong file.
+
+### Workers on other machines
+
+`geneva farm` hands the parts to `geneva worker` processes, and the
+workers can live anywhere the timeline's assets can reach:
+
+- **A second machine** — run `geneva worker` there with the render
+  directory shared (NFS, SSHFS, or a synced copy of what `Plan::write`
+  stages — the folder is self-contained by design), and the farm's parts
+  land where the workers are.
+- **A container** — one worker per container, the render directory a
+  volume; the image needs nothing but the `geneva` binary itself.
+- **A serverless function** — a worker per invocation, the render
+  directory in object storage; the parts join wherever the caller runs.
+
+The one rule the engine holds everywhere: a worker never fetches
+anything, and refuses asset paths that leave the timeline's own
+directory — so a worker on another machine needs the *staged copy*, not a
+route back to your project. `Plan::write` makes that copy; the render
+directory is the contract.
+
+`--parts` is between 1 and 64; the everyday reel verb (`reel`) does not
+take it, because the scene-aware cache already renders a long reel scene
+by scene — the farm pays where one *scene* is itself long.

@@ -48,6 +48,7 @@ fn main() {
         "frame" => frame(&args),
         "bake" => bake(&args),
         "reel" => reel(&args),
+        "render" => render(&args),
         "captions" => captions(&args),
         "help" | "--help" | "-h" => Ok(usage()),
         other => Err(format!("no verb called {other:?}")),
@@ -78,6 +79,7 @@ fn usage() -> serde_json::Value {
             "frame": "agent frame <comp.json> <seconds> [-o frame.png] [--width N]",
             "bake": "agent bake <comp.json> <dir> [--width N] [--height N] [--fps N] [--opaque] [--encode out.mp4|webm|mov] [--crf N]",
             "reel": "agent reel <storyboard.json> [-o reel.mp4] [--cache DIR] [--frame SECONDS] [--plan] [--geneva-timeout SECONDS]",
+            "render": "agent render <storyboard.json> [-o out.mp4] [--parts N] [--frame SECONDS] [--plan] [--geneva-timeout SECONDS] - the whole board in one pass; --parts N renders through geneva farm, the parallel path for long reels",
             "captions": "agent captions <words.json> [-o storyboard.json] [--words-per-line N] [--max-line S] [--preset ID] [--plate IMG] [--audio WAV|MP3]"
         },
         "ops": [
@@ -226,6 +228,105 @@ fn reel(args: &[String]) -> Result<serde_json::Value, String> {
         "seconds": report.seconds,
     });
     value["report"] = json!({"ok": true});
+    Ok(value)
+}
+
+/// `agent render <storyboard.json> [-o out.mp4] [--parts N] [--frame SECONDS] [--plan]`
+///
+/// The whole board in **one pass** - the same plan the reel verb lays,
+/// rendered as the single document it is, without the scene-by-scene
+/// cache. The cache is the everyday door; this is the long-reel one, and
+/// the reason it exists is `--parts N`: **`geneva farm`** cuts the render
+/// into parts, hands each to its own worker process, and joins them
+/// without a re-encode - minutes for the price of one on a machine with
+/// cores to spare, and the door to workers on other machines (see
+/// PERFORMANCE.md's "the farm" for what the flag pays for).
+///
+/// The storyboard is the same contract `reel` takes; a scene's
+/// transitions and pulse are baked exactly as the cache would bake them,
+/// so the two doors agree frame for frame.
+fn render(args: &[String]) -> Result<serde_json::Value, String> {
+    let script_path = args.first().ok_or("render needs a storyboard file")?;
+    let out = flag(args, "-o").map(PathBuf::from);
+    let cache = flag(args, "--cache")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("cache/render"));
+    let at_frame: Option<f64> = flag(args, "--frame").and_then(|value| value.parse().ok());
+    let plan_only = args.iter().any(|arg| arg == "--plan");
+    let parts: Option<u32> = flag(args, "--parts").and_then(|value| value.parse().ok());
+    if let Some(parts) = parts
+        && !(1..=64).contains(&parts)
+    {
+        return Err("--parts is between 1 and 64".to_owned());
+    }
+    let geneva_timeout = flag(args, "--geneva-timeout").and_then(|value| value.parse::<f64>().ok());
+    if let Some(secs) = geneva_timeout
+        && !(5.0..=3600.0).contains(&secs)
+    {
+        return Err("--geneva-timeout is seconds, between 5 and 3600".to_owned());
+    }
+
+    let script = Path::new(script_path);
+    let text =
+        std::fs::read_to_string(script).map_err(|error| format!("{script_path}: {error}"))?;
+    let board = storyboard::Storyboard::parse(&text)?;
+    let root = board
+        .source_dir
+        .clone()
+        .or_else(|| script.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    let sequence = board.sequence(&root)?;
+    let geneva = engine()?;
+    let geneva = match geneva_timeout {
+        Some(secs) => geneva.with_limits(concat_motion::CallLimits::capped_at(
+            std::time::Duration::from_secs_f64(secs),
+        )),
+        None => geneva,
+    };
+    let planned =
+        concat_motion::sequence::plan(&geneva, &sequence).map_err(|error| error.to_string())?;
+    let summary = json!({
+        "ok": true,
+        "scenes": planned.scenes,
+        "duration": planned.duration,
+        "width": board.width,
+        "height": board.height,
+        "fps": board.fps,
+        "layers": planned.document["layers"].as_array().map(Vec::len).unwrap_or(0),
+        "assets": planned.files.len(),
+        "warnings": planned.warnings,
+    });
+    if plan_only {
+        let mut value = summary;
+        value["timeline"] = planned.document.clone();
+        return Ok(value);
+    }
+    if let Some(at) = at_frame {
+        let path = out.unwrap_or_else(|| PathBuf::from("frame.jpg"));
+        let report = planned
+            .frame(&geneva, &cache, at, &path)
+            .map_err(|error| error.to_string())?;
+        return Ok(
+            json!({ "ok": true, "at": at, "frame": path.display().to_string(),
+                          "report": report, "plan": summary }),
+        );
+    }
+
+    let path = out.unwrap_or_else(|| PathBuf::from("render.mp4"));
+    let report = match parts {
+        Some(parts) => planned
+            .render_parts(&geneva, &cache, &path, parts)
+            .map_err(|error| error.to_string())?,
+        None => planned
+            .render(&geneva, &cache, &path)
+            .map_err(|error| error.to_string())?,
+    };
+    let mut value = summary;
+    value["written"] = json!(path.display().to_string());
+    value["parts"] = json!(parts.unwrap_or(1));
+    value["farm"] = json!(parts.is_some());
+    value["report"] = report;
     Ok(value)
 }
 

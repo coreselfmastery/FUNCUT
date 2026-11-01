@@ -594,6 +594,40 @@ impl Plan {
         geneva.run_in(dir, &args)
     }
 
+    /// Render the whole sequence through **`geneva farm`**: the render cut
+    /// into `parts`, each part drawn by its own worker process, the parts
+    /// joined without a re-encode. The optional high-performance path for
+    /// long renders - even on a single machine it improves CPU
+    /// utilization, and on several it is minutes for the price of one.
+    ///
+    /// `parts` is clamped to at least one; a render that cannot be split
+    /// (the engine's own `E504`) comes back as that refusal, not as a
+    /// wrong file. Workers on other machines are the engine's own to
+    /// arrange - see PERFORMANCE.md's "the farm" for the setups the flag
+    /// pays for.
+    pub fn render_parts(
+        &self,
+        geneva: &Geneva,
+        dir: &Path,
+        out: &Path,
+        parts: u32,
+    ) -> Result<Json, MotionError> {
+        self.write(dir)?;
+        let out = absolute(out);
+        let parts = parts.max(1);
+        let args: Vec<String> = vec![
+            "--format".into(),
+            "json".into(),
+            "farm".into(),
+            "timeline.json".into(),
+            "-o".into(),
+            out.display().to_string(),
+            "--parts".into(),
+            parts.to_string(),
+        ];
+        geneva.run_in(dir, &args)
+    }
+
     /// Draw one still of the sequence, for checking a cut before rendering
     /// the whole thing.
     pub fn frame(
@@ -2939,5 +2973,63 @@ mod tests {
         sequence.push(scene);
         let error = plan(&geneva(), &sequence).expect_err("a cycle is refused");
         assert!(error.to_string().contains("places itself"), "{error}");
+    }
+
+    /// The farm: `--parts N` rides on the engine call as the parallel
+    /// render path, the timeline is the same document the plain render
+    /// takes, and a parts count under one is clamped to one worker.
+    #[test]
+    fn the_farm_renders_with_the_parts_flag_on_the_engine_call() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().expect("a scratch dir");
+        let stub = dir.path().join("geneva-stub");
+        std::fs::write(
+            &stub,
+            concat!(
+                "#!/bin/sh\n",
+                "echo \"$*\" >> \"$(dirname \"$0\")/calls.log\"\n",
+                "echo '{\"ok\":true,\"diagnostics\":[],\"summary\":{}}'\n",
+            ),
+        )
+        .expect("the stub is written");
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755))
+            .expect("the stub is executable");
+        let geneva = Geneva::at(&stub);
+        let log = dir.path().join("calls.log");
+
+        let sequence = reel(vec![
+            Scene::new(presets::build("funcut.sting.wordmark").expect("a preset")).holding(4.0),
+        ]);
+        let planned = plan(&geneva, &sequence).expect("a plan");
+        let render_dir = dir.path().join("render");
+        let out = dir.path().join("reel.mp4");
+        planned
+            .render_parts(&geneva, &render_dir, &out, 4)
+            .expect("farms");
+
+        let calls = std::fs::read_to_string(&log).expect("the call was logged");
+        assert!(calls.contains("farm"), "the farm verb: {calls}");
+        assert!(calls.contains("timeline.json"), "{calls}");
+        assert!(calls.contains("--parts 4"), "{calls}");
+        assert!(
+            calls.contains(&out.display().to_string()),
+            "the output is named in full: {calls}"
+        );
+
+        // A parts count under one is one worker, not a refusal.
+        let _ = std::fs::remove_file(&log);
+        planned
+            .render_parts(&geneva, &render_dir, &out, 0)
+            .expect("clamped");
+        let calls = std::fs::read_to_string(&log).expect("the call was logged");
+        assert!(calls.contains("--parts 1"), "{calls}");
+
+        // And the plain render still takes the plain verb: two doors,
+        // one document.
+        let _ = std::fs::remove_file(&log);
+        planned.render(&geneva, &render_dir, &out).expect("renders");
+        let calls = std::fs::read_to_string(&log).expect("the call was logged");
+        assert!(calls.contains("render"), "{calls}");
+        assert!(!calls.contains("farm"), "{calls}");
     }
 }

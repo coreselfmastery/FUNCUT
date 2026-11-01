@@ -4107,6 +4107,21 @@ mod tests {
         );
     }
 
+    /// The repository root, by the one file only it carries. `None`
+    /// when the crate is built outside a checkout - published alone,
+    /// vendored - where the documents are not there to be read.
+    fn repository() -> Option<std::path::PathBuf> {
+        let mut dir = std::env::current_dir().ok()?;
+        loop {
+            if dir.join(".forge").join("mcp.toml").is_file() {
+                return Some(dir);
+            }
+            if !dir.pop() {
+                return None;
+            }
+        }
+    }
+
     /// The number of tools this server carries, as every document that
     /// states one is held to it. The count is computed from
     /// [`catalogue`] itself - the only source that cannot drift - and the
@@ -4118,20 +4133,6 @@ mod tests {
     /// it and none of them noticed until the count was made a test.
     #[test]
     fn the_documents_tool_count_is_the_catalogues_own() {
-        /// The repository root, by the one file only it carries. `None`
-        /// when the crate is built outside a checkout - published alone,
-        /// vendored - where the documents are not there to be read.
-        fn repository() -> Option<std::path::PathBuf> {
-            let mut dir = std::env::current_dir().ok()?;
-            loop {
-                if dir.join(".forge").join("mcp.toml").is_file() {
-                    return Some(dir);
-                }
-                if !dir.pop() {
-                    return None;
-                }
-            }
-        }
         let Some(root) = repository() else {
             // Not a checkout: nothing to hold. CI and every clone carry
             // the marker file, so this is the standalone-crate case.
@@ -4208,10 +4209,10 @@ mod tests {
         // build serves, and the director's paste-ready list must leave
         // out exactly the two tools its comment names - no more, so a
         // tool like motion_probe cannot ship unlisted, and no fewer, so
-        // the list cannot quietly drop a tool the loop wants. The list
-        // is a comment (a bare NAME=value line is not TOML, and a strict
-        // parser would refuse the whole file), so it is read from behind
-        // its `# `.
+        // the list cannot quietly drop a tool the loop wants. This reads
+        // the paste-ready comment; the active list in the env table is
+        // held to it by its own test below,
+        // `the_forge_allowlist_is_active_and_names_every_tool_but_the_two`.
         let forge = read(".forge/mcp.toml");
         let allow: Vec<&str> = forge
             .lines()
@@ -4250,5 +4251,73 @@ mod tests {
                 "the Forge allowlist says the catalogue carries {said}; it carries {count}"
             );
         }
+    }
+
+    /// The allowlist the Forge server this repository declares runs
+    /// behind, held to the catalogue it serves. The list is not a
+    /// comment's advice but the env the server starts with - an
+    /// assignment in the `[servers.transport.env]` table - and it must
+    /// name every tool the catalogue carries except the two a harness
+    /// must never call by surprise. The paste-ready comment must agree
+    /// with it, or the two lists drift: a tool added to one and not the
+    /// other ships advice the active server does not follow (or the
+    /// reverse). The refusal itself is proven where it happens, in
+    /// `protocol`'s own tests.
+    #[test]
+    fn the_forge_allowlist_is_active_and_names_every_tool_but_the_two() {
+        let Some(root) = repository() else {
+            // Not a checkout: nothing to hold. CI and every clone carry
+            // the marker file, so this is the standalone-crate case.
+            return;
+        };
+        let forge = std::fs::read_to_string(root.join(".forge/mcp.toml"))
+            .unwrap_or_else(|why| panic!("reading .forge/mcp.toml: {why}"));
+
+        // The active list: an assignment in the env table, found from
+        // the line's start so the paste-ready comments cannot stand in
+        // for the real one.
+        let active = forge
+            .lines()
+            .find(|line| line.starts_with("CONCAT_MCP_ALLOW"))
+            .expect("the env table carries the active CONCAT_MCP_ALLOW");
+        let list = active
+            .split_once('"')
+            .and_then(|(_, rest)| rest.split_once('"'))
+            .expect("the active list is one quoted value")
+            .0;
+        let allow: Vec<&str> = list.split(',').map(str::trim).collect();
+        let names: Vec<&str> = catalogue().iter().map(|tool| tool.name).collect();
+        // The catalogue's missing are exactly the two - no more, so a
+        // tool like motion_probe cannot ship unlisted, and no fewer, so
+        // the list cannot quietly drop a tool the loop wants - and no
+        // dead name rides along beside them.
+        let mut left_off: Vec<&str> = names
+            .iter()
+            .filter(|name| !allow.contains(name))
+            .copied()
+            .collect();
+        left_off.sort_unstable();
+        assert_eq!(
+            left_off,
+            ["export_cancel", "project_close"],
+            "the active allowlist leaves out exactly the two its comment names"
+        );
+        assert_eq!(
+            allow.len(),
+            names.len() - left_off.len(),
+            "the active list carries a name the catalogue does not"
+        );
+
+        // The paste-ready comment says the same list, comma for comma.
+        let paste_ready = forge
+            .lines()
+            .filter_map(|line| line.strip_prefix("# CONCAT_MCP_ALLOW="))
+            .next_back()
+            .expect("the paste-ready allowlist");
+        assert_eq!(
+            paste_ready.split(',').map(str::trim).collect::<Vec<_>>(),
+            allow,
+            "the active list and the paste-ready comment must agree"
+        );
     }
 }

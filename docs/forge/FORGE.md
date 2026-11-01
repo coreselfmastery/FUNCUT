@@ -51,7 +51,9 @@ forge mcp add funcut concat -- --mcp window -s user
 
 or run Forge from inside this repository — the repo's own `.forge/mcp.toml`
 already declares the server (and a 900 s call timeout, because transcription
-and analysis take longer than the default 60 s):
+and analysis take longer than the default 60 s), with the per-tool allowlist
+already active in the server's `env`: every tool served but `project_close`
+and `export_cancel`, the two an agent must never call by surprise:
 
 ```toml
 # .forge/mcp.toml (this repo)
@@ -63,6 +65,8 @@ name = "funcut"
 type = "stdio"
 command = "concat"
 args = ["--mcp", "auto"]   # window when open, headless otherwise
+[servers.transport.env]
+CONCAT_MCP_ALLOW = "analysis_wait,…,watch_render"   # 89 of the 91 tools
 ```
 
 Check it: `forge mcp` should list `funcut` as connected, with the tool count.

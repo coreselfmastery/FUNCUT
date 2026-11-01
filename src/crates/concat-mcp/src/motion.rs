@@ -555,6 +555,7 @@ pub fn captions_animate(arguments: Value, backend: &dyn Backend) -> Result<Outco
             "plate",
             "name",
             "curtain",
+            "kinetic",
         ]
         .contains(&key.as_str())
         {
@@ -613,6 +614,31 @@ pub fn captions_animate(arguments: Value, backend: &dyn Backend) -> Result<Outco
     }
     if let Some(tail) = fields.get("tailSeconds").and_then(Value::as_f64) {
         caps.tail = tail.clamp(0.0, 5.0);
+    }
+    // The kinetic hand: `kinetic: true` takes the library's word-staggered
+    // default, and an object spells it out - `stagger` ("word" or "char"),
+    // `delay` seconds between units, `entrance` ("blur-in", "slide-up" or
+    // "scale-in"), `seconds` for the entrance, `curve` as any comp curve,
+    // `flexSeconds`, and `weight: { "from": 100, "to": 900 }` for the
+    // variable-font flex. The caption node is rebuilt as markup whose
+    // per-word spans appear, light and settle on the recogniser's own
+    // word times.
+    match fields.get("kinetic") {
+        Some(Value::Bool(true)) => {
+            caps.kinetic = Some(concat_motion::typography::Kinetic::words());
+        }
+        Some(setting @ Value::Object(_)) => {
+            caps.kinetic = Some(serde_json::from_value(setting.clone()).map_err(|error| {
+                ApiError::invalid(format!("invalid arguments: `kinetic`: {error}"))
+            })?);
+        }
+        Some(Value::Bool(false)) | None => {}
+        Some(other) => {
+            return Err(ApiError::invalid(format!(
+                "invalid arguments: `kinetic` is true, false, or an object of its settings - not {}",
+                serde_json::to_string(other).unwrap_or_default()
+            )));
+        }
     }
 
     let lines = concat_motion::captions::lay_out(&words, &caps);
@@ -682,6 +708,7 @@ pub fn captions_animate(arguments: Value, backend: &dyn Backend) -> Result<Outco
         "height": height,
         "fps": fps,
         "preset": caps.comp,
+        "kinetic": caps.kinetic.is_some(),
         "warnings": planned.warnings,
     });
     if let Some(scene_count) = planned.document["layers"].as_array() {

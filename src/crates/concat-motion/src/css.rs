@@ -67,8 +67,8 @@ pub fn static_transforms(css: &str) -> Vec<StaticTransform> {
                     .trim_start()
                     .to_ascii_lowercase()
                     .starts_with("@keyframes");
-                let keyframes = opens_keyframes
-                    || stack.last().is_some_and(|(_, keyframes)| *keyframes);
+                let keyframes =
+                    opens_keyframes || stack.last().is_some_and(|(_, keyframes)| *keyframes);
                 stack.push((selector.trim().to_owned(), keyframes));
             }
             '}' => {
@@ -128,8 +128,7 @@ fn without_comments(css: &str) -> String {
         let character = characters[at];
         if character == '/' && at + 1 < characters.len() && characters[at + 1] == '*' {
             at += 2;
-            while at + 1 < characters.len()
-                && !(characters[at] == '*' && characters[at + 1] == '/')
+            while at + 1 < characters.len() && !(characters[at] == '*' && characters[at + 1] == '/')
             {
                 at += 1;
             }
@@ -178,8 +177,9 @@ mod tests {
 
     #[test]
     fn a_commented_out_transform_is_not_named() {
-        assert!(static_transforms(".a { /* transform: translateX(10px) */ opacity: 1; }")
-            .is_empty());
+        assert!(
+            static_transforms(".a { /* transform: translateX(10px) */ opacity: 1; }").is_empty()
+        );
     }
 
     #[test]

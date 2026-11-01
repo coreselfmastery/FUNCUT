@@ -233,7 +233,6 @@ fn with_track(mut node: Node, name: &str, track: Track) -> Node {
 
 /// The shared font stack: a project pins its fonts as assets, and these names
 /// are what the pinned families are called.
-const SANS: &str = "Inter, DejaVu Sans";
 const MONO: &str = "JetBrains Mono, DejaVu Sans Mono, monospace";
 const DISPLAY: &str = "Archivo, Inter, DejaVu Sans";
 
@@ -245,9 +244,14 @@ const DISPLAY: &str = "Archivo, Inter, DejaVu Sans";
 // text, no rainbow - the things that date an overlay the year after it
 // shipped. Motion is staggered reveals and rules that draw; a spring only
 // where something is placed, once per comp.
-const INK: &str = "#f4f1ea";
-const MUTED: &str = "#9a978e";
-const ACCENT: &str = "#d9a441";
+//
+// `pub(crate)`: the typography builder highlights in the same ink and the
+// same accent, so a kinetic caption reads as the same hand as the preset
+// the words came from.
+pub(crate) const INK: &str = "#f4f1ea";
+pub(crate) const MUTED: &str = "#9a978e";
+pub(crate) const ACCENT: &str = "#d9a441";
+pub(crate) const SANS: &str = "Inter, DejaVu Sans";
 
 // ----------------------------------------------------------------- presets
 

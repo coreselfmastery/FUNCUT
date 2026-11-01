@@ -75,6 +75,7 @@ pub mod route;
 pub mod sequence;
 pub mod storyboard;
 pub mod track;
+pub mod typography;
 
 pub use authoring::{CompSummary, Op, apply};
 pub use comp::{Comp, FORMAT, Node, NodeKind, Slot};

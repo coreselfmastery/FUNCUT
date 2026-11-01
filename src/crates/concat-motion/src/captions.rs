@@ -36,7 +36,7 @@
 //! ```
 
 use crate::authoring::Op;
-use crate::comp::{Comp, NodeKind};
+use crate::comp::{Comp, Length, NodeKind};
 use crate::presets;
 use crate::sequence::{Scene, Sequence};
 
@@ -90,6 +90,13 @@ pub struct Captions {
     pub tail: f64,
     /// Shortest a line may be, so a single clipped word is still readable.
     pub min_line: f64,
+    /// The kinetic typography the lines are drawn with, when they are
+    /// drawn with it: `None` (the default) keeps the preset's own text
+    /// node - words and highlight, the native path - and `Some` rebuilds
+    /// the caption node as markup whose per-word spans appear, light and
+    /// settle on the recogniser's own word times. A transcript turns into
+    /// a designed moment in either hand; this is the one that flexes.
+    pub kinetic: Option<crate::typography::Kinetic>,
 }
 
 impl Default for Captions {
@@ -103,6 +110,7 @@ impl Default for Captions {
             lead: 0.08,
             tail: 0.28,
             min_line: 0.9,
+            kinetic: None,
         }
     }
 }
@@ -254,6 +262,11 @@ pub fn lay_out(words: &[Word], caps: &Captions) -> Vec<Line> {
 /// where the words are spoken, ready to be rendered as one file or placed on a
 /// project's timeline. `source_dir` is left empty - a caption comp carries no
 /// assets - so a caller that wants plates underneath can stack them.
+///
+/// With [`Captions::kinetic`] set, the line's words are drawn by the
+/// typography builder instead: the caption node becomes markup whose
+/// per-word spans appear, light and settle on the recogniser's own word
+/// times, in the style the preset's text node already carried.
 pub fn sequence(words: &[Word], caps: &Captions, width: u32, height: u32, fps: f64) -> Sequence {
     let mut reel = Sequence::new(width, height, fps);
     let mut comp = preset(&caps.comp);
@@ -283,13 +296,68 @@ pub fn sequence(words: &[Word], caps: &Captions, width: u32, height: u32, fps: f
         ));
     }
     for line in lay_out(words, caps) {
-        let scene = Scene::new(comp.clone())
-            .starting_at(line.at)
-            .holding(line.hold)
-            .with_ops(vec![line.ops(&caps.node)]);
+        // The kinetic hand: the caption node is rebuilt as markup, its
+        // word spans timed from the line's own words, in the style the
+        // preset's text node was just re-sized into. The native hand is
+        // the SetWords operation below, unchanged.
+        let scene = match &caps.kinetic {
+            Some(_) => {
+                let mut scene = Scene::new(kinetic_line(&comp, &line, caps, width));
+                scene.at = Some(line.at);
+                scene.hold = Some(line.hold);
+                scene
+            }
+            None => Scene::new(comp.clone())
+                .starting_at(line.at)
+                .holding(line.hold)
+                .with_ops(vec![line.ops(&caps.node)]),
+        };
         reel.push(scene);
     }
     reel
+}
+
+/// The comp one kinetic caption line is drawn from: the preset, with its
+/// caption node rebuilt as a karaoke markup node carrying the line's own
+/// words and the frame's own width.
+fn kinetic_line(base: &Comp, line: &Line, caps: &Captions, width: u32) -> Comp {
+    let mut comp = base.clone();
+    for node in &mut comp.nodes {
+        if node.id != caps.node {
+            continue;
+        }
+        let style = match &node.kind {
+            NodeKind::Text(text) => text.clone(),
+            _ => continue,
+        };
+        let words = line
+            .words
+            .iter()
+            .map(|word| crate::comp::Word {
+                text: word.text.clone(),
+                start: word.start,
+                end: Some(word.end),
+            })
+            .collect::<Vec<_>>();
+        let kinetic = caps.kinetic.clone().unwrap_or_default();
+        let mut built = crate::typography::karaoke(&words, line.hold, &node.id, &style, &kinetic);
+        built.parent = node.parent.clone();
+        built.start = node.start;
+        built.duration = node.duration;
+        built.transform = node.transform.clone();
+        built.opacity = node.opacity;
+        built.blend = node.blend;
+        built.mask = node.mask.clone();
+        built.tracks = node.tracks.clone();
+        if let NodeKind::Html {
+            width: box_width, ..
+        } = &mut built.kind
+        {
+            *box_width = Length::Px(f64::from(width) * 0.88);
+        }
+        *node = built;
+    }
+    comp
 }
 
 /// The comp a caption line is made of.
@@ -526,5 +594,62 @@ mod tests {
         let reel = sequence(&words(&[("hi", 0.0, 0.3)]), &caps, 1280, 720, 30.0);
         assert_eq!(reel.scenes.len(), 1);
         assert_eq!(reel.scenes[0].comp.id, "funcut.caption.kinetic");
+    }
+
+    /// The kinetic hand: the same transcript, the same preset, the caption
+    /// node rebuilt as markup whose spans carry the recogniser's own word
+    /// times - placed and sized exactly as the native hand is.
+    #[test]
+    fn a_kinetic_transcript_becomes_karaoke_markup_at_the_spoken_times() {
+        let transcript = words(&[
+            ("Make", 0.0, 0.4),
+            ("it", 0.4, 0.7),
+            ("move.", 0.7, 1.1),
+            ("Make", 1.3, 1.7),
+            ("it", 1.7, 2.0),
+            ("yours.", 2.0, 2.5),
+        ]);
+        let caps = Captions {
+            kinetic: Some(crate::typography::Kinetic::words().delay(0.08)),
+            ..Captions::default()
+        };
+        let reel = sequence(&transcript, &caps, 1080, 1920, 30.0);
+        assert_eq!(reel.scenes.len(), 2);
+        for scene in &reel.scenes {
+            assert!(scene.ops.is_empty(), "the words are baked, not applied");
+            let caption = scene
+                .comp
+                .nodes
+                .iter()
+                .find(|node| node.id == "caption")
+                .expect("the caption node is there");
+            let (markup, css, box_width) = match &caption.kind {
+                NodeKind::Html {
+                    markup, css, width, ..
+                } => (markup.clone(), css.clone(), *width),
+                other => panic!("the caption became markup, not {other:?}"),
+            };
+            // The words arrive at the moments they are spoken, relative to
+            // the line the comp is placed at.
+            assert!(markup.matches("<span").count() >= 2, "{markup}");
+            assert!(markup.contains("kk-word"), "{markup}");
+            assert!(css.contains("@keyframes kk-word"), "{css}");
+            assert_eq!(
+                box_width,
+                Length::Px(1080.0 * 0.88),
+                "the caption wraps to the frame's own width"
+            );
+            // The words sit where the native hand puts them, and the
+            // whole scene validates against the static-transform guard.
+            assert_eq!(
+                caption.transform.position.map(|point| (point.x, point.y)),
+                Some((540.0, 1440.0))
+            );
+            assert!(
+                scene.comp.validate().is_empty(),
+                "{:?}",
+                scene.comp.validate()
+            );
+        }
     }
 }

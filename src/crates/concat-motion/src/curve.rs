@@ -167,6 +167,64 @@ impl Curve {
             Curve::Spring(spring) => spring_at(spring, t),
         }
     }
+
+    /// The curve as the CSS timing function the markup engine plays:
+    /// `linear`, `cubic-bezier()`, `steps()` or `linear()`.
+    ///
+    /// CSS has no spring, so a spring is approximated by the bezier that
+    /// overshoots by the amount the spring's own damping ratio says it
+    /// would - the one honest translation, and the reason a comp that wants
+    /// its spring *exactly* animates it as a timeline track
+    /// ([`Curve::Spring`] is solved analytically there) rather than as
+    /// markup CSS. A critic damping ratio settles without overshoot and
+    /// maps to the settle curve every preset shares.
+    pub fn css(&self) -> String {
+        match self {
+            Curve::Linear => "linear".into(),
+            Curve::Bezier { x1, y1, x2, y2 } => {
+                format!("cubic-bezier({x1}, {y1}, {x2}, {y2})")
+            }
+            Curve::Steps { count, position } => {
+                let name = match position {
+                    StepPosition::JumpEnd => "jump-end",
+                    StepPosition::JumpStart => "jump-start",
+                    StepPosition::JumpNone => "jump-none",
+                    StepPosition::JumpBoth => "jump-both",
+                };
+                format!("steps({count}, {name})")
+            }
+            Curve::Points { stops } => {
+                let ramp = stops
+                    .iter()
+                    .map(|(input, output)| format!("{input} {output}"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("linear({ramp})")
+            }
+            Curve::Spring(spring) => spring_css(spring),
+        }
+    }
+}
+
+/// The bezier a spring reads as in CSS: the overshoot of the damped
+/// oscillator, spent on the bezier's first control point.
+fn spring_css(spring: &Spring) -> String {
+    let natural = (spring.stiffness / spring.mass).max(1e-9).sqrt();
+    let ratio = (spring.damping / (2.0 * natural)).clamp(0.0, 1.0);
+    // A damping ratio of 0.95 already overshoots by less than a hundredth
+    // of a percent - imperceptible - so everything from there up is the
+    // settle curve, and only a real overshoot writes one.
+    if ratio >= 0.95 {
+        // Settling: no overshoot to spend.
+        "cubic-bezier(0.16, 1, 0.3, 1)".into()
+    } else {
+        // Under damped: the first peak of e^(-ζπ/√(1-ζ²)) is the overshoot.
+        let overshoot = (-std::f64::consts::PI * ratio / (1.0 - ratio * ratio).sqrt()).exp();
+        // Two decimals, so the stylesheet a comp writes is the same bytes
+        // for the same spring, and a cache key does not see jitter.
+        let peak = ((1.0 + overshoot) * 100.0).round() / 100.0;
+        format!("cubic-bezier(0.3, {peak}, 0.6, 1)")
+    }
 }
 
 /// x of a cubic bezier with endpoints pinned at 0 and 1, at parameter `t`.
@@ -332,6 +390,46 @@ mod tests {
         for t in [0.0, 0.1, 0.5, 0.9, 1.0] {
             assert!((Curve::Linear.apply(t) - t).abs() < 1e-12);
         }
+    }
+
+    /// The CSS a markup stylesheet needs, spelled the way the engine plays
+    /// it: every curve shape has its own grammar, and the one CSS cannot
+    /// say - a spring - is the bezier that overshoots by the spring's own
+    /// damping ratio instead of a guess.
+    #[test]
+    fn every_curve_writes_the_css_timing_function_it_is() {
+        assert_eq!(Curve::Linear.css(), "linear");
+        assert_eq!(
+            Curve::Bezier {
+                x1: 0.16,
+                y1: 1.0,
+                x2: 0.3,
+                y2: 1.0
+            }
+            .css(),
+            "cubic-bezier(0.16, 1, 0.3, 1)"
+        );
+        assert_eq!(
+            Curve::Steps {
+                count: 8,
+                position: StepPosition::JumpEnd
+            }
+            .css(),
+            "steps(8, jump-end)"
+        );
+        assert_eq!(
+            Curve::Points {
+                stops: vec![(0.0, 0.0), (0.35, 1.4), (0.6, 0.9), (1.0, 1.0)]
+            }
+            .css(),
+            "linear(0 0, 0.35 1.4, 0.6 0.9, 1 1)"
+        );
+        // The library's settling spring is critic-damped at heart: it maps
+        // to the settle curve, not to an overshoot it does not have.
+        assert_eq!(Curve::SPRING.css(), "cubic-bezier(0.16, 1, 0.3, 1)");
+        // The pop spring overshoots: 260/15/1 is a damping ratio of 0.465,
+        // whose first peak is e^(-0.465π/√(1-0.465²)) ≈ 0.19 above the mark.
+        assert_eq!(Curve::SPRING_POP.css(), "cubic-bezier(0.3, 1.19, 0.6, 1)");
     }
 
     #[test]

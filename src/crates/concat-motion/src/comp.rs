@@ -598,6 +598,34 @@ pub struct TextNode {
     pub shadow: Option<Shadow>,
 }
 
+impl Default for TextNode {
+    /// The same text a document without the fields parses: every default
+    /// here is the field's own `#[serde(default)]`, so a node built in
+    /// code and a node read from JSON agree without being told to.
+    fn default() -> Self {
+        TextNode {
+            text: String::new(),
+            words: Vec::new(),
+            highlight: None,
+            font: String::new(),
+            size: forty_eight(),
+            weight: four_hundred(),
+            italic: false,
+            letter_spacing: 0.0,
+            line_height: one_two(),
+            align: TextAlign::Left,
+            max_width: None,
+            padding: 0.0,
+            background: transparent(),
+            radius: 0.0,
+            color: white(),
+            fill: None,
+            outline: None,
+            shadow: None,
+        }
+    }
+}
+
 /// Text style overrides a highlight or a slot applies.
 #[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize)]
 pub struct TextStyle {

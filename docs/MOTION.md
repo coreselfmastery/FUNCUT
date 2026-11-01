@@ -337,6 +337,50 @@ dip stays the default for a standalone caption reel.
 
 ---
 
+## Kinetic typography: the builder the engine's facts were waiting for
+
+Geneva animates `font-variation-settings`, times an `animation-delay` to
+the millisecond, and plays `@keyframes` exactly as written. `typography.rs`
+is the builder that turns those facts into a node — the arithmetic a model
+gets wrong and a human will not do twice:
+
+```rust
+use concat_motion::comp::TextNode;
+use concat_motion::typography::{self, Entrance, Kinetic};
+
+// A headline: three words, eighty milliseconds apart, weight flexing 100→900.
+let kinetic = Kinetic::words().delay(0.08).entrance(Entrance::BlurIn)
+    .flexing_weight(100, 900);
+let style = TextNode { font: "Archivo, Inter".into(), size: 148.0,
+    color: Rgba::hex("#f4f1ea"), ..TextNode::default() };
+let headline = typography::headline("headline", "Make it move", &style, &kinetic);
+
+// A caption: the words a recogniser timed, each lit when it is spoken.
+let caption = typography::karaoke(&words, 2.4, "caption", &style, &kinetic);
+```
+
+| Piece | What it builds |
+| --- | --- |
+| `Stagger` — `Word` \| `Char` | one `<span>` per unit, each with its own inline `animation` and `animation-delay: i × delay` — no `calc()`, no custom properties, no cascade order to trust |
+| `Entrance` — `blur-in` \| `slide-up` \| `scale-in` | the three named entrance presets, as `@keyframes` with the individual `translate`/`scale` **inside** the rule (the static-transform guard reads the output) |
+| `WeightFlex` — `flexing_weight(100, 900)` | `@keyframes` animating `font-variation-settings: 'wght'`, played on the wrapper while the units stagger beneath it — needs a variable font carried as a `font` asset (`assets/fonts/Archivo-Variable.ttf`, `Inter-Variable.ttf`) |
+| `karaoke(&words, …)` | the word-synced caption: each word one animation that appears it, holds it **lit** in the highlight colour for most of its own length, and settles it back — the Whisper word times wired straight into the CSS |
+| `Kinetic::curved(curve)` | any of the five curve families, as the CSS timing function — `Curve::css()` writes `steps()`, `linear()` and `cubic-bezier()` natively, and approximates a spring by the overshoot its own damping ratio dictates |
+
+In `captions_animate`, **`kinetic: true`** (or an object spelling out the
+stagger, delay, entrance and weight) rebuilds each caption line as this
+markup — same preset, same style, same placement as the native text-node
+path, the words now arriving as a designed moment. The whole step is one
+flag: the line breaking, the re-anchoring to the frame and the guard all
+stay the code they already were.
+
+`examples/typography.rs` is the done-when as a runnable comp: a
+variable-weight headline, three words staggered 80 ms apart, and a
+karaoke caption from a transcript — validated, mapped to a timeline, and
+written as a document.
+
+---
+
 ## Authoring by hand: what the presets cannot say
 
 Twelve presets are a vocabulary; a film is a sentence. Every preset in `presets.rs` is written as a
@@ -424,6 +468,7 @@ cargo run -p concat-motion --bin concat-motion-agent -- bake comps/lt2.json cach
 cargo run -p concat-motion --bin concat-motion-agent -- reel storyboard.json -o reel.mp4
 cargo run -p concat-motion --bin concat-motion-agent -- captions words.json -o storyboard.json \
     --plate assets/plate.jpg --audio assets/score.wav
+cargo run -p concat-motion --example typography -- /tmp/moment.json   # the kinetic-typography comp
 ```
 
 `inspect` returns the comp summary a model needs: nodes with their kinds, spans, tracks and first

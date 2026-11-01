@@ -973,6 +973,199 @@ def build_sheet(spec):
 
 
 # ---------------------------------------------------------------------------
+# Multi-frame subject tracking: the crop path an H->V reframe is cut by
+# ---------------------------------------------------------------------------
+
+def _median(values):
+    ordered = sorted(values)
+    n = len(ordered)
+    if n == 0:
+        return 0.0
+    mid = n // 2
+    return ordered[mid] if n % 2 else (ordered[mid - 1] + ordered[mid]) / 2.0
+
+
+def track(spec):
+    """Where the subject is, frame after frame - the path a 9:16 crop follows.
+
+    `cropHint` answers "where is the subject" for ONE frame; a vertical edit
+    is seconds long and the subject moves. This samples frames across the
+    clip and finds the subject in each, then turns the answers into a crop
+    path the editor can actually key:
+
+    - The subject's weight in a tile is how far the tile stands out from
+      its own frame (deviation from the frame's median luma, the same
+      honest measure the single-frame hint uses) PLUS half of how far it
+      stands out from the TEMPORAL median of the same tile across every
+      sampled frame - so a static background cancels to zero and a moving
+      subject dominates, while a standing-out still subject still reads.
+    - Confidence is how concentrated the weight is (the top eighth of the
+      tiles' share of the total). A flat frame, a letterboxed stretch, a
+      subject too small to name: confidence falls under the floor and the
+      frame is "lost".
+    - A lost frame HOLDS the last known position - through occlusion, and
+      through the subject leaving the frame - rather than snapping to the
+      centre; the crop camera does not flinch.
+    - Before the first confident frame the path sits at the centre, so a
+      subject that enters late is entered upon, not teleported to.
+    - The smoothed path is reduced to keyframes at the instants it actually
+      moves (plus the first and the last), rounded to what clip_transform
+      takes.
+
+    Spec: `sources` (as build_sheet takes: [{pngB64 | path, at}]), or
+    `path` with `from`/`to`/`samples`/`times` (a span defaults to the whole
+    probed duration, 12 samples by default, 24 at most). Optional:
+    minConfidence (0.18), grid width/height (32/18).
+    """
+    gw = max(8, min(64, int(spec.get("gridWidth", 32))))
+    gh = max(8, min(48, int(spec.get("gridHeight", 18))))
+    min_confidence = max(0.05, min(0.9, float(spec.get("minConfidence", 0.18))))
+    sources = list(spec.get("sources") or [])
+    errors = []
+
+    # A span of one file: sample it across `from`..`to` (the probed
+    # duration by default), `samples` frames or explicit `times`.
+    if spec.get("path") and not sources:
+        path = spec["path"]
+        needs_ffmpeg = True
+        ff, fp = _tools(spec)
+        duration = probe_duration(fp, path)
+        if duration <= 0:
+            return {"ok": False, "error": f"could not probe the duration of {path}"}
+        start = max(0.0, float(spec.get("from", 0.0)))
+        end = min(duration, float(spec.get("to", duration)))
+        if end <= start:
+            end = duration
+        if spec.get("times"):
+            times = [max(start, min(end, float(t))) for t in spec["times"]]
+        else:
+            samples = max(3, min(24, int(spec.get("samples", 12))))
+            times = [start + (end - start) * (i + 0.5) / samples for i in range(samples)]
+        sources = [{"path": path, "at": t} for t in times]
+    else:
+        needs_ffmpeg = any(s.get("pngB64") is None for s in sources)
+        ff, fp = _tools(spec) if needs_ffmpeg else ("", "")
+
+    sources = sources[:24]
+    if len(sources) < 2:
+        return {"ok": False, "error": "track needs a path to sample or at least two sources"}
+
+    # Decode every frame and keep its luma grid: the temporal median is
+    # taken over the grids, so all frames must be in hand first.
+    grids = []
+    ats = []
+    for i, s in enumerate(sources):
+        if s.get("pngB64"):
+            try:
+                raw, sw, sh = png_decode(base64.b64decode(s["pngB64"]))
+                rgb = fit_rgb(raw, sw, sh, 160, 90)
+            except Exception as exc:
+                errors.append(f"source {i}: png decode: {exc}")
+                continue
+        else:
+            p = s.get("path")
+            if not p or not os.path.isfile(p):
+                errors.append(f"source {i}: file not found: {p}")
+                continue
+            rgb, err = extract_frame(ff, p, s.get("at", 0.0), 160, 90)
+            if rgb is None:
+                errors.append(f"source {i}: {err}")
+                continue
+        grids.append(_luma_grid(rgb, 160, 90, gw, gh))
+        ats.append(float(s.get("at", 0.0)))
+    if len(grids) < 2:
+        return {"ok": False, "error": "fewer than two frames decoded", "errors": errors[:8]}
+
+    # The temporal median of each tile: what the pixel has been across the
+    # whole span, which a moving subject is not.
+    tiles = len(grids)
+    temporal = [
+        _median([grids[f][y][x] for f in range(tiles)])
+        for y in range(gh)
+        for x in range(gw)
+    ]
+
+    raw_path = []
+    for f in range(tiles):
+        flat = [v for row in grids[f] for v in row]
+        frame_median = _median(flat)
+        weights = []
+        total = 0.0
+        for y in range(gh):
+            for x in range(gw):
+                here = grids[f][y][x]
+                from_frame = max(0.0, abs(here - frame_median) - 6.0)
+                from_time = max(0.0, abs(here - temporal[y * gw + x]) - 6.0)
+                w = from_frame + 0.5 * from_time
+                weights.append((x, y, w))
+                total += w
+        if total < 1e-6:
+            raw_path.append({"at": ats[f], "x": None, "y": None, "confidence": 0.0})
+            continue
+        top = sorted((w for _, _, w in weights), reverse=True)
+        share = sum(top[: max(1, len(top) // 8)]) / total
+        confidence = min(1.0, share * 2.0)
+        tw = total
+        cx = sum(x * w for x, _, w in weights) / tw / (gw - 1)
+        cy = sum(y * w for _, y, w in weights) / tw / (gh - 1)
+        raw_path.append({
+            "at": ats[f],
+            "x": round(max(-1.0, min(1.0, (cx - 0.5) * 2)), 3),
+            "y": round(max(-1.0, min(1.0, (cy - 0.5) * 2)), 3),
+            "confidence": round(confidence, 3),
+        })
+
+    # The smoothed path: hold the last confident position through a lost
+    # frame, exponential smoothing over the confident ones, centre before
+    # the first confident one.
+    smoothed = []
+    held = (0.0, 0.0)
+    seen = False
+    alpha = 0.55
+    for sample in raw_path:
+        if sample["x"] is None or sample["confidence"] < min_confidence:
+            smoothed.append({"at": sample["at"], "x": held[0], "y": held[1],
+                             "confidence": sample["confidence"], "held": seen})
+            continue
+        if not seen:
+            held = (sample["x"], sample["y"])
+            seen = True
+        else:
+            held = (held[0] + alpha * (sample["x"] - held[0]),
+                    held[1] + alpha * (sample["y"] - held[1]))
+        smoothed.append({"at": sample["at"], "x": round(held[0], 3), "y": round(held[1], 3),
+                         "confidence": sample["confidence"], "held": False})
+
+    # Keyframes: the first, the last, and every turn of more than 0.08 -
+    # the crop camera cuts its moves, it does not key every sample.
+    keys = []
+    for sample in smoothed:
+        if not keys or abs(sample["x"] - keys[-1]["x"]) > 0.08 or abs(sample["y"] - keys[-1]["y"]) > 0.08:
+            keys.append({"at": sample["at"], "x": sample["x"], "y": sample["y"]})
+    last = smoothed[-1]
+    if not keys or keys[-1]["at"] != last["at"]:
+        keys.append({"at": last["at"], "x": last["x"], "y": last["y"]})
+
+    moved = any(abs(s["x"] - smoothed[0]["x"]) > 0.08 or abs(s["y"] - smoothed[0]["y"]) > 0.08
+                for s in smoothed)
+    return {
+        "ok": True,
+        "frames": len(smoothed),
+        "span": [round(min(ats), 3), round(max(ats), 3)],
+        "path": smoothed,
+        "keyframes": keys[:12],
+        "moved": moved,
+        "notes": (
+            ["the subject's position is a cropHint in -1..1; keyframes are "
+             "the smoothed path's turns, ready for the aspect's offsets"]
+            + (["the subject moved enough to key; a static subject needs no path"]
+               if not moved else [])
+            + errors[:4]
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Craft critique
 # ---------------------------------------------------------------------------
 AXES = ["hook", "story", "rhythm", "shotChoice", "design", "sound"]
@@ -1807,7 +2000,7 @@ def emotion_command(spec):
 def main():
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["sheet", "critique", "rank", "overlay", "loudness", "rhythm", "vlm", "emotion", "selftest"])
+    ap.add_argument("cmd", choices=["sheet", "critique", "rank", "overlay", "loudness", "rhythm", "track", "vlm", "emotion", "selftest"])
     ap.add_argument("--spec", default="{}")
     args = ap.parse_args()
     try:
@@ -1839,6 +2032,8 @@ def main():
             out = result or {"ok": False, "error": "no audio to analyse"}
             if result:
                 out["ok"] = True
+        elif args.cmd == "track":
+            out = track(spec)
         elif args.cmd == "vlm":
             out = vlm_command(spec)
         elif args.cmd == "emotion":
@@ -2003,6 +2198,63 @@ def main():
                     for t in beats["cutTimes"]:
                         assert min(t % 0.5, 0.5 - t % 0.5) < 0.1, beats
                 out["beatTest"] = "ok"
+            # The tracking path, no decoder needed: a bright blob crosses a
+            # dark frame from left to right, vanishes for one sample (the
+            # occlusion), and a second clip enters late. The path must
+            # follow the blob, hold through the occlusion instead of
+            # snapping to the centre, and enter from the centre.
+            def _blob_frame(fw, fh, bx, by, value=220):
+                frame = bytearray(fw * fh * 3)
+                for y in range(fh):
+                    for x in range(fw):
+                        i = (y * fw + x) * 3
+                        frame[i] = frame[i + 1] = frame[i + 2] = 30
+                if bx is not None:
+                    for y in range(max(0, by), min(fh, by + 6)):
+                        for x in range(max(0, bx), min(fw, bx + 8)):
+                            i = (y * fw + x) * 3
+                            frame[i] = frame[i + 1] = frame[i + 2] = value
+                return bytes(frame)
+
+            fw, fh = 64, 36
+            crossing = [
+                {"at": 0.0, "x": 4, "y": 15},
+                {"at": 1.0, "x": 16, "y": 15},
+                {"at": 2.0, "x": 28, "y": 15},
+                {"at": 3.0, "x": None, "y": 15},  # occluded: hold
+                {"at": 4.0, "x": 44, "y": 15},
+                {"at": 5.0, "x": 56, "y": 15},
+            ]
+            sources = [{"at": c["at"],
+                        "pngB64": base64.b64encode(
+                            _png(fw, fh, _blob_frame(fw, fh, c["x"], c["y"]))).decode()}
+                       for c in crossing]
+            tracked = track({"sources": sources})
+            assert tracked.get("ok"), tracked
+            assert tracked["moved"], tracked
+            xs = [s["x"] for s in tracked["path"]]
+            # follows the crossing: the first confident sample is left of
+            # the last, and every confident step moves right
+            assert xs[0] < -0.2 < 0.2 < xs[-1], xs
+            steps = [(a, b) for a, b in zip(xs, xs[1:])]
+            assert all(b >= a - 0.02 for a, b in steps), xs
+            # the occluded sample holds the position before it, not centre
+            assert abs(xs[3] - xs[2]) < 0.06, xs
+            assert tracked["path"][3]["held"], tracked["path"][3]
+            # keyframes: the first, the turns, the last - never every sample
+            assert 2 <= len(tracked["keyframes"]) <= 12, tracked["keyframes"]
+            assert tracked["keyframes"][0]["at"] == 0.0, tracked["keyframes"]
+            assert tracked["keyframes"][-1]["at"] == 5.0, tracked["keyframes"]
+            # a subject that enters late is entered upon from the centre
+            late = [dict(s) for s in sources]
+            late[0] = {"at": 0.0,
+                       "pngB64": base64.b64encode(
+                           _png(fw, fh, _blob_frame(fw, fh, None, 15))).decode()}
+            entered = track({"sources": late})
+            assert entered.get("ok") and entered["path"][0]["x"] == 0.0, entered
+            assert entered["keyframes"][0]["x"] == 0.0, entered["keyframes"]
+            assert entered["keyframes"][-1]["x"] > 0.2, entered["keyframes"]
+            out["trackTest"] = "ok"
             # The emotion proxy is the seam between the MCP tool and the
             # reader: prove the wiring here too, not just in emotion.py's
             # own selftest (both run in CI, but only this one proves the

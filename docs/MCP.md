@@ -256,6 +256,15 @@ return MCP `type: image` content blocks, so the model can actually look:
   specific mix notes. `watch_render {path, audio:true}` reports the same
   figures alongside the contact sheet. `export_wait` reports no loudness,
   so this is the only way to **prove** a target was met.
+- `track_subject` - the multi-frame answer to `cropHint`: sample up to 24
+  frames across `path` (or a `from`/`to` span), find the subject in each,
+  and return a smoothed crop path as keyframes with the exact
+  `clip_transform` offsetX/offsetY for `aspect` (9:16 default). Held
+  through occlusion and exits, entered from centre when the subject
+  arrives late; `moved: false` means a static subject - the single
+  reframeHint is enough. Key the offsets with `keyframe_set` so a
+  vertical crop follows the subject instead of centre-cropping it.
+  Optional `samples`, `from`, `to`, `times`, `minConfidence`, `aspect`.
 - `motion_overlay` - composite a baked RGBA PNG sequence (`frames`, or
   `hash` + `project`) over real footage (`plate`) at `at` seconds, honouring
   the comp's transparency, and return an H.264 clip ready for
@@ -385,7 +394,7 @@ Tools are named for what they do, and their argument schemas are generated from 
 | Motion design | `motion_presets`, `motion_inspect`, `motion_frame`, `motion_bake`, `motion_overlay`, `captions_animate`, `motion_reel`, `motion_probe`, `scene_timeline` |
 | Export | `export_start`, `export_status`, `export_wait` (with progress), `export_cancel` |
 | Looking | `preview_frame` (the composited frame as an image) |
-| Perception and the creative loop | `creative_brief`, `stock_contact_sheet`, `watch_render`, `craft_critique`, `suggest_cuts`, `measure_loudness`, `local_vlm`, `emotion` |
+| Perception and the creative loop | `creative_brief`, `stock_contact_sheet`, `watch_render`, `craft_critique`, `suggest_cuts`, `measure_loudness`, `track_subject`, `local_vlm`, `emotion` |
 
 `plan_validate` takes the edit-plan object defined by the Director skill's
 canonical schema and checks its structure, segment continuity, visual
@@ -412,7 +421,7 @@ For scripts that do not speak MCP, the same API is served as JSON-RPC lines on a
 Three switches - two off by default for a server started bare, and the allowlist already on for the server this repository's own `.forge/mcp.toml` declares:
 
 - **`--mcp-read-only`** (binary) or **`CONCAT_MCP_READ_ONLY=1`** (the app's `concat --mcp` and anything else that starts it): every tool that changes something is refused by name - an edit, an export, a stock import, the reel's render half. The reads stay, and `motion_reel` keeps its look halves (`plan`, `frame`, `sheet`): they change nothing outside the project's cache, and taking them away takes away the only way to see a design before committing to it.
-- **`--mcp-allow a,b,c`** (binary) or **`CONCAT_MCP_ALLOW=a,b,c`**: the only tools this server serves. A tool not on the list is refused as if it were not there - its description still lists it, but the surface served is what the operator said, not what the build happens to carry. `.forge/mcp.toml` starts the repo's own server with the list already set (its `[servers.transport.env]` table: 89 of the 91 tools, everything but `project_close` and `export_cancel`), and carries the same list as a comment, ready to paste for a server started by hand.
+- **`--mcp-allow a,b,c`** (binary) or **`CONCAT_MCP_ALLOW=a,b,c`**: the only tools this server serves. A tool not on the list is refused as if it were not there - its description still lists it, but the surface served is what the operator said, not what the build happens to carry. `.forge/mcp.toml` starts the repo's own server with the list already set (its `[servers.transport.env]` table: 90 of the 92 tools, everything but `project_close` and `export_cancel`), and carries the same list as a comment, ready to paste for a server started by hand.
 - **Per-tool timeouts**: every tool carries its own limit (`Tool::timeout_secs` - the VLM download and the overlay encode 1200 s, transcribe 900 s, exports and the sense family 600 s, the renders and watches 300 s, everything else 60 s), and a call that outlives it is cancelled and answered for at the deadline, with the limit in the message. The client-side `call_timeout_secs` stays as the ceiling over all of them; the engine's own calls are bounded a second time, per call, by the Geneva guard (see `docs/MOTION.md`).
 
 ## The reel contact sheet

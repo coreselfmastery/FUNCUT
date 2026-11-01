@@ -1177,6 +1177,71 @@ pub fn measure_loudness(arguments: Value) -> Result<Outcome, ApiError> {
     Ok(Outcome::json(result))
 }
 
+/// `track_subject`: the multi-frame answer to the single-frame `cropHint`.
+///
+/// `stock_contact_sheet` says where the subject is in ONE frame; a vertical
+/// edit is seconds long and the subject moves. This samples frames across
+/// the clip, finds the subject in each (a weighted centroid of what stands
+/// out from its own frame AND from the temporal median of the same tile
+/// across every sampled frame, so a static background cancels), smooths
+/// the path - holding the last known position through occlusion and
+/// exits, entering from the centre when the subject arrives late - and
+/// returns the keyframes at the path's turns, each with the exact
+/// `clip_transform` offsets for the target aspect, ready for
+/// `keyframe_set` on the clip's offsetX/offsetY. Read-only: it decodes
+/// frames and answers; it changes nothing.
+pub fn track_subject(arguments: Value) -> Result<Outcome, ApiError> {
+    let fields = arguments
+        .as_object()
+        .cloned()
+        .ok_or_else(|| invalid("the arguments are an object"))?;
+    let path = fields
+        .get("path")
+        .and_then(Value::as_str)
+        .filter(|p| !p.trim().is_empty())
+        .ok_or_else(|| invalid("`path` is the media file to track the subject of"))?;
+    let aspect = fields
+        .get("aspect")
+        .and_then(Value::as_str)
+        .unwrap_or("9:16");
+    if !["16:9", "9:16", "1:1", "4:5"].contains(&aspect) {
+        return Err(invalid("aspect is 16:9, 9:16, 1:1, or 4:5"));
+    }
+    let mut spec = json!({
+        "path": path,
+        "samples": (number(&fields, "samples", 12.0).round() as i64).clamp(3, 24),
+        "minConfidence": number(&fields, "minConfidence", 0.18),
+        "autoSetup": fields.get("autoSetup").and_then(Value::as_bool).unwrap_or(true),
+    });
+    for key in ["from", "to"] {
+        if let Some(at) = fields.get(key).and_then(Value::as_f64) {
+            spec[key] = json!(at);
+        }
+    }
+    if let Some(times) = fields.get("times").and_then(Value::as_array) {
+        spec["times"] = json!(times);
+    }
+    // As `measure_loudness`: the binary is never the caller's to choose.
+    let mut result = run("track", &spec, Duration::from_secs(240))?;
+    // The keyframes carry the subject's position as a cropHint (-1..1);
+    // each becomes the exact clip_transform offsets for `aspect`, the same
+    // geometry the single-frame reframeHint uses, so the two agree.
+    if let Some(keys) = result.get_mut("keyframes").and_then(Value::as_array_mut) {
+        for key in keys.iter_mut() {
+            let hint_x = key.get("x").and_then(Value::as_f64).unwrap_or(0.0);
+            let hint_y = key.get("y").and_then(Value::as_f64).unwrap_or(0.0);
+            let (offset_x, offset_y) = reframe_offset(aspect, hint_x, hint_y);
+            key["offsetX"] = json!(offset_x);
+            key["offsetY"] = json!(offset_y);
+        }
+    }
+    result["aspect"] = json!(aspect);
+    result["hint"] = json!(
+        "Keyframes are the crop path's turns, `at` seconds from the clip's start: keyframe_set each one on the clip's offsetX/offsetY (and the first at the clip's start) so the vertical crop follows the subject instead of centre-cropping it. `path` is the smoothed position every sample, `held` marking the holds; a `moved: false` subject needs no keys - the single reframeHint is enough."
+    );
+    Ok(Outcome::json(result))
+}
+
 /// `motion_overlay`: composite a transparent RGBA bake over real footage.
 ///
 /// The motion sidecar's video codecs write opaque frames, and FFmpeg's WebM

@@ -1309,3 +1309,42 @@ the shared window, moved on purpose and was `--update`d - only
 `whip.png` changed, every other golden byte-identical - the whip frame
 still renders twice to identical bytes, and every golden frame holds
 at DSSIM 0.00000 against its committed image.
+
+## 29. `track_subject`: the crop path that follows the subject
+
+The H->V reframe was answered by a single-frame `cropHint`: the energy
+centroid of ONE frame, one static offset per clip. A vertical edit is
+seconds long and the subject moves - the top feature for short-form
+content, and the one the audit kept asking for.
+
+`track_subject` (the 92nd tool) samples up to 24 frames across a clip
+(or a `from`/`to` span), finds the subject in each, and returns the
+crop path. The subject's weight in a tile is what stands out from the
+frame's own median PLUS half of what stands out from the temporal
+median of the same tile across every sampled frame - a static
+background cancels to zero, a moving subject dominates, a
+standing-out still subject still reads; confidence is how concentrated
+the weight is, and a frame under the floor is "lost". A lost frame
+HOLDS the last known position - through occlusion, through the subject
+leaving the frame - rather than snapping to centre, and a subject that
+enters late is entered upon from centre. The smoothed path is reduced
+to keyframes at its turns, each with the exact `clip_transform`
+offsets for the target aspect - the same geometry `reframeHint` uses,
+so the two agree - ready for `keyframe_set` on the clip's
+offsetX/offsetY. `moved: false` says the subject never went anywhere:
+the single-frame hint is enough, key nothing.
+
+The tracker lives in the sense layer (`track` command): pure stdlib,
+no numpy, no OpenCV, the same ffmpeg decode the contact sheets use -
+and it also takes `sources` as base64 PNGs, so the selftest drives it
+with a synthetic blob that crosses the frame, vanishes for one sample,
+and enters late, and CI proves the path follows it, holds through the
+occlusion, and enters from centre with no decoder on the machine at
+all. Verified against a real stepped-box video end to end: nine
+frames, the box tracked -0.71 to 0.52, six keys at the turns.
+
+**What it costs:** a frame decode a sample (24 at most) and one ffmpeg
+probe - a few seconds on the 4 GB machine, once per look. Every
+document that states the tool count now says 92; the Forge allowlist
+carries the tool; the guard holds all of them.
+

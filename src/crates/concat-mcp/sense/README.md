@@ -50,9 +50,10 @@ parseable.
 | `overlay` | Composite a baked RGBA PNG sequence over a plate video (or a solid colour) into an H.264 clip, honouring alpha at the compositing step. |
 | `loudness` | EBU R128 integrated LUFS, true peak dBTP and loudness range of a media file, checked against a platform target. |
 | `rhythm` | BPM, energy-onset curve and beat-aligned cut times spread across the whole piece, with no Python extras. |
+| `track` | The subject's path across a clip, frame by frame: samples up to 24 frames, finds the subject in each (what stands out from the frame and from the temporal median across samples), smooths the path - holding through occlusion and exits, entering from centre - and returns crop keyframes. The `track_subject` MCP tool turns them into clip_transform offsets. |
 | `vlm` | `status` / `setup` for the local vision model. |
 | `emotion` | The emotional read of the voiceover: per-line emotion, act, easing, colour, duck, vocabulary + the arc; `brand` / `gate` / `verify` / `template` beside it. |
-| `selftest` | Generate a synthetic PNG, decode it, measure it, and exercise the model-reply, loudness and cut-spread parsers — no fixtures; the beat path (onset curve, click-track BPM) runs when an ffmpeg is on PATH. `vlm.py selftest` and `emotion.py selftest` check the critic and the reader the same way, and CI runs all three. |
+| `selftest` | Generate a synthetic PNG, decode it, measure it, and exercise the model-reply, loudness, cut-spread and subject-tracking parsers — no fixtures; the beat path (onset curve, click-track BPM) runs when an ffmpeg is on PATH. `vlm.py selftest` and `emotion.py selftest` check the critic and the reader the same way, and CI runs all three. |
 
 Example:
 

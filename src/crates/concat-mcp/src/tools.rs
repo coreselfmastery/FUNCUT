@@ -126,6 +126,9 @@ pub enum Action {
     MeasureLoudness,
     /// Beat-aligned cut times from the soundtrack, no Python extras.
     SuggestCuts,
+    /// The subject's path across a clip, frame by frame: the multi-frame
+    /// answer to the single-frame cropHint, as crop keyframes.
+    TrackSubject,
     /// `project.get`, read for every place two clips share a lane.
     CollisionCheck,
     /// `openvid.search` once per query, one reply.
@@ -904,6 +907,15 @@ pub fn catalogue() -> Vec<Tool> {
             action: Action::MeasureLoudness,
         },
         Tool {
+            name: "track_subject",
+            title: "Follow the subject",
+            description: "The single-frame cropHint answers WHERE THE SUBJECT IS; this answers WHERE IT GOES - the top feature for short-form H->V edits. Samples up to 24 frames across `path` (or a `from`/`to` span), finds the subject in each (what stands out from the frame AND from the temporal median across every sample, so a static background cancels), and returns a smoothed crop path: held through occlusion and exits rather than snapping to centre, entered from centre when the subject arrives late, reduced to keyframes at the path's turns - each with the exact clip_transform offsetX/offsetY for `aspect` (9:16 default), ready to keyframe_set on the clip so the vertical crop follows the subject instead of centre-cropping it. `moved: false` means a static subject: the single reframeHint is enough, key nothing. Optional: samples (12 default), from, to, times[], minConfidence (0.18), aspect (9:16 default), autoSetup. Not read-only: it runs a decoder, and with autoSetup (the default) it downloads a pinned static ffmpeg into the app's own data folder when no decoder is on the machine.",
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            action: Action::TrackSubject,
+        },
+        Tool {
             name: "motion_overlay",
             title: "Composite motion over footage",
             description: "Fixes the opaque-caption-reel problem. Takes a baked RGBA PNG sequence (`frames`, or `hash` + `project` to find it) and composites it OVER real footage (`plate`, a video path) at `at` seconds, honouring the comp's transparency, and writes an ordinary H.264 clip ready for media_import and clip_add. Without a plate it composites over a solid `background` at the given width/height. The sidecar's video codecs cannot carry alpha and FFmpeg's WebM muxer does not reliably write VP9 AlphaMode, so this is the honest alpha path: transparency is honoured at the compositing step, not faked in an encoder. Optional: fps (30), width, height, at (0), crf (18), background, x, y, out (defaults to <project>/motion/overlay.mp4).",
@@ -1217,7 +1229,8 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
         | Action::CreativeBrief
         | Action::MotionOverlay
         | Action::MeasureLoudness
-        | Action::SuggestCuts => sense_schema(tool.name),
+        | Action::SuggestCuts
+        | Action::TrackSubject => sense_schema(tool.name),
         Action::Mask => {
             let update = schemas.command("updateClip")?;
             let mut mask = schemas.def("ClipMask")?;
@@ -1350,6 +1363,16 @@ fn sense_schema(name: &str) -> Option<Value> {
             "path": string("The media file with an audio stream to measure."),
             "targetLufs": { "type": "number", "default": -14, "minimum": -70, "maximum": 0 },
             "targetTruePeakDbtp": { "type": "number", "default": -1, "minimum": -20, "maximum": 6 },
+            "autoSetup": { "type": "boolean", "default": true },
+        }),
+        "track_subject" => json!({
+            "path": string("The media file whose subject the crop should follow."),
+            "samples": count(3, 24, 12, "How many frames to sample across the span."),
+            "from": { "type": "number", "minimum": 0, "description": "Seconds into the file where the span starts; the start by default." },
+            "to": { "type": "number", "minimum": 0, "description": "Seconds where the span ends; the file's end by default." },
+            "times": times,
+            "minConfidence": { "type": "number", "default": 0.18, "minimum": 0.05, "maximum": 0.9, "description": "How concentrated a frame's subject weight must be to count as found; below it the path holds the last position." },
+            "aspect": { "type": "string", "enum": ["9:16", "16:9", "1:1", "4:5"], "default": "9:16", "description": "Target frame; each keyframe's position becomes the exact clip_transform offsets for it." },
             "autoSetup": { "type": "boolean", "default": true },
         }),
         "motion_overlay" => json!({
@@ -2108,6 +2131,7 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         Action::MotionOverlay => crate::sense::motion_overlay(arguments, backend),
         Action::MeasureLoudness => crate::sense::measure_loudness(arguments),
         Action::SuggestCuts => crate::sense::suggest_cuts(arguments),
+        Action::TrackSubject => crate::sense::track_subject(arguments),
         Action::CollisionCheck => {
             let result = backend.call(request("project.get", arguments)?)?;
             Ok(collision_report(summary::view(&result)))
@@ -3689,7 +3713,8 @@ mod tests {
                 | Action::CreativeBrief
                 | Action::MotionOverlay
                 | Action::MeasureLoudness
-                | Action::SuggestCuts => continue,
+                | Action::SuggestCuts
+                | Action::TrackSubject => continue,
                 Action::CollisionCheck => request("project.get", sample.clone()),
                 Action::OpenvidSearchBatch => {
                     // One `openvid.search` per query: the first query's

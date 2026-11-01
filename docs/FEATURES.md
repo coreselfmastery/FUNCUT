@@ -351,7 +351,9 @@ always win; maestro refines how a floor is met, never lowers it. See
   English-only lexicon.
 - **The harness config** (`.forge/mcp.toml`): one stdio server (`concat
   --mcp auto`), a 900-second call timeout for patient work, servers
-  allow-listed to `funcut`.
+  allow-listed to `funcut`, and the per-tool allowlist active in the
+  server's `env` - every tool served but `project_close` and
+  `export_cancel`, which an agent must never call by surprise.
 - Overnight queues (`forge queue`/`forge schedule`), a vision-capable
   director model picker (`FUNCUT_FORGE_MODEL`), and a research ledger of
   every claim. See [docs/forge/FORGE.md](forge/FORGE.md) and

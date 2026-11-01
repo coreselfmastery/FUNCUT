@@ -674,6 +674,13 @@ mod tests {
     use concat_api::{ApiError, Request};
     use std::io::Cursor;
 
+    /// The one at a time for tests that read and write the environment:
+    /// `Serving::from_environment` reads the process's variables, so
+    /// two tests setting them at once would read each other's. Held
+    /// across the set, the read and the remove, by every test that
+    /// touches them.
+    static ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// A backend that answers every request with an empty object.
     struct Idle;
 
@@ -858,6 +865,81 @@ mod tests {
     }
 
     #[test]
+    fn a_tool_the_forge_allowlist_leaves_off_is_refused_on_the_default_path() {
+        // The repo's own .forge/mcp.toml starts this server with
+        // CONCAT_MCP_ALLOW set, so the default path an agent meets is
+        // the allowlist, not the whole catalogue. This reads that very
+        // line, builds the serving the way the environment builds it,
+        // and proves the two the list leaves off are refused by name -
+        // on the list the repository actually ships, not a stand-in.
+        let mut dir = std::env::current_dir().expect("the working directory");
+        let root = loop {
+            if dir.join(".forge").join("mcp.toml").is_file() {
+                break Some(dir);
+            }
+            if !dir.pop() {
+                break None;
+            }
+        };
+        let Some(root) = root else {
+            // Not a checkout: no declaration to hold. CI and every
+            // clone carry the marker file.
+            return;
+        };
+        let forge = std::fs::read_to_string(root.join(".forge/mcp.toml"))
+            .unwrap_or_else(|why| panic!("reading .forge/mcp.toml: {why}"));
+        let active = forge
+            .lines()
+            .find(|line| line.starts_with("CONCAT_MCP_ALLOW"))
+            .expect("the env table carries the active CONCAT_MCP_ALLOW");
+        let list = active
+            .split_once('"')
+            .and_then(|(_, rest)| rest.split_once('"'))
+            .expect("the active list is one quoted value")
+            .0;
+
+        // The environment the server starts in, read the way the server
+        // reads it, under the lock the environment's tests hold so two
+        // of them cannot read each other's switches. Edition 2024
+        // makes the environment's mutators unsafe: the set and the read
+        // sit between the remove, which is what the unsafe blocks say
+        // (as in `the_environment_switches_are_read`).
+        let _held = ENV.lock().expect("the environment's lock");
+        unsafe {
+            std::env::set_var("CONCAT_MCP_ALLOW", list);
+        }
+        let serving = Serving::from_environment();
+        unsafe {
+            std::env::remove_var("CONCAT_MCP_ALLOW");
+        }
+        let expected = crate::tools::catalogue().len() - 2;
+        assert_eq!(
+            serving.allowed.as_ref().map(Vec::len),
+            Some(expected),
+            "the environment read the list the file declares"
+        );
+
+        // The two the list leaves off are refused as if they were not
+        // there; a tool it names is served.
+        for tool in ["project_close", "export_cancel"] {
+            let replies = serve_safety(call(tool, json!({})).as_bytes(), serving.clone());
+            assert_eq!(replies.len(), 1, "{tool}: {replies:?}");
+            assert!(refused(&replies[0]), "{tool}: {replies:?}");
+            let text = replies[0]
+                .pointer("/result/content/0/text")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            assert!(text.contains(tool), "{text}");
+            assert!(text.contains("allowlist"), "{text}");
+        }
+        let served = serve_safety(
+            call("timeline_read", json!({ "path": "/tmp/p" })).as_bytes(),
+            serving,
+        );
+        assert!(!refused(&served[0]), "{served:?}");
+    }
+
+    #[test]
     fn the_default_serving_changes_nothing() {
         // No switches: every tool is served as it always was, which is
         // the server an agent has always had.
@@ -875,6 +957,7 @@ mod tests {
         // Edition 2024 makes the environment's mutators unsafe: the
         // tests are single-threaded through the runner's own guarantees
         // around these lines, which is what the unsafe blocks say.
+        let _held = ENV.lock().expect("the environment's lock");
         unsafe {
             std::env::set_var("CONCAT_MCP_READ_ONLY", "1");
             std::env::set_var("CONCAT_MCP_ALLOW", "timeline_read");

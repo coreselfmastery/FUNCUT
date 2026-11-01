@@ -88,7 +88,7 @@ pub mod typography;
 
 pub use authoring::{CompSummary, Op, apply};
 pub use comp::{Comp, FORMAT, Node, NodeKind, Slot};
-pub use critic::{Fix, Report};
+pub use critic::{Fix, Report, score};
 pub use curve::{Curve, Spring, StepPosition};
 pub use engine::{
     BakeRequest, Baked, Choice, CompEngine, EngineKind, EnginePreference, MotionError, Probe,

@@ -315,13 +315,25 @@ are. `pulse.rs` is the arithmetic between them:
 | `beats` | the measured grid, in seconds from the scene's own start - `suggest_cuts` reads it from the soundtrack, the recogniser times the words; nothing here trusts a guess |
 | `driven` | `scale` (the chart grows on the downbeat), `opacity` (the caption pulses on the transient - a full-opacity node dips, because brightening nowhere is not a pulse), or `position` (the card takes the beat) |
 | `amount` / `release` | the bump's size and its settle - the tail that makes a hit read as a hit rather than a flicker |
-| `curve` | how the bump decays: the library's `spring-pop` is the drum read |
+| `curve` | how the bump decays: the library's `spring-pop` is the drum read, written as a name from the easing library (`bounce`, `typewriter`) or a full curve object |
 | `nodes` | the ids the pulse drives; empty is every node the comp carries |
 
 The keys **merge** with the nodes' own tracks - an authored fade, a choreographed transition and a
 heartbeat all ride the same property without one rewriting the other, sorted by time, the beat
 winning its own moment. Beats outside a node's own window do not reach it; a node that starts at
 2 s does not pulse at 0.5 s.
+
+The scene card can also name its **`act`** - one of the seven the emotion read uses (`hook`,
+`setup`, `tension`, `turn`, `reveal`, `proof`, `cta`) - and the act chooses the pulse's hand
+when nobody else did: a pulse that names no curve of its own gets the act's, wired in by the
+planner itself rather than left for the caller to translate. A pulse that names a curve keeps
+it; the author's hand beats the read's.
+
+```json
+{ "preset": "funcut.chart.bars", "hold": 5.0, "act": "hook",
+  "pulse": { "beats": [0.98, 1.94, 2.91], "driven": "scale",
+             "amount": 0.05, "release": 0.32 } }
+```
 
 Two more pieces of the same idea: **`curve_for_act`** maps the emotion read's act to its easing
 curve - calm for the hook (`ease-out`), wound for the tension (`ease-in`), punchy for the payoff
@@ -360,11 +372,11 @@ scale, rotation and opacity around the node's resting value, opacity held inside
 
 A LUT is a lookup the footage passes through, and a comp cannot carry one - but it can carry the
 CSS that approximates it. `grade.rs` bakes a scene's grade into the comp as its **first paint**:
-a full-bleed box whose `backdrop-filter` (`saturate()`, `contrast()`, `brightness()`) does the
-tonal work and whose translucent tint, blended `soft-light`, does the cast. What the engine has
-under that box - the scene's plate, the layers beneath - is what gets graded; the comp's own
-words stay as inked, which is the whole point of grading inside the comp rather than over the
-render.
+a full-bleed box whose `backdrop-filter` (`saturate()`, `hue-rotate()`, `contrast()`,
+`brightness()`) does the tonal work and the hue turn, and whose translucent tint, blended
+`soft-light`, does the cast. What the engine has under that box - the scene's plate, the layers
+beneath - is what gets graded; the comp's own words stay as inked, which is the whole point of
+grading inside the comp rather than over the render.
 
 ```json
 { "preset": "funcut.sting.wordmark", "hold": 5.0, "plate": "back",
@@ -373,9 +385,10 @@ render.
 
 | Piece | What it does |
 | --- | --- |
-| `temperature` | the seven the emotion read names per line - `hot`, `sickly`, `cold`, `warm`, `balanced`, `cool`, `split` - each a tuned row of tonal moves and a cast; the act a line sits in is the grade its scene wears |
+| `temperature` | the seven the emotion read names per line - `hot`, `sickly`, `cold`, `warm`, `balanced`, `cool`, `split` - each a tuned row of tonal moves, a hue turn and a cast; the act a line sits in is the grade its scene wears |
 | `amount` | 0 to 1, how much of the cast is put on; the tonal moves are not scaled by it |
 | `saturate` / `contrast` / `brightness` | explicit overrides of the temperature's moves - a balanced grade with `{"saturate": 1.2}` is a neutral tonal move by name |
+| `hue` | `hue-rotate()` in degrees, -360 to 360 - the move that turns the whole palette rather than laying a colour over it, the LUT approximation's third leg beside `saturate()` and `contrast()`; `sickly` carries +25° of it, `split` -5° |
 | `tint` | the brand's own colour, `#rrggbb` or `#rrggbbaa`, worn instead of the stock cast - the palette is respected by wearing it |
 
 `split` is the classic two-temperature grade - teal in the shadows, orange in the highs -
@@ -451,6 +464,21 @@ applied confidently is worse than a suggestion left on the table. The heuristic 
 measured fixes of its own (black lead-ins, bars, static cuts, repeats), the strong VLM's prompt
 asks for exactly this shape, and every pass - scores, revisions *and* fixes - is journaled to
 `craft-history.json`, so the loop from critique to revision is data the whole way through.
+
+And the loop's convergence has a number: **`critic::score`** holds a comp to the contact
+sheet's own floors - 10 to start, a contract problem costing 2, a clipped element 4 (the defect
+the sheet's reader names first and loudest), an element the reel never shows 2 - so "applying
+the fixes converges the score above 7" is a thing a test holds and a loop can steer by without
+eyes: the deliberately broken scene (a chart clipped off the right edge) scores 6, and the same
+scene under its two fixes scores a clean 10.
+
+```rust,ignore
+use concat_motion::critic;
+
+let before = critic::score(&comp);          // 6.0 - the chart is clipped
+let report = critic::apply(&mut comp, &fixes);
+let after = critic::score(&comp);           // 10.0 - nothing left to name
+```
 
 `examples/reel.rs` is a complete one: **thirteen scenes, twelve presets, 45.5 s**, with plates, a
 curtain and a synthesised score.
@@ -661,8 +689,9 @@ Every verb prints exactly one JSON document and exits non-zero on failure.
 
 The binary ships as `concat-motion-agent` in the Linux .deb and .rpm (on the
 path, beside `concat`) and inside the AppImage (`--appimage-extract` reaches
-it); an MCP agent reaches the same engine through the `motion_*` tools and
-never needs it. From a source checkout it is:
+it); an MCP agent reaches the same engine through the `motion_*` tools (and
+`geneva_explain`, for any diagnostic code a refusal carries) and never needs
+it. From a source checkout it is:
 
 ```sh
 cargo run -p concat-motion --bin concat-motion-agent -- list

@@ -158,6 +158,15 @@ pub struct SceneCard {
     /// the entering scene's `transition` wins the shared boundary.
     #[serde(default)]
     pub exit: Option<crate::transition::Cut>,
+    /// The act the scene plays in, as the emotion read names it: one of
+    /// `hook`, `setup`, `tension`, `turn`, `reveal`, `proof` or `cta`.
+    /// The read's answer to "how should this feel" is a curve, and the
+    /// curve is wired in: a scene that names its act and carries a
+    /// pulse that names no curve of its own gets the act's - calm for
+    /// the hook, wound for the tension, punchy for the payoff. A pulse
+    /// that names a curve keeps it; the author's hand beats the read's.
+    #[serde(default)]
+    pub act: Option<crate::route::BeatType>,
     /// The scene's pulse, when the audio drives it: the beat grid as
     /// measured times (`suggest_cuts` reads them from the soundtrack),
     /// baked into the comp's nodes as the plan is laid.
@@ -932,7 +941,21 @@ impl SceneCard {
             scene = scene.layer(layer.layer(index)?);
         }
         if let Some(pulse) = &self.pulse {
-            scene = scene.pulsing(pulse.clone());
+            // The act chooses the pulse's hand when nobody else did: the
+            // emotion read's curve for the act the scene plays in,
+            // wired into the plan rather than left for the caller to
+            // translate. A pulse that names its own curve keeps it -
+            // the author's hand beats the read's. The one case the two
+            // cannot be told apart is a curve named "spring-pop", the
+            // default's own name: the act wins it, and a hook that must
+            // pop despite its calm names no act.
+            let mut pulse = pulse.clone();
+            if let Some(act) = self.act
+                && pulse.curve == crate::pulse::Pulse::default().curve
+            {
+                pulse.curve = crate::pulse::curve_for_act(act);
+            }
+            scene = scene.pulsing(pulse);
         }
         if let Some(grade) = &self.grade {
             scene = scene.graded(grade.clone());

@@ -78,7 +78,10 @@ pub struct Pulse {
     /// makes a hit read as a hit rather than a flicker.
     pub release: f64,
     /// How the bump decays. The library's spring-pop is the drum read;
-    /// `linear` is the mechanical one.
+    /// `linear` is the mechanical one. Written as a name from the
+    /// easing library (`"bounce"`) or a full curve object, exactly as a
+    /// layer's `fadeCurve` is.
+    #[serde(deserialize_with = "curve_by_name")]
     pub curve: Curve,
     /// The nodes the pulse drives, by id; empty is every node the comp
     /// carries - a scene-wide pulse is usually what a beat grid means.
@@ -152,6 +155,18 @@ pub fn curve_for_act(beat: BeatType) -> Curve {
 /// with no measured peak starts exactly on the moment.
 pub fn sound_starts_at(moment: f64, sync_at: Option<f64>) -> f64 {
     (moment - sync_at.unwrap_or(0.0).max(0.0)).max(0.0)
+}
+
+/// A pulse's `curve`: a name from the easing library (`"bounce"`,
+/// `"spring-pop"`) or a full curve object - the same two forms a
+/// layer's `fadeCurve` takes, so the field an agent writes is a word
+/// rather than a tagged struct.
+fn curve_by_name<'de, D>(deserializer: D) -> Result<Curve, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value: serde_json::Value = serde::Deserialize::deserialize(deserializer)?;
+    crate::curve::from_json(&value).map_err(serde::de::Error::custom)
 }
 
 /// Bake a pulse into a comp: every beat the comp's nodes carry as a bump

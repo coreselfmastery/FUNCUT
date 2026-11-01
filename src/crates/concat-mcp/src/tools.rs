@@ -106,6 +106,8 @@ pub enum Action {
     /// The validated timeline a storyboard becomes, printed as the
     /// engine reads it.
     SceneTimeline,
+    /// What a diagnostic code means, in the engine's own words.
+    GenevaExplain,
     /// Sample a render or the open timeline into a contact sheet.
     WatchRender,
     /// Look at B-roll candidates before choosing them.
@@ -821,6 +823,15 @@ pub fn catalogue() -> Vec<Tool> {
             action: Action::SceneTimeline,
         },
         Tool {
+            name: "geneva_explain",
+            title: "Explain a motion diagnostic code",
+            description: "What a Geneva diagnostic code means, in the engine's own words - `geneva explain E302` at the MCP surface. Takes `code`: the code itself (E103, W210), or a refusal sentence pasted whole, whose first code-shaped token is picked out. Returns the sentence that says what the engine meant and how to fix it. The refusals the motion tools return have already consulted this for their first diagnostic; call it directly for the second and third codes a refusal carries, or to read a code the engine printed anywhere else. The rest of the answer - the guide page a code points at - stays in the engine's manual.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::GenevaExplain,
+        },
+        Tool {
             name: "analysis_wait",
             title: "Wait for a job",
             description: "Waits for any job - an analysis, a transcription, a voice, an export - to end, up to `timeoutSeconds` (60 by default, 600 at most), and returns its status; a finished analysis carries its JSON result in the status's `output`. If the job is still running when the time is up, call it again.",
@@ -1178,7 +1189,8 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
         | Action::CaptionsAnimate
         | Action::MotionReel
         | Action::MediaProbe
-        | Action::SceneTimeline => motion_schema(tool.name),
+        | Action::SceneTimeline
+        | Action::GenevaExplain => motion_schema(tool.name),
         Action::WatchRender
         | Action::StockSheet
         | Action::CraftCritique
@@ -1809,6 +1821,17 @@ fn motion_schema(name: &str) -> Option<Value> {
             );
             object(properties, &["path"])
         }
+        "geneva_explain" => {
+            let mut properties = Map::new();
+            properties.insert(
+                "code".to_owned(),
+                json!({
+                    "type": "string",
+                    "description": "The diagnostic code (E302) or a refusal sentence that carries one; its first code-shaped token is the code asked about."
+                }),
+            );
+            object(properties, &["code"])
+        }
         "scene_timeline" => {
             // The storyboard's own shape, the same document
             // motion_reel takes.
@@ -1858,15 +1881,17 @@ fn motion_schema(name: &str) -> Option<Value> {
                         "layers": { "type": "array", "items": layer },
                         "ops": { "type": "array", "items": {} },
                         "grade": { "type": "object",
-                                   "description": "The scene's colour grade: one of the emotion read's temperatures (hot, sickly, cold, warm, balanced, cool, split) with its own tuning, `amount` 0-1 scaling the cast, optional saturate/contrast/brightness overrides, and a brand `tint` as #rrggbb worn instead of the stock cast. Baked in under the comp's own words as backdrop-filter plus a soft-light cast - the LUT approximation a comp carries." },
+                                   "description": "The scene's colour grade: one of the emotion read's temperatures (hot, sickly, cold, warm, balanced, cool, split) with its own tuning, `amount` 0-1 scaling the cast, optional saturate/contrast/brightness overrides, a `hue` turn in degrees (-360..360) that rotates the whole palette, and a brand `tint` as #rrggbb worn instead of the stock cast. Baked in under the comp's own words as backdrop-filter (saturate, hue-rotate, contrast, brightness) plus a soft-light cast - the LUT approximation a comp carries." },
                         "style": { "type": "string", "enum": ["calm", "punchy", "editorial"],
                                    "description": "The personality the scene wears over its layout: the weight the type carries, the tracking, the easing hand, the tempo - and the colour when no grade is named. One layout, three moods." },
                         "transition": { "type": "object",
                                          "description": "The choreographed cut INTO this scene: whip-pan (direction, seconds), zoom-through, inverse-zoom, rack-focus (radius), velocity-match or stagger-exit (step)." },
                         "exit": { "type": "object",
                                   "description": "This scene's own way OUT, when the next scene names no transition of its own." },
+                        "act": { "type": "string", "enum": ["hook", "setup", "tension", "turn", "reveal", "proof", "cta"],
+                                 "description": "The act the scene plays in, as the emotion read names it. A pulse that names no curve of its own gets the act's - calm for the hook, wound for the tension, the overshoot for the reveal; a pulse that names a curve keeps it." },
                         "pulse": { "type": "object",
-                                   "description": "The audio-driven keyframes: beats (measured times), driven (scale|opacity|position), amount, release, curve, nodes." }
+                                   "description": "The audio-driven keyframes: beats (measured times), driven (scale|opacity|position), amount, release, curve (a name from the easing library - bounce, spring-pop, typewriter - or a full curve object), nodes." }
                     }
                 });
                 json!({
@@ -2056,6 +2081,7 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         Action::MotionReel => crate::motion::reel(arguments, backend),
         Action::MediaProbe => crate::motion::media_probe(arguments),
         Action::SceneTimeline => crate::motion::scene_timeline(arguments, backend),
+        Action::GenevaExplain => crate::motion::geneva_explain(arguments),
         Action::WatchRender => crate::sense::watch_render(arguments, backend),
         Action::StockSheet => crate::sense::stock_contact_sheet(arguments, backend),
         Action::CraftCritique => crate::sense::craft_critique(arguments, backend),
@@ -3246,6 +3272,7 @@ mod tests {
                 json!({ "path": "/tmp/Cut", "video": { "width": 1920, "height": 1080, "rateNum": 30000, "rateDen": 1001 } }),
             ),
             ("media_probe", json!({ "path": "/tmp/a.mp4" })),
+            ("geneva_explain", json!({ "code": "E302" })),
             (
                 "media_import",
                 json!({ "path": "/tmp/Cut", "file": "/tmp/a.mp4" }),
@@ -3613,7 +3640,8 @@ mod tests {
                 | Action::CaptionsAnimate
                 | Action::MotionReel
                 | Action::MediaProbe
-                | Action::SceneTimeline => {
+                | Action::SceneTimeline
+                | Action::GenevaExplain => {
                     continue;
                 }
                 // The sense tools run Python, ffmpeg or a project; a unit
@@ -4115,7 +4143,7 @@ mod tests {
                 .unwrap_or_else(|why| panic!("reading {relative}: {why}"))
         };
 
-        // The README's badge line: "**90 tools**" is the shape it takes,
+        // The README's badge line: "**91 tools**" is the shape it takes,
         // wrapped over as many lines as the sentence needs.
         let readme = read("README.md");
         let stated: Vec<&str> = readme
@@ -4210,7 +4238,7 @@ mod tests {
             ["export_cancel", "project_close"],
             "the paste-ready allowlist leaves out exactly the two its comment names"
         );
-        // And the count the comment claims: "88 of the 90 tools".
+        // And the count the comment claims: "89 of the 91 tools".
         if let Some(rest) = forge.split(" of the ").nth(1) {
             let said: usize = rest
                 .split(|c: char| !c.is_ascii_digit())

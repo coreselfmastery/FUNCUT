@@ -1236,6 +1236,67 @@ pub fn scene_timeline(arguments: Value, backend: &dyn Backend) -> Result<Outcome
     Ok(Outcome::json(reply))
 }
 
+/// `geneva_explain`: what a diagnostic code means, in the engine's own
+/// words - `geneva explain E302` at the MCP surface, so an agent that
+/// meets a refusal can read any code it carries without shelling out.
+/// The refusals the motion tools return have already consulted this for
+/// their first diagnostic; this is the door for the second and third
+/// codes, and for a code the engine printed anywhere else.
+pub fn geneva_explain(arguments: Value) -> Result<Outcome, ApiError> {
+    let fields = arguments
+        .as_object()
+        .cloned()
+        .ok_or_else(|| ApiError::invalid("invalid arguments: the arguments are an object"))?;
+    for key in fields.keys() {
+        if key != "code" {
+            return Err(ApiError::invalid(format!(
+                "invalid arguments: unknown field `{key}`"
+            )));
+        }
+    }
+    let text = fields
+        .get("code")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|code| !code.is_empty())
+        .ok_or_else(|| ApiError::invalid("invalid arguments: `code` is required"))?;
+    // The code: the whole argument when it is one (`E302`), or the
+    // first code-shaped token of a diagnostic pasted whole - the shape
+    // is an uppercase letter and the digits after it, which is how the
+    // sidecar numbers its own refusals.
+    let shaped = |token: &str| {
+        let mut characters = token.chars();
+        characters
+            .next()
+            .is_some_and(|first| first.is_ascii_uppercase())
+            && characters.all(|c| c.is_ascii_digit())
+    };
+    let code = if shaped(text) {
+        text.to_owned()
+    } else {
+        text.split(|c: char| !c.is_ascii_alphanumeric())
+            .find(|token| token.len() > 1 && shaped(token))
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                ApiError::invalid(
+                    "invalid arguments: `code` is a diagnostic code (E302) or a \
+                     refusal that carries one",
+                )
+            })?
+    };
+    let engine = geneva()?;
+    let Some(meaning) = engine.explain(&code) else {
+        return Err(ApiError::failed(format!(
+            "the engine had nothing to say about {code:?} - a code the sidecar \
+             knows is one of its own refusals",
+        )));
+    };
+    Ok(Outcome::json(json!({
+        "code": code,
+        "meaning": meaning,
+    })))
+}
+
 /// Whether the motion tools can reach an engine at all, for the catalogue
 /// to say so in its own words.
 pub fn engine_available() -> bool {

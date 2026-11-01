@@ -3612,6 +3612,79 @@ mod tests {
         );
     }
 
+    /// The act a scene plays in chooses its pulse's hand, wired in from
+    /// the storyboard: the emotion read's curve for the act - calm for
+    /// the hook, the overshoot for the reveal - replaces the pulse's
+    /// default spring, and a pulse that names its own curve keeps it.
+    #[test]
+    fn an_act_chooses_the_pulse_curve_when_nobody_else_did() {
+        let storyboard = crate::storyboard::Storyboard::parse(
+            r##"{ "scenes": [
+                   { "preset": "funcut.chart.bars", "hold": 5.0,
+                     "act": "hook",
+                     "pulse": { "beats": [0.98], "driven": "scale",
+                                "amount": 0.05, "release": 0.32 } },
+                   { "preset": "funcut.chart.bars", "hold": 5.0,
+                     "act": "reveal",
+                     "pulse": { "beats": [0.98], "driven": "scale",
+                                "amount": 0.05, "release": 0.32,
+                                "curve": "bounce" } },
+                   { "preset": "funcut.chart.bars", "hold": 5.0,
+                     "pulse": { "beats": [0.98], "driven": "scale",
+                                "amount": 0.05, "release": 0.32 } } ] }"##,
+        )
+        .expect("a storyboard");
+        let sequence = storyboard.sequence(Path::new(".")).expect("a sequence");
+        let planned = plan(&geneva(), &sequence).expect("a plan");
+        let bump_of = |scene: usize| {
+            planned.document["layers"]
+                .as_array()
+                .expect("layers")
+                .iter()
+                .find(|layer| layer["id"] == json!(format!("s{scene}.sheet")))
+                .expect("the chart's sheet")["clips"][0]["transform"]["scale"]
+                .as_object()
+                .expect("the pulse landed")["keyframes"]
+                .as_array()
+                .expect("the keys")
+                .clone()
+        };
+        // The hook's bump: the read's own ease-out, not the default
+        // spring the pulse was born with.
+        let hook = bump_of(0);
+        let hook_bump = hook
+            .iter()
+            .find(|key| key[1].as_f64() == Some(1.05))
+            .expect("the hook's bump");
+        assert_eq!(
+            hook_bump[2],
+            json!({ "cubic-bezier": [0.0, 0.0, 0.58, 1.0] }),
+            "the hook pulses calm: {hook_bump:?}"
+        );
+        // The reveal names bounce and keeps it - the author's hand beats
+        // the read's, which would have given it the spring-pop.
+        let reveal = bump_of(1);
+        let reveal_bump = reveal
+            .iter()
+            .find(|key| key[1].as_f64() == Some(1.05))
+            .expect("the reveal's bump");
+        assert!(
+            reveal_bump[2].get("linear").is_some(),
+            "a named curve is kept: {reveal_bump:?}"
+        );
+        // And a scene that names no act keeps the default spring: the
+        // wiring adds a hand, it does not take one away.
+        let plain = bump_of(2);
+        let plain_bump = plain
+            .iter()
+            .find(|key| key[1].as_f64() == Some(1.05))
+            .expect("the plain bump");
+        assert!(
+            plain_bump[2].get("spring").is_some(),
+            "the default spring stays: {plain_bump:?}"
+        );
+    }
+
     /// The grade, from a storyboard: the scene wears its act's
     /// temperature, baked into the plan as the comp's first paint - the
     /// cold hook over the plate, the comp's own words untouched above

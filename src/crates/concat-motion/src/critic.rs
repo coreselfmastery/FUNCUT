@@ -43,7 +43,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 
-use crate::comp::{Comp, Node};
+use crate::comp::{Comp, Node, NodeKind};
 use crate::curve::Curve;
 
 /// One fix, as the critic writes it: a where, a problem, a change with
@@ -121,6 +121,69 @@ pub fn apply(comp: &mut Comp, fixes: &[Fix]) -> Report {
         }
     }
     report
+}
+
+/// The comp's score on the contact-sheet floors, 0 to 10 - the number
+/// the critic loop converges. The vision critic reads frames and
+/// answers in prose; this is the same judgement reduced to what a
+/// document can say without eyes, so "applying the fixes raises the
+/// score above 7" is a thing a test - and a loop - can hold:
+///
+/// * a document that fails its own contract costs 2 a problem;
+/// * an element the frame clips costs 4 - the defect the contact
+///   sheet's reader names first and loudest;
+/// * an element the reel never shows costs 2.
+///
+/// A comp that carries none of that is a 10. The floors the CI holds
+/// scenes to are the same arithmetic in smaller clothes.
+pub fn score(comp: &Comp) -> f64 {
+    let mut score = 10.0;
+    // The contract first: a comp that does not hold it is a comp the
+    // engine may refuse to draw at all.
+    score -= 2.0 * comp.validate().len() as f64;
+    for node in &comp.nodes {
+        if clipped(comp, node) {
+            score -= 4.0;
+        }
+        // Never shows: an element whose entrance sits beyond the
+        // comp's own end. `duration: 0` runs to the end, so only a
+        // `start` past it is invisible.
+        if node.duration != 0.0 && node.start + node.duration <= 0.0 || node.start > comp.duration {
+            score -= 2.0;
+        }
+    }
+    score.clamp(0.0, 10.0)
+}
+
+/// Whether the frame clips a node: its placed centre plus its own box,
+/// which is exactly the arithmetic the convergence test's chart was
+/// refused by. A node the document never places is centred by the
+/// engine and so never clipped; a node whose size is its content's own
+/// (text, pictures, paths) is measured by its render, not its box, and
+/// is left to the eyes of the vision critic.
+fn clipped(comp: &Comp, node: &Node) -> bool {
+    let Some(at) = placed_at(node) else {
+        return false;
+    };
+    let (width, height) = match &node.kind {
+        NodeKind::Rect { width, height, .. }
+        | NodeKind::Ellipse { width, height, .. }
+        | NodeKind::Html { width, height, .. } => (
+            width.resolve(comp.width as f64),
+            height.resolve(comp.height as f64),
+        ),
+        _ => return false,
+    };
+    let Some((width, height)) = width.zip(height) else {
+        return false;
+    };
+    let scale = node.transform.scale.abs();
+    let half_width = width * scale / 2.0;
+    let half_height = height * scale / 2.0;
+    at.x - half_width < -1e-9
+        || at.x + half_width > comp.width as f64 + 1e-9
+        || at.y - half_height < -1e-9
+        || at.y + half_height > comp.height as f64 + 1e-9
 }
 
 /// One fix, applied - or the reason it cannot be.
@@ -480,6 +543,61 @@ mod tests {
             "the chart fits: {x}"
         );
         assert!((chart.start - 0.4).abs() < 1e-9, "nothing is early");
+
+        // The score the loop converges, in numbers: the broken scene
+        // sat under the 7 floor - a clipped element is the defect the
+        // contact sheet names first - and the fixed one clears it.
+        let broken = comp_of(vec![chart_node()]);
+        let before = score(&broken);
+        assert!(
+            before < 7.0,
+            "the broken scene scores {before}, under the 7 floor"
+        );
+        let fixed = score(&comp);
+        assert!(
+            fixed > 7.0,
+            "the fixed scene scores {fixed}, above the 7 floor"
+        );
+        assert!(
+            fixed > before,
+            "the fixes raised the score, not just moved it"
+        );
+        // And the loop's own next critique has nothing left to name.
+        assert_eq!(fixed, 10.0, "a comp with no named defect is a 10");
+    }
+
+    /// The floors the score charges, one defect at a time: a clean comp
+    /// is a 10, a clipped element costs 4, an element the reel never
+    /// shows costs 2, and the floor is 0 - a comp cannot score below
+    /// the sheet it is judged on.
+    #[test]
+    fn the_score_costs_what_the_contact_sheet_names() {
+        // Clean: the chart, centred, inside the frame.
+        let mut centred = chart_node();
+        centred.transform.position = Some(Point::new(960.0, 540.0));
+        let clean = comp_of(vec![centred]);
+        assert!(clean.validate().is_empty(), "{:?}", clean.validate());
+        assert_eq!(score(&clean), 10.0);
+
+        // Clipped: the chart as the broken scene carries it.
+        let clipped = comp_of(vec![chart_node()]);
+        assert_eq!(score(&clipped), 6.0, "a clipped element costs 4");
+
+        // Never shows: an entrance past the comp's own end.
+        let mut late = chart_node();
+        late.transform.position = Some(Point::new(960.0, 540.0));
+        late.start = 5.0;
+        let never = comp_of(vec![late]);
+        assert_eq!(score(&never), 8.0, "an unseen element costs 2");
+
+        // Both: 10 - 4 - 2.
+        let mut both = chart_node();
+        both.start = 5.0;
+        assert_eq!(score(&comp_of(vec![both])), 4.0);
+
+        // And the floor: five clipped elements cannot score -10.
+        let many = (0..5).map(|_| chart_node()).collect();
+        assert_eq!(score(&comp_of(many)), 0.0, "the floor is 0");
     }
 
     /// The word forms the critic actually writes: "left 120px" is

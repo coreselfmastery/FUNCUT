@@ -1233,3 +1233,49 @@ parts, resumed after one marker was deleted (one part drawn, four
 served); the wobble's 21 keys, ±19 px of wander and the cover growth
 read straight out of the emitted timeline; and every golden frame at
 DSSIM 0.00000 against its committed image.
+
+## 28. The plan's last four gaps, closed
+
+The Geneva integration plan had ten steps, and the audit that re-read
+them against the tree found ten built - and four places where what
+shipped was beside the plan's own words rather than on them. This
+change closes the four, each in the shape the plan asked for.
+
+**What changed:**
+
+- **`hue-rotate()` in the grade (step 8).** The LUT approximation was
+  `saturate() contrast() brightness()` plus a soft-light cast; the plan
+  named `saturate() hue-rotate() contrast()`. The grade now carries a
+  `hue` field - degrees, -360..360, overridable per scene - emitted
+  between the saturation and the contrast, and the temperatures that
+  need a wheel turn carry one (`sickly` +25°, `split` -5°); the cast
+  still does most of the hue work, and the warm/cold CI shifts are
+  unchanged.
+- **The critic score, as a number (step 6).** "Applying the fixes
+  converges the score above 7" was held as "the defects are gone";
+  `critic::score` makes it a number the loop can steer by: 10 to
+  start, a contract problem -2, a clipped element -4, an element the
+  reel never shows -2. The convergence test now asserts the broken
+  scene scores 6 and the fixed one 10.
+- **The act wired into the planner (step 4).** `curve_for_act` was
+  exported for callers to translate; now a scene card names its `act`
+  (hook, setup, tension, turn, reveal, proof, cta) and the planner
+  gives a pulse that names no curve of its own the act's curve - calm
+  for the hook, the overshoot for the reveal. A pulse that names a
+  curve keeps it, and the pulse's `curve` field now takes a library
+  name (`"bounce"`) as well as a full curve object, the same two forms
+  `fadeCurve` always took.
+- **`geneva_explain` as an MCP tool (step 7).** The engine's own
+  answer to "what does E302 mean" was consulted inside refusals only;
+  it is now a tool of its own - `code` is the code or a refusal
+  sentence pasted whole, its first code-shaped token picked out - the
+  door for the second and third codes a refusal carries. The catalogue
+  is 91 tools; the README, FEATURES, MCP.md and the Forge allowlist
+  all say so, held by the count test.
+
+Verified: `cargo test -p concat-motion` - 268 tests and the doctests,
+green, including the new `an_act_chooses_the_pulse_curve_when_nobody_
+else_did`, `the_score_costs_what_the_contact_sheet_names` and the
+three `hue-rotate` tests; `concat-mcp`'s count test holds 91 against
+every document. The tool itself needs the sidecar and the ffmpeg
+headers, so its build is CI's to run.

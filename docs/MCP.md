@@ -130,9 +130,10 @@ carries its JSON result in the status's `output`:
   status.
 
 The motion layer - the design door the director skill's Phase 5b assumes -
-is seven tools: six thin wrappers over the `concat-motion` crate here (the same
-vocabulary the `concat-motion-agent` CLI speaks), plus `motion_overlay`, the
-compositing path over real footage, documented with the perception tools below:
+is ten tools: eight thin wrappers over the `concat-motion` crate here (the same
+vocabulary the `concat-motion-agent` CLI speaks), `geneva_explain` for the
+engine's own diagnostic codes, plus `motion_overlay`, the compositing path
+over real footage, documented with the perception tools below:
 
 - `motion_presets` - the twelve motion-graphics presets (lower thirds,
   kinetic captions, stat cards, wordmark stings, pull quotes, chapter
@@ -190,6 +191,13 @@ compositing path over real footage, documented with the perception tools below:
   Nothing renders, nothing is written; a board that does not validate is
   refused with the scene named and `geneva explain` already consulted
   for the first diagnostic's code.
+- `geneva_explain` - what a diagnostic code means, in the engine's own
+  words: `code` is the code itself (E103, W210) or a refusal sentence
+  pasted whole, its first code-shaped token picked out, and the reply is
+  the sentence that says what the engine meant and how to fix it. The
+  refusals the motion tools return have already consulted it for their
+  first diagnostic; this is the door for the second and third codes a
+  refusal carries, and for a code the engine printed anywhere else.
 
 ## Perception and the creative loop (nine more tools)
 

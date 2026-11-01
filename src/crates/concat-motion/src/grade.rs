@@ -6,12 +6,13 @@
 //! A LUT is a lookup table the footage passes through, and a comp cannot
 //! carry one - but it can carry the CSS that approximates it: a
 //! full-bleed box, first in the comp's paint order, whose
-//! `backdrop-filter` (`saturate()`, `contrast()`, `brightness()`) does
-//! the tonal work and whose translucent tint, blended `soft-light`, does
-//! the cast. What the engine has under that box - the scene's plate, the
-//! layers beneath - is what gets graded; the comp's own words stay as
-//! inked, which is the whole point of grading inside the comp rather
-//! than over the render.
+//! `backdrop-filter` (`saturate()`, `hue-rotate()`, `contrast()`,
+//! `brightness()`) does the tonal work and the hue turn, and whose
+//! translucent tint, blended `soft-light`, does the cast. What the
+//! engine has under that box - the scene's plate, the layers beneath -
+//! is what gets graded; the comp's own words stay as inked, which is
+//! the whole point of grading inside the comp rather than over the
+//! render.
 //!
 //! The temperatures are the seven the emotion read names for a line
 //! (`cold`, `warm`, `cool`, `hot`, `sickly`, `split`, `balanced`), so
@@ -68,6 +69,12 @@ struct Tuning {
     saturate: f64,
     contrast: f64,
     brightness: f64,
+    /// The hue move, in degrees of `hue-rotate()`: 0 is none. The cast
+    /// does most of a temperature's hue work; this is the move that
+    /// turns the whole picture's palette rather than laying a colour
+    /// over it - the LUT approximation's third leg, for the
+    /// temperatures whose shift is not one colour deep.
+    hue: f64,
     /// The cast, as 8-bit RGB and an alpha. `None` is no cast at all.
     cast: Option<([u8; 3], f64)>,
     /// The second cast of a split grade; ignored unless `cast` is some.
@@ -80,6 +87,7 @@ fn tuning(temperature: Temperature) -> Tuning {
             saturate: 1.20,
             contrast: 1.12,
             brightness: 0.98,
+            hue: 0.0,
             cast: Some(([255, 120, 60], 0.26)),
             counter: None,
         },
@@ -87,6 +95,9 @@ fn tuning(temperature: Temperature) -> Tuning {
             saturate: 0.80,
             contrast: 1.06,
             brightness: 0.97,
+            // The whole palette leans green-yellow, not just the cast
+            // over it: the wrong kind of quiet is a wheel turned.
+            hue: 25.0,
             cast: Some(([150, 160, 60], 0.20)),
             counter: None,
         },
@@ -94,6 +105,7 @@ fn tuning(temperature: Temperature) -> Tuning {
             saturate: 0.88,
             contrast: 1.10,
             brightness: 0.94,
+            hue: 0.0,
             cast: Some(([24, 68, 102], 0.28)),
             counter: None,
         },
@@ -101,6 +113,7 @@ fn tuning(temperature: Temperature) -> Tuning {
             saturate: 1.12,
             contrast: 1.04,
             brightness: 1.02,
+            hue: 0.0,
             cast: Some(([255, 178, 92], 0.22)),
             counter: None,
         },
@@ -108,6 +121,7 @@ fn tuning(temperature: Temperature) -> Tuning {
             saturate: 1.0,
             contrast: 1.0,
             brightness: 1.0,
+            hue: 0.0,
             cast: None,
             counter: None,
         },
@@ -115,6 +129,7 @@ fn tuning(temperature: Temperature) -> Tuning {
             saturate: 0.92,
             contrast: 1.03,
             brightness: 0.99,
+            hue: 0.0,
             cast: Some(([96, 128, 168], 0.22)),
             counter: None,
         },
@@ -122,6 +137,9 @@ fn tuning(temperature: Temperature) -> Tuning {
             saturate: 1.15,
             contrast: 1.07,
             brightness: 1.0,
+            // The split's own small wheel turn: cools deepen a touch so
+            // the orange highs read warmer against them.
+            hue: -5.0,
             cast: Some(([18, 86, 120], 0.24)),
             counter: Some([255, 150, 60]),
         },
@@ -153,6 +171,12 @@ pub struct Grade {
     /// `brightness()`, 1 untouched.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub brightness: Option<f64>,
+    /// `hue-rotate()`, in degrees: -360 to 360, 0 untouched. The move
+    /// that turns the palette itself rather than laying a cast over
+    /// it - the third leg of the LUT approximation beside `saturate()`
+    /// and `contrast()`. Overrides the temperature's own turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hue: Option<f64>,
     /// The brand's own colour as the cast, `#rrggbb` or `#rrggbbaa`,
     /// worn instead of the temperature's stock cast. On a split grade it
     /// replaces the gradient with the one colour.
@@ -178,6 +202,7 @@ impl Grade {
             saturate: None,
             contrast: None,
             brightness: None,
+            hue: None,
             tint: None,
         }
     }
@@ -207,6 +232,14 @@ impl Grade {
                 ));
             }
         }
+        if let Some(hue) = self.hue
+            && (!hue.is_finite() || !(-360.0..=360.0).contains(&hue))
+        {
+            problems.push(format!(
+                "the grade's `hue` is {}, and it is between -360 and 360 degrees",
+                number(hue)
+            ));
+        }
         if let Some(tint) = &self.tint {
             if parse_tint(tint).is_none() {
                 problems.push(format!(
@@ -229,17 +262,27 @@ impl Grade {
         let saturate = self.saturate.unwrap_or(tuning.saturate);
         let contrast = self.contrast.unwrap_or(tuning.contrast);
         let brightness = self.brightness.unwrap_or(tuning.brightness);
+        let hue = self.hue.unwrap_or(tuning.hue);
         let mut moves = String::new();
+        // The LUT approximation's three legs, in the order a colourist
+        // thinks them: the saturation, the hue turn, the contrast, the
+        // level.
         for (value, name) in [
             (saturate, "saturate"),
+            (hue, "hue-rotate"),
             (contrast, "contrast"),
             (brightness, "brightness"),
         ] {
-            if (value - 1.0).abs() > 1e-9 {
+            let said = if name == "hue-rotate" {
+                format!("{name}({}deg)", number(value))
+            } else {
+                format!("{name}({})", number(value))
+            };
+            if (value - if name == "hue-rotate" { 0.0 } else { 1.0 }).abs() > 1e-9 {
                 if !moves.is_empty() {
                     moves.push(' ');
                 }
-                moves.push_str(&format!("{name}({})", number(value)));
+                moves.push_str(&said);
             }
         }
         // The cast, as the engine wears it: the temperature's own colour
@@ -294,9 +337,11 @@ impl Grade {
     pub fn is_identity(&self) -> bool {
         let tuning = tuning(self.temperature);
         let untouched = |value: f64| (value - 1.0).abs() <= 1e-9;
+        let no_turn = |value: f64| value.abs() <= 1e-9;
         untouched(self.saturate.unwrap_or(tuning.saturate))
             && untouched(self.contrast.unwrap_or(tuning.contrast))
             && untouched(self.brightness.unwrap_or(tuning.brightness))
+            && no_turn(self.hue.unwrap_or(tuning.hue))
             && (tuning.cast.is_none() || self.amount <= 1e-9)
             && self.tint.is_none()
     }
@@ -492,6 +537,54 @@ mod tests {
         let none = grade_from(r#"{"temperature": "warm", "amount": 0}"#).stylesheet();
         assert!(!none.contains("background:"), "{none}");
         assert!(!none.contains("soft-light"), "{none}");
+    }
+
+    #[test]
+    fn a_sickly_grade_turns_the_whole_wheel_not_just_the_cast() {
+        // The wrong kind of quiet is a palette turned green-yellow:
+        // `hue-rotate()` between the saturation and the contrast, the
+        // LUT approximation's third leg.
+        let css = grade_from(r#"{"temperature": "sickly"}"#).stylesheet();
+        assert!(
+            css.contains(
+                "backdrop-filter:saturate(0.8) hue-rotate(25deg) contrast(1.06) brightness(0.97);"
+            ),
+            "{css}"
+        );
+        // The split turns the other way, a touch, so its orange highs
+        // read warmer against deepened cools.
+        let split = grade_from(r#"{"temperature": "split"}"#).stylesheet();
+        assert!(split.contains("hue-rotate(-5deg)"), "{split}");
+    }
+
+    #[test]
+    fn a_hue_override_replaces_the_temperatures_own_turn() {
+        let css = grade_from(r#"{"temperature": "cold", "hue": -20}"#).stylesheet();
+        assert!(css.contains("hue-rotate(-20deg)"), "{css}");
+        // A zero override is no turn at all, even on a temperature that
+        // carries one: the override wins both ways.
+        let flat = grade_from(r#"{"temperature": "sickly", "hue": 0}"#).stylesheet();
+        assert!(!flat.contains("hue-rotate"), "{flat}");
+        // And a hue alone on the balanced base is a grade - a neutral
+        // wheel turn asked for by name.
+        let turn = grade_from(r#"{"hue": 12}"#);
+        assert!(!turn.is_identity());
+        assert!(turn.stylesheet().contains("hue-rotate(12deg)"));
+        // The reading form is the writing form.
+        let written = serde_json::to_string(&turn).expect("writes");
+        let read_back: Grade = serde_json::from_str(&written).expect("reads back");
+        assert_eq!(read_back, turn);
+    }
+
+    #[test]
+    fn a_hue_beyond_the_wheel_is_named_as_the_mistake_it_is() {
+        let problems = grade_from(r#"{"temperature": "warm", "hue": 400}"#).problems();
+        assert!(
+            problems.iter().any(|p| p.contains("`hue` is 400")),
+            "{problems:?}"
+        );
+        let mut comp = empty_comp();
+        assert!(apply(&mut comp, &grade_from(r#"{"hue": 720}"#)).is_err());
     }
 
     #[test]

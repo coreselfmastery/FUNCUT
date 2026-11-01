@@ -139,11 +139,27 @@ opt-level = 2
 
 # No incremental caches for the everyday check-and-test builds; see
 # .cargo/config.toml for why it is said here and not there.
+#
+# Line tables, not full debug information. These profiles optimise every
+# dependency to level 2 (the override above), and a rustc emitting full
+# DWARF over that asks more of a machine than the small ones this fork is
+# for have: the out-of-memory killer takes the build and the shell with
+# it, which from the chair looks like the machine crashed. Measured on a
+# 4 GB machine, cold at the default two jobs: the engine's tests build
+# with 2.5 GB of memory to spare and the largest single rustc at 0.9 GB -
+# with full debug information the same build had been killed outright,
+# one rustc over the wgpu tree at one job asking more than the machine
+# had. Line tables keep a panic's backtrace down to its file and line -
+# what a failing test needs, and what CI reads out of one. Full debug
+# information stays one variable away for a debugging session on a
+# machine that can afford it: CARGO_PROFILE_DEV_DEBUG=2 cargo test.
 [profile.dev]
 incremental = false
+debug = "line-tables-only"
 
 [profile.test]
 incremental = false
+debug = "line-tables-only"
 
 # Slint's Skia renderer, as published, with one change: text is pixel-snapped
 # on a low-density screen (see patches/README.md). The copy is 1.18.1 exactly;

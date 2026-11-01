@@ -256,13 +256,11 @@ jobs:
 
       # The crates the motion work touches, built and tested against the
       # dance: the document library, the timeline model and the MCP
-      # server that drives them all. One job wide and no debug info, the
-      # same memory treatment ci.yml gives itself.
+      # server that drives them all. One job wide, the same memory
+      # treatment ci.yml gives itself.
       - name: The motion stack's tests
         working-directory: src
         timeout-minutes: 45
-        env:
-          CARGO_PROFILE_DEV_DEBUG: "0"
         run: cargo test -p concat-motion -p concat-core -p concat-mcp -j 1
       # And the example, under the full environment, asserted to exist.
       - name: The example, rendered under the full environment

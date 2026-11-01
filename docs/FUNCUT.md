@@ -226,6 +226,17 @@ The `--jobs 2` keeps two `rustc`s from squabbling over your RAM; expect
 the first build to take an hour or three. Later builds are incremental
 and much faster.
 
+The everyday commands - `cargo build`, `cargo test`, `cargo clippy` -
+need none of that care. Their profiles carry line tables instead of full
+debug information (`[profile.dev]` in `src/Cargo.toml`), which is what
+keeps a `rustc` working over the wgpu tree inside four gigabytes: full
+DWARF on top of the optimised dependencies is what used to see the
+build, and the shell with it, killed outright. A failing test's
+backtrace still names its file and line. If you need to step through
+the engine in a debugger, put the debug information back for that one
+command - `CARGO_PROFILE_DEV_DEBUG=2 cargo test` - and give yourself
+the swap below first.
+
 **Give yourself swap first.** Even the quick profile has moments where one
 crate wants more memory than a 4 GB machine has free, and a compile that
 dies to the out-of-memory killer has to start over. Zram (compressed swap

@@ -206,10 +206,10 @@ jobs:
       # before tests: they finish in a fraction of the time and catch the
       # most.
       #
-      # One job at a time and no debug info, the same treatment the test
-      # build below gives itself: with the default four jobs, the whisper,
-      # Slint and ort crates are checked at once and the runner is killed
-      # for its memory mid-lint. Every run of the Linux-only tree ended
+      # One job at a time, the same treatment the test build below gives
+      # itself: with the default four jobs, the whisper, Slint and ort
+      # crates are checked at once and the runner is killed for its
+      # memory mid-lint. Every run of the Linux-only tree ended
       # that way, at concat-speech, behind what looked like an infra
       # failure (exit code 143) that kept the last lints from ever being
       # named.
@@ -223,19 +223,17 @@ jobs:
       - run: cargo clippy --workspace --all-targets -j 1 -- -D warnings
         timeout-minutes: 75
         working-directory: src
-        env:
-          CARGO_PROFILE_DEV_DEBUG: "0"
 
       # The tests are compiled in a step of their own, so a slow compile
       # and a slow test are told apart by which step ran out of time. One
-      # job at a time and no debug info, to stay inside the runner's
-      # memory; the run below finds everything already built.
+      # job at a time, to stay inside the runner's memory; the line tables
+      # the dev profile carries instead of full debug information (see
+      # [profile.dev] in Cargo.toml) do the rest, and the run below finds
+      # everything already built.
       # A cold cache, one build job at a time, has run past 25 minutes.
       - name: Build the tests
         timeout-minutes: 50
         working-directory: src
-        env:
-          CARGO_PROFILE_DEV_DEBUG: "0"
         run: cargo nextest run --workspace --no-run --build-jobs 1
       # CONCAT_REQUIRE_GPU: the GPU tests fail rather than skip when no
       # adapter is usable, so the parity suite is known to have run. The
@@ -244,7 +242,6 @@ jobs:
         timeout-minutes: 20
         working-directory: src
         env:
-          CARGO_PROFILE_DEV_DEBUG: "0"
           CONCAT_REQUIRE_GPU: "1"
         run: |
           set -o pipefail
@@ -256,18 +253,14 @@ jobs:
       - name: Run the documentation's examples
         timeout-minutes: 10
         working-directory: src
-        env:
-          CARGO_PROFILE_DEV_DEBUG: "0"
         run: cargo test --workspace --doc -j 1
       # The gRPC transport is a feature nothing else in the workspace turns
       # on, so it is linted and tested here on its own. See concat-server.
-      # One job at a time and no debug info, like the lint above and the
-      # test build below it: the tonic stack is checked from nothing here.
+      # One job at a time, like the lint above and the test build below
+      # it: the tonic stack is checked from nothing here.
       - run: cargo clippy -p concat-server -p concat-cli --features grpc --all-targets -j 1 -- -D warnings
         timeout-minutes: 20
         working-directory: src
-        env:
-          CARGO_PROFILE_DEV_DEBUG: "0"
       - name: Run the gRPC tests
         timeout-minutes: 10
         working-directory: src

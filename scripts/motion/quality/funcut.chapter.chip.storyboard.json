@@ -1,0 +1,13 @@
+{
+  "source_dir": "",
+  "assets": {
+    "back": "scripts/motion/quality/plates/plate_studio.png"
+  },
+  "scenes": [
+    {
+      "comp": "src/crates/concat-motion/examples/comps/funcut.chapter.chip.json",
+      "plate": "back",
+      "zoom": 0.04
+    }
+  ]
+}

@@ -57,7 +57,14 @@ Linux-only, so there is no "ignored on macOS" class to carry.
   and then renders the multi-layer example through the real sidecar on
   every push to `main` and every pull request; the motion crate's tests
   are counted in the 1355, and the render is the check the count cannot
-  express.
+  express. The lane also runs **the scene-quality regression**
+  (`scripts/motion/scene-quality.py`): ten reference storyboards, each
+  rendered through the sidecar at sampled instants, measured with the
+  sense layer's own pixel metrics, scored with the critic's own
+  heuristic, and held to a floor recorded in
+  `scripts/motion/quality-manifest.json`. A change that makes a scene
+  render worse - while every test stays green - fails there; a floor
+  moved on purpose is `--refresh`, with the reason said in the commit.
 - **The engine lane is long** (about two hours) and its concurrency group
   cancels the older run when pushes land quickly, so the freshest green
   number on `main` can lag the tip by a few commits. The run's own log -

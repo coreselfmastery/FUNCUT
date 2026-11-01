@@ -157,6 +157,21 @@ jobs:
       - name: The styles, inspected
         run: python3 scripts/motion/inspect-styles.py check
 
+      # The scene-quality regression: ten reference scenes, each rendered
+      # through the same sidecar at sampled instants, measured with the
+      # sense layer's own pixel metrics, scored with the critic's own
+      # heuristic, and held to a floor recorded in the manifest. The one
+      # check that fails when a change makes the OUTPUT worse while the
+      # tests stay green - a font that stopped loading, an entrance that
+      # stopped entering, a colour that went grey. Re-measuring on
+      # purpose is --refresh, said in the commit.
+      - name: The scene quality, held to floors
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          (cd src && cargo build -q -p concat-motion --bin concat-motion-agent)
+          python3 scripts/motion/scene-quality.py --agent src/target/debug/concat-motion-agent
+
   # The long lane: the whole dependency dance, on a clean runner, every
   # version pinned. This is the recipe a session once improvised, made a
   # file; a step that only works on the machine it was written on fails

@@ -1,0 +1,18 @@
+{
+  "what": "The scene-quality regression: ten reference scenes, each scored by the critic's own heuristic over frames the real sidecar rendered, and held to a floor. A score below its floor fails CI - the only signal that catches the day a change makes the output worse while the tests stay green.",
+  "how": "scripts/motion/scene-quality.py renders each storyboard at the sampled instants (a plate under each comp, from the same deterministic generators the multi-layer example's assets come from), measures the frames with the sense layer's own pixel metrics, scores with sense.heuristic (no audio: still frames carry none, so every scene's sound axis sits at the same unmeasured 5.5), and compares to the floor. --refresh re-measures and prints these rows.",
+  "floors": "A floor sits 0.4 under the measured score: far enough that renderer jitter - a dHash bit, a rounding step - cannot fail it, close enough that a real regression - a font that stopped loading, an entrance that stopped entering, a colour that went grey, a plate that stopped compositing - does. Re-measure with --refresh when a change moves a score ON PURPOSE, and say in the commit why the scene got better or worse.",
+  "measured_at": "measured on the harness' first run, 2026-11-01, geneva 1.6.0, the sidecar pinned by scripts/ci/deps.lock",
+  "scenes": [
+    { "id": "funcut.lower-third.glass", "at": [0.4, 1.0, 2.5, 4.0, 5.5], "measured": 4.9, "floor": 4.5 },
+    { "id": "funcut.chart.bars", "at": [0.4, 1.0, 2.0, 3.5], "measured": 5.8, "floor": 5.4 },
+    { "id": "funcut.caption.kinetic", "at": [0.4, 1.0, 2.0, 3.2], "measured": 5.3, "floor": 4.9 },
+    { "id": "funcut.sting.wordmark", "at": [0.3, 0.8, 1.6, 2.8], "measured": 5.3, "floor": 4.9 },
+    { "id": "funcut.chapter.chip", "at": [0.4, 1.2, 2.5, 4.2], "measured": 4.1, "floor": 3.7 },
+    { "id": "funcut.cta.subscribe", "at": [0.4, 1.0, 2.2, 3.8], "measured": 4.5, "floor": 4.1 },
+    { "id": "funcut.ticker.count", "at": [0.4, 1.0, 2.0, 3.2], "measured": 4.9, "floor": 4.5 },
+    { "id": "funcut.stats.triptych", "at": [0.4, 1.2, 2.6, 4.2], "measured": 5.1, "floor": 4.7 },
+    { "id": "funcut.quote.pull", "at": [0.4, 1.0, 3.0, 5.0], "measured": 5.7, "floor": 5.3 },
+    { "id": "funcut.compare.split", "at": [0.4, 1.0, 2.2, 3.8], "measured": 5.7, "floor": 5.3 }
+  ]
+}

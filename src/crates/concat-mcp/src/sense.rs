@@ -720,9 +720,15 @@ pub fn watch_render(arguments: Value, backend: &mut dyn Backend) -> Result<Outco
         // in a tool call, so the sheet's `pngPath` is how the critic looks
         // at the same frames - without it the documented critique loop
         // could never see a picture at all.
+        //
+        // A relative name, held to the project by the base: an absolute
+        // path is refused outright on the window backend, which serves
+        // no write roots, and `--mcp auto` picks that backend whenever
+        // the window is open - the default deployment. The siblings
+        // (craft-history.json, the brief) pass relative names for
+        // exactly this reason.
         let n = NONCE.fetch_add(1, Ordering::Relaxed);
-        let sheet = Path::new(project)
-            .join("cache")
+        let sheet = Path::new("cache")
             .join("sense")
             .join(format!("sheet-{n}.png"));
         spec["out"] = json!(

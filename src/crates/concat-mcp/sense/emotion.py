@@ -201,10 +201,13 @@ _PHRASES = {
             "over the moon", "dream come true", "thank you"),
     "sadness": ("miss you", "miss them", "miss him", "miss her", "left behind",
                 "never came back", "all alone", "gone forever", "no one left"),
-    "surprise": ("cant believe", "wont believe", "no way", "plot twist",
+    "surprise": ("cant believe", "wont believe", "will not believe",
+                 "cannot believe", "could not believe", "no way", "plot twist",
                  "turns out", "here s the thing", "guess what",
                  "who would have thought", "hard to believe",
                  "believe it or not", "out of nowhere",
+                 "did not see that coming", "did not see it coming",
+                 "never saw it coming", "nobody saw it coming",
                  "hold on", "wait for it", "the truth is"),
 }
 
@@ -946,13 +949,32 @@ def extract(spec):
     return result
 
 
+# Words a stock query is better without: verbs, fillers and glue that
+# name no thing a camera could point at, which the noun picker in
+# `_queries` would otherwise hand to openvid_search as if they were the
+# subject - "believe rain" is not a shot anyone can find.
+_QUERY_FILLER = frozenset("""
+    believe believed thinks think thought know knew knows guess suppose
+    supposed feel feels felt find finds found there here where when
+    would could should might must really actually maybe perhaps thing
+    things stuff something someone somebody everyone anybody nobody
+    nothing anything again still just even also always never ever going
+    gone went comes come came take takes took taken make makes made
+    says said saying tells tell told looks look looked seem seems
+    appear appears appeared because about into onto with without from
+    this that these those they them their your yours ours mine its
+    watch lookin looking gonna wanna kinda sorta
+""".split())
+
+
 def _queries(profile, text, act):
     """Two-or-three-word stock queries per the broll_matching law: the
     emotion's visual register crossed with the act's shot preference."""
     register = profile["vocabulary"][0].split()[:3]
     shot = ACT_PROFILE[act]["shot"][0].split()[:1]
     noun = next((t for t in _tokens(text) if len(t) > 4
-                 and t not in _AMPLIFIERS and t not in _HEDGES), "")
+                 and t not in _AMPLIFIERS and t not in _HEDGES
+                 and t not in _QUERY_FILLER), "")
     queries = []
     if noun:
         queries.append(" ".join([noun] + register[:1]))

@@ -21,7 +21,16 @@ fn main() -> Result<(), slint::PlatformError> {
     // with no standard output - is not a reason to panic.
     if launch == Ok(Launch::Version) {
         use std::io::Write;
-        let _ = writeln!(std::io::stdout(), "concat {}", env!("CARGO_PKG_VERSION"));
+        // The running version, not the workspace's bare number: a release
+        // built from one of the fork's own tags - v0.2.8-funcut.6 - carries
+        // that iteration through `FUNCUT_ITERATION`, and a `--version` that
+        // printed only `0.2.8` would name upstream's release, not this
+        // fork's, and could not be told from an upstream install.
+        let _ = writeln!(
+            std::io::stdout(),
+            "concat {}",
+            concat_host::updates::Version::current()
+        );
         return Ok(());
     }
     // Before the log and the window too: what this proves is that whisper's

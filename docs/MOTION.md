@@ -240,12 +240,48 @@ What `plan` guarantees:
 - **A cover-fitted layer that pans or sits off-centre is scaled up by its own travel**, so the
   frame's edge never shows behind it; a `scale` under one is a deliberate shape and keeps its edges.
 - **One curtain** over everything, opaque at the ends and dipping at each cut, with times forced to
-  strictly increase.
+  strictly increase. **Unless the cut is choreographed** - see below, the curtain stands down at a
+  boundary that carries a [`transition`], because a whip pan and a colour wash at the same frame is
+  two transitions fighting.
 - **The output is one timeline**: a scene's own @keyframes, its plates and overlays, the curtain and
   the audio beds, rendered in a single pass because they are one document.
 
 `Plan::write` copies every asset into the render directory, so the folder renders on a machine that has
 nothing else; `Plan::render` writes it and calls the engine.
+
+### Scene-to-scene transitions: the cut, choreographed
+
+The router knows the beat; the curtain dips through a colour. Neither of those is a *transition* -
+a dip is the admission that nothing was choreographed. A **`transition`** on a scene card says what
+the moments either side of the boundary do, written on the scene that **enters by it**:
+
+```json
+{ "scenes": [
+  { "preset": "funcut.sting.wordmark", "hold": 4.0 },
+  { "preset": "funcut.chart.bars", "hold": 6.0,
+    "transition": { "kind": "whip-pan", "direction": "left", "seconds": 0.24 } } ] }
+```
+
+| Cut | What both sides do |
+| --- | --- |
+| `whip-pan` (`direction`, `seconds` 0.24) | the outgoing plates and comp sweep out, accelerating; the incoming sweep in from the opposite side, settling - fast enough to read as one camera move rather than two edits |
+| `zoom-through` (`seconds` 0.35) | the outgoing grows to 135%, the incoming arrives still at 135% and settles - one continuous push |
+| `inverse-zoom` (`seconds` 0.35) | the pull-back reading: the outgoing shrinks to 72%, the incoming starts small and grows - a breath. On a cover-fitted plate the shrink shows the frame's edges for its duration; that is the read of a pull-back |
+| `rack-focus` (`seconds` 0.3, `radius` 16px) | the outgoing blurs out, the incoming resolves in - "same world, new subject" |
+| `velocity-match` (`seconds` 0.4) | the incoming plate enters carrying the outgoing's own drift velocity - direction *and* speed, read from the plate - and settles; the outgoing keeps drifting exactly as it was. The cut hides itself |
+| `stagger-exit` (`seconds` 0.22, `step` 0.06) | the outgoing comp's elements leave one by one - the front of the list first, the last gone exactly at the cut - not on the same frame |
+
+Both sides are written into the timeline the engine already plays: keyframes on the layers'
+transforms and blur effects, and tracks appended to the comp's own nodes - a transition *rides on
+top of* the authored animation, never rewriting it (a node whose own track runs past where the
+cut's keys would land keeps what it wrote; a node that is never placed keeps its place). The
+`transition` on a **first** scene is the way the reel opens; an **`exit`** on a scene is its own way
+out - the fallback when the next scene names none, and the only way to choreograph the last scene's
+leaving (a staggered exit at the reel's end is the credits rolling out).
+
+The scene-aware reel cache carries the cuts into each cached segment and stands the segment's own
+dip down at a choreographed boundary, so the segmented cache and the one-shot render agree frame
+for frame - and a changed choreography is a changed scene, so the cache key carries the cuts too.
 
 `examples/reel.rs` is a complete one: **thirteen scenes, twelve presets, 45.5 s**, with plates, a
 curtain and a synthesised score.

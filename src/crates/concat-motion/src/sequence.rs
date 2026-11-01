@@ -340,6 +340,18 @@ pub struct Sequence {
     /// scene can find it: the plan places named scenes as nested
     /// compositions. Empty for a sequence built by hand.
     pub scene_cards: Vec<crate::storyboard::SceneCard>,
+    /// The choreographed cuts, keyed by the **outgoing** scene's index:
+    /// `transitions[0]` is the cut between scene 0 and scene 1. A cut
+    /// writes motion into both sides - the outgoing scene's last
+    /// moments and the incoming scene's first - and replaces the
+    /// curtain's dip at that boundary, because a whip pan and a colour
+    /// wash at the same frame is two transitions fighting.
+    pub transitions: std::collections::BTreeMap<usize, crate::transition::Cut>,
+    /// The choreographed way the reel *opens*: the cut into the first
+    /// scene, whose enter side is the only side there is. A zoom onto
+    /// the opening frame, a rack focus onto the hook - the entrance a
+    /// reel earns before it has anywhere to come from.
+    pub opening: Option<crate::transition::Cut>,
 }
 
 impl Sequence {
@@ -356,6 +368,8 @@ impl Sequence {
             audio: Vec::new(),
             curtain: Some(Curtain::default()),
             scene_cards: Vec::new(),
+            transitions: BTreeMap::new(),
+            opening: None,
             crf: 18,
         }
     }
@@ -375,6 +389,23 @@ impl Sequence {
     /// Add a bed of sound.
     pub fn bed(&mut self, bed: AudioBed) -> &mut Sequence {
         self.audio.push(bed);
+        self
+    }
+
+    /// Choreograph the cut after scene `after`: both sides of the
+    /// boundary get the [`Cut`]'s motion, and the curtain's dip at that
+    /// boundary stands down for it. The last scene's own exit can be
+    /// choreographed the same way - a staggered exit at the reel's end
+    /// is the credits rolling out.
+    pub fn with_cut(&mut self, after: usize, cut: crate::transition::Cut) -> &mut Sequence {
+        self.transitions.insert(after, cut);
+        self
+    }
+
+    /// Choreograph the way the reel opens: the cut onto the first
+    /// scene's first frames.
+    pub fn opens_with(&mut self, cut: crate::transition::Cut) -> &mut Sequence {
+        self.opening = Some(cut);
         self
     }
 
@@ -604,12 +635,20 @@ fn layer_id(scene: usize, side: &str, nth: usize) -> String {
 /// the middle is the least growth that keeps the edge hidden. A deliberate
 /// shrink (`scale` under one) is left alone: a layer that means to show the
 /// frame's edges keeps them.
+///
+/// A choreographed cut rides at the span's edges: the enter side sweeps
+/// the layer in from its offset and settles it where its own drift takes
+/// over, the exit side carries it away at the end - the same vocabulary
+/// (`pan`, `offset`, `scale`) the layer itself speaks, so the drift and
+/// the cut read as one motion.
 fn layer_clip(
     layer: &SceneLayer,
     width: f64,
     height: f64,
     start: f64,
     span: f64,
+    enter: Option<&crate::transition::PlateCut>,
+    exit: Option<&crate::transition::PlateCut>,
 ) -> Map<String, Json> {
     let mut clip = Map::new();
     clip.insert(
@@ -646,6 +685,11 @@ fn layer_clip(
     };
     let offset = layer.offset;
 
+    // The cut's windows, held to a third of the span each so the two
+    // sides of one boundary never meet inside a single layer's span.
+    let enter_seconds = enter.map(|cut| cut.seconds.min(span / 3.0)).unwrap_or(0.0);
+    let exit_seconds = exit.map(|cut| cut.seconds.min(span / 3.0)).unwrap_or(0.0);
+
     // Where the layer sits, in pixels from the frame's corner: the centre,
     // plus its offset as a fraction of the frame, plus its drift.
     let placed = |x: f64, y: f64| {
@@ -663,31 +707,122 @@ fn layer_clip(
         base = base.max(1.0 + travel);
     }
 
+    // Position: the cut's windows at the edges, the layer's own drift
+    // between them - one list of marks, in time order by construction:
+    // 0 < enter_seconds <= span - exit_seconds < span.
+    let rest = offset;
+    let drift_end = (offset.0 + pan.0, offset.1 + pan.1);
+    let mut position_marks: Vec<(f64, (f64, f64), Option<&Curve>)> = Vec::new();
+    if let Some(cut) = enter
+        && cut.from != (0.0, 0.0)
+    {
+        position_marks.push((
+            0.0,
+            (offset.0 + cut.from.0, offset.1 + cut.from.1),
+            Some(&cut.curve),
+        ));
+        position_marks.push((enter_seconds, rest, None));
+    } else if pan != (0.0, 0.0) {
+        position_marks.push((0.0, rest, None));
+    }
+    if let Some(cut) = exit
+        && cut.from != (0.0, 0.0)
+    {
+        position_marks.push((span - exit_seconds, drift_end, None));
+        position_marks.push((
+            span,
+            (drift_end.0 + cut.from.0, drift_end.1 + cut.from.1),
+            Some(&cut.curve),
+        ));
+    } else if pan != (0.0, 0.0) {
+        position_marks.push((span, drift_end, None));
+    }
+
     let mut transform = Map::new();
-    if pan != (0.0, 0.0) {
+    if position_marks.len() >= 2 {
         transform.insert(
             "position".into(),
-            json!({ "keyframes": [
-                [seconds(0.0), placed(offset.0, offset.1)],
-                [seconds(span), placed(offset.0 + pan.0, offset.1 + pan.1)],
-            ] }),
+            json!({ "keyframes": position_marks
+                .iter()
+                .map(|(at, (x, y), curve)| match curve {
+                    Some(curve) => json!([seconds(*at), placed(*x, *y), crate::geneva::ease(curve)]),
+                    None => json!([seconds(*at), placed(*x, *y)]),
+                })
+                .collect::<Vec<Json>>() }),
         );
     } else if offset != (0.0, 0.0) {
         transform.insert("position".into(), placed(offset.0, offset.1));
     }
-    if zoom.abs() > 1e-9 {
+
+    // Scale: the same shape - the cut's edge scales at the boundaries,
+    // the layer's own zoom between them, and the drift's own end value
+    // is what the exit rides from.
+    let rest_scale = base;
+    let drift_scale = base * (1.0 + zoom);
+    let mut scale_marks: Vec<(f64, f64, Option<&Curve>)> = Vec::new();
+    if let Some(cut) = enter
+        && (cut.scale_from - 1.0).abs() > 1e-9
+    {
+        scale_marks.push((0.0, rest_scale * cut.scale_from, Some(&cut.curve)));
+        scale_marks.push((enter_seconds, rest_scale, None));
+    } else if zoom.abs() > 1e-9 {
+        scale_marks.push((0.0, rest_scale, None));
+    }
+    if let Some(cut) = exit
+        && (cut.scale_from - 1.0).abs() > 1e-9
+    {
+        scale_marks.push((span - exit_seconds, drift_scale, None));
+        scale_marks.push((span, drift_scale * cut.scale_from, Some(&cut.curve)));
+    } else if zoom.abs() > 1e-9 {
+        scale_marks.push((span, drift_scale, None));
+    }
+    if scale_marks.len() >= 2 {
         transform.insert(
             "scale".into(),
-            json!({ "keyframes": [
-                [seconds(0.0), round(base)],
-                [seconds(span), round(base * (1.0 + zoom))],
-            ] }),
+            json!({ "keyframes": scale_marks
+                .iter()
+                .map(|(at, value, curve)| match curve {
+                    Some(curve) => json!([seconds(*at), round(*value), crate::geneva::ease(curve)]),
+                    None => json!([seconds(*at), round(*value)]),
+                })
+                .collect::<Vec<Json>>() }),
         );
     } else if (base - 1.0).abs() > 1e-9 {
         transform.insert("scale".into(), json!(round(base)));
     }
     if !transform.is_empty() {
         clip.insert("transform".into(), Json::Object(transform));
+    }
+
+    // A rack focus rides the clip's blur effect: the radius keyframed
+    // up to the cut on the way out, down from it on the way in.
+    let mut blur_marks: Vec<(f64, f64, Option<&Curve>)> = Vec::new();
+    if let Some(cut) = enter
+        && cut.blur_from > 1e-9
+    {
+        blur_marks.push((0.0, cut.blur_from, Some(&cut.curve)));
+        blur_marks.push((enter_seconds, 0.0, None));
+    }
+    if let Some(cut) = exit
+        && cut.blur_from > 1e-9
+    {
+        blur_marks.push((span - exit_seconds, 0.0, None));
+        blur_marks.push((span, cut.blur_from, Some(&cut.curve)));
+    }
+    if !blur_marks.is_empty() {
+        clip.insert(
+            "effects".into(),
+            json!([{
+                "kind": "blur",
+                "radius": { "keyframes": blur_marks
+                    .iter()
+                    .map(|(at, value, curve)| match curve {
+                        Some(curve) => json!([seconds(*at), round(*value), crate::geneva::ease(curve)]),
+                        None => json!([seconds(*at), round(*value)]),
+                    })
+                    .collect::<Vec<Json>>() },
+            }]),
+        );
     }
 
     // Opacity: a steady number, or a fade up, a hold and a fade down.
@@ -776,6 +911,32 @@ fn round(value: f64) -> f64 {
     (value * 1000.0).round() / 1000.0
 }
 
+/// The drift velocity of a scene's plate, in fractions of the frame per
+/// second - what a velocity-matched cut reads to hide itself. The first
+/// layer that pans says it; a scene of stills speaks with the classic
+/// plate's own three-percent slide.
+fn plate_velocity(sequence: &Sequence, index: usize) -> (f64, f64) {
+    let Some(scene) = sequence.scenes.get(index) else {
+        return (0.0, 0.0);
+    };
+    let span = scene.hold.unwrap_or(scene.comp.duration).max(0.1);
+    for layer in &scene.layers {
+        let rate = layer
+            .parallax
+            .filter(|rate| rate.is_finite() && *rate > 0.0)
+            .unwrap_or(1.0);
+        let pan = if layer.zoom.abs() < 1e-9 && layer.pan == (0.0, 0.0) {
+            (-0.03, 0.0)
+        } else {
+            layer.pan
+        };
+        if pan != (0.0, 0.0) {
+            return (pan.0 * rate / span, pan.1 * rate / span);
+        }
+    }
+    (-0.03 / span, 0.0)
+}
+
 /// Lay a sequence out as one Geneva timeline.
 ///
 /// Every scene's comp is validated and its operations applied first: a shot
@@ -840,6 +1001,47 @@ fn plan_with_chain(
                 // ends before it begins simply means it draws nothing
                 // inside the held window.
                 node.duration = (node.duration.min(comp.duration - node.start)).max(0.0);
+            }
+        }
+        // The choreographed cuts this scene sits between: the one it
+        // enters by (the reel's own opening, or the cut after the scene
+        // before it) and the one it leaves by (the cut after this scene
+        // - the reel's closing, when nothing follows). The cut writes
+        // motion into the comp's own nodes here, before anything is
+        // validated or emitted, riding on top of the authored tracks.
+        // A velocity match reads the *outgoing* scene's drift, so the
+        // enter side is handed the scene before this one's.
+        let enter_cut = if index == 0 {
+            sequence.opening.as_ref()
+        } else {
+            sequence.transitions.get(&(index - 1))
+        };
+        let exit_cut = sequence.transitions.get(&index);
+        let enter_drift = if index == 0 {
+            (0.0, 0.0)
+        } else {
+            plate_velocity(sequence, index - 1)
+        };
+        if let Some(cut) = enter_cut {
+            crate::transition::prepare_comp(
+                &mut comp,
+                crate::transition::Side::Enter,
+                cut,
+                enter_drift,
+            );
+        }
+        if let Some(cut) = exit_cut {
+            crate::transition::prepare_comp(
+                &mut comp,
+                crate::transition::Side::Exit,
+                cut,
+                plate_velocity(sequence, index),
+            );
+            if index + 1 == sequence.scenes.len() {
+                warnings.push(format!(
+                    "scene {index} leaves by a {} with nothing after it: the reel's closing choreography",
+                    cut.name()
+                ));
             }
         }
         let problems = comp.validate();
@@ -1011,12 +1213,36 @@ fn plan_with_chain(
                 ));
                 continue;
             }
+            // The cut's plate motion, for the sides this layer's span
+            // reaches: an enter cut only reaches a layer that starts
+            // with its scene, an exit cut one that is still there at
+            // the end - a layer that leaves early never sees the cut.
+            let reaches_start = span_start <= 1e-9;
+            let reaches_end = span >= hold - span_start - 1e-9;
+            let enter_plate = enter_cut.filter(|_| reaches_start).map(|cut| {
+                crate::transition::plate_cut(
+                    cut,
+                    crate::transition::Side::Enter,
+                    enter_drift,
+                    (f64::from(sequence.width), f64::from(sequence.height)),
+                )
+            });
+            let exit_plate = exit_cut.filter(|_| reaches_end).map(|cut| {
+                crate::transition::plate_cut(
+                    cut,
+                    crate::transition::Side::Exit,
+                    plate_velocity(sequence, index),
+                    (f64::from(sequence.width), f64::from(sequence.height)),
+                )
+            });
             let clip = layer_clip(
                 layer,
                 f64::from(sequence.width),
                 f64::from(sequence.height),
                 start + span_start,
                 span,
+                enter_plate.as_ref(),
+                exit_plate.as_ref(),
             );
             let id = if layer.above {
                 overlays += 1;
@@ -1139,7 +1365,13 @@ fn plan_with_chain(
         let open = curtain.open.min(duration / 4.0);
         let close = curtain.close.min(duration / 4.0);
         let mut marks: Vec<(f64, f64)> = vec![(0.0, 1.0), (open, 0.0)];
-        for end in &scene_ends[..scene_ends.len() - 1] {
+        for (index, end) in scene_ends[..scene_ends.len() - 1].iter().enumerate() {
+            // A choreographed cut replaces the dip at its boundary: a
+            // whip pan and a colour wash at the same frame is two
+            // transitions fighting, and the choreography wins.
+            if sequence.transitions.contains_key(&index) {
+                continue;
+            }
             let dip = curtain.dip.min(duration / 8.0);
             marks.push(((end - dip).max(0.0), 0.0));
             marks.push((*end, curtain.depth));
@@ -2316,6 +2548,219 @@ mod tests {
         .expect_err("an unknown curve name is refused");
         assert!(refused.contains("wobbly"), "{refused}");
         assert!(refused.contains("typewriter"), "{refused}");
+    }
+
+    /// The done-when of the step: a two-scene timeline with a whip pan
+    /// and a zoom-through, choreographed rather than spliced - both
+    /// sides of each boundary carry the motion, in the plates and in the
+    /// comps, and the curtain stands down at the choreographed cuts.
+    #[test]
+    fn a_two_scene_timeline_with_a_whip_pan_and_a_zoom_through_is_choreographed() {
+        let mut sequence = reel(vec![
+            Scene::new(presets::build("funcut.caption.kinetic").expect("a preset")).holding(4.0),
+            Scene::new(presets::build("funcut.chapter.chip").expect("a preset")).holding(4.0),
+            Scene::new(presets::build("funcut.sting.wordmark").expect("a preset")).holding(4.0),
+        ]);
+        sequence.asset(
+            "plate",
+            Asset {
+                src: "plate.png".into(),
+                kind: None,
+            },
+        );
+        for scene in &mut sequence.scenes {
+            scene.layers.push(SceneLayer::new("plate").zooming(0.04));
+        }
+        // The cut after scene 0 whips left; the cut after scene 1 zooms
+        // through; the reel itself opens onto its first frame.
+        sequence.with_cut(
+            0,
+            crate::transition::Cut::WhipPan {
+                direction: crate::transition::Direction::Left,
+                seconds: 0.24,
+            },
+        );
+        sequence.with_cut(1, crate::transition::Cut::ZoomThrough { seconds: 0.35 });
+        sequence.opens_with(crate::transition::Cut::ZoomThrough { seconds: 0.35 });
+        let planned = plan(&geneva(), &sequence).expect("a plan");
+        let layers = planned.document["layers"].as_array().expect("layers");
+        let read = |id: &str| {
+            layers
+                .iter()
+                .find(|layer| layer["id"] == json!(id))
+                .unwrap_or_else(|| panic!("no layer {id}"))["clips"][0]
+                .clone()
+        };
+
+        // Scene 0's plate sweeps out to the left over its last 0.24s:
+        // the exit key sits at the scene's end (4s), its position left
+        // of centre, on the accelerating curve.
+        let outgoing = read("s0.plate");
+        let keys = &outgoing["transform"]["position"]["keyframes"];
+        let last = keys.as_array().expect("keys").last().expect("the exit key");
+        assert_eq!(last[0], json!("4s"), "{keys:?}");
+        let x = last[1][0].as_f64().expect("pixels");
+        assert!(x < 960.0 - 0.5 * 1920.0, "swept left of centre: {x}");
+        assert_eq!(last[2], json!({ "cubic-bezier": [0.42, 0.0, 1.0, 1.0] }));
+
+        // Scene 1's plate sweeps in from the right over its first 0.24s:
+        // the enter key sits at the clip's own start (the boundary, 4s
+        // absolute), its position right of centre, on the settling curve.
+        let incoming = read("s1.plate");
+        let keys = &incoming["transform"]["position"]["keyframes"];
+        let first = keys
+            .as_array()
+            .expect("keys")
+            .first()
+            .expect("the enter key");
+        assert_eq!(first[0], json!("0s"), "{keys:?}");
+        assert_eq!(incoming["start"], json!("4s"), "the clip starts at the cut");
+        let x = first[1][0].as_f64().expect("pixels");
+        assert!(x > 960.0 + 0.5 * 1920.0, "swept in from the right: {x}");
+        assert_eq!(
+            first[2],
+            json!({ "cubic-bezier": [0.0, 0.0, 0.58, 1.0] }),
+            "the settling curve"
+        );
+
+        // Scene 1's plate grows to 1.35 at its end - over its own 4%
+        // drift, which compounds: 1.04 × 1.35 = 1.404 - and scene 2's
+        // plate arrives from the same place and settles: one camera
+        // move, both sides.
+        let zoom_out = read("s1.plate")["transform"]["scale"]["keyframes"].clone();
+        let last = zoom_out
+            .as_array()
+            .expect("keys")
+            .last()
+            .expect("the exit key");
+        assert_eq!(last[1], json!(1.404), "the plate exits through 1.35");
+        let zoom_in = read("s2.plate")["transform"]["scale"]["keyframes"].clone();
+        let first = zoom_in
+            .as_array()
+            .expect("keys")
+            .first()
+            .expect("the enter key");
+        assert_eq!(first[1], json!(1.35), "and arrives from 1.35");
+
+        // The comps carry the cuts too: scene 0's caption - a node with
+        // a place of its own - slides out with the whip. A node that is
+        // never placed keeps its place: the whip moves what it can move.
+        let caption = read("s0.caption");
+        let keys = caption["transform"]["position"]["keyframes"]
+            .as_array()
+            .expect("the comp rides the whip");
+        let last = keys.last().expect("the exit key");
+        assert_eq!(last[0], json!("4s"));
+        let x = last[1][0].as_f64().expect("pixels");
+        assert!(x < 500.0, "the caption sweeps out with the plate: {x}");
+
+        // The curtain stands down at both choreographed cuts and dips
+        // nowhere: a two-dip reel has one dip per cut, this one has none.
+        let curtain = read("curtain")["opacity"]["keyframes"].clone();
+        let keys = curtain.as_array().expect("the curtain's keys");
+        let dips = keys
+            .iter()
+            .filter(|key| key[1].as_f64().unwrap_or(0.0) > 0.5)
+            .count();
+        assert_eq!(dips, 2, "only the reel's own ends: {keys:?}");
+
+        // And the whole document is one the engine would take: every
+        // keyframe time strictly increases.
+        for layer in layers {
+            for clip in layer["clips"].as_array().unwrap_or(&Vec::new()) {
+                for property in ["position", "scale", "opacity"] {
+                    let Some(keys) = clip["transform"][property]["keyframes"].as_array() else {
+                        continue;
+                    };
+                    let times: Vec<f64> = keys
+                        .iter()
+                        .map(|key| key[0].as_str().and_then(parse_seconds).expect("a time"))
+                        .collect();
+                    for pair in times.windows(2) {
+                        assert!(pair[0] < pair[1], "{property} in {}: {keys:?}", layer["id"]);
+                    }
+                }
+            }
+        }
+    }
+
+    /// A staggered exit on the reel's last scene is its closing
+    /// choreography - the credits rolling out, not a dip to colour.
+    #[test]
+    fn the_last_scene_can_leave_by_a_staggered_exit() {
+        let mut sequence = reel(vec![
+            Scene::new(presets::build("funcut.stats.triptych").expect("a preset")).holding(5.0),
+        ]);
+        sequence.with_cut(
+            0,
+            crate::transition::Cut::StaggerExit {
+                seconds: 0.22,
+                step: 0.06,
+            },
+        );
+        let planned = plan(&geneva(), &sequence).expect("a plan");
+        // The comp's nodes fade out one after the next.
+        let comp_layer = planned.document["layers"]
+            .as_array()
+            .expect("layers")
+            .iter()
+            .find(|layer| layer["id"].as_str().unwrap_or_default().starts_with("s0."))
+            .expect("the comp's own layer")
+            .clone();
+        assert!(
+            comp_layer["clips"][0]["opacity"]["keyframes"].is_array()
+                || planned
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.contains("stagger")),
+            "the exit is written or said"
+        );
+        assert!(
+            planned
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("closing choreography")),
+            "{:?}",
+            planned.warnings
+        );
+    }
+
+    /// The storyboard names a cut on the scene that enters by it, and
+    /// the plan carries both sides; an `exit` on the last scene is the
+    /// reel's own closing.
+    #[test]
+    fn a_storyboard_choreographs_its_cuts_by_name() {
+        let storyboard = crate::storyboard::Storyboard::parse(
+            r##"{ "assets": { "back": "b.png" },
+                 "scenes": [
+                   { "preset": "funcut.sting.wordmark", "hold": 4.0,
+                     "layers": [ { "asset": "back", "zoom": 0.04 } ] },
+                   { "preset": "funcut.chapter.chip", "hold": 4.0,
+                     "transition": { "kind": "whip-pan", "direction": "left" },
+                     "layers": [ { "asset": "back", "zoom": 0.04 } ] },
+                   { "preset": "funcut.sting.wordmark", "hold": 4.0,
+                     "exit": { "kind": "stagger-exit", "seconds": 0.2, "step": 0.05 },
+                     "layers": [ { "asset": "back", "zoom": 0.04 } ] } ] }"##,
+        )
+        .expect("a storyboard");
+        let sequence = storyboard.sequence(Path::new(".")).expect("a sequence");
+        assert_eq!(
+            sequence.transitions.len(),
+            2,
+            "whip after 0, stagger after 2"
+        );
+        assert!(matches!(
+            sequence.transitions.get(&0),
+            Some(crate::transition::Cut::WhipPan { .. })
+        ));
+        assert!(matches!(
+            sequence.transitions.get(&2),
+            Some(crate::transition::Cut::StaggerExit { .. })
+        ));
+        assert!(
+            sequence.opening.is_none(),
+            "the first scene names no way in"
+        );
     }
 
     #[test]

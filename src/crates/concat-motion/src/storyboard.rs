@@ -145,6 +145,19 @@ pub struct SceneCard {
     /// Operations applied to the comp before it is placed.
     #[serde(default)]
     pub ops: Vec<Json>,
+    /// The choreographed cut INTO this scene - the boundary between the
+    /// scene before it and this one, written on the scene that enters
+    /// by it: `{"kind": "whip-pan", "direction": "left"}` or any
+    /// other [`crate::transition::Cut`]. On the first scene it is the
+    /// way the reel opens; nowhere else, it is this scene's own way in.
+    #[serde(default)]
+    pub transition: Option<crate::transition::Cut>,
+    /// This scene's own way OUT, when the scene after it does not name
+    /// its own `transition` - and the only way to choreograph the last
+    /// scene's exit, which no later scene carries. When both name one,
+    /// the entering scene's `transition` wins the shared boundary.
+    #[serde(default)]
+    pub exit: Option<crate::transition::Cut>,
 }
 
 /// One layer of a scene, as a storyboard writes it. The source is either
@@ -780,6 +793,35 @@ impl Storyboard {
         }
         for (index, card) in self.scenes.iter().enumerate() {
             sequence.push(card.scene(index, &source)?);
+        }
+        // The choreographed cuts. A scene's `transition` is the cut it
+        // enters by: on the first scene it opens the reel, elsewhere it
+        // belongs to the boundary after the scene before it. A scene's
+        // `exit` is its own way out - the fallback for a boundary whose
+        // entering scene named none, and the only way to choreograph the
+        // last scene's leaving. When both name one, the entering scene's
+        // `transition` wins the boundary they share.
+        for (index, card) in self.scenes.iter().enumerate() {
+            match (&card.transition, index) {
+                (Some(cut), 0) => {
+                    sequence.opens_with(cut.clone());
+                }
+                (Some(cut), _) => {
+                    sequence.with_cut(index - 1, cut.clone());
+                }
+                (None, _) => {}
+            }
+        }
+        for index in 0..self.scenes.len() {
+            let entering = self
+                .scenes
+                .get(index + 1)
+                .and_then(|card| card.transition.clone());
+            if entering.is_none()
+                && let Some(cut) = self.scenes[index].exit.clone()
+            {
+                sequence.with_cut(index, cut);
+            }
         }
         for bed in &self.audio {
             if !self.assets.contains_key(&bed.asset) {

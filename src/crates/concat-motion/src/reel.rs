@@ -124,7 +124,10 @@ pub fn scene_key(board: &Storyboard, root: &Path, index: usize) -> String {
     let mut parts: Vec<Vec<u8>> = Vec::new();
 
     // The scene's own document, canonically written: the same scene, the
-    // same bytes, whatever order the author's JSON carried.
+    // same bytes, whatever order the author's JSON carried. The cut the
+    // scene enters by and the one it leaves by are part of what draws it
+    // now - a changed choreography is a changed scene, and the cache
+    // must miss for it.
     let document = json!({
         "scene": {
             "preset": scene.preset,
@@ -135,6 +138,8 @@ pub fn scene_key(board: &Storyboard, root: &Path, index: usize) -> String {
             "zoom": scene.zoom,
             "layers": scene.layers,
             "ops": scene.ops,
+            "transition": scene.transition,
+            "exit": scene.exit,
         },
         "geometry": [board.width, board.height, board.fps],
         "format": [crate::geneva::TIMELINE_VERSION, crate::geneva::TESTED_VERSION],
@@ -493,15 +498,53 @@ fn render_scene_segment(
     // The scene's own `at` is where it sits in the whole reel; inside
     // its own segment it sits at the gap, and nowhere else.
     scene.at = Some(gap);
+    // The choreographed cuts this scene sits between, carried into the
+    // segment so the cache renders what the whole board would: the cut
+    // it enters by (the card's own `transition`), and the cut it leaves
+    // by (the next card's `transition`, or its own `exit`).
+    if let Some(cut) = &board.scenes[index].transition {
+        sub.opens_with(cut.clone());
+    }
+    let leaving = board
+        .scenes
+        .get(index + 1)
+        .and_then(|card| card.transition.clone())
+        .or_else(|| board.scenes[index].exit.clone());
+    if let Some(cut) = leaving {
+        sub.with_cut(0, cut);
+    }
     let first = index == 0;
     let last = index + 1 == board.scenes.len();
+    // A choreographed side stands the curtain's dip at that boundary
+    // down, exactly as the whole-board plan does - the segmented cache
+    // and the one-shot render must agree frame for frame.
+    let enters_choreographed = board.scenes[index].transition.is_some();
+    let leaves_choreographed = board
+        .scenes
+        .get(index + 1)
+        .and_then(|card| card.transition.as_ref())
+        .is_some()
+        || board.scenes[index].exit.is_some();
     if let Some(curtain) = &board.curtain {
         sub.curtain = Some(Curtain {
             color: crate::comp::Rgba::hex(&curtain.color),
             // A middle scene dips at both ends; the first opens, the last
-            // closes, and the dip half-width stays what the author wrote.
-            open: if first { curtain.open } else { curtain.dip },
-            close: if last { curtain.close } else { curtain.dip },
+            // closes, and a choreographed side clears instantly - the
+            // motion is the transition, not a wash of colour.
+            open: if first {
+                curtain.open
+            } else if enters_choreographed {
+                0.0
+            } else {
+                curtain.dip
+            },
+            close: if last {
+                curtain.close
+            } else if leaves_choreographed {
+                0.0
+            } else {
+                curtain.dip
+            },
             dip: curtain.dip,
             depth: curtain.depth,
         });

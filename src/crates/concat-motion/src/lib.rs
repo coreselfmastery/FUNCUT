@@ -75,6 +75,7 @@ pub mod route;
 pub mod sequence;
 pub mod storyboard;
 pub mod track;
+pub mod transition;
 pub mod typography;
 
 pub use authoring::{CompSummary, Op, apply};
@@ -88,6 +89,7 @@ pub use geneva::{Breaker, CallLimits, Diagnostic, Geneva, fix_for};
 pub use reel::{ReelReport, SceneOutcome, render_reel, scene_key};
 pub use route::{BeatType, Decision, Routing, route};
 pub use track::{Key, Track, Tracks, Value};
+pub use transition::{Cut, Direction};
 
 /// The library version of the preset set, bumped when a preset changes shape
 /// so a project's saved copies can be offered an upgrade.

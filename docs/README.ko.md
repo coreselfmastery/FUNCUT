@@ -97,7 +97,3 @@ Concat은 **베타**입니다: 동작하지만 아직 거친 부분이 있습니
 <a href="https://github.com/jub0t/Concat/graphs/contributors">
   <img alt="Contributors" src="https://contrib.rocks/image?repo=jub0t/concat">
 </a>
-
-## DMCA
-
-If you believe something in this repository, its releases, or a package or model it distributes infringes your copyright, send a notice through [GitHub's DMCA takedown process](https://docs.github.com/en/site-policy/content-removal-policies/dmca-takedown-policy), which covers this repository's content and releases; a valid notice is acted on through that process. Material this repository inherits from upstream Concat can also be reported to upstream at jub0trd@gmail.com, the address upstream's README publishes for the purpose.

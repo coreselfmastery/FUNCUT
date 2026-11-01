@@ -582,15 +582,16 @@ in `.claude/skills/motion/SKILL.md` so an author does not walk into it:
 | `conic-gradient` | draws nothing | use a linear or a radial gradient |
 | `radial-gradient(62% 74% at …)` | draws nothing | `radial-gradient(circle at 50% 60%, …)` works |
 | a key time with >9 decimals | `E103` | times are written to **milliseconds** |
-| **`transform` as a base style** (and `translate`/`rotate`/`scale`) | **silently skipped** — the layer is reported by name and drawn at its default position | `Comp::validate` **refuses the comp**, naming the rule and the property |
+| **`transform` as a base style** (and `translate`/`rotate`/`scale`/`perspective`) | **silently skipped** — the layer is reported by name and drawn at its default position | `Comp::validate` **refuses the comp**, naming the rule and the property |
 
 The last-but-one row was a real bug: a track key at a fraction of a node's span divides into seventeen digits,
 and one such key made the render refuse the whole timeline. `seconds()` now writes three decimals,
 which is finer than any frame the renderer draws, and a test holds it there.
 
 The last row is the trap that never reports itself, so it gets its own guard. Geneva animates
-`transform` — and the individual `translate`, `rotate` and `scale` properties — only inside
-`@keyframes`; written as a base style the declaration is skipped without a diagnostic, and every
+`transform` — and the individual `translate`, `rotate`, `scale` and `perspective` properties — only
+inside `@keyframes`; written as a base style the declaration is skipped without a diagnostic, and
+every
 motion feature built on top of it is wrong while the comp looks perfectly valid. `css::static_transforms`
 reads every stylesheet a markup node carries — its `css` field and any `<style>` block in its markup,
 comments stripped, strings kept whole — and `Comp::validate` refuses the comp with the rule, the

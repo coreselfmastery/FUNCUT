@@ -3,8 +3,9 @@
 
 //! A stylesheet read for the one thing the markup engine stays quiet about.
 //!
-//! Geneva animates `transform` - and the individual `translate`, `rotate`
-//! and `scale` properties - only inside `@keyframes`. A transform set as a
+//! Geneva animates `transform` - and the individual `translate`, `rotate`,
+//! `scale` and `perspective` properties - only inside `@keyframes`. A
+//! transform set as a
 //! base style is silently skipped: the layer is reported by name and drawn
 //! at its default position, and every motion feature built on top of it is
 //! then wrong while looking perfectly valid. The engine does not say so;
@@ -24,13 +25,20 @@
 pub struct StaticTransform {
     /// The selector whose rule carries the declaration, as written.
     pub selector: String,
-    /// The property: `transform`, `translate`, `rotate` or `scale`.
+    /// The property: `transform`, `translate`, `rotate`, `scale` or
+    /// `perspective`.
     pub property: String,
 }
 
 /// The properties that place a layer when written outside `@keyframes`,
 /// and are skipped there: the engine reads them only as animation values.
-const PLACING_PROPERTIES: [&str; 4] = ["transform", "translate", "rotate", "scale"];
+const PLACING_PROPERTIES: [&str; 5] = [
+    "transform",
+    "translate",
+    "rotate",
+    "scale",
+    "perspective",
+];
 
 /// Every transform-style declaration in `css` that sits outside a
 /// `@keyframes` block, in document order.
@@ -163,16 +171,22 @@ mod tests {
 
     #[test]
     fn the_individual_placing_properties_are_named_too() {
-        let css = ".a { translate: -100% 0; } .b { rotate: 90deg; } .c { scale: 1.2; }";
+        let css = ".a { translate: -100% 0; } .b { rotate: 90deg; } .c { scale: 1.2; } \
+                  .d { perspective: 900px; }";
         let hits = static_transforms(css);
-        assert_eq!(hits.len(), 3);
+        assert_eq!(hits.len(), 4);
         let properties: Vec<&str> = hits.iter().map(|hit| hit.property.as_str()).collect();
-        assert_eq!(properties, ["translate", "rotate", "scale"]);
+        assert_eq!(properties, ["translate", "rotate", "scale", "perspective"]);
     }
 
     #[test]
     fn transform_origin_is_not_a_transform() {
         assert!(static_transforms(".bar { transform-origin: top center; }").is_empty());
+    }
+
+    #[test]
+    fn perspective_origin_is_not_a_perspective() {
+        assert!(static_transforms(".stage { perspective-origin: top left; }").is_empty());
     }
 
     #[test]

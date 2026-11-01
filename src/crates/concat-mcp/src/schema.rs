@@ -509,6 +509,9 @@ mod tests {
         // (scenes, layers with zoom/pan/offset/scale/fit/blend/opacity/
         // fades/timing, assets, audio beds, a curtain) so an agent can write
         // a reel without a second round trip - reviewed with this change.
+        // And now geneva_explain, the door on the sidecar's own refusal
+        // codes, took the 91-tool list to 231 612 - reviewed with this
+        // change, the cap moving to 240 000.
         let toolbox = crate::tools::Toolbox::new();
         let sizes: Vec<(String, usize)> = toolbox
             .list()
@@ -516,7 +519,7 @@ mod tests {
             .map(|tool| (tool["name"].to_string(), tool.to_string().len()))
             .collect();
         let total: usize = sizes.iter().map(|(_, size)| size).sum();
-        assert!(total < 230_000, "{total}: {sizes:?}");
+        assert!(total < 240_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }

@@ -1085,7 +1085,11 @@ def heuristic(brief, sheet):
     # Measured fixes: the same facts the revisions speak of, as the
     # structured patch operations the scene builder can apply - a fix
     # names its where, its problem, its change and its op, so the loop
-    # from critique to revision is data the whole way through.
+    # from critique to revision is data the whole way through. They
+    # carry no `patch` on purpose: their numbers are sampled estimates
+    # about the rendered reel, and their `where` names frames rather
+    # than nodes - the exact numbers an applier trusts belong to a
+    # critic that measured the document it is patching.
     fixes = []
     if black_pen > 0.05:
         seconds = round(_num(c.get("blackFrames")) / n * _num(c.get("duration"), 30.0), 1)
@@ -1142,7 +1146,7 @@ Score each axis 0-10 (0 unwatchable, 5 generic, 8 good, 10 excellent):
 hook, story, rhythm, shotChoice, design, sound.
 Judge only what the frames and the measurements support. The sound axis is judged from the measured loudness facts in MEASURED FACTS (LUFS, true peak, silence), never guessed from the picture. Be harsh.
 
-Then name the concrete FIXES, not vague advice: up to 6 patch operations the editor can apply exactly as written. Each fix is {{"where": the element or frames ("the chart in frames 6-8", "the caption on frame 3"), "problem": what is wrong, seen in the frames ("clipped off the right edge", "enters 400ms too early", "unreadable against the background"), "change": the exact change with its number and unit ("shift x by -120px", "start 0.4s later", "scale to 0.9", "ease with spring-pop"), "op": one of retime (timing), shift (position), resize (size/scale), restyle (easing, colour, look) or replace (needs new content)}}. A fix without a number and a unit in its change is advice, not a fix - do not give advice.
+Then name the concrete FIXES, not vague advice: up to 6 patch operations the editor can apply exactly as written. Each fix is {{"where": the element or frames ("the chart in frames 6-8", "the caption on frame 3"), "problem": what is wrong, seen in the frames ("clipped off the right edge", "enters 400ms too early", "unreadable against the background"), "change": the exact change with its number and unit ("shift x by -120px", "start 0.4s later", "scale to 0.9", "ease with spring-pop"), "op": one of retime (timing), shift (position), resize (size/scale), restyle (easing, colour, look) or replace (needs new content)}}. A fix without a number and a unit in its change is advice, not a fix - do not give advice. A fix may also carry "patch": the same change as exact JSON the applier reads as written - {{"start": 1.9}} or {{"shift": 0.4}} for a retime, {{"dx": -180, "dy": 0}} for a shift, {{"factor": 1.2}} for a resize, {{"curve": "spring-pop"}} for a restyle. Carry a patch ONLY when every number in it comes from the measured facts above, never from a guess at the picture: a patch is applied exactly as written, so a guessed number in one is worse than prose.
 
 Reply with a JSON object containing integer "hook","story","rhythm","shotChoice","design","sound" (0-10), a short "verdict", up to 4 "notes" citing frame numbers, up to 4 "revisions" naming concrete editing tools, and up to 6 "fixes" as the patch operations above. No markdown."""
 
@@ -1172,6 +1176,10 @@ SCORE_SCHEMA = {
                         "type": "string",
                         "enum": ["retime", "shift", "resize", "restyle", "replace"],
                     },
+                    "patch": {
+                        "type": "object",
+                        "description": "optional: the same change as exact JSON - only when every number comes from the measured facts, never guessed",
+                    },
                 },
                 "required": ["where", "problem", "change", "op"],
             },
@@ -1183,6 +1191,67 @@ SCORE_SCHEMA = {
 # The ops a fix may name - the scene builder's own vocabulary, so a fix
 # is a patch operation and not a wish.
 FIX_OPS = ("retime", "shift", "resize", "restyle", "replace")
+
+# The curves a restyle patch may name - the easing library's own names,
+# mirrored from the Rust `Curve::NAMES` the applier answers to, the same
+# way FIX_OPS mirrors its ops.
+FIX_CURVES = (
+    "linear",
+    "ease",
+    "ease-in",
+    "ease-out",
+    "ease-in-out",
+    "emphasis",
+    "spring",
+    "spring-pop",
+    "typewriter",
+    "bounce",
+)
+
+
+def _valid_patch(op, patch):
+    """A fix's optional `patch`: the exact numbers of its change, as the
+    JSON its op reads. The same shapes the Rust critic's own check
+    names, mirrored here so a malformed patch is dropped on this side
+    rather than refused on that one - a wrong patch dropped is a fix
+    that still applies by its prose."""
+    if not isinstance(patch, dict):
+        return None
+
+    def num(key):
+        value = patch.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return float(value) if math.isfinite(value) else None
+
+    if op == "retime":
+        has_start, has_shift = "start" in patch, "shift" in patch
+        if set(patch) - {"start", "shift"} or has_start == has_shift:
+            return None
+        if has_start:
+            start = num("start")
+            return {"start": start} if start is not None else None
+        shift = num("shift")
+        return {"shift": shift} if shift is not None else None
+    if op == "shift":
+        if set(patch) != {"dx", "dy"}:
+            return None
+        dx, dy = num("dx"), num("dy")
+        return {"dx": dx, "dy": dy} if dx is not None and dy is not None else None
+    if op == "resize":
+        if set(patch) != {"factor"}:
+            return None
+        factor = num("factor")
+        return {"factor": factor} if factor is not None and factor > 0.0 else None
+    if op == "restyle":
+        if set(patch) != {"curve"}:
+            return None
+        curve = patch.get("curve")
+        if isinstance(curve, str) and curve.strip().lower() in FIX_CURVES:
+            return {"curve": curve.strip().lower()}
+        return None
+    # A replacement needs content the patch does not carry.
+    return None
 
 FLAG_SCHEMA = {
     "type": "object",
@@ -1230,7 +1299,8 @@ def _fix_list(value, cap=8):
     fix needs its four fields, its op must be one of the five the scene
     builder patches with, and anything malformed is dropped whole rather
     than half-read - a fix that loses its `where` is advice nobody can
-    apply."""
+    apply. A `patch` rides along only when it is the shape its op reads,
+    so a wrong number never reaches the applier as an exact one."""
     if not isinstance(value, list):
         return []
     fixes = []
@@ -1243,12 +1313,16 @@ def _fix_list(value, cap=8):
         change = str(entry.get("change") or "").strip()
         if not (where and problem and change and op in FIX_OPS):
             continue
-        fixes.append({
+        fix = {
             "where": where[:160],
             "problem": problem[:240],
             "change": change[:240],
             "op": op,
-        })
+        }
+        patch = _valid_patch(op, entry.get("patch"))
+        if patch is not None:
+            fix["patch"] = patch
+        fixes.append(fix)
     return fixes
 
 

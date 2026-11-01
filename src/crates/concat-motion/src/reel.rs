@@ -465,10 +465,17 @@ pub fn render_reel_budgeted(
         let origin = end;
         let key = run_key(board, root, from, to, gap, origin);
         let segment = segments.join(format!("{key}.mp4"));
+        // A first-generation marker carries no duration: the segment is
+        // re-rendered to learn one, exactly as `marker_duration`'s
+        // contract says. Serving it anyway - at 0.0 s, which is what a
+        // missing number reads as - would pin every later scene to the
+        // reel's beginning, and the beds and the report would measure
+        // a reel that does not exist.
         let served = segment.is_file()
             && std::fs::read_to_string(segment.with_extension("done"))
                 .map(|text| marker_key(&text) == Some(key.clone()))
-                .unwrap_or(false);
+                .unwrap_or(false)
+            && marker_duration(&segment).is_some();
         let duration = if served {
             // A served entry counts as used: the sweep that holds the
             // cache under its budget evicts what nothing has read lately,
@@ -801,7 +808,6 @@ fn render_bed(
             }],
         }],
     });
-    let _ = &mut document;
     let dir = bed_audio.with_extension("stage");
     std::fs::create_dir_all(dir.join("assets")).map_err(|source| MotionError::Io {
         doing: "creating the bed's render directory".into(),
@@ -1058,6 +1064,42 @@ mod tests {
                 first_bytes,
                 "byte-identical, because it is the same file"
             );
+        }
+
+        /// A first-generation marker - the key, and no duration - is not
+        /// a hit: its segment is re-rendered to learn one, exactly as
+        /// `marker_duration`'s contract says. Serving it anyway would
+        /// read its duration as 0.0 s and pin every later scene to the
+        /// beginning of the reel, so the second render draws the scene
+        /// again and the report still measures a reel that exists.
+        #[test]
+        fn a_marker_without_a_duration_is_re_rendered_not_served_at_zero() {
+            let _serial = serial();
+            let dir = TempDir::new().unwrap();
+            let geneva = stub_geneva(&dir);
+            let (board, root) = setup(&dir);
+            let cache = dir.path().join("cache");
+            let out = dir.path().join("reel.mp4");
+
+            let first = render_reel(&geneva, &board, &root, &out, &cache, 18).expect("renders");
+            assert_eq!(first.renders, 2, "both scenes draw the first time");
+            // Age one marker back to the first generation: the key, and
+            // no duration after it.
+            let marker = cache
+                .join("scenes")
+                .join(format!("{}.done", first.scenes[0].key));
+            std::fs::write(&marker, first.scenes[0].key.clone()).expect("a v1 marker");
+
+            let (board, root) = setup(&dir);
+            let second = render_reel(&geneva, &board, &root, &out, &cache, 18).expect("renders");
+            assert_eq!(second.renders, 1, "the v1 marker's scene draws again");
+            assert!(!second.scenes[0].cached, "the v1 marker is not a hit");
+            assert!(second.scenes[1].cached, "the v2 marker still is");
+            // And the re-render taught the marker its duration, so the
+            // next render serves it whole again.
+            let (board, root) = setup(&dir);
+            let third = render_reel(&geneva, &board, &root, &out, &cache, 18).expect("renders");
+            assert_eq!(third.renders, 0, "the learned duration serves it again");
         }
 
         #[test]

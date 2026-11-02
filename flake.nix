@@ -176,6 +176,16 @@
           # a size a builder can hold; the thin LTO still joins them.
           # https://github.com/jub0t/Concat/issues/225
           env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "16";
+          # And the crate beside its neighbours: at cargo's default width
+          # the window crate's rustc ran beside slint's, motion's and the
+          # mcp's at once, and after the interface grew three and a half
+          # thousand lines the four together were more than the builder
+          # held - the same kill the codegen units above once were, only
+          # across processes, and the same cure ci.yml gives its own lanes:
+          # one heavy thing at a time, two jobs where its four were. The
+          # build was twenty-nine minutes at the old width; this keeps it
+          # inside the job's two hours with room for a slower runner.
+          env.CARGO_BUILD_JOBS = "2";
 
           nativeBuildInputs = (nativeInputs pkgs) ++ [
             pkgs.wrapGAppsHook3

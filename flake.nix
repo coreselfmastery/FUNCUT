@@ -182,10 +182,16 @@
           # thousand lines the four together were more than the builder
           # held - the same kill the codegen units above once were, only
           # across processes, and the same cure ci.yml gives its own lanes:
-          # one heavy thing at a time, two jobs where its four were. The
-          # build was twenty-nine minutes at the old width; this keeps it
-          # inside the job's two hours with room for a slower runner.
-          env.CARGO_BUILD_JOBS = "2";
+          # one heavy thing at a time. The hook that runs the build passes
+          # its own `-j $NIX_BUILD_CORES` on the command line - an env var
+          # would be written over by it - but it runs this hook first, so
+          # the cores themselves are what is narrowed: two, where the
+          # builder's four were. The build was twenty-nine minutes at the
+          # old width; this keeps it inside the job's two hours with room
+          # for a slower runner.
+          preBuild = ''
+            export NIX_BUILD_CORES=2
+          '';
 
           nativeBuildInputs = (nativeInputs pkgs) ++ [
             pkgs.wrapGAppsHook3

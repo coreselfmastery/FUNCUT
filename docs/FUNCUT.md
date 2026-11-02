@@ -68,11 +68,11 @@ the **95 tools** this build carries - so if the fork has a published
 release, that is the one you want. (A release the workflows build starts as
 a draft, and a draft is invisible to this script; see the note below.)
 
-> **A private repository needs a token.** While this repository is private,
-> the anonymous GitHub API cannot see its releases at all - the script would
-> read that as "none" and quietly install upstream instead. Give it read
-> access with a fine-grained personal access token (no scopes beyond
-> *Contents: read* on this repository):
+> **A private fork needs a token.** This repository's releases are public,
+> so the anonymous GitHub API sees them; a private fork's releases it
+> cannot see at all - the script would read that as "none" and quietly
+> install upstream instead. Give it read access with a fine-grained
+> personal access token (no scopes beyond *Contents: read* on that fork):
 >
 > ```sh
 > GITHUB_TOKEN=github_pat_... ./install-linux.sh

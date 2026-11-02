@@ -74,6 +74,7 @@ pub mod engine;
 pub mod farm;
 pub mod geneva;
 pub mod grade;
+pub mod lint;
 pub mod looks;
 pub mod noise;
 pub mod presets;
@@ -96,6 +97,7 @@ pub use engine::{
     Sidecar,
 };
 pub use geneva::{Breaker, CallLimits, Diagnostic, Geneva, fix_for};
+pub use lint::{Finding, RULES, Rule, rule_count};
 pub use looks::Look;
 pub use pulse::{BeatGrid, Driven, Pulse, curve_for_act, sound_starts_at};
 pub use reel::{ReelReport, SceneOutcome, render_reel, scene_key};

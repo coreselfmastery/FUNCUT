@@ -180,6 +180,14 @@ pub struct SceneCard {
     /// and under the comp's own words.
     #[serde(default)]
     pub grade: Option<crate::grade::Grade>,
+    /// The texture the scene wears over its picture, as a storyboard
+    /// writes it on the scene: `{"kind": "grain", "amount": 0.4,
+    /// "size": 3, "seed": 7}` - or `glass` with a `blur` and a
+    /// `saturate`, or `chromatic` with an `amount`. The grain and the
+    /// fringe go over everything; the frost goes under the comp's own
+    /// words, over the plate.
+    #[serde(default)]
+    pub look: Option<crate::looks::Look>,
     /// The personality the scene wears over its layout: `"calm"`,
     /// `"punchy"` or `"editorial"` - the weight the type carries, the
     /// tracking, the easing hand, the tempo, and the colour when no
@@ -523,6 +531,12 @@ impl Storyboard {
             if let Some(grade) = &card.grade {
                 for why in grade.problems() {
                     problem(index, None, format!("the grade: {why}"));
+                }
+            }
+            // The scene's look: the same refusal, in the look's own words.
+            if let Some(look) = &card.look {
+                for why in look.problems() {
+                    problem(index, None, format!("the look: {why}"));
                 }
             }
             if let Some(hold) = card.hold
@@ -959,6 +973,9 @@ impl SceneCard {
         }
         if let Some(grade) = &self.grade {
             scene = scene.graded(grade.clone());
+        }
+        if let Some(look) = &self.look {
+            scene = scene.looking(look.clone());
         }
         if let Some(style) = self.style {
             scene = scene.styled(style);

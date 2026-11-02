@@ -74,6 +74,11 @@ pub struct Scene {
     /// lower layers. The temperatures are the emotion read's own seven,
     /// so the act is the grade: a cold hook, a warm payoff.
     pub grade: Option<crate::grade::Grade>,
+    /// The texture the scene wears over its picture, when it names one:
+    /// grain over everything, the chromatic fringe over everything, the
+    /// glass frost under the comp's own ink - baked into the comp as
+    /// nodes the engine draws, the same door the grade goes through.
+    pub look: Option<crate::looks::Look>,
     /// The personality the scene wears over its layout: the weight the
     /// type carries, how tightly it tracks, the hand its eased segments
     /// move with, the tempo its animations run at - and, when no grade
@@ -549,6 +554,7 @@ impl Scene {
             layers: Vec::new(),
             pulse: None,
             grade: None,
+            look: None,
             style: None,
         }
     }
@@ -603,6 +609,15 @@ impl Scene {
     /// temperature at its own strength - the cold hook, the warm payoff.
     pub fn graded(mut self, grade: crate::grade::Grade) -> Scene {
         self.grade = Some(grade);
+        self
+    }
+
+    /// Give the scene a texture over its picture - the grain, the glass
+    /// frost, the chromatic fringe - baked into the comp when the plan is
+    /// laid. The grain and the fringe go over everything, ink included;
+    /// the frost goes under the comp's own words, over the plate.
+    pub fn looking(mut self, look: crate::looks::Look) -> Scene {
+        self.look = Some(look);
         self
     }
 
@@ -1479,6 +1494,35 @@ fn plan_with_chain(
                 warnings.push(format!(
                     "scene {index}: the grade has nothing under the comp to grade - no plate, \
                      no lower layer - so the cast lands on the curtain alone"
+                ));
+            }
+        }
+        // The look, worn where its kind sits in the paint order: the grain
+        // and the fringe over everything the comp paints, the frost under
+        // the comp's ink and over the plate - the texture after the colour.
+        // The frost needs the same ground the grade does, and for the same
+        // reason: frosted curtain is fog nobody can see through.
+        if let Some(look) = &scene.look {
+            let has_ground = scene.layers.iter().any(|layer| !layer.above);
+            crate::looks::apply(&mut comp, look).map_err(|why| {
+                // A look this wrong was the storyboard's to refuse with its
+                // scene named; a builder can still make one, and the plan
+                // is where it stops.
+                MotionError::Invalid {
+                    diagnostics: vec![crate::comp::Diagnostic {
+                        path: format!("/scenes/{index}/look"),
+                        message: why,
+                        help: None,
+                    }],
+                }
+            })?;
+            if matches!(look, crate::looks::Look::Glass { .. })
+                && !look.is_identity()
+                && !has_ground
+            {
+                warnings.push(format!(
+                    "scene {index}: the glass has nothing under the comp to frost - no plate, \
+                     no lower layer - so the frost lands on the curtain alone"
                 ));
             }
         }

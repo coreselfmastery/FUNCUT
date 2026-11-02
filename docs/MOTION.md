@@ -402,6 +402,38 @@ A scene whose grade has nothing under its comp - no plate, no lower layer - is t
 plan's warnings: the cast would land on the curtain alone, and a grade nobody can see is a grade
 the author should hear about.
 
+### The looks: grain, glass and the chromatic fringe
+
+The effect catalogue owns the pixel shaders, and they run on footage through the renderer's own
+compositor; a comp is a document, and the engine that bakes it is a CSS raster with no shader
+stage. `looks.rs` writes the CSS that approximates the three textures every template reaches
+for, as nodes the engine draws in the comp's own paint order:
+
+```json
+{ "preset": "funcut.lower-third.glass", "hold": 4.0, "plate": "back",
+  "look": { "kind": "grain", "amount": 0.4, "size": 3, "seed": 7 } }
+```
+
+| Look | Where it sits | What it is |
+| --- | --- | --- |
+| `grain` | over everything, ink included | a seeded field of motes (480 at full strength, capped where the engine's layout stays quick), half light half dark, shimmering on the node's own `position` track - twelve steps-curved keys within a few pixels of the authored place |
+| `glass` | first paint, under the comp's ink | a full-bleed `backdrop-filter: blur() saturate()` frost over the plate, and a faint white wash; the words stay sharp, the world behind them goes glassy |
+| `chromatic` | over everything | the edge fringe: a warm fall-off on the left, a cool one on the right, one gradient per edge - the honest approximation a browserless raster can draw; a true channel split needs per-channel masks the engine has none of |
+
+Measured against the engine (1.6.0) on a neutral grey plate: the wash and both fringes draw;
+gradients without stop positions carry the spatial fall-off (so one gradient per edge, and one
+div per mote - multiple backgrounds on one element drew nothing when measured); and **markup
+animations are static per bake** - zero pixels moved between two frames under a linear-timed
+keyframe set - so the grain's shimmer rides the node's own timeline track, which the engine
+*does* animate per frame. The timeline's animation is the timeline's; the stylesheet's is a
+still. The seed is the whole of the grain's randomness - the same seed is the same grain on
+every machine and every re-render, and the mote count and the shimmer's offsets come from
+`noise.rs`, never from a clock.
+
+A scene whose glass has nothing under its comp is told so in the plan's warnings, the way a
+grade is: frosted curtain is fog nobody can see through. And an identity look - a grain at
+zero, a frost with no blur at unity saturation, a fringe at zero - bakes nothing at all.
+
 ### The style: one layout, three personalities
 
 A layout template says where things sit; a style says how the same layout feels. `style.rs` is

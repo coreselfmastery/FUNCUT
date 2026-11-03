@@ -25,7 +25,7 @@
 use std::path::{Path, PathBuf};
 
 use concat_motion::authoring::{self, CompSummary};
-use concat_motion::comp::Comp;
+use concat_motion::comp::{AssetKind, Comp, NodeKind, Paint, Rgba};
 use concat_motion::engine::{BakeRequest, CompEngine, EnginePreference};
 use concat_motion::geneva::Geneva;
 use concat_motion::presets;
@@ -254,6 +254,394 @@ pub fn inspect(arguments: Value) -> Result<Outcome, ApiError> {
         reply["file"] = json!(file.display().to_string());
     }
     Ok(Outcome::json(reply))
+}
+
+/// `scene_analysis`: the comp read as an engineer reads it, before a
+/// frame is drawn - `motion_inspect` says *what* a comp holds; this says
+/// *how well it is built*. The census (nodes by kind, animated against
+/// static, keyframes and the curves they ride, nesting depth), the timing
+/// (first start, last end, the fraction of the comp's span anything is
+/// on screen, the gaps where nothing is), the text (sizes against the
+/// frame, the fonts, karaoke, plates, outlines, shadows, gradient ink),
+/// per-text legibility (contrast of the ink against the plate or the
+/// background it actually draws over, WCAG-shaped and honestly null when
+/// the ink is a gradient over video), the assets against the disk, and
+/// the lint's own findings with their stable `L###` codes. No engine, no
+/// render, no write: everything here is read off the document, so it
+/// costs nothing and refuses nothing - it is the critique that happens
+/// before the pixels do.
+pub fn scene_analysis(arguments: Value) -> Result<Outcome, ApiError> {
+    let fields = arguments
+        .as_object()
+        .cloned()
+        .ok_or_else(|| ApiError::invalid("invalid arguments: the arguments are an object"))?;
+    let known = ["preset", "comp", "project", "ops"];
+    for key in fields.keys() {
+        if !known.contains(&key.as_str()) {
+            return Err(ApiError::invalid(format!(
+                "invalid arguments: unknown field `{key}`"
+            )));
+        }
+    }
+    let (comp, file) = resolve_comp(&fields)?;
+    // The asset family reads the disk, and the disk it reads is the
+    // folder the comp file lives in - the same place a bake stages from.
+    // A preset has no folder, so its assets are reported as unverified
+    // rather than checked against a directory that is not there.
+    let source = file
+        .as_ref()
+        .and_then(|file| file.parent().map(Path::to_path_buf));
+    let mut reply = json!({ "analysis": analyse(&comp, source.as_deref()) });
+    if let Some(file) = file {
+        reply["file"] = json!(file.display().to_string());
+    }
+    Ok(Outcome::json(reply))
+}
+
+/// The analysis itself: every number `scene_analysis` answers, walked off
+/// the document. Kept private because it is the tool's own shape, not a
+/// contract another crate reads.
+fn analyse(comp: &Comp, source: Option<&Path>) -> Value {
+    let duration = comp.duration.max(0.0);
+
+    // ── The census ────────────────────────────────────────────────────
+    let mut by_kind: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    let mut curves: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let mut keys = 0usize;
+    let mut animated = 0usize;
+    let mut effects = 0usize;
+    let mut parents: std::collections::BTreeMap<&str, Option<&str>> =
+        std::collections::BTreeMap::new();
+    let mut depth = 0usize;
+    for node in &comp.nodes {
+        let kind = match &node.kind {
+            NodeKind::Group { .. } => "group",
+            NodeKind::Rect { .. } => "rect",
+            NodeKind::Ellipse { .. } => "ellipse",
+            NodeKind::Path { .. } => "path",
+            NodeKind::Text { .. } => "text",
+            NodeKind::Html { .. } => "html",
+            NodeKind::Image { .. } => "image",
+            NodeKind::Lottie { .. } => "lottie",
+            NodeKind::Composition { .. } => "composition",
+        };
+        *by_kind.entry(kind).or_default() += 1;
+        parents.insert(node.id.as_str(), node.parent.as_deref());
+        effects += node.effects.len();
+        if node.tracks.is_empty() {
+            continue;
+        }
+        animated += 1;
+        for track in node.tracks.values() {
+            keys += track.keys.len();
+            for key in &track.keys {
+                if let Some(curve) = &key.curve {
+                    *curves.entry(curve.css()).or_default() += 1;
+                }
+            }
+        }
+    }
+    // Nesting depth, the honest way: walk each node's parent chain, with
+    // the engine's own cap (32) so a document that is a loop is a
+    // finding, not a hang here too.
+    for node in &comp.nodes {
+        let mut walked = 0usize;
+        let mut parent = node.parent.as_deref();
+        while let Some(id) = parent {
+            walked += 1;
+            if walked > 32 {
+                break;
+            }
+            parent = parents.get(id).copied().flatten();
+        }
+        depth = depth.max(walked);
+    }
+
+    // ── The timing ────────────────────────────────────────────────────
+    // The union of the node windows, exactly: sort the spans, merge what
+    // overlaps, and the gaps fall out as what is left of [0, duration].
+    let mut spans: Vec<(f64, f64)> = comp
+        .nodes
+        .iter()
+        .map(|node| (node.start, node.end(duration)))
+        .filter(|(from, to)| to > from)
+        .collect();
+    spans.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    let mut covered: Vec<(f64, f64)> = Vec::new();
+    for (from, to) in spans {
+        match covered.last_mut() {
+            Some(last) if from <= last.1 => last.1 = last.1.max(to),
+            _ => covered.push((from, to)),
+        }
+    }
+    let on_screen: f64 = covered.iter().map(|(from, to)| to - from).sum();
+    let mut gaps: Vec<Value> = Vec::new();
+    let mut at = 0.0;
+    for (from, to) in &covered {
+        if from - at >= 0.05 {
+            gaps.push(json!({ "from": at, "to": *from }));
+        }
+        at = at.max(*to);
+    }
+    if duration - at >= 0.05 {
+        gaps.push(json!({ "from": at, "to": duration }));
+    }
+    let first_start = comp
+        .nodes
+        .iter()
+        .map(|node| node.start)
+        .fold(f64::INFINITY, f64::min);
+    let last_end = comp
+        .nodes
+        .iter()
+        .map(|node| node.end(duration))
+        .fold(f64::NEG_INFINITY, f64::max);
+
+    // ── The text, and its legibility ──────────────────────────────────
+    let mut sizes: Vec<f64> = Vec::new();
+    let mut fonts: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut karaoke = 0usize;
+    let mut plates = 0usize;
+    let mut outlines = 0usize;
+    let mut shadows = 0usize;
+    let mut gradient_ink = 0usize;
+    let mut readability: Vec<Value> = Vec::new();
+    for node in &comp.nodes {
+        let NodeKind::Text(text) = &node.kind else {
+            continue;
+        };
+        if !text.words.is_empty() {
+            karaoke += 1;
+        }
+        if text.background.a > 0.0 {
+            plates += 1;
+        }
+        if text.outline.is_some() {
+            outlines += 1;
+        }
+        if text.shadow.is_some() {
+            shadows += 1;
+        }
+        if text.fill.is_some() {
+            gradient_ink += 1;
+        }
+        if !text.font.is_empty() {
+            fonts.insert(text.font.clone());
+        }
+        sizes.push(text.size);
+        // The backdrop the words actually draw over: their own plate when
+        // it is opaque enough to matter, else the comp's background when
+        // it is, else video nobody can read from the document.
+        let backdrop = if text.background.a > 0.5 {
+            Some(text.background)
+        } else if comp.background.a > 0.5 {
+            Some(comp.background)
+        } else {
+            None
+        };
+        // The ink: a flat colour answers with one ratio, a gradient with
+        // its worst stop (the ramp is only as legible as its quietest
+        // moment), and no backdrop leaves the ratio honestly null.
+        let inks: Vec<&Rgba> = match &text.fill {
+            Some(Paint::Solid { color }) => vec![color],
+            Some(Paint::Gradient { stops, .. }) => stops.iter().map(|(_, color)| color).collect(),
+            None => vec![&text.color],
+        };
+        let contrast = backdrop.and_then(|backdrop| {
+            inks.iter().map(|ink| contrast_ratio(ink, &backdrop)).fold(
+                None::<f64>,
+                |worst, ratio| match worst {
+                    None => Some(ratio),
+                    Some(worst) => Some(worst.min(ratio)),
+                },
+            )
+        });
+        let as_percent = if comp.height > 0 {
+            text.size / f64::from(comp.height) * 100.0
+        } else {
+            0.0
+        };
+        let mut verdict = "ok";
+        if as_percent < 3.0 {
+            verdict = "small";
+        }
+        if let Some(ratio) = contrast
+            && ratio < 3.0
+        {
+            verdict = if as_percent < 3.0 {
+                "small-and-low-contrast"
+            } else {
+                "low-contrast"
+            };
+        }
+        readability.push(json!({
+            "node": node.id,
+            "size": text.size,
+            "asPercentOfHeight": (as_percent * 100.0).round() / 100.0,
+            "alpha": text.color.a,
+            "contrast": contrast.map(|ratio| (ratio * 100.0).round() / 100.0),
+            "backdrop": backdrop.is_some(),
+            "verdict": verdict,
+        }));
+    }
+    let min_size = sizes.iter().copied().fold(f64::INFINITY, f64::min);
+    let max_size = sizes.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+
+    // ── The assets, against the disk ─────────────────────────────────
+    let mut assets: Vec<Value> = Vec::new();
+    for (id, asset) in &comp.assets {
+        let kind = asset
+            .kind
+            .as_ref()
+            .map(|kind| match kind {
+                AssetKind::Image => "image",
+                AssetKind::Video => "video",
+                AssetKind::Audio => "audio",
+                AssetKind::Font => "font",
+                AssetKind::Lottie => "lottie",
+                AssetKind::Html => "html",
+            })
+            .map(str::to_owned);
+        let off_machine = asset.src.starts_with("http:")
+            || asset.src.starts_with("https:")
+            || asset.src.starts_with("//");
+        let present = if off_machine {
+            None
+        } else {
+            source.map(|source| source.join(&asset.src).is_file())
+        };
+        assets.push(json!({
+            "id": id,
+            "kind": kind,
+            "src": asset.src,
+            "present": present,
+        }));
+    }
+
+    // ── The lint, with its stable codes ───────────────────────────────
+    let mut findings: Vec<Value> = comp_lint(comp, source).iter().map(finding_json).collect();
+    if findings.is_empty() {
+        findings = vec![json!({
+            "code": "clean",
+            "family": "none",
+            "path": "/",
+            "message": "The lint has nothing to say: no finding in any of its five families.",
+        })];
+    }
+
+    json!({
+        "comp": {
+            "id": comp.id,
+            "name": comp.name,
+            "width": comp.width,
+            "height": comp.height,
+            "fps": comp.fps,
+            "duration": comp.duration,
+            "needsMarkup": comp.needs_markup(),
+            "slots": comp.slots.len(),
+        },
+        "census": {
+            "nodes": comp.nodes.len(),
+            "byKind": by_kind,
+            "animated": animated,
+            "static": comp.nodes.len() - animated,
+            "keys": keys,
+            "curves": curves,
+            "depth": depth,
+            "effects": effects,
+        },
+        "timing": {
+            "firstStart": if first_start.is_finite() { json!(first_start) } else { Value::Null },
+            "lastEnd": if last_end.is_finite() { json!(last_end) } else { Value::Null },
+            "coverage": if duration > 0.0 {
+                json!((on_screen / duration * 100.0).round() / 100.0)
+            } else {
+                Value::Null
+            },
+            "gaps": gaps,
+        },
+        "text": {
+            "nodes": sizes.len(),
+            "minSize": if min_size.is_finite() { json!(min_size) } else { Value::Null },
+            "maxSize": if max_size.is_finite() { json!(max_size) } else { Value::Null },
+            "fonts": fonts,
+            "karaoke": karaoke,
+            "plates": plates,
+            "outlines": outlines,
+            "shadows": shadows,
+            "gradientInk": gradient_ink,
+        },
+        "readability": readability,
+        "assets": assets,
+        "assetsChecked": source.is_some(),
+        "lint": findings,
+        "note": "Read this before a frame is drawn: the small and the low-contrast are the \
+                 retakes a render would have to tell you, the gaps are the dead air, and the \
+                 lint's codes are stable - L1xx structure, L2xx timing, L3xx assets, L4xx \
+                 motion, L5xx determinism. Nothing here refused anything; everything here is \
+                 advice about a document you can still change for free.",
+    })
+}
+
+/// The lint's findings for one comp: the four families that read the
+/// document, plus the asset family when there is a folder to read. The
+/// `playful` voice is off - an agent wants the sentence, not the wink.
+fn comp_lint(comp: &Comp, source: Option<&Path>) -> Vec<concat_motion::lint::Finding> {
+    let mut found = concat_motion::lint::audit(comp, false);
+    if let Some(source) = source {
+        found.extend(concat_motion::lint::audit_assets(comp, source));
+    }
+    found
+}
+
+/// One finding, as the tool answers it: the code, the family the code's
+/// prefix names, the place, the sentence, and the help when there is one.
+fn finding_json(finding: &concat_motion::lint::Finding) -> Value {
+    let family = match finding.code.as_bytes().first() {
+        Some(b'L') => match finding.code.as_bytes().get(1) {
+            Some(b'1') => "structure",
+            Some(b'2') => "timing",
+            Some(b'3') => "assets",
+            Some(b'4') => "motion",
+            Some(b'5') => "determinism",
+            _ => "unknown",
+        },
+        _ => "unknown",
+    };
+    let mut value = json!({
+        "code": finding.code,
+        "family": family,
+        "path": finding.path,
+        "message": finding.message,
+    });
+    if let Some(help) = &finding.help {
+        value["help"] = json!(help);
+    }
+    value
+}
+
+/// The WCAG-shaped contrast ratio of an ink over a backdrop: relative
+/// luminance of each, the lighter over the darker, both plus 0.05 - the
+/// 1.0 a grey draws on its own grey, the 21.0 black on white. A shape
+/// video borrows for want of its own: a caption's legibility against a
+/// plate is the same arithmetic a page's is against a background.
+fn contrast_ratio(ink: &Rgba, backdrop: &Rgba) -> f64 {
+    let lighter = luminance(ink).max(luminance(backdrop));
+    let darker = luminance(ink).min(luminance(backdrop));
+    (lighter + 0.05) / (darker + 0.05)
+}
+
+/// Relative luminance, the WCAG shape: linearised channels, weighted,
+/// alpha ignored (the caller already chose an opaque-enough backdrop).
+fn luminance(color: &Rgba) -> f64 {
+    let channel = |c: f64| {
+        if c <= 0.03928 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
 }
 
 /// `motion_frame`: one frame of a comp at `at` seconds, drawn in tens of

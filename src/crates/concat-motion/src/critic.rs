@@ -663,6 +663,7 @@ mod tests {
             assets: std::collections::BTreeMap::new(),
             curves: std::collections::BTreeMap::new(),
             nodes,
+            comps: Default::default(),
             slots: Vec::new(),
         }
     }

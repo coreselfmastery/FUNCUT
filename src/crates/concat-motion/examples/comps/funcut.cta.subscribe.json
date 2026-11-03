@@ -73,8 +73,8 @@
         ]
       },
       "kind": "html",
-      "markup": "\n<div class=\"wrap\">\n  <div class=\"ask\">One <em>tap</em> away.</div>\n  <div class=\"btn\"><div class=\"dot\"></div><div class=\"txt\">SUBSCRIBE</div></div>\n  <div class=\"sub\">NEW EPISODE EVERY FRIDAY</div>\n</div>\n",
-      "css": "\n.wrap { position: absolute; inset: 0; display: flex; flex-direction: column;\n  align-items: center; justify-content: center; gap: 30px; }\n.ask { font-family: Archivo, Inter, DejaVu Sans; font-size: 84px; font-weight: 900; letter-spacing: -0.035em;\n  color: #f7f9ff; }\n.ask em { font-style: normal; color: #ff2d55; }\n.btn { display: flex; flex-direction: row; align-items: center; gap: 14px;\n  padding: 20px 38px; border-radius: 999px; background: #ff2d55;\n  box-shadow: 0 18px 50px rgba(255,45,85,0.45);\n  animation: breathe 2.4s ease-in-out infinite; }\n.dot { width: 12px; height: 12px; border-radius: 999px; background: #ffffff; }\n.txt { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 22px; font-weight: 700; letter-spacing: 0.2em; color: #ffffff; }\n.sub { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 17px; letter-spacing: 0.24em; color: #9fb0bf; }\n@keyframes breathe { from { transform: scale(1) } 50% { transform: scale(1.055) } to { transform: scale(1) } }\n",
+      "markup": "\n<div class=\"wrap\">\n  <div class=\"ask\">One <em>tap</em> away.</div>\n  <div class=\"ul\"></div>\n  <div class=\"btn\"><div class=\"dot\"></div><div class=\"txt\">SUBSCRIBE</div></div>\n  <div class=\"sub\">NEW EPISODE EVERY FRIDAY</div>\n</div>\n",
+      "css": "\n.wrap { position: absolute; inset: 0; display: flex; flex-direction: column;\n  align-items: center; justify-content: center; gap: 34px; }\n.ask { font-family: Archivo, Inter, DejaVu Sans; font-size: 88px; font-weight: 800; letter-spacing: -0.035em;\n  color: #f4f1ea; }\n.ask em { font-style: normal; color: #d9a441; }\n.ul { width: 260px; height: 5px; border-radius: 3px; background: #d9a441; transform-origin: left center;\n  animation: draw 0.7s cubic-bezier(0.16,1,0.3,1) 0.55s both; }\n.btn { display: flex; flex-direction: row; align-items: center; gap: 14px;\n  padding: 18px 36px; border-radius: 999px; background: rgba(12,13,16,0.92);\n  border: 1.5px solid #d9a441; }\n.dot { width: 10px; height: 10px; border-radius: 999px; background: #d9a441; }\n.txt { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 21px; font-weight: 700; letter-spacing: 0.2em; color: #f4f1ea; }\n.sub { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 16px; letter-spacing: 0.24em; color: #9a978e; }\n@keyframes draw { from { transform: scaleX(0) } to { transform: scaleX(1) } }\n",
       "width": {
         "px": 1920.0
       },
@@ -89,6 +89,18 @@
       "field": "text",
       "sample": "One tap away.",
       "label": "Headline"
+    },
+    {
+      "node": "card",
+      "field": "text",
+      "sample": "NEW EPISODE EVERY FRIDAY",
+      "label": "Subline"
+    },
+    {
+      "node": "card",
+      "field": "text",
+      "sample": "SUBSCRIBE",
+      "label": "Button"
     }
   ]
 }

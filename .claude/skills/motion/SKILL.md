@@ -1,6 +1,6 @@
 ---
 name: motion
-description: Design and render motion graphics inside FUNCUT (the Concat video editor) — titles, lower thirds, kinetic captions, stat cards, charts, quotes, chapters, terminals, before/after splits, logo stings, backdrops, and hand-authored comps with masks, effects, blends and spring curves. Use this whenever a video needs designed type or animated graphics, whenever you are asked to animate text, caption a transcript word by word, build a title package or a showreel, or retime/restyle an existing comp. Covers the design doctrine (hooks, rhythm, contrast, one idea per beat), the comp JSON document down to every node kind, the twelve shipped presets and how to break out of them, the full operation vocabulary (set-slot, set-words, set-track, set-track-points, add-text/add-rect/add-group, spring/bezier/steps/points curves), the `concat-motion-agent` CLI (list, inspect, edit, frame, bake, reel, captions), multi-layer scenes (parallax plates, light leaks, grain and vignettes stacked under and over a comp, each on its own clock), the Geneva engine's real limits, and the verification loop: inspect, edit in one validated batch, look at three frames, bake at cut size.
+description: Design and render motion graphics inside FUNCUT (the Concat video editor) — titles, lower thirds, kinetic captions, stat cards, charts, quotes, chapters, agendas, terminals, diffs, before/after splits, logo stings, end cards, backdrops, and hand-authored comps with masks, effects, blends and spring curves. Use this whenever a video needs designed type or animated graphics, whenever you are asked to animate text, caption a transcript word by word, build a title package or a showreel, or retime/restyle an existing comp. Covers the design doctrine (hooks, rhythm, contrast, one idea per beat), the comp JSON document down to every node kind, the eighteen shipped presets and how to break out of them, the full operation vocabulary (set-slot, set-words, set-track, set-track-points, add-text/add-rect/add-group, spring/bezier/steps/points curves), the `concat-motion-agent` CLI (list, inspect, edit, frame, bake, reel, captions), multi-layer scenes (parallax plates, light leaks, grain and vignettes stacked under and over a comp, each on its own clock), the Geneva engine's real limits, and the verification loop: inspect, edit in one validated batch, look at three frames, bake at cut size.
 ---
 
 # Motion comps
@@ -20,7 +20,7 @@ The full reference is `docs/MOTION.md`; this file is the working manual **and th
 
 ## 0. You are the director, not the operator
 
-The twelve presets are a **vocabulary**, not a menu. A reel that runs the presets in order is a
+The eighteen presets are a **vocabulary**, not a menu. A reel that runs the presets in order is a
 catalogue; a reel that *argues* something is design. This layer is one of the most expressive things in
 the product — masks, blends, effects, five curve families, markup that can draw anything CSS can draw —
 and it is wasted if every scene is "preset, default slot, three seconds".
@@ -233,20 +233,26 @@ kicker) is ~440 lines of pretty-printed JSON and is in the repository as a templ
 
 ---
 
-## 5. The library — twelve comps
+## 5. The library — eighteen comps
 
 | Id | Category | Slot | What it is |
 | --- | --- | --- | --- |
 | `funcut.lower-third.glass` | Lower thirds | Name | editorial lower third: an accent bar that wipes down, a kicker, a name, a role — no avatar block, no LIVE badge |
+| `funcut.lower-third.minimal` | Lower thirds | Name, Role | the documentary read — a name, a mono role, a hairline rule that draws; no card |
 | `funcut.caption.kinetic` | Captions | Transcript line | word-timed caption with a highlight |
-| `funcut.stats.triptych` | Stats | Numbers | three stat cards, bars growing |
+| `funcut.stats.triptych` | Stats | Number/Label 1–3 | three stat cards, bars growing |
 | `funcut.chart.bars` | Charts | Chart title | bar chart building on |
-| `funcut.ticker.count` | Stats | Number | one big counting number + drawn rule |
+| `funcut.chart.progress` | Charts | Number, Label | one number, one fill — the bar grows to the number |
+| `funcut.ticker.count` | Stats | Number, Label | one big counting number + drawn rule |
 | `funcut.sting.wordmark` | Stings | Wordmark, Subline | solid-ink wordmark with one accent full stop and a rule that draws under it |
 | `funcut.quote.pull` | Quotes | Quote | pull quote with attribution |
-| `funcut.chapter.chip` | Chapters | Chapter | number, label, underline |
+| `funcut.chapter.chip` | Chapters | Chapter, Number | number, label, underline — the corner badge |
+| `funcut.chapter.numbered` | Chapters | Kicker, Number, Title | the full-frame section change — giant number, accent rule, title |
+| `funcut.chapter.agenda` | Chapters | Heading, Row 1–4 | the numbered list of what is coming, one row at a time |
 | `funcut.cta.subscribe` | Calls to action | Headline | typographic ask — one accent word, an outlined button that settles once |
+| `funcut.cta.endcard` | Calls to action | Headline, Buttons, Footer | the full-frame close — kicker, headline, two buttons, footer |
 | `funcut.code.terminal` | Code | Window title | terminal window, lines on `steps()` |
+| `funcut.code.diff` | Code | File, Removed, Added | a code diff — red minus, green plus, landing beat by beat |
 | `funcut.compare.split` | Before / after | After label | split frame, wipe, knob |
 | `funcut.backdrop.mesh` | Backdrops | — | mesh gradient + grid + vignette (opaque) |
 

@@ -474,6 +474,7 @@ mod tests {
                 tracks: Default::default(),
                 kind,
             }],
+            comps: Default::default(),
             slots: Vec::new(),
         }
     }

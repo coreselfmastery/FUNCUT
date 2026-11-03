@@ -774,7 +774,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "motion_presets",
             title: "List the motion library",
-            description: "Every motion-graphics preset - lower thirds, kinetic captions, stat cards, wordmark stings, pull quotes, chapter chips, subscribe cards, terminals, bar charts, split compares, counting numbers, mesh backdrops - with its category, frame size, duration, slots to fill and the nodes it animates, plus whether the Geneva engine is on this machine to bake it. The vocabulary Phase 5b of the director skill designs with; `motion_inspect` sees inside one.",
+            description: "Every motion-graphics preset - lower thirds (glass and minimal), kinetic captions, stat cards, wordmark stings, pull quotes, chapter chips, numbered chapters, agenda lists, subscribe cards, end cards, terminals, code diffs, bar charts, progress bars, split compares, counting numbers, mesh backdrops - with its category, frame size, duration, slots to fill and the nodes it animates, plus whether the Geneva engine is on this machine to bake it. The vocabulary Phase 5b of the director skill designs with; `motion_inspect` sees inside one.",
             read_only: true,
             destructive: false,
             idempotent: true,

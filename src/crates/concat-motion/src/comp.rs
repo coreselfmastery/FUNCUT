@@ -64,6 +64,20 @@ pub struct Comp {
     /// The nodes, in paint order: earlier is under later.
     #[serde(default)]
     pub nodes: Vec<Node>,
+    /// Sub-compositions this comp carries, by name: whole comp
+    /// documents a [`NodeKind::Composition`] node places, any number of
+    /// times, each placement with its own timing and transform - define a
+    /// sting once, use it nine times.
+    ///
+    /// Each is a **scope of its own**: its node ids, assets, curves and
+    /// slots belong to it, a parent and a child may both have a node
+    /// called `card` and an asset called `logo`, and a diagnostic inside
+    /// one is pointed at `/comps/{name}/...` - the same document-in-a-
+    /// document rule the timeline engine holds (its nesting cap is eight
+    /// levels, and a comp that contains itself through any chain is
+    /// refused, here first and by the engine's E207 after).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub comps: BTreeMap<String, Comp>,
     /// Marks this comp as a template: slots are nodes whose text or asset a
     /// project fills in (the same idea as `template.json`'s placeholders).
     #[serde(default)]
@@ -876,6 +890,67 @@ impl Comp {
     /// A comp that fails here is not rendered: a broken document rendered
     /// half-right is worse than one refused with a pointer into it.
     pub fn validate(&self) -> Vec<Diagnostic> {
+        // The trail opens with this document's own id: a sub-comp whose id
+        // is already on it is a placement that comes back around, which is
+        // the cycle the engine refuses as E207 and this refuses first,
+        // with a pointer into the document the engine cannot give.
+        let mut trail = vec![self.id.clone()];
+        self.validate_in("", &mut trail)
+    }
+
+    /// The same validation, rooted at `prefix` and walking `trail`: the
+    /// document's own findings carry the prefix, its sub-comps' findings
+    /// carry `/comps/{name}` on top of it, and the trail is what a cycle
+    /// and the nesting cap are read from. Every sub-comp is validated,
+    /// placed or not - each is emitted to the engine, so each has to be a
+    /// document the engine accepts.
+    fn validate_in(&self, prefix: &str, trail: &mut Vec<String>) -> Vec<Diagnostic> {
+        let mut found = self.validate_document();
+        for problem in &mut found {
+            problem.path = format!("{prefix}{}", problem.path);
+        }
+        for (name, sub) in &self.comps {
+            let path = format!("{prefix}/comps/{name}");
+            if trail.contains(&sub.id) {
+                found.push(
+                    Diagnostic::new(
+                        path.clone(),
+                        format!(
+                            "the comp {:?} contains itself: {} places {:?}, which is already \
+                             on the chain {:?}",
+                            sub.id, path, sub.id, trail
+                        ),
+                    )
+                    .with_help(
+                        "a scene cannot be built from itself at any depth; the engine \
+                         refuses it as E207 too",
+                    ),
+                );
+                continue;
+            }
+            if trail.len() >= 8 {
+                found.push(
+                    Diagnostic::new(
+                        path.clone(),
+                        format!(
+                            "the comp {:?} sits deeper than the engine's eight levels of \
+                             nesting",
+                            sub.id
+                        ),
+                    )
+                    .with_help("lift the deepest level out, or inline it as nodes"),
+                );
+                continue;
+            }
+            trail.push(sub.id.clone());
+            found.extend(sub.validate_in(&path, trail));
+            trail.pop();
+        }
+        found
+    }
+
+    /// This document's own findings, in its own scope's paths.
+    fn validate_document(&self) -> Vec<Diagnostic> {
         let mut found = Vec::new();
         if self.format != FORMAT {
             found.push(
@@ -961,6 +1036,23 @@ impl Comp {
                     format!("/nodes/{i}/asset"),
                     format!("no asset called {asset:?}"),
                 ));
+            }
+            // A placement names a comp this document carries: the scoping
+            // rule. A name that is not in `comps` is a broken template -
+            // and pointing at another document's comp by id is exactly the
+            // cross-scope leak the rule exists to refuse.
+            if let NodeKind::Composition { comp } = &node.kind
+                && !self.comps.contains_key(comp)
+            {
+                found.push(
+                    Diagnostic::new(
+                        format!("/nodes/{i}/comp"),
+                        format!("no sub-composition called {comp:?}"),
+                    )
+                    .with_help(
+                        "a composition node places a comp this document carries under `comps`",
+                    ),
+                );
             }
             // The stylesheet a markup node carries is read for the one
             // thing the engine stays quiet about: a transform as a base
@@ -1174,6 +1266,7 @@ mod tests {
             background: transparent(),
             assets: BTreeMap::new(),
             curves: BTreeMap::new(),
+            comps: Default::default(),
             nodes: vec![Node {
                 id: "card".into(),
                 parent: None,
@@ -1500,5 +1593,217 @@ mod tests {
                 1.0
             )
         );
+    }
+
+    // ── Sub-compositions: the scoped document-in-a-document ────────────
+
+    /// A placement names a comp this document carries: the scoping rule.
+    /// A name that is not in `comps` is refused with the pointer, and a
+    /// name that is validates clean - placed once or nine times.
+    #[test]
+    fn a_placement_names_a_comp_the_document_carries() {
+        let mut comp = rect_comp();
+        comp.nodes.push(Node {
+            id: "place".into(),
+            parent: None,
+            start: 0.0,
+            duration: 0.0,
+            transform: Transform::default(),
+            opacity: 1.0,
+            blend: crate::comp::Blend::Normal,
+            mask: None,
+            effects: Vec::new(),
+            tracks: Default::default(),
+            kind: NodeKind::Composition {
+                comp: "sting".into(),
+            },
+        });
+        let missing = comp.validate();
+        assert!(
+            missing.iter().any(|d| d.path == "/nodes/1/comp"
+                && d.message.contains("no sub-composition called \"sting\"")),
+            "{missing:?}"
+        );
+        comp.comps.insert("sting".into(), sting_comp());
+        assert!(comp.validate().is_empty(), "{:?}", comp.validate());
+    }
+
+    /// A sub-comp is a scope of its own: parent and child may both have a
+    /// node called `card` and an asset called `logo`, and a diagnostic
+    /// inside the child is pointed at `/comps/{name}/...` - the scope is
+    /// in the path, not implied.
+    #[test]
+    fn sub_comps_are_scopes_of_their_own() {
+        let mut comp = rect_comp();
+        comp.assets.insert(
+            "logo".into(),
+            Asset {
+                src: "logo.png".into(),
+                kind: None,
+            },
+        );
+        let mut child = sting_comp();
+        // The child's own `card`, its own `logo`: the same names, another
+        // scope, no collision and no complaint.
+        child.id = "sting".into();
+        child.assets.insert(
+            "logo".into(),
+            Asset {
+                src: "sting-logo.png".into(),
+                kind: None,
+            },
+        );
+        child.nodes.insert(
+            0,
+            Node {
+                id: "card".into(),
+                parent: None,
+                start: 0.0,
+                duration: 0.0,
+                transform: Transform::default(),
+                opacity: 1.0,
+                blend: crate::comp::Blend::Normal,
+                mask: None,
+                effects: Vec::new(),
+                tracks: Default::default(),
+                kind: NodeKind::Rect {
+                    width: Length::Px(100.0),
+                    height: Length::Px(50.0),
+                    fill: None,
+                    radius: 0.0,
+                },
+            },
+        );
+        comp.comps.insert("sting".into(), child);
+        assert!(comp.validate().is_empty(), "{:?}", comp.validate());
+
+        // A diagnostic inside the child carries the child's own path.
+        let mut broken = comp.clone();
+        broken.comps.get_mut("sting").expect("the sting").duration = 0.0;
+        let problems = broken.validate();
+        assert!(
+            problems.iter().any(|d| d.path == "/comps/sting/duration"),
+            "{problems:?}"
+        );
+    }
+
+    /// A comp cannot contain itself through any chain of placements: the
+    /// trail refuses it here, with a pointer into the document, before
+    /// the engine refuses it as E207.
+    #[test]
+    fn a_comp_cannot_contain_itself_through_a_chain() {
+        let mut outer = rect_comp();
+        outer.id = "outer".into();
+        let mut middle = sting_comp();
+        middle.id = "outer".into(); // placing middle eventually places outer again
+        outer.comps.insert("loop".into(), middle);
+        let problems = outer.validate();
+        assert!(
+            problems
+                .iter()
+                .any(|d| d.path == "/comps/loop" && d.message.contains("contains itself")),
+            "{problems:?}"
+        );
+    }
+
+    /// The engine nests eight levels deep; a document that goes deeper is
+    /// refused here with its depth named, not discovered mid-bake.
+    #[test]
+    fn nesting_past_the_engines_eight_levels_is_refused() {
+        let mut comp = rect_comp();
+        comp.id = "level0".into();
+        let mut current = &mut comp;
+        for level in 1..=9 {
+            let mut next = sting_comp();
+            next.id = format!("level{level}");
+            current = current.comps.entry(format!("level{level}")).or_insert(next);
+        }
+        let problems = comp.validate();
+        assert!(
+            problems
+                .iter()
+                .any(|d| d.message.contains("deeper than the engine's eight levels")),
+            "{problems:?}"
+        );
+    }
+
+    /// The comps map serialises and comes back: a document saved by one
+    /// hand is read by the next, and an empty map stays unwritten - the
+    /// committed comp documents do not grow a field they never used.
+    #[test]
+    fn the_comps_map_round_trips_and_stays_unwritten_when_empty() {
+        let mut comp = rect_comp();
+        comp.comps.insert("sting".into(), sting_comp());
+        let text = serde_json::to_string(&comp).expect("serialises");
+        assert!(text.contains("\"comps\":{\"sting\""));
+        let back: Comp = serde_json::from_str(&text).expect("parses");
+        assert!(back.comps.contains_key("sting"));
+        assert_eq!(back, comp);
+
+        let plain = rect_comp();
+        let text = serde_json::to_string(&plain).expect("serialises");
+        assert!(
+            !text.contains("comps"),
+            "an empty map is not written: {text}"
+        );
+        let back: Comp = serde_json::from_str(&text).expect("parses");
+        assert!(back.comps.is_empty());
+    }
+
+    /// A sub-comp's files are part of the document's content key in the
+    /// same way its own are: changing the logo inside the sting is a
+    /// different bake.
+    #[test]
+    fn the_comps_hash_moves_when_a_sub_comp_moves() {
+        let mut comp = rect_comp();
+        let before = comp.hash();
+        comp.comps.insert("sting".into(), sting_comp());
+        assert_ne!(comp.hash(), before);
+        let changed = {
+            let mut sting = sting_comp();
+            sting.duration = 9.0;
+            sting
+        };
+        comp.comps.insert("sting".into(), changed);
+        assert_ne!(comp.hash(), before);
+    }
+
+    /// A whole comp a placement can use: one gold bar and one word, the
+    /// sting the tests place nine times if they want to.
+    fn sting_comp() -> Comp {
+        Comp {
+            format: FORMAT,
+            id: "sting".into(),
+            name: "Sting".into(),
+            width: 640,
+            height: 360,
+            fps: 30.0,
+            duration: 1.2,
+            background: transparent(),
+            assets: BTreeMap::new(),
+            curves: BTreeMap::new(),
+            comps: Default::default(),
+            nodes: vec![Node {
+                id: "bar".into(),
+                parent: None,
+                start: 0.0,
+                duration: 0.0,
+                transform: Transform::default(),
+                opacity: 1.0,
+                blend: crate::comp::Blend::Normal,
+                mask: None,
+                effects: Vec::new(),
+                tracks: Default::default(),
+                kind: NodeKind::Rect {
+                    width: Length::Px(320.0),
+                    height: Length::Px(120.0),
+                    fill: Some(Paint::Solid {
+                        color: Rgba::hex("#d9a441ff"),
+                    }),
+                    radius: 12.0,
+                },
+            }],
+            slots: Vec::new(),
+        }
     }
 }

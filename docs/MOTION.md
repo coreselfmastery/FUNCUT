@@ -563,6 +563,42 @@ zero errors and zero warnings (one note: which x264 built the H.264).
 python3 scripts/motion/inspect-frames.py ./check   # renders one A/B frame itself
 ```
 
+### The lint: five families, every finding a stable code
+
+`lint.rs` is the discipline, widened: the motion principles (still reached
+through `discipline::audit`, unchanged, as the sentences the plan's warnings
+always carried) plus four more families — structure, timing, assets and
+determinism — every finding carrying a stable code in the lint's own `L###`
+namespace. The sidecar owns `E###`/`W###`; the document's own lint owns `L`,
+so the two can never collide or be read as one another's.
+
+| Family | Codes | The rules |
+| --- | --- | --- |
+| Structure | `L100`–`L103` | missing comp id, duplicate node ids, empty tracks, a comp that contains itself |
+| Timing | `L200`–`L203` | keys outside their span, negative starts, scenes overlapping with no transition to blend them, a cut longer than the scene before it |
+| Assets | `L300`–`L302` | a file that is not there, a kind the cache cannot file, a codec the engine's own table does not name |
+| Motion | `L400`–`L406` | the four principles, plus the crowd: more than five nodes entering inside one instant |
+| Determinism | `L500`–`L503` | the fetch, the wall clock, the unseeded random, an asset that points off-machine |
+
+Advice, not refusal — the same contract the principles always had. Several
+rules shadow a `validate()` refusal on purpose: a comp that is about to be
+refused also deserves to be told, in the words an agent can act on, before
+the refusal lands. Three doors, because the families read different things:
+
+```rust
+use concat_motion::lint;
+
+let findings = lint::audit(&comp, false);                          // the document alone
+let against_disk = lint::audit_assets(&comp, source_dir.as_path()); // the asset family
+let against_the_reel = lint::audit_sequence(&sequence);            // the reel-level timing family
+```
+
+Every finding carries its code, a JSON pointer into the document, the
+sentence, and the fix: `[L401] /nodes/3/tracks/opacity: node "card" enters
+opacity at 0% on a straight line; …`. The codes are stable — `L400` means
+the same thing in every future version, a new rule takes a new code, and
+`lint::RULES` is the registry a report counts from.
+
 ---
 
 ## Captions: a transcript is the input, not the design
@@ -973,7 +1009,10 @@ Lottie engine, and the native engine's `CompEngine` impl.
 8. **The same bytes twice**: a comp that fetches, imports or asks the clock is refused — see
    `docs/DETERMINISM.md` — and the golden frames hold the render to it in CI.
 
-Rules 2 and 3 are not left to the mood, either: `discipline.rs` audits every planned scene and
+Rules 2 and 3 are not left to the mood, either: the lint (`lint.rs`, reached as
+`discipline::audit` for the motion family) audits every planned scene and
 rides its findings in the plan's warnings — an entrance that creeps in on `ease-in` or a straight
 line, an exit that hangs in the doorway on `ease-out`, a bounce on a scene that never asked to be
 playful. Advice, not refusal: the `punchy` style is the ask, and it is honoured.
+The four other families — structure, timing, assets and determinism — carry
+stable `L###` codes beside them, for the agent that wants to key on one.

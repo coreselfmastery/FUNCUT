@@ -1320,23 +1320,31 @@ pub fn geneva_kind(asset: &Asset) -> Option<&'static str> {
     geneva_asset_kind(asset)
 }
 
+/// The asset kind a file extension names, in the engine's own table: the
+/// one place the extension-to-kind mapping lives, so the emitter, the
+/// lint and the help texts cannot drift apart. Lowercase, as paths carry
+/// it; `None` when the extension names no kind the engine reads.
+pub fn extension_kind(extension: &str) -> Option<AssetKind> {
+    Some(match extension {
+        "png" | "jpg" | "jpeg" | "webp" => AssetKind::Image,
+        "mp4" | "mov" | "mkv" | "webm" => AssetKind::Video,
+        "wav" | "mp3" | "flac" | "ogg" | "m4a" => AssetKind::Audio,
+        "ttf" | "otf" | "ttc" | "woff" | "woff2" => AssetKind::Font,
+        "srt" | "vtt" => AssetKind::Html,
+        "html" | "htm" | "css" => AssetKind::Html,
+        "json" | "lottie" => AssetKind::Lottie,
+        _ => return None,
+    })
+}
+
 /// The Geneva asset kind for an asset, or `None` when it does not read one.
 fn geneva_asset_kind(asset: &Asset) -> Option<&'static str> {
     let from_extension = Path::new(&asset.src)
         .extension()
         .map(|ext| ext.to_string_lossy().to_lowercase());
-    let kind = asset.kind.or_else(|| {
-        Some(match from_extension.as_deref()? {
-            "png" | "jpg" | "jpeg" | "webp" => AssetKind::Image,
-            "mp4" | "mov" | "mkv" | "webm" => AssetKind::Video,
-            "wav" | "mp3" | "flac" | "ogg" | "m4a" => AssetKind::Audio,
-            "ttf" | "otf" | "ttc" | "woff" | "woff2" => AssetKind::Font,
-            "srt" | "vtt" => AssetKind::Html,
-            "html" | "htm" | "css" => AssetKind::Html,
-            "json" | "lottie" => AssetKind::Lottie,
-            _ => return None,
-        })
-    })?;
+    let kind = asset
+        .kind
+        .or_else(|| from_extension.as_deref().and_then(extension_kind))?;
     Some(match kind {
         AssetKind::Image => "image",
         AssetKind::Video => "video",

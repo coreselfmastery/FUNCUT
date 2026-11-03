@@ -31,9 +31,7 @@ sense selftest beside the farm, emotion and vlm selftests it already
 ran. The five timing benchmarks of 2026-11-03 are
 `#[ignore]`d - counted as skipped, never as run. A number in a session
 or a document is a snapshot of a commit; this table names its commit,
-which is the only honest way to hold one. A number in a session or a document
-is a snapshot of a commit; this table names its commit, which is the only
-honest way to hold one.
+which is the only honest way to hold one.
 
 ## What the eleven skipped are
 

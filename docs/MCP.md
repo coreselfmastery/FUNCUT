@@ -130,10 +130,11 @@ carries its JSON result in the status's `output`:
   status.
 
 The motion layer - the design door the director skill's Phase 5b assumes -
-is thirteen tools: ten thin wrappers over the `concat-motion` crate here (the same
+is fourteen tools: ten thin wrappers over the `concat-motion` crate here (the same
 vocabulary the `concat-motion-agent` CLI speaks), `geneva_explain` for the
 engine's own diagnostic codes, `motion_farm_progress` for reading a farmed
-render's progress live, plus `motion_overlay`, the compositing path
+render's progress live, `motion_farm_cloud` for the farm's legs on object
+storage, plus `motion_overlay`, the compositing path
 over real footage, documented with the perception tools below:
 
 - `motion_presets` - the eighteen motion-graphics presets (lower thirds,
@@ -215,6 +216,18 @@ over real footage, documented with the perception tools below:
   percent, and an `etaSeconds` estimate from the pace of the parts drawn
   so far. A farm that has said nothing is a whole farm pending, not an
   error. Takes `farm` (absolute, or relative to `project`).
+- `motion_farm_cloud` - the resumable farm on object storage: `push`
+  uploads a farm directory and its staged render tree (files whose stored
+  sha256 already matches are skipped, so a re-push costs what changed),
+  `pull` downloads them back, `status` says what differs, and `work` is a
+  worker's whole day - pull, render ONE missing part through the sidecar
+  with the farm's own atomic part-and-marker shapes and the joiner's own
+  key, push it back, repeat until it answers done. The bucket, the
+  endpoint and the credentials come from the operator's environment
+  (FUNCUT_FARM_BUCKET, FUNCUT_FARM_ENDPOINT, AWS_ACCESS_KEY_ID), never
+  from the arguments - the same posture the VLM endpoint allow-list
+  takes. Everything streams a block at a time; every request is
+  SigV4-signed.
 - `geneva_explain` - what a diagnostic code means, in the engine's own
   words: `code` is the code itself (E103, W210) or a refusal sentence
   pasted whole, its first code-shaped token picked out, and the reply is
@@ -415,7 +428,7 @@ Tools are named for what they do, and their argument schemas are generated from 
 | Speech | `transcribe`, `tts_generate`, `models_list`, `models_download` |
 | Anything else | `edit_apply` (any edit command, or a batch of them as one undo step), `edit_undo`, `edit_redo` |
 | Templates | `template_list`, `template_instantiate` |
-| Motion design | `motion_presets`, `motion_inspect`, `scene_analysis`, `motion_frame`, `motion_preview`, `motion_bake`, `motion_overlay`, `captions_animate`, `motion_reel`, `motion_probe`, `scene_timeline` |
+| Motion design | `motion_presets`, `motion_inspect`, `scene_analysis`, `motion_frame`, `motion_preview`, `motion_bake`, `motion_overlay`, `captions_animate`, `motion_reel`, `motion_probe`, `scene_timeline`, `motion_farm_cloud` |
 | Export | `export_start`, `export_status`, `export_wait` (with progress), `export_cancel` |
 | Looking | `preview_frame` (the composited frame as an image) |
 | Perception and the creative loop | `creative_brief`, `stock_contact_sheet`, `watch_render`, `craft_critique`, `suggest_cuts`, `measure_loudness`, `track_subject`, `local_vlm`, `emotion` |
@@ -445,7 +458,7 @@ For scripts that do not speak MCP, the same API is served as JSON-RPC lines on a
 Three switches - two off by default for a server started bare, and the allowlist already on for the server this repository's own `.forge/mcp.toml` declares:
 
 - **`--mcp-read-only`** (binary) or **`CONCAT_MCP_READ_ONLY=1`** (the app's `concat --mcp` and anything else that starts it): every tool that changes something is refused by name - an edit, an export, a stock import, the reel's render half. The reads stay, and `motion_reel` keeps its look halves (`plan`, `frame`, `sheet`): they change nothing outside the project's cache, and taking them away takes away the only way to see a design before committing to it.
-- **`--mcp-allow a,b,c`** (binary) or **`CONCAT_MCP_ALLOW=a,b,c`**: the only tools this server serves. A tool not on the list is refused as if it were not there - its description still lists it, but the surface served is what the operator said, not what the build happens to carry. `.forge/mcp.toml` starts the repo's own server with the list already set (its `[servers.transport.env]` table: 96 of the 98 tools, everything but `project_close` and `export_cancel`), and carries the same list as a comment, ready to paste for a server started by hand.
+- **`--mcp-allow a,b,c`** (binary) or **`CONCAT_MCP_ALLOW=a,b,c`**: the only tools this server serves. A tool not on the list is refused as if it were not there - its description still lists it, but the surface served is what the operator said, not what the build happens to carry. `.forge/mcp.toml` starts the repo's own server with the list already set (its `[servers.transport.env]` table: 97 of the 99 tools, everything but `project_close` and `export_cancel`), and carries the same list as a comment, ready to paste for a server started by hand.
 - **Per-tool timeouts**: every tool carries its own limit (`Tool::timeout_secs` - the VLM download and the overlay encode 1200 s, transcribe 900 s, exports and the sense family 600 s, the renders and watches 300 s, everything else 60 s), and a call that outlives it is cancelled and answered for at the deadline, with the limit in the message. The client-side `call_timeout_secs` stays as the ceiling over all of them; the engine's own calls are bounded a second time, per call, by the Geneva guard (see `docs/MOTION.md`).
 
 ## The reel contact sheet

@@ -16,6 +16,7 @@ green when this page was written:
 | Engine, documentation | `cargo test --workspace --doc` | **8 passed** |
 | Engine, gRPC feature | `cargo nextest run -p concat-server --features grpc` | **30 tests run: 30 passed** |
 | Analysis senses | `python3 src/crates/concat-api/analysis/tests/run_tests.py` | **21 checks ok** |
+| Cloud farm | `python3 src/crates/concat-mcp/sense/farm-sync.py selftest` | **8 checks ok** |
 
 **The Rust total: 1393** (1355 + 8 + 30). Every workspace member is
 counted - the 22 binaries cover all seventeen crates, their integration

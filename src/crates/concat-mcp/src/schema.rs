@@ -521,6 +521,11 @@ mod tests {
         // title_add and captions_add +2.8 kB each for the word styles,
         // clip_update for the patch fields, craft_critique for the
         // patch verb): 253,800 at 95 tools, and the cap follows it.
+        // Measured once more for the Geneva roadmap's own last stretch -
+        // scene_analysis, motion_preview and motion_farm_cloud, three
+        // tools an agent plans, watches and farms by, none of them a
+        // schema an agent can defer: 263,742 at 99 tools, and the cap
+        // follows that too.
         let toolbox = crate::tools::Toolbox::new();
         let sizes: Vec<(String, usize)> = toolbox
             .list()
@@ -528,7 +533,7 @@ mod tests {
             .map(|tool| (tool["name"].to_string(), tool.to_string().len()))
             .collect();
         let total: usize = sizes.iter().map(|(_, size)| size).sum();
-        assert!(total < 262_000, "{total}: {sizes:?}");
+        assert!(total < 266_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }

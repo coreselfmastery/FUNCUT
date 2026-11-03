@@ -78,6 +78,7 @@ pub mod lint;
 pub mod looks;
 pub mod noise;
 pub mod presets;
+pub mod progress;
 pub mod pulse;
 pub mod reel;
 pub mod route;

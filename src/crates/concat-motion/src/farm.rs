@@ -42,6 +42,7 @@ use serde_json::{Value as Json, json};
 use crate::cache;
 use crate::engine::MotionError;
 use crate::geneva::Geneva;
+use crate::progress;
 use crate::sequence::Plan;
 
 /// The outcome of one part: what it covered, and whether this call drew
@@ -204,6 +205,15 @@ pub fn render(
     })?;
     let out = crate::sequence::absolute(out);
     let (ranges, has_audio) = ask_for_parts(geneva, dir, parts, &out)?;
+    // A new render begins a new story: the stream is truncated and the
+    // plan is said before the first part draws, so a reader that arrives
+    // mid-render knows how many parts there are to wait for.
+    progress::restart(farm_dir)?;
+    let frames: u32 = ranges
+        .iter()
+        .map(|(from, to)| to.saturating_sub(*from))
+        .sum();
+    progress::said_plan(farm_dir, ranges.len(), frames, has_audio)?;
     let timeline = cache::stream_hash("concat-motion/farm/1", &dir.join("timeline.json"))
         .ok_or_else(|| MotionError::Engine {
             code: None,
@@ -231,13 +241,23 @@ pub fn render(
             .is_some_and(|found| found == key)
             && path.is_file();
         if !served {
+            let part_started = Instant::now();
+            progress::said_part_start(farm_dir, index, from, to)?;
             render_part(geneva, dir, from, to, &path, false)?;
             cache::mark_done(&path, &key, 0.0).map_err(|source| MotionError::Io {
                 doing: "marking a farm part done".into(),
                 path: marker.clone(),
                 source,
             })?;
+            progress::said_part_end(
+                farm_dir,
+                index,
+                "done",
+                Some(part_started.elapsed().as_secs_f64()),
+            )?;
         } else {
+            progress::said_part_start(farm_dir, index, from, to)?;
+            progress::said_part_end(farm_dir, index, "served", None)?;
             cache::touch(&path);
         }
         report.parts.push(PartOutcome {
@@ -266,13 +286,16 @@ pub fn render(
             .is_some_and(|found| found == key)
             && path.is_file();
         if !served {
+            let part_started = Instant::now();
             render_part(geneva, dir, 0, 0, &path, true)?;
             cache::mark_done(&path, &key, 0.0).map_err(|source| MotionError::Io {
                 doing: "marking the farm's audio part done".into(),
                 path: marker,
                 source,
             })?;
+            progress::said_audio(farm_dir, "done", Some(part_started.elapsed().as_secs_f64()))?;
         } else {
+            progress::said_audio(farm_dir, "served", None)?;
             cache::touch(&path);
         }
         report.audio = Some(PartOutcome {
@@ -301,6 +324,7 @@ pub fn render(
 
     // The join: the engine's own `join`, which stitches parts - and the
     // audio part - back together without re-encoding a frame.
+    progress::said_join(farm_dir, part_paths.len())?;
     let mut args: Vec<String> = vec![
         "--format".into(),
         "json".into(),
@@ -319,6 +343,7 @@ pub fn render(
     geneva.run_in(dir, &args)?;
 
     report.seconds = started.elapsed().as_secs_f64();
+    progress::said_done(farm_dir, &out, report.seconds)?;
     Ok(report)
 }
 
@@ -460,6 +485,45 @@ mod tests {
             let third = render(&geneva, &plan, &render_dir, &farm_dir, &out, 2).expect("farms");
             assert_eq!(third.rendered, 1, "only the lost part is redrawn");
             assert_eq!(third.served, 2);
+        }
+
+        /// A farm render says its story as it happens: the plan first,
+        /// each part's start and end in order, the join, the done - and a
+        /// reader mid-render would see exactly the parts that had landed.
+        #[test]
+        fn a_farm_render_tells_its_story_as_it_happens() {
+            let _serial = serial();
+            let dir = TempDir::new().unwrap();
+            let geneva = stub_geneva(&dir);
+            let plan = plan(&geneva);
+            let render_dir = dir.path().join("render");
+            let farm_dir = dir.path().join("farm");
+            let out = dir.path().join("reel.mp4");
+
+            render(&geneva, &plan, &render_dir, &farm_dir, &out, 2).expect("farms");
+            let read = crate::progress::progress(&farm_dir).expect("the story reads back");
+            assert_eq!(read.parts.len(), 2, "the plan named two picture parts");
+            assert!(read.audio, "the plan named the audio part");
+            assert_eq!(read.frames, 60, "0..30 and 30..60");
+            assert!(
+                read.parts.iter().all(|part| part.state == "done"),
+                "{:?}",
+                read.parts
+            );
+            assert_eq!(read.frames_done, 60);
+            assert_eq!(read.out.as_deref(), Some(out.to_str().unwrap()));
+            assert_eq!(read.to_json()["percent"], serde_json::json!(100.0));
+
+            // A second run serves every part: a new story, told whole, with
+            // the served states instead of the drawn ones.
+            render(&geneva, &plan, &render_dir, &farm_dir, &out, 2).expect("farms");
+            let read = crate::progress::progress(&farm_dir).expect("the story reads back");
+            assert!(
+                read.parts.iter().all(|part| part.state == "served"),
+                "{:?}",
+                read.parts
+            );
+            assert_eq!(read.frames_done, 60, "served parts count as finished");
         }
 
         /// A changed plan is a changed timeline, so every part re-renders:

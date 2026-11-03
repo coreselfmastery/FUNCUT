@@ -1320,6 +1320,64 @@ pub fn geneva_explain(arguments: Value) -> Result<Outcome, ApiError> {
     })))
 }
 
+/// The farm's progress stream, read live: what a `concat-motion-agent
+/// render --farm` run is doing right now, without waiting for it.
+///
+/// The farm cuts a long render into parts that survive their own failure,
+/// and every state it passes through is a line in the farm directory's
+/// `progress.jsonl` - read here mid-render, from another process, and
+/// answered as the number an agent actually wants: the parts done against
+/// the parts planned, the frames finished, and the estimate the pace of
+/// the parts drawn so far gives for the rest. A farm that has said nothing
+/// is a whole farm pending; a farm whose last event is `done` says where
+/// the file landed.
+pub fn farm_progress(arguments: Value) -> Result<Outcome, ApiError> {
+    let fields = arguments
+        .as_object()
+        .cloned()
+        .ok_or_else(|| ApiError::invalid("invalid arguments: the arguments are an object"))?;
+    for key in fields.keys() {
+        if key != "farm" && key != "project" {
+            return Err(ApiError::invalid(format!(
+                "invalid arguments: unknown field `{key}`"
+            )));
+        }
+    }
+    let farm = fields
+        .get("farm")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|farm| !farm.is_empty())
+        .ok_or_else(|| ApiError::invalid("invalid arguments: `farm` is required"))?;
+    let path = if Path::new(farm).is_absolute() {
+        PathBuf::from(farm)
+    } else {
+        let project = fields
+            .get("project")
+            .and_then(Value::as_str)
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                ApiError::invalid(
+                    "invalid arguments: a relative `farm` needs the `project` it is under",
+                )
+            })?;
+        project.join(farm)
+    };
+    if path.components().any(|part| {
+        matches!(
+            part,
+            std::path::Component::ParentDir | std::path::Component::Prefix(_)
+        )
+    }) {
+        return Err(ApiError::invalid(
+            "invalid arguments: `farm` may not hold `..` or a drive",
+        ));
+    }
+    let read = concat_motion::progress::progress(&path)
+        .map_err(|error| ApiError::failed(error.to_string()))?;
+    Ok(Outcome::json(read.to_json()))
+}
+
 /// Whether the motion tools can reach an engine at all, for the catalogue
 /// to say so in its own words.
 pub fn engine_available() -> bool {

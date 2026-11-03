@@ -1598,3 +1598,42 @@ adapters are not a player — a `.lottie` file already plays through the
 Lottie engine — they are for when motion made elsewhere should become
 document: editable, lintable, fillable by a slot, baked by whichever
 engine the project prefers.
+
+## 35. The farm's progress stream: a long render, said as it happens
+
+Item 11 of the Geneva roadmap. `geneva farm` cuts a long render into
+parts that survive their own failure, and until now the call was
+silence: a forty-minute render blocked, and an agent watching it had
+nothing to watch. The stream is the other half of the contract - every
+state the farm passes through is one line of JSON, appended to
+`progress.jsonl` in the farm's own directory as it happens, and read
+back mid-render, from another process.
+
+The events, in order: the plan (parts, frames, audio), each part's
+start (its frame range) and landing or serving, the audio part under
+its own name, the join, the done. One write call per event, the file
+in append mode, nothing buffered between events - a progress stream
+that only flushes at the end is a report wearing the name. A reader
+racing the writer sees a torn tail and ignores it; a farm that has
+said nothing answers a whole farm pending, because asking about a
+render that has not started is a legitimate question with a boring
+answer.
+
+What the reader aggregates is the number an agent actually wants:
+each part's state (pending, rendering, done, served), the frames
+finished against the frames planned, the percent, the wall-clock
+seconds the drawn parts cost, and an `etaSeconds` estimate from the
+pace of the parts drawn so far - half the frames done at four seconds
+a part says the other half is four seconds away.
+
+The `motion_farm_progress` tool puts the reader at the MCP surface
+(read-only, idempotent, nothing rendered, nothing written), and the
+tool count the documents hold goes from ninety-five to ninety-six:
+the README badge, FEATURES.md's inventory, FUNCUT.md, the Forge
+architecture page, the allowlist in `.forge/mcp.toml` and the
+allowlist's own count comments all say the new number, held there by
+the count test that reads them. Seven tests over the stream itself -
+the story read back whole, the pending farm, the torn tail, the pace
+estimate, the live answer, the farm-level integration against the
+stub engine - and the e2e arm that proves a farm which said nothing
+answers live.

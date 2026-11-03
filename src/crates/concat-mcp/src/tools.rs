@@ -93,6 +93,9 @@ pub enum Action {
     MotionPresets,
     /// One comp summarised, ops applied first when given.
     MotionInspect,
+    /// One comp read as an engineer reads it: census, timing, text,
+    /// legibility, assets and the lint - no frame drawn.
+    SceneAnalysis,
     /// One frame of a comp, drawn and written under the project.
     MotionFrame,
     /// A comp baked, and encoded when asked.
@@ -792,6 +795,15 @@ pub fn catalogue() -> Vec<Tool> {
             action: Action::MotionInspect,
         },
         Tool {
+            name: "scene_analysis",
+            title: "Analyse a scene before a frame is drawn",
+            description: "A motion comp read as an engineer reads it, with no engine and no render: `motion_inspect` says what a comp holds; this says how well it is built. Answers the census (nodes by kind, animated against static, keyframes, the curves they ride, nesting depth, effects), the timing (first start, last end, what fraction of the comp anything is on screen, the gaps where nothing is), the text (sizes against the frame height, fonts, karaoke, plates, outlines, shadows, gradient ink), per-text legibility with a WCAG-shaped contrast ratio of the ink against the plate or background it actually draws over (honestly null over video or a mid-ramp gradient), the comp's assets checked against the disk a bake would stage from, and the lint's findings with their stable L### codes - L1xx structure, L2xx timing, L3xx assets, L4xx motion, L5xx determinism. Takes `preset` or `comp` (+ `project`), with an optional `ops` batch applied first. Read it before motion_frame and motion_bake: the small text and the low contrast are the retakes a render would otherwise have to tell you, and here they cost nothing to fix.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::SceneAnalysis,
+        },
+        Tool {
             name: "motion_frame",
             title: "Draw one motion frame",
             description: "One frame of a motion comp at `at` seconds - tens of milliseconds, no bake - returned as an INLINE IMAGE you can actually look at, and also written under the project's motion/. The look-before-you-bake of the design loop: mid-entrance, settled, mid-exit. Check legibility, contrast, safe margins and timing before baking. Takes `preset` or `comp` (+ `project`), optional `ops`, and `width` to draw at another size.",
@@ -1238,6 +1250,7 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
         }
         Action::MotionPresets
         | Action::MotionInspect
+        | Action::SceneAnalysis
         | Action::MotionFrame
         | Action::MotionBake
         | Action::CaptionsAnimate
@@ -1605,6 +1618,7 @@ fn motion_schema(name: &str) -> Option<Value> {
     let schema = match name {
         "motion_presets" => object(Map::new(), &[]),
         "motion_inspect" => object(shared, &[]),
+        "scene_analysis" => object(shared, &[]),
         "motion_frame" => object(
             with(
                 shared,
@@ -2168,6 +2182,7 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         Action::SceneTimeline => crate::motion::scene_timeline(arguments, backend),
         Action::GenevaExplain => crate::motion::geneva_explain(arguments),
         Action::MotionFarmProgress => crate::motion::farm_progress(arguments),
+        Action::SceneAnalysis => crate::motion::scene_analysis(arguments),
         Action::WatchRender => crate::sense::watch_render(arguments, backend),
         Action::StockSheet => crate::sense::stock_contact_sheet(arguments, backend),
         Action::CraftCritique => crate::sense::craft_critique(arguments, backend),
@@ -3589,6 +3604,10 @@ mod tests {
                 json!({ "preset": "funcut.lower-third.glass" }),
             ),
             (
+                "scene_analysis",
+                json!({ "preset": "funcut.lower-third.glass" }),
+            ),
+            (
                 "motion_frame",
                 json!({ "project": "/tmp/Cut", "preset": "funcut.lower-third.glass", "at": 1.0 }),
             ),
@@ -3765,6 +3784,25 @@ mod tests {
                 }
                 Action::MotionInspect => {
                     crate::motion::inspect(sample.clone()).expect("the sample inspects");
+                    continue;
+                }
+                Action::SceneAnalysis => {
+                    let outcome =
+                        crate::motion::scene_analysis(sample.clone()).expect("the sample analyses");
+                    // The analysis answers its four numbers and the lint,
+                    // all off the document: the census, the timing, the
+                    // text, and findings with the lint's own codes.
+                    let said = outcome.structured.expect("the analysis is JSON");
+                    let analysis = &said["analysis"];
+                    assert!(analysis["census"]["nodes"].as_u64().is_some(), "{said}");
+                    assert!(analysis["timing"].is_object(), "{said}");
+                    assert!(analysis["text"].is_object(), "{said}");
+                    assert!(
+                        analysis["lint"]
+                            .as_array()
+                            .is_some_and(|lint| !lint.is_empty()),
+                        "{said}"
+                    );
                     continue;
                 }
                 Action::MotionFarmProgress => {

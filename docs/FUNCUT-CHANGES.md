@@ -1637,3 +1637,49 @@ the story read back whole, the pending farm, the torn tail, the pace
 estimate, the live answer, the farm-level integration against the
 stub engine - and the e2e arm that proves a farm which said nothing
 answers live.
+
+## 35. The scene read as an engineer reads it: `scene_analysis`, item 08
+
+Item 08 of the Geneva roadmap. `motion_inspect` says what a comp holds;
+`scene_analysis` says how well it is built - read off the document, with
+no engine, no render and no write, so it costs nothing and refuses
+nothing. It is the critique that happens before the pixels do.
+
+The census: nodes by kind, the animated against the static, the
+keyframes counted, the curves they ride named by their own CSS shape and
+counted, the nesting depth walked parent by parent with the engine's own
+32-deep cap, the effects. The timing: the first start, the last end, the
+union of every node's window as the fraction of the comp's span anything
+is on screen, and the gaps - spans of at least fifty milliseconds where
+the comp draws its background and nothing else, the dead air of a motion
+piece. The text: sizes against the frame height, the distinct fonts,
+which nodes are karaoke by their own words, which carry plates, outlines,
+shadows, gradient ink.
+
+Per-text legibility is the part a render would otherwise have to tell
+you: for every text node, the size as a percent of the frame height, and
+a WCAG-shaped contrast ratio of the ink over the backdrop it actually
+draws over - its own plate when the plate is opaque enough to matter,
+else the comp's background, else honestly null, because a ratio read
+against video nobody has seen would be a guess wearing a number. A
+gradient ink answers with its worst stop: a ramp is only as legible as
+its quietest moment. The verdicts are plain words - small (under three
+percent of the frame height), low-contrast (under 3:1), both, or ok.
+
+The assets are checked against the disk a bake would stage from - the
+same folder the comp file lives in, so `present` is a fact, not an
+expectation; a preset, which has no folder, answers `assetsChecked:
+false` rather than pretending. And the lint's findings ride along with
+their stable codes - every family the document and the disk can answer:
+L1xx structure, L2xx timing, L3xx assets, L4xx motion, L5xx determinism,
+each finding with its code, its place, its sentence and its help - the
+lint had been a crate-internal discipline since it landed; this is its
+door at the MCP surface, the fifth of the motion tools that need no
+engine.
+
+The tool count the documents hold goes from ninety-six to ninety-seven:
+the README badge, FEATURES.md's inventory, FUNCUT.md, the Forge
+architecture page, the allowlist in `.forge/mcp.toml` and the allowlist's
+own count comments all say the new number, held there by the count test
+that reads them. The e2e arm proves the sample analysis answers its four
+numbers and its findings.

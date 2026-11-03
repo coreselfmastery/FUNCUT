@@ -7,10 +7,11 @@
 //! with their weights ramping from 100 to 900 across them - a static
 //! `font-weight` per word, the crescendo the engine draws, because it
 //! cannot animate a weight at all (font-variation-settings is W450,
-//! font-weight in a keyframe is E442) - and a karaoke caption whose
-//! words light when a Whisper transcript says they are spoken - one
-//! comp, validated, mapped onto a Geneva timeline, and written as a
-//! document a project can place.
+//! font-weight in a keyframe is E442) - a karaoke caption whose
+//! words light when a Whisper transcript says they are spoken - a
+//! three-line paragraph revealing one line after another - and a
+//! gradient-ink headline - one comp, validated, mapped onto a Geneva
+//! timeline, and written as a document a project can place.
 //!
 //! ```sh
 //! cargo run -p concat-motion --example typography -- /tmp/moment.json
@@ -79,7 +80,39 @@ fn main() {
     };
     let mut caption =
         concat_motion::typography::karaoke(&words, 2.4, "caption", &caption_style, &kinetic);
-    caption.transform.position = Some(concat_motion::comp::Point::new(960.0, 920.0));
+    caption.transform.position = Some(concat_motion::comp::Point::new(960.0, 950.0));
+
+    // A paragraph: two lines, 180 ms apart, the editorial reveal - at
+    // its own smaller size, stacked under the headline the way a
+    // title card stacks its argument.
+    let paragraph_style = TextNode {
+        font: "Archivo, Inter".into(),
+        size: 56.0,
+        ..headline_style.clone()
+    };
+    let mut paragraph = concat_motion::typography::paragraph(
+        "paragraph",
+        &[
+            "A comp is a document.",
+            "The renderer is not allowed an opinion.",
+        ],
+        &paragraph_style,
+        &concat_motion::typography::Kinetic::lines().flexing_weight(300, 900),
+    );
+    paragraph.transform.position = Some(concat_motion::comp::Point::new(960.0, 700.0));
+
+    // A gradient headline: the ink is a clip, not a colour, arriving on
+    // its tracking.
+    let mut gradient = concat_motion::typography::gradient_headline(
+        "gradient",
+        "EIGHTEEN BEATS",
+        &caption_style,
+        &concat_motion::typography::Kinetic::words()
+            .entrance(concat_motion::typography::Entrance::TrackIn),
+        "#d9a441",
+        "#f4f1ea",
+    );
+    gradient.transform.position = Some(concat_motion::comp::Point::new(960.0, 160.0));
 
     let comp = Comp {
         format: FORMAT,
@@ -92,7 +125,7 @@ fn main() {
         background: Rgba::new(0.02, 0.024, 0.04, 1.0),
         assets: BTreeMap::new(),
         curves: BTreeMap::new(),
-        nodes: vec![headline, caption],
+        nodes: vec![headline, caption, paragraph, gradient],
         slots: Vec::new(),
     };
 
@@ -103,7 +136,7 @@ fn main() {
     assert!(warnings.is_empty(), "{warnings:?}");
     let layers = document["layers"].as_array().expect("layers");
     println!(
-        "{}: two nodes, {} timeline layers, {} bytes",
+        "{}: four nodes, {} timeline layers, {} bytes",
         comp.id,
         layers.len(),
         serde_json::to_string_pretty(&comp)

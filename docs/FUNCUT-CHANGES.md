@@ -1469,3 +1469,45 @@ landing; `docs/MOTION.md`, `docs/FEATURES.md`, `docs/MCP.md`, the
 motion skill and the `motion_presets` tool description all say
 eighteen now, because a catalogue the docs miscount is a catalogue an
 agent misuses.
+
+## 32. Typography's second pass: the directional sweeps, the tracking entrance, the paragraph and the gradient ink
+
+Geneva roadmap item 13. The typography builder had three entrances,
+two staggers and one treatment; the measured engine facts said three
+more were free for the taking, and the module's own doctrine - build
+what the engine draws, refuse what it does not - picked them:
+
+- **Four entrances** - `slide-down`, `slide-from-left`,
+  `slide-from-right` (the directional sweeps a third, a badge and a
+  timestamp arrive on, the rises in pixels off the style's own size)
+  and **`track-in`**, the cinematic title arrival: `letter-spacing`
+  animates from `0.6 x size` to the style's rest while the line fades
+  up. That last one rides a newly measured fact - the pinned engine
+  **interpolates `letter-spacing` inside keyframes** (a 90 px line's
+  right edge measured travelling 319 px), where the module's older
+  facts are all refusals.
+- **`paragraph(&[lines], ..)`** - the multi-line reveal, one `<div>`
+  per line staggered `Kinetic::lines()`' 180 ms apart, the weight ramp
+  riding the lines as it rides the words. An empty line takes no beat:
+  a stanza break is not a 180 ms wait on nothing. Measured rendering:
+  three lines at 180 ms stagger, each rising on the settle curve.
+- **`gradient_headline(.., from, to)`** - the ink is a clip, not a
+  colour: `linear-gradient` behind `background-clip: text`, the fill
+  transparent, written after the base stylesheet so the cascade cannot
+  lose it. Measured: the clip carries into the staggered inline spans -
+  gold into ink across three words, drawn.
+
+And one negative finding, held to the same standard: a **clip-path
+wipe is not offered**. `inset()` in keyframes is refused outright
+(E442, its own error naming `polygon()`), and a `polygon()` from-to
+pair does not interpolate - it jumps to its end state at the delay's
+edge (measured: zero ink at 0.2 s, full ink at 0.3 s, nothing between).
+The module docs and MOTION.md both say so, so the next hand author
+does not spend a bake discovering it.
+
+The example (`examples/typography.rs`) grew to four nodes - the weight
+ramp, the karaoke caption, a two-line paragraph and a gradient headline
+arriving on its tracking - and its frames were read before landing: a
+layout that clipped its own paragraph was caught by exactly that
+discipline and restacked. Six tests hold the new surface to the
+module's own bar, the static-transform guard included.

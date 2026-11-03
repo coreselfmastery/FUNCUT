@@ -108,6 +108,8 @@ pub enum Action {
     SceneTimeline,
     /// What a diagnostic code means, in the engine's own words.
     GenevaExplain,
+    /// A farm render's progress stream, read live.
+    MotionFarmProgress,
     /// Sample a render or the open timeline into a contact sheet.
     WatchRender,
     /// Look at B-roll candidates before choosing them.
@@ -853,6 +855,15 @@ pub fn catalogue() -> Vec<Tool> {
             action: Action::GenevaExplain,
         },
         Tool {
+            name: "motion_farm_progress",
+            title: "Read a farm render's progress",
+            description: "What a long farmed render is doing right now, without waiting for it: a `concat-motion-agent render --farm` run writes every state it passes through - the plan (parts, frames, audio), each part's start and landing or serving, the join, the done - as lines in the farm directory's progress.jsonl, and this reads them back live, from another process. Answers each part's state (pending, rendering, done, served), the frames finished against the frames planned, the percent, the seconds the drawn parts cost, an `etaSeconds` estimate from the pace of the parts drawn so far, and `out` when the render has finished. A farm that has said nothing is a whole farm pending - not an error. Takes `farm` (the farm directory, absolute, or relative to `project`) and optional `project`. Poll it while the render runs; nothing is rendered and nothing is written.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::MotionFarmProgress,
+        },
+        Tool {
             name: "analysis_wait",
             title: "Wait for a job",
             description: "Waits for any job - an analysis, a transcription, a voice, an export - to end, up to `timeoutSeconds` (60 by default, 600 at most), and returns its status; a finished analysis carries its JSON result in the status's `output`. If the job is still running when the time is up, call it again.",
@@ -1233,7 +1244,8 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
         | Action::MotionReel
         | Action::MediaProbe
         | Action::SceneTimeline
-        | Action::GenevaExplain => motion_schema(tool.name),
+        | Action::GenevaExplain
+        | Action::MotionFarmProgress => motion_schema(tool.name),
         Action::WatchRender
         | Action::StockSheet
         | Action::CraftCritique
@@ -1885,6 +1897,24 @@ fn motion_schema(name: &str) -> Option<Value> {
             );
             object(properties, &["code"])
         }
+        "motion_farm_progress" => {
+            let mut properties = Map::new();
+            properties.insert(
+                "farm".to_owned(),
+                json!({
+                    "type": "string",
+                    "description": "The farm directory a farmed render writes to: absolute, or relative to `project`."
+                }),
+            );
+            properties.insert(
+                "project".to_owned(),
+                json!({
+                    "type": "string",
+                    "description": "The project folder a relative `farm` resolves against."
+                }),
+            );
+            object(properties, &["farm"])
+        }
         "scene_timeline" => {
             // The storyboard's own shape, the same document
             // motion_reel takes.
@@ -2137,6 +2167,7 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         Action::MediaProbe => crate::motion::media_probe(arguments),
         Action::SceneTimeline => crate::motion::scene_timeline(arguments, backend),
         Action::GenevaExplain => crate::motion::geneva_explain(arguments),
+        Action::MotionFarmProgress => crate::motion::farm_progress(arguments),
         Action::WatchRender => crate::sense::watch_render(arguments, backend),
         Action::StockSheet => crate::sense::stock_contact_sheet(arguments, backend),
         Action::CraftCritique => crate::sense::craft_critique(arguments, backend),
@@ -3355,6 +3386,10 @@ mod tests {
             ("media_probe", json!({ "path": "/tmp/a.mp4" })),
             ("geneva_explain", json!({ "code": "E302" })),
             (
+                "motion_farm_progress",
+                json!({ "farm": "/tmp/nowhere/farm" }),
+            ),
+            (
                 "media_import",
                 json!({ "path": "/tmp/Cut", "file": "/tmp/a.mp4" }),
             ),
@@ -3730,6 +3765,18 @@ mod tests {
                 }
                 Action::MotionInspect => {
                     crate::motion::inspect(sample.clone()).expect("the sample inspects");
+                    continue;
+                }
+                Action::MotionFarmProgress => {
+                    let outcome =
+                        crate::motion::farm_progress(sample.clone()).expect("the sample reads");
+                    // A farm that has said nothing answers a whole farm
+                    // pending, live, with no out - the honest shape the
+                    // sample can check without a render to watch.
+                    assert!(outcome.structured.is_some(), "the progress is JSON");
+                    let said = outcome.structured.unwrap();
+                    assert_eq!(said["live"], serde_json::json!(true), "{said}");
+                    assert!(said.get("out").is_some_and(|out| out.is_null()), "{said}");
                     continue;
                 }
                 Action::MotionFrame

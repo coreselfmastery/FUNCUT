@@ -130,9 +130,10 @@ carries its JSON result in the status's `output`:
   status.
 
 The motion layer - the design door the director skill's Phase 5b assumes -
-is ten tools: eight thin wrappers over the `concat-motion` crate here (the same
+is eleven tools: eight thin wrappers over the `concat-motion` crate here (the same
 vocabulary the `concat-motion-agent` CLI speaks), `geneva_explain` for the
-engine's own diagnostic codes, plus `motion_overlay`, the compositing path
+engine's own diagnostic codes, `motion_farm_progress` for reading a farmed
+render's progress live, plus `motion_overlay`, the compositing path
 over real footage, documented with the perception tools below:
 
 - `motion_presets` - the eighteen motion-graphics presets (lower thirds,
@@ -192,6 +193,15 @@ over real footage, documented with the perception tools below:
   Nothing renders, nothing is written; a board that does not validate is
   refused with the scene named and `geneva explain` already consulted
   for the first diagnostic's code.
+- `motion_farm_progress` - what a long farmed render is doing right now,
+  without waiting for it: a `concat-motion-agent render --farm` run writes
+  every state it passes through (the plan, each part's start and landing
+  or serving, the join, the done) as lines in the farm directory's
+  `progress.jsonl`, and this reads them back live, from another process -
+  each part's state, the frames finished against the frames planned, the
+  percent, and an `etaSeconds` estimate from the pace of the parts drawn
+  so far. A farm that has said nothing is a whole farm pending, not an
+  error. Takes `farm` (absolute, or relative to `project`).
 - `geneva_explain` - what a diagnostic code means, in the engine's own
   words: `code` is the code itself (E103, W210) or a refusal sentence
   pasted whole, its first code-shaped token picked out, and the reply is
@@ -422,7 +432,7 @@ For scripts that do not speak MCP, the same API is served as JSON-RPC lines on a
 Three switches - two off by default for a server started bare, and the allowlist already on for the server this repository's own `.forge/mcp.toml` declares:
 
 - **`--mcp-read-only`** (binary) or **`CONCAT_MCP_READ_ONLY=1`** (the app's `concat --mcp` and anything else that starts it): every tool that changes something is refused by name - an edit, an export, a stock import, the reel's render half. The reads stay, and `motion_reel` keeps its look halves (`plan`, `frame`, `sheet`): they change nothing outside the project's cache, and taking them away takes away the only way to see a design before committing to it.
-- **`--mcp-allow a,b,c`** (binary) or **`CONCAT_MCP_ALLOW=a,b,c`**: the only tools this server serves. A tool not on the list is refused as if it were not there - its description still lists it, but the surface served is what the operator said, not what the build happens to carry. `.forge/mcp.toml` starts the repo's own server with the list already set (its `[servers.transport.env]` table: 93 of the 95 tools, everything but `project_close` and `export_cancel`), and carries the same list as a comment, ready to paste for a server started by hand.
+- **`--mcp-allow a,b,c`** (binary) or **`CONCAT_MCP_ALLOW=a,b,c`**: the only tools this server serves. A tool not on the list is refused as if it were not there - its description still lists it, but the surface served is what the operator said, not what the build happens to carry. `.forge/mcp.toml` starts the repo's own server with the list already set (its `[servers.transport.env]` table: 94 of the 96 tools, everything but `project_close` and `export_cancel`), and carries the same list as a comment, ready to paste for a server started by hand.
 - **Per-tool timeouts**: every tool carries its own limit (`Tool::timeout_secs` - the VLM download and the overlay encode 1200 s, transcribe 900 s, exports and the sense family 600 s, the renders and watches 300 s, everything else 60 s), and a call that outlives it is cancelled and answered for at the deadline, with the limit in the message. The client-side `call_timeout_secs` stays as the ceiling over all of them; the engine's own calls are bounded a second time, per call, by the Geneva guard (see `docs/MOTION.md`).
 
 ## The reel contact sheet

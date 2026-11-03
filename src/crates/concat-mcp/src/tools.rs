@@ -963,7 +963,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "motion_overlay",
             title: "Composite motion over footage",
-            description: "Fixes the opaque-caption-reel problem. Takes a baked RGBA PNG sequence (`frames`, or `hash` + `project` to find it) and composites it OVER real footage (`plate`, a video path) at `at` seconds, honouring the comp's transparency, and writes an ordinary H.264 clip ready for media_import and clip_add. Without a plate it composites over a solid `background` at the given width/height. The sidecar's video codecs cannot carry alpha and FFmpeg's WebM muxer does not reliably write VP9 AlphaMode, so this is the honest alpha path: transparency is honoured at the compositing step, not faked in an encoder. Optional: fps (30), width, height, at (0), crf (18), background, x, y, out (defaults to <project>/motion/overlay.mp4).",
+            description: "Fixes the opaque-caption-reel problem. Takes a baked RGBA PNG sequence (`frames`, or `hash` + `project` to find it) and composites it OVER real footage (`plate`, a video path) at `at` seconds, honouring the comp's transparency, and writes an ordinary H.264 clip ready for media_import and clip_add. Without a plate it composites over a solid `background` at the given width/height. The sidecar's video codecs cannot carry alpha and FFmpeg's WebM muxer does not reliably write VP9 AlphaMode, so this is the honest alpha path: transparency is honoured at the compositing step, not faked in an encoder. The encode rides the machine's GPU when it has one (`gpu`: auto by default - h264_vaapi where a VAAPI driver and render node exist; on asks for it and falls back to libx264 with a note when they do not; off encodes with libx264; FUNCUT_OVERLAY_ENCODER is the operator's pin). The reply says which encoder ran. Optional: fps (30), width, height, at (0), crf (18), background, x, y, out (defaults to <project>/motion/overlay.mp4).",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -1456,6 +1456,7 @@ fn sense_schema(name: &str) -> Option<Value> {
             "background": string("Colour when there is no plate, e.g. black or 101018."),
             "x": string("Overlay x expression; default (W-w)/2."),
             "y": string("Overlay y expression; default (H-h)/2."),
+            "gpu": { "type": ["boolean", "string"], "enum": ["auto", "on", "off", true, false], "default": "auto", "description": "Whether the encode rides the machine's GPU: auto uses h264_vaapi where a VAAPI driver and render node exist, on asks for it and falls back to libx264 with a note when they do not, off encodes with libx264." },
             "autoSetup": { "type": "boolean", "default": true },
         }),
         "local_vlm" => json!({

@@ -1327,7 +1327,7 @@ pub fn motion_overlay(arguments: Value, backend: &dyn Backend) -> Result<Outcome
         "crf": number(&fields, "crf", 18.0),
         "autoSetup": fields.get("autoSetup").and_then(Value::as_bool).unwrap_or(true),
     });
-    for key in ["plate", "width", "height", "background", "x", "y"] {
+    for key in ["plate", "width", "height", "background", "x", "y", "gpu"] {
         if let Some(value) = fields.get(key) {
             spec[key] = value.clone();
         }

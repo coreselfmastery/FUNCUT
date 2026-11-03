@@ -1862,6 +1862,78 @@ def _probe_size(ffprobe, path):
         return None
 
 
+def _has_vaapi(ff):
+    """Whether this ffmpeg carries the VAAPI encoder and the machine has
+    the render node it needs. The device check is part of presence: an
+    encoder with no /dev/dri node behind it is not a GPU this call can
+    reach, and pretending otherwise is a failed encode dressed as a
+    feature."""
+    device = os.environ.get("FUNCUT_VAAPI_DEVICE", "/dev/dri/renderD128")
+    if not os.path.exists(device):
+        return False
+    rc, out, _ = _run([ff, "-hide_banner", "-encoders"], 20)
+    return rc == 0 and "h264_vaapi" in (out or b"").decode("utf-8", "replace")
+
+
+def _pick_from(have_vaapi, spec, env=""):
+    """The overlay's encoder, chosen from what the machine actually has.
+
+    `gpu` in the spec is auto (the default), on or off; the environment
+    FUNCUT_OVERLAY_ENCODER (auto, libx264, h264_vaapi) is the operator's
+    pin. Off in the call wins over everything; the environment's
+    libx264 beats the call's auto (the operator knows their machine);
+    on with no VAAPI falls back to libx264 with a note that says so,
+    because a clip that encodes beats a refusal that does not.
+    """
+    want = str(spec.get("gpu", "auto")).strip().lower()
+    if want in ("true", "yes", "1"):
+        want = "on"
+    elif want in ("false", "no", "0"):
+        want = "off"
+    if want not in ("auto", "on", "off"):
+        want = "auto"
+    env = (env or "auto").strip().lower()
+    if want == "off" or env == "libx264":
+        return {"encoder": "libx264", "gpu": False, "note": ""}
+    if have_vaapi:
+        return {
+            "encoder": "h264_vaapi",
+            "gpu": True,
+            "device": os.environ.get("FUNCUT_VAAPI_DEVICE", "/dev/dri/renderD128"),
+            "note": "",
+        }
+    note = (
+        "gpu was asked for but this machine has no VAAPI encoder or render "
+        "node; encoded with libx264 instead"
+        if want == "on"
+        else ""
+    )
+    return {"encoder": "libx264", "gpu": False, "note": note}
+
+
+def _encoder_pick(ff, spec):
+    """[`_pick_from`], asking the machine what it has."""
+    return _pick_from(_has_vaapi(ff), spec, os.environ.get("FUNCUT_OVERLAY_ENCODER", ""))
+
+
+def _hw_init(pick):
+    """The args that give the filter graph a VAAPI device to upload to,
+    empty when the encode stays in software."""
+    if not pick.get("gpu"):
+        return []
+    return ["-init_hw_device", f"vaapi=va:{pick['device']}", "-filter_hw_device", "va"]
+
+
+def _codec_args(pick, crf):
+    """The video codec tail. VAAPI takes a constant QP where libx264 takes
+    a crf; the two scales are close enough that passing the number
+    straight through is the honest mapping, and the reply says which
+    encoder ran so the number can be read for what it is."""
+    if pick.get("gpu"):
+        return ["-c:v", "h264_vaapi", "-qp", str(crf)]
+    return ["-c:v", "libx264", "-preset", "medium", "-crf", str(crf), "-pix_fmt", "yuv420p"]
+
+
 def overlay(spec):
     """Composite an RGBA PNG bake over real footage (or a colour plate).
 
@@ -1871,9 +1943,18 @@ def overlay(spec):
     transparency at the compositing step and hand back an opaque, correct
     piece of footage that plays anywhere. The original RGBA sequence is
     left untouched.
+
+    The encode rides the machine's own GPU when it has one: h264_vaapi on
+    every Linux box with a VAAPI driver, the frames uploaded once and the
+    encoder fed in hardware. The compositing arithmetic itself stays in
+    software - an overlay of two planes is trivial next to the encode,
+    and keeping it in the filter graph keeps the path honest on the
+    machines that have no GPU at all, which is half of what this fork is
+    for.
     """
     import glob
     ff, fp = _tools(spec)
+    pick = _encoder_pick(ff, spec)
     frames_dir = spec.get("frames") or spec.get("dir")
     out = spec.get("out")
     if not frames_dir or not out:
@@ -1912,16 +1993,26 @@ def overlay(spec):
         f"x={spec.get('x', '(W-w)/2')}:y={spec.get('y', '(H-h)/2')}:"
         f"enable='between(t,{at:.4f},{at + duration:.4f})'"
     )
+    # The GPU door: the finished frame is uploaded to the VAAPI device
+    # once, as nv12, and the encoder takes it from there. The software
+    # path maps the same [v] the graph always ended with.
+    if pick.get("gpu"):
+        upload = ";[v]format=nv12,hwupload[vout]"
+        sink = "[vout]"
+    else:
+        upload = ""
+        sink = "[v]"
     if plate:
         fc = (
             f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
             f"crop={width}:{height},setsar=1[base];{ov};"
-            f"[base][ov]overlay={place}[v]"
+            f"[base][ov]overlay={place}[v]{upload}"
         )
         cmd = [
-            ff, "-v", "error", "-i", plate, "-framerate", f"{fps:.6f}",
+            ff, "-v", "error", *_hw_init(pick), "-i", plate,
+            "-framerate", f"{fps:.6f}",
             "-start_number", "1", "-i", pattern,
-            "-filter_complex", fc, "-map", "[v]", "-map", "0:a?",
+            "-filter_complex", fc, "-map", sink, "-map", "0:a?",
         ]
         if plate_duration > 0:
             cmd += ["-t", f"{plate_duration:.4f}"]
@@ -1929,18 +2020,15 @@ def overlay(spec):
     else:
         colour = str(spec.get("background", "black")).lstrip("#")
         colour = "0x" + colour if all(c in "0123456789abcdefABCDEF" for c in colour) else colour
-        fc = f"{ov};[0:v][ov]overlay={place}:shortest=1[v]"
+        fc = f"{ov};[0:v][ov]overlay={place}:shortest=1[v]{upload}"
         cmd = [
-            ff, "-v", "error", "-f", "lavfi",
+            ff, "-v", "error", *_hw_init(pick), "-f", "lavfi",
             "-i", f"color=c={colour}:s={width}x{height}:r={fps:.6f}:d={at + duration:.4f}",
             "-framerate", f"{fps:.6f}", "-start_number", "1", "-i", pattern,
-            "-filter_complex", fc, "-map", "[v]",
+            "-filter_complex", fc, "-map", sink,
         ]
     Path(out).parent.mkdir(parents=True, exist_ok=True)
-    cmd += [
-        "-c:v", "libx264", "-preset", "medium", "-crf", str(crf),
-        "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-y", out,
-    ]
+    cmd += [*_codec_args(pick, crf), "-movflags", "+faststart", "-y", out]
     rc, _, err = _run(cmd, 900)
     if rc != 0:
         return {"ok": False, "error": (err.decode("utf-8", "replace") or "ffmpeg failed")[-1200:]}
@@ -1953,12 +2041,16 @@ def overlay(spec):
         "width": width,
         "height": height,
         "plate": plate,
+        "encoder": pick["encoder"],
+        "gpu": pick["gpu"],
+        "gpuNote": pick["note"] or None,
         "note": (
             "The RGBA bake was composited over the plate, so the comp's transparency "
             "was honoured and the result is an opaque H.264 clip ready for media_import "
             "and clip_add. The alpha sequence itself is untouched. VP9/prores alpha "
             "targets are deliberately not claimed: FFmpeg's WebM muxer does not reliably "
-            "write AlphaMode, which is why this path exists."
+            "write AlphaMode, which is why this path exists. The encode ran on the "
+            f"{pick['encoder']} encoder{' on the machine\'s GPU' if pick['gpu'] else ''}."
         ),
     }
 
@@ -2097,6 +2189,33 @@ def main():
                 {"pngB64": b64, "at": 0, "label": "test A"},
                 {"pngB64": b64, "at": 1, "label": "test B"},
             ]})
+            # The overlay's GPU door, chosen without a GPU in the room: the
+            # pick is a pure function of what the machine is said to have,
+            # what the call asked for and what the operator pinned, and the
+            # command builders are checked against both of its answers.
+            gpu = _pick_from(True, {}, "")
+            assert gpu["encoder"] == "h264_vaapi" and gpu["gpu"] is True, gpu
+            assert _hw_init(gpu) == [
+                "-init_hw_device", f"vaapi=va:{gpu['device']}",
+                "-filter_hw_device", "va"], _hw_init(gpu)
+            assert _codec_args(gpu, 18) == ["-c:v", "h264_vaapi", "-qp", "18"]
+            soft = _pick_from(False, {}, "")
+            assert soft["encoder"] == "libx264" and soft["gpu"] is False, soft
+            assert _hw_init(soft) == [] and soft["note"] == ""
+            assert _codec_args(soft, 20) == [
+                "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+                "-pix_fmt", "yuv420p"]
+            # The precedence: off in the call beats VAAPI in the machine,
+            # the operator's libx264 beats the call's auto, and on with no
+            # VAAPI falls back with the note that says so.
+            assert _pick_from(True, {"gpu": "off"}, "h264_vaapi")["gpu"] is False
+            assert _pick_from(True, {"gpu": "auto"}, "libx264")["gpu"] is False
+            fell = _pick_from(False, {"gpu": "on"}, "")
+            assert fell["gpu"] is False and "no VAAPI encoder" in fell["note"], fell
+            # Booleans and the misspelled are read, not crashed on.
+            assert _pick_from(True, {"gpu": True}, "")["gpu"] is True
+            assert _pick_from(True, {"gpu": "nonsense"}, "")["gpu"] is True
+            out["gpuPick"] = "ok"
             # The new measurements: per-tile saturation, the aggregate craft
             # fields, and the overexposure the blownFraction always measured
             # but nothing ever consumed.

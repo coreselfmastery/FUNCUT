@@ -1683,3 +1683,36 @@ architecture page, the allowlist in `.forge/mcp.toml` and the allowlist's
 own count comments all say the new number, held there by the count test
 that reads them. The e2e arm proves the sample analysis answers its four
 numbers and its findings.
+
+## 36. The motion watched: `motion_preview`, item 09
+
+Item 09 of the Geneva roadmap. `motion_frame` is one exact moment; a
+comp is a span. `motion_preview` is the span at a glance: `frames`
+stills (1 to 12, six by default) spread evenly across the comp's
+duration, each drawn small (width 16 to 640, 480 by default), answered
+as one document of inline images in time order with each sample's time
+and file - the entrance, the hold and the exit, for the cost of a
+handful of frames instead of a bake.
+
+The spread never lands on the dead last instant, where an exit has
+usually already gone: the samples walk [0, duration) at even fractions,
+so six frames of a six-second comp read 0.0, 1.0, 2.0, 3.0, 4.0, 5.0 -
+the motion's own story, not its frame after the curtain. The count is
+bounded because the point is a glance, not a flipbook; the width is
+bounded because a preview that costs what a bake costs has missed its
+own name. A comp without a duration is refused with the reason rather
+than sampled six times at zero.
+
+The reading the reply carries says what to watch for - the entrance
+should land on its curve, the hold should breathe, the exit should
+leave - and names its own borders: `motion_frame` for one exact time,
+`scene_analysis` for the document with no engine at all, `motion_bake`
+for the finished clip. The tool rides the render budget (300 s) with
+the other frame-drawing tools, and its timeout place in the catalogue
+says so.
+
+The tool count goes ninety-seven to ninety-eight across every document
+that holds it - the README badge, FEATURES.md's inventory, FUNCUT.md,
+the Forge architecture page, the allowlist in `.forge/mcp.toml` and the
+allowlist's own count comments - held there by the count test that
+reads them.

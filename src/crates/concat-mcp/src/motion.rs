@@ -726,6 +726,108 @@ fn frame_of(project: &Path) -> Option<(u32, u32)> {
     ))
 }
 
+/// `motion_preview`: the comp's motion, watched - `frames` stills spread
+/// evenly across the comp's duration (never the dead last instant, where
+/// an exit has usually already gone), drawn small and answered as one
+/// document of inline images in time order. `motion_frame` is one exact
+/// moment; this is the whole span at a glance - the entrance, the hold,
+/// the exit - for the cost of a handful of frames instead of a bake.
+pub fn preview(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError> {
+    let fields = arguments
+        .as_object()
+        .cloned()
+        .ok_or_else(|| ApiError::invalid("invalid arguments: the arguments are an object"))?;
+    for key in fields.keys() {
+        if !["preset", "comp", "project", "ops", "frames", "width"].contains(&key.as_str()) {
+            return Err(ApiError::invalid(format!(
+                "invalid arguments: unknown field `{key}`"
+            )));
+        }
+    }
+    let project = project_of(&fields, backend)?;
+    // The spread: how many stills, and how wide each draws. The count is
+    // bounded because the point is a glance, not a flipbook; the width is
+    // bounded because a preview that costs what a bake costs has missed
+    // its own name.
+    let frames = fields.get("frames").and_then(Value::as_u64).unwrap_or(6);
+    if !(1..=12).contains(&frames) {
+        return Err(ApiError::invalid(
+            "invalid arguments: `frames` is 1 to 12 - six is the glance, twelve the strip",
+        ));
+    }
+    let width = fields.get("width").and_then(Value::as_u64).unwrap_or(480);
+    if !(16..=640).contains(&width) {
+        return Err(ApiError::invalid(
+            "invalid arguments: `width` is 16 to 640 - a preview, not a bake",
+        ));
+    }
+    let (comp, _) = resolve_comp(&fields)?;
+    if comp.duration <= 0.0 || !comp.duration.is_finite() {
+        return Err(ApiError::invalid(
+            "invalid arguments: the comp has no duration to spread frames across",
+        ));
+    }
+    let engine = geneva()?;
+    std::fs::create_dir_all(motion_dir(&project))
+        .map_err(|error| ApiError::failed(format!("could not create motion/: {error}")))?;
+
+    // One sixth of the way in is the first sample, five sixths the last:
+    // the samples walk [0, duration) without ever landing on the frame
+    // after everything has left.
+    let mut content = Vec::with_capacity(frames as usize + 1);
+    let mut said = Vec::with_capacity(frames as usize);
+    for index in 0..frames {
+        let at = comp.duration * f64::from(index as u32) / f64::from(frames as u32);
+        let drawn = engine
+            .frame(&comp, at, Some(width as u32), &comps_dir(&project))
+            .map_err(|error| ApiError::failed(error.to_string()))?;
+        // Read the drawn PNG before it is removed: an agent cannot open a
+        // path, so each sample travels back as MCP `type: image` content,
+        // in time order - the flipbook the reply is.
+        let bytes = std::fs::read(&drawn).map_err(|error| {
+            ApiError::failed(format!("could not read the drawn frame: {error}"))
+        })?;
+        let out = motion_dir(&project).join(format!(
+            "preview-{:016x}-{}-{at:.2}.png",
+            comp.hash(),
+            index + 1
+        ));
+        std::fs::copy(&drawn, &out)
+            .map_err(|error| ApiError::failed(format!("could not keep the frame: {error}")))?;
+        let _ = std::fs::remove_file(&drawn);
+        content.push(json!({
+            "type": "image",
+            "data": crate::sense::base64(&bytes),
+            "mimeType": "image/png",
+        }));
+        said.push(json!({
+            "index": index + 1,
+            "at": (at * 100.0).round() / 100.0,
+            "frame": out.display().to_string(),
+        }));
+    }
+    let reading = json!({
+        "frames": said,
+        "count": frames,
+        "duration": comp.duration,
+        "width": width,
+        "height": comp.height,
+        "note": "Watch these in order: the entrance should land on its curve, the hold \
+                 should breathe, the exit should leave. Compare the first against the \
+                 last before motion_bake pays for the whole clip; motion_frame draws one \
+                 exact time, scene_analysis reads the document with no engine at all.",
+    });
+    content.push(json!({
+        "type": "text",
+        "text": serde_json::to_string_pretty(&reading).unwrap_or_default(),
+    }));
+    Ok(Outcome {
+        content,
+        structured: Some(reading),
+        is_error: false,
+    })
+}
+
 /// `motion_bake`: a comp - a preset or a file, edited by `ops` - baked to
 /// PNG frames in the project's cache and, when `encode` is set, written as
 /// one video file under `motion/` ready for `media_import`.

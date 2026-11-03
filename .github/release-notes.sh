@@ -27,15 +27,19 @@
 # front of one is scaffolding for the log and reads as noise in a release,
 # so the type comes off and the first letter goes up. A subject that appears
 # twice appears once.
+#
+# The build-green filter names the types it drops - everything but `feat` -
+# because a feature whose subject says "the lint" is the lint itself, not a
+# tree that was appeased to make one green: item 02's five lint families
+# were dropped from the v0.2.8-funcut.8 notes by the wider net, and a
+# feature nobody can read about in the release it shipped in is a release
+# note that stopped telling the truth.
 set -euo pipefail
 
 since="$1"
 until="$2"
 version="$3"
 title="Concat $version"
-
-# A conventional-commit type, with its optional (scope) and breaking `!`.
-type='^[a-z0-9]+(\([^)]*\))?!?: '
 
 # Each line opens with one mark for what it touches, from the commit's
 # scope where it has one and its type where it has not - a fix reads as a
@@ -47,7 +51,7 @@ changes=$(git log "$since..$until" --no-merges --format='%s' 2>/dev/null \
   | grep -Ev 'in the (export|pool) tests$' \
   | grep -Eiv '^(test|chore|ci|build|refactor|style|docs)(\([^)]*\))?!?: ' \
   | grep -Eiv '^[a-z0-9]+\((release|ci)\)!?: ' \
-  | grep -Eiv "${type}.*(clippy|lint|rustfmt|(unused|duplicate|missing) [A-Za-z]* ?import|non-existent|does not compile|before test module|green again)" \
+  | grep -Eiv '^(fix|chore|style|refactor|test|build|ci|perf)(\([^)]*\))?!?: .*(clippy|lint|rustfmt|(unused|duplicate|missing) [A-Za-z]* ?import|non-existent|does not compile|before test module|green again)' \
   | grep -Eiv '^(updates?|wip|fixes?|cleanup)\.?$' \
   | awk -v marks="$marks" '
       BEGIN {

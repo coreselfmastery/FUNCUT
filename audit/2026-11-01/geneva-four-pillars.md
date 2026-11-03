@@ -324,3 +324,62 @@ a door to the same room the agent already opens; the description
 points at the doors that exist.
 
 The findings register above stays open, in the order it deserves.
+
+## Postscript - the register, closed: 3 November 2026
+
+The register above stayed open for two days. This is what became of
+each item, in its own order, and the tree now says so:
+
+1. **A cache hit still requires a live sidecar** - the comment at the
+   cache door now says it plainly: the version is part of the key, so
+   even a hit has asked a live sidecar for it; the cache spares the
+   render, not the sidecar. The intent was always engine.rs's own
+   (a missing engine fails loudly rather than serving a bake it cannot
+   name); the words now agree with it.
+2. **Two definitions of "the bake key"** - resolved before this pass:
+   `Comp::cache_key` no longer exists, and `bake_cache_hit`'s hash +
+   assets comparison is the one definition, documented where it lives.
+3. **Ranged bakes share a staging dir** - fixed: `stage_assets` fills
+   `cache::part_path(&to)` (pid and counter, hidden, the same
+   discipline every publish already had) instead of one shared
+   `.part`, so two workers copying the same asset cannot truncate
+   each other's copy or rename it out from under the other.
+4. **An explicit `at` bypasses the overlap rule silently at plan
+   level** - fixed: the plan now warns when a scene enters by a cut
+   choreographed to cross but its authored `at` places it flush or
+   later - the placement is kept (it is the author's) and the cut's
+   sequential fate is said in the plan, not left for the join to
+   reveal. Tested both ways: the flush placement warns, the author who
+   crosses the cut themselves hears nothing.
+5. **`Sequence::duration()` over-reports under choreography** -
+   resolved before this pass: `layout()` subtracts the entering cut's
+   window the same arithmetic the plan uses, so the convenience and
+   the plan agree.
+6. **`frame()` leaks its scratch dir** - fixed in the agent's verb:
+   the frame is always copied out (to `-o`, or to a deterministic
+   temp file named by the comp and the moment - the engine is
+   deterministic, so a second call writes the same bytes over the
+   same name) and the scratch always goes.
+7. **`request.alpha` is metadata-only for Geneva** - the field's doc
+   says what it moves and what it does not: RGBA engines honour it in
+   the frames, Geneva's PNG sequence is always RGBA so the flag
+   changes nothing it draws, and it stays a key's field and a
+   manifest's. Said where the reader would otherwise mistake it for a
+   promise.
+8. **`publish_bake`'s retired-dir naming** - resolved by the
+   ship-blockers rewrite before this pass: there is no retired
+   directory anymore, only a `.part` renamed in, unique per writer.
+9. **Eviction blind spots** - resolved by the same rewrite: the
+   sweep counts a no-manifest directory younger than an hour as
+   somebody's in-flight bake and an older one as a crash's junk, and
+   a stale `.part` file in the root goes the same way.
+10. **`discover` checks `is_file()`, not the exec bit** - fixed:
+    `runnable()` reads the mode (Unix) and discovery's choosing half
+    is `Geneva::pick`, a pure function the regression test drives
+    without touching the environment discovery reads: a plain file is
+    skipped, the executable beside it is found, and a missing path is
+    nothing.
+
+The two documented approximations stand as documented: gradient-on-
+shape averages to one colour, and `absolute_position` folds ancestor
+positions only.

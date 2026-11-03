@@ -177,6 +177,13 @@ pub struct BakeRequest {
     /// Frame rate; the comp's own when `None`.
     pub fps: Option<f64>,
     /// Keep the alpha channel: an overlay for a layer above.
+    ///
+    /// A key's field and a manifest's, honest about what it moves: the
+    /// engines that bake RGBA honour it in the frames themselves, and a
+    /// metadata-only engine (Geneva's PNG sequence is always RGBA, so the
+    /// flag changes nothing it draws) still compares and stores it - the
+    /// audit's finding 7, said where the field lives rather than left
+    /// for a reader to mistake for a promise the renderer never made.
     pub alpha: bool,
     /// Encoder quality for engines that encode, 0 to 51, lower is better.
     pub crf: u8,

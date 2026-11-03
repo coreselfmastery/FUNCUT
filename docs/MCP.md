@@ -130,7 +130,7 @@ carries its JSON result in the status's `output`:
   status.
 
 The motion layer - the design door the director skill's Phase 5b assumes -
-is twelve tools: nine thin wrappers over the `concat-motion` crate here (the same
+is thirteen tools: ten thin wrappers over the `concat-motion` crate here (the same
 vocabulary the `concat-motion-agent` CLI speaks), `geneva_explain` for the
 engine's own diagnostic codes, `motion_farm_progress` for reading a farmed
 render's progress live, plus `motion_overlay`, the compositing path
@@ -155,6 +155,12 @@ over real footage, documented with the perception tools below:
 - `motion_frame` - one frame of a comp at a time in seconds, drawn in tens
   of milliseconds, returned as an **inline image** (and also written under
   the project's `motion/`). Look at it before baking.
+- `motion_preview` - the comp's motion watched: `frames` stills (1-12,
+  six by default) spread evenly across the duration - never the dead last
+  instant - drawn small (width 16-640, 480 by default) and returned as
+  **inline images in time order** with each sample's time and file. The
+  entrance, the hold and the exit at a glance, for a handful of frames
+  instead of a bake.
 - `motion_bake` - a comp (preset or file, optionally edited by `ops`)
   baked to PNG frames under `cache/comps/`, and with `encode: true`
   written as one video under `motion/` ready for `media_import` and
@@ -409,7 +415,7 @@ Tools are named for what they do, and their argument schemas are generated from 
 | Speech | `transcribe`, `tts_generate`, `models_list`, `models_download` |
 | Anything else | `edit_apply` (any edit command, or a batch of them as one undo step), `edit_undo`, `edit_redo` |
 | Templates | `template_list`, `template_instantiate` |
-| Motion design | `motion_presets`, `motion_inspect`, `scene_analysis`, `motion_frame`, `motion_bake`, `motion_overlay`, `captions_animate`, `motion_reel`, `motion_probe`, `scene_timeline` |
+| Motion design | `motion_presets`, `motion_inspect`, `scene_analysis`, `motion_frame`, `motion_preview`, `motion_bake`, `motion_overlay`, `captions_animate`, `motion_reel`, `motion_probe`, `scene_timeline` |
 | Export | `export_start`, `export_status`, `export_wait` (with progress), `export_cancel` |
 | Looking | `preview_frame` (the composited frame as an image) |
 | Perception and the creative loop | `creative_brief`, `stock_contact_sheet`, `watch_render`, `craft_critique`, `suggest_cuts`, `measure_loudness`, `track_subject`, `local_vlm`, `emotion` |
@@ -439,7 +445,7 @@ For scripts that do not speak MCP, the same API is served as JSON-RPC lines on a
 Three switches - two off by default for a server started bare, and the allowlist already on for the server this repository's own `.forge/mcp.toml` declares:
 
 - **`--mcp-read-only`** (binary) or **`CONCAT_MCP_READ_ONLY=1`** (the app's `concat --mcp` and anything else that starts it): every tool that changes something is refused by name - an edit, an export, a stock import, the reel's render half. The reads stay, and `motion_reel` keeps its look halves (`plan`, `frame`, `sheet`): they change nothing outside the project's cache, and taking them away takes away the only way to see a design before committing to it.
-- **`--mcp-allow a,b,c`** (binary) or **`CONCAT_MCP_ALLOW=a,b,c`**: the only tools this server serves. A tool not on the list is refused as if it were not there - its description still lists it, but the surface served is what the operator said, not what the build happens to carry. `.forge/mcp.toml` starts the repo's own server with the list already set (its `[servers.transport.env]` table: 95 of the 97 tools, everything but `project_close` and `export_cancel`), and carries the same list as a comment, ready to paste for a server started by hand.
+- **`--mcp-allow a,b,c`** (binary) or **`CONCAT_MCP_ALLOW=a,b,c`**: the only tools this server serves. A tool not on the list is refused as if it were not there - its description still lists it, but the surface served is what the operator said, not what the build happens to carry. `.forge/mcp.toml` starts the repo's own server with the list already set (its `[servers.transport.env]` table: 96 of the 98 tools, everything but `project_close` and `export_cancel`), and carries the same list as a comment, ready to paste for a server started by hand.
 - **Per-tool timeouts**: every tool carries its own limit (`Tool::timeout_secs` - the VLM download and the overlay encode 1200 s, transcribe 900 s, exports and the sense family 600 s, the renders and watches 300 s, everything else 60 s), and a call that outlives it is cancelled and answered for at the deadline, with the limit in the message. The client-side `call_timeout_secs` stays as the ceiling over all of them; the engine's own calls are bounded a second time, per call, by the Geneva guard (see `docs/MOTION.md`).
 
 ## The reel contact sheet

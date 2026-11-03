@@ -98,6 +98,8 @@ pub enum Action {
     SceneAnalysis,
     /// One frame of a comp, drawn and written under the project.
     MotionFrame,
+    /// The comp's motion watched: frames spread across the span.
+    MotionPreview,
     /// A comp baked, and encoded when asked.
     MotionBake,
     /// A word-timed transcript as one caption video.
@@ -813,6 +815,15 @@ pub fn catalogue() -> Vec<Tool> {
             action: Action::MotionFrame,
         },
         Tool {
+            name: "motion_preview",
+            title: "Watch a comp's motion",
+            description: "The comp's motion, watched instead of guessed at: `frames` stills (1-12, six by default) spread evenly across the comp's duration - never the dead last instant, where an exit has usually already gone - drawn at a preview width (16-640, 480 by default) and returned as INLINE IMAGES in time order, plus the JSON that names each sample's time and file. The entrance, the hold and the exit at a glance, for the cost of a handful of frames instead of a bake: watch it here, then motion_bake the whole clip, or fix what the watch showed first. Takes `preset` or `comp` (+ `project`), an optional `ops` batch applied first, `frames` and `width`. motion_frame draws one exact time; this is the whole span.",
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            action: Action::MotionPreview,
+        },
+        Tool {
             name: "motion_bake",
             title: "Bake a motion comp",
             description: "Bakes a motion comp - `preset` or `comp`, edited by an optional `ops` batch (set-slot, set-text, set-words, set-track, slide-to, pop, fade-in, add-text, ...) - into PNG frames under the project's cache/comps/, content-addressed by the comp's hash, and with `encode: true` writes one video file under motion/ ready for media_import and clip_add (`name` picks its file name, with the comp's hash prepended when missing so export can find it; .webm is VP9, .mov ProRes 4444, otherwise H.264 - none carry alpha, which the PNG sequence keeps). For a transparent comp, take `dir` and `hash` from this reply to motion_overlay, which composites the RGBA frames over your real footage with the alpha honoured. Optional width/height - the project's own frame, read from its document, when absent, so a vertical project bakes vertical; clamped to 4096 for safety - fps, crf (0-51). A bake whose manifest already matches the comp, engine, size and rate is returned from the cache without re-rendering (cached: true in the reply).",
@@ -1020,6 +1031,7 @@ impl Tool {
         const RENDER: &[&str] = &[
             "motion_bake",
             "motion_frame",
+            "motion_preview",
             "captions_animate",
             "watch_render",
         ];
@@ -1252,6 +1264,7 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
         | Action::MotionInspect
         | Action::SceneAnalysis
         | Action::MotionFrame
+        | Action::MotionPreview
         | Action::MotionBake
         | Action::CaptionsAnimate
         | Action::MotionReel
@@ -1640,6 +1653,28 @@ fn motion_schema(name: &str) -> Option<Value> {
                 ],
             ),
             &["project", "at"],
+        ),
+        "motion_preview" => object(
+            with(
+                shared,
+                &[
+                    (
+                        "frames",
+                        json!({
+                            "type": "integer", "minimum": 1, "maximum": 12, "default": 6,
+                            "description": "How many stills spread across the comp's duration - six is the glance, twelve the strip."
+                        }),
+                    ),
+                    (
+                        "width",
+                        json!({
+                            "type": "integer", "minimum": 16, "maximum": 640, "default": 480,
+                            "description": "The width each sample draws at - a preview, not a bake."
+                        }),
+                    ),
+                ],
+            ),
+            &["project"],
         ),
         "motion_bake" => object(
             with(
@@ -2175,6 +2210,7 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         Action::MotionPresets => crate::motion::presets_list(),
         Action::MotionInspect => crate::motion::inspect(arguments),
         Action::MotionFrame => crate::motion::frame(arguments, backend),
+        Action::MotionPreview => crate::motion::preview(arguments, backend),
         Action::MotionBake => crate::motion::bake(arguments, backend),
         Action::CaptionsAnimate => crate::motion::captions_animate(arguments, backend),
         Action::MotionReel => crate::motion::reel(arguments, backend),
@@ -3612,6 +3648,10 @@ mod tests {
                 json!({ "project": "/tmp/Cut", "preset": "funcut.lower-third.glass", "at": 1.0 }),
             ),
             (
+                "motion_preview",
+                json!({ "project": "/tmp/Cut", "preset": "funcut.lower-third.glass", "frames": 4 }),
+            ),
+            (
                 "motion_bake",
                 json!({ "project": "/tmp/Cut", "preset": "funcut.chapter.chip", "encode": true }),
             ),
@@ -3818,6 +3858,7 @@ mod tests {
                     continue;
                 }
                 Action::MotionFrame
+                | Action::MotionPreview
                 | Action::MotionBake
                 | Action::CaptionsAnimate
                 | Action::MotionReel

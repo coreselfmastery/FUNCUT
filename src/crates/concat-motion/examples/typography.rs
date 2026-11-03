@@ -125,6 +125,7 @@ fn main() {
         background: Rgba::new(0.02, 0.024, 0.04, 1.0),
         assets: BTreeMap::new(),
         curves: BTreeMap::new(),
+        comps: BTreeMap::new(),
         nodes: vec![headline, caption, paragraph, gradient],
         slots: Vec::new(),
     };

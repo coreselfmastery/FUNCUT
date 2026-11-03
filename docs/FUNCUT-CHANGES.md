@@ -1511,3 +1511,42 @@ arriving on its tracking - and its frames were read before landing: a
 layout that clipped its own paragraph was caught by exactly that
 discipline and restacked. Six tests hold the new surface to the
 module's own bar, the static-transform guard included.
+
+## 33. Scoped sub-compositions: the sting placed nine times, the scope kept
+
+Geneva roadmap item 05. The `composition` node has said "define a
+sting once, use it nine times" since the node table was written, but
+nothing behind it was: the timeline mapping never emitted the
+engine's `compositions` map, a placement's name resolved against
+nothing, and the promise was a dead link. Now:
+
+- **The document carries its comps**: `comps` maps a name to a whole
+  comp document. A `composition` node places one - once or nine
+  times, each placement with its own timing and transform. The name
+  resolves **inside the same document**, which is the scoping rule:
+  no reaching into another document's comps by id.
+- **Each sub-comp is a scope**: its node ids, assets, curves and
+  slots are its own; a parent and a child may both have a `card` and
+  a `logo`; a diagnostic inside one is pointed at `/comps/{name}/...`.
+  Cycles are refused at `validate` with a pointer into the document
+  (the engine's E207 after, ours first), and so is nesting past the
+  engine's eight levels.
+- **The timeline flattens by scope**: the engine resolves composition
+  names from one top-level map, so the mapping spells the sting's
+  `logo` as `sting::logo` and an `outer` comp's sting as
+  `outer::sting` - the document scopes, the timeline flattens, and
+  neither knows the other's business. Staging copies every scope's
+  files under the same spelling, with the same `.part`-then-rename
+  discipline, and the bake's assets key covers them: changing the
+  logo *inside the sting* is a different bake, measured by test.
+
+A real bug found on the way, by rendering the thing: `source_of`
+wrote an image node's `fit` **inside the timeline source**, which the
+engine refuses as E101 (`asset` is the only field an image source
+takes) - so every comp with an image node failed to bake through
+`Geneva::bake` (the MCP `motion_bake` path and the agent CLI), while
+the sequence path, which writes `fit` on the clip, was green. The
+comp path now writes it on the clip too, and `examples/stings.rs` -
+the worked proof: one definition, three placements, three sizes, the
+third tilted, rendered with the pinned sidecar and read before
+landing - carries an image inside its sting for exactly this reason.

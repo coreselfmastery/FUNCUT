@@ -432,7 +432,11 @@ impl Geneva {
     /// The timeline a comp becomes, and what could not be expressed in it.
     ///
     /// Assets are staged separately (`stage_assets`), so this only invents
-    /// relative paths.
+    /// relative paths. A comp that carries sub-compositions emits them as
+    /// the timeline's own `compositions` map - names flattened by scope
+    /// (`sting`, `outer::sting`), because the engine resolves every name
+    /// from the one top-level map while the document holds one scope per
+    /// comp.
     pub fn timeline(&self, comp: &Comp, request: &BakeRequest) -> (Json, Vec<String>) {
         let mut warnings = Vec::new();
         let width = request.width(comp);
@@ -440,93 +444,13 @@ impl Geneva {
         let fps = request.fps(comp);
 
         let mut assets = serde_json::Map::new();
-        for (id, asset) in &comp.assets {
-            let Some(kind) = geneva_asset_kind(asset) else {
-                warnings.push(format!(
-                    "asset {id:?} is a {:?}, which geneva does not read",
-                    asset.kind
-                ));
-                continue;
-            };
-            assets.insert(
-                id.clone(),
-                json!({ "src": staged_path(id, asset), "kind": kind }),
-            );
-        }
+        collect_assets(comp, "", &mut assets, &mut warnings);
 
         let mut layers = Vec::new();
         for node in comp.paint_order() {
-            let Some(source) = source_of(comp, node, &mut warnings) else {
-                continue;
-            };
-            let mut clip = serde_json::Map::new();
-            clip.insert("source".into(), source);
-            if node.start > 0.0 {
-                clip.insert("start".into(), Json::String(seconds(node.start)));
+            if let Some(layer) = layer_of(comp, node, "", &mut warnings) {
+                layers.push(layer);
             }
-            if node.duration > 0.0 {
-                clip.insert("duration".into(), Json::String(seconds(node.duration)));
-            }
-            let transform = effective_transform(comp, node, &mut warnings);
-            if let Some(transform) = transform {
-                clip.insert("transform".into(), transform);
-            }
-            let opacity = node
-                .tracks
-                .get("opacity")
-                .and_then(|track| {
-                    keyframes(track, Kind::Number, span_of(comp, node), &mut warnings)
-                })
-                .unwrap_or_else(|| json!(node.opacity));
-            if opacity != json!(1.0) {
-                clip.insert("opacity".into(), opacity);
-            }
-            if node.blend != Blend::Normal
-                && let Some(name) = blend_name(node.blend)
-            {
-                clip.insert("blend".into(), Json::String(name.into()));
-            }
-            if let Some(mask) = &node.mask
-                && let Some(mask) = mask_json(mask)
-            {
-                clip.insert("mask".into(), mask);
-            }
-            let mut effects = Vec::new();
-            for effect in &node.effects {
-                match effect {
-                    Effect::Blur { radius } => {
-                        let radius = node
-                            .tracks
-                            .get("blur")
-                            .and_then(|track| keyframes(track, Kind::Number, span_of(comp, node), &mut warnings))
-                            .unwrap_or_else(|| json!(radius));
-                        effects.push(json!({ "kind": "blur", "radius": radius }));
-                    }
-                    Effect::Shadow { .. } => warnings.push(format!(
-                        "node {:?}: a drop shadow is drawn by the native engine only; geneva has shadows inside markup",
-                        node.id
-                    )),
-                    Effect::Shader { id, .. } => warnings.push(format!(
-                        "node {:?}: shader {id:?} is a project package, drawn by the native engine only",
-                        node.id
-                    )),
-                }
-            }
-            if !effects.is_empty() {
-                clip.insert("effects".into(), Json::Array(effects));
-            }
-            for name in node.tracks.keys() {
-                if !matches!(
-                    name.as_str(),
-                    "position" | "scale" | "rotation" | "opacity" | "blur"
-                ) {
-                    warnings.push(format!(
-                        "node {:?}: the {name:?} track is not expressible in a geneva timeline",
-                        node.id
-                    ));
-                }
-            }
-            layers.push(json!({ "id": node.id, "clips": [clip] }));
         }
 
         let mut output = serde_json::Map::new();
@@ -558,6 +482,15 @@ impl Geneva {
         if !assets.is_empty() {
             document.insert("assets".into(), Json::Object(assets));
         }
+        // Sub-compositions, flattened by scope into the one map the
+        // engine resolves names from: a comp's own `sting` stays `sting`,
+        // the `sting` inside a comp called `outer` lands as
+        // `outer::sting`, and a placement's reference is rewritten the
+        // same way - the document scopes, the timeline flattens.
+        let compositions = compositions_of(comp, request, "", &mut warnings);
+        if !compositions.is_empty() {
+            document.insert("compositions".into(), Json::Object(compositions));
+        }
         document.insert("layers".into(), Json::Array(layers));
         (Json::Object(document), warnings)
     }
@@ -575,30 +508,7 @@ impl Geneva {
             path: dir.join("assets"),
             source,
         })?;
-        for (id, asset) in &comp.assets {
-            let from = source_dir.join(&asset.src);
-            if !from.is_file() {
-                continue;
-            }
-            let to = dir.join(staged_path(id, asset));
-            if to.is_file() {
-                continue;
-            }
-            // A copy that did not finish must not be believed whole by the
-            // next bake: it lands beside the bake as a `.part` and is
-            // renamed in only when it is complete.
-            let part = to.with_extension("part");
-            std::fs::copy(&from, &part).map_err(|source| MotionError::Io {
-                doing: "copying an asset into the bake".into(),
-                path: from,
-                source,
-            })?;
-            std::fs::rename(&part, &to).map_err(|source| MotionError::Io {
-                doing: "finishing an asset copy".into(),
-                path: to.clone(),
-                source,
-            })?;
-        }
+        stage_assets(comp, "", source_dir, dir)?;
         let (document, warnings) = self.timeline(comp, request);
         for warning in &warnings {
             log_warning(warning);
@@ -1042,6 +952,45 @@ pub fn fix_for(code: &str) -> Option<&'static str> {
     }
 }
 
+/// Every asset a comp and its sub-comps name, copied into the bake
+/// under the flattened, scope-unique spelling the timeline's asset map
+/// uses - the same `.part`-then-rename discipline the top-level assets
+/// always had, so a half-written copy is never believed whole whatever
+/// document carried the file.
+fn stage_assets(
+    comp: &Comp,
+    scope: &str,
+    source_dir: &Path,
+    dir: &Path,
+) -> Result<(), MotionError> {
+    for (id, asset) in &comp.assets {
+        let staged = format!("{scope}{id}");
+        let from = source_dir.join(&asset.src);
+        if !from.is_file() {
+            continue;
+        }
+        let to = dir.join(staged_path(&staged, asset));
+        if to.is_file() {
+            continue;
+        }
+        let part = to.with_extension("part");
+        std::fs::copy(&from, &part).map_err(|source| MotionError::Io {
+            doing: "copying an asset into the bake".into(),
+            path: from,
+            source,
+        })?;
+        std::fs::rename(&part, &to).map_err(|source| MotionError::Io {
+            doing: "finishing an asset copy".into(),
+            path: to.clone(),
+            source,
+        })?;
+    }
+    for (name, sub) in &comp.comps {
+        stage_assets(sub, &format!("{scope}{name}::"), source_dir, dir)?;
+    }
+    Ok(())
+}
+
 /// The content key of every file a comp points at: the comp's own hash
 /// covers the document, this covers its bytes. Each asset's content is
 /// hashed by [`crate::cache::stream_hash`], a megabyte at a time - a
@@ -1051,7 +1000,21 @@ pub fn fix_for(code: &str) -> Option<&'static str> {
 /// that could not read an asset is a bake a later re-render with the
 /// file present must not be served in place of.
 fn bake_assets_key(comp: &Comp, source_dir: &Path) -> Option<u64> {
-    if comp.assets.is_empty() {
+    // Sub-compositions point at files of their own, and a bake whose key
+    // ignored them would serve a stale placement after "changed the
+    // logo inside the sting" - the same bug the top-level key exists to
+    // refuse. One walk, one order, every scope in the key.
+    let mut walk: BTreeMap<String, &str> = BTreeMap::new();
+    fn gather<'a>(comp: &'a Comp, scope: &str, walk: &mut BTreeMap<String, &'a str>) {
+        for (id, asset) in &comp.assets {
+            walk.insert(format!("{scope}{id}"), asset.src.as_str());
+        }
+        for (name, sub) in &comp.comps {
+            gather(sub, &format!("{scope}{name}::"), walk);
+        }
+    }
+    gather(comp, "", &mut walk);
+    if walk.is_empty() {
         return None;
     }
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
@@ -1062,11 +1025,10 @@ fn bake_assets_key(comp: &Comp, source_dir: &Path) -> Option<u64> {
         }
     };
     eat(b"concat-motion/bake-assets/1");
-    for (id, asset) in &comp.assets {
+    for (id, src) in &walk {
         eat(id.as_bytes());
         eat(b"\0");
-        match crate::cache::stream_hash("concat-motion/bake-assets/1", &source_dir.join(&asset.src))
-        {
+        match crate::cache::stream_hash("concat-motion/bake-assets/1", &source_dir.join(src)) {
             Some(file) => eat(&file.to_le_bytes()),
             None => eat(b"missing"),
         }
@@ -1578,8 +1540,176 @@ fn average_color(stops: &[(f64, Rgba)]) -> Rgba {
     )
 }
 
+/// One node as one timeline layer: a clip carrying the node's source,
+/// timing, transform, opacity, blend, mask, effects and the tracks the
+/// timeline can say. `scope` is the sub-composition prefix the node's
+/// asset and composition names are rewritten by - empty at the document
+/// root - so the same mapping serves a comp and every comp it carries.
+fn layer_of(comp: &Comp, node: &Node, scope: &str, warnings: &mut Vec<String>) -> Option<Json> {
+    let source = source_of(comp, node, scope, warnings)?;
+    let mut clip = serde_json::Map::new();
+    clip.insert("source".into(), source);
+    // `fit` is a field of the clip, not of the source (E101: the engine's
+    // schema allows `asset` alone on an image source), and it sizes a
+    // picture to the frame *before* the transform - the same placement
+    // the sequence path has always written.
+    if let NodeKind::Image { fit, .. } = &node.kind {
+        clip.insert(
+            "fit".into(),
+            Json::String(
+                match fit {
+                    Fit::Contain => "contain",
+                    Fit::Cover => "cover",
+                    Fit::Fill => "fill",
+                    Fit::None => "none",
+                }
+                .into(),
+            ),
+        );
+    }
+    if node.start > 0.0 {
+        clip.insert("start".into(), Json::String(seconds(node.start)));
+    }
+    if node.duration > 0.0 {
+        clip.insert("duration".into(), Json::String(seconds(node.duration)));
+    }
+    let transform = effective_transform(comp, node, warnings);
+    if let Some(transform) = transform {
+        clip.insert("transform".into(), transform);
+    }
+    let opacity = node
+        .tracks
+        .get("opacity")
+        .and_then(|track| keyframes(track, Kind::Number, span_of(comp, node), warnings))
+        .unwrap_or_else(|| json!(node.opacity));
+    if opacity != json!(1.0) {
+        clip.insert("opacity".into(), opacity);
+    }
+    if node.blend != Blend::Normal
+        && let Some(name) = blend_name(node.blend)
+    {
+        clip.insert("blend".into(), Json::String(name.into()));
+    }
+    if let Some(mask) = &node.mask
+        && let Some(mask) = mask_json(mask)
+    {
+        clip.insert("mask".into(), mask);
+    }
+    let mut effects = Vec::new();
+    for effect in &node.effects {
+        match effect {
+            Effect::Blur { radius } => {
+                let radius = node
+                    .tracks
+                    .get("blur")
+                    .and_then(|track| {
+                        keyframes(track, Kind::Number, span_of(comp, node), warnings)
+                    })
+                    .unwrap_or_else(|| json!(radius));
+                effects.push(json!({ "kind": "blur", "radius": radius }));
+            }
+            Effect::Shadow { .. } => warnings.push(format!(
+                "node {:?}: a drop shadow is drawn by the native engine only; geneva has shadows inside markup",
+                node.id
+            )),
+            Effect::Shader { id, .. } => warnings.push(format!(
+                "node {:?}: shader {id:?} is a project package, drawn by the native engine only",
+                node.id
+            )),
+        }
+    }
+    if !effects.is_empty() {
+        clip.insert("effects".into(), Json::Array(effects));
+    }
+    for name in node.tracks.keys() {
+        if !matches!(
+            name.as_str(),
+            "position" | "scale" | "rotation" | "opacity" | "blur"
+        ) {
+            warnings.push(format!(
+                "node {:?}: the {name:?} track is not expressible in a geneva timeline",
+                node.id
+            ));
+        }
+    }
+    Some(json!({ "id": node.id, "clips": [clip] }))
+}
+
+/// The assets a comp and every comp it carries name, flattened by scope:
+/// a document's own `logo` stays `logo`, the `logo` inside a sub-comp
+/// called `sting` lands as `sting::logo` - one map for the timeline, one
+/// scope per document, and no two documents' assets can collide.
+fn collect_assets(
+    comp: &Comp,
+    scope: &str,
+    assets: &mut serde_json::Map<String, Json>,
+    warnings: &mut Vec<String>,
+) {
+    for (id, asset) in &comp.assets {
+        let Some(kind) = geneva_asset_kind(asset) else {
+            warnings.push(format!(
+                "asset {id:?} is a {:?}, which geneva does not read",
+                asset.kind
+            ));
+            continue;
+        };
+        let staged = format!("{scope}{id}");
+        assets.insert(
+            staged.clone(),
+            json!({ "src": staged_path(&staged, asset), "kind": kind }),
+        );
+    }
+    for (name, sub) in &comp.comps {
+        collect_assets(sub, &format!("{scope}{name}::"), assets, warnings);
+    }
+}
+
+/// The `compositions` map a comp and every comp it carries become, names
+/// flattened by scope the same way [`collect_assets`] flattens asset
+/// ids - the engine resolves every composition name from one top-level
+/// map, the document keeps one scope per comp, and this is the bridge.
+/// Each value is the engine's own nested timeline: a frame, a
+/// background when it is not transparent, and the sub-comp's nodes
+/// mapped exactly as the parent's are, times already relative to the
+/// sub-comp's own clock.
+fn compositions_of(
+    comp: &Comp,
+    request: &BakeRequest,
+    scope: &str,
+    warnings: &mut Vec<String>,
+) -> serde_json::Map<String, Json> {
+    let mut map = serde_json::Map::new();
+    for (name, sub) in &comp.comps {
+        let key = format!("{scope}{name}");
+        let mut nested = serde_json::Map::new();
+        nested.insert("width".into(), json!(request.width(sub)));
+        nested.insert("height".into(), json!(request.height(sub)));
+        if sub.background.a > 0.0 {
+            nested.insert("background".into(), Json::String(sub.background.to_hex()));
+        }
+        let mut layers = Vec::new();
+        for node in sub.paint_order() {
+            if let Some(layer) = layer_of(sub, node, &format!("{key}::"), warnings) {
+                layers.push(layer);
+            }
+        }
+        nested.insert("layers".into(), Json::Array(layers));
+        map.insert(key.clone(), Json::Object(nested));
+        // The sub-comp's own sub-comps, one scope deeper: the recursion
+        // covers every depth the document's cap allows.
+        let deeper = compositions_of(sub, request, &format!("{key}::"), warnings);
+        for (deeper_key, value) in deeper {
+            map.insert(deeper_key, value);
+        }
+    }
+    map
+}
+
 /// What a node draws, as a Geneva source; `None` when this engine cannot.
-fn source_of(comp: &Comp, node: &Node, warnings: &mut Vec<String>) -> Option<Json> {
+/// `scope` rewrites an image's asset id and a composition's name to the
+/// flattened timeline spelling - the document scopes, the timeline
+/// flattens.
+fn source_of(comp: &Comp, node: &Node, scope: &str, warnings: &mut Vec<String>) -> Option<Json> {
     match &node.kind {
         NodeKind::Group { .. } => {
             // A group is a transform and nothing else: its children carry
@@ -1648,15 +1778,9 @@ fn source_of(comp: &Comp, node: &Node, warnings: &mut Vec<String>) -> Option<Jso
             "width": length(*width),
             "height": length(*height),
         })),
-        NodeKind::Image { asset, fit } => Some(json!({
+        NodeKind::Image { asset, .. } => Some(json!({
             "kind": "image",
-            "asset": asset,
-            "fit": match fit {
-                Fit::Contain => "contain",
-                Fit::Cover => "cover",
-                Fit::Fill => "fill",
-                Fit::None => "none",
-            },
+            "asset": format!("{scope}{asset}"),
         })),
         NodeKind::Lottie { asset, .. } => {
             warnings.push(format!(
@@ -1666,7 +1790,7 @@ fn source_of(comp: &Comp, node: &Node, warnings: &mut Vec<String>) -> Option<Jso
             None
         }
         NodeKind::Composition { comp } => {
-            Some(json!({ "kind": "composition", "composition": comp }))
+            Some(json!({ "kind": "composition", "composition": format!("{scope}{comp}") }))
         }
     }
 }
@@ -1881,6 +2005,7 @@ mod tests {
             background: Rgba::new(0.0, 0.0, 0.0, 0.0),
             assets: Default::default(),
             curves: Default::default(),
+            comps: Default::default(),
             nodes: vec![Node {
                 id: "caption".into(),
                 parent: None,
@@ -2736,6 +2861,218 @@ mod tests {
                 slow.version().expect_err("a sleeper has no version"),
                 MotionError::TimedOut { .. }
             ));
+        }
+    }
+
+    // ── Sub-compositions in the timeline: scope flattened ──────────────
+
+    /// The sub-comps a comp carries become the timeline's own
+    /// `compositions` map, and every placement - however many - becomes a
+    /// `composition` source naming it, each with its own timing and
+    /// transform. The engine resolves names from one top-level map; the
+    /// document holds one scope per comp; the flattening is the bridge.
+    #[test]
+    fn sub_compositions_flatten_into_the_engines_map() {
+        let geneva = Geneva::at("geneva");
+        let mut comp = text_comp();
+        comp.comps.insert("sting".into(), the_sting());
+        comp.nodes.push(place("one", "sting", 0.0));
+        comp.nodes.push(place("two", "sting", 0.8));
+        let (document, warnings) = geneva.timeline(&comp, &crate::engine::BakeRequest::default());
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let compositions = &document["compositions"];
+        assert!(compositions.is_object(), "{document}");
+        assert_eq!(compositions["sting"]["width"], json!(640));
+        assert_eq!(compositions["sting"]["height"], json!(360));
+        // The nested timeline carries the sting's own layers, its own
+        // times relative to its own clock.
+        let layers = compositions["sting"]["layers"].as_array().expect("layers");
+        assert!(
+            layers.iter().any(|layer| layer["id"] == json!("bar")),
+            "{layers:?}"
+        );
+        // Both placements name the same composition; the second carries
+        // its own later start.
+        let sources: Vec<&Json> = document["layers"]
+            .as_array()
+            .expect("layers")
+            .iter()
+            .filter(|layer| layer["clips"][0]["source"]["kind"] == json!("composition"))
+            .collect();
+        assert_eq!(sources.len(), 2, "{document}");
+        assert!(
+            sources
+                .iter()
+                .all(|s| s["clips"][0]["source"]["composition"] == json!("sting"))
+        );
+        assert_eq!(sources[1]["clips"][0]["start"], json!("0.8s"));
+    }
+
+    /// A sub-comp's assets land in the timeline's one asset map under the
+    /// flattened scope-unique name, and the image node inside the
+    /// sub-comp references that spelling - a parent's `logo` and a
+    /// child's `logo` are two files, never one overwritten by the other.
+    /// A sub-comp inside a sub-comp flattens one scope deeper, and the
+    /// placement inside the outer names the scoped spelling.
+    #[test]
+    fn a_sub_comps_assets_and_references_are_scoped() {
+        let geneva = Geneva::at("geneva");
+        let mut sting = the_sting();
+        sting.assets.insert(
+            "logo".into(),
+            crate::comp::Asset {
+                src: "sting-logo.png".into(),
+                kind: None,
+            },
+        );
+        sting.nodes.insert(
+            0,
+            Node {
+                id: "mark".into(),
+                parent: None,
+                start: 0.0,
+                duration: 0.0,
+                transform: Transform::default(),
+                opacity: 1.0,
+                blend: Blend::Normal,
+                mask: None,
+                effects: Vec::new(),
+                tracks: Default::default(),
+                kind: crate::comp::NodeKind::Image {
+                    asset: "logo".into(),
+                    fit: crate::comp::Fit::Contain,
+                },
+            },
+        );
+        // The sting carries a sting of its own: one scope deeper.
+        sting.comps.insert("inner".into(), the_sting());
+        sting.nodes.push(place("nested", "inner", 0.2));
+
+        let mut comp = text_comp();
+        comp.assets.insert(
+            "logo".into(),
+            crate::comp::Asset {
+                src: "parent-logo.png".into(),
+                kind: None,
+            },
+        );
+        comp.comps.insert("sting".into(), sting);
+        comp.nodes.push(place("one", "sting", 0.0));
+
+        let (document, warnings) = geneva.timeline(&comp, &crate::engine::BakeRequest::default());
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let assets = &document["assets"];
+        assert_eq!(assets["logo"]["src"], json!("assets/logo.parent-logo.png"));
+        assert_eq!(
+            assets["sting::logo"]["src"],
+            json!("assets/sting--logo.sting-logo.png")
+        );
+        let inner_image = &document["compositions"]["sting"]["layers"][0];
+        assert_eq!(
+            inner_image["clips"][0]["source"]["asset"],
+            json!("sting::logo"),
+            "the image inside the sting names the scoped spelling"
+        );
+        // The nested placement inside the sting names the deeper scope,
+        // and the inner comp itself is in the one map under that name.
+        let nested_place = document["compositions"]["sting"]["layers"]
+            .as_array()
+            .expect("layers")
+            .iter()
+            .find(|layer| layer["clips"][0]["source"]["kind"] == json!("composition"))
+            .expect("the nested placement");
+        assert_eq!(
+            nested_place["clips"][0]["source"]["composition"],
+            json!("sting::inner")
+        );
+        assert!(
+            document["compositions"]["sting::inner"].is_object(),
+            "{document}"
+        );
+    }
+
+    /// A comp whose sub-comp points at a file bakes a key that moves when
+    /// that file moves: the cache cannot serve the old sting's logo after
+    /// the document's own logo changed inside it.
+    #[test]
+    fn the_bake_assets_key_covers_a_sub_comps_files() {
+        let dir = std::env::temp_dir().join("concat-motion-sub-comp-key-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a dir");
+        std::fs::write(dir.join("sting-logo.png"), b"one").expect("a file");
+        let mut sting = the_sting();
+        sting.assets.insert(
+            "logo".into(),
+            crate::comp::Asset {
+                src: "sting-logo.png".into(),
+                kind: None,
+            },
+        );
+        let mut comp = text_comp();
+        comp.comps.insert("sting".into(), sting);
+        let first = bake_assets_key(&comp, &dir);
+        std::fs::write(dir.join("sting-logo.png"), b"two bytes").expect("the file again");
+        let second = bake_assets_key(&comp, &dir);
+        assert_ne!(
+            first, second,
+            "a changed file inside a sub-comp is a changed bake"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A placement node: a composition source carrying the parent's own
+    /// timing.
+    fn place(id: &str, comp: &str, start: f64) -> Node {
+        Node {
+            id: id.into(),
+            parent: None,
+            start,
+            duration: 0.0,
+            transform: Transform::default(),
+            opacity: 1.0,
+            blend: Blend::Normal,
+            mask: None,
+            effects: Vec::new(),
+            tracks: Default::default(),
+            kind: crate::comp::NodeKind::Composition { comp: comp.into() },
+        }
+    }
+
+    /// The reusable sting: one gold bar on a small frame.
+    fn the_sting() -> Comp {
+        Comp {
+            format: crate::comp::FORMAT,
+            id: "sting".into(),
+            name: "Sting".into(),
+            width: 640,
+            height: 360,
+            fps: 30.0,
+            duration: 1.2,
+            background: Rgba::new(0.0, 0.0, 0.0, 0.0),
+            assets: Default::default(),
+            curves: Default::default(),
+            comps: Default::default(),
+            nodes: vec![Node {
+                id: "bar".into(),
+                parent: None,
+                start: 0.0,
+                duration: 0.0,
+                transform: Transform::default(),
+                opacity: 1.0,
+                blend: Blend::Normal,
+                mask: None,
+                effects: Vec::new(),
+                tracks: Default::default(),
+                kind: crate::comp::NodeKind::Rect {
+                    width: crate::comp::Length::Px(320.0),
+                    height: crate::comp::Length::Px(120.0),
+                    fill: Some(crate::comp::Paint::Solid {
+                        color: Rgba::hex("#d9a441ff"),
+                    }),
+                    radius: 12.0,
+                },
+            }],
+            slots: Vec::new(),
         }
     }
 }

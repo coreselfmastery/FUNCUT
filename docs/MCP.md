@@ -379,7 +379,7 @@ Tools are named for what they do, and their argument schemas are generated from 
 | Projects | `project_list`, `project_create`, `project_open`, `project_save`, `project_close`, `project_set_video` |
 | Reading and plans | `timeline_read` (compact: lanes, clips in time order, media, ids), `collision_check` (every place two clips share a lane; `clean` when none), `project_get` (everything), `concat_version`, `plan_validate` (checks a director plan before edits) |
 | Media | `media_probe`, `media_import` |
-| Stock clips | `openvid_status`, `openvid_prepare`, `openvid_search`, `openvid_search_batch` (several queries, one call), `openvid_get`, `openvid_fetch`, `openvid_import` |
+| Stock clips | `openvid_status`, `openvid_prepare`, `openvid_search`, `openvid_search_batch` (several queries, one call, the CLIP rerank riding along per query unless `rerank: false`), `openvid_get`, `openvid_fetch`, `openvid_import` |
 | Sound effects | `sounds_search`, `sounds_add` |
 | Music | `bgm_status`, `bgm_prepare`, `bgm_search`, `bgm_fetch`, `bgm_import` |
 | Stickers | `magick_status`, `magick_prepare`, `magick_search`, `magick_fetch`, `magick_add` |

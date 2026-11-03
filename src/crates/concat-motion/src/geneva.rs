@@ -1119,6 +1119,10 @@ fn bake_cache_hit(dir: &Path, comp: &Comp, request: &BakeRequest, version: &str)
     }
     let mut hit = manifest;
     hit.cached = true;
+    // A served bake counts as used: the comps sweep keys on the
+    // manifest's clock, and a hit that never touched it would be the
+    // first evicted by its own popularity's opposite.
+    crate::cache::touch_file(&dir.join("manifest.json"));
     Some(hit)
 }
 

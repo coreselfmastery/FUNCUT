@@ -362,7 +362,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "openvid_search_batch",
             title: "Search stock clips, several queries at once",
-            description: "The `openvid_search` search run once per entry of `queries` - two or three words each, a noun a camera could film, never a sentence - in one call, every entry with the same optional floors and filters: `minAesthetic`/`minMotion`/`maxMotion`/`minTemporal`, `minSeconds`/`maxSeconds`/`minFps`, `camera`, `source`, `orientation`, `sort`, `limit` (per query, default 20) and `offset`. The reply's `searches` carry one entry per query - its `query`, `total` and `clips` - in the order given; the tool fails as `openvid_search` would (the OpenVid index must be prepared first). Shop a whole plan's B-roll in one round trip, then look before choosing with `stock_contact_sheet`.",
+            description: "The `openvid_search` search run once per entry of `queries` - two or three words each, a noun a camera could film, never a sentence - in one call, every entry with the same optional floors and filters: `minAesthetic`/`minMotion`/`maxMotion`/`minTemporal`, `minSeconds`/`maxSeconds`/`minFps`, `camera`, `source`, `orientation`, `sort`, `limit` (per query, default 20) and `offset`. The semantic second pass rides along exactly as it does in `openvid_search`: a relevance search of more than ten matches is re-read by the local MobileCLIP2 model, once per query, and re-ordered by what the clips SHOW - a batch is a row of the same search, not a second, lesser search. `rerank: false` skips the CLIP pass for a fast BM25-only sweep; the reply's `searches` carry one entry per query - its `query`, `total`, `clips` and `rerank` - in the order given, and the tool fails as `openvid_search` would (the OpenVid index must be prepared first). Shop a whole plan's B-roll in one round trip, then look before choosing with `stock_contact_sheet`.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -882,7 +882,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "craft_critique",
             title: "Score the cut",
-            description: "The measured creative critic. Takes the `sheet` JSON returned by watch_render (its pngPath is how the critic sees the frames; a raw `pngB64` also works) and a `brief`, and returns six honest 0-10 scores - hook, story, rhythm, shotChoice, design, sound - plus notes, concrete revisions and a `fixes` array: structured patch operations, each {where, problem, change, op} with the number and unit in its change and the op from the scene builder's vocabulary (retime, shift, resize, restyle, replace) - and, when the critic measured the number rather than guessed it, a `patch` carrying the exact JSON its op reads ({\"shift\": 0.4} for a retime, {\"dx\": -180, \"dy\": 0} for a shift, {\"factor\": 1.2} for a resize, {\"curve\": \"spring-pop\"} for a restyle), applied as written with no sentence parsed. Apply them to a motion comp with the concat-motion critic module (`agent fix <comp.json> <fixes.json>` is its shell door), or the agent's edit verb. Baseline is REAL pixel/audio measurement: black frames, letterbox bars, flat and overexposed shots, duplicates, static transitions, opening-frame hook check, colour saturation (engine 'heuristic', confidence 0.5). With the bundled 0.5B local model it adds bounded visible-defect flags (engine 'local-vlm-flags', confidence 0.58, at most 1 point per axis: black frames, letterbox bars, readable text) - it CANNOT judge taste. Full six-axis VLM scoring and free-text fixes (engine 'local-vlm', confidence 0.78) needs a stronger critic: local_vlm {action:'configure', provider, apiKey} with a free-tier provider (groq, gemini, zai, openrouter), or FUNCUT_VLM_ENDPOINT pointing at any OpenAI-compatible vision server. With `project` it journals every pass (scores, revisions and fixes) to craft-history.json and returns pass, previousOverall, delta, improved and trend - a file write, so the tool is not read-only. Call it after EVERY watch_render. Optional: autoSetup, profile.",
+            description: "The measured creative critic. Takes the `sheet` JSON returned by watch_render (its pngPath is how the critic sees the frames; a raw `pngB64` also works) and a `brief`, and returns six honest 0-10 scores - hook, story, rhythm, shotChoice, design, sound - plus notes, concrete revisions and a `fixes` array: structured patch operations, each {where, problem, change, op} with the number and unit in its change, a `confidence` of 0-1 saying how sure the critic is (high when the measured facts carry the fix, low when it is a read of taste), and the op from the scene builder's vocabulary (retime, shift, resize, restyle, replace) - and, when the critic measured the number rather than guessed it, a `patch` carrying the exact JSON its op reads ({\"shift\": 0.4} for a retime, {\"dx\": -180, \"dy\": 0} for a shift, {\"factor\": 1.2} for a resize, {\"curve\": \"spring-pop\"} for a restyle), applied as written with no sentence parsed. Apply them to a motion comp with the concat-motion critic module (`agent fix <comp.json> <fixes.json>` is its shell door), or the agent's edit verb. Baseline is REAL pixel/audio measurement: black frames, letterbox bars, flat and overexposed shots, duplicates, static transitions, opening-frame hook check, colour saturation (engine 'heuristic', confidence 0.5). With the bundled 0.5B local model it adds bounded visible-defect flags (engine 'local-vlm-flags', confidence 0.58, at most 1 point per axis: black frames, letterbox bars, readable text) - it CANNOT judge taste. Full six-axis VLM scoring and free-text fixes (engine 'local-vlm', confidence 0.78) needs a stronger critic: local_vlm {action:'configure', provider, apiKey} with a free-tier provider (groq, gemini, zai, openrouter), or FUNCUT_VLM_ENDPOINT pointing at any OpenAI-compatible vision server. With `project` it journals every pass (scores, revisions and fixes) to craft-history.json and returns pass, previousOverall, delta, improved and trend - a file write, so the tool is not read-only. Call it after EVERY watch_render. Optional: autoSetup, profile.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -1013,6 +1013,11 @@ impl Tool {
             // asking for the documented maximum is cancelled by the
             // net rather than named by the deadline.
             "motion_reel",
+            // A batch runs up to eight searches, each with the 240 s
+            // rerank budget `openvid_search` runs inside it; the outer
+            // bound is the net the rarest, slowest batch hits, not the
+            // arithmetic of every budget at once.
+            "openvid_search_batch",
         ];
         if DEEP.contains(&self.name) {
             1200
@@ -1203,6 +1208,14 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
                     "maxItems": 8,
                     "items": { "type": "string", "minLength": 1 },
                     "description": "The searches to run, one `openvid_search` query each: two or three words, a noun a camera could film.",
+                }),
+            );
+            properties.insert(
+                "rerank".to_owned(),
+                json!({
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Whether each query gets the CLIP rerank `openvid_search` runs (the default) or a fast BM25-only sweep.",
                 }),
             );
             Some(json!({
@@ -1891,7 +1904,7 @@ fn motion_schema(name: &str) -> Option<Value> {
                         "fadeIn": { "type": "number" },
                         "fadeOut": { "type": "number" },
                         "fadeCurve": { "type": "string",
-                                       "description": "A name from the easing library (linear, ease, ease-in, ease-out, ease-in-out, emphasis, spring, spring-pop, typewriter, bounce) or a full curve object." },
+                                       "description": "A name from the easing library (linear, ease, ease-in, ease-out, ease-in-out, emphasis, drift, snap, accelerate, anticipate, spring, spring-pop, typewriter, bounce) or a full curve object." },
                         "start": { "type": "number" },
                         "hold": { "type": "number" },
                         "parallax": { "type": "number" },
@@ -1922,6 +1935,8 @@ fn motion_schema(name: &str) -> Option<Value> {
                         "ops": { "type": "array", "items": {} },
                         "grade": { "type": "object",
                                    "description": "The scene's colour grade: one of the emotion read's temperatures (hot, sickly, cold, warm, balanced, cool, split) with its own tuning, `amount` 0-1 scaling the cast, optional saturate/contrast/brightness overrides, a `hue` turn in degrees (-360..360) that rotates the whole palette, and a brand `tint` as #rrggbb worn instead of the stock cast. Baked in under the comp's own words as backdrop-filter (saturate, hue-rotate, contrast, brightness) plus a soft-light cast - the LUT approximation a comp carries." },
+                        "look": { "type": "object",
+                                  "description": "The texture the scene wears over its picture: grain (amount 0-1, size 2-8 px, seed) - a seeded field of motes over everything, ink included; glass (blur 0-24, saturate 0.5-2) - a frost under the comp's own words, over the plate; chromatic (amount 0-1) - the warm-left cool-right edge fringe over everything; vignette (amount 0-1) - the corners' dark fall-off from all four edges over everything; letterbox (ratio 1-3) - the cinema bars holding the frame to a wider ratio, 2.39 the scope screen, a ratio under the comp's own the pillarbox." },
                         "style": { "type": "string", "enum": ["calm", "punchy", "editorial"],
                                    "description": "The personality the scene wears over its layout: the weight the type carries, the tracking, the easing hand, the tempo - and the colour when no grade is named. One layout, three moods." },
                         "transition": { "type": "object",
@@ -3237,7 +3252,10 @@ fn collision_report(view: Value) -> Outcome {
 /// An agent shopping a plan's B-roll runs one of these where it used to
 /// run a row of `openvid_search` round trips; the index it reads is one,
 /// so a library that is not prepared fails the whole call as a single
-/// search would, not per query.
+/// search would, not per query. The CLIP rerank rides along exactly as
+/// it does in `openvid_search` - once per query, `rerank: false` aside -
+/// because a batch is a row of the same search, not a second, lesser
+/// search that quietly returns what nobody looked at.
 fn openvid_search_batch(arguments: Value, backend: &mut dyn Backend) -> Result<Outcome, ApiError> {
     let invalid = |why: &str| ApiError::invalid(format!("invalid arguments: {why}"));
     let mut shared = match arguments {
@@ -3248,6 +3266,12 @@ fn openvid_search_batch(arguments: Value, backend: &mut dyn Backend) -> Result<O
         Some(queries) => queries,
         None => return Err(invalid("`queries` is required")),
     };
+    // The batch's own flag, consumed here and never forwarded: the API
+    // method does not know it.
+    let rerank = shared
+        .remove("rerank")
+        .and_then(|flag| flag.as_bool())
+        .unwrap_or(true);
     let Some(queries) = queries.as_array() else {
         return Err(invalid("`queries` is a list of queries"));
     };
@@ -3264,7 +3288,17 @@ fn openvid_search_batch(arguments: Value, backend: &mut dyn Backend) -> Result<O
     let mut searches = Vec::with_capacity(queries.len());
     for query in queries {
         shared.insert("query".to_owned(), query.clone());
+        // The arguments are remembered before `request` stamps the method
+        // into them, because the rerank reads the caller's query, sort and
+        // offset back out - the same remembering `openvid_search`'s own
+        // dispatch arm does.
+        let remembered = Value::Object(shared.clone());
         let found = backend.call(request("openvid.search", Value::Object(shared.clone()))?)?;
+        let found = if rerank {
+            crate::sense::semantic_rerank(&remembered, found, backend)
+        } else {
+            found
+        };
         searches.push(json!({
             "query": query,
             "total": found.get("total").cloned().unwrap_or(Value::Null),
@@ -3272,6 +3306,7 @@ fn openvid_search_batch(arguments: Value, backend: &mut dyn Backend) -> Result<O
                 .get("clips")
                 .cloned()
                 .unwrap_or_else(|| Value::Array(Vec::new())),
+            "rerank": found.get("rerank").cloned().unwrap_or(Value::Null),
         }));
     }
     Ok(Outcome::json(json!({ "searches": searches })))
@@ -3840,7 +3875,9 @@ mod tests {
     }
 
     /// The batch runs one `openvid.search` per query, carrying the shared
-    /// filters, and the reply keeps the queries apart.
+    /// filters, and the reply keeps the queries apart. The CLIP rerank
+    /// rides along - these pages are tiny, so it is a no-op here, and the
+    /// flag is consumed by the batch and never forwarded to the API.
     #[test]
     fn openvid_search_batch_runs_one_search_per_query() {
         let mut backend = Answers(
@@ -3848,6 +3885,7 @@ mod tests {
             [
                 json!({ "clips": [{ "id": 1 }], "total": 1 }),
                 json!({ "clips": [{ "id": 2 }, { "id": 3 }], "total": 2 }),
+                json!({ "clips": [{ "id": 9 }], "total": 1 }),
             ]
             .into(),
         );
@@ -3875,6 +3913,31 @@ mod tests {
             calls[0].get("queries").is_none(),
             "the list is not forwarded"
         );
+        assert!(
+            calls[0].get("rerank").is_none(),
+            "the batch's own flag is not forwarded"
+        );
+    }
+
+    /// `rerank: false` is the fast sweep: the same searches, the BM25
+    /// order, and the flag still never reaching the API method.
+    #[test]
+    fn the_batch_can_skip_the_clip_rerank_for_a_fast_sweep() {
+        let mut backend = Answers(
+            std::cell::RefCell::new(Vec::new()),
+            [json!({ "clips": [{ "id": 7 }], "total": 1 })].into(),
+        );
+        let outcome = openvid_search_batch(
+            json!({ "queries": ["harbour dawn"], "rerank": false }),
+            &mut backend,
+        )
+        .expect("searches");
+        let reply = outcome.structured.expect("structured");
+        assert_eq!(reply["searches"][0]["query"], "harbour dawn");
+        assert_eq!(reply["searches"][0]["total"], 1);
+        let calls = backend.0.borrow();
+        assert_eq!(calls.len(), 1);
+        assert!(calls[0].get("rerank").is_none());
     }
 
     /// A key the schema does not name is refused at the door, not dropped

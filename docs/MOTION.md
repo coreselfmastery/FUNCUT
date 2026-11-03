@@ -402,11 +402,11 @@ A scene whose grade has nothing under its comp - no plate, no lower layer - is t
 plan's warnings: the cast would land on the curtain alone, and a grade nobody can see is a grade
 the author should hear about.
 
-### The looks: grain, glass and the chromatic fringe
+### The looks: grain, glass, the chromatic fringe, the vignette and the bars
 
 The effect catalogue owns the pixel shaders, and they run on footage through the renderer's own
 compositor; a comp is a document, and the engine that bakes it is a CSS raster with no shader
-stage. `looks.rs` writes the CSS that approximates the three textures every template reaches
+stage. `looks.rs` writes the CSS that approximates the textures every template reaches
 for, as nodes the engine draws in the comp's own paint order:
 
 ```json
@@ -419,6 +419,8 @@ for, as nodes the engine draws in the comp's own paint order:
 | `grain` | over everything, ink included | a seeded field of motes (480 at full strength, capped where the engine's layout stays quick), half light half dark, shimmering on the node's own `position` track - twelve steps-curved keys within a few pixels of the authored place |
 | `glass` | first paint, under the comp's ink | a full-bleed `backdrop-filter: blur() saturate()` frost over the plate, and a faint white wash; the words stay sharp, the world behind them goes glassy |
 | `chromatic` | over everything | the edge fringe: a warm fall-off on the left, a cool one on the right, one gradient per edge - the honest approximation a browserless raster can draw; a true channel split needs per-channel masks the engine has none of |
+| `vignette` | over everything | the corners fall, the centre holds: the fringe's own one-gradient-per-edge shape, in black, from all four edges - `amount` 0-1, 0.3 to 0.6 where the frame draws the eye inward |
+| `letterbox` | over everything | the cinema bars: solid black bars holding the frame to `ratio` (1-3, 2.39 the scope screen) - a ratio under the comp's own is the pillarbox, the same bars on the sides; the bars are percentages of the frame, so the look holds at every size |
 
 Measured against the engine (1.6.0) on a neutral grey plate: the wash and both fringes draw;
 gradients without stop positions carry the spatial fall-off (so one gradient per edge, and one
@@ -432,7 +434,8 @@ every machine and every re-render, and the mote count and the shimmer's offsets 
 
 A scene whose glass has nothing under its comp is told so in the plan's warnings, the way a
 grade is: frosted curtain is fog nobody can see through. And an identity look - a grain at
-zero, a frost with no blur at unity saturation, a fringe at zero - bakes nothing at all.
+zero, a frost with no blur at unity saturation, a fringe or a vignette at zero, a letterbox
+holding the ratio the comp already is - bakes nothing at all.
 
 ### The style: one layout, three personalities
 
@@ -880,9 +883,13 @@ the other half of the point: the header settles in on `"emphasis"` while the bod
   { "asset": "body",   "fadeIn": 0.6, "fadeOut": 0.6, "fadeCurve": "bounce" } ] }
 ```
 
-The easing library is ten names, every one of them a curve the engine already plays exactly as
-written - `linear`, `ease`, `ease-in`, `ease-out`, `ease-in-out`, `emphasis` (the settle curve the
-presets share), `spring`, `spring-pop`, **`typewriter`** (`steps(8, jump-end)` - the reveal in
+The easing library is fourteen names, every one of them a curve the engine already plays exactly
+as written - `linear`, `ease`, `ease-in`, `ease-out`, `ease-in-out`, `emphasis` (the settle curve the
+presets share), `drift` (in and out equally gentle - the sine's own pace, for a light or a focus
+that drifts rather than moves), `snap` (almost all of the way at once, then a dead stop - the
+harder `emphasis`), `accelerate` (from rest to full speed - the exit that gathers, the mirror of
+the snap's entrance), `anticipate` (dips under its start before it arrives - the wind-up before
+the run), `spring`, `spring-pop`, **`typewriter`** (`steps(8, jump-end)` - the reveal in
 clacks) and **`bounce`** (`linear(0, 1.4, 0.9, 1)` - a whole bounce in one timing function, no
 JavaScript). A full curve object parses too (`{"kind": "steps", "count": 12, "position":
 "jump-none"}`), and an unknown name is refused with the library spelled out rather than silently

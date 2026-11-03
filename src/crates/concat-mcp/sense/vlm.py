@@ -174,16 +174,42 @@ def config_path() -> Path:
 def load_config() -> dict:
     try:
         d = json.loads(config_path().read_text(encoding="utf-8"))
+        if isinstance(d, dict):
+            # A file written before the private write, tightened at read.
+            _harden(config_path())
         return d if isinstance(d, dict) else {}
     except Exception:
         return {}
 
 
+def _harden(path: Path):
+    """Tighten a key-holding file and its directory where the platform
+    allows: 0600 on the file, 0700 on the directory. Best-effort and
+    quiet - a platform that will not say (Windows) keeps what it has."""
+    if os.name == "nt":
+        return
+    try:
+        if path.is_file():
+            os.chmod(path, 0o600)
+        if path.parent.is_dir():
+            os.chmod(path.parent, 0o700)
+    except OSError:
+        pass
+
+
 def save_config(entry: dict) -> dict:
-    config_path().parent.mkdir(parents=True, exist_ok=True)
-    tmp = config_path().with_suffix(".json.part")
-    tmp.write_text(json.dumps(entry, indent=2), encoding="utf-8")
-    tmp.replace(config_path())
+    """Write the config the way a file holding an API key is written:
+    created 0600 - the temp it lands through and the file it becomes -
+    and the directory it lives in 0700, so the key is the user's alone.
+    A plain write lands 0644, world-readable on a shared machine."""
+    path = config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.part")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(json.dumps(entry, indent=2))
+    os.replace(tmp, path)
+    _harden(path)
     return entry
 
 
@@ -233,6 +259,12 @@ def configure(provider=None, endpoint=None, api_key=None, model=None):
     if not base:
         raise RuntimeError(
             "no endpoint to configure: name a provider or pass an endpoint URL"
+        )
+    if not _allowed_base(base):
+        raise RuntimeError(
+            f"the endpoint {base} is not one this build sends frames to; name a provider "
+            f"({', '.join(PROVIDERS)}), use a local endpoint, list the host in "
+            "FUNCUT_VLM_EXTRA_ENDPOINTS, or set FUNCUT_VLM_ALLOW_ANY_ENDPOINT=1"
         )
     key = api_key or _resolved_key(provider, previous) or ""
     chosen = model or preset.get("model") or previous.get("model") or ""
@@ -318,6 +350,69 @@ def _is_local(base: str):
     )
 
 
+def _provider_hosts():
+    """The hosts the named providers answer on, so an allow-list check
+    never has to say the table's contents a second time."""
+    hosts = set()
+    for provider in PROVIDERS.values():
+        try:
+            hosts.add((urllib.parse.urlparse(provider["base"]).hostname or "").lower())
+        except Exception:
+            continue
+    return hosts
+
+
+def _extra_hosts():
+    """Hosts the operator listed in FUNCUT_VLM_EXTRA_ENDPOINTS - the
+    door a LAN llama server or a provider the table does not name comes
+    through. An entry may be a bare host or a full URL; both spell the
+    hostname it means."""
+    hosts = set()
+    for entry in os.environ.get("FUNCUT_VLM_EXTRA_ENDPOINTS", "").split(","):
+        entry = entry.strip().lower()
+        if not entry:
+            continue
+        if "://" in entry:
+            try:
+                entry = urllib.parse.urlparse(entry).hostname or ""
+            except Exception:
+                entry = ""
+        if entry:
+            hosts.add(entry)
+    return hosts
+
+
+def _allowed_base(base: str) -> bool:
+    """Whether this build will send frames - and the API key - to `base`.
+
+    The three doors a hosted critic leaves by (configure, detect, ask)
+    all ask this one question: a named provider's own host, anything
+    loopback, or a host the operator listed passes; anything else is a
+    stranger, and an agent must not be able to point the critic's frames
+    - and the key beside them - at a host of its choosing. The operator's
+    own FUNCUT_VLM_ENDPOINT passes by identity, and
+    FUNCUT_VLM_ALLOW_ANY_ENDPOINT=1 opens every door for a machine that
+    wants it that way; both are environment, which an agent cannot write."""
+    if os.environ.get("FUNCUT_VLM_ALLOW_ANY_ENDPOINT") == "1":
+        return True
+    if _is_local(base):
+        return True
+    try:
+        host = (urllib.parse.urlparse(base).hostname or "").lower()
+    except Exception:
+        return False
+    if not host:
+        return False
+    if host in _provider_hosts() or host in _extra_hosts():
+        return True
+    env = os.environ.get("FUNCUT_VLM_ENDPOINT", "")
+    try:
+        env_host = (urllib.parse.urlparse(env).hostname or "").lower()
+    except Exception:
+        env_host = ""
+    return bool(env_host) and host == env_host
+
+
 def detect(timeout: float = 3.0):
     """Resolve a vision endpoint. Order: FUNCUT_VLM_ENDPOINT, the saved
     hosted-provider config, an already-running local server, Ollama.
@@ -351,6 +446,11 @@ def detect(timeout: float = 3.0):
             return entry
         # a dead keyless endpoint keeps the old fall-through behaviour
     cfg = load_config()
+    if cfg.get("endpoint") and not _allowed_base(str(cfg["endpoint"])):
+        # A saved endpoint the allow-list refuses - written before the
+        # guard, or by a hand edit - is no config at all: never probed
+        # (the probe itself carries the key) and never asked.
+        cfg = {}
     if cfg.get("endpoint"):
         base = str(cfg["endpoint"]).rstrip("/")
         cfg_key = key or cfg.get("apiKey") or _provider_env_key(cfg.get("provider"))
@@ -649,6 +749,12 @@ def ask(prompt: str, images=None, endpoint=None, model=None, timeout=90.0,
         # dictionaries. It used to crash on the first `.get`.
         ep = {"type": "openai", "base": ep.rstrip("/")}
     base = ep["base"]
+    if not _allowed_base(base):
+        raise RuntimeError(
+            f"the vision endpoint {base} is not one this build will send frames or a key "
+            "to; name a provider, use a local endpoint, list the host in "
+            "FUNCUT_VLM_EXTRA_ENDPOINTS, or set FUNCUT_VLM_ALLOW_ANY_ENDPOINT=1"
+        )
     key = None
     if ep.get("key"):
         key = ep["key"]
@@ -807,6 +913,48 @@ def selftest():
             out["config"] = "ok"
         else:
             raise AssertionError("configure() saved an endpoint-less entry")
+        # The endpoint allow-list: a provider's own host, a loopback and
+        # an operator-listed host pass; an agent-named stranger is refused
+        # at configure - one of the three doors frames leave by, and the
+        # one an agent's tool call reaches.
+        saved_env = {}
+        for var in ("FUNCUT_VLM_ENDPOINT", "FUNCUT_VLM_EXTRA_ENDPOINTS",
+                    "FUNCUT_VLM_ALLOW_ANY_ENDPOINT"):
+            saved_env[var] = os.environ.pop(var, None)
+        try:
+            assert _allowed_base(PROVIDERS["groq"]["base"]) is True
+            assert _allowed_base("http://127.0.0.1:9/v1") is True
+            assert _allowed_base("http://[::1]:9/v1") is True
+            assert _allowed_base("https://evil.example.com/v1") is False
+            assert _allowed_base("https://api.groq.com.evil.example.com/v1") is False
+            try:
+                configure(provider="custom", endpoint="https://evil.example.com/v1")
+            except RuntimeError:
+                pass
+            else:
+                raise AssertionError("configure() saved a stranger's endpoint")
+            assert not config_path().exists(), "a refused configure left a file behind"
+            os.environ["FUNCUT_VLM_EXTRA_ENDPOINTS"] = "lan-vision.example.com"
+            assert _allowed_base("https://lan-vision.example.com/v1") is True
+            os.environ["FUNCUT_VLM_ALLOW_ANY_ENDPOINT"] = "1"
+            assert _allowed_base("https://evil.example.com/v1") is True
+        finally:
+            for var, value in saved_env.items():
+                if value is None:
+                    os.environ.pop(var, None)
+                else:
+                    os.environ[var] = value
+        out["endpointGuard"] = "ok"
+        # The saved config is written private: 0600 on the file, 0700 on
+        # its directory - a key the operator saved is not world-readable.
+        entry = configure(provider="groq", api_key="sk-test-123456789")
+        assert entry["saved"] is True
+        if os.name != "nt":
+            mode = config_path().stat().st_mode & 0o777
+            assert mode == 0o600, oct(mode)
+            dmode = config_path().parent.stat().st_mode & 0o777
+            assert dmode == 0o700, oct(dmode)
+        out["privateConfig"] = "ok"
     finally:
         import shutil
 

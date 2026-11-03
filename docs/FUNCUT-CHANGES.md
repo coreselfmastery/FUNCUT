@@ -1348,3 +1348,77 @@ probe - a few seconds on the 4 GB machine, once per look. Every
 document that states the tool count now says 92; the Forge allowlist
 carries the tool; the guard holds all of them.
 
+
+## 30. The ship-blockers, answered: the cache's budget, the key's privacy, the stranger's endpoint, the pinned download, the batch's second pass
+
+Five bugs the audit named and a roadmap's near side, closed in one pass.
+
+**The comps bake cache is bounded.** `cache/comps/` grew a directory
+per comp-content and size, forever: nothing swept it but the File
+menu's clear-everything. The 1 November audit described an LRU that
+never landed in a commit - this is it, built beside the reel cache's
+own sweep instead of over it (`cache::sweep_comps`): a bake directory
+is an entry when its `manifest.json` is there, the manifest's clock is
+the use (a cache hit touches it, so a *served* bake outlives a merely
+baked one), the bake this render just wrote is kept but counted, an
+in-flight bake - no manifest, younger than an hour - is never touched,
+and a crash's orphan goes as junk before anything useful does. Every
+`motion_bake` sweeps its own root under the machine's own budget: 2
+GiB, 1 GiB on a machine with six gigabytes or less,
+`CONCAT_MOTION_CACHE_GIB` to name another. The reply says what the
+sweep did only when it did something.
+
+**The key's privacy.** `vlm.json` - a hosted critic's API key in
+plaintext - was written 0644, world-readable on a shared machine. It
+is written 0600 now, through a temp that is 0600 itself, in a
+directory that is 0700, and a file from before the guard is tightened
+at read. The vlm selftest pins the modes.
+
+**The stranger's endpoint.** `local_vlm {action:'configure'}` took any
+endpoint an agent named, and the critic's frames - and the key beside
+them - would have been sent there: an exfiltration vector shaped like
+a configuration option. The endpoint is allow-listed at all three
+doors it leaves by (`configure`, `detect`, `ask`): a named provider's
+own host, anything loopback, a host the operator listed in
+`FUNCUT_VLM_EXTRA_ENDPOINTS`, the operator's own
+`FUNCUT_VLM_ENDPOINT`, or `FUNCUT_VLM_ALLOW_ANY_ENDPOINT=1` for a
+machine that wants it that way. Environment is the operator's; an
+agent cannot write it.
+
+**The pinned download.** The ffmpeg bootstrap fetched a rolling
+"release" pointer from a personal site, digest-checked against an
+empty table - the machinery was there, the pin was not. The bootstrap
+now fetches BtbN's month-last autobuild of FFmpeg 8.1, the same
+immutable tag `scripts/ci/deps.lock` pins the CI libraries from, and
+every asset carries its digest, verified against the downloaded
+bytes; the selftest refuses an unpinned asset or a rolling URL ever
+again.
+
+**The batch's second pass.** `openvid_search_batch` called the API
+directly, past the dispatch arm that runs the CLIP rerank - eight
+queries of BM25 word-matches, none of them looked at. The rerank rides
+along now, once per query, exactly as `openvid_search` runs it;
+`rerank: false` is the fast BM25-only sweep, and the reply's
+`searches` carry each query's `rerank` verdict.
+
+**The roadmap's near side.** Two looks the audit asked for - `vignette`
+(the corners fall, the centre holds: the fringe's own shape in black,
+all four edges) and `letterbox` (the cinema bars: solid black, holding
+the frame to a ratio, 2.39 the scope screen, a ratio under the comp's
+own the pillarbox) - with the grain's render coverage the looks never
+had: a golden frame in the board (the existing five rendered
+byte-identical beside it) and an eleventh scene held at a floor in the
+quality manifest. Four curves the library lacked - `drift` (the sine's
+own pace), `snap` (the harder emphasis), `accelerate` (from rest to
+full speed) and `anticipate` (the wind-up that dips under its start) -
+named, tested, mirrored everywhere the library's names are listed.
+And the critic's fixes carry a `confidence` now, 0 to 1, said by the
+prompt, clamped by the defence, refused out of range by the Rust
+parser - the measured heuristic fixes say the engine's own 0.5 - so an
+agent orders its work by a number instead of a hunch.
+
+**What it costs:** the sweep is a directory walk a bake (the manifest
+read it already had), the allow-list a hostname parse a call, the pin
+nothing at all, and the batch's rerank the budget `openvid_search`
+already ran per query. Eleven quality scenes hold their floors; six
+golden frames hold at DSSIM 0.00000.

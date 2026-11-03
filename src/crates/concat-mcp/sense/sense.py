@@ -248,21 +248,36 @@ def fit_rgb(rgb, sw, sh, dw, dh):
 # the API already rendered).
 # ---------------------------------------------------------------------------
 FFMPEG_BUILDS = {
-    ("Linux", "x86_64"): "ffmpeg-release-amd64-static.tar.xz",
-    ("Linux", "aarch64"): "ffmpeg-release-arm64-static.tar.xz",
-    ("Linux", "arm64"): "ffmpeg-release-arm64-static.tar.xz",
+    ("Linux", "x86_64"): "ffmpeg-n8.1.3-9-g29e619e767-linux64-gpl-8.1.tar.xz",
+    ("Linux", "aarch64"): "ffmpeg-n8.1.3-9-g29e619e767-linuxarm64-gpl-8.1.tar.xz",
+    ("Linux", "arm64"): "ffmpeg-n8.1.3-9-g29e619e767-linuxarm64-gpl-8.1.tar.xz",
 }
-FFMPEG_URL_BASE = "https://johnvansickle.com/ffmpeg/releases/"
+# BtbN's month-last autobuild of FFmpeg 8.1 - the same immutable tag
+# scripts/ci/deps.lock pins the CI libraries from, so the CLI the senses
+# bootstrap and the libraries the app links are one build of one source
+# somebody verified once, not two builds of two versions nobody compared.
+# An autobuild tag never changes under a file, where the old
+# johnvansickle "release" pointer was replaced under us as FFmpeg
+# released; bumping means changing deps.lock and this table together.
+FFMPEG_URL_BASE = (
+    "https://github.com/BtbN/FFmpeg-Builds/releases/download/"
+    "autobuild-2026-09-30-13-08/"
+)
 
 # The digests the bootstrap checks its download against, by asset name.
-# The site's "release" builds are replaced as FFmpeg releases, so a row
-# here is a pin somebody verified on the day they added it - download the
-# asset once, `sha256sum` it, and add the row (or name the digest through
-# FUNCUT_FFMPEG_SHA256 without a code change). An empty row means the
-# download is not digest-pinned; the size cap, the member filter and the
-# `-version` sanity run below still hold, and a mismatch against any
-# digest that IS named is a refusal, never "run it anyway".
-FFMPEG_SHA256 = {}
+# Every asset above has one, and the selftest refuses a row without: an
+# unpinned download is a binary the senses would execute that nobody
+# ever looked at. The digests are the release's own asset digests,
+# verified against the downloaded bytes (FUNCUT_FFMPEG_SHA256 still
+# names a different one - the form a mirror or a pinned cache manager
+# uses - and a mismatch against any digest that IS named is a refusal,
+# never "run it anyway").
+FFMPEG_SHA256 = {
+    "ffmpeg-n8.1.3-9-g29e619e767-linux64-gpl-8.1.tar.xz":
+        "97ce978979194b5cf7e06a5e68020dbdaa7a4f3294c5452b6a1bc347100dbb79",
+    "ffmpeg-n8.1.3-9-g29e619e767-linuxarm64-gpl-8.1.tar.xz":
+        "10523d1e0be6b3ce62a9708cc50815c4b5eb5f36ae147fbe2afeecda6f2d6845",
+}
 
 
 def _app_dir():
@@ -309,8 +324,10 @@ def _ensure_ffmpeg(spec):
         # Download to a .part and rename only once the whole file is here:
         # a half-written tarball left at the final name was reused forever
         # after, and the bootstrap never recovered by itself. The stream
-        # is capped - a mirror that never ends must not fill the disk.
-        MAX_BOOTSTRAP_BYTES = 128 * 1024 * 1024
+        # is capped - a mirror that never ends must not fill the disk. The
+        # pinned x86_64 build is 143.4 MB, so the cap sits just above it
+        # and far below anything that would fill a disk.
+        MAX_BOOTSTRAP_BYTES = 192 * 1024 * 1024
         part = root / (asset + ".part")
         req = urllib.request.Request(FFMPEG_URL_BASE + asset, headers={"User-Agent": "concat-sense/1.0"})
         with urllib.request.urlopen(req, timeout=60) as r, open(part, "wb") as f:
@@ -1284,6 +1301,11 @@ def heuristic(brief, sheet):
     # than nodes - the exact numbers an applier trusts belong to a
     # critic that measured the document it is patching.
     fixes = []
+    # The measured fixes carry the engine's own confidence - the same
+    # 0.5 the heuristic read says overall - because their existence is
+    # measured (the frames are black, the bars are there) and their fix
+    # is a judgement: an agent ordering fixes by confidence sees them as
+    # half-certain, which is what they are.
     if black_pen > 0.05:
         seconds = round(_num(c.get("blackFrames")) / n * _num(c.get("duration"), 30.0), 1)
         fixes.append({
@@ -1291,6 +1313,7 @@ def heuristic(brief, sheet):
             "problem": f"{_num(c.get('blackFrames'))} of {n} sampled frames are black or empty",
             "change": f"trim the first {seconds}s of the reel",
             "op": "retime",
+            "confidence": 0.5,
         })
     if bar_pen > 0.1:
         fixes.append({
@@ -1298,6 +1321,7 @@ def heuristic(brief, sheet):
             "problem": f"{_num(c.get('letterboxedFrames'))} of {n} sampled frames carry bars",
             "change": "reframe to fill the frame (crop or scale up), not pillarbox",
             "op": "shift",
+            "confidence": 0.5,
         })
     if static_pen > 0.4:
         fixes.append({
@@ -1305,6 +1329,7 @@ def heuristic(brief, sheet):
             "problem": f"{_num(c.get('staticTransitions'))} of {max(1, n - 1)} cuts are static",
             "change": "choreograph the cuts: a whip-pan or rack-focus transition on the storyboard",
             "op": "restyle",
+            "confidence": 0.5,
         })
     if dup_pen > 0.1 or variety < 0.6:
         fixes.append({
@@ -1312,6 +1337,7 @@ def heuristic(brief, sheet):
             "problem": f"only {distinct:.0f} of {n:.0f} sampled frames are distinct",
             "change": "replace the repeats with different footage",
             "op": "replace",
+            "confidence": 0.5,
         })
     return {
         "engine": "heuristic",
@@ -1339,7 +1365,7 @@ Score each axis 0-10 (0 unwatchable, 5 generic, 8 good, 10 excellent):
 hook, story, rhythm, shotChoice, design, sound.
 Judge only what the frames and the measurements support. The sound axis is judged from the measured loudness facts in MEASURED FACTS (LUFS, true peak, silence), never guessed from the picture. Be harsh.
 
-Then name the concrete FIXES, not vague advice: up to 6 patch operations the editor can apply exactly as written. Each fix is {{"where": the element or frames ("the chart in frames 6-8", "the caption on frame 3"), "problem": what is wrong, seen in the frames ("clipped off the right edge", "enters 400ms too early", "unreadable against the background"), "change": the exact change with its number and unit ("shift x by -120px", "start 0.4s later", "scale to 0.9", "ease with spring-pop"), "op": one of retime (timing), shift (position), resize (size/scale), restyle (easing, colour, look) or replace (needs new content)}}. A fix without a number and a unit in its change is advice, not a fix - do not give advice. A fix may also carry "patch": the same change as exact JSON the applier reads as written - {{"start": 1.9}} or {{"shift": 0.4}} for a retime, {{"dx": -180, "dy": 0}} for a shift, {{"factor": 1.2}} for a resize, {{"curve": "spring-pop"}} for a restyle. Carry a patch ONLY when every number in it comes from the measured facts above, never from a guess at the picture: a patch is applied exactly as written, so a guessed number in one is worse than prose.
+Then name the concrete FIXES, not vague advice: up to 6 patch operations the editor can apply exactly as written. Each fix is {{"where": the element or frames ("the chart in frames 6-8", "the caption on frame 3"), "problem": what is wrong, seen in the frames ("clipped off the right edge", "enters 400ms too early", "unreadable against the background"), "change": the exact change with its number and unit ("shift x by -120px", "start 0.4s later", "scale to 0.9", "ease with spring-pop"), "op": one of retime (timing), shift (position), resize (size/scale), restyle (easing, colour, look) or replace (needs new content)}}. A fix without a number and a unit in its change is advice, not a fix - do not give advice. A fix may also carry "patch": the same change as exact JSON the applier reads as written - {{"start": 1.9}} or {{"shift": 0.4}} for a retime, {{"dx": -180, "dy": 0}} for a shift, {{"factor": 1.2}} for a resize, {{"curve": "spring-pop"}} for a restyle. Carry a patch ONLY when every number in it comes from the measured facts above, never from a guess at the picture: a patch is applied exactly as written, so a guessed number in one is worse than prose. Every fix also carries "confidence": a number 0 to 1 saying how sure you are it helps - 0.8 and above only when the frames or the measurements show the problem plainly, 0.4 and below for a read of taste. An agent orders its work by these numbers, so say them honestly.
 
 Reply with a JSON object containing integer "hook","story","rhythm","shotChoice","design","sound" (0-10), a short "verdict", up to 4 "notes" citing frame numbers, up to 4 "revisions" naming concrete editing tools, and up to 6 "fixes" as the patch operations above. No markdown."""
 
@@ -1373,6 +1399,12 @@ SCORE_SCHEMA = {
                         "type": "object",
                         "description": "optional: the same change as exact JSON - only when every number comes from the measured facts, never guessed",
                     },
+                    "confidence": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                        "description": "how sure the critic is of this fix, 0 to 1 - high when the measured facts carry it, low when it is a read of taste",
+                    },
                 },
                 "required": ["where", "problem", "change", "op"],
             },
@@ -1395,6 +1427,10 @@ FIX_CURVES = (
     "ease-out",
     "ease-in-out",
     "emphasis",
+    "drift",
+    "snap",
+    "accelerate",
+    "anticipate",
     "spring",
     "spring-pop",
     "typewriter",
@@ -1493,7 +1529,10 @@ def _fix_list(value, cap=8):
     builder patches with, and anything malformed is dropped whole rather
     than half-read - a fix that loses its `where` is advice nobody can
     apply. A `patch` rides along only when it is the shape its op reads,
-    so a wrong number never reaches the applier as an exact one."""
+    so a wrong number never reaches the applier as an exact one, and a
+    `confidence` rides only when it is a finite 0-1, clamped to the
+    range the schema promises - a critic that cannot say a number does
+    not get to invent one."""
     if not isinstance(value, list):
         return []
     fixes = []
@@ -1512,6 +1551,10 @@ def _fix_list(value, cap=8):
             "change": change[:240],
             "op": op,
         }
+        confidence = entry.get("confidence")
+        if isinstance(confidence, (int, float)) and not isinstance(confidence, bool) \
+                and math.isfinite(float(confidence)):
+            fix["confidence"] = round(max(0.0, min(1.0, float(confidence))), 2)
         patch = _valid_patch(op, entry.get("patch"))
         if patch is not None:
             fix["patch"] = patch
@@ -2270,6 +2313,18 @@ def main():
                 })
                 assert gate_probe.get("ok") and gate_probe["order"] == [0], gate_probe
                 out["emotionProxy"] = "ok"
+            # The ffmpeg bootstrap is pinned: every asset it can name has
+            # a digest, and the URL names one immutable release tag - never
+            # a rolling pointer that changes under the bytes somebody
+            # verified. An unpinned asset here is a binary the senses would
+            # execute that nobody ever looked at.
+            assert FFMPEG_BUILDS, "the bootstrap has no builds table"
+            for _asset in set(FFMPEG_BUILDS.values()):
+                assert _asset in FFMPEG_SHA256, f"unpinned bootstrap asset: {_asset}"
+                assert len(FFMPEG_SHA256[_asset]) == 64, _asset
+            assert "/releases/download/" in FFMPEG_URL_BASE, FFMPEG_URL_BASE
+            assert "latest" not in FFMPEG_URL_BASE, FFMPEG_URL_BASE
+            out["ffmpegPin"] = "ok"
             out["selftest"] = True
             out["decoder"] = "pure-python"
             out["vlmParsers"] = "ok"

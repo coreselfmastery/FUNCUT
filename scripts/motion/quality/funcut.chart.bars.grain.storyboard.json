@@ -1,0 +1,14 @@
+{
+  "source_dir": "",
+  "assets": {
+    "back": "scripts/motion/quality/plates/plate_studio.png"
+  },
+  "scenes": [
+    {
+      "comp": "src/crates/concat-motion/examples/comps/funcut.chart.bars.json",
+      "plate": "back",
+      "zoom": 0.04,
+      "look": { "kind": "grain", "amount": 0.4, "size": 3, "seed": 7 }
+    }
+  ]
+}

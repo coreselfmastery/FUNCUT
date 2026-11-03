@@ -183,9 +183,10 @@ pub struct SceneCard {
     /// The texture the scene wears over its picture, as a storyboard
     /// writes it on the scene: `{"kind": "grain", "amount": 0.4,
     /// "size": 3, "seed": 7}` - or `glass` with a `blur` and a
-    /// `saturate`, or `chromatic` with an `amount`. The grain and the
-    /// fringe go over everything; the frost goes under the comp's own
-    /// words, over the plate.
+    /// `saturate`, `chromatic` or `vignette` with an `amount`, or
+    /// `letterbox` with the `ratio` the frame is held to. The grain, the
+    /// fringe, the vignette and the bars go over everything; the frost
+    /// goes under the comp's own words, over the plate.
     #[serde(default)]
     pub look: Option<crate::looks::Look>,
     /// The personality the scene wears over its layout: `"calm"`,

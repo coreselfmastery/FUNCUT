@@ -205,6 +205,179 @@ pub fn sweep(root: &Path, budget: u64) -> Sweep {
     report
 }
 
+/// Sweep a comps bake cache root under a budget: the same three rules the
+/// reel cache's [`sweep`] keeps, read over directories instead of files.
+/// A bake is a directory whose `manifest.json` is its marker - written
+/// last and renamed in, so a manifest present is a bake whole, and a
+/// directory without one is a bake still filling or a crash's orphan.
+///
+/// "Used" is the manifest's clock, and a cache hit touches it (see
+/// [`touch_file`]), so the sweep is least-*recently-used*, not merely
+/// least-recently-baked. The bake the current render just published is
+/// `keep`: never evicted, always counted - a sweep that ate the render's
+/// own output would be a cache that charges for admission. Junk goes
+/// before anything useful, and an in-flight bake (no manifest, younger
+/// than an hour) is left entirely alone: deleting a directory somebody
+/// is filling is corruption, not housekeeping.
+pub fn sweep_comps(root: &Path, budget: u64, keep: Option<&Path>) -> Sweep {
+    let mut report = Sweep {
+        budget,
+        ..Sweep::default()
+    };
+    let Ok(read) = std::fs::read_dir(root) else {
+        return report;
+    };
+    // (dir, size, last use, protected from eviction)
+    let mut entries: Vec<(PathBuf, u64, SystemTime, bool)> = Vec::new();
+    for entry in read.filter_map(Result::ok) {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        if !meta.is_dir() {
+            // A file in the root is a manifest's `.part` a crash left
+            // behind; junk once it is old enough to be a crash's and not
+            // a neighbour's.
+            if name.contains(".part") && older_than(&meta, PART_LIFETIME) {
+                let _ = std::fs::remove_file(&path);
+                report.junk.push(name);
+            }
+            continue;
+        }
+        let manifest = path.join("manifest.json");
+        if !manifest.is_file() {
+            // No manifest: a bake still filling, or a crash's orphan.
+            // Younger than an hour it is somebody's; older - and not the
+            // bake this render is writing - it is junk.
+            if older_than(&meta, PART_LIFETIME) && Some(path.as_path()) != keep {
+                let _ = std::fs::remove_dir_all(&path);
+                report.junk.push(name);
+            }
+            continue;
+        }
+        let used = manifest
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
+        entries.push((path, 0, used, false));
+    }
+    // Sizes after the junk pass, so nothing dead is walked or counted,
+    // and the protected one is named where the caller said it is.
+    for entry in &mut entries {
+        entry.1 = dir_size(&entry.0);
+        entry.3 = Some(entry.0.as_path()) == keep;
+    }
+    report.kept = entries.iter().map(|(_, size, _, _)| *size).sum();
+    entries.sort_by_key(|(_, _, used, _)| *used);
+    while report.kept > budget {
+        // Oldest first, and never the protected one: the sort put the
+        // oldest at the head, and the head is skipped while it is. When
+        // everything left is protected the budget has to wait for a
+        // later sweep - the one after the next bake.
+        let Some(index) = entries.iter().position(|(_, _, _, protected)| !protected) else {
+            break;
+        };
+        let (path, size, _, _) = entries.remove(index);
+        let _ = std::fs::remove_dir_all(&path);
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default();
+        report.evicted.push(name);
+        report.kept = report.kept.saturating_sub(size);
+        report.freed += size;
+    }
+    report
+}
+
+/// A path's whole size, files and all: a bake's bytes, frames first and
+/// the manifest last, walked once per sweep.
+fn dir_size(dir: &Path) -> u64 {
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut total = 0;
+    for entry in read.filter_map(Result::ok) {
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        if meta.is_dir() {
+            total += dir_size(&entry.path());
+        } else {
+            total += meta.len();
+        }
+    }
+    total
+}
+
+/// Whether `meta` was last changed longer ago than `lifetime`.
+fn older_than(meta: &std::fs::Metadata, lifetime: Duration) -> bool {
+    meta.modified()
+        .map(|at| SystemTime::now().duration_since(at).unwrap_or_default())
+        .is_ok_and(|age| age > lifetime)
+}
+
+/// Touch a file's clock so a *served* cache entry counts as used: the
+/// comps sweep keys on the manifest's mtime, and a bake every render
+/// hits would be the first evicted if its popularity never showed in
+/// the clock. A missing file is left alone - the sweep's junk pass is
+/// the one that clears what never arrived.
+pub fn touch_file(path: &Path) {
+    if let Ok(file) = std::fs::OpenOptions::new().write(true).open(path) {
+        let _ = file.set_modified(SystemTime::now());
+    }
+}
+
+/// The machine's physical memory where the platform says: `/proc/meminfo`
+/// on Linux - the machine the farm and the 4 GB laptop both are. `None`
+/// anywhere else, and the budget takes its usual size rather than guess.
+fn machine_memory() -> Option<u64> {
+    static TOTAL: std::sync::OnceLock<Option<u64>> = std::sync::OnceLock::new();
+    *TOTAL.get_or_init(|| {
+        let info = std::fs::read_to_string("/proc/meminfo").ok()?;
+        let line = info.lines().find(|line| line.starts_with("MemTotal:"))?;
+        let kib: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+        Some(kib.saturating_mul(1024))
+    })
+}
+
+/// The comps budget, from its two inputs: the operator's named gibibytes,
+/// or the machine's own size - a small machine (six gigabytes and under,
+/// the budget-laptop class whose RAM is shared with a whole desktop) gets
+/// half, so the cache is never the reason a render swapped. Pure, so the
+/// step-down line can be tested without a machine.
+fn budget_from(named: Option<f64>, machine: Option<u64>) -> u64 {
+    const GIB: u64 = 1024 * 1024 * 1024;
+    if let Some(named) = named
+        && named.is_finite()
+        && named > 0.0
+    {
+        // A named budget is the operator's own arithmetic, clamped to the
+        // range a disk survives: a tenth of a gigabyte to a terabyte.
+        let bytes = (named * GIB as f64) as u64;
+        return bytes.clamp(GIB / 10, 1024 * GIB);
+    }
+    const SMALL: u64 = 6 * GIB;
+    if machine.is_some_and(|total| total <= SMALL) {
+        GIB
+    } else {
+        DEFAULT_BUDGET_BYTES
+    }
+}
+
+/// The size every comps bake cache is swept to stay under: the operator's
+/// `CONCAT_MOTION_CACHE_GIB`, or the machine's own answer - two gibibytes
+/// on a workstation, one on the budget laptop. `cache/comps` grows a
+/// directory per comp-content and size, and without a budget it grows
+/// forever.
+pub fn comps_budget() -> u64 {
+    let named = std::env::var("CONCAT_MOTION_CACHE_GIB")
+        .ok()
+        .and_then(|value| value.trim().parse::<f64>().ok());
+    budget_from(named, machine_memory())
+}
+
 /// A unique temp path beside `to`: the name a render fills before it
 /// publishes. Two renders of one entry, from two processes, each fill
 /// their own - that is the whole point of the `pid` in the name.
@@ -424,5 +597,96 @@ mod tests {
         mark_done(&entry, "key", 2.5).unwrap();
         let text = std::fs::read_to_string(entry.with_extension("done")).unwrap();
         assert_eq!(text, "key 2.500");
+    }
+
+    /// The comps sweep evicts the least recently used bake - a served one
+    /// outliving one merely baked earlier - and keeps the bake this render
+    /// just wrote, counting its bytes all the same: a cache that charges
+    /// for admission is no cache at all.
+    #[cfg(unix)]
+    #[test]
+    fn the_comps_sweep_evicts_the_stale_bake_and_keeps_the_fresh_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("comps");
+        let bake = |name: &str, size: usize| {
+            let path = root.join(name);
+            std::fs::create_dir_all(path.join("frames")).unwrap();
+            std::fs::write(path.join("frames/0001.png"), vec![0u8; size]).unwrap();
+            std::fs::write(path.join("manifest.json"), b"{}").unwrap();
+        };
+        bake("old", 40);
+        bake("read", 40);
+        bake("fresh", 40);
+        let stamp = |name: &str, when: &str| {
+            let _ = std::process::Command::new("touch")
+                .arg("-t")
+                .arg(when)
+                .arg(root.join(format!("{name}/manifest.json")))
+                .status();
+        };
+        stamp("old", "201501010000");
+        stamp("read", "202001010000");
+        stamp("fresh", "202501010000");
+        touch_file(&root.join("read/manifest.json")); // served now
+
+        // Three ~42-byte bakes is ~126: a budget of 100 evicts exactly the
+        // stale one and stops.
+        let report = sweep_comps(&root, 100, Some(&root.join("fresh")));
+        assert_eq!(
+            report.evicted,
+            vec!["old".to_owned()],
+            "the stale one goes, not the served one and not the fresh one"
+        );
+        assert!(root.join("fresh/manifest.json").is_file());
+        assert!(root.join("read/manifest.json").is_file());
+        assert!(!root.join("old").exists());
+        assert!(report.kept <= 100);
+    }
+
+    /// Junk goes before anything useful: a bake directory whose manifest
+    /// never arrived is a crash's orphan once it is an hour old, and a
+    /// bake still filling - young, manifestless - is left alone, because
+    /// deleting a directory somebody is filling is corruption.
+    #[cfg(unix)]
+    #[test]
+    fn the_comps_sweep_clears_orphans_and_leaves_the_in_flight_bake() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("comps");
+        let kept = root.join("kept-1x1@30");
+        std::fs::create_dir_all(kept.join("frames")).unwrap();
+        std::fs::write(kept.join("frames/0001.png"), vec![0u8; 10]).unwrap();
+        std::fs::write(kept.join("manifest.json"), b"{}").unwrap();
+        let orphan = root.join("crashed-1x1@30");
+        std::fs::create_dir_all(orphan.join("frames")).unwrap();
+        std::fs::write(orphan.join("frames/half.png"), vec![0u8; 10]).unwrap();
+        let _ = std::process::Command::new("touch")
+            .arg("-t")
+            .arg("202001010000")
+            .arg(&orphan)
+            .status();
+        let in_flight = root.join("baking-2x1@30");
+        std::fs::create_dir_all(in_flight.join("frames")).unwrap();
+
+        let report = sweep_comps(&root, DEFAULT_BUDGET_BYTES, None);
+        assert_eq!(report.junk, vec!["crashed-1x1@30".to_owned()]);
+        assert!(report.evicted.is_empty());
+        assert!(kept.join("manifest.json").is_file());
+        assert!(in_flight.is_dir(), "an in-flight bake is never swept");
+    }
+
+    /// The budget answers the operator first and the machine second: a
+    /// named size is the operator's own arithmetic, a small machine gets
+    /// half the default, and a machine that will not say keeps the whole
+    /// of it.
+    #[test]
+    fn the_comps_budget_answers_the_operator_then_the_machine() {
+        let gib = 1024 * 1024 * 1024;
+        assert_eq!(budget_from(Some(0.5), None), gib / 2);
+        assert_eq!(budget_from(Some(3.0), None), 3 * gib);
+        assert_eq!(budget_from(Some(-1.0), None), DEFAULT_BUDGET_BYTES);
+        assert_eq!(budget_from(None, Some(4 * gib)), gib);
+        assert_eq!(budget_from(None, Some(6 * gib)), gib);
+        assert_eq!(budget_from(None, Some(32 * gib)), DEFAULT_BUDGET_BYTES);
+        assert_eq!(budget_from(None, None), DEFAULT_BUDGET_BYTES);
     }
 }

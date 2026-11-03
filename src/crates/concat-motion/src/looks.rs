@@ -26,11 +26,23 @@
 //!   approximation a browserless raster can draw; a true channel split
 //!   needs per-channel masks the engine has none of, and the module says
 //!   so rather than pretending.
+//! - [`Look::Vignette`] - the corners fall, the centre holds: a dark
+//!   fall-off from all four edges over everything, the same one-gradient-
+//!   per-edge shape the fringe is, four times. A true radial falloff needs
+//!   stop positions the engine does not read; the four straight edges
+//!   carry the vignette read without them.
+//! - [`Look::Letterbox`] - the cinema bars: solid black bars that hold the
+//!   frame to a wider ratio than the comp's own (2.39 on a 16:9 comp),
+//!   top and bottom; a ratio under the comp's own is the pillarbox, the
+//!   same bars on the sides. The bars are percentages of the frame, so
+//!   the look holds at every size the comp bakes at.
 //!
 //! ```text
 //! {"kind": "grain", "amount": 0.4, "size": 3, "seed": 7}
 //! {"kind": "glass", "blur": 8, "saturate": 1.4}
 //! {"kind": "chromatic", "amount": 0.35}
+//! {"kind": "vignette", "amount": 0.4}
+//! {"kind": "letterbox", "ratio": 2.39}
 //! ```
 //!
 //! Measured against the engine (1.6.0) at 640x360 over a neutral grey
@@ -110,6 +122,24 @@ pub enum Look {
         /// the frame reads as a lens rather than a border.
         amount: f64,
     },
+    /// The corners fall, the centre holds: a dark fall-off from all four
+    /// edges over everything - the same one-gradient-per-edge shape the
+    /// fringe is, four times, in black.
+    Vignette {
+        /// How hard the corners fall, 0 to 1. 0.3 to 0.6 is where the
+        /// frame draws the eye inward without wearing sunglasses.
+        amount: f64,
+    },
+    /// The cinema bars: solid black bars holding the frame to `ratio`
+    /// (width over height) - 2.39 on a 16:9 comp is the widescreen
+    /// cinema; a ratio under the comp's own is the pillarbox, the same
+    /// bars on the sides.
+    Letterbox {
+        /// The ratio the frame is held to, 1 to 3. The comp's own aspect
+        /// baked nothing (that is the frame as it stands); 2.39 is the
+        /// scope screen, 1.0 the square.
+        ratio: f64,
+    },
 }
 
 impl Look {
@@ -145,19 +175,35 @@ impl Look {
                     ));
                 }
             }
+            Look::Vignette { amount } => {
+                if !(0.0..=1.0).contains(amount) {
+                    said.push(format!("the vignette's amount is {amount}, outside 0 to 1"));
+                }
+            }
+            Look::Letterbox { ratio } => {
+                if !(1.0..=3.0).contains(ratio) {
+                    said.push(format!(
+                        "the letterbox's ratio is {ratio}, outside 1 to 3 - the scope screen is 2.39"
+                    ));
+                }
+            }
         }
         said
     }
 
     /// Whether the look, as written, changes anything: a grain at zero,
-    /// a frost with no blur at unity saturation, a fringe at zero draw
-    /// nothing, and baking them would only add nodes the engine carries
-    /// for no picture.
+    /// a frost with no blur at unity saturation, a fringe at zero and a
+    /// vignette at zero draw nothing, and baking them would only add
+    /// nodes the engine carries for no picture. The letterbox is decided
+    /// against the comp it is worn on - a ratio the comp already is, is
+    /// the frame as it stands - which [`apply`] knows and this cannot.
     pub fn is_identity(&self) -> bool {
         match self {
             Look::Grain { amount, .. } => *amount <= 1e-9,
             Look::Glass { blur, saturate } => *blur <= 1e-9 && (saturate - 1.0).abs() <= 1e-9,
             Look::Chromatic { amount } => *amount <= 1e-9,
+            Look::Vignette { amount } => *amount <= 1e-9,
+            Look::Letterbox { .. } => false,
         }
     }
 }
@@ -260,6 +306,61 @@ fn chromatic_stylesheet(amount: f64) -> String {
     )
 }
 
+/// The vignette's stylesheet: the fringe's own shape, in black, from all
+/// four edges - one gradient per edge, four elements, no stop positions
+/// (the engine does not read them, and the straight-edged fall-off carries
+/// the vignette read without a radial gradient).
+fn vignette_stylesheet(amount: f64) -> String {
+    let alpha = number(0.18 + 0.50 * amount.clamp(0.0, 1.0));
+    format!(
+        ".vig-t{{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,{alpha}),rgba(0,0,0,0));}}\
+         .vig-b{{position:absolute;inset:0;background:linear-gradient(0deg,rgba(0,0,0,{alpha}),rgba(0,0,0,0));}}\
+         .vig-l{{position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,{alpha}),rgba(0,0,0,0));}}\
+         .vig-r{{position:absolute;inset:0;background:linear-gradient(270deg,rgba(0,0,0,{alpha}),rgba(0,0,0,0));}}"
+    )
+}
+
+/// The letterbox's stylesheet: solid black bars holding the frame to
+/// `ratio`. The bar sizes are percentages of the frame, worked out from
+/// the comp's own aspect once, here, so the look holds at every size the
+/// comp bakes at - and a ratio the comp already is asks for no bars at
+/// all, which [`apply`] answers before this is called.
+fn letterbox_stylesheet(comp: &Comp, ratio: f64) -> String {
+    let own = f64::from(comp.width) / f64::from(comp.height);
+    if ratio > own {
+        // Wider than the comp: bars top and bottom, each holding the
+        // half of the frame's height the ratio gives back.
+        let each = (1.0 - own / ratio) * 50.0;
+        format!(
+            ".bar-t{{position:absolute;left:0;top:0;width:100%;height:{}%;background:#000;}}\
+             .bar-b{{position:absolute;left:0;bottom:0;width:100%;height:{}%;background:#000;}}",
+            number(each),
+            number(each),
+        )
+    } else {
+        // Narrower than the comp: the pillarbox, the same bars on the
+        // sides, each holding half the width the ratio gives back.
+        let each = (1.0 - ratio / own) * 50.0;
+        format!(
+            ".bar-l{{position:absolute;top:0;left:0;height:100%;width:{}%;background:#000;}}\
+             .bar-r{{position:absolute;top:0;right:0;height:100%;width:{}%;background:#000;}}",
+            number(each),
+            number(each),
+        )
+    }
+}
+
+/// The letterbox's markup: the bars the stylesheet sizes, named for the
+/// half of the frame each holds.
+fn letterbox_markup(comp: &Comp, ratio: f64) -> String {
+    let own = f64::from(comp.width) / f64::from(comp.height);
+    if ratio > own {
+        r#"<div class="bar-t"></div><div class="bar-b"></div>"#.to_owned()
+    } else {
+        r#"<div class="bar-l"></div><div class="bar-r"></div>"#.to_owned()
+    }
+}
+
 /// Bake a look into a comp. The grain and the fringe go on top, last in
 /// paint order - film grain covers everything, and so does a lens. The
 /// frost goes first, under the comp's ink, over whatever the scene has
@@ -275,12 +376,23 @@ pub fn apply(comp: &mut Comp, look: &Look) -> Result<(), String> {
     if look.is_identity() {
         return Ok(());
     }
+    // The letterbox's identity is against the comp it is worn on: a ratio
+    // the comp already is, is the frame as it stands, and bars of no
+    // height would only add nodes the engine carries for no picture.
+    if let Look::Letterbox { ratio } = look {
+        let own = f64::from(comp.width) / f64::from(comp.height);
+        if (ratio - own).abs() <= 1e-6 {
+            return Ok(());
+        }
+    }
     // The node's name, unique in this comp: a second look on a nested
     // composition is not a collision to refuse, it is a name to have.
     let (base, over) = match look {
         Look::Grain { .. } => ("funcut-look-grain", true),
         Look::Glass { .. } => ("funcut-look-glass", false),
         Look::Chromatic { .. } => ("funcut-look-chromatic", true),
+        Look::Vignette { .. } => ("funcut-look-vignette", true),
+        Look::Letterbox { .. } => ("funcut-look-letterbox", true),
     };
     let mut id = base.to_owned();
     let mut suffix = 1;
@@ -304,6 +416,17 @@ pub fn apply(comp: &mut Comp, look: &Look) -> Result<(), String> {
         Look::Chromatic { amount } => (
             r#"<div class="edge-l"></div><div class="edge-r"></div>"#.to_owned(),
             chromatic_stylesheet(*amount),
+            Default::default(),
+        ),
+        Look::Vignette { amount } => (
+            r#"<div class="vig-t"></div><div class="vig-b"></div><div class="vig-l"></div><div class="vig-r"></div>"#
+                .to_owned(),
+            vignette_stylesheet(*amount),
+            Default::default(),
+        ),
+        Look::Letterbox { ratio } => (
+            letterbox_markup(comp, *ratio),
+            letterbox_stylesheet(comp, *ratio),
             Default::default(),
         ),
     };
@@ -542,6 +665,10 @@ mod tests {
         assert!(glass.problems().first().unwrap().contains("fog"));
         let fringe = look_from(r#"{"kind":"chromatic","amount":-1.0}"#);
         assert!(fringe.problems().first().unwrap().contains("amount"));
+        let vignette = look_from(r#"{"kind":"vignette","amount":2.0}"#);
+        assert!(vignette.problems().first().unwrap().contains("amount"));
+        let bars = look_from(r#"{"kind":"letterbox","ratio":4.0}"#);
+        assert!(bars.problems().first().unwrap().contains("ratio"));
     }
 
     #[test]
@@ -562,9 +689,20 @@ mod tests {
             &look_from(r#"{"kind":"chromatic","amount":0.0}"#),
         )
         .expect("applies");
+        apply(&mut comp, &look_from(r#"{"kind":"vignette","amount":0.0}"#)).expect("applies");
+        // The comp is 16:9 already: a 16:9 letterbox is the frame as it
+        // stands, and bakes nothing either.
+        apply(
+            &mut comp,
+            &look_from(&format!(
+                "{{\"kind\":\"letterbox\",\"ratio\":{}}}",
+                1920.0 / 1080.0
+            )),
+        )
+        .expect("applies");
         assert!(
             comp.nodes.is_empty(),
-            "three identity looks left the comp as they found it"
+            "five identity looks left the comp as they found it"
         );
     }
 
@@ -586,12 +724,69 @@ mod tests {
             &look_from(r#"{"kind":"chromatic","amount":0.35}"#),
         )
         .expect("applies");
+        apply(&mut comp, &look_from(r#"{"kind":"vignette","amount":0.4}"#)).expect("applies");
+        apply(
+            &mut comp,
+            &look_from(r#"{"kind":"letterbox","ratio":2.39}"#),
+        )
+        .expect("applies");
         comp.validate().into_iter().for_each(|d| panic!("{d:?}"));
         let (_document, warnings) = Geneva::at("geneva").timeline(&comp, &BakeRequest::default());
         assert!(
             warnings.is_empty(),
             "a worn look is drawn, not warned about: {warnings:?}"
         );
+    }
+
+    #[test]
+    fn the_vignette_falls_from_all_four_edges_over_everything() {
+        let mut comp = empty_comp();
+        apply(&mut comp, &look_from(r#"{"kind":"vignette","amount":0.4}"#)).expect("applies");
+        assert_eq!(
+            comp.nodes.last().map(|node| node.id.as_str()),
+            Some("funcut-look-vignette"),
+            "the vignette is last in paint order, over everything"
+        );
+        let NodeKind::Html { css, markup, .. } = &comp.nodes.last().unwrap().kind else {
+            unreachable!();
+        };
+        for edge in ["180deg", "0deg", "90deg", "270deg"] {
+            assert!(css.contains(edge), "an edge is missing its fall-off: {css}");
+        }
+        assert!(
+            css.contains("rgba(0,0,0,0.38)"),
+            "the amount is the darkness: {css}"
+        );
+        assert!(!css.contains("%"), "no stop positions: {css}");
+        assert_eq!(markup.matches("<div").count(), 4, "one element an edge");
+    }
+
+    #[test]
+    fn the_letterbox_holds_the_ratio_the_frame_is_asked_for() {
+        let mut comp = empty_comp();
+        apply(
+            &mut comp,
+            &look_from(r#"{"kind":"letterbox","ratio":2.39}"#),
+        )
+        .expect("applies");
+        let NodeKind::Html { css, markup, .. } = &comp.nodes.last().unwrap().kind else {
+            unreachable!();
+        };
+        // 1 - (16/9)/2.39 is ~0.2562 of the height, half a bar each way:
+        // 12.81%, in a percentage box, so the bars hold at every size.
+        assert!(css.contains("height:12.81%"), "the scope bars: {css}");
+        assert_eq!(markup.matches("<div").count(), 2, "a bar top, a bar bottom");
+        assert!(css.contains("background:#000"), "the bars are solid: {css}");
+
+        // A ratio under the comp's own is the pillarbox, the same bars on
+        // the sides: 1 - 1/(16/9) is 43.75% of the width, half a bar each.
+        let mut comp = empty_comp();
+        apply(&mut comp, &look_from(r#"{"kind":"letterbox","ratio":1.0}"#)).expect("applies");
+        let NodeKind::Html { css, .. } = &comp.nodes.last().unwrap().kind else {
+            unreachable!();
+        };
+        assert!(css.contains("width:21.88%"), "the pillarbox: {css}");
+        assert!(css.contains(".bar-l") && css.contains(".bar-r"), "{css}");
     }
 
     #[test]

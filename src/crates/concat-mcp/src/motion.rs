@@ -423,6 +423,18 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
         .bake(&comp, &request, &dir)
         .map_err(|error| ApiError::failed(error.to_string()))?;
 
+    // The bake cache is bounded: every bake sweeps its own root under the
+    // machine-sized budget, the bake just written kept but counted, so
+    // `cache/comps` is an accelerator and not a disk-eater that grows a
+    // directory per comp forever. A hit is swept the same as a write -
+    // the budget holds either way - and the manifest the hit touched is
+    // the clock the sweep sorts by.
+    let swept = concat_motion::cache::sweep_comps(
+        &cache_dir(&project),
+        concat_motion::cache::comps_budget(),
+        Some(&dir),
+    );
+
     let mut reply = json!({
         "frames": baked.frames,
         "width": baked.width,
@@ -438,6 +450,17 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
     if asked != (width, height) {
         reply["clampedTo"] =
             json!("4096: the bake was requested above 4K and is rendered at 4K for safety");
+    }
+    // The sweep is said only when it did something: a sweep that freed
+    // nothing is housekeeping, not news.
+    if !swept.evicted.is_empty() || !swept.junk.is_empty() {
+        reply["cache"] = json!({
+            "budgetBytes": swept.budget,
+            "keptBytes": swept.kept,
+            "freedBytes": swept.freed,
+            "evicted": swept.evicted,
+            "junk": swept.junk,
+        });
     }
 
     if fields.get("encode").and_then(Value::as_bool) == Some(true) {

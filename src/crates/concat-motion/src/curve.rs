@@ -158,6 +158,43 @@ impl Curve {
         count: 8,
         position: StepPosition::JumpEnd,
     };
+    /// The drift: in and out equally gentle, the sine's own pace - the
+    /// curve for a light, a focus or a plate that drifts rather than
+    /// moves, where `emphasis` would read as arriving.
+    pub const DRIFT: Curve = Curve::Bezier {
+        x1: 0.37,
+        y1: 0.0,
+        x2: 0.63,
+        y2: 1.0,
+    };
+    /// The snap: almost all of the way at once, then a dead stop - the
+    /// harder `emphasis`, for the thing that lands like it was always
+    /// there. Reads as decisive on a chip or a count.
+    pub const SNAP: Curve = Curve::Bezier {
+        x1: 0.0,
+        y1: 1.0,
+        x2: 0.1,
+        y2: 1.0,
+    };
+    /// The accelerate: starts from rest and leaves at full speed - the
+    /// exit that gathers, the push-in that ends mid-stride. The entrance
+    /// that wants its mirror is `snap`.
+    pub const ACCELERATE: Curve = Curve::Bezier {
+        x1: 0.32,
+        y1: 0.0,
+        x2: 0.67,
+        y2: 0.0,
+    };
+    /// The anticipate: dips under its start before it arrives - the
+    /// wind-up a cartoon does before the run, the pull-back before the
+    /// leave. Below zero on the way is the point of it, the way a
+    /// spring's above one is.
+    pub const ANTICIPATE: Curve = Curve::Bezier {
+        x1: 0.36,
+        y1: 0.0,
+        x2: 0.66,
+        y2: -0.56,
+    };
 
     /// A bounce without JavaScript: `linear(0, 1.4, 0.9, 1)` - the CSS
     /// `linear()` ramp that overshoots by 40 percent and settles back,
@@ -187,6 +224,10 @@ impl Curve {
             "ease-out" => Some(Curve::EASE_OUT),
             "ease-in-out" => Some(Curve::EASE_IN_OUT),
             "emphasis" => Some(Curve::EMPHASIS),
+            "drift" => Some(Curve::DRIFT),
+            "snap" => Some(Curve::SNAP),
+            "accelerate" => Some(Curve::ACCELERATE),
+            "anticipate" => Some(Curve::ANTICIPATE),
             "spring" => Some(Curve::SPRING),
             "spring-pop" => Some(Curve::SPRING_POP),
             "typewriter" => Some(Curve::TYPEWRITER),
@@ -197,13 +238,17 @@ impl Curve {
 
     /// The names the easing library answers to, in the order a gallery
     /// would show them.
-    pub const NAMES: [&str; 10] = [
+    pub const NAMES: [&str; 14] = [
         "linear",
         "ease",
         "ease-in",
         "ease-out",
         "ease-in-out",
         "emphasis",
+        "drift",
+        "snap",
+        "accelerate",
+        "anticipate",
         "spring",
         "spring-pop",
         "typewriter",
@@ -528,8 +573,76 @@ mod tests {
         assert!(Curve::named("nope").is_none());
         assert_eq!(Curve::named("typewriter"), Some(Curve::TYPEWRITER));
         assert_eq!(Curve::named("bounce"), Some(Curve::bounce()));
+        assert_eq!(Curve::named("anticipate"), Some(Curve::ANTICIPATE));
         // Case and padding are the document's, not the library's.
         assert_eq!(Curve::named("  Ease-Out "), Some(Curve::EASE_OUT));
+    }
+
+    /// The drift is gentle at both ends and honest in the middle - the
+    /// sine's own pace, where `emphasis` would read as arriving.
+    #[test]
+    fn the_drift_is_equally_gentle_at_both_ends() {
+        assert!((Curve::DRIFT.apply(0.5) - 0.5).abs() < 0.02);
+        assert!(
+            Curve::DRIFT.apply(0.1) < 0.05,
+            "a drift starts slower than an ease: {}",
+            Curve::DRIFT.apply(0.1)
+        );
+        assert!(
+            Curve::DRIFT.apply(0.9) > 0.95,
+            "a drift ends as gently as it began: {}",
+            Curve::DRIFT.apply(0.9)
+        );
+    }
+
+    /// The snap is almost all of the way at once and then a dead stop:
+    /// harder than `emphasis`, decisive where it is gentle.
+    #[test]
+    fn the_snap_lands_almost_at_once_and_stops_dead() {
+        assert!(
+            Curve::SNAP.apply(0.2) > 0.9,
+            "the snap is nearly there by a fifth of the span: {}",
+            Curve::SNAP.apply(0.2)
+        );
+        assert!(
+            Curve::SNAP.apply(0.2) > Curve::EMPHASIS.apply(0.2),
+            "the snap is the harder emphasis"
+        );
+        assert!((Curve::SNAP.apply(1.0) - 1.0).abs() < 1e-9);
+    }
+
+    /// The accelerate starts from rest and leaves at full speed: the
+    /// exit that gathers, the mirror of the snap's entrance.
+    #[test]
+    fn the_accelerate_leaves_from_rest_at_full_speed() {
+        assert!(
+            Curve::ACCELERATE.apply(0.5) < 0.2,
+            "half the span is barely a fifth of the way: {}",
+            Curve::ACCELERATE.apply(0.5)
+        );
+        assert!(
+            Curve::ACCELERATE.apply(0.9) < 0.8,
+            "it is still gathering at nine tenths: {}",
+            Curve::ACCELERATE.apply(0.9)
+        );
+        assert!((Curve::ACCELERATE.apply(1.0) - 1.0).abs() < 1e-9);
+    }
+
+    /// The anticipate dips under its start before it arrives: the
+    /// wind-up before the run, below zero on the way the way a spring
+    /// is above one.
+    #[test]
+    fn the_anticipate_dips_before_it_goes() {
+        assert!(
+            Curve::ANTICIPATE.apply(0.5) < 0.0,
+            "the wind-up dips under the start: {}",
+            Curve::ANTICIPATE.apply(0.5)
+        );
+        assert!((Curve::ANTICIPATE.apply(1.0) - 1.0).abs() < 1e-9);
+        assert_eq!(
+            Curve::ANTICIPATE.css(),
+            "cubic-bezier(0.36, 0, 0.66, -0.56)"
+        );
     }
 
     /// A bounce overshoots and lands: `linear(0, 1.4, 0.9, 1)` is above

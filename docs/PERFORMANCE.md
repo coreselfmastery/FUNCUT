@@ -188,7 +188,15 @@ them that way (`cache.rs`, `reel.rs`, `geneva.rs`):
   takes the number): the least-recently-used *complete* entries go
   first — serving one counts as a use — and junk (orphan markers,
   markerless entries, a crashed render's stale temp files) goes before
-  anything useful does. The report carries what the sweep did.
+  anything useful does. The report carries what the sweep did. The
+  comps bake cache (`cache/comps/`) is swept the same way by every
+  `motion_bake` (`cache::sweep_comps`): a bake directory's
+  `manifest.json` is its entry and its clock — a cache hit touches it,
+  so a served bake counts as used — the bake just written is kept but
+  counted, and an in-flight bake (no manifest yet, younger than an
+  hour) is never touched. The budget is the machine's own: **2 GiB**,
+  **1 GiB** on a machine with six gigabytes or less, and
+  `CONCAT_MOTION_CACHE_GIB` names another.
 
 The GPU compositor behind the project's own preview and render is the
 `wgpu` path: optional, off by default, behind concat-render's `gpu`

@@ -71,6 +71,7 @@ FRAMES = [
     ("land", 2.3),
     ("rack", 3.6),
     ("settle", 5.0),
+    ("grain", 6.6),
 ]
 
 WIDTH, HEIGHT = 640, 360

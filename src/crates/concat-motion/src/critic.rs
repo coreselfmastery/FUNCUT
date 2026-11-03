@@ -78,6 +78,13 @@ pub struct Fix {
     /// reads.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub patch: Option<Json>,
+    /// How sure the critic is, 0 to 1. A fix whose every number came
+    /// from the measured facts carries a high one, a read of the reel's
+    /// taste a low one, and an agent batching fixes has the number it
+    /// needs to order them. `None` is the critic that did not say, read
+    /// as unrated, never as certain.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
 }
 
 impl Fix {
@@ -100,6 +107,11 @@ impl Fix {
             || fix.change.trim().is_empty()
         {
             return Err("a fix carries its where, its problem and its change".into());
+        }
+        if let Some(confidence) = fix.confidence
+            && (!confidence.is_finite() || !(0.0..=1.0).contains(&confidence))
+        {
+            return Err("a fix's confidence is between 0 and 1".into());
         }
         if let Some(patch) = &fix.patch {
             check_patch(&fix.op, patch)?;
@@ -1133,5 +1145,40 @@ mod tests {
             .is_err()
         );
         assert!(Fix::parse(&serde_json::json!("just a string")).is_err());
+    }
+
+    /// A fix's confidence rides along when it is a finite 0-1 and is
+    /// refused when it is not: the number an agent orders its work by is
+    /// not one a model gets to invent the range of.
+    #[test]
+    fn a_fixs_confidence_is_carried_and_kept_in_its_range() {
+        let fix = Fix::parse(&serde_json::json!({
+            "where": "the chart", "op": "shift",
+            "problem": "clipped off the right edge",
+            "change": "shift x by -180px",
+            "confidence": 0.85
+        }))
+        .expect("parsed");
+        assert_eq!(fix.confidence, Some(0.85));
+        // Absent is carried as unrated, never as certain.
+        let quiet = Fix::parse(&serde_json::json!({
+            "where": "the chart", "op": "shift",
+            "problem": "clipped off the right edge",
+            "change": "shift x by -180px"
+        }))
+        .expect("parsed");
+        assert_eq!(quiet.confidence, None);
+        for said in [1.5, -0.1] {
+            assert!(
+                Fix::parse(&serde_json::json!({
+                    "where": "the chart", "op": "shift",
+                    "problem": "clipped off the right edge",
+                    "change": "shift x by -180px",
+                    "confidence": said
+                }))
+                .is_err(),
+                "a confidence of {said} is not a confidence"
+            );
+        }
     }
 }

@@ -236,6 +236,7 @@ fn comp(id: &str, name: &str, width: u32, height: u32, duration: f64) -> Comp {
         assets: BTreeMap::new(),
         curves: BTreeMap::new(),
         nodes: Vec::new(),
+        comps: BTreeMap::new(),
         slots: Vec::new(),
     }
 }

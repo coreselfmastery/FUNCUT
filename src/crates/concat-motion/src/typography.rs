@@ -1014,6 +1014,7 @@ mod tests {
             assets: std::collections::BTreeMap::new(),
             curves: std::collections::BTreeMap::new(),
             nodes: Vec::new(),
+            comps: Default::default(),
             slots: Vec::new(),
         };
         let kinetic = Kinetic::words().delay(0.08).entrance(Entrance::BlurIn);

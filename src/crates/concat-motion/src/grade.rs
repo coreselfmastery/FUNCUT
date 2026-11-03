@@ -458,6 +458,7 @@ mod tests {
             assets: BTreeMap::new(),
             curves: BTreeMap::new(),
             nodes: Vec::new(),
+            comps: Default::default(),
             slots: Vec::new(),
         }
     }

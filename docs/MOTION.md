@@ -63,6 +63,43 @@ A node is `{ id, parent?, start, duration, transform, opacity, blend, mask?, eff
 | `lottie` | a Lottie / dotLottie asset |
 | `composition` | another comp, placed: define a sting once, use it nine times |
 
+### Sub-compositions: scoped, placed
+
+A `composition` node places a comp **this document carries under `comps`**, any number of times, each
+placement with its own timing and transform — the id names an entry in the same document, never
+another document's comp by id:
+
+```json
+{
+  "comps": {
+    "sting": {
+      "id": "funcut.sting.unit", "width": 640, "height": 360, "duration": 1.2,
+      "nodes": [ ... the sting, once ... ]
+    }
+  },
+  "nodes": [
+    { "id": "one",   "kind": "composition", "comp": "sting", "transform": { "position": [400, 540] } },
+    { "id": "two",   "kind": "composition", "comp": "sting", "start": 0.9,
+      "transform": { "position": [960, 540], "scale": 0.9 } },
+    { "id": "three", "kind": "composition", "comp": "sting", "start": 1.8,
+      "transform": { "position": [1520, 540], "scale": 0.8, "rotation": -6 } }
+  ]
+}
+```
+
+Each sub-comp is a **scope of its own**: its node ids, assets, curves and slots belong to it, a parent
+and a child may both have a node called `card` and an asset called `logo`, and a diagnostic inside one
+is pointed at `/comps/{name}/...`. Nesting runs eight levels deep (the engine's own cap) and never in a
+circle — a comp that contains itself through any chain is refused at `validate`, with a pointer into
+the document, before the engine's E207. The bake key covers every scope's files: changing the logo
+*inside the sting* is a different bake, the same way changing the comp's own logo is.
+
+The timeline engine resolves composition names from one top-level map, so the mapping flattens by
+scope — the sting's `logo` lands in the timeline as `sting::logo`, a sting inside an `outer` comp as
+`outer::sting` — and the document never knows: it scopes, the timeline flattens.
+`examples/stings.rs` is the worked proof: one definition, three placements, three sizes, the third
+tilted.
+
 **Tracks** are keyed at *fractions of the node's span*, so an entrance survives retiming, trimming and
 nesting. Property names: `position`, `scale`, `rotation`, `opacity`, `blur`, `dash`, and `param:<key>`
 for an effect parameter. Values are `number | point | size | color`; mismatched kinds step at halfway,

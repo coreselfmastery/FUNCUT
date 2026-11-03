@@ -1555,6 +1555,26 @@ fn plan_with_chain(
                 previous_hold
             ));
         }
+        // The authored placement is the author's and is kept - but a cut
+        // choreographed to cross, placed flush or later by its own `at`,
+        // cannot cross, and a plan that said nothing left the cache to
+        // break the news. The plan says what the join will do (the audit's
+        // finding 4).
+        if scene.at.is_some()
+            && let Some(cut) = enter_cut
+            && cut.overlaps()
+            && cut.seconds() > 1e-9
+            && start >= scene_ends.last().copied().unwrap_or(0.0) - 1e-9
+        {
+            warnings.push(format!(
+                "scene {index} enters by a {} but its authored `at` places it at or after \
+                 the scene before it ends: the placement is kept, and the cut plays as two \
+                 edits rather than the composite it was choreographed as - drop `at` to let \
+                 the cut cross, or move it {:.3} s earlier",
+                cut.name(),
+                cut.seconds()
+            ));
+        }
         scene_ends.push(start + hold);
         holds.push(hold);
 
@@ -3721,6 +3741,52 @@ mod tests {
                 .warnings
                 .iter()
                 .any(|warning| warning.contains("beats all fall outside")),
+            "{:?}",
+            planned.warnings
+        );
+    }
+
+    /// An authored `at` that places a choreographed cut flush or later is
+    /// the author's placement and is kept - but the plan says so, the way
+    /// the cache's join already did. The audit's finding 4, closed.
+    #[test]
+    fn an_authored_at_that_flattens_a_choreographed_cut_is_said() {
+        // Flush at the previous end: the whip pan cannot cross, and the
+        // plan warns instead of leaving the join to break the news.
+        let storyboard = crate::storyboard::Storyboard::parse(
+            r##"{ "scenes": [
+                   { "preset": "funcut.chapter.chip", "hold": 4.0 },
+                   { "preset": "funcut.sting.wordmark", "hold": 4.0, "at": 4.0,
+                     "transition": { "kind": "whip-pan", "direction": "left",
+                                     "seconds": 0.24, "blur": 12 } } ] }"##,
+        )
+        .expect("a storyboard");
+        let sequence = storyboard.sequence(Path::new(".")).expect("a sequence");
+        let planned = plan(&geneva(), &sequence).expect("a plan");
+        assert!(
+            planned.warnings.iter().any(|warning| warning.contains(
+                "scene 1 enters by a whip-pan but its authored `at` places it at or after"
+            )),
+            "{:?}",
+            planned.warnings
+        );
+        // The author who crosses the cut themselves - `at` earlier by the
+        // cut's own window - hears nothing: the placement did the crossing.
+        let storyboard = crate::storyboard::Storyboard::parse(
+            r##"{ "scenes": [
+                   { "preset": "funcut.chapter.chip", "hold": 4.0 },
+                   { "preset": "funcut.sting.wordmark", "hold": 4.0, "at": 3.76,
+                     "transition": { "kind": "whip-pan", "direction": "left",
+                                     "seconds": 0.24, "blur": 12 } } ] }"##,
+        )
+        .expect("a storyboard");
+        let sequence = storyboard.sequence(Path::new(".")).expect("a sequence");
+        let planned = plan(&geneva(), &sequence).expect("a plan");
+        assert!(
+            !planned
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("authored `at`")),
             "{:?}",
             planned.warnings
         );

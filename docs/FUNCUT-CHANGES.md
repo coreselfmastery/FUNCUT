@@ -1638,7 +1638,7 @@ estimate, the live answer, the farm-level integration against the
 stub engine - and the e2e arm that proves a farm which said nothing
 answers live.
 
-## 35. The scene read as an engineer reads it: `scene_analysis`, item 08
+## 36. The scene read as an engineer reads it: `scene_analysis`, item 08
 
 Item 08 of the Geneva roadmap. `motion_inspect` says what a comp holds;
 `scene_analysis` says how well it is built - read off the document, with
@@ -1684,7 +1684,7 @@ own count comments all say the new number, held there by the count test
 that reads them. The e2e arm proves the sample analysis answers its four
 numbers and its findings.
 
-## 36. The motion watched: `motion_preview`, item 09
+## 37. The motion watched: `motion_preview`, item 09
 
 Item 09 of the Geneva roadmap. `motion_frame` is one exact moment; a
 comp is a span. `motion_preview` is the span at a glance: `frames`
@@ -1717,7 +1717,7 @@ the Forge architecture page, the allowlist in `.forge/mcp.toml` and the
 allowlist's own count comments - held there by the count test that
 reads them.
 
-## 37. The motion engine's own numbers: the timing benchmarks, item 15
+## 38. The motion engine's own numbers: the timing benchmarks, item 15
 
 Item 15 of the Geneva roadmap. The editor's benchmark
 (`scripts/benchmark.py`) measures the machine's whole pipeline on a real
@@ -1758,7 +1758,7 @@ their effort.
 became the eleven), and `PERFORMANCE.md` carries the table of numbers
 and how to run them.
 
-## 38. The cloud farm: `motion_farm_cloud`, item 10 - the farm's legs on object storage
+## 39. The cloud farm: `motion_farm_cloud`, item 10 - the farm's legs on object storage
 
 Item 10 of the Geneva roadmap, the last of it. The resumable farm
 renders a long reel in parts that survive their own failure, and its
@@ -1808,3 +1808,49 @@ sidecar, the fourth call serving, the joiner's pull landing everything.
 Eight checks, wired into the CI lane beside the sense selftests. The
 tool count goes ninety-eight to ninety-nine across every document that
 holds it, held there by the count test that reads them.
+
+## 40. The GPU encode door: the overlay on the machine's own encoder, item 06
+
+The editor's compositor has been wgpu - GPU work, always - since the
+fork began; item 06 was the motion chain's own GPU path, and the
+overlay is that chain's one encode (an overlay of two planes is trivial
+next to it).
+
+`gpu` is a field on `motion_overlay`: `auto` (the default) picks
+`h264_vaapi` where a VAAPI driver and a render node exist - the
+finished frame uploaded once as nv12, the encoder fed in hardware;
+`on` asks for it and falls back to libx264 **with a note that says
+so**, because a clip that encodes beats a refusal that does not; `off`
+stays in software. `FUNCUT_OVERLAY_ENCODER` is the operator's pin and
+`FUNCUT_VAAPI_DEVICE` names another node; the reply says which encoder
+ran, so the crf number is read for what it is (a QP on the vaapi path).
+Presence is honest: the encoder in ffmpeg's list AND the node behind
+it, or it is not a GPU this call can reach.
+
+The pick is a pure function of what the machine has, what the call
+asked for and what the operator pinned, and the selftest proves its
+precedence table and both command shapes without a GPU in the room.
+Verified end to end on the no-GPU sandbox: both the plate and the
+colour branches, the fallback note in the reply, a valid 30-frame h264
+out each way.
+
+The docs tell the truth they had stopped telling: PERFORMANCE.md said
+the wgpu compositor was "optional, off by default, behind
+concat-render's `gpu` feature (Vulkan, Metal or DX12)" - it is always
+built (the feature is an empty shim), and this fork is Linux-only, so
+Metal and DX12 were never ours to promise.
+
+## 41. The findings register, closed
+
+The 1 November audit's ten findings, worked through on a machine with
+the pinned toolchain: the shared `.part` in a staging directory
+(`cache::part_path`, unique per writer), the scratch the frame verb
+leaked when no `-o` was given (always copied out, always removed), the
+exec bit discovery never checked (`runnable()` + `Geneva::pick`, with
+a regression test that names no environment), the authored `at` that
+flattened a choreographed cut in silence (the plan warns now, tested
+both ways), and the words that overstated - the cache door's comment
+and `BakeRequest::alpha`'s doc now say exactly what each moves.
+Findings 2, 5, 8 and 9 were resolved before this pass (the postscript
+in `audit/2026-11-01/geneva-four-pillars.md` says so, item by item).
+379 lib tests and 6 doctests, clippy `-D warnings` clean.

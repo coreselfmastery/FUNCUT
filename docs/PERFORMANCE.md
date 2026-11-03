@@ -243,11 +243,29 @@ them that way (`cache.rs`, `reel.rs`, `geneva.rs`):
   `CONCAT_MOTION_CACHE_GIB` names another.
 
 The GPU compositor behind the project's own preview and render is the
-`wgpu` path: optional, off by default, behind concat-render's `gpu`
-feature (Vulkan, Metal or DX12 — whichever the machine has), sharing a
-device with the window's renderer so a preview frame never leaves the
-GPU. Engine-only work never pays for the dependency tree: the feature
-is opt-in exactly because the tree is heavy.
+`wgpu` path: **always built** — it is the one compositor there is
+(`concat-render` depends on wgpu unconditionally; the `gpu` feature is
+an empty compatibility shim so the crates that name it need not change)
+— drawing on Vulkan, which every mainstream Linux driver speaks, with
+Mesa's lavapipe the software adapter on a machine with no GPU at all.
+Built on the window's own device, a preview frame never leaves the GPU.
+The editor's compositor is therefore GPU work everywhere, by default,
+with no flag to forget.
+
+**The motion overlay's own GPU door.** The overlay path — where a baked
+RGBA comp is composited over real footage and encoded (see
+`motion_overlay` in MCP.md) — is ffmpeg, and its encode rides the
+machine's GPU the same honest way: `h264_vaapi` where a VAAPI driver
+and a render node exist, the finished frame uploaded once as nv12 and
+the encoder fed in hardware; `libx264` everywhere else, with no
+pretence. `gpu: auto` (the default) uses what the machine has; `on`
+asks for it and falls back **with a note that says so** rather than
+refusing; `off` encodes in software; `FUNCUT_OVERLAY_ENCODER` is the
+operator's pin, and `FUNCUT_VAAPI_DEVICE` names another render node.
+The reply says which encoder ran. The compositing arithmetic itself
+stays in the filter graph — an overlay of two planes is trivial next
+to the encode, and keeping it there keeps the path honest on the
+machines with no GPU at all, which is half of what this fork is for.
 
 ## The motion engine's own numbers: the timing benchmarks
 

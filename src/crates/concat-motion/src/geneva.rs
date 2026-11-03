@@ -191,6 +191,27 @@ pub struct Geneva {
     limits: CallLimits,
 }
 
+/// A candidate that can actually be run. A file is not yet a program:
+/// the exec bit is part of discoverability, because a candidate without
+/// it would be found by [`Geneva::discover`] and fail later at spawn with
+/// an error that names the wrong thing. Unix carries the bit in the mode;
+/// elsewhere a file is all a program can be.
+#[cfg(unix)]
+fn runnable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    path.is_file()
+        && path
+            .metadata()
+            .map(|meta| meta.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+}
+
+/// [`runnable`] where a program is any file.
+#[cfg(not(unix))]
+fn runnable(path: &Path) -> bool {
+    path.is_file()
+}
+
 impl Geneva {
     /// Find the binary: the environment's hint, then the setting, then the
     /// usual places a sidecar is installed, then `PATH`.
@@ -217,13 +238,18 @@ impl Geneva {
                 candidates.push(dir.join("geneva"));
             }
         }
-        candidates
-            .into_iter()
-            .find(|path| path.is_file())
-            .map(|exe| Geneva {
-                exe,
-                limits: CallLimits::default(),
-            })
+        let found = Geneva::pick(&candidates);
+        found.map(|exe| Geneva {
+            exe,
+            limits: CallLimits::default(),
+        })
+    }
+
+    /// The first candidate that can be run, from a list a test can name:
+    /// the choosing half of [`Geneva::discover`], without the environment
+    /// it reads. Public-in-crate for the same reason the tests are.
+    pub(crate) fn pick(candidates: &[PathBuf]) -> Option<PathBuf> {
+        candidates.iter().find(|path| runnable(path)).cloned()
     }
 
     /// A Geneva at a known path, without checking that it runs.
@@ -973,7 +999,12 @@ fn stage_assets(
         if to.is_file() {
             continue;
         }
-        let part = to.with_extension("part");
+        // The part is unique per call (pid and a counter, the same
+        // discipline `cache::part_path` gives every publish): two workers
+        // sharing a staging directory - ranged bakes do - must not write
+        // the same part path, or one truncates what the other is still
+        // copying and the rename publishes a torn file as a whole one.
+        let part = crate::cache::part_path(&to);
         std::fs::copy(&from, &part).map_err(|source| MotionError::Io {
             doing: "copying an asset into the bake".into(),
             path: from,
@@ -1123,7 +1154,11 @@ impl CompEngine for Geneva {
         // The cache answers before anything is staged or rendered: an
         // unchanged comp at the same size and rate has nothing new to say,
         // and the inspect -> frame -> bake loop stops paying for a full
-        // re-render on every iteration.
+        // re-render on every iteration. The version above is part of the
+        // key, so even a cache hit has asked a live sidecar for it - the
+        // cache spares the render, not the sidecar (see engine.rs: the
+        // engine is a preference, not a dependency, and a machine without
+        // it fails loudly rather than serving a bake it cannot name).
         if let Some(hit) = bake_cache_hit(dir, comp, request, &version) {
             return Ok(hit);
         }
@@ -2288,6 +2323,33 @@ mod tests {
         if let Some(geneva) = found {
             assert!(geneva.exe().is_file());
         }
+    }
+
+    /// A candidate without its exec bit is not a program: discovery skips
+    /// it rather than finding it and failing later at spawn with an error
+    /// that names the wrong thing. The audit's finding 10, held here
+    /// without touching the environment discovery reads.
+    #[test]
+    fn discovery_skips_a_candidate_that_cannot_be_run() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("scratch");
+        let plain = dir.path().join("geneva");
+        std::fs::write(&plain, "#!/bin/sh\n").expect("write");
+        std::fs::set_permissions(&plain, std::fs::Permissions::from_mode(0o644)).expect("mode");
+        let program = dir.path().join("geneva-runnable");
+        std::fs::write(&program, "#!/bin/sh\n").expect("write");
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).expect("mode");
+        // The plain file alone: nothing to run.
+        assert!(
+            Geneva::pick(std::slice::from_ref(&plain)).is_none(),
+            "a file without the exec bit is not a program"
+        );
+        // Both, in order: the runnable one is picked over the plain one
+        // ahead of it.
+        let found = Geneva::pick(&[plain, program]).expect("the runnable candidate");
+        assert!(found.ends_with("geneva-runnable"), "{found:?}");
+        // A path that is not there at all: also nothing.
+        assert!(Geneva::pick(&[dir.path().join("nope")]).is_none());
     }
 
     /// The two inspection doors, held to their calls: a media probe is

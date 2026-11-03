@@ -721,20 +721,24 @@ fn frame(args: &[String]) -> Result<serde_json::Value, String> {
     let produced = geneva
         .frame(&comp, at, width, &source_dir)
         .map_err(|error| error.to_string())?;
-    match out {
-        Some(path) => {
-            std::fs::copy(&produced, &path)
-                .map_err(|error| format!("{}: {error}", path.display()))?;
-            // The scratch this frame was drawn in is the call's own; the
-            // file the caller asked for is copied out of it and the rest
-            // is not kept.
-            let _ = produced
-                .parent()
-                .and_then(|dir| std::fs::remove_dir_all(dir).ok());
-            Ok(json!({ "ok": true, "at": at, "frame": path.display().to_string() }))
-        }
-        None => Ok(json!({ "ok": true, "at": at, "frame": produced.display().to_string() })),
-    }
+    // The scratch a frame is drawn in is the call's own, and it is never
+    // kept: the file is copied out to where the caller asked (or, when
+    // they asked nowhere, to a deterministic temp file named by the comp
+    // and the moment - the engine is deterministic, so a second call
+    // writes the same bytes over the same name) and the rest goes. The
+    // old shape returned a path inside the scratch and left the whole
+    // directory behind when no -o was given.
+    let path = out.unwrap_or_else(|| {
+        std::env::temp_dir().join(format!(
+            "concat-motion-frame-{:016x}-{at:.3}.png",
+            comp.hash()
+        ))
+    });
+    std::fs::copy(&produced, &path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let _ = produced
+        .parent()
+        .and_then(|dir| std::fs::remove_dir_all(dir).ok());
+    Ok(json!({ "ok": true, "at": at, "frame": path.display().to_string() }))
 }
 
 fn bake(args: &[String]) -> Result<serde_json::Value, String> {

@@ -1029,7 +1029,11 @@ FFmpeg's WebM muxer does not reliably emit VP9 `AlphaMode` (verified: `yuva420p`
 ordinary H.264 clip that `media_import` + `clip_add` place on the timeline above (or instead of) the
 plate. Without a plate it composites over a solid colour, which is what `--encode` already did but
 with the alpha handled correctly. The RGBA sequence itself is never modified, so the same bake can be
-re-composited over a different shot.
+re-composited over a different shot. The encode itself rides the machine's GPU where it can: `gpu`
+is `auto` by default and picks `h264_vaapi` when a VAAPI driver and render node exist (the frame
+uploaded once as nv12, the encoder fed in hardware), `on` asks for it and falls back to `libx264`
+with a note that says so, and `off` stays in software — see PERFORMANCE.md's "the motion overlay's
+own GPU door" for the whole story.
 
 Try:
 

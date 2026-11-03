@@ -63,6 +63,7 @@
 //! ```
 
 pub mod authoring;
+pub mod bench;
 pub mod cache;
 pub mod captions;
 pub mod comp;

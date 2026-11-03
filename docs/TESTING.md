@@ -22,19 +22,28 @@ counted - the 22 binaries cover all seventeen crates, their integration
 tests and their binaries.
 
 The suite grows with the code: the correctness audit of 2026-11-01 added
-five tests after `e737286d`, so the next green engine lane on `main`
-should read 1360 + 8 + 30 = **1398**. A number in a session or a document
+five tests after `e737286d`, the ship-blockers and the roadmap's middle
+days added more, and the five timing benchmarks of 2026-11-03 are
+`#[ignore]`d - counted as skipped, never as run. A number in a session
+or a document is a snapshot of a commit; this table names its commit,
+which is the only honest way to hold one. A number in a session or a document
 is a snapshot of a commit; this table names its commit, which is the only
 honest way to hold one.
 
-## What the six skipped are
+## What the eleven skipped are
 
 `nextest` skips exactly the tests the source marks `#[ignore]`, and each
-of the six needs something a CI runner does not have:
+of them needs something a CI runner does not have - a hand, a machine,
+or a network:
 
 | Test | Why it is skipped |
 | --- | --- |
 | `concat-vision` `stabilize::track::time_a_frame_at_the_analysis_size` | a timing benchmark, run by hand |
+| `concat-motion` `bench::tests::time_the_timeline_document_for_the_whole_library` | a timing benchmark, run by hand |
+| `concat-motion` `bench::tests::time_track_sampling_across_a_six_second_span` | a timing benchmark, run by hand |
+| `concat-motion` `bench::tests::time_the_streaming_hash_over_a_128mib_asset` | a timing benchmark, run by hand |
+| `concat-motion` `bench::tests::time_the_comps_sweep_over_a_full_cache` | a timing benchmark, run by hand |
+| `concat-motion` `bench::tests::time_noise_at_the_particle_cap` | a timing benchmark, run by hand |
 | `concat-media` `decode::mediacodec_decodes_a_real_file_as_the_cpu_does` | needs Android and a sample in `CONCAT_DEVICE_SAMPLE` |
 | `concat-speech` `transcribe::transcribes_a_file_with_the_installed_model` | needs a downloaded `tiny.en` and `CONCAT_TRANSCRIBE_AUDIO` |
 | `concat-host` `openvid::the_library_end_to_end` | needs `OPENVID_INDEX` naming a real index |

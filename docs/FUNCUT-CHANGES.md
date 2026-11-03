@@ -1716,3 +1716,44 @@ that holds it - the README badge, FEATURES.md's inventory, FUNCUT.md,
 the Forge architecture page, the allowlist in `.forge/mcp.toml` and the
 allowlist's own count comments - held there by the count test that
 reads them.
+
+## 37. The motion engine's own numbers: the timing benchmarks, item 15
+
+Item 15 of the Geneva roadmap. The editor's benchmark
+(`scripts/benchmark.py`) measures the machine's whole pipeline on a real
+video; the motion engine's hot paths had no numbers of their own. Now
+they do: five timing tests in `concat-motion`'s `bench` module,
+`#[ignore]`d on the same contract the vision crate's
+`time_a_frame_at_the_analysis_size` set — a timing assertion is flaky by
+nature, so nothing fails a lane; run them by hand, in release, and read
+what they print:
+
+```sh
+cargo test -p concat-motion --release -- --ignored --nocapture bench
+```
+
+The five, each earning its place: **the timeline document** (the pure
+half of every bake - all eighteen presets turned into the JSON the
+sidecar reads; the floor under the engine), **track sampling** (the
+per-animated-property per-frame cost, with a spring and a steps curve on
+the segments, because a linear-only track is the cheap case wearing the
+expensive one's name), **the streaming hash** (the bake key's own cost
+over a 128 MiB generated asset - generated, and saying so, because a
+benchmark that pretends its file was a real clip is a boast), **the
+comps sweep** (the LRU walk the bounded cache runs once a bake, over 48
+manifested entries under a half budget), and **the noise field** (the
+organic layers at the particle cap, 64 motes a frame plus drift).
+
+The numbers a two-core sandbox printed on 3 November 2026 - a machine
+weaker than the laptop this fork is for, so floors, not boasts: the
+library's timeline documents in 0.3 ms, a track sample in 39 ns, the
+streaming hash at 689 MiB a second (a 2 GB plate keys in about three
+seconds, once), the 96 MiB sweep in 8 ms, and a frame of organic layers
+under a microsecond. The shape they draw: the document layer is
+microseconds, and the engine's real costs are the sidecar's frame draws
+and the disk's hashes - which is where the farm and the cache spend
+their effort.
+
+`TESTING.md`'s skipped table carries the five by name (the six skipped
+became the eleven), and `PERFORMANCE.md` carries the table of numbers
+and how to run them.

@@ -204,3 +204,34 @@ feature (Vulkan, Metal or DX12 — whichever the machine has), sharing a
 device with the window's renderer so a preview frame never leaves the
 GPU. Engine-only work never pays for the dependency tree: the feature
 is opt-in exactly because the tree is heavy.
+
+## The motion engine's own numbers: the timing benchmarks
+
+The editor's benchmark above measures the machine's whole pipeline on a
+real video. The motion engine's hot paths have their own suite — five
+timing tests, `#[ignore]`d so no lane ever fails on a clock, run by hand
+in release and read as printed numbers:
+
+```sh
+cd src
+cargo test -p concat-motion --release -- --ignored --nocapture bench
+```
+
+What each one measures, and the numbers a two-core sandbox printed on
+3 November 2026 (a machine weaker than the laptop this fork is for, so
+they are floors, not boasts):
+
+| Benchmark | What it costs | On a two-core sandbox |
+| --- | --- | --- |
+| `time_the_timeline_document_for_the_whole_library` | the pure half of every bake: all 18 presets turned into the JSON the sidecar reads | 0.3 ms the library, 0.1 ms the slowest comp |
+| `time_track_sampling_across_a_six_second_span` | the per-animated-property per-frame cost, 30 properties over 6 s at 30 fps | 39 ns a sample |
+| `time_the_streaming_hash_over_a_128mib_asset` | the bake key over a big asset — the megabyte-at-a-time walk that keeps a 2 GB plate at a megabyte of RAM | 689 MiB a second |
+| `time_the_comps_sweep_over_a_full_cache` | the LRU sweep a bounded cache runs once a bake: 48 entries, 96 MiB walked | 8 ms |
+| `time_noise_at_the_particle_cap` | the organic layers at their worst, 64 motes a frame plus drift | under a microsecond a frame |
+
+The shape the numbers draw: the document layer — the comp, its tracks,
+its noise — is microseconds to fractions of a millisecond, and the
+engine's real costs are the sidecar's frame draws and the disk's hashes,
+which is where the farm and the cache spend their effort. The streaming
+hash at two-thirds of a gigabyte a second says a 2 GB plate keys in
+about three seconds, once, and serves from the cache forever after.

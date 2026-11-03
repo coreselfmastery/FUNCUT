@@ -1,0 +1,103 @@
+{
+  "format": 1,
+  "id": "funcut.lower-third.minimal",
+  "name": "Minimal lower third",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30.0,
+  "duration": 5.0,
+  "background": {
+    "r": 0.0,
+    "g": 0.0,
+    "b": 0.0,
+    "a": 0.0
+  },
+  "assets": {},
+  "curves": {},
+  "nodes": [
+    {
+      "id": "third",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.0,
+              "y1": 0.0,
+              "x2": 0.58,
+              "y2": 1.0
+            }
+          },
+          {
+            "at": 0.28,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            }
+          }
+        ],
+        "position": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "point",
+              "x": 960.0,
+              "y": 552.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.0,
+              "y1": 0.0,
+              "x2": 0.58,
+              "y2": 1.0
+            }
+          },
+          {
+            "at": 0.5,
+            "value": {
+              "kind": "point",
+              "x": 960.0,
+              "y": 540.0
+            }
+          }
+        ]
+      },
+      "kind": "html",
+      "markup": "\n<div class=\"wrap\">\n  <div class=\"name\">Grace Hopper</div>\n  <div class=\"role\">REAR ADMIRAL · COMPILER PIONEER</div>\n  <div class=\"rule\"></div>\n</div>\n",
+      "css": "\n.wrap { position: absolute; left: 140px; top: 768px;\n  display: flex; flex-direction: column; align-items: flex-start; gap: 14px; }\n.name { font-family: Archivo, Inter, DejaVu Sans; font-size: 56px; font-weight: 800;\n  letter-spacing: -0.02em; color: #f4f1ea; line-height: 1;\n  text-shadow: 0 2px 14px rgba(0,0,0,0.55);\n  animation: rise 0.55s cubic-bezier(0.16,1,0.3,1) 0.12s both; }\n.role { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 18px; font-weight: 500;\n  letter-spacing: 0.22em; color: #9a978e; line-height: 1;\n  text-shadow: 0 2px 10px rgba(0,0,0,0.5);\n  animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.24s both; }\n.rule { width: 0px; height: 2px; background: rgba(244,241,234,0.35);\n  animation: draw 0.7s cubic-bezier(0.16,1,0.3,1) 0.34s both; }\n@keyframes rise { from { opacity: 0; transform: translateY(10px) } to { opacity: 1; transform: translateY(0) } }\n@keyframes draw { from { width: 0px } to { width: 380px } }\n",
+      "width": {
+        "px": 1920.0
+      },
+      "height": {
+        "px": 1080.0
+      }
+    }
+  ],
+  "slots": [
+    {
+      "node": "third",
+      "field": "text",
+      "sample": "Grace Hopper",
+      "label": "Name"
+    },
+    {
+      "node": "third",
+      "field": "text",
+      "sample": "REAR ADMIRAL · COMPILER PIONEER",
+      "label": "Role"
+    }
+  ]
+}

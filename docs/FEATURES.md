@@ -262,11 +262,12 @@ Nothing here is bundled whole; indexes download once, media arrives per pick.
   nodes, images, Lottie, nested comps; animated tracks on every numeric
   property; linear/steps/spring curves, springs solved analytically) baked
   by the **Geneva** sidecar — a browserless HTML/CSS renderer — to an RGBA
-  PNG sequence, or drawn by the native engine with no sidecar. 12 presets
-  (glass lower third, kinetic caption, stat triptych, wordmark sting, pull
-  quote, chapter chip, subscribe card, terminal, bar chart, split compare,
-  counting number, mesh backdrop) with slots an agent fills; 19 editing
-  ops; `motion_overlay` composites a transparent bake over real footage
+  PNG sequence, or drawn by the native engine with no sidecar. 18 presets
+  (glass and minimal lower thirds, kinetic caption, stat triptych, wordmark
+  sting, pull quote, chapter chip, numbered chapter, agenda list, subscribe
+  card, end card, terminal, code diff, bar chart, progress bar, split
+  compare, counting number, mesh backdrop) with slots an agent fills;
+  19 editing ops; `motion_overlay` composites a transparent bake over real footage
   (the honest alpha path); `captions_animate` turns a word-timed transcript
   into a kinetic caption video in one call; `concat-motion-agent` puts the
   same vocabulary on a CLI (`list/inspect/edit/frame/bake/reel/captions`).

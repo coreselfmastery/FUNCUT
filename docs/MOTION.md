@@ -86,26 +86,32 @@ on each side: the tool always promised "never above 4K for safety", and a
 
 ---
 
-## The library (`presets::ALL`, twelve comps)
+## The library (`presets::ALL`, eighteen comps)
 
 | Id | Category | What it is |
 | --- | --- | --- |
 | `funcut.lower-third.glass` | Lower thirds | an editorial lower third — an accent bar that wipes down, a kicker, a name, a role (no avatar block, no LIVE badge) — slot: Name |
+| `funcut.lower-third.minimal` | Lower thirds | the documentary read — a name, a mono role, a hairline rule that draws; no card, no shadow |
 | `funcut.caption.kinetic` | Captions | word-timed caption row with a highlight — slot: Transcript line |
 | `funcut.stats.triptych` | Stats | three stat cards, bars growing |
 | `funcut.chart.bars` | Charts | a bar chart that builds on |
+| `funcut.chart.progress` | Charts | one number, one fill — a wide hairline track and an accent bar that grows to the number |
 | `funcut.ticker.count` | Stats | one big number, label, drawn rule |
 | `funcut.sting.wordmark` | Stings | solid-ink wordmark with one accent full stop and a rule that draws under it — slots: Wordmark, Subline |
 | `funcut.quote.pull` | Quotes | pull quote with attribution |
 | `funcut.chapter.chip` | Chapters | number, label, underline |
+| `funcut.chapter.numbered` | Chapters | the full-frame section change — a kicker, a giant number, an accent rule, a title |
+| `funcut.chapter.agenda` | Chapters | the numbered list of what is coming, one row arriving a step after the one before |
 | `funcut.cta.subscribe` | Calls to action | a typographic ask — one accent word, an outlined button that settles once |
+| `funcut.cta.endcard` | Calls to action | the full-frame close — a kicker, a headline with one accent word, two buttons, a footer |
 | `funcut.code.terminal` | Code | terminal window, lines landing on `steps()` |
+| `funcut.code.diff` | Code | a code diff — a removed line in red, an added line in green, landing beat by beat |
 | `funcut.compare.split` | Before / after | split frame with a wipe and a knob |
 | `funcut.backdrop.mesh` | Backdrops | mesh gradient + grid light + vignette (opaque) |
 
 Each is an ordinary `Comp` with slots, so it is a template rather than a picture. `presets::build(id)`
-returns one by id, `presets::ALL` is the catalogue, and `dump_presets` writes all twelve out as JSON -
-`examples/comps/` holds that output for all twelve, plus the two hand-authored `cypher` comps and the
+returns one by id, `presets::ALL` is the catalogue, and `dump_presets` writes all eighteen out as JSON -
+`examples/comps/` holds that output for all eighteen, plus the two hand-authored `cypher` comps and the
 `showreel-v3` storyboard.
 
 ---
@@ -515,7 +521,7 @@ let report = critic::apply(&mut comp, &fixes);
 let after = critic::score(&comp);           // 10.0 - nothing left to name
 ```
 
-`examples/reel.rs` is a complete one: **thirteen scenes, twelve presets, 45.5 s**, with plates, a
+`examples/reel.rs` is a complete one: **nineteen scenes, all eighteen presets, 66.1 s**, with plates, a
 curtain and a synthesised score.
 
 ```sh
@@ -693,7 +699,7 @@ document.
 
 ## Authoring by hand: what the presets cannot say
 
-Twelve presets are a vocabulary; a film is a sentence. Every preset in `presets.rs` is written as a
+Eighteen presets are a vocabulary; a film is a sentence. Every preset in `presets.rs` is written as a
 document literal, and so is anything a designer or an agent writes: the JSON *is* the authoring
 surface, masks, effects, blends, gradients, dash and all five curve families included.
 
@@ -708,9 +714,9 @@ worked examples, and between them they exercise the whole model:
 | a CSS hairline grown by `@keyframes` inside markup | a markup card with `backdrop-filter`, a gradient-clipped heading and a growing bar |
 
 Measured bake: `cypher.spectrum` is 162 frames of 1080p in 23 s on two cores (7 fps); the opener is
-~10 s for 132 frames. Both are slotted into `examples/reel.rs`'s shape by a storyboard: seventeen
-scenes, twelve presets plus the two hand-authored comps, 54.6 s, 1638 frames at 1080p30 rendered in
-121 s on two cores (13.6 fps end to end).
+~10 s for 132 frames. Both are slotted into a storyboard of reel.rs's shape (`showreel-v3.json`):
+seventeen scenes, twelve presets plus the two hand-authored comps, 54.6 s, 1638 frames at 1080p30
+rendered in 121 s on two cores (13.6 fps end to end).
 
 ### What Geneva 1.6.0 does and does not draw
 

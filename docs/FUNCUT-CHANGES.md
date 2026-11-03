@@ -1422,3 +1422,50 @@ read it already had), the allow-list a hostname parse a call, the pin
 nothing at all, and the batch's rerank the budget `openvid_search`
 already ran per query. Eleven quality scenes hold their floors; six
 golden frames hold at DSSIM 0.00000.
+
+## 31. The library at eighteen: the six comps the vocabulary lacked
+
+The preset library was twelve strong and thin in the places a real
+video is made: one lower third, one chapter device, one code device,
+one chart, one call to action. Geneva roadmap item 04 - eighteen
+comps - closes the six gaps that were felt, not counted:
+
+- **`funcut.lower-third.minimal`** - the documentary read: a name, a
+  mono role, a hairline rule that draws from the left. No card, no
+  shadow, for footage the glass card would have shouted over.
+- **`funcut.chapter.numbered`** - the full-frame section change: a
+  kicker, a giant number, an accent rule that draws, a title. The chip
+  is the corner badge; this is the door.
+- **`funcut.chapter.agenda`** - the table of contents: four numbered
+  rows, each arriving a step after the one before, hairlines between.
+- **`funcut.cta.endcard`** - the close: a kicker, a headline with one
+  accent word, two buttons that settle one after the other, a footer.
+  The subscribe card is the mid-roll ask; this is the last frame.
+- **`funcut.code.diff`** - the second code device: a file header, a
+  removed line in red, an added line in green, context between,
+  landing on `steps()` a beat apart. Where the terminal types a
+  session, the diff shows a change.
+- **`funcut.chart.progress`** - one number, one fill: a wide hairline
+  track and an accent bar that grows to the number it names.
+
+All six carry the library's one design system (paper ink, editorial
+gold, Archivo/Inter/JetBrains Mono), staggered CSS reveals, a spring
+only where something is placed, and slots an agent fills - so the
+`every_slot_can_be_filled` and `every_preset_builds_and_validates`
+tests hold them to the library's own bar. The transitions side of
+item 04 was already met: the catalogue's six choreographed cuts
+(whip-pan, zoom-through, inverse-zoom, rack-focus, velocity-match,
+stagger-exit) shipped with the overlap work in section 26.
+
+Two drifts found and fixed on the way: `examples/reel.rs` still filled
+a `Numbers` slot on the stat triptych that no longer exists (the reel
+is an example, not a test, so nothing failed when the slot was
+renamed - it failed the moment anyone ran it), and the committed
+`examples/comps/` dumps predated the counting number's restyle. The
+reel now plays all eighteen presets - nineteen scenes, 66.1 s - and
+the dumps are the eighteen the source builds. Every new comp was
+baked with the pinned sidecar 1.6.0 and its frames read before
+landing; `docs/MOTION.md`, `docs/FEATURES.md`, `docs/MCP.md`, the
+motion skill and the `motion_presets` tool description all say
+eighteen now, because a catalogue the docs miscount is a catalogue an
+agent misuses.

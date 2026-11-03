@@ -51,8 +51,8 @@
         ]
       },
       "kind": "html",
-      "markup": "<div class=\"sheet\"><div class=\"head\"><div class=\"t\">What the motion layer adds</div><div class=\"s\">% EFFECT, CS</div></div><div class=\"plot\"><div class=\"col\"><div class=\"bar\" style=\"height: 96%; background: #22d3c5; animation-delay: 0.20s\"></div><div class=\"lab\">Linear light</div></div><div class=\"col\"><div class=\"bar\" style=\"height: 74%; background: #8b5cf6; animation-delay: 0.32s\"></div><div class=\"lab\">Alpha PNG</div></div><div class=\"col\"><div class=\"bar\" style=\"height: 58%; background: #ffc247; animation-delay: 0.44s\"></div><div class=\"lab\">Spring keys</div></div><div class=\"col\"><div class=\"bar\" style=\"height: 41%; background: #fb7185; animation-delay: 0.56s\"></div><div class=\"lab\">Lottie</div></div></div></div>",
-      "css": "\n.sheet { position: absolute; left: 160px; width: 1600px; top: 180px; height: 720px;\n  display: flex; flex-direction: column; gap: 18px; }\n.head { display: flex; flex-direction: row; align-items: baseline; gap: 16px; }\n.t { font-family: Archivo, Inter, DejaVu Sans; font-size: 46px; font-weight: 800; color: #f7f9ff; }\n.s { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 16px; letter-spacing: 0.22em; color: #9fb0bf; }\n.plot { position: relative; flex: 1; display: flex; flex-direction: row; align-items: flex-end;\n  gap: 56px; padding: 0 20px; border-bottom: 2px solid rgba(247,249,255,0.16); }\n.col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; }\n.bar { width: 100%; border-radius: 10px 10px 0 0; transform-origin: bottom center;\n  animation: rise 1s cubic-bezier(0.16,1,0.3,1) both; }\n.lab { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 17px; letter-spacing: 0.12em; color: #9fb0bf;\n  padding-top: 14px; }\n@keyframes rise { from { transform: scaleY(0) } to { transform: scaleY(1) } }\n",
+      "markup": "<div class=\"sheet\"><div class=\"head\"><div class=\"t\">Where the money went</div><div class=\"s\">SHARE OF TOTAL, %</div></div><div class=\"plot\"><div class=\"col\"><div class=\"bar\" style=\"height: 96%; background: #d9a441; animation-delay: 0.20s\"></div><div class=\"lab\">Q1</div></div><div class=\"col\"><div class=\"bar\" style=\"height: 74%; background: rgba(217,164,65,0.68); animation-delay: 0.32s\"></div><div class=\"lab\">Q2</div></div><div class=\"col\"><div class=\"bar\" style=\"height: 58%; background: rgba(217,164,65,0.46); animation-delay: 0.44s\"></div><div class=\"lab\">Q3</div></div><div class=\"col\"><div class=\"bar\" style=\"height: 41%; background: rgba(217,164,65,0.28); animation-delay: 0.56s\"></div><div class=\"lab\">Q4</div></div></div></div>",
+      "css": "\n.sheet { position: absolute; left: 160px; width: 1600px; top: 180px; height: 720px;\n  display: flex; flex-direction: column; gap: 18px; }\n.head { display: flex; flex-direction: row; align-items: baseline; gap: 16px; }\n.t { font-family: Archivo, Inter, DejaVu Sans; font-size: 46px; font-weight: 800; color: #f4f1ea; }\n.s { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 16px; letter-spacing: 0.22em; color: #9a978e; }\n.plot { position: relative; flex: 1; display: flex; flex-direction: row; align-items: flex-end;\n  gap: 56px; padding: 0 20px; border-bottom: 2px solid rgba(244,241,234,0.16); }\n.col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; }\n.bar { width: 100%; border-radius: 10px 10px 0 0; transform-origin: bottom center;\n  animation: rise 1s cubic-bezier(0.16,1,0.3,1) both; }\n.lab { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 17px; letter-spacing: 0.12em; color: #9a978e;\n  padding-top: 14px; }\n@keyframes rise { from { transform: scaleY(0) } to { transform: scaleY(1) } }\n",
       "width": {
         "px": 1920.0
       },
@@ -65,8 +65,38 @@
     {
       "node": "sheet",
       "field": "text",
-      "sample": "What the motion layer adds",
+      "sample": "Where the money went",
       "label": "Chart title"
+    },
+    {
+      "node": "sheet",
+      "field": "text",
+      "sample": "SHARE OF TOTAL, %",
+      "label": "Chart subline"
+    },
+    {
+      "node": "sheet",
+      "field": "text",
+      "sample": "Q1",
+      "label": "Bar 1 label"
+    },
+    {
+      "node": "sheet",
+      "field": "text",
+      "sample": "Q2",
+      "label": "Bar 2 label"
+    },
+    {
+      "node": "sheet",
+      "field": "text",
+      "sample": "Q3",
+      "label": "Bar 3 label"
+    },
+    {
+      "node": "sheet",
+      "field": "text",
+      "sample": "Q4",
+      "label": "Bar 4 label"
     }
   ]
 }

@@ -1,0 +1,96 @@
+{
+  "format": 1,
+  "id": "funcut.chapter.agenda",
+  "name": "Agenda list",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30.0,
+  "duration": 5.0,
+  "background": {
+    "r": 0.0,
+    "g": 0.0,
+    "b": 0.0,
+    "a": 0.0
+  },
+  "assets": {},
+  "curves": {},
+  "nodes": [
+    {
+      "id": "agenda",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.0,
+              "y1": 0.0,
+              "x2": 0.58,
+              "y2": 1.0
+            }
+          },
+          {
+            "at": 0.3,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "html",
+      "markup": "\n<div class=\"wrap\">\n  <div class=\"head\">WHAT IS COMING</div>\n  <div class=\"row r1\"><div class=\"n\">01</div><div class=\"t\">The comp document</div></div>\n  <div class=\"row r2\"><div class=\"n\">02</div><div class=\"t\">The looks</div></div>\n  <div class=\"row r3\"><div class=\"n\">03</div><div class=\"t\">The critic</div></div>\n  <div class=\"row r4\"><div class=\"n\">04</div><div class=\"t\">The farm</div></div>\n</div>\n",
+      "css": "\n.wrap { position: absolute; left: 220px; top: 292px; width: 980px;\n  display: flex; flex-direction: column; align-items: stretch; }\n.head { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 17px; font-weight: 600;\n  letter-spacing: 0.3em; color: #d9a441; padding-bottom: 26px;\n  animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.1s both; }\n.row { display: flex; flex-direction: row; align-items: baseline; gap: 36px;\n  padding: 25px 4px; border-bottom: 1px solid rgba(244,241,234,0.14); }\n.n { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 20px; font-weight: 600; color: #d9a441; }\n.t { font-family: Archivo, Inter, DejaVu Sans; font-size: 42px; font-weight: 700;\n  letter-spacing: -0.01em; color: #f4f1ea; }\n.r1 { animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.20s both; }\n.r2 { animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.32s both; }\n.r3 { animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.44s both; }\n.r4 { animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.56s both; }\n@keyframes rise { from { opacity: 0; transform: translateY(12px) } to { opacity: 1; transform: translateY(0) } }\n",
+      "width": {
+        "px": 1920.0
+      },
+      "height": {
+        "px": 1080.0
+      }
+    }
+  ],
+  "slots": [
+    {
+      "node": "agenda",
+      "field": "text",
+      "sample": "WHAT IS COMING",
+      "label": "Heading"
+    },
+    {
+      "node": "agenda",
+      "field": "text",
+      "sample": "The comp document",
+      "label": "Row 1"
+    },
+    {
+      "node": "agenda",
+      "field": "text",
+      "sample": "The looks",
+      "label": "Row 2"
+    },
+    {
+      "node": "agenda",
+      "field": "text",
+      "sample": "The critic",
+      "label": "Row 3"
+    },
+    {
+      "node": "agenda",
+      "field": "text",
+      "sample": "The farm",
+      "label": "Row 4"
+    }
+  ]
+}

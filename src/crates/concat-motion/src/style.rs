@@ -368,6 +368,7 @@ mod tests {
             background: Rgba::new(0.0, 0.0, 0.0, 0.0),
             assets: BTreeMap::new(),
             curves: BTreeMap::new(),
+            comps: Default::default(),
             nodes: vec![Node {
                 id: "card".into(),
                 parent: None,

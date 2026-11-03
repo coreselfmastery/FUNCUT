@@ -1,0 +1,106 @@
+{
+  "format": 1,
+  "id": "funcut.chapter.numbered",
+  "name": "Numbered chapter",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30.0,
+  "duration": 4.5,
+  "background": {
+    "r": 0.0,
+    "g": 0.0,
+    "b": 0.0,
+    "a": 0.0
+  },
+  "assets": {},
+  "curves": {},
+  "nodes": [
+    {
+      "id": "chapter",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.0,
+              "y1": 0.0,
+              "x2": 0.58,
+              "y2": 1.0
+            }
+          },
+          {
+            "at": 0.25,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            }
+          }
+        ],
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.965
+            },
+            "curve": {
+              "kind": "spring",
+              "stiffness": 260.0,
+              "damping": 15.0,
+              "mass": 1.0
+            }
+          },
+          {
+            "at": 0.55,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "html",
+      "markup": "\n<div class=\"wrap\">\n  <div class=\"kicker\">CHAPTER THREE</div>\n  <div class=\"num\">03</div>\n  <div class=\"rule\"></div>\n  <div class=\"title\">The Machine That Draws</div>\n</div>\n",
+      "css": "\n.wrap { position: absolute; inset: 0; display: flex; flex-direction: column;\n  justify-content: center; align-items: flex-start; padding-left: 220px; gap: 24px; }\n.kicker { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 17px; font-weight: 600;\n  letter-spacing: 0.3em; color: #d9a441;\n  animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.1s both; }\n.num { font-family: Archivo, Inter, DejaVu Sans; font-size: 290px; font-weight: 800;\n  letter-spacing: -0.045em; color: #f4f1ea; line-height: 0.9;\n  animation: rise 0.6s cubic-bezier(0.16,1,0.3,1) 0.2s both; }\n.rule { width: 0px; height: 5px; border-radius: 3px; background: #d9a441;\n  animation: draw 0.85s cubic-bezier(0.16,1,0.3,1) 0.5s both; }\n.title { font-family: Inter, DejaVu Sans; font-size: 40px; font-weight: 400;\n  color: #9a978e; line-height: 1.2;\n  animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.58s both; }\n@keyframes rise { from { opacity: 0; transform: translateY(14px) } to { opacity: 1; transform: translateY(0) } }\n@keyframes draw { from { width: 0px } to { width: 460px } }\n",
+      "width": {
+        "px": 1920.0
+      },
+      "height": {
+        "px": 1080.0
+      }
+    }
+  ],
+  "slots": [
+    {
+      "node": "chapter",
+      "field": "text",
+      "sample": "CHAPTER THREE",
+      "label": "Kicker"
+    },
+    {
+      "node": "chapter",
+      "field": "text",
+      "sample": "03",
+      "label": "Number"
+    },
+    {
+      "node": "chapter",
+      "field": "text",
+      "sample": "The Machine That Draws",
+      "label": "Title"
+    }
+  ]
+}

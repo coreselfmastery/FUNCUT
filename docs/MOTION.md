@@ -63,6 +63,43 @@ A node is `{ id, parent?, start, duration, transform, opacity, blend, mask?, eff
 | `lottie` | a Lottie / dotLottie asset |
 | `composition` | another comp, placed: define a sting once, use it nine times |
 
+### Sub-compositions: scoped, placed
+
+A `composition` node places a comp **this document carries under `comps`**, any number of times, each
+placement with its own timing and transform — the id names an entry in the same document, never
+another document's comp by id:
+
+```json
+{
+  "comps": {
+    "sting": {
+      "id": "funcut.sting.unit", "width": 640, "height": 360, "duration": 1.2,
+      "nodes": [ ... the sting, once ... ]
+    }
+  },
+  "nodes": [
+    { "id": "one",   "kind": "composition", "comp": "sting", "transform": { "position": [400, 540] } },
+    { "id": "two",   "kind": "composition", "comp": "sting", "start": 0.9,
+      "transform": { "position": [960, 540], "scale": 0.9 } },
+    { "id": "three", "kind": "composition", "comp": "sting", "start": 1.8,
+      "transform": { "position": [1520, 540], "scale": 0.8, "rotation": -6 } }
+  ]
+}
+```
+
+Each sub-comp is a **scope of its own**: its node ids, assets, curves and slots belong to it, a parent
+and a child may both have a node called `card` and an asset called `logo`, and a diagnostic inside one
+is pointed at `/comps/{name}/...`. Nesting runs eight levels deep (the engine's own cap) and never in a
+circle — a comp that contains itself through any chain is refused at `validate`, with a pointer into
+the document, before the engine's E207. The bake key covers every scope's files: changing the logo
+*inside the sting* is a different bake, the same way changing the comp's own logo is.
+
+The timeline engine resolves composition names from one top-level map, so the mapping flattens by
+scope — the sting's `logo` lands in the timeline as `sting::logo`, a sting inside an `outer` comp as
+`outer::sting` — and the document never knows: it scopes, the timeline flattens.
+`examples/stings.rs` is the worked proof: one definition, three placements, three sizes, the third
+tilted.
+
 **Tracks** are keyed at *fractions of the node's span*, so an entrance survives retiming, trimming and
 nesting. Property names: `position`, `scale`, `rotation`, `opacity`, `blur`, `dash`, and `param:<key>`
 for an effect parameter. Values are `number | point | size | color`; mismatched kinds step at halfway,
@@ -86,26 +123,32 @@ on each side: the tool always promised "never above 4K for safety", and a
 
 ---
 
-## The library (`presets::ALL`, twelve comps)
+## The library (`presets::ALL`, eighteen comps)
 
 | Id | Category | What it is |
 | --- | --- | --- |
 | `funcut.lower-third.glass` | Lower thirds | an editorial lower third — an accent bar that wipes down, a kicker, a name, a role (no avatar block, no LIVE badge) — slot: Name |
+| `funcut.lower-third.minimal` | Lower thirds | the documentary read — a name, a mono role, a hairline rule that draws; no card, no shadow |
 | `funcut.caption.kinetic` | Captions | word-timed caption row with a highlight — slot: Transcript line |
 | `funcut.stats.triptych` | Stats | three stat cards, bars growing |
 | `funcut.chart.bars` | Charts | a bar chart that builds on |
+| `funcut.chart.progress` | Charts | one number, one fill — a wide hairline track and an accent bar that grows to the number |
 | `funcut.ticker.count` | Stats | one big number, label, drawn rule |
 | `funcut.sting.wordmark` | Stings | solid-ink wordmark with one accent full stop and a rule that draws under it — slots: Wordmark, Subline |
 | `funcut.quote.pull` | Quotes | pull quote with attribution |
 | `funcut.chapter.chip` | Chapters | number, label, underline |
+| `funcut.chapter.numbered` | Chapters | the full-frame section change — a kicker, a giant number, an accent rule, a title |
+| `funcut.chapter.agenda` | Chapters | the numbered list of what is coming, one row arriving a step after the one before |
 | `funcut.cta.subscribe` | Calls to action | a typographic ask — one accent word, an outlined button that settles once |
+| `funcut.cta.endcard` | Calls to action | the full-frame close — a kicker, a headline with one accent word, two buttons, a footer |
 | `funcut.code.terminal` | Code | terminal window, lines landing on `steps()` |
+| `funcut.code.diff` | Code | a code diff — a removed line in red, an added line in green, landing beat by beat |
 | `funcut.compare.split` | Before / after | split frame with a wipe and a knob |
 | `funcut.backdrop.mesh` | Backdrops | mesh gradient + grid light + vignette (opaque) |
 
 Each is an ordinary `Comp` with slots, so it is a template rather than a picture. `presets::build(id)`
-returns one by id, `presets::ALL` is the catalogue, and `dump_presets` writes all twelve out as JSON -
-`examples/comps/` holds that output for all twelve, plus the two hand-authored `cypher` comps and the
+returns one by id, `presets::ALL` is the catalogue, and `dump_presets` writes all eighteen out as JSON -
+`examples/comps/` holds that output for all eighteen, plus the two hand-authored `cypher` comps and the
 `showreel-v3` storyboard.
 
 ---
@@ -515,7 +558,7 @@ let report = critic::apply(&mut comp, &fixes);
 let after = critic::score(&comp);           // 10.0 - nothing left to name
 ```
 
-`examples/reel.rs` is a complete one: **thirteen scenes, twelve presets, 45.5 s**, with plates, a
+`examples/reel.rs` is a complete one: **nineteen scenes, all eighteen presets, 66.1 s**, with plates, a
 curtain and a synthesised score.
 
 ```sh
@@ -671,9 +714,11 @@ let caption = typography::karaoke(&words, 2.4, "caption", &style, &kinetic);
 | Piece | What it builds |
 | --- | --- |
 | `Stagger` — `Word` \| `Char` | one `<span>` per unit, each with its own inline `animation` and `animation-delay: i × delay` — no `calc()`, no custom properties, no cascade order to trust |
-| `Entrance` — `blur-in` \| `slide-up` \| `scale-in` | the three named entrance presets, as `@keyframes` with the individual `translate`/`scale` **inside** the rule (the static-transform guard reads the output), the rises in **pixels** computed from the style's own font size — the engine's keyframes take `px` and `%` only, and an `em` there is E442 |
+| `Entrance` — `blur-in` \| `slide-up` \| `slide-down` \| `slide-from-left` \| `slide-from-right` \| `scale-in` \| `track-in` | the named entrance presets, as `@keyframes` with the individual `translate`/`scale` **inside** the rule (the static-transform guard reads the output), the rises in **pixels** computed from the style's own font size — the engine's keyframes take `px` and `%` only, and an `em` there is E442. `track-in` is the one that animates `letter-spacing` too — measured: the engine interpolates it (a 90 px line's right edge travels 319 px), the cinematic title arrival. A clip-path wipe is **not** offered: `inset()` is refused outright and a `polygon()` from-to pair jumps at the delay's end instead of wiping — measured, not read from a manual |
 | `WeightFlex` — `flexing_weight(100, 900)` | a **static `font-weight` per unit**, the first at `from`, the last at `to`, interpolated between — the engine snaps a static weight to the family's own instances and draws it (measured: 100 against 900 is 1.74× the ink through this very builder), which is the one weight it draws; the animation this was once written as (`font-variation-settings` in `@keyframes`) is refused by the engine, and `css::refused_weights` refuses it at `validate` now, naming the fix |
 | `karaoke(&words, …)` | the word-synced caption: each word one animation that appears it, holds it **lit** in the highlight colour for most of its own length, and settles it back — the Whisper word times wired straight into the CSS; the highlight is a colour trip, the engine being unable to animate a weight |
+| `paragraph(…, &[lines], …)` | the multi-line reveal: one `<div>` per line, staggered `Kinetic::lines()`' 180 ms apart, the weight ramp riding the lines — the editorial title sequence. An empty line takes no beat: a stanza break is not a wait on nothing |
+| `gradient_headline(…, from, to)` | the ink is a clip, not a colour: a `linear-gradient` behind `background-clip: text`, the fill transparent — measured to clip into the staggered spans. The cascade order is the thing a hand author gets wrong; the builder cannot |
 | `Kinetic::curved(curve)` | any of the five curve families, as the CSS timing function — `Curve::css()` writes `steps()`, `linear()` and `cubic-bezier()` natively, and approximates a spring by the overshoot its own damping ratio dictates |
 
 In `captions_animate`, **`kinetic: true`** (or an object spelling out the
@@ -684,8 +729,9 @@ flag: the line breaking, the re-anchoring to the frame and the guard all
 stay the code they already were.
 
 `examples/typography.rs` is the done-when as a runnable comp: a
-weight-ramped headline, three words staggered 80 ms apart, and a
-karaoke caption from a transcript — validated, mapped to a timeline,
+weight-ramped headline, three words staggered 80 ms apart, a karaoke
+caption from a transcript, a two-line paragraph and a gradient-ink
+headline arriving on its tracking — validated, mapped to a timeline,
 baked by the pinned engine (90 frames of 1080p), and written as a
 document.
 
@@ -693,9 +739,14 @@ document.
 
 ## Authoring by hand: what the presets cannot say
 
-Twelve presets are a vocabulary; a film is a sentence. Every preset in `presets.rs` is written as a
+Eighteen presets are a vocabulary; a film is a sentence. Every preset in `presets.rs` is written as a
 document literal, and so is anything a designer or an agent writes: the JSON *is* the authoring
 surface, masks, effects, blends, gradients, dash and all five curve families included.
+
+Motion made *elsewhere* has a door in too: the `geneva-adapter` crate reads a Lottie (bodymovin)
+document as a comp and applies a GSAP-style timeline to a comp's nodes as tracks — nothing converts
+silently, every skip and approximation is a note the caller can read. `docs/ADAPTERS.md` is that
+crate's reference, and `geneva-adapt` is its command line.
 
 `src/crates/concat-motion/examples/comps/cypher.opener.json` and `cypher.spectrum.json` are the two
 worked examples, and between them they exercise the whole model:
@@ -708,9 +759,9 @@ worked examples, and between them they exercise the whole model:
 | a CSS hairline grown by `@keyframes` inside markup | a markup card with `backdrop-filter`, a gradient-clipped heading and a growing bar |
 
 Measured bake: `cypher.spectrum` is 162 frames of 1080p in 23 s on two cores (7 fps); the opener is
-~10 s for 132 frames. Both are slotted into `examples/reel.rs`'s shape by a storyboard: seventeen
-scenes, twelve presets plus the two hand-authored comps, 54.6 s, 1638 frames at 1080p30 rendered in
-121 s on two cores (13.6 fps end to end).
+~10 s for 132 frames. Both are slotted into a storyboard of reel.rs's shape (`showreel-v3.json`):
+seventeen scenes, twelve presets plus the two hand-authored comps, 54.6 s, 1638 frames at 1080p30
+rendered in 121 s on two cores (13.6 fps end to end).
 
 ### What Geneva 1.6.0 does and does not draw
 

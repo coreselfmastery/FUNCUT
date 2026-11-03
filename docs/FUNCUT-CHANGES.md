@@ -1422,3 +1422,179 @@ read it already had), the allow-list a hostname parse a call, the pin
 nothing at all, and the batch's rerank the budget `openvid_search`
 already ran per query. Eleven quality scenes hold their floors; six
 golden frames hold at DSSIM 0.00000.
+
+## 31. The library at eighteen: the six comps the vocabulary lacked
+
+The preset library was twelve strong and thin in the places a real
+video is made: one lower third, one chapter device, one code device,
+one chart, one call to action. Geneva roadmap item 04 - eighteen
+comps - closes the six gaps that were felt, not counted:
+
+- **`funcut.lower-third.minimal`** - the documentary read: a name, a
+  mono role, a hairline rule that draws from the left. No card, no
+  shadow, for footage the glass card would have shouted over.
+- **`funcut.chapter.numbered`** - the full-frame section change: a
+  kicker, a giant number, an accent rule that draws, a title. The chip
+  is the corner badge; this is the door.
+- **`funcut.chapter.agenda`** - the table of contents: four numbered
+  rows, each arriving a step after the one before, hairlines between.
+- **`funcut.cta.endcard`** - the close: a kicker, a headline with one
+  accent word, two buttons that settle one after the other, a footer.
+  The subscribe card is the mid-roll ask; this is the last frame.
+- **`funcut.code.diff`** - the second code device: a file header, a
+  removed line in red, an added line in green, context between,
+  landing on `steps()` a beat apart. Where the terminal types a
+  session, the diff shows a change.
+- **`funcut.chart.progress`** - one number, one fill: a wide hairline
+  track and an accent bar that grows to the number it names.
+
+All six carry the library's one design system (paper ink, editorial
+gold, Archivo/Inter/JetBrains Mono), staggered CSS reveals, a spring
+only where something is placed, and slots an agent fills - so the
+`every_slot_can_be_filled` and `every_preset_builds_and_validates`
+tests hold them to the library's own bar. The transitions side of
+item 04 was already met: the catalogue's six choreographed cuts
+(whip-pan, zoom-through, inverse-zoom, rack-focus, velocity-match,
+stagger-exit) shipped with the overlap work in section 26.
+
+Two drifts found and fixed on the way: `examples/reel.rs` still filled
+a `Numbers` slot on the stat triptych that no longer exists (the reel
+is an example, not a test, so nothing failed when the slot was
+renamed - it failed the moment anyone ran it), and the committed
+`examples/comps/` dumps predated the counting number's restyle. The
+reel now plays all eighteen presets - nineteen scenes, 66.1 s - and
+the dumps are the eighteen the source builds. Every new comp was
+baked with the pinned sidecar 1.6.0 and its frames read before
+landing; `docs/MOTION.md`, `docs/FEATURES.md`, `docs/MCP.md`, the
+motion skill and the `motion_presets` tool description all say
+eighteen now, because a catalogue the docs miscount is a catalogue an
+agent misuses.
+
+## 32. Typography's second pass: the directional sweeps, the tracking entrance, the paragraph and the gradient ink
+
+Geneva roadmap item 13. The typography builder had three entrances,
+two staggers and one treatment; the measured engine facts said three
+more were free for the taking, and the module's own doctrine - build
+what the engine draws, refuse what it does not - picked them:
+
+- **Four entrances** - `slide-down`, `slide-from-left`,
+  `slide-from-right` (the directional sweeps a third, a badge and a
+  timestamp arrive on, the rises in pixels off the style's own size)
+  and **`track-in`**, the cinematic title arrival: `letter-spacing`
+  animates from `0.6 x size` to the style's rest while the line fades
+  up. That last one rides a newly measured fact - the pinned engine
+  **interpolates `letter-spacing` inside keyframes** (a 90 px line's
+  right edge measured travelling 319 px), where the module's older
+  facts are all refusals.
+- **`paragraph(&[lines], ..)`** - the multi-line reveal, one `<div>`
+  per line staggered `Kinetic::lines()`' 180 ms apart, the weight ramp
+  riding the lines as it rides the words. An empty line takes no beat:
+  a stanza break is not a 180 ms wait on nothing. Measured rendering:
+  three lines at 180 ms stagger, each rising on the settle curve.
+- **`gradient_headline(.., from, to)`** - the ink is a clip, not a
+  colour: `linear-gradient` behind `background-clip: text`, the fill
+  transparent, written after the base stylesheet so the cascade cannot
+  lose it. Measured: the clip carries into the staggered inline spans -
+  gold into ink across three words, drawn.
+
+And one negative finding, held to the same standard: a **clip-path
+wipe is not offered**. `inset()` in keyframes is refused outright
+(E442, its own error naming `polygon()`), and a `polygon()` from-to
+pair does not interpolate - it jumps to its end state at the delay's
+edge (measured: zero ink at 0.2 s, full ink at 0.3 s, nothing between).
+The module docs and MOTION.md both say so, so the next hand author
+does not spend a bake discovering it.
+
+The example (`examples/typography.rs`) grew to four nodes - the weight
+ramp, the karaoke caption, a two-line paragraph and a gradient headline
+arriving on its tracking - and its frames were read before landing: a
+layout that clipped its own paragraph was caught by exactly that
+discipline and restacked. Six tests hold the new surface to the
+module's own bar, the static-transform guard included.
+
+## 33. Scoped sub-compositions: the sting placed nine times, the scope kept
+
+Geneva roadmap item 05. The `composition` node has said "define a
+sting once, use it nine times" since the node table was written, but
+nothing behind it was: the timeline mapping never emitted the
+engine's `compositions` map, a placement's name resolved against
+nothing, and the promise was a dead link. Now:
+
+- **The document carries its comps**: `comps` maps a name to a whole
+  comp document. A `composition` node places one - once or nine
+  times, each placement with its own timing and transform. The name
+  resolves **inside the same document**, which is the scoping rule:
+  no reaching into another document's comps by id.
+- **Each sub-comp is a scope**: its node ids, assets, curves and
+  slots are its own; a parent and a child may both have a `card` and
+  a `logo`; a diagnostic inside one is pointed at `/comps/{name}/...`.
+  Cycles are refused at `validate` with a pointer into the document
+  (the engine's E207 after, ours first), and so is nesting past the
+  engine's eight levels.
+- **The timeline flattens by scope**: the engine resolves composition
+  names from one top-level map, so the mapping spells the sting's
+  `logo` as `sting::logo` and an `outer` comp's sting as
+  `outer::sting` - the document scopes, the timeline flattens, and
+  neither knows the other's business. Staging copies every scope's
+  files under the same spelling, with the same `.part`-then-rename
+  discipline, and the bake's assets key covers them: changing the
+  logo *inside the sting* is a different bake, measured by test.
+
+A real bug found on the way, by rendering the thing: `source_of`
+wrote an image node's `fit` **inside the timeline source**, which the
+engine refuses as E101 (`asset` is the only field an image source
+takes) - so every comp with an image node failed to bake through
+`Geneva::bake` (the MCP `motion_bake` path and the agent CLI), while
+the sequence path, which writes `fit` on the clip, was green. The
+comp path now writes it on the clip too, and `examples/stings.rs` -
+the worked proof: one definition, three placements, three sizes, the
+third tilted, rendered with the pinned sidecar and read before
+landing - carries an image inside its sting for exactly this reason.
+
+## 34. The adapters: Lottie read as a document, GSAP written as tracks
+
+Item 03 of the Geneva roadmap. `geneva-adapter` is a new workspace
+crate — the first new crate since the fork's own motion lane — with one
+rule carried through both of its halves: **nothing converts silently.**
+
+The Lottie half reads a bodymovin document into a comp: solids,
+images, shape layers (rectangles, ellipses, paths), shape groups with
+their own transforms, keyframed properties with their bezier and hold
+eases, layer parenting, in/out points, precomps nested to eight deep
+with the depth limit the cycle detector. The GSAP half applies a
+GSAP-style timeline — tweens on `x`, `y`, `scale`, `rotation`,
+`opacity` and `blur` with `delay`, `stagger`, `repeat`, `yoyo` and the
+named ease families — to a comp's nodes as tracks, `x` and `y` written
+as one position track the way a position moves.
+
+Everything the comp vocabulary has no answer for is skipped with a note
+naming the layer and the feature — text layers, mattes, masks, trim
+paths, gradient paints, repeaters, effects, 3D, hidden layers — and
+everything that converts approximately is approximated *and said*: a
+non-uniform scale takes the mean, a curved motion path straightens, an
+animated shape size holds its first value, a group paint over several
+shapes splits per shape, an elastic ease reads as the library's pop
+spring. A conversion with no notes lost nothing the source document
+said; a document whose every layer is skipped is refused with the
+comp's own words, because an empty comp is not a conversion either.
+
+Two order rules are pinned by the tests because they are the ones the
+reference players render by: the first layer of a `layers` array is
+the front, and within a shape list later items paint on top. Paths are
+re-based to their own bounding box and the box placed where the source
+drew it; they are drawn by the native engine only, as any hand-written
+path is, and the bake says so per node.
+
+The crate is deliberately dependency-light — `concat-motion`, serde,
+serde_json, thiserror, nothing else — because an adapter that reads a
+document should not pull a pixel library to do it. It carries 42
+tests: every supported feature and every refusal has a fixture, the
+output of every fixture validates *and lints* by the library's own
+rules, and the GSAP fixtures are built through the Lottie adapter so
+the two halves are proven against each other's output. A
+`geneva-adapt` binary puts both verbs on the command line for the
+agent and the curious; `docs/ADAPTERS.md` is the reference. The
+adapters are not a player — a `.lottie` file already plays through the
+Lottie engine — they are for when motion made elsewhere should become
+document: editable, lintable, fillable by a slot, baked by whichever
+engine the project prefers.

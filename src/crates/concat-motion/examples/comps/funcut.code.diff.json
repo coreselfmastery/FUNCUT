@@ -1,0 +1,84 @@
+{
+  "format": 1,
+  "id": "funcut.code.diff",
+  "name": "Code diff",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30.0,
+  "duration": 4.5,
+  "background": {
+    "r": 0.0,
+    "g": 0.0,
+    "b": 0.0,
+    "a": 0.0
+  },
+  "assets": {},
+  "curves": {},
+  "nodes": [
+    {
+      "id": "diff",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.0,
+              "y1": 0.0,
+              "x2": 0.58,
+              "y2": 1.0
+            }
+          },
+          {
+            "at": 0.28,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "html",
+      "markup": "\n<div class=\"win\">\n  <div class=\"bar\">\n    <div class=\"light\" style=\"background: #ff5f57\"></div>\n    <div class=\"light\" style=\"background: #febc2e\"></div>\n    <div class=\"light\" style=\"background: #28c840\"></div>\n    <div class=\"title\">src/plan.rs</div>\n  </div>\n  <div class=\"body\">\n    <div class=\"line ctx l1\">@@ fn whip(seconds: f64) -> Cut {</div>\n    <div class=\"line meta l2\">@@@ the sweep the whip owns, in seconds</div>\n    <div class=\"line del l3\">-     seconds: 24.0,</div>\n    <div class=\"line add l4\">+     seconds: 2.4,</div>\n    <div class=\"line ctx l5\">}</div>\n  </div>\n</div>\n",
+      "css": "\n.win { position: absolute; left: 260px; top: 320px; width: 1400px;\n  display: flex; flex-direction: column; border-radius: 18px; overflow: hidden;\n  background: #07090d; border: 1px solid rgba(247,249,255,0.14);\n  box-shadow: 0 30px 80px rgba(0,0,0,0.6); }\n.bar { display: flex; flex-direction: row; align-items: center; gap: 9px;\n  padding: 16px 22px; background: #0d1117; border-bottom: 1px solid rgba(247,249,255,0.08); }\n.light { width: 13px; height: 13px; border-radius: 999px; }\n.title { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 15px; letter-spacing: 0.16em;\n  color: #6b7a89; margin-left: 12px; }\n.body { display: flex; flex-direction: column; gap: 12px; padding: 30px 34px 38px 34px; }\n.line { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 25px; white-space: nowrap; }\n.ctx { color: #6b7a89; }\n.del { color: #ff7b72; }\n.add { color: #4ade80; }\n.meta { color: #6b7a89; }\n.l1 { animation: land 0.4s steps(18) 0.15s both; }\n.l2 { animation: land 0.4s steps(20) 0.65s both; }\n.l3 { animation: land 0.4s steps(20) 1.15s both; }\n.l4 { animation: land 0.35s steps(14) 1.65s both; }\n.l5 { animation: land 0.35s steps(16) 2.1s both; }\n@keyframes land { from { opacity: 0 } to { opacity: 1 } }\n",
+      "width": {
+        "px": 1920.0
+      },
+      "height": {
+        "px": 1080.0
+      }
+    }
+  ],
+  "slots": [
+    {
+      "node": "diff",
+      "field": "text",
+      "sample": "src/plan.rs",
+      "label": "File"
+    },
+    {
+      "node": "diff",
+      "field": "text",
+      "sample": "-     seconds: 24.0,",
+      "label": "Removed line"
+    },
+    {
+      "node": "diff",
+      "field": "text",
+      "sample": "+     seconds: 2.4,",
+      "label": "Added line"
+    }
+  ]
+}

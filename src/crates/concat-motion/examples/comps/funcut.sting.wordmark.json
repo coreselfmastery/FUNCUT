@@ -74,8 +74,8 @@
         ]
       },
       "kind": "html",
-      "markup": "\n<div class=\"stack\">\n  <div class=\"mark\">FUNCUT</div>\n  <div class=\"rule\"></div>\n  <div class=\"sub\">MOTION</div>\n</div>\n",
-      "css": "\n.stack { position: absolute; inset: 0; display: flex; flex-direction: column;\n  align-items: center; justify-content: center; }\n.mark { font-family: Archivo, Inter, DejaVu Sans; font-size: 200px; font-weight: 900; letter-spacing: -0.045em;\n  background: linear-gradient(96deg, #22d3c5, #f7f9ff 34%, #8b5cf6 72%, #ffc247);\n  background-clip: text; color: rgba(0,0,0,0); }\n.rule { width: 0px; height: 3px; border-radius: 2px; margin: 24px 0 20px 0;\n  background: linear-gradient(90deg, #22d3c5, #8b5cf6);\n  animation: grow 1s cubic-bezier(0.16,1,0.3,1) 0.5s both; }\n.sub { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 20px; letter-spacing: 0.42em; color: #f7f9ff; }\n@keyframes grow { from { width: 0px } to { width: 620px } }\n",
+      "markup": "\n<div class=\"stack\">\n  <div class=\"mark\">FUNCUT<em>.</em></div>\n  <div class=\"rule\"></div>\n  <div class=\"sub\">MOTION</div>\n</div>\n",
+      "css": "\n.stack { position: absolute; inset: 0; display: flex; flex-direction: column;\n  align-items: center; justify-content: center; }\n.mark { font-family: Archivo, Inter, DejaVu Sans; font-size: 190px; font-weight: 900; letter-spacing: -0.045em;\n  color: #f4f1ea; }\n.mark em { font-style: normal; color: #d9a441; }\n.rule { width: 0px; height: 3px; border-radius: 2px; margin: 26px 0 22px 0;\n  background: #d9a441;\n  animation: grow 0.9s cubic-bezier(0.16,1,0.3,1) 0.45s both; }\n.sub { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 20px; letter-spacing: 0.42em; color: #9a978e; }\n@keyframes grow { from { width: 0px } to { width: 620px } }\n",
       "width": {
         "px": 1920.0
       },
@@ -90,6 +90,12 @@
       "field": "text",
       "sample": "FUNCUT",
       "label": "Wordmark"
+    },
+    {
+      "node": "mark",
+      "field": "text",
+      "sample": "MOTION",
+      "label": "Subline"
     }
   ]
 }

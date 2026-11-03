@@ -77,7 +77,7 @@
       },
       "kind": "html",
       "markup": "\n<div class=\"chap\">\n  <div class=\"num\">02 / 06</div>\n  <div class=\"lab\">LOWER THIRDS</div>\n  <div class=\"ul\"></div>\n</div>\n",
-      "css": "\n.chap { position: absolute; left: 120px; top: 96px; display: flex; flex-direction: column; gap: 10px; }\n.num { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 17px; letter-spacing: 0.3em; color: rgba(34,211,197,0.95); }\n.lab { font-family: Archivo, Inter, DejaVu Sans; font-size: 30px; font-weight: 600; color: rgba(247,249,255,0.9); }\n.ul { width: 0px; height: 2px; background: #22d3c5; animation: ul 1s cubic-bezier(0.16,1,0.3,1) 0.4s both; }\n@keyframes ul { from { width: 0px } to { width: 210px } }\n",
+      "css": "\n.chap { position: absolute; left: 120px; top: 88px; display: flex; flex-direction: column; gap: 12px; }\n.num { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 17px; letter-spacing: 0.3em; color: #d9a441;\n  text-shadow: 0 2px 10px rgba(0,0,0,0.5); }\n.lab { font-family: Archivo, Inter, DejaVu Sans; font-size: 46px; font-weight: 800; letter-spacing: -0.015em; color: #f4f1ea;\n  text-shadow: 0 2px 14px rgba(0,0,0,0.55); }\n.ul { width: 0px; height: 3px; background: #d9a441; animation: ul 0.8s cubic-bezier(0.16,1,0.3,1) 0.4s both; }\n@keyframes ul { from { width: 0px } to { width: 260px } }\n",
       "width": {
         "px": 1920.0
       },
@@ -92,6 +92,12 @@
       "field": "text",
       "sample": "LOWER THIRDS",
       "label": "Chapter"
+    },
+    {
+      "node": "chap",
+      "field": "text",
+      "sample": "02 / 06",
+      "label": "Number"
     }
   ]
 }

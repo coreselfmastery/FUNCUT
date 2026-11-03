@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
-//! A whole motion reel, built the way a project builds one: twelve comps from
-//! the library, authored per scene with the operation vocabulary, placed on one
-//! timeline over plates, dipped between, scored, and rendered in one pass.
+//! A whole motion reel, built the way a project builds one: eighteen comps
+//! from the library, authored per scene with the operation vocabulary, placed
+//! on one timeline over plates, dipped between, scored, and rendered in one
+//! pass.
 //!
 //! ```sh
 //! # the storyboard, printed as the timeline it becomes
@@ -31,7 +32,7 @@ fn preset(id: &str) -> concat_motion::comp::Comp {
     presets::build(id).unwrap_or_else(|| panic!("no preset {id:?}"))
 }
 
-/// The storyboard: twelve beats, each a comp from the library with a few
+/// The storyboard: eighteen beats, each a comp from the library with a few
 /// operations on it, over a plate, under a curtain and a bed of sound.
 fn reel(assets: PathBuf) -> Sequence {
     let mut sequence = Sequence::new(1920, 1080, 30.0);
@@ -78,7 +79,7 @@ fn reel(assets: PathBuf) -> Sequence {
             .with_ops(vec![
                 Op::AddText {
                     id: "title".into(),
-                    text: "TWELVE BEATS".into(),
+                    text: "EIGHTEEN BEATS".into(),
                     size: 132.0,
                     weight: 900,
                     color: "#f7f9ff".into(),
@@ -122,18 +123,52 @@ fn reel(assets: PathBuf) -> Sequence {
             }]),
     );
 
-    // 3. A chapter card.
+    // 3. The numbered chapter: the section change at full frame.
+    sequence.push(
+        Scene::new(preset("funcut.chapter.numbered"))
+            .holding(3.2)
+            .over("plate_night", 0.04)
+            .with_ops(vec![
+                Op::SetSlot {
+                    slot: "Number".into(),
+                    value: "02".into(),
+                },
+                Op::SetSlot {
+                    slot: "Title".into(),
+                    value: "The library, numbered".into(),
+                },
+            ]),
+    );
+
+    // 4. The agenda: what is coming, one row at a time.
+    sequence.push(
+        Scene::new(preset("funcut.chapter.agenda"))
+            .holding(4.0)
+            .over("plate_dark", 0.04)
+            .with_ops(vec![
+                Op::SetSlot {
+                    slot: "Row 1".into(),
+                    value: "The comp document".into(),
+                },
+                Op::SetSlot {
+                    slot: "Row 4".into(),
+                    value: "The farm, resumable".into(),
+                },
+            ]),
+    );
+
+    // 5. A chapter card.
     sequence.push(
         Scene::new(preset("funcut.chapter.chip"))
             .holding(3.0)
             .over("plate_night", 0.04)
             .with_ops(vec![Op::SetSlot {
                 slot: "Chapter".into(),
-                value: "TWELVE BEATS".into(),
+                value: "THE LIBRARY".into(),
             }]),
     );
 
-    // 4. An interval: a lower third, arriving after the voice would have
+    // 6. An interval: a lower third, arriving after the voice would have
     //    started and popping a touch as it lands.
     sequence.push(
         Scene::new(preset("funcut.lower-third.glass"))
@@ -156,7 +191,25 @@ fn reel(assets: PathBuf) -> Sequence {
             ]),
     );
 
-    // 5. Captions, word by word: the reason a comp beats a title.
+    // 7. The minimal third over the desert: the documentary read, where
+    //    the glass card's shadow would have been the loudest thing there.
+    sequence.push(
+        Scene::new(preset("funcut.lower-third.minimal"))
+            .holding(3.4)
+            .over("plate_desert", 0.03)
+            .with_ops(vec![
+                Op::SetSlot {
+                    slot: "Name".into(),
+                    value: "Jareer Abdullah".into(),
+                },
+                Op::SetSlot {
+                    slot: "Role".into(),
+                    value: "UPSTREAM · CONCAT".into(),
+                },
+            ]),
+    );
+
+    // 8. Captions, word by word: the reason a comp beats a title.
     sequence.push(
         Scene::new(preset("funcut.caption.kinetic"))
             .holding(4.0)
@@ -176,18 +229,28 @@ fn reel(assets: PathBuf) -> Sequence {
             }]),
     );
 
-    // 6. Three numbers, one line.
+    // 9. Three numbers, one line.
     sequence.push(
         Scene::new(preset("funcut.stats.triptych"))
             .holding(3.6)
             .over("plate_forest", 0.05)
-            .with_ops(vec![Op::SetSlot {
-                slot: "Numbers".into(),
-                value: "COMPS SHIPPED".into(),
-            }]),
+            .with_ops(vec![
+                Op::SetSlot {
+                    slot: "Label 1".into(),
+                    value: "PRESETS".into(),
+                },
+                Op::SetSlot {
+                    slot: "Label 2".into(),
+                    value: "MCP TOOLS".into(),
+                },
+                Op::SetSlot {
+                    slot: "Label 3".into(),
+                    value: "CURVE PRESETS".into(),
+                },
+            ]),
     );
 
-    // 7. A chart that builds on, titled.
+    // 10. A chart that builds on, titled.
     sequence.push(
         Scene::new(preset("funcut.chart.bars"))
             .holding(3.6)
@@ -198,7 +261,24 @@ fn reel(assets: PathBuf) -> Sequence {
             }]),
     );
 
-    // 8. One number, counted in.
+    // 11. One number and the bar that grows to it.
+    sequence.push(
+        Scene::new(preset("funcut.chart.progress"))
+            .holding(3.2)
+            .over("plate_forest", 0.04)
+            .with_ops(vec![
+                Op::SetSlot {
+                    slot: "Number".into(),
+                    value: "86%".into(),
+                },
+                Op::SetSlot {
+                    slot: "Label".into(),
+                    value: "OF THE REEL IS CACHED BY THE FARM".into(),
+                },
+            ]),
+    );
+
+    // 12. One number, counted in.
     sequence.push(
         Scene::new(preset("funcut.ticker.count"))
             .holding(3.0)
@@ -206,7 +286,7 @@ fn reel(assets: PathBuf) -> Sequence {
             .with_ops(vec![
                 Op::SetSlot {
                     slot: "Number".into(),
-                    value: "12".into(),
+                    value: "18".into(),
                 },
                 Op::FadeIn {
                     node: "num".into(),
@@ -216,7 +296,7 @@ fn reel(assets: PathBuf) -> Sequence {
             ]),
     );
 
-    // 9. A terminal that types itself.
+    // 13. A terminal that types itself.
     sequence.push(
         Scene::new(preset("funcut.code.terminal"))
             .holding(3.6)
@@ -227,7 +307,18 @@ fn reel(assets: PathBuf) -> Sequence {
             }]),
     );
 
-    // 10. Before and after, wiped.
+    // 14. A diff that lands line by line: the second code device.
+    sequence.push(
+        Scene::new(preset("funcut.code.diff"))
+            .holding(3.4)
+            .over("plate_dark", 0.04)
+            .with_ops(vec![Op::SetSlot {
+                slot: "File".into(),
+                value: "src/reel.rs".into(),
+            }]),
+    );
+
+    // 15. Before and after, wiped.
     sequence.push(
         Scene::new(preset("funcut.compare.split"))
             .holding(3.6)
@@ -238,7 +329,7 @@ fn reel(assets: PathBuf) -> Sequence {
             }]),
     );
 
-    // 11. A pull quote, allowed to breathe.
+    // 16. A pull quote, allowed to breathe.
     sequence.push(
         Scene::new(preset("funcut.quote.pull"))
             .holding(4.0)
@@ -249,18 +340,35 @@ fn reel(assets: PathBuf) -> Sequence {
             }]),
     );
 
-    // 12. The call to action.
+    // 17. The call to action.
     sequence.push(
         Scene::new(preset("funcut.cta.subscribe"))
             .holding(3.4)
             .over("plate_forest", 0.04)
             .with_ops(vec![Op::SetSlot {
                 slot: "Headline".into(),
-                value: "Twelve beats. None of them a browser.".into(),
+                value: "Eighteen beats. None of them a browser.".into(),
             }]),
     );
 
-    // 13. And the last card, over the tail of the curtain.
+    // 18. The end card: the last frame the viewer sees.
+    sequence.push(
+        Scene::new(preset("funcut.cta.endcard"))
+            .holding(3.4)
+            .over("plate_night", 0.04)
+            .with_ops(vec![
+                Op::SetSlot {
+                    slot: "Headline".into(),
+                    value: "See you in the next reel.".into(),
+                },
+                Op::SetSlot {
+                    slot: "Footer".into(),
+                    value: "FUNCUT · EIGHTEEN BEATS".into(),
+                },
+            ]),
+    );
+
+    // 19. And the last card, over the tail of the curtain.
     sequence.push(
         Scene::new(preset("funcut.chapter.chip"))
             .holding(2.6)

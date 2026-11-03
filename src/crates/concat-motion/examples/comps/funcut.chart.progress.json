@@ -1,0 +1,100 @@
+{
+  "format": 1,
+  "id": "funcut.chart.progress",
+  "name": "Progress bar",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30.0,
+  "duration": 4.0,
+  "background": {
+    "r": 0.0,
+    "g": 0.0,
+    "b": 0.0,
+    "a": 0.0
+  },
+  "assets": {},
+  "curves": {},
+  "nodes": [
+    {
+      "id": "bar",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.0,
+              "y1": 0.0,
+              "x2": 0.58,
+              "y2": 1.0
+            }
+          },
+          {
+            "at": 0.2,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            }
+          }
+        ],
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.88
+            },
+            "curve": {
+              "kind": "spring",
+              "stiffness": 260.0,
+              "damping": 15.0,
+              "mass": 1.0
+            }
+          },
+          {
+            "at": 0.6,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "html",
+      "markup": "\n<div class=\"wrap\">\n  <div class=\"num\">72%</div>\n  <div class=\"track\"><div class=\"fill\"></div></div>\n  <div class=\"lab\">OF RENDERS FINISH INSIDE CI</div>\n</div>\n",
+      "css": "\n.wrap { position: absolute; left: 220px; top: 396px;\n  display: flex; flex-direction: column; align-items: flex-start; gap: 34px; }\n.num { font-family: Archivo, Inter, DejaVu Sans; font-size: 210px; font-weight: 800;\n  letter-spacing: -0.04em; color: #f4f1ea; line-height: 0.9; }\n.track { width: 1200px; height: 14px; border-radius: 999px;\n  background: rgba(244,241,234,0.10); overflow: hidden; }\n.fill { width: 0px; height: 14px; border-radius: 999px; background: #d9a441;\n  animation: fill 1.4s cubic-bezier(0.16,1,0.3,1) 0.4s both; }\n.lab { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 18px; font-weight: 500;\n  letter-spacing: 0.24em; color: #9a978e;\n  animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.75s both; }\n@keyframes fill { from { width: 0px } to { width: 864px } }\n@keyframes rise { from { opacity: 0; transform: translateY(10px) } to { opacity: 1; transform: translateY(0) } }\n",
+      "width": {
+        "px": 1920.0
+      },
+      "height": {
+        "px": 1080.0
+      }
+    }
+  ],
+  "slots": [
+    {
+      "node": "bar",
+      "field": "text",
+      "sample": "72%",
+      "label": "Number"
+    },
+    {
+      "node": "bar",
+      "field": "text",
+      "sample": "OF RENDERS FINISH INSIDE CI",
+      "label": "Label"
+    }
+  ]
+}

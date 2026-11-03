@@ -23,6 +23,17 @@
 //! the kind of arithmetic a model gets wrong and a human will not do
 //! twice.
 //!
+//! Three more engine facts, measured the same way and built on here: a
+//! **`letter-spacing` inside keyframes animates** (a 90 px line's right
+//! edge travels 319 px from `0.6 × size` tracking to rest), which the
+//! `TrackIn` entrance is; **`background-clip: text` clips into the
+//! staggered inline spans** (gold into ink across three spans, drawn),
+//! which [`gradient_headline`] paints; and a **`clip-path` in keyframes
+//! does not interpolate** - `inset()` is refused outright (E442) and a
+//! `polygon()` from-to pair jumps at the delay's end instead of wiping -
+//! so there is no wipe entrance here, and a hand author who writes one
+//! is told why by the engine itself.
+//!
 //! Everything here emits CSS the engine can play and the
 //! static-transform guard can read: every `translate`/`scale` lives
 //! inside a `@keyframes` rule, never as a base style.
@@ -68,8 +79,13 @@ pub enum Stagger {
     Char,
 }
 
-/// The three entrances every motion designer reaches for first, as named
-/// presets rather than hand-written keyframes.
+/// The named entrances, as presets rather than hand-written keyframes:
+/// the three every motion designer reaches for first, the two directional
+/// sweeps a third or a badge arrives on, and the tracking entrance the
+/// cinematic titles use. Every one is drawn by the pinned engine as
+/// written - the `letter-spacing` of `TrackIn` included, measured - and
+/// the rise and travel are in **pixels** computed from the style's own
+/// font size, because the engine's keyframes take `px` and `%` only.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Entrance {
@@ -77,8 +93,24 @@ pub enum Entrance {
     BlurIn,
     /// Rises from below: the workhorse of titles and captions.
     SlideUp,
+    /// Sinks in from above: the mirror of the rise, for lower thirds
+    /// and subtitles that belong to the top of the frame.
+    SlideDown,
+    /// Sweeps in from the left: the third's own direction, for name
+    /// cards and chips that arrive with the reading.
+    SlideFromLeft,
+    /// Sweeps in from the right: the mirror read, for badges and
+    /// timestamps pinned to the frame's far edge.
+    SlideFromRight,
     /// Lands from a smaller scale: the confident, placed arrival.
     ScaleIn,
+    /// Arrives on its tracking: `letter-spacing` animates from wide to
+    /// rest while the line fades up - the cinematic title entrance. The
+    /// one entrance that animates a property besides transform and
+    /// opacity, because the pinned engine animates `letter-spacing` in
+    /// keyframes (measured: a 90 px line's right edge travels 319 px
+    /// from `0.6 × size` tracking to its rest).
+    TrackIn,
 }
 
 /// A weight ramp across the stagger: the first unit at `from`, the last
@@ -156,6 +188,19 @@ impl Kinetic {
             delay: 0.045,
             seconds: 0.4,
             curve: Curve::TYPEWRITER,
+            ..Kinetic::default()
+        }
+    }
+
+    /// A paragraph's line rhythm: 180 ms between one line and the next,
+    /// each rising on the settle curve - the editorial reveal a title
+    /// sequence is. The stagger's own `Stagger` is not walked by
+    /// [`paragraph`], which reveals whole lines; the delay and the
+    /// entrance are what it reads.
+    pub fn lines() -> Kinetic {
+        Kinetic {
+            delay: 0.18,
+            seconds: 0.6,
             ..Kinetic::default()
         }
     }
@@ -238,6 +283,83 @@ pub fn karaoke(words: &[Word], span: f64, id: &str, style: &TextNode, kinetic: &
     }
     let markup = format!("<div class=\"kt kk\">{}</div>", spans);
     let css = stylesheet(style) + &karaoke_keyframes(style) + &entrance_keyframes(kinetic, style);
+    html_node(id, &markup, &css)
+}
+
+/// A multi-line paragraph as one markup node: one `<div>` per line, each
+/// carrying its own inline `animation` staggered `kinetic.delay` apart -
+/// the editorial title sequence, lines rising one after another. A word
+/// stagger animates *units of a line*; this animates *lines*, which is
+/// what a manifesto, an oath or a three-beat argument is.
+///
+/// The weight ramp rides the lines statically when one is set - the
+/// first line at `from`, the last at `to`, the same crescendo the word
+/// stagger gives a headline. An empty line draws nothing and takes no
+/// beat in the rhythm: a paragraph's shape is its words.
+pub fn paragraph(id: &str, lines: &[&str], style: &TextNode, kinetic: &Kinetic) -> Node {
+    // An empty line draws nothing and takes no beat: neither the delay
+    // rhythm nor the weight ramp counts it, or the reveal after a
+    // stanza break would wait on a line that is not there.
+    let kept: Vec<&str> = lines
+        .iter()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .collect();
+    let total = kept.len();
+    let mut divs = String::new();
+    for (index, line) in kept.iter().enumerate() {
+        let weight = unit_weight(kinetic, index, total)
+            .map(|weight| format!("; font-weight: {weight}"))
+            .unwrap_or_default();
+        divs.push_str(&format!(
+            "<div style=\"animation: kt-in {:.3}s {} {:.3}s both{}\">{}</div>",
+            kinetic.seconds,
+            kinetic.curve.css(),
+            index as f64 * kinetic.delay,
+            weight,
+            escape(line)
+        ));
+    }
+    let markup = format!("<div class=\"kt kt-block\">{}</div>", divs);
+    // The block override: lines stack, the flex row a word stagger walks
+    // would lay them side by side.
+    let css = format!(
+        ".kt-block {{ flex-direction: column; align-items: flex-start; }}\n{}{}",
+        stylesheet(style),
+        entrance_keyframes(kinetic, style)
+    );
+    html_node(id, &markup, &css)
+}
+
+/// A headline whose ink is a gradient: the glyphs painted with a
+/// `linear-gradient` and `background-clip: text`, the fill itself
+/// transparent - the shimmering title treatment a designer writes by
+/// hand and a model gets wrong in the cascade order. The stagger walks
+/// the words exactly as [`headline`] walks them; the clip carries into
+/// the inline spans (measured against the pinned 1.6.0: gold at both
+/// ends and ink in the middle, drawn across three staggered spans).
+///
+/// `from` and `to` are CSS colours - `#d9a441` and `#f4f1ea` say the
+/// library's own accent-into-ink.
+pub fn gradient_headline(
+    id: &str,
+    text: &str,
+    style: &TextNode,
+    kinetic: &Kinetic,
+    from: &str,
+    to: &str,
+) -> Node {
+    let units = units_of(text, kinetic.stagger);
+    let spans = staggered_spans(&units, kinetic, "kt-in");
+    let markup = format!("<div class=\"kt\">{}</div>", spans);
+    // After `stylesheet`, so the transparent fill wins the cascade: the
+    // ink is the gradient behind the clipped glyphs, not the style's
+    // own solid colour.
+    let css = format!(
+        "{}.kt {{ background: linear-gradient(96deg, {from}, {to}); background-clip: text; color: rgba(0,0,0,0); }}\n{}",
+        stylesheet(style),
+        entrance_keyframes(kinetic, style)
+    );
     html_node(id, &markup, &css)
 }
 
@@ -403,9 +525,45 @@ fn entrance_keyframes(kinetic: &Kinetic, style: &TextNode) -> String {
                 0.4 * style.size
             )
         }
+        Entrance::SlideDown => {
+            format!(
+                "from {{ opacity: 0; translate: 0 {:.1}px }}\n\
+                 to {{ opacity: 1; translate: 0 0 }}",
+                -0.4 * style.size
+            )
+        }
+        Entrance::SlideFromLeft => {
+            format!(
+                "from {{ opacity: 0; translate: {:.1}px 0 }}\n\
+                 to {{ opacity: 1; translate: 0 0 }}",
+                -0.55 * style.size
+            )
+        }
+        Entrance::SlideFromRight => {
+            format!(
+                "from {{ opacity: 0; translate: {:.1}px 0 }}\n\
+                 to {{ opacity: 1; translate: 0 0 }}",
+                0.55 * style.size
+            )
+        }
         Entrance::ScaleIn => "from { opacity: 0; scale: 0.84 }\n\
                               to { opacity: 1; scale: 1 }"
             .to_owned(),
+        Entrance::TrackIn => {
+            // The tracking entrance: `letter-spacing` animates from
+            // `0.6 x size` to the style's own rest while the line fades
+            // and rises a touch. The engine animates a `letter-spacing`
+            // inside keyframes (measured against the pinned 1.6.0), and
+            // the spacing is in pixels for the same reason every rise
+            // is: `em` in a keyframe is E442.
+            format!(
+                "from {{ opacity: 0; letter-spacing: {:.1}px; translate: 0 {:.1}px }}\n\
+                 to {{ opacity: 1; letter-spacing: {:.1}px; translate: 0 0 }}",
+                0.6 * style.size,
+                0.15 * style.size,
+                style.letter_spacing
+            )
+        }
     };
     format!("@keyframes kt-in {{ {body} }}\n")
 }
@@ -677,12 +835,20 @@ mod tests {
         assert!(markup.contains("font-weight: 900"), "{markup}");
     }
 
-    /// All three entrances emit their own keyframes, and every transform
-    /// they carry is inside the rule - the static-transform guard is run
-    /// over the generated stylesheet in its own test below.
+    /// Every entrance emits its own keyframes, and every transform they
+    /// carry is inside the rule - the static-transform guard is run over
+    /// the generated stylesheet in its own test below.
     #[test]
     fn every_entrance_emits_its_keyframes() {
-        for entrance in [Entrance::BlurIn, Entrance::SlideUp, Entrance::ScaleIn] {
+        for entrance in [
+            Entrance::BlurIn,
+            Entrance::SlideUp,
+            Entrance::SlideDown,
+            Entrance::SlideFromLeft,
+            Entrance::SlideFromRight,
+            Entrance::ScaleIn,
+            Entrance::TrackIn,
+        ] {
             let kinetic = Kinetic::words().entrance(entrance);
             let node = headline("headline", "Word", &style(), &kinetic);
             let css = css_of(&node);
@@ -697,7 +863,11 @@ mod tests {
             let expected = match entrance {
                 Entrance::BlurIn => "filter: blur(14px); translate: 0 28.8px",
                 Entrance::SlideUp => "translate: 0 38.4px",
+                Entrance::SlideDown => "translate: 0 -38.4px",
+                Entrance::SlideFromLeft => "translate: -52.8px 0",
+                Entrance::SlideFromRight => "translate: 52.8px 0",
                 Entrance::ScaleIn => "scale: 0.84",
+                Entrance::TrackIn => "letter-spacing: 57.6px",
             };
             assert!(css.contains(expected), "{:?}: {css}", entrance);
             assert!(!css.contains("em }"), "{:?}: {css}", entrance);
@@ -844,6 +1014,7 @@ mod tests {
             assets: std::collections::BTreeMap::new(),
             curves: std::collections::BTreeMap::new(),
             nodes: Vec::new(),
+            comps: Default::default(),
             slots: Vec::new(),
         };
         let kinetic = Kinetic::words().delay(0.08).entrance(Entrance::BlurIn);
@@ -880,6 +1051,123 @@ mod tests {
 
     fn markup_blocks(markup: &str) -> Vec<String> {
         vec![markup.to_owned()]
+    }
+
+    /// The directional entrances travel their own axis: down arrives
+    /// from a negative y, from-the-left from a negative x, from-the-right
+    /// from a positive one - three reads a hand author mixes up and the
+    /// builder never does.
+    #[test]
+    fn the_directional_entrances_travel_their_own_axis() {
+        for (entrance, needle) in [
+            (Entrance::SlideDown, "translate: 0 -38.4px"),
+            (Entrance::SlideFromLeft, "translate: -52.8px 0"),
+            (Entrance::SlideFromRight, "translate: 52.8px 0"),
+        ] {
+            let kinetic = Kinetic::words().entrance(entrance);
+            let css = css_of(&headline("headline", "Make it move", &style(), &kinetic));
+            assert!(css.contains(needle), "{entrance:?}: {needle} not in {css}");
+        }
+    }
+
+    /// The tracking entrance is the one that animates a property besides
+    /// transform and opacity: its keyframes carry `letter-spacing` from
+    /// `0.6 x size` to the style's own rest, both in pixels - the
+    /// measured fact the entrance exists on.
+    #[test]
+    fn the_tracking_entrance_animates_the_letter_spacing() {
+        let kinetic = Kinetic::words().entrance(Entrance::TrackIn);
+        let css = css_of(&headline("headline", "Make it move", &style(), &kinetic));
+        assert!(
+            css.contains("letter-spacing: 57.6px"),
+            "the wide tracking is 0.6 x the 96 px size: {css}"
+        );
+        assert!(
+            css.contains("letter-spacing: -1.0px"),
+            "the rest is the style's own tracking: {css}"
+        );
+    }
+
+    /// A paragraph staggers its lines, and an empty line takes no beat:
+    /// a stanza break is not a 180 ms wait on nothing.
+    #[test]
+    fn a_paragraph_staggers_its_lines_and_skips_the_empty() {
+        let node = paragraph(
+            "paragraph",
+            &["THE FIRST LINE", "", "THE THIRD LINE"],
+            &style(),
+            &Kinetic::lines(),
+        );
+        let markup = markup_of(&node);
+        assert_eq!(markup.matches("<div").count(), 3, "{markup}");
+        assert!(markup.contains("0.000s both"), "{markup}");
+        assert!(markup.contains("0.180s both"), "{markup}");
+        assert!(!markup.contains("0.360s"), "{markup}");
+        // Lines stack, they do not walk the flex row the words walk.
+        assert!(css_of(&node).contains("flex-direction: column"));
+    }
+
+    /// A paragraph's weight ramp rides its lines: the first line light,
+    /// the last heavy, the crescendo the word stagger gives a headline.
+    #[test]
+    fn a_paragraphs_weight_ramp_rides_its_lines() {
+        let kinetic = Kinetic::lines().flexing_weight(100, 900);
+        let node = paragraph("paragraph", &["One", "Two", "Three"], &style(), &kinetic);
+        let markup = markup_of(&node);
+        assert!(markup.contains("font-weight: 100"), "{markup}");
+        assert!(markup.contains("font-weight: 500"), "{markup}");
+        assert!(markup.contains("font-weight: 900"), "{markup}");
+    }
+
+    /// A gradient headline clips its ink into the glyphs and keeps the
+    /// stagger: the transparent fill is written after the base
+    /// stylesheet so it wins the cascade, and the words still arrive one
+    /// delay apart.
+    #[test]
+    fn a_gradient_headline_clips_its_ink_and_keeps_the_stagger() {
+        let kinetic = Kinetic::words().delay(0.08);
+        let node = gradient_headline(
+            "headline",
+            "Make it move",
+            &style(),
+            &kinetic,
+            "#d9a441",
+            "#f4f1ea",
+        );
+        let css = css_of(&node);
+        let clip = css.find("background-clip: text").expect("the clip");
+        let base = css.find("color: #f4f1ea").expect("the base fill");
+        assert!(
+            clip > base,
+            "the clip rule is written after the base style, so the transparent fill wins: {css}"
+        );
+        assert!(css.contains("color: rgba(0,0,0,0)"), "{css}");
+        let markup = markup_of(&node);
+        assert_eq!(markup.matches("<span").count(), 3, "{markup}");
+        assert!(markup.contains("0.080s both"), "{markup}");
+    }
+
+    /// The new builders pass the same static-transform guard the old ones
+    /// are held to.
+    #[test]
+    fn the_new_builders_carry_no_static_transform() {
+        let kinetic = Kinetic::lines().entrance(Entrance::SlideFromRight);
+        let para = paragraph("paragraph", &["One", "Two"], &style(), &kinetic);
+        let gradient = gradient_headline(
+            "headline",
+            "Make it move",
+            &style(),
+            &Kinetic::words(),
+            "#d9a441",
+            "#f4f1ea",
+        );
+        for (name, node) in [("paragraph", &para), ("gradient", &gradient)] {
+            let css = css_of(node);
+            assert!(
+                crate::css::static_transforms(&css).is_empty(),
+                "{name}: a static transform in {css}"
+            );
+        }
     }
 
     fn entrance_debug(entrance: Entrance) -> String {

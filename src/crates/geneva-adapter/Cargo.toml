@@ -1,0 +1,24 @@
+[package]
+name = "geneva-adapter"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "Motion made elsewhere, read here: Lottie documents and GSAP-style timelines adapted to the comp format the engines already bake."
+
+[dependencies]
+# The adapters write comps and only comps: the document model, its curves
+# and its tracks are the whole target vocabulary, and nothing here needs a
+# pixel or a file the caller did not already hand over.
+concat-motion = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+# The fixture tests write throwaway comp and lottie files.
+tempfile = "3"

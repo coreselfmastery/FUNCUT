@@ -85,10 +85,16 @@ impl Category {
 }
 
 /// Every preset, in library order.
-pub const ALL: [Preset; 12] = [
+pub const ALL: [Preset; 18] = [
     Preset {
         id: "funcut.lower-third.glass",
         name: "Glass lower third",
+        category: Category::LowerThird,
+        engine: crate::engine::EngineKind::Geneva,
+    },
+    Preset {
+        id: "funcut.lower-third.minimal",
+        name: "Minimal lower third",
         category: Category::LowerThird,
         engine: crate::engine::EngineKind::Geneva,
     },
@@ -111,6 +117,18 @@ pub const ALL: [Preset; 12] = [
         engine: crate::engine::EngineKind::Geneva,
     },
     Preset {
+        id: "funcut.chapter.numbered",
+        name: "Numbered chapter",
+        category: Category::Chapter,
+        engine: crate::engine::EngineKind::Geneva,
+    },
+    Preset {
+        id: "funcut.chapter.agenda",
+        name: "Agenda list",
+        category: Category::Chapter,
+        engine: crate::engine::EngineKind::Geneva,
+    },
+    Preset {
         id: "funcut.quote.pull",
         name: "Pull quote",
         category: Category::Quote,
@@ -129,14 +147,32 @@ pub const ALL: [Preset; 12] = [
         engine: crate::engine::EngineKind::Geneva,
     },
     Preset {
+        id: "funcut.cta.endcard",
+        name: "End card",
+        category: Category::CallToAction,
+        engine: crate::engine::EngineKind::Geneva,
+    },
+    Preset {
         id: "funcut.code.terminal",
         name: "Terminal reveal",
         category: Category::Code,
         engine: crate::engine::EngineKind::Geneva,
     },
     Preset {
+        id: "funcut.code.diff",
+        name: "Code diff",
+        category: Category::Code,
+        engine: crate::engine::EngineKind::Geneva,
+    },
+    Preset {
         id: "funcut.chart.bars",
         name: "Bar chart",
+        category: Category::Chart,
+        engine: crate::engine::EngineKind::Geneva,
+    },
+    Preset {
+        id: "funcut.chart.progress",
+        name: "Progress bar",
         category: Category::Chart,
         engine: crate::engine::EngineKind::Geneva,
     },
@@ -164,14 +200,20 @@ pub const ALL: [Preset; 12] = [
 pub fn build(id: &str) -> Option<Comp> {
     match id {
         "funcut.lower-third.glass" => Some(lower_third()),
+        "funcut.lower-third.minimal" => Some(minimal_lower_third()),
         "funcut.caption.kinetic" => Some(kinetic_caption()),
         "funcut.stats.triptych" => Some(stat_cards()),
         "funcut.sting.wordmark" => Some(wordmark_sting()),
         "funcut.quote.pull" => Some(pull_quote()),
         "funcut.chapter.chip" => Some(chapter_chip()),
+        "funcut.chapter.numbered" => Some(numbered_chapter()),
+        "funcut.chapter.agenda" => Some(agenda_list()),
         "funcut.cta.subscribe" => Some(subscribe_card()),
+        "funcut.cta.endcard" => Some(end_card()),
         "funcut.code.terminal" => Some(terminal_reveal()),
+        "funcut.code.diff" => Some(code_diff()),
         "funcut.chart.bars" => Some(bar_chart()),
+        "funcut.chart.progress" => Some(progress_bar()),
         "funcut.compare.split" => Some(split_compare()),
         "funcut.ticker.count" => Some(counting_number()),
         "funcut.backdrop.mesh" => Some(mesh_backdrop()),
@@ -194,6 +236,7 @@ fn comp(id: &str, name: &str, width: u32, height: u32, duration: f64) -> Comp {
         assets: BTreeMap::new(),
         curves: BTreeMap::new(),
         nodes: Vec::new(),
+        comps: BTreeMap::new(),
         slots: Vec::new(),
     }
 }
@@ -1110,6 +1153,476 @@ pub fn mesh_backdrop() -> Comp {
         Length::Px(1920.0),
         Length::Px(1080.0),
     ));
+    built
+}
+
+/// A minimal lower third: no card, no shadow to shout over the footage -
+/// a name, a role in mono, and a hairline rule that draws from the left.
+/// The documentary read, where the glass card would have been the loudest
+/// thing in the frame.
+pub fn minimal_lower_third() -> Comp {
+    let css = format!(
+        r#"
+.wrap {{ position: absolute; left: 140px; top: 768px;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 14px; }}
+.name {{ font-family: {DISPLAY}; font-size: 56px; font-weight: 800;
+  letter-spacing: -0.02em; color: {INK}; line-height: 1;
+  text-shadow: 0 2px 14px rgba(0,0,0,0.55);
+  animation: rise 0.55s cubic-bezier(0.16,1,0.3,1) 0.12s both; }}
+.role {{ font-family: {MONO}; font-size: 18px; font-weight: 500;
+  letter-spacing: 0.22em; color: {MUTED}; line-height: 1;
+  text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+  animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.24s both; }}
+.rule {{ width: 0px; height: 2px; background: rgba(244,241,234,0.35);
+  animation: draw 0.7s cubic-bezier(0.16,1,0.3,1) 0.34s both; }}
+@keyframes rise {{ from {{ opacity: 0; transform: translateY(10px) }} to {{ opacity: 1; transform: translateY(0) }} }}
+@keyframes draw {{ from {{ width: 0px }} to {{ width: 380px }} }}
+"#
+    );
+    let markup = r#"
+<div class="wrap">
+  <div class="name">Grace Hopper</div>
+  <div class="role">REAR ADMIRAL · COMPILER PIONEER</div>
+  <div class="rule"></div>
+</div>
+"#;
+    let mut built = comp(
+        "funcut.lower-third.minimal",
+        "Minimal lower third",
+        1920,
+        1080,
+        5.0,
+    );
+    let node = with_track(
+        html_node(
+            "third",
+            markup,
+            &css,
+            Length::Px(1920.0),
+            Length::Px(1080.0),
+        ),
+        "position",
+        Track::new(vec![
+            Key::eased(0.0, Value::Point { x: 960.0, y: 552.0 }, Curve::EASE_OUT),
+            Key::new(0.5, Value::Point { x: 960.0, y: 540.0 }),
+        ]),
+    );
+    let node = with_track(
+        node,
+        "opacity",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.0), Curve::EASE_OUT),
+            Key::new(0.28, Value::number(1.0)),
+        ]),
+    );
+    built.nodes.push(node);
+    built.slots.push(Slot {
+        node: "third".into(),
+        field: SlotField::Text,
+        sample: "Grace Hopper".into(),
+        label: "Name".into(),
+    });
+    built.slots.push(Slot {
+        node: "third".into(),
+        field: SlotField::Text,
+        sample: "REAR ADMIRAL · COMPILER PIONEER".into(),
+        label: "Role".into(),
+    });
+    built
+}
+
+/// A numbered chapter: the full-frame read of a section change - a kicker,
+/// a giant number, an accent rule that draws under it, a title. The chip
+/// is the corner badge; this is the door the viewer walks through.
+pub fn numbered_chapter() -> Comp {
+    let css = format!(
+        r#"
+.wrap {{ position: absolute; inset: 0; display: flex; flex-direction: column;
+  justify-content: center; align-items: flex-start; padding-left: 220px; gap: 24px; }}
+.kicker {{ font-family: {MONO}; font-size: 17px; font-weight: 600;
+  letter-spacing: 0.3em; color: {ACCENT};
+  animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.1s both; }}
+.num {{ font-family: {DISPLAY}; font-size: 290px; font-weight: 800;
+  letter-spacing: -0.045em; color: {INK}; line-height: 0.9;
+  animation: rise 0.6s cubic-bezier(0.16,1,0.3,1) 0.2s both; }}
+.rule {{ width: 0px; height: 5px; border-radius: 3px; background: {ACCENT};
+  animation: draw 0.85s cubic-bezier(0.16,1,0.3,1) 0.5s both; }}
+.title {{ font-family: {SANS}; font-size: 40px; font-weight: 400;
+  color: {MUTED}; line-height: 1.2;
+  animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.58s both; }}
+@keyframes rise {{ from {{ opacity: 0; transform: translateY(14px) }} to {{ opacity: 1; transform: translateY(0) }} }}
+@keyframes draw {{ from {{ width: 0px }} to {{ width: 460px }} }}
+"#
+    );
+    let markup = r#"
+<div class="wrap">
+  <div class="kicker">CHAPTER THREE</div>
+  <div class="num">03</div>
+  <div class="rule"></div>
+  <div class="title">The Machine That Draws</div>
+</div>
+"#;
+    let mut built = comp(
+        "funcut.chapter.numbered",
+        "Numbered chapter",
+        1920,
+        1080,
+        4.5,
+    );
+    let node = with_track(
+        html_node(
+            "chapter",
+            markup,
+            &css,
+            Length::Px(1920.0),
+            Length::Px(1080.0),
+        ),
+        "opacity",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.0), Curve::EASE_OUT),
+            Key::new(0.25, Value::number(1.0)),
+        ]),
+    );
+    let node = with_track(
+        node,
+        "scale",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.965), Curve::SPRING_POP),
+            Key::new(0.55, Value::number(1.0)),
+        ]),
+    );
+    built.nodes.push(node);
+    built.slots.push(Slot {
+        node: "chapter".into(),
+        field: SlotField::Text,
+        sample: "CHAPTER THREE".into(),
+        label: "Kicker".into(),
+    });
+    built.slots.push(Slot {
+        node: "chapter".into(),
+        field: SlotField::Text,
+        sample: "03".into(),
+        label: "Number".into(),
+    });
+    built.slots.push(Slot {
+        node: "chapter".into(),
+        field: SlotField::Text,
+        sample: "The Machine That Draws".into(),
+        label: "Title".into(),
+    });
+    built
+}
+
+/// An agenda: the numbered list of what is coming, one row arriving a
+/// step after the one before it, hairlines between. The explainer's
+/// table of contents - the promise a chapter chip only points at.
+pub fn agenda_list() -> Comp {
+    let css = format!(
+        r#"
+.wrap {{ position: absolute; left: 220px; top: 292px; width: 980px;
+  display: flex; flex-direction: column; align-items: stretch; }}
+.head {{ font-family: {MONO}; font-size: 17px; font-weight: 600;
+  letter-spacing: 0.3em; color: {ACCENT}; padding-bottom: 26px;
+  animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.1s both; }}
+.row {{ display: flex; flex-direction: row; align-items: baseline; gap: 36px;
+  padding: 25px 4px; border-bottom: 1px solid rgba(244,241,234,0.14); }}
+.n {{ font-family: {MONO}; font-size: 20px; font-weight: 600; color: {ACCENT}; }}
+.t {{ font-family: {DISPLAY}; font-size: 42px; font-weight: 700;
+  letter-spacing: -0.01em; color: {INK}; }}
+.r1 {{ animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.20s both; }}
+.r2 {{ animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.32s both; }}
+.r3 {{ animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.44s both; }}
+.r4 {{ animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.56s both; }}
+@keyframes rise {{ from {{ opacity: 0; transform: translateY(12px) }} to {{ opacity: 1; transform: translateY(0) }} }}
+"#
+    );
+    let markup = r#"
+<div class="wrap">
+  <div class="head">WHAT IS COMING</div>
+  <div class="row r1"><div class="n">01</div><div class="t">The comp document</div></div>
+  <div class="row r2"><div class="n">02</div><div class="t">The looks</div></div>
+  <div class="row r3"><div class="n">03</div><div class="t">The critic</div></div>
+  <div class="row r4"><div class="n">04</div><div class="t">The farm</div></div>
+</div>
+"#;
+    let mut built = comp("funcut.chapter.agenda", "Agenda list", 1920, 1080, 5.0);
+    let node = with_track(
+        html_node(
+            "agenda",
+            markup,
+            &css,
+            Length::Px(1920.0),
+            Length::Px(1080.0),
+        ),
+        "opacity",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.0), Curve::EASE_OUT),
+            Key::new(0.3, Value::number(1.0)),
+        ]),
+    );
+    built.nodes.push(node);
+    built.slots.push(Slot {
+        node: "agenda".into(),
+        field: SlotField::Text,
+        sample: "WHAT IS COMING".into(),
+        label: "Heading".into(),
+    });
+    built.slots.push(Slot {
+        node: "agenda".into(),
+        field: SlotField::Text,
+        sample: "The comp document".into(),
+        label: "Row 1".into(),
+    });
+    built.slots.push(Slot {
+        node: "agenda".into(),
+        field: SlotField::Text,
+        sample: "The looks".into(),
+        label: "Row 2".into(),
+    });
+    built.slots.push(Slot {
+        node: "agenda".into(),
+        field: SlotField::Text,
+        sample: "The critic".into(),
+        label: "Row 3".into(),
+    });
+    built.slots.push(Slot {
+        node: "agenda".into(),
+        field: SlotField::Text,
+        sample: "The farm".into(),
+        label: "Row 4".into(),
+    });
+    built
+}
+
+/// An end card: the full-frame close - a kicker, a headline with one
+/// accent word, two buttons that settle one after the other, a footer.
+/// The subscribe card is the mid-roll ask; this is the last frame the
+/// viewer sees, and it offers the next thing rather than repeating the
+/// same one louder.
+pub fn end_card() -> Comp {
+    let css = format!(
+        r#"
+.wrap {{ position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 34px; }}
+.kicker {{ font-family: {MONO}; font-size: 17px; font-weight: 600;
+  letter-spacing: 0.3em; color: {ACCENT};
+  animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.1s both; }}
+.head {{ font-family: {DISPLAY}; font-size: 92px; font-weight: 800;
+  letter-spacing: -0.035em; color: {INK}; line-height: 1;
+  animation: rise 0.6s cubic-bezier(0.16,1,0.3,1) 0.2s both; }}
+.head em {{ font-style: normal; color: {ACCENT}; }}
+.row {{ display: flex; flex-direction: row; align-items: center; gap: 26px; }}
+.btn {{ display: flex; flex-direction: row; align-items: center; gap: 14px;
+  padding: 18px 34px; border-radius: 999px; background: rgba(12,13,16,0.92);
+  border: 1.5px solid {ACCENT}; }}
+.ghost {{ display: flex; flex-direction: row; align-items: center; gap: 14px;
+  padding: 18px 34px; border-radius: 999px; background: rgba(12,13,16,0.92);
+  border: 1.5px solid rgba(244,241,234,0.3); }}
+.dot {{ width: 10px; height: 10px; border-radius: 999px; background: {ACCENT}; }}
+.txt {{ font-family: {MONO}; font-size: 19px; font-weight: 700;
+  letter-spacing: 0.2em; color: {INK}; }}
+.b1 {{ animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.5s both; }}
+.b2 {{ animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.62s both; }}
+.foot {{ font-family: {MONO}; font-size: 15px; letter-spacing: 0.26em;
+  color: {MUTED};
+  animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.74s both; }}
+@keyframes rise {{ from {{ opacity: 0; transform: translateY(10px) }} to {{ opacity: 1; transform: translateY(0) }} }}
+"#
+    );
+    let markup = r#"
+<div class="wrap">
+  <div class="kicker">THANKS FOR WATCHING</div>
+  <div class="head">See you <em>Friday</em>.</div>
+  <div class="row">
+    <div class="btn b1"><div class="dot"></div><div class="txt">WATCH NEXT</div></div>
+    <div class="ghost b2"><div class="txt">SUBSCRIBE</div></div>
+  </div>
+  <div class="foot">FUNCUT · EPISODE 12</div>
+</div>
+"#;
+    let mut built = comp("funcut.cta.endcard", "End card", 1920, 1080, 4.5);
+    let node = with_track(
+        html_node("card", markup, &css, Length::Px(1920.0), Length::Px(1080.0)),
+        "opacity",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.0), Curve::EASE_OUT),
+            Key::new(0.25, Value::number(1.0)),
+        ]),
+    );
+    let node = with_track(
+        node,
+        "scale",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.955), Curve::SPRING_POP),
+            Key::new(0.5, Value::number(1.0)),
+        ]),
+    );
+    built.nodes.push(node);
+    built.slots.push(Slot {
+        node: "card".into(),
+        field: SlotField::Text,
+        sample: "See you Friday.".into(),
+        label: "Headline".into(),
+    });
+    built.slots.push(Slot {
+        node: "card".into(),
+        field: SlotField::Text,
+        sample: "WATCH NEXT".into(),
+        label: "Button one".into(),
+    });
+    built.slots.push(Slot {
+        node: "card".into(),
+        field: SlotField::Text,
+        sample: "SUBSCRIBE".into(),
+        label: "Button two".into(),
+    });
+    built.slots.push(Slot {
+        node: "card".into(),
+        field: SlotField::Text,
+        sample: "FUNCUT · EPISODE 12".into(),
+        label: "Footer".into(),
+    });
+    built
+}
+
+/// A code diff: the second code device after the terminal - a file
+/// header, a removed line in red, an added line in green, each landing
+/// on a `steps()` curve a beat after the one before it. Where the
+/// terminal types a session, the diff shows a change: the before/after
+/// a reviewer reads.
+pub fn code_diff() -> Comp {
+    let css = format!(
+        r#"
+.win {{ position: absolute; left: 260px; top: 320px; width: 1400px;
+  display: flex; flex-direction: column; border-radius: 18px; overflow: hidden;
+  background: #07090d; border: 1px solid rgba(247,249,255,0.14);
+  box-shadow: 0 30px 80px rgba(0,0,0,0.6); }}
+.bar {{ display: flex; flex-direction: row; align-items: center; gap: 9px;
+  padding: 16px 22px; background: #0d1117; border-bottom: 1px solid rgba(247,249,255,0.08); }}
+.light {{ width: 13px; height: 13px; border-radius: 999px; }}
+.title {{ font-family: {MONO}; font-size: 15px; letter-spacing: 0.16em;
+  color: #6b7a89; margin-left: 12px; }}
+.body {{ display: flex; flex-direction: column; gap: 12px; padding: 30px 34px 38px 34px; }}
+.line {{ font-family: {MONO}; font-size: 25px; white-space: nowrap; }}
+.ctx {{ color: #6b7a89; }}
+.del {{ color: #ff7b72; }}
+.add {{ color: #4ade80; }}
+.meta {{ color: #6b7a89; }}
+.l1 {{ animation: land 0.4s steps(18) 0.15s both; }}
+.l2 {{ animation: land 0.4s steps(20) 0.65s both; }}
+.l3 {{ animation: land 0.4s steps(20) 1.15s both; }}
+.l4 {{ animation: land 0.35s steps(14) 1.65s both; }}
+.l5 {{ animation: land 0.35s steps(16) 2.1s both; }}
+@keyframes land {{ from {{ opacity: 0 }} to {{ opacity: 1 }} }}
+"#
+    );
+    let markup = r#"
+<div class="win">
+  <div class="bar">
+    <div class="light" style="background: #ff5f57"></div>
+    <div class="light" style="background: #febc2e"></div>
+    <div class="light" style="background: #28c840"></div>
+    <div class="title">src/plan.rs</div>
+  </div>
+  <div class="body">
+    <div class="line ctx l1">@@ fn whip(seconds: f64) -> Cut {</div>
+    <div class="line meta l2">@@@ the sweep the whip owns, in seconds</div>
+    <div class="line del l3">-     seconds: 24.0,</div>
+    <div class="line add l4">+     seconds: 2.4,</div>
+    <div class="line ctx l5">}</div>
+  </div>
+</div>
+"#;
+    let mut built = comp("funcut.code.diff", "Code diff", 1920, 1080, 4.5);
+    let node = with_track(
+        html_node("diff", markup, &css, Length::Px(1920.0), Length::Px(1080.0)),
+        "opacity",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.0), Curve::EASE_OUT),
+            Key::new(0.28, Value::number(1.0)),
+        ]),
+    );
+    built.nodes.push(node);
+    built.slots.push(Slot {
+        node: "diff".into(),
+        field: SlotField::Text,
+        sample: "src/plan.rs".into(),
+        label: "File".into(),
+    });
+    built.slots.push(Slot {
+        node: "diff".into(),
+        field: SlotField::Text,
+        sample: "-     seconds: 24.0,".into(),
+        label: "Removed line".into(),
+    });
+    built.slots.push(Slot {
+        node: "diff".into(),
+        field: SlotField::Text,
+        sample: "+     seconds: 2.4,".into(),
+        label: "Added line".into(),
+    });
+    built
+}
+
+/// A progress bar: one number, one fill. The dashboard's favourite
+/// motion - a number that lands while a bar grows to it - drawn as a
+/// wide hairline track and one accent fill, so the read survives being
+/// retimed, re-filled and re-labelled.
+pub fn progress_bar() -> Comp {
+    let css = format!(
+        r#"
+.wrap {{ position: absolute; left: 220px; top: 396px;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 34px; }}
+.num {{ font-family: {DISPLAY}; font-size: 210px; font-weight: 800;
+  letter-spacing: -0.04em; color: {INK}; line-height: 0.9; }}
+.track {{ width: 1200px; height: 14px; border-radius: 999px;
+  background: rgba(244,241,234,0.10); overflow: hidden; }}
+.fill {{ width: 0px; height: 14px; border-radius: 999px; background: {ACCENT};
+  animation: fill 1.4s cubic-bezier(0.16,1,0.3,1) 0.4s both; }}
+.lab {{ font-family: {MONO}; font-size: 18px; font-weight: 500;
+  letter-spacing: 0.24em; color: {MUTED};
+  animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.75s both; }}
+@keyframes fill {{ from {{ width: 0px }} to {{ width: 864px }} }}
+@keyframes rise {{ from {{ opacity: 0; transform: translateY(10px) }} to {{ opacity: 1; transform: translateY(0) }} }}
+"#
+    );
+    let markup = r#"
+<div class="wrap">
+  <div class="num">72%</div>
+  <div class="track"><div class="fill"></div></div>
+  <div class="lab">OF RENDERS FINISH INSIDE CI</div>
+</div>
+"#;
+    let mut built = comp("funcut.chart.progress", "Progress bar", 1920, 1080, 4.0);
+    let node = with_track(
+        html_node("bar", markup, &css, Length::Px(1920.0), Length::Px(1080.0)),
+        "scale",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.88), Curve::SPRING_POP),
+            Key::new(0.6, Value::number(1.0)),
+        ]),
+    );
+    let node = with_track(
+        node,
+        "opacity",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.0), Curve::EASE_OUT),
+            Key::new(0.2, Value::number(1.0)),
+        ]),
+    );
+    built.nodes.push(node);
+    built.slots.push(Slot {
+        node: "bar".into(),
+        field: SlotField::Text,
+        sample: "72%".into(),
+        label: "Number".into(),
+    });
+    built.slots.push(Slot {
+        node: "bar".into(),
+        field: SlotField::Text,
+        sample: "OF RENDERS FINISH INSIDE CI".into(),
+        label: "Label".into(),
+    });
     built
 }
 

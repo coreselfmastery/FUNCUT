@@ -1,0 +1,112 @@
+{
+  "format": 1,
+  "id": "funcut.cta.endcard",
+  "name": "End card",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30.0,
+  "duration": 4.5,
+  "background": {
+    "r": 0.0,
+    "g": 0.0,
+    "b": 0.0,
+    "a": 0.0
+  },
+  "assets": {},
+  "curves": {},
+  "nodes": [
+    {
+      "id": "card",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.0,
+              "y1": 0.0,
+              "x2": 0.58,
+              "y2": 1.0
+            }
+          },
+          {
+            "at": 0.25,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            }
+          }
+        ],
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.955
+            },
+            "curve": {
+              "kind": "spring",
+              "stiffness": 260.0,
+              "damping": 15.0,
+              "mass": 1.0
+            }
+          },
+          {
+            "at": 0.5,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "html",
+      "markup": "\n<div class=\"wrap\">\n  <div class=\"kicker\">THANKS FOR WATCHING</div>\n  <div class=\"head\">See you <em>Friday</em>.</div>\n  <div class=\"row\">\n    <div class=\"btn b1\"><div class=\"dot\"></div><div class=\"txt\">WATCH NEXT</div></div>\n    <div class=\"ghost b2\"><div class=\"txt\">SUBSCRIBE</div></div>\n  </div>\n  <div class=\"foot\">FUNCUT · EPISODE 12</div>\n</div>\n",
+      "css": "\n.wrap { position: absolute; inset: 0; display: flex; flex-direction: column;\n  align-items: center; justify-content: center; gap: 34px; }\n.kicker { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 17px; font-weight: 600;\n  letter-spacing: 0.3em; color: #d9a441;\n  animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.1s both; }\n.head { font-family: Archivo, Inter, DejaVu Sans; font-size: 92px; font-weight: 800;\n  letter-spacing: -0.035em; color: #f4f1ea; line-height: 1;\n  animation: rise 0.6s cubic-bezier(0.16,1,0.3,1) 0.2s both; }\n.head em { font-style: normal; color: #d9a441; }\n.row { display: flex; flex-direction: row; align-items: center; gap: 26px; }\n.btn { display: flex; flex-direction: row; align-items: center; gap: 14px;\n  padding: 18px 34px; border-radius: 999px; background: rgba(12,13,16,0.92);\n  border: 1.5px solid #d9a441; }\n.ghost { display: flex; flex-direction: row; align-items: center; gap: 14px;\n  padding: 18px 34px; border-radius: 999px; background: rgba(12,13,16,0.92);\n  border: 1.5px solid rgba(244,241,234,0.3); }\n.dot { width: 10px; height: 10px; border-radius: 999px; background: #d9a441; }\n.txt { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 19px; font-weight: 700;\n  letter-spacing: 0.2em; color: #f4f1ea; }\n.b1 { animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.5s both; }\n.b2 { animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.62s both; }\n.foot { font-family: JetBrains Mono, DejaVu Sans Mono, monospace; font-size: 15px; letter-spacing: 0.26em;\n  color: #9a978e;\n  animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) 0.74s both; }\n@keyframes rise { from { opacity: 0; transform: translateY(10px) } to { opacity: 1; transform: translateY(0) } }\n",
+      "width": {
+        "px": 1920.0
+      },
+      "height": {
+        "px": 1080.0
+      }
+    }
+  ],
+  "slots": [
+    {
+      "node": "card",
+      "field": "text",
+      "sample": "See you Friday.",
+      "label": "Headline"
+    },
+    {
+      "node": "card",
+      "field": "text",
+      "sample": "WATCH NEXT",
+      "label": "Button one"
+    },
+    {
+      "node": "card",
+      "field": "text",
+      "sample": "SUBSCRIBE",
+      "label": "Button two"
+    },
+    {
+      "node": "card",
+      "field": "text",
+      "sample": "FUNCUT · EPISODE 12",
+      "label": "Footer"
+    }
+  ]
+}

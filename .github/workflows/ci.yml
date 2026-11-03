@@ -73,6 +73,10 @@ jobs:
       # deterministic, no network - it proves the lexicon, the act
       # classifier, the gate and the transcript alignment.
       - run: python3 src/crates/concat-mcp/sense/emotion.py selftest
+      # The cloud farm's own selftest: the S3 client against a mock that
+      # verifies every signature, and the whole work loop over a stub
+      # sidecar - no network, nothing skipped.
+      - run: python3 src/crates/concat-mcp/sense/farm-sync.py selftest
         if: ${{ !cancelled() }}
       # The vision critic's selftest, same contract again: the key masking,
       # the loopback detector behind every privacy note, the archive

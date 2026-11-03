@@ -1757,3 +1757,54 @@ their effort.
 `TESTING.md`'s skipped table carries the five by name (the six skipped
 became the eleven), and `PERFORMANCE.md` carries the table of numbers
 and how to run them.
+
+## 38. The cloud farm: `motion_farm_cloud`, item 10 - the farm's legs on object storage
+
+Item 10 of the Geneva roadmap, the last of it. The resumable farm
+renders a long reel in parts that survive their own failure, and its
+staged render directory is self-contained by design - the unit of work
+a worker anywhere is handed whole. What it did not have was the
+transport: the folders still had to reach the worker by NFS, SSHFS or a
+synced copy. `farm-sync.py` - shipped as the MCP tool
+`motion_farm_cloud` and runnable by hand - is the transport, on
+S3-shaped object storage, written against nothing but the standard
+library.
+
+Four actions. `push` uploads a farm directory and its staged render
+tree under one prefix, HEADing each file first and skipping the ones
+whose stored sha256 metadata already matches - a re-push after a dead
+worker costs what changed, not what existed. `pull` downloads them
+back, atomically, skipping where the local size already matches.
+`status` says what is remote, what is local, what differs. And `work`
+is a worker's whole day: pull, render ONE missing part through the
+sidecar with the farm's own atomic part-and-marker shapes, push the
+part and its marker back, repeat until the answer says done - the
+missing part found by the sidecar's own `plan` verb, asked for the
+number the farm's progress stream names, and the marker written with
+the joiner's own key: the FNV-1a of the staged timeline, computed here
+exactly as `cache::stream_hash` computes it, or the part would be
+re-rendered for nothing.
+
+The wire is SigV4 over HTTPS - the standard AWS HMAC-SHA256 chain,
+every request signed, the payload hash travelled as
+x-amz-content-sha256 - and an upload streams a block at a time: the
+file is hashed once, sent once, never held whole in memory, the same
+megabyte-at-a-time rule the cache's own hashes follow. `FUNCUT_FARM_ENDPOINT`
+names an S3-compatible host (MinIO, R2, a self-hosted one), so the
+farm is not married to one company's storage.
+
+The security posture is the one the VLM endpoint allow-list set:
+everything the storage needs - the bucket, the endpoint, the region,
+the credentials - comes from the environment the OPERATOR set, and
+never from a tool's arguments. A prompted agent cannot aim a render,
+or the credentials beside it, at a host the operator did not choose.
+
+The selftest proves the whole thing with no network: a mock S3 that
+VERIFIES the SigV4 signature of every request it serves (the same chain
+recomputed from the request's own bytes), the sha256 skip on a re-push,
+the FNV-1a's three published vectors, the part key's shape, and the
+whole `work` loop - pull, three parts drawn one a call through a stub
+sidecar, the fourth call serving, the joiner's pull landing everything.
+Eight checks, wired into the CI lane beside the sense selftests. The
+tool count goes ninety-eight to ninety-nine across every document that
+holds it, held there by the count test that reads them.

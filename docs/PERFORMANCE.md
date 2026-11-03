@@ -164,6 +164,50 @@ this call drew it, the counts an agent reads at a glance, and the
 seconds the whole call took. A `--parts` ceiling is a ceiling: the
 engine's plan decides the real number and says so in a note.
 
+### The cloud farm: object storage, `farm-sync.py` and `motion_farm_cloud`
+
+The render directory is self-contained and the farm directory is
+resumable, so the unit of work a worker anywhere is handed is *two
+folders* - and `scripts` stops being the transport the moment the
+machines share no disk. `farm-sync.py` (shipped as the MCP tool
+`motion_farm_cloud`, and runnable by hand) is the transport, on S3-shaped
+object storage, with nothing but the standard library:
+
+```sh
+# the orchestrator: render in resumable parts, push the whole unit
+concat-motion-agent render board.json -o reel.mp4 --farm farm/ --parts 8
+python3 src/crates/concat-mcp/sense/farm-sync.py push farm/ --staged cache/render
+
+# every worker, anywhere: a part a call, until the answer says done
+python3 src/crates/concat-mcp/sense/farm-sync.py work farm/ --staged cache/render
+
+# back on the orchestrator: pull, re-run the render, serve every part, join
+python3 src/crates/concat-mcp/sense/farm-sync.py pull farm/ --staged cache/render
+concat-motion-agent render board.json -o reel.mp4 --farm farm/ --parts 8
+```
+
+The wire is SigV4 over HTTPS, signed with the standard AWS HMAC chain;
+an upload streams a block at a time (the file is hashed once, sent once,
+never held whole in memory - the same megabyte-at-a-time rule the
+cache's own hashes follow), and a push HEADs each file first and skips
+the ones whose stored sha256 already matches, so a re-push after a dead
+worker costs what changed. `work` renders one missing part through the
+sidecar with the farm's own atomic part-and-marker shapes and the
+joiner's own FNV key - computed here exactly as `cache::stream_hash`
+computes it, or the part would be re-rendered by the joiner for nothing
+- and never touches `progress.jsonl`, which is the orchestrator's story
+to tell.
+
+Everything the storage needs comes from the environment the operator
+set - `FUNCUT_FARM_BUCKET`, `FUNCUT_FARM_PREFIX`,
+`FUNCUT_FARM_ENDPOINT` (MinIO, R2, a self-hosted one), the region, the
+AWS credentials - and never from a tool's arguments: the same posture
+the VLM endpoint allow-list takes, so a prompted agent cannot aim a
+render, or the credentials beside it, at a host the operator did not
+choose. The selftest proves the whole thing with no network: a mock S3
+that verifies every signature it serves, and a stub sidecar that answers
+the farm's two verbs.
+
 ### The cache's own lifecycle: hashed in chunks, published in one piece, held to a budget
 
 The caches work because their keys are honest, and three rules keep

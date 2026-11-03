@@ -31,6 +31,7 @@ use crate::tools::Outcome;
 const SENSE_PY: &str = include_str!("../sense/sense.py");
 const VLM_PY: &str = include_str!("../sense/vlm.py");
 const EMOTION_PY: &str = include_str!("../sense/emotion.py");
+const FARM_SYNC_PY: &str = include_str!("../sense/farm-sync.py");
 /// The semantic search step, at the repo's `analysis/rerank.py`: the CLIP
 /// rerank `openvid_search` runs behind BM25. It lands in the same runtime
 /// directory as the other scripts, so it can import their ffmpeg helpers.
@@ -87,6 +88,7 @@ fn runtime() -> Result<&'static PathBuf, ApiError> {
         fs::write(dir.join("sense.py"), SENSE_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("vlm.py"), VLM_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("emotion.py"), EMOTION_PY).map_err(|e| e.to_string())?;
+        fs::write(dir.join("farm-sync.py"), FARM_SYNC_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("rerank.py"), RERANK_PY).map_err(|e| e.to_string())?;
         Ok(dir)
     });
@@ -123,10 +125,24 @@ fn run(cmd: &str, spec: &Value, timeout: Duration) -> Result<Value, ApiError> {
     run_py(&dir.join("sense.py"), cmd, spec, timeout)
 }
 
+/// A named script's path in the runtime directory the sidecars unpacked
+/// into: the door a tool in another module calls one through - the motion
+/// tools' cloud farm, for one, reaches farm-sync.py this way.
+pub(crate) fn runtime_script(name: &str) -> Result<PathBuf, ApiError> {
+    Ok(runtime()?.join(name))
+}
+
 /// [`run`], naming the script: sense.py for the pixel and sound commands,
 /// rerank.py for the semantic search step - both unpacked into the same
 /// runtime directory, which is what lets one import the other's helpers.
-fn run_py(script: &Path, cmd: &str, spec: &Value, timeout: Duration) -> Result<Value, ApiError> {
+/// farm-sync.py, the cloud farm's legs, is unpacked beside them and called
+/// the same way by the motion tools.
+pub(crate) fn run_py(
+    script: &Path,
+    cmd: &str,
+    spec: &Value,
+    timeout: Duration,
+) -> Result<Value, ApiError> {
     let dir = runtime()?;
     let n = NONCE.fetch_add(1, Ordering::Relaxed);
     let out_path = dir.join(format!("out-{cmd}-{n}.json"));

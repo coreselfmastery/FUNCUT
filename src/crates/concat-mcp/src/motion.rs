@@ -1868,6 +1868,124 @@ pub fn farm_progress(arguments: Value) -> Result<Outcome, ApiError> {
     Ok(Outcome::json(read.to_json()))
 }
 
+/// `motion_farm_cloud`: the cloud farm's legs - a farm directory and its
+/// staged render tree, pushed to and pulled from object storage, and a
+/// worker's whole day (`work`: pull, render one missing part through the
+/// sidecar with the farm's own atomic shapes and keys, push it back).
+///
+/// Everything the storage needs comes from the environment the operator
+/// set - `FUNCUT_FARM_BUCKET`, `FUNCUT_FARM_PREFIX`,
+/// `FUNCUT_FARM_ENDPOINT`, `FUNCUT_FARM_REGION`, `AWS_ACCESS_KEY_ID`,
+/// `AWS_SECRET_ACCESS_KEY` - and never from these arguments, the same
+/// posture the VLM endpoint allow-list takes: a prompted agent cannot
+/// aim a render, or the credentials beside it, at a host the operator
+/// did not choose. The tool's own budget is the deep one (1200 s); a
+/// push that outlives it is resumed cheaply, because a re-push skips
+/// every file whose stored sha256 already matches.
+pub fn farm_cloud(arguments: Value) -> Result<Outcome, ApiError> {
+    let fields = arguments
+        .as_object()
+        .cloned()
+        .ok_or_else(|| ApiError::invalid("invalid arguments: the arguments are an object"))?;
+    for key in fields.keys() {
+        if ![
+            "action",
+            "farm",
+            "staged",
+            "project",
+            "part",
+            "geneva",
+            "prefix",
+            "parts",
+            "timeoutSeconds",
+        ]
+        .contains(&key.as_str())
+        {
+            return Err(ApiError::invalid(format!(
+                "invalid arguments: unknown field `{key}`"
+            )));
+        }
+    }
+    let action = fields
+        .get("action")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .ok_or_else(|| ApiError::invalid("invalid arguments: `action` is required"))?;
+    if !["push", "pull", "status", "work"].contains(&action) {
+        return Err(ApiError::invalid(
+            "invalid arguments: `action` is push, pull, status or work",
+        ));
+    }
+    let farm = fields
+        .get("farm")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|farm| !farm.is_empty())
+        .ok_or_else(|| ApiError::invalid("invalid arguments: `farm` is required"))?;
+    // The same confinement `motion_farm_progress` holds: a farm is a
+    // directory under the operator's own sky, not a path out of it.
+    let path = if Path::new(farm).is_absolute() {
+        PathBuf::from(farm)
+    } else {
+        let project = fields
+            .get("project")
+            .and_then(Value::as_str)
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                ApiError::invalid(
+                    "invalid arguments: a relative `farm` needs the `project` it is under",
+                )
+            })?;
+        project.join(farm)
+    };
+    if path.components().any(|part| {
+        matches!(
+            part,
+            std::path::Component::ParentDir | std::path::Component::Prefix(_)
+        )
+    }) {
+        return Err(ApiError::invalid(
+            "invalid arguments: `farm` may not hold `..` or a drive",
+        ));
+    }
+    let staged = fields.get("staged").and_then(Value::as_str).map(str::trim);
+    if staged.is_some_and(|staged| staged.contains("..")) {
+        return Err(ApiError::invalid(
+            "invalid arguments: `staged` is a directory path, not a climb out of one",
+        ));
+    }
+    // The spec the script reads: the action, the resolved farm, and the
+    // worker's own knobs. The bucket, the endpoint and the credentials
+    // are deliberately absent - the script reads those from the
+    // environment the operator set, and nothing here can name them.
+    let mut spec = json!({ "action": action, "farm": path.display().to_string() });
+    if let Some(staged) = staged.filter(|staged| !staged.is_empty()) {
+        spec["staged"] = json!(staged);
+    }
+    if let Some(part) = fields.get("part").and_then(Value::as_u64) {
+        spec["part"] = json!(part);
+    }
+    if let Some(parts) = fields.get("parts").and_then(Value::as_u64) {
+        spec["parts"] = json!(parts);
+    }
+    if let Some(geneva) = fields.get("geneva").and_then(Value::as_str) {
+        spec["geneva"] = json!(geneva);
+    }
+    if let Some(prefix) = fields.get("prefix").and_then(Value::as_str) {
+        spec["prefix"] = json!(prefix);
+    }
+    if let Some(timeout) = fields.get("timeoutSeconds").and_then(Value::as_f64) {
+        spec["timeoutSeconds"] = json!(timeout);
+    }
+    let reply = crate::sense::run_py(
+        &crate::sense::runtime_script("farm-sync.py")?,
+        action,
+        &spec,
+        std::time::Duration::from_secs(1140),
+    )?;
+    Ok(Outcome::json(reply))
+}
+
 /// Whether the motion tools can reach an engine at all, for the catalogue
 /// to say so in its own words.
 pub fn engine_available() -> bool {

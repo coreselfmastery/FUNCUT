@@ -115,6 +115,8 @@ pub enum Action {
     GenevaExplain,
     /// A farm render's progress stream, read live.
     MotionFarmProgress,
+    /// The farm's legs in the cloud: push, pull, a worker's day.
+    MotionFarmCloud,
     /// Sample a render or the open timeline into a contact sheet.
     WatchRender,
     /// Look at B-roll candidates before choosing them.
@@ -887,6 +889,15 @@ pub fn catalogue() -> Vec<Tool> {
             action: Action::MotionFarmProgress,
         },
         Tool {
+            name: "motion_farm_cloud",
+            title: "The farm in the cloud: push, pull, or a worker's day",
+            description: "The resumable farm on object storage: `action` is push (upload a farm directory, and its staged render directory when `staged` names one - files whose stored sha256 already matches are skipped, so a re-push after a dead worker costs what changed), pull (download them back), status (what is remote, what is local, what differs), or work (a worker's whole day: pull, render ONE missing part through the sidecar with the farm's own atomic part-and-marker shapes and the joiner's own key, push it back - repeat until it answers done). The bucket, the endpoint and the credentials come from the operator's environment - FUNCUT_FARM_BUCKET, FUNCUT_FARM_PREFIX, FUNCUT_FARM_ENDPOINT (an S3-compatible host: MinIO, R2, a self-hosted one), FUNCUT_FARM_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY - and NEVER from these arguments, the VLM endpoint allow-list's own posture: a prompted agent cannot aim a render, or the credentials beside it, at a host the operator did not choose. `work` needs `staged` plus `parts` (or a progress.jsonl that says it); `geneva` names the sidecar, `part` picks a part, `prefix` overrides the key prefix. Uploads stream a block at a time; every request is SigV4-signed; a push that outlives the tool's 1200 s budget resumes cheaply.",
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            action: Action::MotionFarmCloud,
+        },
+        Tool {
             name: "analysis_wait",
             title: "Wait for a job",
             description: "Waits for any job - an analysis, a transcription, a voice, an export - to end, up to `timeoutSeconds` (60 by default, 600 at most), and returns its status; a finished analysis carries its JSON result in the status's `output`. If the job is still running when the time is up, call it again.",
@@ -1048,6 +1059,10 @@ impl Tool {
             // asking for the documented maximum is cancelled by the
             // net rather than named by the deadline.
             "motion_reel",
+            // The cloud farm's push and its worker's whole day: an
+            // upload of a staged tree on a slow link, or a part drawn
+            // through the sidecar, both outlive a render's own budget.
+            "motion_farm_cloud",
             // A batch runs up to eight searches, each with the 240 s
             // rerank budget `openvid_search` runs inside it; the outer
             // bound is the net the rarest, slowest batch hits, not the
@@ -1271,7 +1286,8 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
         | Action::MediaProbe
         | Action::SceneTimeline
         | Action::GenevaExplain
-        | Action::MotionFarmProgress => motion_schema(tool.name),
+        | Action::MotionFarmProgress
+        | Action::MotionFarmCloud => motion_schema(tool.name),
         Action::WatchRender
         | Action::StockSheet
         | Action::CraftCritique
@@ -1964,6 +1980,74 @@ fn motion_schema(name: &str) -> Option<Value> {
             );
             object(properties, &["farm"])
         }
+        "motion_farm_cloud" => {
+            let mut properties = Map::new();
+            properties.insert(
+                "action".to_owned(),
+                json!({
+                    "type": "string",
+                    "enum": ["push", "pull", "status", "work"],
+                    "description": "push uploads the farm (and `staged`) to object storage; pull downloads them back; status says what differs; work pulls, renders one missing part through the sidecar, and pushes it back."
+                }),
+            );
+            properties.insert(
+                "farm".to_owned(),
+                json!({
+                    "type": "string",
+                    "description": "The farm directory: absolute, or relative to `project`."
+                }),
+            );
+            properties.insert(
+                "staged".to_owned(),
+                json!({
+                    "type": "string",
+                    "description": "The staged render directory the timeline lives in (the render's --cache), uploaded under `staged/` in the prefix; `work` needs it."
+                }),
+            );
+            properties.insert(
+                "project".to_owned(),
+                json!({
+                    "type": "string",
+                    "description": "The project folder a relative `farm` resolves against."
+                }),
+            );
+            properties.insert(
+                "parts".to_owned(),
+                json!({
+                    "type": "integer", "minimum": 1, "maximum": 64,
+                    "description": "For `work`: the number of parts the orchestrator asked for, when the farm's progress.jsonl does not say it."
+                }),
+            );
+            properties.insert(
+                "part".to_owned(),
+                json!({
+                    "type": "integer", "minimum": 0,
+                    "description": "For `work`: render this part rather than the first missing one."
+                }),
+            );
+            properties.insert(
+                "geneva".to_owned(),
+                json!({
+                    "type": "string",
+                    "description": "The sidecar binary for `work` (CONCAT_GENEVA_BIN and PATH are the other doors)."
+                }),
+            );
+            properties.insert(
+                "prefix".to_owned(),
+                json!({
+                    "type": "string",
+                    "description": "The key prefix in the bucket; the farm's own name under farms/ when absent. The bucket, the endpoint and the credentials come from the operator's environment, never from here."
+                }),
+            );
+            properties.insert(
+                "timeoutSeconds".to_owned(),
+                json!({
+                    "type": "number", "minimum": 5, "maximum": 3600,
+                    "description": "For `work`: the sidecar's own per-part ceiling."
+                }),
+            );
+            object(properties, &["action", "farm"])
+        }
         "scene_timeline" => {
             // The storyboard's own shape, the same document
             // motion_reel takes.
@@ -2218,6 +2302,7 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         Action::SceneTimeline => crate::motion::scene_timeline(arguments, backend),
         Action::GenevaExplain => crate::motion::geneva_explain(arguments),
         Action::MotionFarmProgress => crate::motion::farm_progress(arguments),
+        Action::MotionFarmCloud => crate::motion::farm_cloud(arguments),
         Action::SceneAnalysis => crate::motion::scene_analysis(arguments),
         Action::WatchRender => crate::sense::watch_render(arguments, backend),
         Action::StockSheet => crate::sense::stock_contact_sheet(arguments, backend),
@@ -3441,6 +3526,10 @@ mod tests {
                 json!({ "farm": "/tmp/nowhere/farm" }),
             ),
             (
+                "motion_farm_cloud",
+                json!({ "action": "status", "farm": "/tmp/nowhere/farm" }),
+            ),
+            (
                 "media_import",
                 json!({ "path": "/tmp/Cut", "file": "/tmp/a.mp4" }),
             ),
@@ -3855,6 +3944,28 @@ mod tests {
                     let said = outcome.structured.unwrap();
                     assert_eq!(said["live"], serde_json::json!(true), "{said}");
                     assert!(said.get("out").is_some_and(|out| out.is_null()), "{said}");
+                    continue;
+                }
+                Action::MotionFarmCloud => {
+                    // The cloud's honest refusal: the script's ok:false
+                    // comes back through run_py as an ApiError, which
+                    // the protocol answers as isError naming the
+                    // environment to set. A machine with the environment
+                    // configured answers the status shape instead; both
+                    // are the tool working, so the arm accepts either.
+                    match crate::motion::farm_cloud(sample.clone()) {
+                        Ok(outcome) => {
+                            let said = outcome.structured.expect("the cloud answers JSON");
+                            assert!(said["ok"].as_bool().unwrap_or(false), "{said}");
+                        }
+                        Err(error) => {
+                            let text = error.to_string();
+                            assert!(
+                                text.contains("FUNCUT_FARM_BUCKET"),
+                                "the refusal names the environment it wants: {text}"
+                            );
+                        }
+                    }
                     continue;
                 }
                 Action::MotionFrame

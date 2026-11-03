@@ -1048,6 +1048,7 @@ mod tests {
             assets: Default::default(),
             curves: Default::default(),
             nodes: vec![node],
+            comps: Default::default(),
             slots: Vec::new(),
         }
     }

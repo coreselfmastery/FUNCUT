@@ -1469,3 +1469,84 @@ landing; `docs/MOTION.md`, `docs/FEATURES.md`, `docs/MCP.md`, the
 motion skill and the `motion_presets` tool description all say
 eighteen now, because a catalogue the docs miscount is a catalogue an
 agent misuses.
+
+## 32. Typography's second pass: the directional sweeps, the tracking entrance, the paragraph and the gradient ink
+
+Geneva roadmap item 13. The typography builder had three entrances,
+two staggers and one treatment; the measured engine facts said three
+more were free for the taking, and the module's own doctrine - build
+what the engine draws, refuse what it does not - picked them:
+
+- **Four entrances** - `slide-down`, `slide-from-left`,
+  `slide-from-right` (the directional sweeps a third, a badge and a
+  timestamp arrive on, the rises in pixels off the style's own size)
+  and **`track-in`**, the cinematic title arrival: `letter-spacing`
+  animates from `0.6 x size` to the style's rest while the line fades
+  up. That last one rides a newly measured fact - the pinned engine
+  **interpolates `letter-spacing` inside keyframes** (a 90 px line's
+  right edge measured travelling 319 px), where the module's older
+  facts are all refusals.
+- **`paragraph(&[lines], ..)`** - the multi-line reveal, one `<div>`
+  per line staggered `Kinetic::lines()`' 180 ms apart, the weight ramp
+  riding the lines as it rides the words. An empty line takes no beat:
+  a stanza break is not a 180 ms wait on nothing. Measured rendering:
+  three lines at 180 ms stagger, each rising on the settle curve.
+- **`gradient_headline(.., from, to)`** - the ink is a clip, not a
+  colour: `linear-gradient` behind `background-clip: text`, the fill
+  transparent, written after the base stylesheet so the cascade cannot
+  lose it. Measured: the clip carries into the staggered inline spans -
+  gold into ink across three words, drawn.
+
+And one negative finding, held to the same standard: a **clip-path
+wipe is not offered**. `inset()` in keyframes is refused outright
+(E442, its own error naming `polygon()`), and a `polygon()` from-to
+pair does not interpolate - it jumps to its end state at the delay's
+edge (measured: zero ink at 0.2 s, full ink at 0.3 s, nothing between).
+The module docs and MOTION.md both say so, so the next hand author
+does not spend a bake discovering it.
+
+The example (`examples/typography.rs`) grew to four nodes - the weight
+ramp, the karaoke caption, a two-line paragraph and a gradient headline
+arriving on its tracking - and its frames were read before landing: a
+layout that clipped its own paragraph was caught by exactly that
+discipline and restacked. Six tests hold the new surface to the
+module's own bar, the static-transform guard included.
+
+## 33. Scoped sub-compositions: the sting placed nine times, the scope kept
+
+Geneva roadmap item 05. The `composition` node has said "define a
+sting once, use it nine times" since the node table was written, but
+nothing behind it was: the timeline mapping never emitted the
+engine's `compositions` map, a placement's name resolved against
+nothing, and the promise was a dead link. Now:
+
+- **The document carries its comps**: `comps` maps a name to a whole
+  comp document. A `composition` node places one - once or nine
+  times, each placement with its own timing and transform. The name
+  resolves **inside the same document**, which is the scoping rule:
+  no reaching into another document's comps by id.
+- **Each sub-comp is a scope**: its node ids, assets, curves and
+  slots are its own; a parent and a child may both have a `card` and
+  a `logo`; a diagnostic inside one is pointed at `/comps/{name}/...`.
+  Cycles are refused at `validate` with a pointer into the document
+  (the engine's E207 after, ours first), and so is nesting past the
+  engine's eight levels.
+- **The timeline flattens by scope**: the engine resolves composition
+  names from one top-level map, so the mapping spells the sting's
+  `logo` as `sting::logo` and an `outer` comp's sting as
+  `outer::sting` - the document scopes, the timeline flattens, and
+  neither knows the other's business. Staging copies every scope's
+  files under the same spelling, with the same `.part`-then-rename
+  discipline, and the bake's assets key covers them: changing the
+  logo *inside the sting* is a different bake, measured by test.
+
+A real bug found on the way, by rendering the thing: `source_of`
+wrote an image node's `fit` **inside the timeline source**, which the
+engine refuses as E101 (`asset` is the only field an image source
+takes) - so every comp with an image node failed to bake through
+`Geneva::bake` (the MCP `motion_bake` path and the agent CLI), while
+the sequence path, which writes `fit` on the clip, was green. The
+comp path now writes it on the clip too, and `examples/stings.rs` -
+the worked proof: one definition, three placements, three sizes, the
+third tilted, rendered with the pinned sidecar and read before
+landing - carries an image inside its sting for exactly this reason.

@@ -1550,3 +1550,51 @@ comp path now writes it on the clip too, and `examples/stings.rs` -
 the worked proof: one definition, three placements, three sizes, the
 third tilted, rendered with the pinned sidecar and read before
 landing - carries an image inside its sting for exactly this reason.
+
+## 34. The adapters: Lottie read as a document, GSAP written as tracks
+
+Item 03 of the Geneva roadmap. `geneva-adapter` is a new workspace
+crate — the first new crate since the fork's own motion lane — with one
+rule carried through both of its halves: **nothing converts silently.**
+
+The Lottie half reads a bodymovin document into a comp: solids,
+images, shape layers (rectangles, ellipses, paths), shape groups with
+their own transforms, keyframed properties with their bezier and hold
+eases, layer parenting, in/out points, precomps nested to eight deep
+with the depth limit the cycle detector. The GSAP half applies a
+GSAP-style timeline — tweens on `x`, `y`, `scale`, `rotation`,
+`opacity` and `blur` with `delay`, `stagger`, `repeat`, `yoyo` and the
+named ease families — to a comp's nodes as tracks, `x` and `y` written
+as one position track the way a position moves.
+
+Everything the comp vocabulary has no answer for is skipped with a note
+naming the layer and the feature — text layers, mattes, masks, trim
+paths, gradient paints, repeaters, effects, 3D, hidden layers — and
+everything that converts approximately is approximated *and said*: a
+non-uniform scale takes the mean, a curved motion path straightens, an
+animated shape size holds its first value, a group paint over several
+shapes splits per shape, an elastic ease reads as the library's pop
+spring. A conversion with no notes lost nothing the source document
+said; a document whose every layer is skipped is refused with the
+comp's own words, because an empty comp is not a conversion either.
+
+Two order rules are pinned by the tests because they are the ones the
+reference players render by: the first layer of a `layers` array is
+the front, and within a shape list later items paint on top. Paths are
+re-based to their own bounding box and the box placed where the source
+drew it; they are drawn by the native engine only, as any hand-written
+path is, and the bake says so per node.
+
+The crate is deliberately dependency-light — `concat-motion`, serde,
+serde_json, thiserror, nothing else — because an adapter that reads a
+document should not pull a pixel library to do it. It carries 42
+tests: every supported feature and every refusal has a fixture, the
+output of every fixture validates *and lints* by the library's own
+rules, and the GSAP fixtures are built through the Lottie adapter so
+the two halves are proven against each other's output. A
+`geneva-adapt` binary puts both verbs on the command line for the
+agent and the curious; `docs/ADAPTERS.md` is the reference. The
+adapters are not a player — a `.lottie` file already plays through the
+Lottie engine — they are for when motion made elsewhere should become
+document: editable, lintable, fillable by a slot, baked by whichever
+engine the project prefers.

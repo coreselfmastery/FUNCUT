@@ -743,6 +743,11 @@ Eighteen presets are a vocabulary; a film is a sentence. Every preset in `preset
 document literal, and so is anything a designer or an agent writes: the JSON *is* the authoring
 surface, masks, effects, blends, gradients, dash and all five curve families included.
 
+Motion made *elsewhere* has a door in too: the `geneva-adapter` crate reads a Lottie (bodymovin)
+document as a comp and applies a GSAP-style timeline to a comp's nodes as tracks — nothing converts
+silently, every skip and approximation is a note the caller can read. `docs/ADAPTERS.md` is that
+crate's reference, and `geneva-adapt` is its command line.
+
 `src/crates/concat-motion/examples/comps/cypher.opener.json` and `cypher.spectrum.json` are the two
 worked examples, and between them they exercise the whole model:
 

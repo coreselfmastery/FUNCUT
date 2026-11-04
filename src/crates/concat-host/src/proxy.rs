@@ -13,8 +13,10 @@
 //! adopted into the reader pool as the file's stand-in. A request that
 //! asks for the proxy reads it; the paused monitor and the export never
 //! do, and see the original. The copy is named after the file's path,
-//! size and modification time, so a file replaced on disk gets a fresh
-//! one and the old copy is swept with the rest of the cache.
+//! size, modification time and a probe of its bytes, so a file replaced
+//! on disk gets a fresh one - however exactly the replacement keeps the
+//! original's length and timestamp - and the old copy is swept with the
+//! rest of the cache.
 //!
 //! Which codec the copy is written in is Settings' to say, as
 //! [`ProxyCodec`]: H.264, the small file, or MJPEG, whose every frame is
@@ -119,16 +121,52 @@ pub fn serves_frame(width: u32, height: u32) -> bool {
     width.max(height) <= SHORTEST_LONG_SIDE
 }
 
+/// How much of a file's head, middle and tail is read to name its proxy:
+/// three small reads that differ between two same-sized files almost
+/// everywhere, and not a pass over tens of gigabytes that a lookup
+/// cannot afford - it happens for every clip when a project opens, and
+/// for every clip still waiting for its copy while the write runs.
+const PROBE: u64 = 64 * 1024;
+
+/// Folds a probe of the file's bytes into `hasher`: the first, the
+/// middle and the last [`PROBE`] bytes, each with the offset it came
+/// from - a file no longer than the probe is read whole, once, its head,
+/// middle and tail being the same bytes. What this adds to the path, the
+/// size and the modification time is the one thing none of them can say:
+/// what the file's bytes are. A replacement that keeps the original's
+/// length and timestamp - a backup tool restoring what it saved, an
+/// editor writing in place - is the case those cannot tell from an
+/// unchanged file, and the bytes can (audit 2026-11-04, #2). A file that
+/// cannot be read past its metadata contributes what it can: a key made
+/// without its bytes is a key that only asks for the copy again.
+fn probe_into(file: &mut std::fs::File, len: u64, hasher: &mut impl Hasher) {
+    use std::io::{Read, Seek, SeekFrom};
+    let probe = PROBE.min(len);
+    let starts: Vec<u64> = if probe == len {
+        vec![0]
+    } else {
+        vec![0, len / 2 - probe / 2, len - probe]
+    };
+    let mut bytes = vec![0u8; probe as usize];
+    for at in starts {
+        if file.seek(SeekFrom::Start(at)).is_err() || file.read_exact(&mut bytes).is_err() {
+            return;
+        }
+        at.hash(hasher);
+        bytes.hash(hasher);
+    }
+}
+
 /// Where the proxy of `media` lives under `project`: named by the file's
-/// path, size and modification time, and by the range it is read as,
-/// since the copy is written from the corrected picture and a correction
-/// changed is a different copy - and by whether the file is HDR, whose
-/// proxy keeps its signal, so the tone-mapped copies earlier builds wrote
-/// of one are written again. A proxy in the codec other than H.264 - the
-/// one every proxy was before the codec was a choice - is named for that
-/// too, so a switch of codec in Settings writes the choice's copy and
-/// not the old one renamed. None for a file that cannot be stat'ed,
-/// which cannot be read either.
+/// path, size, modification time and a probe of its bytes, and by the
+/// range it is read as, since the copy is written from the corrected
+/// picture and a correction changed is a different copy - and by whether
+/// the file is HDR, whose proxy keeps its signal, so the tone-mapped
+/// copies earlier builds wrote of one are written again. A proxy in the
+/// codec other than H.264 - the one every proxy was before the codec was
+/// a choice - is named for that too, so a switch of codec in Settings
+/// writes the choice's copy and not the old one renamed. None for a file
+/// that cannot be stat'ed, which cannot be read either.
 pub fn path_for(
     project: &Path,
     media: &str,
@@ -140,6 +178,12 @@ pub fn path_for(
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     media.hash(&mut hasher);
     meta.len().hash(&mut hasher);
+    // The bytes tell a replacement from the file it replaced where the
+    // length and the timestamp cannot: see `probe_into`, whose probe is
+    // folded in wherever the file can be opened.
+    if let Ok(mut file) = std::fs::File::open(media) {
+        probe_into(&mut file, meta.len(), &mut hasher);
+    }
     if let Some(range) = range {
         range.name().hash(&mut hasher);
     }
@@ -887,6 +931,136 @@ mod tests {
             first, second,
             "same-size replacements within one second must not share a proxy"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A replacement that keeps the original's length and its
+    /// modification time exactly - a backup tool restoring what it saved,
+    /// an editor writing in place - is the case no fact about the file's
+    /// name can tell from an unchanged file: the bytes can (audit
+    /// 2026-11-04, #2).
+    #[test]
+    fn same_size_same_time_replacement_gets_a_new_proxy_key() {
+        use std::time::{Duration, UNIX_EPOCH};
+
+        let dir =
+            std::env::temp_dir().join(format!("concat-proxy-content-path-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let media = dir.join("clip.mp4");
+        let project = dir.join("project");
+        std::fs::write(&media, b"first payload").expect("writes first source");
+
+        // One timestamp, set again on the replacement: whatever precision
+        // the filesystem keeps, both sources carry the same one.
+        let time = UNIX_EPOCH + Duration::new(1_700_000_000, 500_000_000);
+        let set_modified = |time| {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&media)
+                .expect("opens source for timestamp update")
+                .set_times(std::fs::FileTimes::new().set_modified(time))
+                .expect("sets modification time");
+        };
+
+        set_modified(time);
+        let first = path_for(
+            &project,
+            &media.to_string_lossy(),
+            None,
+            false,
+            ProxyCodec::H264,
+        )
+        .expect("first proxy path");
+        let first_mtime = std::fs::metadata(&media)
+            .expect("first metadata")
+            .modified()
+            .expect("first mtime");
+
+        // The replacement has different bytes, exactly the same length,
+        // and exactly the timestamp the first source had.
+        std::fs::write(&media, b"other payload").expect("writes replacement source");
+        set_modified(time);
+
+        let second_metadata = std::fs::metadata(&media).expect("replacement metadata");
+        assert_eq!(
+            second_metadata.len(),
+            13,
+            "the replacement keeps the length"
+        );
+        assert_eq!(
+            second_metadata.modified().expect("replacement mtime"),
+            first_mtime,
+            "and the modification time, exactly"
+        );
+
+        let second = path_for(
+            &project,
+            &media.to_string_lossy(),
+            None,
+            false,
+            ProxyCodec::H264,
+        )
+        .expect("replacement proxy path");
+        assert_ne!(
+            first, second,
+            "a replacement the file's facts cannot tell apart is told apart by its bytes"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The probe of an unchanged file is the same probe every time: a key
+    /// that moved between two looks at one file would rewrite its copy
+    /// over and over, which is the failure the key exists to prevent -
+    /// the wrong copy, not no copy - in the other direction.
+    #[test]
+    fn an_unchanged_file_keeps_one_key() {
+        let dir =
+            std::env::temp_dir().join(format!("concat-proxy-stable-path-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let media = dir.join("clip.mp4");
+        let project = dir.join("project");
+        // A file over one probe long, so the head, the middle and the
+        // tail are three different reads of it, and a file under it, read
+        // whole: both must sit still.
+        std::fs::write(&media, vec![b'x'; 256 * 1024]).expect("writes a long source");
+        let long = path_for(
+            &project,
+            &media.to_string_lossy(),
+            None,
+            false,
+            ProxyCodec::H264,
+        )
+        .expect("a path");
+        let again = path_for(
+            &project,
+            &media.to_string_lossy(),
+            None,
+            false,
+            ProxyCodec::H264,
+        )
+        .expect("the same path");
+        assert_eq!(long, again, "an unchanged file keeps its key");
+
+        std::fs::write(&media, b"short but whole").expect("writes a short source");
+        let short = path_for(
+            &project,
+            &media.to_string_lossy(),
+            None,
+            false,
+            ProxyCodec::H264,
+        )
+        .expect("a path");
+        let once_more = path_for(
+            &project,
+            &media.to_string_lossy(),
+            None,
+            false,
+            ProxyCodec::H264,
+        )
+        .expect("the same path");
+        assert_eq!(short, once_more, "a short unchanged file keeps its key too");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

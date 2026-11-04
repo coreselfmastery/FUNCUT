@@ -3683,7 +3683,8 @@ impl Studio {
             // write that failed is worth asking for again: the id is
             // held back until the copy is on disk, so the next pass
             // re-asks for one that never landed. Asking again is cheap
-            // - a stat and a set lookup - while the write runs.
+            // - a stat, a probe of the file's head, middle and tail, and
+            // a set lookup - while the write runs.
             if concat_host::proxy::path_for(
                 std::path::Path::new(&project_path),
                 &path,

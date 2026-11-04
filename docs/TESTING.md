@@ -7,18 +7,22 @@ checked against a machine instead of a memory.
 
 ## The count
 
-As of `4b528cfa` (2026-11-04), the last commit whose engine lane ran to
-green when this page was written:
+As of the 2026-11-04 follow-up that retires the monitor's in-flight
+request on close, probes the proxy key with the file's bytes, and clears
+the Clippy failure that kept the engine lane from running its tests at
+all - ten tests over the 1653 at `4b528cfa` (the seven 8d43162 added but
+whose lane never ran, and this change's three), on the same fourteen
+skips:
 
 | Lane | What runs | Result |
 | --- | --- | --- |
-| Engine, workspace | `cargo nextest run --workspace` | **1653 tests run: 1653 passed, 14 skipped** |
+| Engine, workspace | `cargo nextest run --workspace` | **1663 tests run: 1663 passed, 14 skipped** |
 | Engine, documentation | `cargo test --workspace --doc` | **8 passed** |
 | Engine, gRPC feature | `cargo nextest run -p concat-server --features grpc` | **30 tests run: 30 passed** |
 | Analysis senses | `python3 src/crates/concat-api/analysis/tests/run_tests.py` | **21 checks ok** |
 | Cloud farm | `python3 src/crates/concat-mcp/sense/farm-sync.py selftest` | **8 checks ok** |
 
-**The Rust total: 1691** (1653 + 8 + 30). Every workspace member is
+**The Rust total: 1701** (1663 + 8 + 30). Every workspace member is
 counted - the workspace's test binaries cover all seventeen crates, their
 integration tests and their binaries.
 
@@ -29,8 +33,12 @@ discovery exec-bit regression and the authored-`at` warning's two ways,
 and the same day's checks job gained the GPU-pick assertions inside the
 sense selftest beside the farm, emotion and vlm selftests it already
 ran. The 2026-11-04 snapshot at `4b528cfa` - 1653, with the proxy cache
-identity fix's regression test in it - is the table above. The five
-timing benchmarks of 2026-11-03 are
+identity fix's regression test in it - and the same day's follow-up
+- 1663, with the close retirement's test in the window crate and the
+same-size-same-time and key-stability tests beside the sub-second one
+in the host, over the seven 8d43162 added whose own lane went red on
+the lint and never counted them - are the table above. The five timing benchmarks of
+2026-11-03 are
 `#[ignore]`d - counted as skipped, never as run. A number in a session
 or a document is a snapshot of a commit; this table names its commit,
 which is the only honest way to hold one.

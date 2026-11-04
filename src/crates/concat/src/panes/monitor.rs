@@ -13,7 +13,11 @@
 //! too, not only in the queue: a frame that arrives for a position
 //! already superseded is dropped rather than shown on its way past (audit
 //! 2026-11-04, #1, #2), and a frame that could not be drawn says so once
-//! per project and then stops repeating itself.
+//! per project and then stops repeating itself. A project closing
+//! retires the request that is out, too: the project epoch drops its
+//! delivery at the door, and a delivery dropped there is one that never
+//! reaches the arm that clears the busy flag - the pane clears it
+//! itself, or waits forever on a frame that will not be handed to it.
 //!
 //! The stage's gestures - pressing, dragging and releasing a picture on
 //! the monitor - are not here: one [`crate::studio::Gesture`] spans the
@@ -222,7 +226,7 @@ impl MonitorPane {
                 self.request(studio);
             }
             MonitorMsg::Opened => self.failed = false,
-            MonitorMsg::Closed => self.image = slint::Image::default(),
+            MonitorMsg::Closed => self.close(),
         }
     }
 
@@ -259,6 +263,25 @@ impl MonitorPane {
     /// on the monitor, whatever order the workers finish in.
     fn serves_current(&self, generation: u64) -> bool {
         generation == self.generation
+    }
+
+    /// Nothing to show, and nothing out that owes the pane a frame. The
+    /// request that was decoding when the project closed is dropped at
+    /// delivery by the project epoch, and a delivery dropped there never
+    /// reaches the Frame arm - the only place `busy` is cleared - so a
+    /// pane left busy would wait forever on a frame that will not be
+    /// handed to it, and the monitor of every project after it would
+    /// stay dark. Closing spends the generation the request held, so a
+    /// frame that does land anyway - from some delivery path the epoch
+    /// does not cover - is stale on arrival and not drawn (audit
+    /// 2026-11-04, #1).
+    fn close(&mut self) {
+        self.generation += 1;
+        self.busy = false;
+        self.wanted = false;
+        self.asked = None;
+        self.cadence = Cadence::default();
+        self.image = slint::Image::default();
     }
 
     /// Asks the engine for the frame at the playhead - or under the pointer,
@@ -402,11 +425,13 @@ mod tests {
     /// 2026-11-04, #1).
     #[test]
     fn a_frame_from_a_superseded_request_is_not_the_one_to_show() {
-        let mut pane = MonitorPane::default();
         // A request is out: the pane is busy on its generation, and a
         // frame for it is the one to show.
-        pane.busy = true;
-        pane.generation = 1;
+        let mut pane = MonitorPane {
+            busy: true,
+            generation: 1,
+            ..MonitorPane::default()
+        };
         assert!(pane.serves_current(1), "the request out is the newest one");
         // The playhead moves on while it decodes - once, then again, as a
         // drag does - and every want retires the in-flight request's claim.
@@ -421,6 +446,37 @@ mod tests {
         assert!(
             pane.serves_current(3),
             "only the newest generation is served"
+        );
+    }
+
+    /// A request still out when the project closes is retired outright:
+    /// its delivery is dropped by the project epoch and so never reaches
+    /// the arm that clears `busy`, which would leave the pane waiting
+    /// forever on a frame that will not be handed to it - and every
+    /// project after it with a dark monitor. The generation it held is
+    /// spent too, so a frame that lands anyway is stale on arrival
+    /// (audit 2026-11-04, #1).
+    #[test]
+    fn closing_retires_the_request_that_is_out() {
+        let mut pane = MonitorPane {
+            busy: true,
+            wanted: true,
+            generation: 1,
+            ..MonitorPane::default()
+        };
+        pane.close();
+        assert!(
+            !pane.busy,
+            "the pane is idle, not waiting on a dropped delivery"
+        );
+        assert!(!pane.wanted, "nothing is asked for again after a close");
+        assert!(
+            !pane.serves_current(1),
+            "the request that was out is stale, whatever path delivers it"
+        );
+        assert!(
+            pane.serves_current(2),
+            "the next project's first request starts from a clean slate"
         );
     }
 }

@@ -7,20 +7,20 @@ checked against a machine instead of a memory.
 
 ## The count
 
-As of `e737286d` (2026-11-01), the last commit whose engine lane ran to
+As of `4b528cfa` (2026-11-04), the last commit whose engine lane ran to
 green when this page was written:
 
 | Lane | What runs | Result |
 | --- | --- | --- |
-| Engine, workspace | `cargo nextest run --workspace` | **1355 tests run: 1355 passed, 6 skipped** across 22 binaries |
+| Engine, workspace | `cargo nextest run --workspace` | **1653 tests run: 1653 passed, 14 skipped** |
 | Engine, documentation | `cargo test --workspace --doc` | **8 passed** |
 | Engine, gRPC feature | `cargo nextest run -p concat-server --features grpc` | **30 tests run: 30 passed** |
 | Analysis senses | `python3 src/crates/concat-api/analysis/tests/run_tests.py` | **21 checks ok** |
 | Cloud farm | `python3 src/crates/concat-mcp/sense/farm-sync.py selftest` | **8 checks ok** |
 
-**The Rust total: 1393** (1355 + 8 + 30). Every workspace member is
-counted - the 22 binaries cover all seventeen crates, their integration
-tests and their binaries.
+**The Rust total: 1691** (1653 + 8 + 30). Every workspace member is
+counted - the workspace's test binaries cover all seventeen crates, their
+integration tests and their binaries.
 
 The suite grows with the code: the correctness audit of 2026-11-01 added
 five tests after `e737286d`, the ship-blockers and the roadmap's middle
@@ -28,12 +28,14 @@ days added more, the register-closing pass of 2026-11-03 added the
 discovery exec-bit regression and the authored-`at` warning's two ways,
 and the same day's checks job gained the GPU-pick assertions inside the
 sense selftest beside the farm, emotion and vlm selftests it already
-ran. The five timing benchmarks of 2026-11-03 are
+ran. The 2026-11-04 snapshot at `4b528cfa` - 1653, with the proxy cache
+identity fix's regression test in it - is the table above. The five
+timing benchmarks of 2026-11-03 are
 `#[ignore]`d - counted as skipped, never as run. A number in a session
 or a document is a snapshot of a commit; this table names its commit,
 which is the only honest way to hold one.
 
-## What the eleven skipped are
+## What the fourteen skipped are
 
 `nextest` skips exactly the tests the source marks `#[ignore]`, and each
 of them needs something a CI runner does not have - a hand, a machine,
@@ -42,13 +44,16 @@ or a network:
 | Test | Why it is skipped |
 | --- | --- |
 | `concat-vision` `stabilize::track::time_a_frame_at_the_analysis_size` | a timing benchmark, run by hand |
+| `concat-render` `upscale::upscale_speed` | a timing benchmark, run by hand |
 | `concat-motion` `bench::tests::time_the_timeline_document_for_the_whole_library` | a timing benchmark, run by hand |
 | `concat-motion` `bench::tests::time_track_sampling_across_a_six_second_span` | a timing benchmark, run by hand |
 | `concat-motion` `bench::tests::time_the_streaming_hash_over_a_128mib_asset` | a timing benchmark, run by hand |
 | `concat-motion` `bench::tests::time_the_comps_sweep_over_a_full_cache` | a timing benchmark, run by hand |
 | `concat-motion` `bench::tests::time_noise_at_the_particle_cap` | a timing benchmark, run by hand |
+| `concat-host` `enhance::enhance_stage_timing` | a timing benchmark, run by hand |
 | `concat-media` `decode::mediacodec_decodes_a_real_file_as_the_cpu_does` | needs Android and a sample in `CONCAT_DEVICE_SAMPLE` |
 | `concat-speech` `transcribe::transcribes_a_file_with_the_installed_model` | needs a downloaded `tiny.en` and `CONCAT_TRANSCRIBE_AUDIO` |
+| `concat-speech` `transcribe::captions_of_a_file` | needs a downloaded model and a sample in `CONCAT_TRANSCRIBE_AUDIO` |
 | `concat-host` `openvid::the_library_end_to_end` | needs `OPENVID_INDEX` naming a real index |
 | `concat-host` `magick::the_real_sources_answer` | hits the live sticker sources |
 | `concat-host` `bgm::the_real_sources_answer` | hits the live music sources |
@@ -60,7 +65,7 @@ Linux-only, so there is no "ignored on macOS" class to carry.
 
 - **The gRPC feature** (`concat-server`) is off by default - nothing in
   the workspace turns it on - so its 30 tests run in a lane of their own
-  and are not part of the 1355.
+  and are not part of the 1653.
 - **GPU tests fail rather than skip** when no adapter is usable
   (`CONCAT_REQUIRE_GPU`), so a green run proves the parity suite ran on
   the runner's software Vulkan driver, not that it quietly looked the
@@ -68,7 +73,7 @@ Linux-only, so there is no "ignored on macOS" class to carry.
 - **The Geneva lane** (`geneva.yml`) runs `cargo test -p concat-motion`
   and then renders the multi-layer example through the real sidecar on
   every push to `main` and every pull request; the motion crate's tests
-  are counted in the 1355, and the render is the check the count cannot
+  are counted in the 1653, and the render is the check the count cannot
   express. The lane also runs **the scene-quality regression**
   (`scripts/motion/scene-quality.py`): ten reference storyboards, each
   rendered through the sidecar at sampled instants, measured with the
@@ -111,7 +116,7 @@ version of the count itself:
 
 ```sh
 cd src
-cargo nextest run --workspace        # the 1355 lane
+cargo nextest run --workspace        # the 1653 lane
 cargo test --workspace --doc         # the 8
 cargo nextest run -p concat-server --features grpc   # the 30
 ```

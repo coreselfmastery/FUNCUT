@@ -517,10 +517,20 @@ fn footage(
                     fade_out: 0.0,
                     filter_chain: String::new(),
                 };
-                let muxed = concat_media::audio::mix_to_file(&[clip], duration, &partial_audio)
-                    .and_then(|()| {
-                        concat_media::audio::mux(&partial_video, &partial_audio, &partial_muxed)
-                    });
+                let muxed = concat_media::audio::mix_to_file(
+                    &[clip],
+                    duration,
+                    &partial_audio,
+                    Some(job.cancel_flag()),
+                )
+                .and_then(|()| {
+                    concat_media::audio::mux(
+                        &partial_video,
+                        &partial_audio,
+                        &partial_muxed,
+                        Some(job.cancel_flag()),
+                    )
+                });
                 let _ = std::fs::remove_file(&partial_audio);
                 muxed
             }
@@ -528,6 +538,7 @@ fn footage(
                 &partial_video,
                 Path::new(&request.media_path),
                 &partial_muxed,
+                Some(job.cancel_flag()),
             ),
         }
         .map_err(|error| error.to_string());

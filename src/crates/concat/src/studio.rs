@@ -7424,7 +7424,7 @@ impl Studio {
             move || -> Result<concat_host::media::MediaSummary, String> {
                 std::fs::create_dir_all(&out_dir)
                     .map_err(|error| format!("could not create {}: {error}", out_dir.display()))?;
-                concat_media::audio::mix_to_file(&pieces, duration, &file)
+                concat_media::audio::mix_to_file(&pieces, duration, &file, None)
                     .map_err(|error| error.to_string())?;
                 concat_host::media::probe(&file.to_string_lossy())
             },

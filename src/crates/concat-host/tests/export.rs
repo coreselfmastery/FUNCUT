@@ -195,7 +195,7 @@ fn clock_aac(wav: &Path, path: &Path, seconds: u32) {
         fade_out: 0.0,
         filter_chain: String::new(),
     };
-    sound::mix_to_file(&[clip], f64::from(seconds), path).expect("mixes the clock");
+    sound::mix_to_file(&[clip], f64::from(seconds), path, None).expect("mixes the clock");
 }
 
 /// A still: one solid colour no source second has.
@@ -238,14 +238,14 @@ impl Sources {
         let peek_picture = dir.join("peek-picture.mp4");
         picture(&peek_picture, FrameRate::SIXTY, 6, codec);
         let peek = dir.join("peek.mp4");
-        sound::mux(&peek_picture, &aac, &peek).expect("joins the screen recording");
+        sound::mux(&peek_picture, &aac, &peek, None).expect("joins the screen recording");
 
         let cam_picture = dir.join("cam-picture.mp4");
         picture(&cam_picture, FrameRate::THIRTY, 4, codec);
         let cam_sound = dir.join("cam.m4a");
         clock_aac(&wav, &cam_sound, 4);
         let cam = dir.join("cam.mp4");
-        sound::mux(&cam_picture, &cam_sound, &cam).expect("joins the camera clip");
+        sound::mux(&cam_picture, &cam_sound, &cam, None).expect("joins the camera clip");
 
         let silent = dir.join("silent.mp4");
         picture(&silent, FrameRate::FILM, 3, codec);

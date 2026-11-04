@@ -24,8 +24,8 @@ with one click.
 | Core edit commands (`edit.apply` ops) | **52** | `src/crates/concat-project/src/commands/mod.rs` |
 | Effect/filter/transition/audio packages | **327** = 57 filters + 123 effects + 122 transitions + 25 audio | `src/crates/concat-effects/packages/` |
 | Text presets | 31 named + default | `src/crates/concat/text-presets/` |
-| Motion presets | 12 | `src/crates/concat-motion/src/presets.rs` |
-| Bundled CC0 sounds | 530 (16 MB, 12 categories; 100 of them the designed Hollywood pack) | `audio/` |
+| Motion presets | 18 | `src/crates/concat-motion/src/presets.rs` |
+| Bundled CC0 sounds | 530 (16 MB, 12 categories; 110 of them designed in-repo — the 100-sound Hollywood pack and ten risers and sweeps) | `audio/` |
 | BGM library | 1,191 CC0 tracks (FreePD 1,025 + MobyGratis 166) | fetched on demand |
 | Stock clips (OpenVid) | 937,957 | ~435 MB local index, fetched per clip |
 | Stickers | 1,285 (Fluent Emoji, MIT) | ~135 KB index, fetched per sticker |
@@ -456,5 +456,5 @@ model at all.
 | Session, proxies, models, templates, sounds | `src/crates/concat-host` |
 | The skills | `.claude/skills/{funcut-director,maestro,motion,run-concat}` |
 | The Forge wiring | `.forge/mcp.toml`, `docs/forge/`, the Forge page |
-| Bundled sounds | `audio/` (530, CC0; 100 designed in-repo) |
+| Bundled sounds | `audio/` (530, CC0; 110 designed in-repo) |
 | Model manifest | `models/manifest.toml` |

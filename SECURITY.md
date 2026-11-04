@@ -14,8 +14,12 @@ releases are not patched.
 
 Please do not open a public issue for a security problem.
 
-Report it privately through GitHub's advisory form:
-https://github.com/jub0t/Concat/security/advisories/new
+Report it privately through **this repository's** advisory form:
+https://github.com/coreselfmastery/FUNCUT/security/advisories/new
+
+Reports sent to another repository's advisory page - an upstream
+project this fork tracks, for instance - reach the people who cannot
+ship a fix here; the form above is the one this project watches.
 
 Include the version (Settings › About), the platform, and steps to
 reproduce. A proof of concept helps; a project file that triggers the

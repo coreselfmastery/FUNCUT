@@ -375,11 +375,30 @@ impl MixInput {
 /// Mixes `clips` into one AAC file at `destination`.
 ///
 /// Every clip's file must contain an audio stream; see [`mix_graph`].
-pub fn mix_to_file(clips: &[AudioClip], duration: f64, destination: &Path) -> Result<()> {
+///
+/// `stop`, where a caller has one, is polled at every frame the graph is
+/// fed and every one the sink is drained of: set, the mix stops at once
+/// with [`Error::Cancelled`], leaving whatever part of the file it had
+/// written - the caller's temp, to remove as any failed write's. A mix
+/// that takes minutes (a long timeline, many clips) then stops in
+/// milliseconds, not at the timeline's end; `None` runs to the end as
+/// before.
+pub fn mix_to_file(
+    clips: &[AudioClip],
+    duration: f64,
+    destination: &Path,
+    stop: Option<&std::sync::atomic::AtomicBool>,
+) -> Result<()> {
     ffi::init();
     // A bad chain is refused before any file is opened.
     for clip in clips {
         validate_chain(&clip.filter_chain)?;
+    }
+    // Already stopped: no file is opened, nothing is read. The same flag
+    // is asked again inside the loop, for the stop that lands part-way
+    // through.
+    if stopped(stop) {
+        return Err(Error::Cancelled);
     }
     let missing = |name: &str| Error::Missing {
         what: "filter",
@@ -612,6 +631,9 @@ pub fn mix_to_file(clips: &[AudioClip], duration: f64, destination: &Path) -> Re
     'mix: loop {
         // Pull everything the sink has.
         loop {
+            if stopped(stop) {
+                return Err(Error::Cancelled);
+            }
             let mut mixed = Audio::empty();
             let pulled = {
                 let mut context = graph.get("sink").expect("the graph has a sink");
@@ -647,6 +669,9 @@ pub fn mix_to_file(clips: &[AudioClip], duration: f64, destination: &Path) -> Re
         }
         // Push one frame from every input that still has one.
         for input in inputs.iter_mut() {
+            if stopped(stop) {
+                return Err(Error::Cancelled);
+            }
             if input.done {
                 continue;
             }
@@ -709,8 +734,24 @@ pub fn mix_to_file(clips: &[AudioClip], duration: f64, destination: &Path) -> Re
 /// Streams are copied, not re-encoded: the picture is already exactly as
 /// asked, and a second pass would cost time and a generation of quality.
 /// The result ends with the shorter of the two.
-pub fn mux(video: &Path, audio: &Path, output: &Path) -> Result<()> {
+///
+/// `stop`, where a caller has one, is polled at every packet copied: set,
+/// the mux stops with [`Error::Cancelled`] and leaves `output` part-made -
+/// the caller's temp, to remove as any failed write's. `None` copies it
+/// all.
+pub fn mux(
+    video: &Path,
+    audio: &Path,
+    output: &Path,
+    stop: Option<&std::sync::atomic::AtomicBool>,
+) -> Result<()> {
     ffi::init();
+    // Already stopped: neither input is opened, no output is created. The
+    // same flag is asked again every packet, for the stop that lands
+    // part-way through.
+    if stopped(stop) {
+        return Err(Error::Cancelled);
+    }
     let video_in = ffmpeg::format::input(video).map_err(|error| ffi::fail("open", video, error))?;
     let audio_in = ffmpeg::format::input(audio).map_err(|error| ffi::fail("open", audio, error))?;
     let video_stream = video_in
@@ -769,6 +810,9 @@ pub fn mux(video: &Path, audio: &Path, output: &Path) -> Result<()> {
         Feed::new(audio_in, audio_index, audio_tb, out_audio_tb, 1, audio),
     ];
     loop {
+        if stopped(stop) {
+            return Err(Error::Cancelled);
+        }
         for feed in &mut feeds {
             feed.fill()?;
         }
@@ -797,6 +841,14 @@ pub fn mux(video: &Path, audio: &Path, output: &Path) -> Result<()> {
     }
     out.write_trailer()
         .map_err(|error| ffi::fail("write trailer", output, error))
+}
+
+/// Whether `stop` is set: the one question the long-running operations
+/// (`mix_to_file`, `mux`) ask of the caller's flag at every frame and
+/// packet, so a stop is honoured in milliseconds rather than at the
+/// operation's end.
+fn stopped(stop: Option<&std::sync::atomic::AtomicBool>) -> bool {
+    stop.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// One input of the mux: its demuxer, which of its streams is wanted, and
@@ -1156,7 +1208,7 @@ mod tests {
         encoder.finish().expect("finishes");
         silent_aac(&audio, 4.0);
 
-        let result = mux(&video, &audio, &output);
+        let result = mux(&video, &audio, &output, None);
         let counts = packets_of(&output);
         let _ = std::fs::remove_file(&video);
         let _ = std::fs::remove_file(&audio);
@@ -1188,7 +1240,7 @@ mod tests {
                     source_start,
                     ..clip(&source)
                 };
-                mix_to_file(&[piece], 1.0, &output).expect("mixes");
+                mix_to_file(&[piece], 1.0, &output, None).expect("mixes");
                 let options = AudioOptions {
                     rate: 8_000,
                     channels: 1,
@@ -1244,7 +1296,7 @@ mod tests {
         };
         let clips = [piece(0.0, 0.0, 2.0), piece(2.0, 2.0, 4.0)];
         let target = output.clone();
-        let worker = std::thread::spawn(move || mix_to_file(&clips, 16.0, &target));
+        let worker = std::thread::spawn(move || mix_to_file(&clips, 16.0, &target, None));
         let started = std::time::Instant::now();
         while !worker.is_finished() {
             assert!(
@@ -1283,7 +1335,7 @@ mod tests {
             source_start: 3.5,
             ..clip(&source)
         };
-        mix_to_file(&[piece], 0.6, &output).expect("mixes");
+        mix_to_file(&[piece], 0.6, &output, None).expect("mixes");
         let options = AudioOptions {
             rate: 8_000,
             channels: 1,
@@ -1307,6 +1359,73 @@ mod tests {
             / 8_000.0;
         assert!(onset < 0.03, "the tone starts {onset:.3} s in, not at once");
         let _ = std::fs::remove_file(&output);
+    }
+
+    /// A stop flag set part-way through a mix ends it at once with
+    /// [`Error::Cancelled`], rather than at the timeline's end: the export
+    /// that owns the flag is cancelled in the mixing stage as it is in the
+    /// rendering one. The flag is set before the call here, which the
+    /// export's own path cannot do - but the check it exercises is the same
+    /// one a flag set by another thread lands on, at the next frame.
+    #[test]
+    fn a_stopped_mix_stops_at_once() {
+        use std::sync::atomic::AtomicBool;
+        let dir = std::env::temp_dir();
+        let source = dir.join("concat-mix-stop-source.wav");
+        let output = dir.join("concat-mix-stop-out.m4a");
+        tone_wav(&source, 30.0);
+        let piece = AudioClip {
+            duration: 30.0,
+            ..clip(&source.to_string_lossy())
+        };
+        let stop = AtomicBool::new(true);
+        let started = std::time::Instant::now();
+        let result = mix_to_file(&[piece], 30.0, &output, Some(&stop));
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "a stopped mix returns promptly, not after mixing the whole span"
+        );
+        assert!(matches!(result, Err(Error::Cancelled)));
+        let _ = std::fs::remove_file(&source);
+        let _ = std::fs::remove_file(&output);
+    }
+
+    /// A stop flag set before a mux means not one packet is copied: the
+    /// cancelled export leaves no part-made file behind for its caller to
+    /// mistake for the finished one (it is the caller's temp to remove,
+    /// which this test does itself).
+    #[test]
+    fn a_stopped_mux_copies_nothing() {
+        use std::sync::atomic::AtomicBool;
+
+        use crate::{EncodeOptions, Encoder, FrameSink};
+        use concat_core::frame::Frame;
+        use concat_core::time::FrameRate;
+
+        let dir = std::env::temp_dir();
+        let video = dir.join("concat-mux-stop-picture.mp4");
+        let audio = dir.join("concat-mux-stop-sound.m4a");
+        let output = dir.join("concat-mux-stop-joined.mp4");
+        let options = EncodeOptions {
+            preset: "ultrafast".to_owned(),
+            ..EncodeOptions::default()
+        };
+        let mut encoder = Encoder::create(&video, 64, 64, FrameRate::SIXTY, &options)
+            .expect("the linked FFmpeg encodes h264");
+        for _ in 0..240 {
+            encoder.write_frame(&Frame::black(64, 64)).expect("writes");
+        }
+        encoder.finish().expect("finishes");
+        silent_aac(&audio, 4.0);
+        let stop = AtomicBool::new(true);
+        let result = mux(&video, &audio, &output, Some(&stop));
+        assert!(matches!(result, Err(Error::Cancelled)));
+        assert!(
+            !output.is_file(),
+            "a stopped mux leaves no file: the caller removes its own temp"
+        );
+        let _ = std::fs::remove_file(&video);
+        let _ = std::fs::remove_file(&audio);
     }
 
     #[test]
@@ -1365,7 +1484,7 @@ mod tests {
             ..clip("")
         };
         let output = dir.join("saved.wav");
-        mix_to_file(&[piece], duration, &output).expect("saves the WAV");
+        mix_to_file(&[piece], duration, &output, None).expect("saves the WAV");
         {
             let input = ffmpeg::format::input(&output).expect("opens the saved file");
             let stream = input

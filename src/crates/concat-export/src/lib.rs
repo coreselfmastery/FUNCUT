@@ -31,7 +31,7 @@ use resolve::{
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use concat_core::SpeedCurve;
 use concat_core::animate::{Animation, Ease as AnimEase, Key as AnimKey, Track as AnimTrack};
@@ -1125,6 +1125,200 @@ fn ride(
     true
 }
 
+/// The exports this process has started, so no two of them share a temp
+/// name; see [`render_on`].
+static NEXT_EXPORT: AtomicU64 = AtomicU64::new(0);
+
+/// The run's silent picture, its mixed sound, and the two joined: the
+/// three hidden siblings of the output, each named for the run so no two
+/// runs ever write the same bytes.
+fn silent_of(directory: &Path, run: &str) -> PathBuf {
+    directory.join(format!("{run}.concat-video.mp4"))
+}
+
+/// See [`silent_of`].
+fn mixed_of(directory: &Path, run: &str) -> PathBuf {
+    directory.join(format!("{run}.concat-audio.m4a"))
+}
+
+/// See [`silent_of`].
+fn muxed_of(directory: &Path, run: &str) -> PathBuf {
+    directory.join(format!("{run}.concat-muxed.mp4"))
+}
+
+/// How a stopped mix or mux is said: the same words the render's own
+/// cancellation is, so a person who cancels reads one message whatever
+/// stage the stop landed in.
+fn said_cancelled(error: concat_media::Error) -> String {
+    if matches!(error, concat_media::Error::Cancelled) {
+        "export cancelled".to_owned()
+    } else {
+        error.to_string()
+    }
+}
+
+/// The temporary files one export writes, and the lock that names them a
+/// live run's. Removed on every way out - the end of a render, its error,
+/// a panic unwinding through it - so nothing of this run is left for the
+/// next export of the same file to tidy; see [`sweep_temps`] for what a
+/// crash still leaves, and what clears it.
+struct Temps {
+    /// The hidden siblings of the output: the silent picture, the mixed
+    /// sound, the joined pair, whichever of them exist.
+    files: Vec<PathBuf>,
+    /// The run's lock file, and the handle holding it for as long as the
+    /// render runs. A later export's sweep asks for it, and a run that
+    /// answers is left alone.
+    lock: Option<(std::fs::File, PathBuf)>,
+}
+
+impl Temps {
+    /// Takes `directory`'s lock for `run`, best effort: a folder that will
+    /// not take one still gets its export, and its leftovers, when they
+    /// happen, are swept by age as the older builds' are.
+    fn claim(directory: &Path, run: &str) -> Temps {
+        let path = directory.join(format!("{run}.concat-export.lock"));
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .ok()
+            .and_then(|file| match file.try_lock() {
+                Ok(()) => Some((file, path)),
+                Err(_) => None,
+            });
+        Temps {
+            files: Vec::new(),
+            lock,
+        }
+    }
+
+    /// Whether the run's lock was taken: the one answer a caller needs
+    /// before deciding whether the names it holds are known to be its own.
+    fn is_locked(&self) -> bool {
+        self.lock.is_some()
+    }
+}
+
+impl Drop for Temps {
+    fn drop(&mut self) {
+        // The temps go while the lock is still held: a sweep that looks in
+        // between finds the lock taken and leaves everything alone.
+        for file in &self.files {
+            let _ = std::fs::remove_file(file);
+        }
+        if let Some((handle, path)) = self.lock.take() {
+            let _ = std::fs::remove_file(&path);
+            drop(handle);
+        }
+    }
+}
+
+/// How long a leftover of the older builds - whose temps carried no lock -
+/// outlives its crash before the next export of the same file tidies it:
+/// a day, so however long an export of a build that cannot be asked runs,
+/// the sweep never takes a live one's temp out from under it.
+const OLD_LEFTOVER: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
+/// A crash's leftovers for `stem` in `directory`: the hidden temps an
+/// export killed part-way left beside an output that never got its
+/// rename. Cleared by the next export of the same file, the one moment
+/// their names are known again.
+///
+/// A leftover of this build sits beside its run's `.concat-export.lock`
+/// file: one a live export holds, and one a dead export's kernel let go
+/// of with it. The sweep asks for each - what it gets is dead and goes,
+/// what it does not belongs to a run still writing and stays. The older
+/// builds' temps carried no lock; those go by age alone, a day after
+/// whatever was killed left them.
+fn sweep_temps(directory: &Path, stem: &str) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    let prefix = format!(".{stem}.");
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !name.starts_with(&prefix) {
+            continue;
+        }
+        if let Some(run) = run_of(name, &prefix) {
+            // This build's shape: `.{stem}.{pid}.{nonce}.concat-…`. Dead
+            // when its lock can be taken - or is missing, for a run whose
+            // guard removed the lock and then could not remove a temp - and
+            // a dead run's temps go, however many of the three there are.
+            if !run_is_live(directory, &run) {
+                for kind in [
+                    "concat-video.mp4",
+                    "concat-audio.m4a",
+                    "concat-muxed.mp4",
+                    "concat-export.lock",
+                ] {
+                    let _ = std::fs::remove_file(directory.join(format!("{run}.{kind}")));
+                }
+            }
+        } else {
+            // The older builds' fixed names, held by no lock: gone only
+            // once they have plainly outlived any export of theirs.
+            let old = [
+                format!(".{stem}.concat-video.mp4"),
+                format!(".{stem}.concat-audio.m4a"),
+                format!(".{stem}.concat-muxed.mp4"),
+            ];
+            if old.iter().any(|fixed| fixed == name)
+                && entry
+                    .metadata()
+                    .and_then(|meta| meta.modified())
+                    .is_ok_and(|written| written.elapsed().is_ok_and(|age| age >= OLD_LEFTOVER))
+            {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+}
+
+/// The run a temp or lock of this build belongs to - `.{stem}.{pid}.
+/// {nonce}` - or `None` for a name of any other shape, the older builds'
+/// included.
+fn run_of(name: &str, prefix: &str) -> Option<String> {
+    let rest = name.strip_prefix(prefix)?;
+    let cut = rest.find(".concat-")?;
+    let head = &rest[..cut];
+    // The last two dot-separated words are the process id and the counter;
+    // a stem with dots of its own (`my.movie.mp4`) stands whole before
+    // them. Anything else - an older build's fixed name, a file someone
+    // made - is not this build's shape.
+    let mut parts = head.rsplit('.');
+    let nonce = parts.next()?.parse::<u64>().ok()?;
+    let pid = parts.next()?.parse::<u32>().ok()?;
+    let _ = (pid, nonce);
+    Some(format!("{prefix}{head}"))
+}
+
+/// Whether `run`'s lock is held by a live export: asked for, and answered
+/// `true` only when the asking itself was refused. A lock that cannot be
+/// opened is not one to act on.
+fn run_is_live(directory: &Path, run: &str) -> bool {
+    let path = directory.join(format!("{run}.concat-export.lock"));
+    let Ok(file) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+    else {
+        return true; // not ours to judge
+    };
+    match file.try_lock() {
+        Ok(()) => false, // nobody holds it: the run is dead
+        Err(_) => true,  // held, or a filesystem without locks: not ours to judge
+    }
+}
+
 /// Renders `request` and returns the path written, drawing on a device of
 /// its own; [`render_on`] draws on one the caller lends.
 pub fn render(request: &ExportRequest, reporter: Reporter<'_>) -> Result<String, String> {
@@ -1237,7 +1431,12 @@ pub fn render_on(
     }
 
     // Render into siblings of the output so the move at the end stays on one
-    // filesystem, then clean up whatever we made.
+    // filesystem, then clean up whatever we made. The siblings' names are
+    // this run's own - the process and a counter - so two exports into one
+    // folder, two windows' or two processes', never write one another's
+    // bytes: each finishes into its own temps and the one rename at the
+    // end hands whoever runs it a whole file, never two writers'
+    // interleaved (audit 2026-11-04, #15).
     let stem = output
         .file_stem()
         .map_or_else(|| "concat".into(), |s| s.to_string_lossy());
@@ -1252,15 +1451,44 @@ pub fn render_on(
             directory.display()
         ));
     }
-    let silent = directory.join(format!(".{stem}.concat-video.mp4"));
-    let mixed = directory.join(format!(".{stem}.concat-audio.m4a"));
-    let muxed = directory.join(format!(".{stem}.concat-muxed.mp4"));
+    // A crash's leftovers for this stem go before this run's first temp
+    // is made: an export killed part-way - power loss, kill -9 - leaves
+    // its hidden temps behind, and the next export of the same file into
+    // the same folder is the one that knows their names again (audit
+    // 2026-11-04, #14). See [`sweep_temps`].
+    sweep_temps(directory, &stem);
+    // The run's name - this process and a counter - is taken fresh until
+    // one is this run's own: a name is the run's only when its lock is,
+    // and the one name in a billion that is not (a process id reused
+    // after a reboot, with the same counter, into the same folder and
+    // stem) costs a retry and not an export. A folder that takes no lock
+    // at all still gets its export, its leftovers swept by age like the
+    // older builds'.
+    let nonce = NEXT_EXPORT.fetch_add(1, Ordering::Relaxed);
+    let mut run = format!(".{stem}.{}.{nonce}", std::process::id());
+    let mut temps = Temps::claim(directory, &run);
+    for _ in 0..3 {
+        if temps.is_locked() {
+            break;
+        }
+        let nonce = NEXT_EXPORT.fetch_add(1, Ordering::Relaxed);
+        run = format!(".{stem}.{}.{nonce}", std::process::id());
+        temps = Temps::claim(directory, &run);
+    }
+    // Whatever the lock, the temps are this run's names now, and this
+    // run's own guard removes them on every way out.
+    temps.files = vec![
+        silent_of(directory, &run),
+        mixed_of(directory, &run),
+        muxed_of(directory, &run),
+    ];
 
     // The output path is touched once, by the rename at the end, whichever
     // way the file was made. The mux used to write it directly, and a mux
     // that failed - the disk full, a read error - left a truncated file
     // where the previous export had been (audit 2026-10-09, finding 4).
     let result = (|| -> Result<(), String> {
+        let silent = &temps.files[0];
         render_picture(
             request,
             compositor,
@@ -1268,31 +1496,50 @@ pub fn render_on(
             total_frames,
             &visible,
             transitions,
-            &silent,
+            silent,
             &mut reporter,
         )?;
 
         let finished = if sound.is_empty() {
-            &silent
+            silent
         } else {
             reporter.cancelled()?;
             reporter.emit(0, total_frames, "mixing audio");
             let mix: Vec<AudioClip> = sound.iter().flat_map(|clip| audio_pieces(clip)).collect();
-            audio::mix_to_file(&mix, timeline_end.as_f64(), &mixed)
-                .map_err(|error| error.to_string())?;
+            // The mix takes the export's own stop flag, so a cancellation
+            // lands at the next frame the graph is fed rather than at the
+            // timeline's end - a mix can be the longest part of a long
+            // export, and it was the one stage a cancel could not reach
+            // (audit 2026-11-04, #12).
+            audio::mix_to_file(
+                &mix,
+                timeline_end.as_f64(),
+                &temps.files[1],
+                Some(reporter.cancel),
+            )
+            .map_err(said_cancelled)?;
 
             reporter.cancelled()?;
             reporter.emit(total_frames, total_frames, "muxing");
-            audio::mux(&silent, &mixed, &muxed).map_err(|error| error.to_string())?;
-            &muxed
+            // The mux stops on the same flag, packet by packet (audit
+            // 2026-11-04, #13).
+            audio::mux(
+                silent,
+                &temps.files[1],
+                &temps.files[2],
+                Some(reporter.cancel),
+            )
+            .map_err(said_cancelled)?;
+            &temps.files[2]
         };
         std::fs::rename(finished, &output)
             .map_err(|error| format!("could not write {}: {error}", output.display()))
     })();
 
-    let _ = std::fs::remove_file(&silent);
-    let _ = std::fs::remove_file(&mixed);
-    let _ = std::fs::remove_file(&muxed);
+    // Every way out but success leaves nothing behind, and a panic
+    // unwinding through the render is a way out too: the guard runs where
+    // the `let _` removals this used to be did not.
+    drop(temps);
 
     result.map(|()| output.to_string_lossy().into_owned())
 }
@@ -3505,6 +3752,136 @@ mod tests {
         if result.is_ok() {
             assert!(nested.join("out.mp4").is_file());
         }
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_file(&source);
+    }
+
+    /// An export's hidden siblings are this run's own names, they go on
+    /// every way out, and the ones a crash left behind - this build's,
+    /// beside a lock no one holds, and the older builds' fixed names, old
+    /// by any export's measure - are swept by the next export of the same
+    /// file. What a live export in another process holds is not (audit
+    /// 2026-11-04, #14, #15).
+    #[test]
+    fn an_export_sweeps_a_crashs_temps_and_leaves_none_of_its_own() {
+        use std::time::Duration;
+
+        use concat_core::frame::Frame;
+        use concat_media::{EncodeOptions, Encoder, FrameSink};
+
+        let root = std::env::temp_dir().join(format!(
+            "concat-export-temps-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |since| since.as_nanos())
+        ));
+        let source = std::env::temp_dir().join("concat-export-temps-source.mp4");
+        let Ok(mut encoder) = Encoder::create(
+            &source,
+            64,
+            64,
+            FrameRate::THIRTY,
+            &EncodeOptions::default(),
+        ) else {
+            return; // no ffmpeg here
+        };
+        for _ in 0..6 {
+            encoder.write_frame(&Frame::black(64, 64)).expect("writes");
+        }
+        encoder.finish().expect("finishes");
+        std::fs::create_dir_all(&root).expect("the output's folder");
+        let output = root.join("out.mp4");
+
+        // A crash of this build: its temps, and a lock no process holds.
+        // The names are the ones `render_on` makes - `.{stem}.{pid}.
+        // {nonce}.concat-…` for an output called `out.mp4`.
+        let dead_video = root.join(".out.999999.7.concat-video.mp4");
+        let dead_lock = root.join(".out.999999.7.concat-export.lock");
+        std::fs::write(&dead_video, b"half a picture").expect("writes");
+        std::fs::write(&dead_lock, b"").expect("writes");
+        // An older build's leftover: the fixed name `.{stem}.concat-…`, old
+        // past any export.
+        let ancient = root.join(".out.concat-video.mp4");
+        std::fs::write(&ancient, b"half a picture").expect("writes");
+        let two_days_ago = std::time::SystemTime::now() - Duration::from_secs(48 * 60 * 60);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&ancient)
+            .expect("opens the leftover")
+            .set_times(std::fs::FileTimes::new().set_modified(two_days_ago))
+            .expect("ages the leftover");
+        // A live export in another process: its temp, and a lock this test
+        // holds for it, as its writer would.
+        let live_video = root.join(".out.12345.9.concat-video.mp4");
+        let live_lock = root.join(".out.12345.9.concat-export.lock");
+        std::fs::write(&live_video, b"being written").expect("writes");
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&live_lock)
+            .expect("opens the live lock");
+        held.try_lock().expect("holds it as the writer would");
+
+        let mut footage = clip("video", 0, 0.0, 0.2, 0.0);
+        footage.path = source.to_string_lossy().into_owned();
+        footage.media_width = Some(64);
+        footage.media_height = Some(64);
+        let request = ExportRequest {
+            output: output.to_string_lossy().into_owned(),
+            width: 64,
+            height: 64,
+            rate_num: 30,
+            rate_den: 1,
+            crf: 30,
+            preset: "ultrafast".into(),
+            codec: VideoCodec::H264,
+            ten_bit: false,
+            rate_mode: RateMode::Vbr,
+            bitrate_kbps: 0,
+            color_range: concat_media::ColorRange::Limited,
+            color_space: ColorSpace::Sdr,
+            hdr: false,
+            effect_time_offset: 0.0,
+            clips: vec![footage],
+        };
+        let cancel = AtomicBool::new(false);
+        let mut progress = |_: i64, _: i64, _: &'static str| {};
+        let reporter = Reporter {
+            progress: &mut progress,
+            cancel: &cancel,
+        };
+        let result = render_on(&request, None, reporter);
+
+        // The crash's and the older build's leftovers went; the live run's
+        // stayed; and this run left nothing of its own, whatever came of
+        // it - the drawing included, where a machine without a device for
+        // it fails the render after the sweep and the claim both ran.
+        assert!(!dead_video.is_file(), "a dead run's temp is swept");
+        assert!(!dead_lock.is_file(), "a dead run's lock goes with it");
+        assert!(!ancient.is_file(), "an older build's old leftover is swept");
+        assert!(live_video.is_file(), "a live run's temp is left alone");
+        let mut leftovers: Vec<String> = std::fs::read_dir(&root)
+            .expect("reads the folder")
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains(".concat-"))
+            .collect();
+        leftovers.sort();
+        assert_eq!(
+            leftovers,
+            vec![
+                ".out.12345.9.concat-export.lock".to_owned(),
+                ".out.12345.9.concat-video.mp4".to_owned(),
+            ],
+            "the live run's pair is all that is left"
+        );
+        if result.is_ok() {
+            assert!(output.is_file(), "the export itself landed");
+        }
+        drop(held);
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_file(&source);
     }

@@ -232,10 +232,96 @@ pub fn ensure(
 }
 
 /// The proxies being written now, by target, so one is never queued
-/// twice and a sweep leaves it for its writer to finish.
+/// twice and a sweep leaves it for its writer to finish. Process-local:
+/// what crosses processes is the lock [`write`] takes beside its partial.
 fn writing() -> &'static Mutex<HashSet<PathBuf>> {
     static WRITING: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
     WRITING.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// The lock file beside `partial` that names the process writing it.
+fn lock_beside(partial: &Path) -> PathBuf {
+    partial.with_extension("lock")
+}
+
+/// Takes the lock file at `path`, or `None` when another process holds it
+/// or it cannot be made. The operating system's lock, not the file's: it
+/// lives exactly as long as the handle, so a process that crashes or is
+/// killed lets go of it and the file it leaves is taken over by the next
+/// writer without anybody deciding whether its pid still runs.
+fn take_lock_file(path: &Path) -> Option<std::fs::File> {
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .ok()?;
+    match file.try_lock() {
+        Ok(()) => Some(file),
+        Err(_) => None,
+    }
+}
+
+/// The lock that makes one proxy one write on one machine: taken before
+/// the encoder opens the partial and held until the copy is whole or the
+/// write has failed, so two Concat processes - a window and a
+/// `concat --mcp`, say - never interleave their bytes on the same
+/// `.part.mp4` (audit 2026-11-04, #10). The process-local `writing` set
+/// of [`ensure`] cannot see another process; this is the line between
+/// them. Dropped with the write, and the file goes with the lock.
+struct WritingLock {
+    /// Held and never read: the lock is the handle's, and it goes when the
+    /// handle does. `Option` so [`Drop`] can name the moment.
+    held: Option<std::fs::File>,
+    path: PathBuf,
+}
+
+impl Drop for WritingLock {
+    fn drop(&mut self) {
+        // The file first, the lock with the handle: a sweep that looks in
+        // between finds the lock still taken and leaves the partial alone.
+        let _ = std::fs::remove_file(&self.path);
+        drop(self.held.take());
+    }
+}
+
+/// Takes the writing lock for `partial`'s proxy, or `None` when another
+/// process is writing it.
+fn take_writing_lock(partial: &Path) -> Option<WritingLock> {
+    let path = lock_beside(partial);
+    take_lock_file(&path).map(|file| WritingLock {
+        held: Some(file),
+        path,
+    })
+}
+
+/// What became of the lock file beside a partial: held by a live writer,
+/// let go by a dead one, or never there - which no live writer of this
+/// build can be, since the lock is taken before the partial is made. A
+/// build that wrote no lock at all left exactly that, and its partials
+/// are as dead as its process. Asked without creating anything: a sweep
+/// that made files as it went would count files it made itself.
+enum LockState {
+    /// A live writer holds it: the partial is left to finish and rename.
+    Held,
+    /// Nobody holds it, or there is none: the partial is a crash's or an
+    /// older build's leftovers.
+    Dead,
+}
+
+fn lock_state(path: &Path) -> LockState {
+    let Ok(file) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+    else {
+        return LockState::Dead;
+    };
+    match file.try_lock() {
+        Ok(()) => LockState::Dead,
+        Err(_) => LockState::Held,
+    }
 }
 
 /// Removes the proxies under `project` that `keep` does not name: the
@@ -255,17 +341,40 @@ pub fn sweep(project: &Path, keep: &HashSet<PathBuf>) -> usize {
     let mut removed = 0;
     for entry in entries.flatten() {
         let path = entry.path();
-        // A proxy in mid-write sits under a `.part.mp4` name beside its
-        // target - the muxer needs the extension to know the container -
-        // and is not in the `writing` set, which the writer's *target*
-        // is in: it is skipped rather than unlinked under the encoder,
-        // which would write on to a dead inode and lose the whole
-        // transcode at the rename.
-        let part = path
-            .file_stem()
-            .is_some_and(|stem| stem.to_string_lossy().ends_with(".part"));
-        if !part
-            && path.extension().is_some_and(|extension| extension == "mp4")
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.ends_with(".part.mp4") {
+            // A proxy in mid-write sits under a `.part.mp4` name - the
+            // muxer needs the extension to know the container. Its writer
+            // holds the lock beside it, in this process or another; a lock
+            // that answers - or that was never there, from a build that
+            // wrote no lock - belongs to nobody, and the partial is a
+            // crash's leftovers and goes (audit 2026-11-04, #9). A live
+            // writer's lock does not answer, and its partial is left for
+            // it to finish and rename.
+            if let LockState::Dead = lock_state(&lock_beside(&path)) {
+                let _ = std::fs::remove_file(lock_beside(&path));
+                if std::fs::remove_file(&path).is_ok() {
+                    removed += 1;
+                }
+            }
+            continue;
+        }
+        if name.ends_with(".part.lock") {
+            // The lock alone, its partial renamed into place or cleared
+            // away before the writer died: an orphan when nothing beside
+            // it answers. A partial still beside it is that branch's to
+            // take, with the lock under it.
+            let partial = path.with_extension("mp4");
+            if !partial.is_file()
+                && matches!(lock_state(&path), LockState::Dead)
+                && std::fs::remove_file(&path).is_ok()
+            {
+                removed += 1;
+            }
+            continue;
+        }
+        if path.extension().is_some_and(|extension| extension == "mp4")
             && !keep.contains(&path)
             && !writing.contains(&path)
             && std::fs::remove_file(&path).is_ok()
@@ -295,13 +404,6 @@ pub fn write(
     range: Option<ColorRange>,
     codec: ProxyCodec,
 ) -> Result<(), String> {
-    let info = concat_media::probe(source).map_err(|error| error.to_string())?;
-    let (rate, signal) = info
-        .video
-        .as_ref()
-        .map(|video| (video.frame_rate, video.signal))
-        .ok_or_else(|| "no video stream".to_owned())?;
-    let hdr = matches!(signal, Signal::Hlg | Signal::Pq);
     if let Some(folder) = target.parent() {
         std::fs::create_dir_all(folder)
             .map_err(|error| format!("{}: {error}", folder.display()))?;
@@ -309,6 +411,20 @@ pub fn write(
     // Written beside the target under a name the muxer still knows the
     // format of, and moved into place only when whole.
     let partial = target.with_extension("part.mp4");
+    // The cross-process line before anything is read or written: one
+    // proxy, one writer, on the whole machine. Another process holding it
+    // is not an error there - its write will finish what this one was
+    // queued for - and the next [`ensure`] after that adopts the copy it
+    // lands.
+    let _one_writer = take_writing_lock(&partial)
+        .ok_or_else(|| "another Concat process is writing this proxy".to_owned())?;
+    let info = concat_media::probe(source).map_err(|error| error.to_string())?;
+    let (rate, signal) = info
+        .video
+        .as_ref()
+        .map(|video| (video.frame_rate, video.signal))
+        .ok_or_else(|| "no video stream".to_owned())?;
+    let hdr = matches!(signal, Signal::Hlg | Signal::Pq);
     let options = DecodeOptions::default()
         .scaled_to(width, height)
         .in_software()
@@ -786,21 +902,75 @@ mod tests {
         // The real partial's name: `write` puts it beside the target,
         // extension kept for the muxer, `.part` before it.
         let partial = dir.join("4444444444444444.part.mp4");
-        for file in [&kept, &stale, &busy, &partial] {
+        // A partial whose writer is live: it holds the lock beside it, in
+        // this process as any other, and the sweep leaves both alone.
+        let written = dir.join("5555555555555555.part.mp4");
+        for file in [&kept, &stale, &busy, &partial, &written] {
             std::fs::write(file, b"x").expect("writes");
         }
+        let live = take_lock_file(&lock_beside(&written)).expect("the writer's lock");
         writing()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .insert(busy.clone());
         let keep: HashSet<PathBuf> = [kept.clone()].into_iter().collect();
-        assert_eq!(sweep(&scratch, &keep), 1);
-        assert!(kept.is_file() && busy.is_file() && partial.is_file());
+        // The stale copy and the dead partial go; the kept copy, the busy
+        // one and the live writer's partial stay.
+        assert_eq!(sweep(&scratch, &keep), 2);
+        assert!(kept.is_file() && busy.is_file() && written.is_file());
         assert!(!stale.is_file());
+        assert!(
+            !partial.is_file(),
+            "a partial no writer holds is a crash's leftovers"
+        );
+        // The writer lets go - as a finished write does - and what it left
+        // behind is the next sweep's to take.
+        drop(live);
+        assert_eq!(sweep(&scratch, &keep), 1);
+        assert!(!written.is_file());
         writing()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(&busy);
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    /// One proxy, one writer, on the whole machine: a write refuses while
+    /// another holds the lock beside the partial - whatever process it is -
+    /// and the next [`ensure`] after the holder finishes adopts the copy it
+    /// lands. The lock held here stands for the other process's, the same
+    /// file and the same operating-system lock either way.
+    #[test]
+    fn a_second_writer_of_one_proxy_is_refused_until_the_first_is_done() {
+        let scratch =
+            std::env::temp_dir().join(format!("concat-proxy-second-writer-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&scratch);
+        let dir = scratch.join("cache").join("proxy");
+        std::fs::create_dir_all(&dir).expect("a proxy folder");
+        let target = dir.join("6666666666666666.mp4");
+        let partial = target.with_extension("part.mp4");
+        let _first = take_writing_lock(&partial).expect("the first writer's lock");
+        let refused = write(
+            "whatever the source is, the lock is asked first",
+            &target,
+            (320, 180),
+            None,
+            ProxyCodec::H264,
+        )
+        .expect_err("one proxy, one writer");
+        assert_eq!(
+            refused, "another Concat process is writing this proxy",
+            "the refusal names what happened, not what the source did"
+        );
+        assert!(
+            !partial.is_file(),
+            "the refused writer left no partial under the holder's"
+        );
+        drop(_first);
+        assert!(
+            !lock_beside(&partial).is_file(),
+            "the lock goes with the write, on every way out of it"
+        );
         let _ = std::fs::remove_dir_all(&scratch);
     }
 }

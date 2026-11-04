@@ -152,7 +152,9 @@ pub fn path_for(
     if let Ok(modified) = meta.modified()
         && let Ok(since) = modified.duration_since(std::time::UNIX_EPOCH)
     {
-        since.as_secs().hash(&mut hasher);
+        // Keep sub-second precision: replacing a same-size source twice
+        // within one second must not reuse the first source's proxy.
+        since.as_nanos().hash(&mut hasher);
     }
     Some(
         project
@@ -695,6 +697,79 @@ mod tests {
                 ProxyCodec::H264,
             )
             .is_none()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn same_size_replacement_within_one_second_gets_a_new_proxy_key() {
+        use std::time::{Duration, UNIX_EPOCH};
+
+        let dir = std::env::temp_dir().join(format!(
+            "concat-proxy-subsecond-path-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let media = dir.join("clip.mp4");
+        let project = dir.join("project");
+        std::fs::write(&media, b"first payload").expect("writes first source");
+
+        let first_time = UNIX_EPOCH + Duration::new(1_700_000_000, 100_000_000);
+        let second_time = UNIX_EPOCH + Duration::new(1_700_000_000, 900_000_000);
+        let set_modified = |time| {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(&media)
+                .expect("opens source for timestamp update")
+                .set_times(std::fs::FileTimes::new().set_modified(time))
+                .expect("sets modification time");
+        };
+
+        set_modified(first_time);
+        let first_metadata = std::fs::metadata(&media).expect("first metadata");
+        let first_modified = first_metadata.modified().expect("first mtime");
+        let first = path_for(
+            &project,
+            &media.to_string_lossy(),
+            None,
+            false,
+            ProxyCodec::H264,
+        )
+        .expect("first proxy path");
+
+        // The replacement has different bytes but exactly the same length.
+        std::fs::write(&media, b"other payload").expect("writes replacement source");
+        set_modified(second_time);
+        let second_metadata = std::fs::metadata(&media).expect("second metadata");
+        let second_modified = second_metadata.modified().expect("second mtime");
+
+        assert_eq!(first_metadata.len(), second_metadata.len());
+        let first_since = first_modified
+            .duration_since(UNIX_EPOCH)
+            .expect("first time is after the epoch");
+        let second_since = second_modified
+            .duration_since(UNIX_EPOCH)
+            .expect("second time is after the epoch");
+        if first_since.as_secs() != second_since.as_secs()
+            || first_since.subsec_nanos() == second_since.subsec_nanos()
+        {
+            eprintln!("filesystem does not preserve sub-second modification times; skipped");
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+
+        let second = path_for(
+            &project,
+            &media.to_string_lossy(),
+            None,
+            false,
+            ProxyCodec::H264,
+        )
+        .expect("replacement proxy path");
+        assert_ne!(
+            first, second,
+            "same-size replacements within one second must not share a proxy"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

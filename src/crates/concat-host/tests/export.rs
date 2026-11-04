@@ -195,7 +195,13 @@ fn clock_aac(wav: &Path, path: &Path, seconds: u32) {
         fade_out: 0.0,
         filter_chain: String::new(),
     };
-    sound::mix_to_file(&[clip], f64::from(seconds), path).expect("mixes the clock");
+    sound::mix_to_file(
+        &[clip],
+        f64::from(seconds),
+        path,
+        sound::nothing_to_cancel(),
+    )
+    .expect("mixes the clock");
 }
 
 /// A still: one solid colour no source second has.
@@ -238,14 +244,16 @@ impl Sources {
         let peek_picture = dir.join("peek-picture.mp4");
         picture(&peek_picture, FrameRate::SIXTY, 6, codec);
         let peek = dir.join("peek.mp4");
-        sound::mux(&peek_picture, &aac, &peek).expect("joins the screen recording");
+        sound::mux(&peek_picture, &aac, &peek, sound::nothing_to_cancel())
+            .expect("joins the screen recording");
 
         let cam_picture = dir.join("cam-picture.mp4");
         picture(&cam_picture, FrameRate::THIRTY, 4, codec);
         let cam_sound = dir.join("cam.m4a");
         clock_aac(&wav, &cam_sound, 4);
         let cam = dir.join("cam.mp4");
-        sound::mux(&cam_picture, &cam_sound, &cam).expect("joins the camera clip");
+        sound::mux(&cam_picture, &cam_sound, &cam, sound::nothing_to_cancel())
+            .expect("joins the camera clip");
 
         let silent = dir.join("silent.mp4");
         picture(&silent, FrameRate::FILM, 3, codec);
@@ -2521,4 +2529,94 @@ fn consolidation_keeps_the_global_frame_grid_at_fractional_starts() {
             "frame {frame}: expected {expected:?}, got {got:?}"
         );
     }
+}
+
+// ── a cancel that lands mid-export ──
+
+/// The scratch an export to `output` would leave beside it, if it died
+/// without cleaning up: the hidden `.stem.concat-*` siblings.
+fn scratch_beside(output: &Path) -> Vec<String> {
+    let stem = output.file_stem().map_or_else(
+        || "concat".into(),
+        |stem| stem.to_string_lossy().into_owned(),
+    );
+    let prefix = format!(".{stem}.concat-");
+    std::fs::read_dir(output.parent().unwrap_or(Path::new(".")))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(&prefix))
+        .collect()
+}
+
+/// One clip with sound, exported with the flag raised the moment the
+/// export reaches `at`: the export must fail as cancelled, write no
+/// file, and leave no scratch beside where the file would have been.
+fn cancelled_at(scratch: &Scratch, label: &str, at: &'static str) {
+    let sources = Sources::make(scratch.path());
+    let mut studio = Studio::new(scratch.path(), "Cancelled", video(WIDTH, HEIGHT, 30, 1));
+    let media_id = studio.import(&sources.peek);
+    studio.apply(Command::AddClipAtFirstFree {
+        media_id,
+        start: 0.0,
+        above: false,
+    });
+    let settings = studio.session.settings();
+    let output = studio.exports.join(label);
+    let spec = ExportSpec {
+        output: output.to_string_lossy().into_owned(),
+        crf: 18,
+        preset: "ultrafast".to_owned(),
+        codec: VideoCodec::H264,
+        ten_bit: false,
+        rate_mode: RateMode::Vbr,
+        bitrate_kbps: 0,
+        color_range: studio.range,
+        hdr: false,
+    };
+    let titles = studio
+        .titles
+        .clips(studio.project(), settings.width, settings.height)
+        .into_iter()
+        .map(|title| title.clip)
+        .collect();
+    let request = export::request(&studio.session, &spec, titles);
+    let cancel = AtomicBool::new(false);
+    let result = export::run(&request, &cancel, |progress| {
+        if progress.stage == at {
+            cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    });
+    let error = result.expect_err("a cancelled export fails");
+    assert!(
+        error.to_lowercase().contains("cancel"),
+        "the failure says it was a cancel: {error}"
+    );
+    assert!(!output.exists(), "a cancelled export writes no file");
+    let left = scratch_beside(&output);
+    assert!(
+        left.is_empty(),
+        "a cancelled export leaves no scratch behind: {left:?}"
+    );
+}
+
+/// A cancel that lands while the audio mix runs stops the export in the
+/// mix: the mixer reads the flag between its frames, so the stop is in
+/// the work and not after it - and what the export leaves behind is
+/// nothing at all, neither the file nor the scratch it was writing.
+#[test]
+fn a_cancel_during_the_audio_mix_stops_in_the_mix() {
+    let scratch = Scratch::new("cancel-in-mix");
+    cancelled_at(&scratch, "cancelled-in-mix.mp4", "mixing audio");
+}
+
+/// A cancel that lands while the mux joins picture and sound is still a
+/// cancel: the joined file is not moved into place, the export fails as
+/// cancelled, and no destination appears. This is the one a join that
+/// ignored its flag used to answer with success, finished file and all.
+#[test]
+fn a_cancel_during_the_mux_is_still_a_cancel() {
+    let scratch = Scratch::new("cancel-in-mux");
+    cancelled_at(&scratch, "cancelled-in-mux.mp4", "muxing");
 }

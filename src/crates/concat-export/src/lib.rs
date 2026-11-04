@@ -23,6 +23,9 @@
 pub mod chains;
 pub mod flatten;
 mod resolve;
+mod scratch;
+
+use scratch::Scratch;
 
 use resolve::{
     BuiltTimeline, TransitionSpan, Treatment, animation_of, build_timeline, quantise, quantise_at,
@@ -428,7 +431,9 @@ fn unity() -> f64 {
 #[serde(rename_all = "camelCase")]
 pub struct ExportRequest {
     /// The file to write. Siblings named `.{stem}.concat-*` are used as
-    /// scratch during the render and removed afterwards.
+    /// scratch during the render - this run's own, named after its
+    /// process - and removed afterwards, or by the next export to the
+    /// same destination if the render died before it could.
     pub output: String,
     /// Output frame width in pixels.
     pub width: u32,
@@ -1236,25 +1241,29 @@ pub fn render_on(
         ));
     }
 
-    // Render into siblings of the output so the move at the end stays on one
-    // filesystem, then clean up whatever we made.
-    let stem = output
-        .file_stem()
-        .map_or_else(|| "concat".into(), |s| s.to_string_lossy());
-    let directory = output.parent().unwrap_or(Path::new("."));
     // The folder the file goes in is made when it is not there. A phone's
     // Movies folder under the app's own files does not exist until the
     // first export, and every phone's first export stopped at "no such
     // file or directory" before a frame was drawn (#280, #147).
-    if let Err(error) = std::fs::create_dir_all(directory) {
+    if let Err(error) = std::fs::create_dir_all(output.parent().unwrap_or(Path::new("."))) {
         return Err(format!(
             "could not create the folder {}: {error}",
-            directory.display()
+            output.parent().unwrap_or(Path::new(".")).display()
         ));
     }
-    let silent = directory.join(format!(".{stem}.concat-video.mp4"));
-    let mixed = directory.join(format!(".{stem}.concat-audio.m4a"));
-    let muxed = directory.join(format!(".{stem}.concat-muxed.mp4"));
+
+    // Render into siblings of the output so the move at the end stays on one
+    // filesystem, then clean up whatever we made - or the last run to die
+    // here made, now that this one holds the destination. The claim is a
+    // lock in the session's runtime folder keyed by the destination, so a
+    // second process exporting to the same file is refused instead of
+    // racing this one to the rename; the scratch is named after this
+    // process, so even where no claim could be made - a folder that will
+    // not take the file - two runs never write one another's bytes.
+    let scratch = Scratch::begin(&output)?;
+    let silent = scratch.video().to_path_buf();
+    let mixed = scratch.audio().to_path_buf();
+    let muxed = scratch.muxed().to_path_buf();
 
     // The output path is touched once, by the rename at the end, whichever
     // way the file was made. The mux used to write it directly, and a mux
@@ -1278,23 +1287,37 @@ pub fn render_on(
             reporter.cancelled()?;
             reporter.emit(0, total_frames, "mixing audio");
             let mix: Vec<AudioClip> = sound.iter().flat_map(|clip| audio_pieces(clip)).collect();
-            audio::mix_to_file(&mix, timeline_end.as_f64(), &mixed)
-                .map_err(|error| error.to_string())?;
+            audio::mix_to_file(&mix, timeline_end.as_f64(), &mixed, reporter.cancel)
+                .map_err(said)?;
 
             reporter.cancelled()?;
             reporter.emit(total_frames, total_frames, "muxing");
-            audio::mux(&silent, &mixed, &muxed).map_err(|error| error.to_string())?;
+            audio::mux(&silent, &mixed, &muxed, reporter.cancel).map_err(said)?;
+            // A cancel that landed while the mux joined its last packets is
+            // still a cancel: the joined file is not moved into place, and
+            // a cancelled export leaves no destination behind it.
+            reporter.cancelled()?;
             &muxed
         };
         std::fs::rename(finished, &output)
             .map_err(|error| format!("could not write {}: {error}", output.display()))
     })();
 
-    let _ = std::fs::remove_file(&silent);
-    let _ = std::fs::remove_file(&mixed);
-    let _ = std::fs::remove_file(&muxed);
-
+    // The scratch goes with `scratch` on every way out of this function,
+    // panic included - a file that was renamed into place is no longer at
+    // its scratch name, and removing a name that is not there costs
+    // nothing.
     result.map(|()| output.to_string_lossy().into_owned())
+}
+
+/// What a mix or a mux said when it stopped, in the render's words: a
+/// cancellation is the export's own message and not the mixer's, so a
+/// stopped export reads as stopped wherever its result is told.
+fn said(error: concat_media::Error) -> String {
+    match error {
+        concat_media::Error::Cancelled => "export cancelled".to_owned(),
+        error => error.to_string(),
+    }
 }
 
 /// The timeline's end and how many frames it runs for, on the frame grid the

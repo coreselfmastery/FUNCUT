@@ -28,10 +28,19 @@ days added more, the register-closing pass of 2026-11-03 added the
 discovery exec-bit regression and the authored-`at` warning's two ways,
 and the same day's checks job gained the GPU-pick assertions inside the
 sense selftest beside the farm, emotion and vlm selftests it already
-ran. The five timing benchmarks of 2026-11-03 are
-`#[ignore]`d - counted as skipped, never as run. A number in a session
-or a document is a snapshot of a commit; this table names its commit,
-which is the only honest way to hold one.
+ran. The reliability pass of 2026-11-04 added fifteen: the mix and the
+mux asked to stop (two, in `concat-media`), the export's scratch - its
+names, its sweep, its claim on a destination, spelled-twice-ways and
+cleared-on-drop (five, in `concat-export`), the folder's save order
+between processes (four, in `concat-host`), the proxy's partial names
+and its turn between writers (two, in `concat-host`), and a cancel that
+lands mid-mix and mid-mux through a whole export (two, in
+`concat-host`'s export suite). The five timing benchmarks of 2026-11-03
+are `#[ignore]`d - counted as skipped, never as run. A number in a
+session or a document is a snapshot of a commit; this table names its
+commit, which is the only honest way to hold one, and the table above
+is now behind the code by that pass - re-run the lane and pin the new
+commit before quoting a total from it.
 
 ## What the eleven skipped are
 

@@ -16,15 +16,27 @@
 //! size and modification time, so a file replaced on disk gets a fresh
 //! one and the old copy is swept with the rest of the cache.
 //!
+//! Writing one is a turn two processes take without meeting: the
+//! partial is this writer's own - named after its process - and the
+//! target is claimed with an operating-system lock for the length of
+//! the write, so a second window on the same machine leaves the copy to
+//! the first rather than transcode it twice into the same name. A
+//! writer that dies lets go of its claim with its handle, and the
+//! partial it leaves is swept with the next sweep: an unlocked partial
+//! is an orphan, whichever process wrote it.
+//!
 //! Which codec the copy is written in is Settings' to say, as
 //! [`ProxyCodec`]: H.264, the small file, or MJPEG, whose every frame is
 //! a keyframe of its own and which nothing has to seek within - the
 //! scrubbiest there is, at several times the file.
 
 use std::collections::HashSet;
+use std::fs::{File, OpenOptions, TryLockError};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 use concat_core::frame::Signal;
 use concat_media::decode::{DecodeOptions, Decoder, FrameSource};
@@ -175,11 +187,19 @@ pub fn existing(project: &Path, media: &str, range: Option<ColorRange>) -> Optio
         .find(|path| path.is_file())
 }
 
+/// How long a partial is left alone on a folder whose locks do not work:
+/// where a claim cannot be taken, age is the only thing that tells an
+/// orphan from a slow write, and an hour is the longest a copy of a
+/// quarter-size transcode has ever taken on the machines this is for.
+const PART_LIFETIME: Duration = Duration::from_secs(60 * 60);
+
 /// Sees to it that `media` - `width` by `height`, read as `range` - has
 /// a proxy when it is worth one: an existing copy is adopted into the
 /// reader pool at once; otherwise one is queued to be written on the
 /// proxy lane and adopted when done. Asking again while it is being
-/// written is free. Returns whether the file has, or will have, a proxy.
+/// written is free, here or in another process: a copy another process
+/// is writing is left to it, and the next ask finds it done. Returns
+/// whether the file has, or will have, a proxy.
 pub fn ensure(
     project: &Path,
     media: &str,
@@ -211,6 +231,19 @@ pub fn ensure(
             return true;
         }
     }
+    // Ours is not writing it; whether another process is. The turn is
+    // taken before the job is queued and held for the length of the
+    // write, so two processes never transcode one file twice into one
+    // name - and a process that dies mid-write lets its turn go with
+    // its handle, leaving the next ask to write the copy again.
+    let turn = take_turn(&target);
+    if matches!(turn, Turn::Theirs) {
+        writing
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(&target);
+        return true;
+    }
     let source = media.to_owned();
     let size = size_for(width, height);
     crate::scheduler().submit(Priority::Proxy, move || {
@@ -227,6 +260,8 @@ pub fn ensure(
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(&target);
+        // The turn goes with `turn`'s file when this closure ends.
+        drop(turn);
     });
     true
 }
@@ -242,8 +277,10 @@ fn writing() -> &'static Mutex<HashSet<PathBuf>> {
 /// copies of media no longer in the project, or read as a range they no
 /// longer are. Nothing else sweeps this folder, and a proxy is a
 /// quarter-size copy of every file over HD the project ever held
-/// (audit 2026-09-23, #15). One being written is left for its writer.
-/// Returns how many files went.
+/// (audit 2026-09-23, #15). One being written is left for its writer,
+/// here or in another process: a partial is an orphan exactly when
+/// nothing holds its target's turn, and age is the judge only where a
+/// claim cannot be taken at all. Returns how many files went.
 pub fn sweep(project: &Path, keep: &HashSet<PathBuf>) -> usize {
     let dir = project.join("cache").join("proxy");
     let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -256,14 +293,19 @@ pub fn sweep(project: &Path, keep: &HashSet<PathBuf>) -> usize {
     for entry in entries.flatten() {
         let path = entry.path();
         // A proxy in mid-write sits under a `.part.mp4` name beside its
-        // target - the muxer needs the extension to know the container -
-        // and is not in the `writing` set, which the writer's *target*
-        // is in: it is skipped rather than unlinked under the encoder,
-        // which would write on to a dead inode and lose the whole
-        // transcode at the rename.
+        // target - the muxer needs the extension to know the container.
+        // Its writer holds the target's turn, in this process or
+        // another; a partial nothing holds a turn for is an orphan a
+        // dead writer left, and goes with the rest of the cache.
         let part = path
             .file_stem()
             .is_some_and(|stem| stem.to_string_lossy().ends_with(".part"));
+        if part {
+            if partial_is_orphan(&path) && std::fs::remove_file(&path).is_ok() {
+                removed += 1;
+            }
+            continue;
+        }
         if !part
             && path.extension().is_some_and(|extension| extension == "mp4")
             && !keep.contains(&path)
@@ -276,12 +318,173 @@ pub fn sweep(project: &Path, keep: &HashSet<PathBuf>) -> usize {
     removed
 }
 
+/// Whether a `.part.mp4` beside a target is an orphan: nothing holds the
+/// turn on the target it belongs to, in this process or any other. On a
+/// folder whose locks do not work, age decides instead - a partial older
+/// than [`PART_LIFETIME`] is nobody's work in progress.
+fn partial_is_orphan(partial: &Path) -> bool {
+    // The target's name is the partial's first dot-separated word: the
+    // hash stem the target is filed under, with this writer's process
+    // and counter after it and `.part` before the extension.
+    let stem = partial
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.split('.').next())
+        .unwrap_or("");
+    let target = partial.with_file_name(format!("{stem}.mp4"));
+    if target_turn_is_held(&target) {
+        return false;
+    }
+    if locks_work() {
+        return true;
+    }
+    // No claim could be probed: age is what is left.
+    std::fs::metadata(partial)
+        .and_then(|meta| meta.modified())
+        .is_ok_and(|written| written.elapsed().unwrap_or_default() > PART_LIFETIME)
+}
+
+/// What asking for a proxy target's turn found.
+enum Turn {
+    /// Ours to write: the handle holds the turn, and letting it go - by
+    /// dropping the value - is what gives the turn back.
+    Ours { _held: File },
+    /// Another process is writing this copy now.
+    Theirs,
+    /// The runtime folder would not take the file: nobody is turned
+    /// away, and nobody is held to one at a time.
+    Unmanaged,
+}
+
+/// Asks for the turn to write `target`, across processes: an exclusive
+/// lock on a file in the session's runtime folder, named after the
+/// target as the filesystem spells it. The lock is the operating
+/// system's, not the file's - it lives exactly as long as the handle -
+/// so a writer that crashes or is killed gives the turn back, and the
+/// next ask writes the copy again.
+fn take_turn(target: &Path) -> Turn {
+    let Some(path) = turn_path(target) else {
+        return Turn::Unmanaged;
+    };
+    let Ok(file) = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+    else {
+        return Turn::Unmanaged;
+    };
+    match file.try_lock() {
+        Ok(()) => Turn::Ours { _held: file },
+        Err(TryLockError::WouldBlock) => Turn::Theirs,
+        Err(TryLockError::Error(_)) => Turn::Unmanaged,
+    }
+}
+
+/// Whether some process holds the turn on `target` right now: a writer
+/// mid-transcode, in this process or another.
+fn target_turn_is_held(target: &Path) -> bool {
+    let Some(path) = turn_path(target) else {
+        return false;
+    };
+    let Ok(file) = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+    else {
+        return false;
+    };
+    matches!(file.try_lock(), Err(TryLockError::WouldBlock))
+}
+
+/// Whether claims can be probed at all: the runtime folder takes the
+/// files. Where it does not, a partial's fate is decided by its age.
+fn locks_work() -> bool {
+    static WORK: OnceLock<bool> = OnceLock::new();
+    *WORK.get_or_init(|| {
+        let probe = std::env::temp_dir().join(format!("concat-proxy-probe-{}", std::process::id()));
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&probe)
+            .and_then(|file| {
+                file.try_lock().map_err(|error| match error {
+                    TryLockError::Error(error) => error,
+                    TryLockError::WouldBlock => std::io::Error::other("the probe lock is held"),
+                })
+            })
+            .is_ok()
+    })
+}
+
+/// The claim file for `target`, in the session's runtime folder - or the
+/// system's temporary one where there is no session - named after the
+/// target as the filesystem spells it.
+fn turn_path(target: &Path) -> Option<PathBuf> {
+    let folder = std::env::var_os("XDG_RUNTIME_DIR").map_or_else(std::env::temp_dir, PathBuf::from);
+    let name = target.file_name()?;
+    let spelled = target
+        .parent()
+        .and_then(|parent| std::fs::canonicalize(parent).ok())
+        .map(|parent| parent.join(name))
+        .unwrap_or_else(|| target.to_path_buf());
+    Some(folder.join(format!(
+        "concat-proxy-{:016x}.lock",
+        fnv1a(&spelled.to_string_lossy())
+    )))
+}
+
+/// The partial a proxy is written under: beside its target, named after
+/// it with this process and a counter of this call between, and `.part`
+/// before the extension the muxer needs - so two writers, in one process
+/// or two, never share the file one is still encoding into.
+fn partial_for(target: &Path) -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let stem = target
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("proxy");
+    let mut taken = 0;
+    loop {
+        let nonce = NEXT.fetch_add(1, Ordering::Relaxed);
+        let candidate =
+            target.with_file_name(format!("{stem}.{}.{}.part.mp4", std::process::id(), nonce));
+        // The encoder makes the file itself, so this is a courtesy and
+        // not a lock: a name already taken is tried again under the next
+        // counter, and after sixteen in a row - which cannot happen - the
+        // last is returned and is still this writer's own.
+        if !candidate.exists() || taken >= 16 {
+            return candidate;
+        }
+        taken += 1;
+    }
+}
+
+/// FNV-1a, sixty-four bits, over the bytes of `text`: a short, stable
+/// name for a path, so a claim file made by one build is found by the
+/// next.
+fn fnv1a(text: &str) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in text.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
 /// Writes the proxy of `source`, read as `range`, at `size` to `target`
 /// in `codec` (an HDR source's copy keeps its signal and is HEVC
 /// whatever the codec says, since MJPEG carries neither): two threads,
-/// in software, into a temporary name that is moved into place only when
-/// whole, so a copy that is there is a copy that is complete. The copy
-/// is tagged with the levels it holds and converted to match - video
+/// in software, into a temporary name of this writer's own that is moved
+/// into place only when whole, so a copy that is there is a copy that is
+/// complete - and a copy another process is writing beside is never
+/// written through, whatever the folder's locks make of the two. The
+/// copy is tagged with the levels it holds and converted to match - video
 /// range for H.264, JPEG's own full range for MJPEG, which the encoder
 /// will take no other way - so it is read as it is and needs no
 /// correction of its own. An HDR source's copy keeps its signal - HEVC
@@ -307,8 +510,9 @@ pub fn write(
             .map_err(|error| format!("{}: {error}", folder.display()))?;
     }
     // Written beside the target under a name the muxer still knows the
-    // format of, and moved into place only when whole.
-    let partial = target.with_extension("part.mp4");
+    // format of, this writer's own, and moved into place only when
+    // whole.
+    let partial = partial_for(target);
     let options = DecodeOptions::default()
         .scaled_to(width, height)
         .in_software()
@@ -776,17 +980,37 @@ mod tests {
 
     #[test]
     fn a_sweep_keeps_what_is_named_and_what_is_being_written() {
+        if !locks_work() {
+            eprintln!("this folder's locks do not work; skipped");
+            return;
+        }
         let scratch =
             std::env::temp_dir().join(format!("concat-proxy-sweep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&scratch);
         let dir = scratch.join("cache").join("proxy");
         std::fs::create_dir_all(&dir).expect("a proxy folder");
         let kept = dir.join("1111111111111111.mp4");
         let stale = dir.join("2222222222222222.mp4");
         let busy = dir.join("3333333333333333.mp4");
-        // The real partial's name: `write` puts it beside the target,
-        // extension kept for the muxer, `.part` before it.
-        let partial = dir.join("4444444444444444.part.mp4");
-        for file in [&kept, &stale, &busy, &partial] {
+        // A live writer's partial: its writer holds the target's turn,
+        // here or in another process, and the sweep leaves it alone.
+        let live = dir.join("4444444444444444.mp4");
+        let live_partial = dir.join(format!(
+            "4444444444444444.{}.1.part.mp4",
+            std::process::id()
+        ));
+        let held = take_turn(&live);
+        assert!(
+            matches!(held, Turn::Ours { .. }),
+            "the turn is ours to hold"
+        );
+        // An orphan: a writer that died mid-write, its turn gone with its
+        // handle, its partial left behind for this sweep to take.
+        let orphan = dir.join(format!(
+            "5555555555555555.{}.1.part.mp4",
+            std::process::id()
+        ));
+        for file in [&kept, &stale, &busy, &live_partial, &orphan] {
             std::fs::write(file, b"x").expect("writes");
         }
         writing()
@@ -794,13 +1018,113 @@ mod tests {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .insert(busy.clone());
         let keep: HashSet<PathBuf> = [kept.clone()].into_iter().collect();
-        assert_eq!(sweep(&scratch, &keep), 1);
-        assert!(kept.is_file() && busy.is_file() && partial.is_file());
-        assert!(!stale.is_file());
+        assert_eq!(
+            sweep(&scratch, &keep),
+            2,
+            "the stale copy and the orphan go"
+        );
+        assert!(kept.is_file() && busy.is_file() && live_partial.is_file());
+        assert!(!stale.is_file() && !orphan.is_file());
         writing()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(&busy);
+        drop(held);
         let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    /// A partial's name is its writer's own: the target's stem, this
+    /// process, a counter of the call, and `.part` before the extension -
+    /// so two writers never share the file one is still encoding into.
+    #[test]
+    fn a_partials_name_is_its_writers_own() {
+        let target = Path::new("/cache/proxy/0123456789abcdef.mp4");
+        let first = partial_for(target);
+        let second = partial_for(target);
+        assert_ne!(first, second, "two writes never share a partial");
+        let name = first.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(name.starts_with("0123456789abcdef."), "{name}");
+        assert!(
+            name.contains(&format!(".{}.", std::process::id())),
+            "{name} names its writer"
+        );
+        assert!(name.ends_with(".part.mp4"), "{name}");
+        assert_eq!(
+            name.split('.').count(),
+            5,
+            "{name} is stem, writer, counter, part, mp4"
+        );
+    }
+
+    /// A copy another process is writing is left to it: the ask says the
+    /// file will have its proxy, nothing is written here, and the next
+    /// ask - the turn free again - writes it.
+    #[test]
+    fn a_copy_another_process_is_writing_is_left_to_it() {
+        use concat_core::frame::Frame;
+        use concat_core::time::FrameRate;
+        if !locks_work() {
+            eprintln!("this folder's locks do not work; skipped");
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("concat-proxy-turn-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let media = dir.join("big.mp4");
+        {
+            let mut encoder = Encoder::create(
+                &media,
+                2560,
+                1440,
+                FrameRate::THIRTY,
+                &EncodeOptions {
+                    preset: "ultrafast".to_owned(),
+                    hardware: false,
+                    ..EncodeOptions::default()
+                },
+            )
+            .expect("encodes");
+            let frame = Frame::black(2560, 1440);
+            for _ in 0..3 {
+                encoder.write_frame(&frame).expect("writes");
+            }
+            encoder.finish().expect("finishes");
+        }
+        let project = dir.join("project");
+        let source = media.to_string_lossy().into_owned();
+        let target = path_for(&project, &source, None, false, ProxyCodec::H264).expect("a path");
+        // Another writer holds the turn - as a second window would.
+        let held = take_turn(&target);
+        assert!(matches!(held, Turn::Ours { .. }));
+        assert!(
+            ensure(&project, &source, 2560, 1440, None, false, ProxyCodec::H264),
+            "worth a proxy"
+        );
+        crate::scheduler().drain();
+        assert!(!target.is_file(), "the copy was left to its writer");
+        assert!(
+            !writing()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .contains(&target),
+            "nothing of ours is queued or held for it"
+        );
+        // The writer finished and let go: the next ask writes the copy.
+        drop(held);
+        assert!(ensure(
+            &project,
+            &source,
+            2560,
+            1440,
+            None,
+            false,
+            ProxyCodec::H264
+        ));
+        crate::scheduler().drain();
+        assert!(
+            target.is_file(),
+            "the copy was written once the turn was free"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

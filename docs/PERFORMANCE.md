@@ -52,6 +52,26 @@ python3 scripts/benchmark.py --video my.mp4  # or scrubs and renders your own
 
 It prints a markdown block; paste it under Results below.
 
+## What the benchmark does not measure
+
+Named here so nobody reads the scrub number as a promise it never made:
+
+- **Real timeline dragging.** A drag of the playhead in the window is a
+  stream of asks a few milliseconds apart, coalesced to one request at a
+  time, with the prefetcher decoding ahead and - when Settings allows -
+  the proxies answering instead of the originals. The benchmark's 120
+  independent `preview.frame` calls are random access to the *original*
+  file through the API, one process, no prefetch and no proxy in the
+  path: a floor for one frame of the paused monitor, not a measurement
+  of how a drag feels. Feel is not measured here yet; a benchmark that
+  drives the window's own monitor at drag cadence, proxies on and off,
+  is what would measure it.
+- **A second machine.** One VM, one day, one build. The number is a
+  fact about that run, reproducible with the script, nothing more.
+- **1080p playback.** Playing uses the Half and Quarter quality tiers
+  and, where they exist, the proxies; the benchmark asks for frames at
+  the timeline's own size from the originals.
+
 ## Results
 
 First measurement, 2026-11-01, on a 2 vCPU cloud VM (Intel Xeon) with

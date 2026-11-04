@@ -97,4 +97,11 @@ pub enum Error {
         /// Its name.
         name: String,
     },
+
+    /// The caller asked for the work to stop before it was done: a mix or
+    /// a mux that was still running when its export was cancelled. Not a
+    /// failure of anything - the file it was writing is the caller's to
+    /// clear away, which it already does for every way out.
+    #[error("cancelled")]
+    Cancelled,
 }

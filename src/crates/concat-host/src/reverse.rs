@@ -31,6 +31,7 @@
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use concat_core::{Frame, FrameRate, Rational};
 use concat_media::audio::{AudioClip, mix_to_file, mux};
@@ -138,7 +139,7 @@ impl Reversers {
         }
         progress(0.0);
         let result = if request.audio_only {
-            sound(request)
+            sound(request, job.cancel_flag())
         } else {
             footage(request, &job, progress)
         };
@@ -177,13 +178,14 @@ fn land(partial: &Path, target: &Path, written: Result<(), String>) -> Result<()
 }
 
 /// The span's sound, backwards, as a file of its own: the mixer's graph
-/// with `areverse` on it.
-fn sound(request: &ReverseRequest) -> Result<(), String> {
+/// with `areverse` on it, stopping when `cancel` rises.
+fn sound(request: &ReverseRequest, cancel: &AtomicBool) -> Result<(), String> {
     let partial = request.target.with_extension("part.m4a");
     let written = mix_to_file(
         &[span_clip(request, "areverse")],
         request.duration,
         &partial,
+        cancel,
     )
     .map_err(|error| error.to_string());
     land(&partial, &request.target, written)
@@ -304,8 +306,16 @@ fn footage(
         &[span_clip(request, "areverse")],
         request.duration,
         &partial_audio,
+        job.cancel_flag(),
     )
-    .and_then(|()| mux(&partial_video, &partial_audio, &partial_muxed))
+    .and_then(|()| {
+        mux(
+            &partial_video,
+            &partial_audio,
+            &partial_muxed,
+            job.cancel_flag(),
+        )
+    })
     .map_err(|error| error.to_string());
     let _ = std::fs::remove_file(&partial_video);
     let _ = std::fs::remove_file(&partial_audio);

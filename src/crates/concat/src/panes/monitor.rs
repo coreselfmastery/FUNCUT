@@ -4,13 +4,16 @@
 //! The monitor: the frame at the playhead, one request at a time.
 //!
 //! The pane owns the picture, the busy and wanted flags that serialise
-//! requests, the quality tier per timeline, and the worker that draws a
-//! frame. What goes into the frame - the flattened clips with their
-//! titles, a look being auditioned, a cutout being painted - is the
-//! controller's to say, and the pane asks it for that list. A request
-//! while one is out waits for it, and the newest wins; a frame that
-//! could not be drawn says so once per project and then stops repeating
-//! itself.
+//! requests, the generation that tells a superseded delivery from the one
+//! the playhead is waiting on, the quality tier per timeline, and the
+//! worker that draws a frame. What goes into the frame - the flattened
+//! clips with their titles, a look being auditioned, a cutout being
+//! painted - is the controller's to say, and the pane asks it for that
+//! list. A request while one is out waits for it, and the newest wins:
+//! a frame that lands for a position the playhead has already left is
+//! dropped rather than drawn, and the newest ask goes out at once
+//! instead of after a beat of the wrong picture. A frame that could not
+//! be drawn says so once per project and then stops repeating itself.
 //!
 //! The stage's gestures - pressing, dragging and releasing a picture on
 //! the monitor - are not here: one [`crate::studio::Gesture`] spans the
@@ -31,8 +34,10 @@ use crate::studio::Studio;
 pub enum MonitorMsg {
     /// The frame at the playhead is wanted.
     Request,
-    /// The worker is done: a frame, or why not.
-    Frame(Result<Picture, String>, FrameSpec),
+    /// The worker is done: a frame, or why not - and the generation of
+    /// the request it answers, so a delivery from a request the pane has
+    /// already replaced is told apart from the one it is waiting on.
+    Frame(Result<Picture, String>, FrameSpec, u64),
     /// The quality picker: 0 full, 1 half, 2 quarter.
     QualityChanged(i32),
     /// A project opened: the monitor starts clean and may complain again.
@@ -45,9 +50,9 @@ impl std::fmt::Debug for MonitorMsg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Request => write!(f, "Request"),
-            Self::Frame(result, spec) => write!(
+            Self::Frame(result, spec, generation) => write!(
                 f,
-                "Frame({}, {spec:?})",
+                "Frame({}, {spec:?}, generation {generation})",
                 match result {
                     Ok(Picture::Sources(_)) => "sources".to_owned(),
                     Ok(Picture::Pixels(_, w, h)) => format!("{w}x{h} pixels"),
@@ -93,6 +98,12 @@ pub struct MonitorPane {
     quality: HashMap<String, usize>,
     /// When the request out now was sent.
     asked: Option<std::time::Instant>,
+    /// The request out now, counted up every time one is issued. A frame
+    /// that arrives for any generation but the newest is not the frame
+    /// the playhead is waiting for: it was asked for by a position the
+    /// person has already moved away from, and it is dropped on arrival
+    /// instead of drawn.
+    generation: u64,
     /// How the frames of the current playback arrived.
     cadence: Cadence,
 }
@@ -148,10 +159,35 @@ impl MonitorPane {
     pub fn update(&mut self, msg: MonitorMsg, studio: &mut Studio) {
         match msg {
             MonitorMsg::Request => self.request(studio),
-            MonitorMsg::Frame(result, spec) => {
+            MonitorMsg::Frame(result, spec, generation) => {
                 self.busy = false;
-                let fps = studio.project().active().video.rate();
                 let wait = self.asked.take().map(|at| at.elapsed()).unwrap_or_default();
+                if generation != self.generation {
+                    // A delivery from a request the pane has already
+                    // replaced - a project closed and opened again under
+                    // it, or the pane reset while it was in flight.
+                    // Whatever it holds is not the frame the playhead is
+                    // waiting for; it is dropped, and a newer ask, if one
+                    // is waiting, goes out at once rather than after it.
+                    if self.wanted {
+                        self.request(studio);
+                    }
+                    return;
+                }
+                if self.wanted && !spec.moving {
+                    // The playhead moved on while this one was decoding:
+                    // stale the moment it lands. Rather than take the
+                    // beat to draw a frame from a position nobody is
+                    // looking at any more, it is dropped and the newest
+                    // position asked for now. A playing frame is
+                    // different - every frame it can show is one the eye
+                    // counts, and the cadence ledger says which were
+                    // missed - so those land as they always did, and the
+                    // wanted one is asked for after.
+                    self.request(studio);
+                    return;
+                }
+                let fps = studio.project().active().video.rate();
                 if spec.moving && result.is_ok() {
                     self.cadence
                         .count((spec.time * fps + 1e-6).floor() as i64, wait);
@@ -199,9 +235,30 @@ impl MonitorPane {
                 self.quality.insert(id, (index.max(0) as usize).min(2));
                 self.request(studio);
             }
-            MonitorMsg::Opened => self.failed = false,
-            MonitorMsg::Closed => self.image = slint::Image::default(),
+            MonitorMsg::Opened => {
+                self.failed = false;
+                self.retire();
+            }
+            MonitorMsg::Closed => {
+                self.image = slint::Image::default();
+                self.retire();
+            }
         }
+    }
+
+    /// Forgets any request in flight: the pane must not wait on one
+    /// forever, and none of them can land in a project the pane no longer
+    /// belongs to - a delivery dropped by the project epoch never clears
+    /// `busy`, and a monitor left busy refuses every ask after. The next
+    /// request gets a generation no delivery in flight can carry, so
+    /// anything still on its way is dropped on arrival even where the
+    /// epoch guard let it through.
+    fn retire(&mut self) {
+        self.busy = false;
+        self.wanted = false;
+        self.asked = None;
+        self.frame_was_proxied = false;
+        self.generation = self.generation.wrapping_add(1);
     }
 
     /// The quality tier for the project's active timeline: 0 full, 1
@@ -269,6 +326,8 @@ impl MonitorPane {
         let monitor = studio.host.monitor.clone();
         self.busy = true;
         self.wanted = false;
+        self.generation = self.generation.wrapping_add(1);
+        let generation = self.generation;
         self.asked = Some(std::time::Instant::now());
         spawn_frame(
             move || {
@@ -303,7 +362,7 @@ impl MonitorPane {
                 frame
             },
             move |studio, _, _, result| {
-                studio.handle(Msg::Monitor(MonitorMsg::Frame(result, spec)));
+                studio.handle(Msg::Monitor(MonitorMsg::Frame(result, spec, generation)));
             },
         );
     }

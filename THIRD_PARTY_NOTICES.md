@@ -293,18 +293,21 @@ is kept in that machine's own cache. See `docs/BGM.md`.
 
 ## The built-in sound library (the `audio/` folder)
 
-The Audio page's built-in shelf serves 430 CC0 sound effects, which this
+The Audio page's built-in shelf serves 530 CC0 sound effects, which this
 repository redistributes directly from `audio/` at its root (see
 `docs/AUDIO_LIBRARY.md`); a user's machine fetches them one at a time
 from this repository's `audio-v1` release or its `main` branch, checks
 each against the SHA-256 in `audio/manifest.json`, and keeps them in that
 machine's own cache.
 
-110 of them are curated from Kenney's audio packs and CC0 packs on
-OpenGameArt (each sound's `source` line in the manifest names the page a
-reviewer can check the licence on), plus ten risers and sweeps generated
-for this repository and dedicated to CC0. They were trimmed of head
-silence, normalised to −1 dBFS and encoded Ogg Vorbis q5 at 44.1 kHz.
+100 of them are curated from Kenney's audio packs (45) and CC0 packs on
+OpenGameArt (55) - each sound's `source` line in the manifest names the
+page a reviewer can check the licence on - and 110 more are designed and
+synthesised for this repository (the hundred-sound Hollywood pack and
+ten risers and sweeps, seeded and deterministic, CC0 by authorship,
+their `source` lines naming this repository). Both groups were trimmed
+of head silence, normalised to −1 dBFS and encoded Ogg Vorbis q5 at
+44.1 kHz.
 
 The other 320 are Wyzowl's sfx-kit
 (https://huggingface.co/datasets/wyzowl/sfx-kit), a CC0 1.0 collection of

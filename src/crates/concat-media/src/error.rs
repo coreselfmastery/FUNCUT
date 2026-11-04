@@ -97,4 +97,11 @@ pub enum Error {
         /// Its name.
         name: String,
     },
+
+    /// The caller's stop flag was set part-way through, and the operation
+    /// stopped at the next frame, packet or filter push rather than running
+    /// to the end. Whatever the operation was writing is left part-made;
+    /// it is the caller's temp file to remove, as any failed write's is.
+    #[error("cancelled")]
+    Cancelled,
 }

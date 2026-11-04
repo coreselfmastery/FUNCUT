@@ -39,7 +39,13 @@ each through the program's own paths rather than a mock-up:
   paused monitor shows (decode, effects, blend, scale), asked for 120
   random instants across a 60 s 1080p30 clip through one `concat-cli
   api` process. Random instants, not sequential ones, because scrubbing
-  is random access.
+  is random access. What this lane is **not**: a measurement of the
+  window's proxy-based timeline scrubbing - the drag of the playhead
+  reading a project's quarter-size working copies at Half and Quarter
+  quality. It reads the original file, at one quality, with no project
+  open; the proxy path is faster than this on footage large enough to
+  get one, and has not been measured here. A number for it belongs on
+  this page as soon as a run of it exists, and not before.
 - **Export** — `concat-cli render`, the end-to-end slice: decode,
   composite, encode, one process, 300 frames.
 - **Peak RSS** — each process's own high-water mark (`VmHWM`), read

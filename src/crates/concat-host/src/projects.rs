@@ -12,6 +12,7 @@
 //! another machine should not drag one person's recent files along with it.
 
 use std::collections::HashMap;
+use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -163,23 +164,48 @@ pub fn create(
     })
 }
 
-/// A snapshot's place in this process's write order.
+/// A snapshot's place in this process's write order, and in every
+/// process's.
 ///
 /// Minted by [`ticket`] where a document is captured - on the thread that
 /// captures it, before the write is handed to a worker - and carried to
 /// [`save_ordered`], where the write happens. Two snapshots of one project
 /// are written in ticket order, so a worker that finishes late cannot put an
-/// older document back on disk after a newer one.
+/// older document back on disk after a newer one: the sequence counts this
+/// process's order, and the capture time - the clock every process on the
+/// machine shares - orders what this process cannot see, another process
+/// writing the same folder.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Ticket(u64);
+pub struct Ticket {
+    /// This process's counter: the order of two snapshots it minted.
+    seq: u64,
+    /// When the snapshot was captured, in nanoseconds since the epoch: the
+    /// order of two snapshots from different processes, where neither
+    /// knows the other's counter.
+    at: u64,
+}
 
 /// Mints the next ticket; see [`Ticket`].
 ///
 /// The counter is process-wide, so tickets are monotonic for every project,
-/// and therefore for each project on its own. It is not shared with another
-/// process; see [`save_ordered`] for what that leaves unordered.
+/// and therefore for each project on its own. The capture time orders what
+/// the counter cannot: snapshots another process minted over the same
+/// folder, which [`save_ordered`] holds against the folder's own record.
 pub fn ticket() -> Ticket {
-    Ticket(NEXT_TICKET.fetch_add(1, Ordering::Relaxed))
+    Ticket {
+        seq: NEXT_TICKET.fetch_add(1, Ordering::Relaxed),
+        at: captured(),
+    }
+}
+
+/// When now is, in nanoseconds since the epoch: the clock every process on
+/// the machine shares. `0` where the machine says it is before the epoch,
+/// which no ticket minted after it can be superseded by.
+fn captured() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|since| since.as_nanos() as u64)
+        .unwrap_or(0)
 }
 
 static NEXT_TICKET: AtomicU64 = AtomicU64::new(1);
@@ -252,23 +278,25 @@ pub fn save(path: &str, document: &serde_json::Value) -> Result<(), String> {
     save_ordered(path, document, ticket()).map(|_| ())
 }
 
-/// Writes a document captured at `ticket`, in this process's write order.
+/// Writes a document captured at `ticket`, in this process's write order
+/// and against every other process's.
 ///
 /// A snapshot older than the one already on disk is skipped whole - see
 /// [`Saved`] - so a worker that finishes late cannot put an older document
-/// back over a newer one, whatever order the two are scheduled in. A write
-/// that fails is always a failure: a document that should have been written
-/// and could not returns the error, never [`Saved::Superseded`].
+/// back over a newer one, whatever order the two are scheduled in: this
+/// process's snapshots by their sequence, and another process's by the
+/// capture time both shared, checked against the record the folder keeps
+/// under [`SAVE_LOCK`] (audit 2026-11-04, #16). A write that fails is
+/// always a failure: a document that should have been written and could not
+/// returns the error, never [`Saved::Superseded`].
 ///
 /// The temporary file is this call's own (`create_new`), so two saves -
 /// including ones in different processes on the same folder - never write one
 /// another's bytes, and the rename over the manifest is atomic on a local
 /// disk (not always on FAT or a network share, where it is still one call
-/// that replaces or fails). What a folder shared between processes does not get is the
-/// order: each process counts tickets on its own, so a stale snapshot in one
-/// process can still land after a newer document written by another.
-/// Ordering across processes would need a lock both honour, and a project
-/// folder has none today.
+/// that replaces or fails). Where the folder cannot be locked - read-only,
+/// or a filesystem without locks - the cross-process order is not checked,
+/// which is the older behaviour and not a failed save.
 pub fn save_ordered(
     path: &str,
     document: &serde_json::Value,
@@ -286,15 +314,105 @@ pub fn save_ordered(
         .writing
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if ticket.0 < state.written.load(Ordering::Acquire) {
+    if ticket.seq < state.written.load(Ordering::Acquire) {
+        return Ok(Saved::Superseded);
+    }
+
+    // The folder's lock, taken briefly and given back: one save at a time
+    // across every process writing this manifest, so the check against the
+    // record and the write it decides cannot be split by another process's.
+    let mut order = SaveOrder::take(&root);
+    if order
+        .recorded()
+        .is_some_and(|recorded| ticket.at < recorded)
+    {
         return Ok(Saved::Superseded);
     }
 
     let encoded = serde_json::to_vec_pretty(document)
         .map_err(|error| format!("could not encode the project: {error}"))?;
     write_manifest(&root, &encoded)?;
-    state.written.store(ticket.0, Ordering::Release);
+    order.record(ticket.at);
+    state.written.store(ticket.seq, Ordering::Release);
     Ok(Saved::Written)
+}
+
+/// The file the folder's saves are ordered by: `concat.save.lock` beside
+/// the manifest, locked for the check-and-write of each save and carrying,
+/// as its whole contents, the capture time of the newest snapshot any
+/// process has put on disk. The lock is the operating system's, so a
+/// process that crashes lets go of it and the next saver takes over the
+/// file it left.
+const SAVE_LOCK: &str = "concat.save.lock";
+
+/// How long a save waits for another process's save to let go of the
+/// folder's lock: long enough for a save to finish - the temp file, its
+/// flush and the rename are milliseconds - and never long enough to hang
+/// an autosave on a peer that is stuck.
+const SAVE_LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// One save's hold on the folder's [`SAVE_LOCK`], and what it says. `None`
+/// of the lock where it could not be taken - another process holding it
+/// past the wait, or a folder that will not take one - in which case the
+/// cross-process order is not checked and the save goes on as it always
+/// did, ordered within this process alone.
+struct SaveOrder {
+    file: Option<std::fs::File>,
+}
+
+impl SaveOrder {
+    /// Takes the folder's save lock, waiting briefly for a save that is
+    /// finishing: bounded, so a stuck peer costs a fifth of a second and
+    /// not a save.
+    fn take(root: &Path) -> SaveOrder {
+        let path = root.join(SAVE_LOCK);
+        let started = std::time::Instant::now();
+        loop {
+            let Ok(file) = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&path)
+            else {
+                return SaveOrder { file: None };
+            };
+            match file.try_lock() {
+                Ok(()) => return SaveOrder { file: Some(file) },
+                Err(_) if started.elapsed() < SAVE_LOCK_WAIT => {
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Err(_) => return SaveOrder { file: None },
+            }
+        }
+    }
+
+    /// The capture time of the newest snapshot on disk, as the lock file
+    /// records it: `None` without the lock, or from a file nothing has been
+    /// written to yet, in which case there is nothing to be superseded by.
+    fn recorded(&mut self) -> Option<u64> {
+        let file = self.file.as_mut()?;
+        let mut text = String::new();
+        let _ = file.seek(std::io::SeekFrom::Start(0));
+        let _ = file.read_to_string(&mut text);
+        text.trim().parse().ok()
+    }
+
+    /// Records `at` as the capture time of the newest snapshot on disk.
+    /// Only ever moves forward: a clock stepped back between two captures
+    /// must not make the folder forget a newer save it already holds.
+    fn record(&mut self, at: u64) {
+        // Read before the write's borrow of the file, so the two never
+        // hold it at once.
+        let stamped = at.max(self.recorded().unwrap_or(0));
+        let Some(file) = self.file.as_mut() else {
+            return;
+        };
+        let _ = file.set_len(0);
+        let _ = file.seek(std::io::SeekFrom::Start(0));
+        let _ = file.write_all(stamped.to_string().as_bytes());
+        let _ = file.flush();
+    }
 }
 
 /// The temporary file a save writes: flushed and renamed into place on the
@@ -817,7 +935,7 @@ mod tests {
         save_ordered(&root, &document("two"), second).expect("writes");
         // An older ticket is a skip, told apart from a failure.
         assert_eq!(
-            save_ordered(&root, &document("stale"), Ticket(first.0)).expect("not an error"),
+            save_ordered(&root, &document("stale"), first).expect("not an error"),
             Saved::Superseded
         );
         assert_eq!(read_document(&root).expect("reads"), Some(document("two")));
@@ -880,6 +998,80 @@ mod tests {
         assert_eq!(temporaries(&root), 0, "no temporary is left behind");
 
         let _ = std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A snapshot captured before another process's save - the case the
+    /// in-process counter cannot see, a window and a `concat --mcp` on one
+    /// folder - is not put back over the newer document: the folder's lock
+    /// file records what landed, and a save older than that is superseded
+    /// exactly as one this process minted late is (audit 2026-11-04, #16).
+    /// What stands in for the other process here is the record itself,
+    /// written as its save would have written it.
+    #[test]
+    fn an_older_snapshot_from_another_process_is_not_put_back() {
+        let root = scratch("cross-process-order");
+        let ours = ticket();
+        let written = document("written by the other process");
+        {
+            let mut held = SaveOrder::take(Path::new(&root));
+            held.record(u64::MAX);
+        }
+        assert_eq!(
+            save_ordered(&root, &document("stale"), ours).expect("a skip, not a failure"),
+            Saved::Superseded,
+            "a snapshot captured before what the folder holds does not land"
+        );
+        // A capture after the record writes, and the record follows it.
+        let after = Ticket {
+            seq: ours.seq + 1,
+            at: u64::MAX,
+        };
+        assert_eq!(
+            save_ordered(&root, &written, after).expect("writes"),
+            Saved::Written
+        );
+        assert_eq!(
+            read_document(&root).expect("reads"),
+            Some(written),
+            "the newer document stands"
+        );
+        let mut order = SaveOrder::take(Path::new(&root));
+        assert_eq!(order.recorded(), Some(u64::MAX));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A save lock held by another writer is waited for, briefly, and a
+    /// save that gets it after the wait goes through: what a window's
+    /// autosave does behind an API save finishing on the same folder. The
+    /// lock held here stands for the other process's, the same file and
+    /// the same operating-system lock either way.
+    #[test]
+    fn a_save_waits_briefly_for_the_folder_and_then_writes() {
+        let root = scratch("save-waits");
+        let path = Path::new(&root).join(SAVE_LOCK);
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .expect("the other process's lock file");
+        held.try_lock().expect("taken as another process would");
+        let writer = {
+            let root = root.clone();
+            std::thread::spawn(move || save(&root, &document("after the wait")).expect("writes"))
+        };
+        // Long enough for the save to be waiting, short enough that it
+        // gets the lock inside its budget.
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        drop(held);
+        writer.join().expect("no panic");
+        assert_eq!(
+            read_document(&root).expect("reads"),
+            Some(document("after the wait")),
+            "the save went through once the folder was free"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 }

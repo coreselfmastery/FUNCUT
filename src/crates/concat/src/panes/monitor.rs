@@ -4,13 +4,16 @@
 //! The monitor: the frame at the playhead, one request at a time.
 //!
 //! The pane owns the picture, the busy and wanted flags that serialise
-//! requests, the quality tier per timeline, and the worker that draws a
+//! requests, the generation that retires a request the moment a newer one
+//! is wanted, the quality tier per timeline, and the worker that draws a
 //! frame. What goes into the frame - the flattened clips with their
 //! titles, a look being auditioned, a cutout being painted - is the
 //! controller's to say, and the pane asks it for that list. A request
-//! while one is out waits for it, and the newest wins; a frame that
-//! could not be drawn says so once per project and then stops repeating
-//! itself.
+//! while one is out waits for it, and the newest wins - on the screen
+//! too, not only in the queue: a frame that arrives for a position
+//! already superseded is dropped rather than shown on its way past (audit
+//! 2026-11-04, #1, #2), and a frame that could not be drawn says so once
+//! per project and then stops repeating itself.
 //!
 //! The stage's gestures - pressing, dragging and releasing a picture on
 //! the monitor - are not here: one [`crate::studio::Gesture`] spans the
@@ -31,8 +34,10 @@ use crate::studio::Studio;
 pub enum MonitorMsg {
     /// The frame at the playhead is wanted.
     Request,
-    /// The worker is done: a frame, or why not.
-    Frame(Result<Picture, String>, FrameSpec),
+    /// The worker is done: a frame, or why not, and the generation of the
+    /// request it answers - the pane's when it is the newest one, and
+    /// stale otherwise.
+    Frame(Result<Picture, String>, FrameSpec, u64),
     /// The quality picker: 0 full, 1 half, 2 quarter.
     QualityChanged(i32),
     /// A project opened: the monitor starts clean and may complain again.
@@ -45,9 +50,9 @@ impl std::fmt::Debug for MonitorMsg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Request => write!(f, "Request"),
-            Self::Frame(result, spec) => write!(
+            Self::Frame(result, spec, generation) => write!(
                 f,
-                "Frame({}, {spec:?})",
+                "Frame({}, {spec:?}, generation {generation})",
                 match result {
                     Ok(Picture::Sources(_)) => "sources".to_owned(),
                     Ok(Picture::Pixels(_, w, h)) => format!("{w}x{h} pixels"),
@@ -95,6 +100,12 @@ pub struct MonitorPane {
     asked: Option<std::time::Instant>,
     /// How the frames of the current playback arrived.
     cadence: Cadence,
+    /// Which request the pane is waiting on, counted up whenever the
+    /// picture it wants changes: a request made, a position wanted under a
+    /// busy monitor. A frame delivered for anything but the newest
+    /// generation is a position already scrubbed past - it is dropped, not
+    /// drawn on its way to the newest one (audit 2026-11-04, #1).
+    generation: u64,
 }
 
 /// How smoothly a playback's frames reached the monitor: one line in the
@@ -148,8 +159,19 @@ impl MonitorPane {
     pub fn update(&mut self, msg: MonitorMsg, studio: &mut Studio) {
         match msg {
             MonitorMsg::Request => self.request(studio),
-            MonitorMsg::Frame(result, spec) => {
+            MonitorMsg::Frame(result, spec, generation) => {
                 self.busy = false;
+                // A frame for a position the pointer has already left: the
+                // request that superseded it bumped the generation, and
+                // this one's is older. Not drawn, not counted, not said -
+                // and the newest position is asked for at once if it was
+                // waiting on this worker.
+                if !self.serves_current(generation) {
+                    if self.wanted {
+                        self.request(studio);
+                    }
+                    return;
+                }
                 let fps = studio.project().active().video.rate();
                 let wait = self.asked.take().map(|at| at.elapsed()).unwrap_or_default();
                 if spec.moving && result.is_ok() {
@@ -225,6 +247,20 @@ impl MonitorPane {
         (side(width), side(height))
     }
 
+    /// A request while one is out: the newest wins, and the one in flight
+    /// is retired - its frame, when it lands, is not the one to show.
+    fn note_wanted(&mut self) {
+        self.wanted = true;
+        self.generation += 1;
+    }
+
+    /// Whether a frame delivered from `generation` is the one to show:
+    /// the newest request the pane has is the only one whose frame belongs
+    /// on the monitor, whatever order the workers finish in.
+    fn serves_current(&self, generation: u64) -> bool {
+        generation == self.generation
+    }
+
     /// Asks the engine for the frame at the playhead - or under the pointer,
     /// while the preview axis has it - one at a time.
     fn request(&mut self, studio: &mut Studio) {
@@ -232,7 +268,7 @@ impl MonitorPane {
             return;
         }
         if self.busy {
-            self.wanted = true;
+            self.note_wanted();
             return;
         }
         let (width, height) =
@@ -269,6 +305,8 @@ impl MonitorPane {
         let monitor = studio.host.monitor.clone();
         self.busy = true;
         self.wanted = false;
+        self.generation += 1;
+        let generation = self.generation;
         self.asked = Some(std::time::Instant::now());
         spawn_frame(
             move || {
@@ -303,7 +341,7 @@ impl MonitorPane {
                 frame
             },
             move |studio, _, _, result| {
-                studio.handle(Msg::Monitor(MonitorMsg::Frame(result, spec)));
+                studio.handle(Msg::Monitor(MonitorMsg::Frame(result, spec, generation)));
             },
         );
     }
@@ -355,5 +393,34 @@ mod tests {
         assert_eq!(pane.quality_of(&project), 2);
         project.active_timeline_id = "b".to_owned();
         assert_eq!(pane.quality_of(&project), 1, "another timeline has its own");
+    }
+
+    /// A frame delivered for a position already superseded - the scrub that
+    /// moved on while the old position's decode was still running - is not
+    /// the one to show: every want retires the in-flight request's claim on
+    /// the monitor, and only the newest generation is served (audit
+    /// 2026-11-04, #1).
+    #[test]
+    fn a_frame_from_a_superseded_request_is_not_the_one_to_show() {
+        let mut pane = MonitorPane::default();
+        // A request is out: the pane is busy on its generation, and a
+        // frame for it is the one to show.
+        pane.busy = true;
+        pane.generation = 1;
+        assert!(pane.serves_current(1), "the request out is the newest one");
+        // The playhead moves on while it decodes - once, then again, as a
+        // drag does - and every want retires the in-flight request's claim.
+        pane.note_wanted();
+        pane.note_wanted();
+        assert!(pane.wanted);
+        assert_eq!(pane.generation, 3, "each want retires what came before it");
+        assert!(
+            !pane.serves_current(1),
+            "the older frame must not be drawn on its way past"
+        );
+        assert!(
+            pane.serves_current(3),
+            "only the newest generation is served"
+        );
     }
 }

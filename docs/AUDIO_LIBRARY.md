@@ -5,7 +5,8 @@
 > repository's `audio-v1` release - and the URLs the app reads point here
 > (`raw.githubusercontent.com/coreselfmastery/FUNCUT/main/audio/…`) rather
 > than at the upstream assets repository, which has nothing published yet.
-> Of the 530, one hundred are the **Hollywood pack**: trailer-grade slams,
+> Of the 530, one hundred and ten are designed in this repository: the
+> hundred-sound **Hollywood pack** - trailer-grade slams,
 > sub drops, braams, reverse sucks, flybys, glitch zaps, portal and magic
 > reveals, drones and logo stingers, designed and synthesised in-repo
 > (seeded, deterministic, CC0 by authorship) under the same categories -
@@ -18,7 +19,9 @@
 > after the name and the tags and both handed back to an agent by
 > `sounds.search`; and `syncAt`, seconds into the file where the sound's
 > peak lands, which the API hands back so a sound can be placed by the
-> moment it is for. Everything else below is the schema as the app reads
+> moment it is for. The ten beyond the hundred are risers and sweeps made
+> the same seeded, deterministic way. Everything else below is the schema as
+> the app reads
 > it. The making of this library is in
 > [FUNCUT-CHANGES.md](FUNCUT-CHANGES.md), sections 5 and 7.
 

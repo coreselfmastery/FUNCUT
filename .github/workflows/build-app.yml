@@ -34,6 +34,10 @@ name: Build app
 # The two targets are a matrix so one fails without taking the other down;
 # `fail-fast` is off for the same reason.
 on:
+  # Build and smoke-test installable Linux artifacts from every main commit,
+  # so a green source tree also has a runnable application bundle.
+  push:
+    branches: [main]
   workflow_call:
     inputs:
       ref:

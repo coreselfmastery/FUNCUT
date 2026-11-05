@@ -21,6 +21,7 @@ use crate::{Error, LineSpec, Take};
 
 /// The forensic reading of one line.
 #[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct LineForensic {
     /// The formant frequencies F1-F4 in Hz, when the line is long enough
     /// and voiced enough for LPC to mean anything.
@@ -37,6 +38,7 @@ pub struct LineForensic {
 
 /// The whole take's forensic reading.
 #[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct WholeForensic {
     /// The signal-to-noise ratio in dB.
     pub snr_db: f32,
@@ -71,6 +73,7 @@ pub struct WholeForensic {
 
 /// The forensic ear's whole output.
 #[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct ForensicOut {
     /// Per-line readings, index-aligned with the spec's lines.
     pub lines: Vec<Option<LineForensic>>,

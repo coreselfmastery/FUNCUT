@@ -24,6 +24,7 @@ use anno::Model as _;
 
 /// One entity, mapped onto the timeline.
 #[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct EntityOut {
     /// The line the entity was found in (index into the spec's lines).
     pub line_index: usize,

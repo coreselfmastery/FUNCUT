@@ -38,6 +38,7 @@ const MAX_NODES: usize = 3600;
 
 /// The prosody reading of one line.
 #[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct LineProsody {
     /// Mean voiced pitch in Hz.
     pub pitch_mean_hz: Option<f64>,
@@ -62,6 +63,7 @@ pub struct LineProsody {
 
 /// One stressed word, located by an energy peak.
 #[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct EmphasisWord {
     /// The peak's time in seconds.
     pub t: f64,
@@ -77,6 +79,7 @@ pub struct EmphasisWord {
 
 /// One rhythm layer of the take.
 #[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct RhythmLayerOut {
     /// The layer's eigenvalue in the graph Laplacian's spectrum.
     pub eigenvalue: f64,
@@ -88,6 +91,7 @@ pub struct RhythmLayerOut {
 
 /// One phrase boundary the Fiedler vector found.
 #[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct PhraseOut {
     /// The phrase's start in seconds.
     pub start_sec: f64,
@@ -101,6 +105,7 @@ pub struct PhraseOut {
 
 /// The whole take's prosody.
 #[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct ProsodyOut {
     /// Per-line readings, index-aligned with the spec's lines (the entry
     /// is `None` for a line with no usable timing).

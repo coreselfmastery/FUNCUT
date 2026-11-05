@@ -46,6 +46,10 @@ try:
     import emotion as emotion_read
 except Exception:  # pragma: no cover - sense must work without the emotion reader
     emotion_read = None
+try:
+    import voice_signals as voice_read
+except Exception:  # pragma: no cover - sense must work without the voice-signal reader
+    voice_read = None
 
 
 # ---------------------------------------------------------------------------
@@ -2132,10 +2136,19 @@ def emotion_command(spec):
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
+def voice_command(spec):
+    """The voiceover read as a score, proxied to voice_signals.py: what each
+    line IS as sound - loudness, pauses, rate, pitch, speakers, entities.
+    Same degradation contract as emotion_command."""
+    if voice_read is None:
+        return {"ok": False, "error": "voice_signals.py missing from sense runtime"}
+    return voice_read.command(spec)
+
+
 def main():
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["sheet", "critique", "rank", "overlay", "loudness", "rhythm", "track", "vlm", "emotion", "selftest"])
+    ap.add_argument("cmd", choices=["sheet", "critique", "rank", "overlay", "loudness", "rhythm", "track", "vlm", "emotion", "voice", "selftest"])
     ap.add_argument("--spec", default="{}")
     args = ap.parse_args()
     try:
@@ -2173,6 +2186,8 @@ def main():
             out = vlm_command(spec)
         elif args.cmd == "emotion":
             out = emotion_command(spec)
+        elif args.cmd == "voice":
+            out = voice_command(spec)
         else:
             # No external dependencies: generate a synthetic gradient sheet and
             # measure it. Proves ffmpeg, PNG encoding and metrics all work.

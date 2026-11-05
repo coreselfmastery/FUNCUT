@@ -22,6 +22,7 @@ use polyvoice::vad::VoiceActivityDetector as _;
 
 /// One stretch of detected speech.
 #[derive(Serialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct Span {
     /// Start in seconds.
     pub start: f64,
@@ -31,6 +32,7 @@ pub struct Span {
 
 /// One speaker turn: a continuous stretch of one speaker.
 #[derive(Serialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct Turn {
     /// Start in seconds.
     pub start: f64,
@@ -42,6 +44,7 @@ pub struct Turn {
 
 /// One change of speaker, at the moment it happens.
 #[derive(Serialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct Change {
     /// When the change lands, in seconds.
     pub t: f64,
@@ -53,6 +56,7 @@ pub struct Change {
 
 /// One speaker found in the take.
 #[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct SpeakerEntry {
     /// The speaker's label.
     pub id: u32,
@@ -64,6 +68,7 @@ pub struct SpeakerEntry {
 
 /// The speaker ear's whole output.
 #[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct SpeakerOutAll {
     /// Whether a diarization was possible at all.
     pub available: bool,

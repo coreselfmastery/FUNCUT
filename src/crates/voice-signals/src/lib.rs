@@ -60,6 +60,7 @@ pub enum Error {
 
 /// One measured word, as the transcript job reports it.
 #[derive(Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct WordSpec {
     /// Seconds from the take's start.
     pub start: f64,
@@ -71,6 +72,7 @@ pub struct WordSpec {
 
 /// One transcript line: its span, its text and its measured words.
 #[derive(Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct LineSpec {
     /// Seconds from the take's start; `None` on a text-only line, which
     /// still gets its entities read but no audio-derived signals.
@@ -88,6 +90,7 @@ pub struct LineSpec {
 
 /// The voice-activity configuration, overridable from the spec.
 #[derive(Deserialize, Clone, Copy, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct VadSpec {
     /// The energy threshold in dB below which a frame is silence
     /// (ffmpeg's `silencedetect` convention: -35 default).
@@ -138,6 +141,7 @@ impl Default for VadSpec {
 
 /// The whole extraction request, as the Python bridge writes it.
 #[derive(Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct Spec {
     /// A 16-bit PCM mono WAV of the take (the bridge's ffmpeg handoff).
     /// `None` on a text-only pass: entities are still extracted, audio
@@ -189,6 +193,7 @@ impl Default for Spec {
 
 /// The whole extraction, ready to serialise.
 #[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct Output {
     /// Always present; the honest extraction note.
     pub ok: bool,
@@ -209,6 +214,7 @@ pub struct Output {
 
 /// What the decoded take itself says.
 #[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct AudioFacts {
     /// The take's length in seconds.
     pub duration_sec: f64,

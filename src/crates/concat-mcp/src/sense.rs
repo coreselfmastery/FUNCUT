@@ -31,6 +31,7 @@ use crate::tools::Outcome;
 const SENSE_PY: &str = include_str!("../sense/sense.py");
 const VLM_PY: &str = include_str!("../sense/vlm.py");
 const EMOTION_PY: &str = include_str!("../sense/emotion.py");
+const VOICE_SIGNALS_PY: &str = include_str!("../sense/voice_signals.py");
 const FARM_SYNC_PY: &str = include_str!("../sense/farm-sync.py");
 /// The semantic search step, at the repo's `analysis/rerank.py`: the CLIP
 /// rerank `openvid_search` runs behind BM25. It lands in the same runtime
@@ -88,6 +89,7 @@ fn runtime() -> Result<&'static PathBuf, ApiError> {
         fs::write(dir.join("sense.py"), SENSE_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("vlm.py"), VLM_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("emotion.py"), EMOTION_PY).map_err(|e| e.to_string())?;
+        fs::write(dir.join("voice_signals.py"), VOICE_SIGNALS_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("farm-sync.py"), FARM_SYNC_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("rerank.py"), RERANK_PY).map_err(|e| e.to_string())?;
         Ok(dir)
@@ -1471,6 +1473,73 @@ pub fn emotion(arguments: Value) -> Result<Outcome, ApiError> {
         30
     };
     let result = run("emotion", &spec, Duration::from_secs(budget.min(480)))?;
+    Ok(Outcome::json(result))
+}
+
+/// The voiceover read as a score: the `voice` tool's extract. One spec in
+/// (audio + transcript), one reading out - per-line loudness, pause
+/// classes, speech rate, word confidence, sentence types, motifs and
+/// fillers from the Python side; prosody, forensics, speakers and
+/// entities from the Rust `voice-signals` binary when it is built; the
+/// emotion read's arc passed through when the caller gives it. The budget
+/// scales with the lines and the audio length: the Rust ears analyse
+/// every line and window, and a WhisperX alignment (when installed) is
+/// real work on top.
+pub fn voice_signals(arguments: Value) -> Result<Outcome, ApiError> {
+    let fields = arguments
+        .as_object()
+        .cloned()
+        .ok_or_else(|| invalid("the arguments are an object"))?;
+    let action = fields
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("extract");
+    if !["extract", "selftest"].contains(&action) {
+        return Err(invalid("action is `extract` or `selftest`"));
+    }
+    let mut spec = json!({ "action": action });
+    // Only the fields the action reads travel on: the spec crosses a
+    // process boundary, and a transcript with word timings is large
+    // enough already.
+    for key in [
+        "audio",
+        "transcript",
+        "lines",
+        "script",
+        "language",
+        "emotion",
+        "thresholdDb",
+        "minSilenceMs",
+        "maxSpeakers",
+        "speakerThreshold",
+        "whisperx",
+    ] {
+        if let Some(value) = fields.get(key) {
+            spec[key] = value.clone();
+        }
+    }
+    let budget = if action == "extract" {
+        let scripted = fields
+            .get("script")
+            .and_then(Value::as_str)
+            .map_or(0, |text| text.lines().count());
+        let lined = fields
+            .get("lines")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        let segments = match fields.get("transcript") {
+            Some(Value::Array(list)) => list.len(),
+            Some(Value::Object(map)) => map
+                .get("segments")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len),
+            _ => 0,
+        };
+        120 + 8 * scripted.max(lined).max(segments) as u64
+    } else {
+        60
+    };
+    let result = run("voice", &spec, Duration::from_secs(budget.min(480)))?;
     Ok(Outcome::json(result))
 }
 

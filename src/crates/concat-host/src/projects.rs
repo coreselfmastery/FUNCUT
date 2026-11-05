@@ -294,9 +294,11 @@ pub fn save(path: &str, document: &serde_json::Value) -> Result<(), String> {
 /// including ones in different processes on the same folder - never write one
 /// another's bytes, and the rename over the manifest is atomic on a local
 /// disk (not always on FAT or a network share, where it is still one call
-/// that replaces or fails). Where the folder cannot be locked - read-only,
-/// or a filesystem without locks - the cross-process order is not checked,
-/// which is the older behaviour and not a failed save.
+/// that replaces or fails). If the folder's lock cannot be opened, acquired,
+/// or updated, the save fails closed: it never silently writes without the
+/// cross-process conflict check. The order record is advanced before the
+/// manifest write, so a failed replacement conservatively bars older
+/// pending snapshots rather than letting one overwrite newer intent.
 pub fn save_ordered(
     path: &str,
     document: &serde_json::Value,
@@ -318,12 +320,12 @@ pub fn save_ordered(
         return Ok(Saved::Superseded);
     }
 
-    // The folder's lock, taken briefly and given back: one save at a time
-    // across every process writing this manifest, so the check against the
-    // record and the write it decides cannot be split by another process's.
-    let mut order = SaveOrder::take(&root);
+    // The folder's lock is mandatory: the check and manifest write are one
+    // cross-process transaction. A peer that holds it past the bounded wait
+    // makes this save fail rather than fall back to process-local ordering.
+    let mut order = SaveOrder::take(&root)?;
     if order
-        .recorded()
+        .recorded()?
         .is_some_and(|recorded| ticket.at < recorded)
     {
         return Ok(Saved::Superseded);
@@ -331,8 +333,11 @@ pub fn save_ordered(
 
     let encoded = serde_json::to_vec_pretty(document)
         .map_err(|error| format!("could not encode the project: {error}"))?;
+    // Advance the high-water mark before replacing the manifest. If the
+    // replacement fails, older queued snapshots remain barred from
+    // overwriting this newer intent; the caller receives the write error.
+    order.record(ticket.at)?;
     write_manifest(&root, &encoded)?;
-    order.record(ticket.at);
     state.written.store(ticket.seq, Ordering::Release);
     Ok(Saved::Written)
 }
@@ -351,67 +356,97 @@ const SAVE_LOCK: &str = "concat.save.lock";
 /// an autosave on a peer that is stuck.
 const SAVE_LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(200);
 
-/// One save's hold on the folder's [`SAVE_LOCK`], and what it says. `None`
-/// of the lock where it could not be taken - another process holding it
-/// past the wait, or a folder that will not take one - in which case the
-/// cross-process order is not checked and the save goes on as it always
-/// did, ordered within this process alone.
+/// One save's hold on the folder's [`SAVE_LOCK`]. A save without this
+/// operating-system lock is not allowed to replace the manifest.
 struct SaveOrder {
-    file: Option<std::fs::File>,
+    file: std::fs::File,
 }
 
 impl SaveOrder {
-    /// Takes the folder's save lock, waiting briefly for a save that is
-    /// finishing: bounded, so a stuck peer costs a fifth of a second and
-    /// not a save.
-    fn take(root: &Path) -> SaveOrder {
+    /// Takes the folder's save lock. Waiting is bounded so a stuck peer
+    /// cannot hang autosave indefinitely, but timeout or unsupported locking
+    /// is an error: writing without the lock would reopen the cross-process
+    /// lost-update race this guard exists to prevent.
+    fn take(root: &Path) -> Result<SaveOrder, String> {
         let path = root.join(SAVE_LOCK);
         let started = std::time::Instant::now();
         loop {
-            let Ok(file) = std::fs::OpenOptions::new()
+            let file = std::fs::OpenOptions::new()
                 .read(true)
                 .write(true)
                 .create(true)
                 .truncate(false)
                 .open(&path)
-            else {
-                return SaveOrder { file: None };
-            };
+                .map_err(|error| {
+                    format!(
+                        "could not open project save lock {}: {error}",
+                        path.display()
+                    )
+                })?;
             match file.try_lock() {
-                Ok(()) => return SaveOrder { file: Some(file) },
-                Err(_) if started.elapsed() < SAVE_LOCK_WAIT => {
+                Ok(()) => return Ok(SaveOrder { file }),
+                Err(std::fs::TryLockError::WouldBlock)
+                    if started.elapsed() < SAVE_LOCK_WAIT =>
+                {
+                    drop(file);
                     std::thread::sleep(std::time::Duration::from_millis(20));
                 }
-                Err(_) => return SaveOrder { file: None },
+                Err(std::fs::TryLockError::WouldBlock) => {
+                    return Err(format!(
+                        "timed out waiting for project save lock {}; the project was not saved",
+                        path.display()
+                    ));
+                }
+                Err(error) => {
+                    return Err(format!(
+                        "could not acquire project save lock {}: {error}",
+                        path.display()
+                    ));
+                }
             }
         }
     }
 
-    /// The capture time of the newest snapshot on disk, as the lock file
-    /// records it: `None` without the lock, or from a file nothing has been
-    /// written to yet, in which case there is nothing to be superseded by.
-    fn recorded(&mut self) -> Option<u64> {
-        let file = self.file.as_mut()?;
+    /// The capture time of the newest snapshot on disk. An empty lock file
+    /// means no ordered save has reached the manifest yet; malformed or
+    /// unreadable contents are errors, never an excuse to skip conflict
+    /// detection.
+    fn recorded(&mut self) -> Result<Option<u64>, String> {
         let mut text = String::new();
-        let _ = file.seek(std::io::SeekFrom::Start(0));
-        let _ = file.read_to_string(&mut text);
-        text.trim().parse().ok()
+        self.file
+            .seek(std::io::SeekFrom::Start(0))
+            .map_err(|error| format!("could not read project save order: {error}"))?;
+        self.file
+            .read_to_string(&mut text)
+            .map_err(|error| format!("could not read project save order: {error}"))?;
+        let text = text.trim();
+        if text.is_empty() {
+            Ok(None)
+        } else {
+            text.parse::<u64>()
+                .map(Some)
+                .map_err(|error| format!("invalid project save order record: {error}"))
+        }
     }
 
     /// Records `at` as the capture time of the newest snapshot on disk.
     /// Only ever moves forward: a clock stepped back between two captures
     /// must not make the folder forget a newer save it already holds.
-    fn record(&mut self, at: u64) {
-        // Read before the write's borrow of the file, so the two never
-        // hold it at once.
-        let stamped = at.max(self.recorded().unwrap_or(0));
-        let Some(file) = self.file.as_mut() else {
-            return;
-        };
-        let _ = file.set_len(0);
-        let _ = file.seek(std::io::SeekFrom::Start(0));
-        let _ = file.write_all(stamped.to_string().as_bytes());
-        let _ = file.flush();
+    fn record(&mut self, at: u64) -> Result<(), String> {
+        let stamped = at.max(self.recorded()?.unwrap_or(0));
+        self.file
+            .set_len(0)
+            .map_err(|error| format!("could not reset project save order: {error}"))?;
+        self.file
+            .seek(std::io::SeekFrom::Start(0))
+            .map_err(|error| format!("could not update project save order: {error}"))?;
+        self.file
+            .write_all(stamped.to_string().as_bytes())
+            .map_err(|error| format!("could not update project save order: {error}"))?;
+        self.file
+            .sync_all()
+            .map_err(|error| format!("could not flush project save order: {error}"))?;
+        Ok(())
     }
 }
 
@@ -1014,8 +1049,9 @@ mod tests {
         let ours = ticket();
         let written = document("written by the other process");
         {
-            let mut held = SaveOrder::take(Path::new(&root));
-            held.record(u64::MAX);
+            let mut held = SaveOrder::take(Path::new(&root)).expect("takes the folder lock");
+            held.record(u64::MAX)
+                .expect("records the other process's save");
         }
         assert_eq!(
             save_ordered(&root, &document("stale"), ours).expect("a skip, not a failure"),
@@ -1036,8 +1072,72 @@ mod tests {
             Some(written),
             "the newer document stands"
         );
-        let mut order = SaveOrder::take(Path::new(&root));
-        assert_eq!(order.recorded(), Some(u64::MAX));
+        let mut order = SaveOrder::take(Path::new(&root)).expect("takes the folder lock");
+        assert_eq!(order.recorded().expect("reads the record"), Some(u64::MAX));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A peer that never releases the folder lock must not make this
+    /// process fall back to process-local ordering and overwrite the
+    /// saved manifest. Timeout is a failed save, with no temp left behind.
+    #[test]
+    fn a_save_fails_closed_when_another_writer_keeps_the_lock() {
+        let root = scratch("save-lock-timeout");
+        let saved = document("already saved");
+        save(&root, &saved).expect("first save");
+        let before = std::fs::read(Path::new(&root).join(MANIFEST)).expect("reads manifest");
+
+        let path = Path::new(&root).join(SAVE_LOCK);
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&path)
+            .expect("the other process's lock file");
+        held.try_lock().expect("held as another process would");
+
+        let error = save(&root, &document("must not overwrite"))
+            .expect_err("a save without the cross-process lock must fail");
+        assert!(
+            error.contains("timed out waiting for project save lock"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(
+            std::fs::read(Path::new(&root).join(MANIFEST)).expect("reads manifest"),
+            before,
+            "the already saved project is untouched"
+        );
+        assert_eq!(temporaries(&root), 0, "no temporary is left behind");
+
+        drop(held);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A damaged order record is not treated as an empty one: doing so
+    /// would let an older process overwrite a manifest whose ordering can
+    /// no longer be established.
+    #[test]
+    fn a_malformed_save_order_record_fails_closed() {
+        let root = scratch("save-order-malformed");
+        let saved = document("already saved");
+        save(&root, &saved).expect("first save");
+        let before = std::fs::read(Path::new(&root).join(MANIFEST)).expect("reads manifest");
+        std::fs::write(Path::new(&root).join(SAVE_LOCK), b"not-a-ticket")
+            .expect("corrupts the order record");
+
+        let error = save(&root, &document("must not overwrite"))
+            .expect_err("a malformed order record must fail");
+        assert!(
+            error.contains("invalid project save order record"),
+            "{error}"
+        );
+        assert_eq!(
+            std::fs::read(Path::new(&root).join(MANIFEST)).expect("reads manifest"),
+            before,
+            "the already saved project is untouched"
+        );
+        assert_eq!(temporaries(&root), 0, "no temporary is left behind");
         let _ = std::fs::remove_dir_all(&root);
     }
 

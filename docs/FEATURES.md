@@ -11,7 +11,7 @@ composited, CapCut-class video editor for Linux) tuned for small machines,
 plus an agent stack bolted onto it — a built-in MCP server with **100 tools**,
 an analysis/sense layer, an emotion-driven edit pipeline with a brand kit, a
 motion-graphics engine with its own sidecar, and two Claude skills (a director
-that runs an 11-phase measured pipeline, and maestro, a vendored design and
+that runs a 12-phase measured pipeline, and maestro, a vendored design and
 film judgment library) — all drivable from a Forge page inside the editor
 with one click.
 
@@ -191,7 +191,7 @@ Nothing here is bundled whole; indexes download once, media arrives per pick.
 | Motion design | `motion_presets`, `motion_inspect`, `motion_probe`, `scene_timeline`, `motion_frame`, `motion_bake`, `motion_overlay`, `captions_animate`, `motion_reel` (with per-scene colour grades and the calm/punchy/editorial style axis) |
 | Export | `export_start`, `export_status`, `export_wait`, `export_cancel` |
 | Looking | `preview_frame` (an image the model can see) |
-| Perception & the creative loop | `creative_brief`, `stock_contact_sheet`, `watch_render`, `craft_critique`, `suggest_cuts`, `measure_loudness`, `local_vlm`, `emotion` |
+| Perception & the creative loop | `creative_brief`, `stock_contact_sheet`, `watch_render`, `craft_critique`, `suggest_cuts`, `measure_loudness`, `local_vlm`, `emotion`, `voice_signals` |
 
 - **The JSON-RPC API** (Settings > Automation, or `concat-cli serve`): the
   same 48 request methods over TCP/Unix lines, plus gRPC with an events
@@ -238,6 +238,23 @@ Nothing here is bundled whole; indexes download once, media arrives per pick.
   guide), `gate` (the placement gate below), `verify` (re-transcribe the
   export and align words — what a render loses, duplicates or shifts is a
   defect), `template`.
+- **The voice-signal ear** (`voice_signals`,
+  [docs/VOICE-SIGNALS.md](VOICE-SIGNALS.md)): the acoustic read of the
+  voiceover — per line, momentary loudness relative to the take, speech
+  rate with a pace class, the sentence type cross-checked against the
+  pitch's terminal rise, the emphasis words the energy peaks land on,
+  fillers, a measured word-confidence gate, the speaker, formants and
+  voice quality, and the entities the line names (money → stat card, a
+  name → lower-third, a date → timeline, PII → redact); around the
+  lines, pauses classified (breath / beat / dramatic hold / scene turn /
+  dead air), motifs, rhythm layers, the noise-floor BGM decision, the
+  diarization with change times, and director hints — cut style, caption
+  gate, protected pauses, font and music-genre hints for the detected
+  script. Engines: ffmpeg ebur128 + silencedetect and pure-Python regex
+  always; the Rust `voice-signals` crate (spectral-prosody,
+  oximedia-audio-analysis, polyvoice 0.17, anno offline NER) for
+  prosody, forensics, speakers and entities; WhisperX (pip) for aligned
+  words with scores. ~36 signals, each naming its source.
 - **The creative brief & the brand box** (`creative_brief`): the WHY of the
   edit persisted as `creative-brief.json` in the project — audience,
   platform, goal, thesis, curiosityGap, payoff, emotionalArc,

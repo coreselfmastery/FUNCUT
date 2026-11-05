@@ -371,6 +371,30 @@ attribution table — including sources that informed the distilled layer only
 `.claude/skills/maestro/NOTICE.md`; the upstream-drift pins for re-syncing
 the vendor live in `scripts/maestro/` (see `scripts/maestro/README.md`).
 
+## The voice-signal crates (linked into the `voice-signals` binary)
+
+The `voice_signals` sense tool's Rust half links four analysis crates and a
+WAV reader, all pure Rust, no C, no models fetched at build or run time:
+
+- **spectral-prosody** 0.1.1
+  (crates.io/crates/spectral-prosody), **MIT** — autocorrelation pitch
+  estimation, energy envelopes and the spectral-graph rhythm/phrase
+  decomposition the prosody ear is built on.
+- **oximedia-audio-analysis** 0.2.1
+  (crates.io/crates/oximedia-audio-analysis), **Apache-2.0** — LPC formants,
+  the noise profiler, SNR, spectral flux, dynamics and the voice-quality
+  analyzer behind the forensic ear.
+- **polyvoice** 0.17.0 (crates.io/crates/polyvoice), **MIT** — the
+  `EnergyVad` and agglomerative cosine clustering the speaker ear uses,
+  built with default features off (no ONNX runtime, no model files). 0.17
+  is pinned because the later lines declare an MSRV above the toolchain
+  this repository builds with.
+- **anno** 0.14.0 (crates.io/crates/anno), **MIT OR Apache-2.0** — the
+  offline pattern NER behind the entity ear, built with default features
+  off so nothing downloads at first use.
+- **hound** 3.5.1 (crates.io/crates/hound), **Apache-2.0** — the WAV
+  handoff between the Python bridge and the Rust ears.
+
 ## Tools fetched at runtime by the sense layer (not redistributed here)
 
 The MCP sense tools (`watch_render`, `stock_contact_sheet`,

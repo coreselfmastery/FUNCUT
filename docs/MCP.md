@@ -350,9 +350,32 @@ return MCP `type: image` content blocks, so the model can actually look:
   applies it; `action "verify"` aligns the edit's words against the
   re-transcribed export — what a render loses, duplicates or shifts is a
   defect the eye cannot see.
+- `voice_signals` - the acoustic read of the voiceover, the other half of
+  the driver (see [docs/VOICE-SIGNALS.md](VOICE-SIGNALS.md) for the full
+  map). `action "extract"` takes the voiceover `audio`, the `transcript`
+  (for the word timings) and optionally the `emotion` extract (for the
+  arc), and returns per line: momentary **loudness relative to the take**,
+  the **speech rate** with a pace class, the **sentence type**
+  cross-checked against the pitch's terminal rise, the **emphasis words**
+  the energy peaks land on, **fillers**, per-word **confidence** (a
+  measured gate — or WhisperX scores when installed), the **speaker**, and
+  the **entities** the line names with the artefact each suggests
+  (`$10,450` → stat card, a name → lower-third, a date → timeline, PII →
+  redact); plus the **pauses CLASSIFIED** (breath / beat / dramatic hold /
+  scene turn / dead air — a hold is never cut), **motifs**, the take's
+  **rhythm layers**, the **noise floor** (the BGM decision), the
+  **diarization** with change times, and `directorHints` — the cut style,
+  the caption gate, the protected pauses, and the font and music-genre
+  hints for the detected script. Engines: ffmpeg ebur128 + silencedetect
+  and pure-Python regex always; the Rust `voice-signals` binary
+  (`cargo build -p voice-signals`) for prosody, forensics, speakers and
+  NER — an honest note when it is not built; WhisperX (pip) for aligned
+  words with scores. `action "selftest"` proves the whole chain on a
+  synthetic take.
 
 The intended loop: `creative_brief` -> `emotion` (extract, on the
-voiceover) -> `plan_validate` (creativeReady true) -> `stock_contact_sheet`
+voiceover) -> `voice_signals` (the acoustic score, with the emotion read
+for the arc) -> `plan_validate` (creativeReady true) -> `stock_contact_sheet`
 -> `emotion` (gate, before anything is placed) -> build -> `watch_render` ->
 `craft_critique` -> revise -> `watch_render` again -> export ->
 `watch_render {path}` + `measure_loudness` + `emotion` (verify) on the file

@@ -1854,3 +1854,33 @@ and `BakeRequest::alpha`'s doc now say exactly what each moves.
 Findings 2, 5, 8 and 9 were resolved before this pass (the postscript
 in `audit/2026-11-01/geneva-four-pillars.md` says so, item by item).
 379 lib tests and 6 doctests, clippy `-D warnings` clean.
+
+## 42. The voice read as a score: `voice_signals`, item 11 - the sixth sense
+
+The emotion read told the director what every line FEELS; nothing told
+it what the voice IS. Six signals the editor already computed were
+never wired to the edit (whole-file loudness, raw silence spans, a
+derivable speech rate, whisper's word timings used raw, a language the
+transcriber knew and the fonts never saw, an arc that warned but never
+paced), three more were a regex away (sentence type, repeated motifs,
+fillers), and the rest needed real extraction. This adds the
+`voice_signals` tool: the Python half (sense/voice_signals.py, pure
+stdlib, one ebur128 pass for per-line momentary loudness, silencedetect
+spans CLASSIFIED breath/beat/dramatic/scene_turn/dead_air, speech rate
+with a pace class, a measured word-confidence gate, script detection
+with font and music-genre hints, sentence types cross-checked against
+the prosody's terminal rise, motifs, fillers, and a regex complement
+for the bare years and money the NER misses) and the Rust half (the
+`voice-signals` crate: spectral-prosody for pitch, emphasis and rhythm,
+oximedia-audio-analysis for formants, noise floor, SNR and flux,
+polyvoice for VAD and voice-print diarization, anno for offline NER,
+WhisperX bridged when installed). The director skill grew a Phase 1c
+and an "A - the voice is a score" law: only dead air is cut, a dramatic
+hold survives, SFX peaks land on emphasis words, the BGM obeys the
+measured noise floor, and a speaker change is staged like a scene
+change. polyvoice is pinned at 0.17 for the pinned toolchain's MSRV;
+the diarization says in its own `method` that it is a voice-print
+heuristic, not a neural model. 23 new tests in the crate, the
+concat-mcp suite green end to end (36 lib, 7 e2e) on the CI dependency
+set, and both selftests - the crate's synthetic two-voice take and the
+sense script's - answer. Full map: docs/VOICE-SIGNALS.md.

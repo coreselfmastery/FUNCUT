@@ -307,65 +307,31 @@ fn take_lock_file(path: &Path) -> Option<std::fs::File> {
     }
 }
 
-/// The lock that makes one proxy one write on one machine: taken before
-/// the encoder opens the partial and held until the copy is whole or the
-/// write has failed, so two Concat processes - a window and a
-/// `concat --mcp`, say - never interleave their bytes on the same
-/// `.part.mp4` (audit 2026-11-04, #10). The process-local `writing` set
-/// of [`ensure`] cannot see another process; this is the line between
-/// them. Dropped with the write, and the file goes with the lock.
+/// The lock that makes one proxy one write on one machine. The lock file
+/// is a permanent sentinel: unlinking it while a handle still owns its
+/// lock lets another process create a new file at the same path and take
+/// a second lock on a different inode. Keeping the sentinel means every
+/// process always locks the same file, even after a completed write.
 struct WritingLock {
-    /// Held and never read: the lock is the handle's, and it goes when the
-    /// handle does. `Option` so [`Drop`] can name the moment.
-    held: Option<std::fs::File>,
-    path: PathBuf,
-}
-
-impl Drop for WritingLock {
-    fn drop(&mut self) {
-        // The file first, the lock with the handle: a sweep that looks in
-        // between finds the lock still taken and leaves the partial alone.
-        let _ = std::fs::remove_file(&self.path);
-        drop(self.held.take());
-    }
+    /// The OS releases this lock when the handle is dropped.
+    _held: std::fs::File,
 }
 
 /// Takes the writing lock for `partial`'s proxy, or `None` when another
 /// process is writing it.
 fn take_writing_lock(partial: &Path) -> Option<WritingLock> {
     let path = lock_beside(partial);
-    take_lock_file(&path).map(|file| WritingLock {
-        held: Some(file),
-        path,
-    })
+    take_lock_file(&path).map(|file| WritingLock { _held: file })
 }
 
-/// What became of the lock file beside a partial: held by a live writer,
-/// let go by a dead one, or never there - which no live writer of this
-/// build can be, since the lock is taken before the partial is made. A
-/// build that wrote no lock at all left exactly that, and its partials
-/// are as dead as its process. Asked without creating anything: a sweep
-/// that made files as it went would count files it made itself.
-enum LockState {
-    /// A live writer holds it: the partial is left to finish and rename.
-    Held,
-    /// Nobody holds it, or there is none: the partial is a crash's or an
-    /// older build's leftovers.
-    Dead,
-}
-
-fn lock_state(path: &Path) -> LockState {
-    let Ok(file) = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(path)
-    else {
-        return LockState::Dead;
+/// Removes a crash-left partial only while holding the same stable lock a
+/// writer must take before opening it. Creating a missing sentinel first
+/// closes the race with a writer that is just about to start.
+fn remove_abandoned_partial(partial: &Path) -> bool {
+    let Some(_lock) = take_lock_file(&lock_beside(partial)) else {
+        return false;
     };
-    match file.try_lock() {
-        Ok(()) => LockState::Dead,
-        Err(_) => LockState::Held,
-    }
+    std::fs::remove_file(partial).is_ok()
 }
 
 /// Removes the proxies under `project` that `keep` does not name: the
@@ -396,26 +362,15 @@ pub fn sweep(project: &Path, keep: &HashSet<PathBuf>) -> usize {
             // crash's leftovers and goes (audit 2026-11-04, #9). A live
             // writer's lock does not answer, and its partial is left for
             // it to finish and rename.
-            if let LockState::Dead = lock_state(&lock_beside(&path)) {
-                let _ = std::fs::remove_file(lock_beside(&path));
-                if std::fs::remove_file(&path).is_ok() {
-                    removed += 1;
-                }
+            if remove_abandoned_partial(&path) {
+                removed += 1;
             }
             continue;
         }
         if name.ends_with(".part.lock") {
-            // The lock alone, its partial renamed into place or cleared
-            // away before the writer died: an orphan when nothing beside
-            // it answers. A partial still beside it is that branch's to
-            // take, with the lock under it.
-            let partial = path.with_extension("mp4");
-            if !partial.is_file()
-                && matches!(lock_state(&path), LockState::Dead)
-                && std::fs::remove_file(&path).is_ok()
-            {
-                removed += 1;
-            }
+            // Keep the lock sentinel even after its partial is gone. Removing
+            // an unlocked lock file races a writer opening the same path:
+            // the two handles could then lock different inodes.
             continue;
         }
         if path.extension().is_some_and(|extension| extension == "mp4")
@@ -1102,6 +1057,10 @@ mod tests {
         drop(live);
         assert_eq!(sweep(&scratch, &keep), 1);
         assert!(!written.is_file());
+        assert!(
+            lock_beside(&written).is_file(),
+            "the stable lock sentinel remains after cleanup"
+        );
         writing()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -1109,11 +1068,44 @@ mod tests {
         let _ = std::fs::remove_dir_all(&scratch);
     }
 
+    #[test]
+    fn abandoned_partial_cleanup_and_writers_share_one_stable_lock() {
+        let scratch =
+            std::env::temp_dir().join(format!("concat-proxy-cleanup-lock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&scratch);
+        let dir = scratch.join("cache").join("proxy");
+        std::fs::create_dir_all(&dir).expect("a proxy folder");
+        let target = dir.join("7777777777777777.mp4");
+        let partial = target.with_extension("part.mp4");
+        std::fs::write(&partial, b"interrupted proxy").expect("writes partial");
+
+        let live_writer = take_writing_lock(&partial).expect("writer takes the sentinel");
+        assert!(
+            !remove_abandoned_partial(&partial),
+            "cleanup cannot remove a partial while its writer owns the lock"
+        );
+        assert!(partial.is_file(), "the live writer's partial stays");
+        drop(live_writer);
+
+        assert!(
+            remove_abandoned_partial(&partial),
+            "cleanup takes the now-free sentinel before removing the partial"
+        );
+        assert!(!partial.exists(), "the abandoned partial is removed");
+        assert!(
+            lock_beside(&partial).is_file(),
+            "cleanup leaves the sentinel in place for the next writer"
+        );
+        let next_writer = take_writing_lock(&partial)
+            .expect("the next writer acquires the same sentinel after cleanup");
+        drop(next_writer);
+
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
     /// One proxy, one writer, on the whole machine: a write refuses while
-    /// another holds the lock beside the partial - whatever process it is -
-    /// and the next [`ensure`] after the holder finishes adopts the copy it
-    /// lands. The lock held here stands for the other process's, the same
-    /// file and the same operating-system lock either way.
+    /// another holds the stable lock beside the partial, then a later writer
+    /// acquires that same sentinel after the first lets go.
     #[test]
     fn a_second_writer_of_one_proxy_is_refused_until_the_first_is_done() {
         let scratch =
@@ -1142,9 +1134,13 @@ mod tests {
         );
         drop(_first);
         assert!(
-            !lock_beside(&partial).is_file(),
-            "the lock goes with the write, on every way out of it"
+            lock_beside(&partial).is_file(),
+            "the stable sentinel is not unlinked when the writer finishes"
         );
+        let _second = take_writing_lock(&partial)
+            .expect("the next writer locks the same persistent sentinel");
+        drop(_second);
+        assert!(lock_beside(&partial).is_file());
         let _ = std::fs::remove_dir_all(&scratch);
     }
 }

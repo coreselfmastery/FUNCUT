@@ -1982,3 +1982,58 @@ rustfmt clean, and the chain proven live through the real binary - a
 family dispatch per door, the schema refusal naming a wrong family's
 members, and a `voice_signals` extract answering `signalConfidence`
 (13 families) and `decisionPolicy` (5 decisions) on a synthetic take.
+
+## 45. The footage layer: the plan's slots, the search that takes a description seriously, the gate that reads the cut, and the revision that keeps its wins
+
+The sound side of the director was done; what the picture did between the
+words was still the agent's guess. The footage layer closes that, in five
+moves, each one branch and one pull request:
+
+- **The engine** (`concat-motion`'s `footage` module, `oximedia-auto =0.1.8`
+  pinned patch-exact like `ort`): `suggest_footage(beats, transcript)`
+  reads a beat grid and a transcript and returns a `FootagePlan` - the
+  dialogue gaps the edit leaves uncovered (as the crate's own
+  `CoverageGap`, carrying the topic tags the words either side asked
+  for), the monotony runs it drones over, and the J/L cuts the dialogue's
+  own boundaries propose. Gap scoring, colour continuity and cut
+  positions come from the crate, wired not rebuilt.
+- **The Slot schema** (`concat-motion`'s `plan` module, the canonical
+  `edit_plan.schema.json`, and `plan_validate`): a plan may carry
+  `slots` - slotId, role (the seven acts), treatment (hold, broll,
+  graphic, black), job, entry, exit, the rich description CLIP ranks
+  against, the fallback queries, hero, motionMin, durationS. The
+  validator's laws: a description under 40 characters is refused, a
+  drawn treatment takes no queries, b-roll takes at least one, and the
+  b-roll share keeps the 30-45% band - warned past 45%, refused past
+  60%. A plan without slots is a plan the segments alone describe.
+- **The search takes a description seriously**: `openvid_search` and
+  `openvid_search_batch` gain `excludeIds` (snake_case `exclude_ids`
+  accepted) and the motion floor - both filtering before the ranking,
+  an excluded id not ordered lower but not there, the clause one NOT IN
+  with a bind an id, refusing past 500 rather than quietly forgetting.
+- **`openvid_rank_for_slot`**: rank a page against a slot's rich
+  description - BM25 builds it, the MobileCLIP2-S0 second pass re-orders
+  it by what the clips show, the queries blend in as Jaccard similarity
+  at `tag_weight` (0.3 default), the hard filters enforced twice (they
+  ride the request and are checked again on what lands), a hero slot
+  asking for thirty and any other for twelve, every clip carrying its
+  `slotScore` and `slotRank`. An empty description is an error that says
+  why, not a quiet fallback.
+- **The gate and the revision**: `footage_continuity` reads a filled
+  manifest the way an editor scrubs - colour jumps past the half-scale
+  threshold, reversed travels, repeated scales, one-category runs,
+  clips under their own slot's floor - each flag naming its slot, rule
+  and remedy (search again with an avoid-hint, or the treatment
+  downgrade: b-roll to graphic for a rhythm problem, b-roll to hold for
+  stillness the slot can own). `concat-motion`'s `revision` module is
+  the director's loop's other half: at or above 0.65 the edit ships,
+  below it exactly the slots the critic named go back to the planning
+  step while two revisions last, every attempt rendering to its own
+  `edit_v1`/`edit_v2`/`edit_v3.mp4`, and after that the edit ships
+  exhausted with the failures recorded per slot.
+
+The catalogue grows to **107** tools; the director's default stays at
+95 - the two footage tools are named deliberately on the forge's own
+allowlist (97 there), the whole-catalogue copy carrying all 107 - and
+the canonical plan schema, the forge config, FEATURES.md and this ledger
+say so in the same breath.

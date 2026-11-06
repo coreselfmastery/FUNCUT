@@ -8,7 +8,7 @@ detail elsewhere, the link says so.
 
 The one-paragraph version: FUNCUT is the Concat editor (a native Rust, GPU
 composited, CapCut-class video editor for Linux) tuned for small machines,
-plus an agent stack bolted onto it — a built-in MCP server with **105 tools**,
+plus an agent stack bolted onto it — a built-in MCP server with **107 tools**,
 an analysis/sense layer, an emotion-driven edit pipeline with a brand kit, a
 motion-graphics engine with its own sidecar, and two Claude skills (a director
 that runs a 12-phase measured pipeline, and maestro, a vendored design and
@@ -19,7 +19,7 @@ with one click.
 
 | What | Count | Where it lives |
 | --- | --- | --- |
-| MCP tools | **105** | `src/crates/concat-mcp/src/tools.rs` (`catalogue()`) |
+| MCP tools | **107** | `src/crates/concat-mcp/src/tools.rs` (`catalogue()`) |
 | JSON-RPC API methods | 48 requests + 8 progress notifications | `src/crates/concat-api/src/message.rs` |
 | Core edit commands (`edit.apply` ops) | **52** | `src/crates/concat-project/src/commands/mod.rs` |
 | Effect/filter/transition/audio packages | **327** = 57 filters + 123 effects + 122 transitions + 25 audio | `src/crates/concat-effects/packages/` |
@@ -167,7 +167,7 @@ Nothing here is bundled whole; indexes download once, media arrives per pick.
 
 ## The agent layer
 
-- **The MCP server** (`concat --mcp`, [docs/MCP.md](MCP.md)): **105 tools**
+- **The MCP server** (`concat --mcp`, [docs/MCP.md](MCP.md)): **107 tools**
   over stdio, both protocol eras (initialize handshake and per-request
   `_meta`), schemas generated from the API's own types so an agent cannot
   invent an argument. It reaches the engine through the open window
@@ -179,6 +179,7 @@ Nothing here is bundled whole; indexes download once, media arrives per pick.
 | Projects & reading | `concat_version`, `project_list/create/open/save/close/get`, `project_set_video`, `timeline_read`, `collision_check`, `plan_validate` |
 | Media | `media_probe`, `media_import` |
 | OpenVid stock | `openvid_status/prepare/search/search_batch/get/fetch/import` |
+| Footage planning | `openvid_rank_for_slot` (a slot's rich description ranked against the library, the CLIP second pass with the tags blended in, used ids and under-floor clips never returned), `footage_continuity` (the filled manifest read the way an editor scrubs: colour, motion, scale, monotony, stillness - each flag with its slot, rule and remedy) |
 | Sounds | `sounds_search`, `sounds_add` |
 | Music | `bgm_status/prepare/search/fetch/import` |
 | Stickers | `magick_status/prepare/search/fetch/add` |
@@ -473,7 +474,7 @@ model at all.
 | Speech (whisper.cpp, three TTS families) | `src/crates/concat-speech` |
 | Motion engine (Geneva, presets, authoring) | `src/crates/concat-motion` |
 | The API (JSON-RPC methods, jobs) | `src/crates/concat-api` |
-| The MCP server (105 tools, senses, emotion, voice signals) | `src/crates/concat-mcp` |
+| The MCP server (107 tools, senses, emotion, voice signals) | `src/crates/concat-mcp` |
 | The socket server + CLI | `src/crates/concat-server`, `concat-cli` |
 | The window (Slint UI, studio controller) | `src/crates/concat` |
 | Session, proxies, models, templates, sounds | `src/crates/concat-host` |

@@ -67,6 +67,7 @@ pub mod bench;
 pub mod cache;
 pub mod captions;
 pub mod comp;
+pub mod continuity;
 pub mod critic;
 pub mod css;
 pub mod curve;
@@ -92,6 +93,10 @@ pub mod typography;
 
 pub use authoring::{CompSummary, Op, apply};
 pub use comp::{Comp, FORMAT, Node, NodeKind, Slot};
+pub use continuity::{
+    AssetManifest, ContinuityRule, Discontinuity, ManifestClip, Remedy, ShotScale, TravelDirection,
+    check_continuity,
+};
 pub use critic::{Fix, Report, score};
 pub use curve::{Curve, Spring, StepPosition};
 pub use engine::{

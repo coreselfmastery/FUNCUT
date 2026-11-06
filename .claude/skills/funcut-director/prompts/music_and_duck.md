@@ -5,7 +5,19 @@ and automated.
 
 ## Choice
 
-`bgm_search` (shelves: freepd ~1,000 tracks, lofi 166; a search that
+**First, the gate.** Before any `bgm_search`:
+`sense_audio_repair {action: "detect_music_segments", audio: <the
+voiceover>}`. `musicPresent: true` means the take already carries music —
+no bed is searched, fetched or imported on top of it (duck or replace,
+never stack; the reply's `editingAnswer` states the call), and the
+copyright check runs:
+`sense_audio_repair {action: "identify_music", audio}` describes the
+embedded track (tempo, key, mood — an offline descriptor, never a title
+match) while you warn the user that its licence is unknown. A dry take
+(`musicPresent: false`) is the only take the rest of this page is for.
+
+`bgm_search` (shelves: freepd 1,025 CC0 tracks; lofi 166, free for
+non-commercial use only; a search that
 names no shelf searches whichever are ready). Match by:
 
 - **Niche register**: finance/tech → clean electronic, minimal keys;
@@ -63,7 +75,14 @@ One track can carry eight minutes, but it should not carry them flat:
 
 ## Licensing
 
-Both shelves are whole-track CC0 (FreePD is Kevin MacLeod's public
-domain library; Lo-Fi is Moby's MobyGratis instrumentals). Attribution
-welcome, never required. Stickers are Fluent Emoji, MIT — usable in
+The two shelves carry two different licences, and the difference
+matters. **FreePD** (1,025 tracks) is whole-track CC0 — Kevin MacLeod's
+public-domain library; attribution welcome, never required. **Lo-Fi**
+(166 tracks) is Moby's MobyGratis — free for **non-commercial use
+only**: MobyGratis's own licence governs what Moby granted, so never put
+one of these tracks in monetized or client work, and credit
+"Moby (MobyGratis)" where one is used. A voiceover that already carries
+music is a copyright question, not a bed: `identify_music` describes
+the track, the user is warned before publishing, and the licence is
+theirs to confirm. Stickers are Fluent Emoji, MIT — usable in
 commercial work; every magick_search result says so in its license field.

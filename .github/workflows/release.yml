@@ -22,9 +22,10 @@ name: Release
 # before it uploads it, and a bundle that does not start fails its job,
 # which `publish` needs.
 #
-# The release is created as a draft. A person looks it over - the notes,
-# the files - and publishes it from the Releases page; nothing reaches
-# the updater or the downloads page before then.
+# The release is published by the run itself: the tag is not built until
+# CI has passed on it, and every bundle is launched where it was built
+# before it uploads (build-app.yml). A person watches the run instead
+# of clicking Publish.
 on:
   push:
     tags: ["v*"]
@@ -182,12 +183,13 @@ jobs:
           .github/release-notes.sh "$previous" "$tag" "${tag#v}" > "$RUNNER_TEMP/notes.md"
           cat "$RUNNER_TEMP/notes.md"
 
-      # A draft: a person publishes it. See the top of this file.
+      # Published by the run itself; every bundle was launched before it
+      # uploaded. See the top of this file.
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ needs.check.outputs.tag }}
           name: Concat ${{ needs.check.outputs.tag }}
-          draft: true
+          draft: false
           # A `-funcut.N` tag is the fork's own release, not a pre-release;
           # the check job said which this one is.
           prerelease: ${{ needs.check.outputs.prerelease }}

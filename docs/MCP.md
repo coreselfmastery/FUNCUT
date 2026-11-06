@@ -50,8 +50,9 @@ source's unity gain; it does not accept a level. Use the dB-aware
 `clip_audio_levels_db` tool on the returned clip id to set the planned gain.
 ### Background music (FreePD and MobyGratis)
 
-The `bgm` tools search 1,191 whole CC0 music tracks on two shelves and
-fetch only what is used. FreePD is the Internet Archive's mirror of Kevin
+The `bgm` tools search 1,191 music tracks on two shelves and
+fetch only what is used — 1,025 whole-track CC0 (FreePD) and 166
+MobyGratis (free for non-commercial use only). FreePD is the Internet Archive's mirror of Kevin
 MacLeod's CC0 library (~1,000 tracks, grouped as freepd.com grouped them:
 upbeat, epic, comedy, scoring, world…); Lo-Fi is Moby's MobyGratis
 instrumentals as the OpenLo-Fi pack (166 tracks, 10 categories). Nothing

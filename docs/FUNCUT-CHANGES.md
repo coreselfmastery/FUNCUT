@@ -121,8 +121,10 @@ one `openvid_get` away.
 ## 3. The feature: the background-music library
 
 The library pane grew a fifth page beside Media, Audio and OpenVid:
-**Music** - 1,191 whole CC0 background tracks on two shelves, searched
-locally, fetched one track at a time. FreePD is the Internet Archive's
+**Music** - 1,025 whole CC0 background tracks (FreePD) plus 166
+MobyGratis tracks (free for non-commercial use only) on two shelves,
+searched locally, fetched one track at a time. FreePD is the Internet
+Archive's
 mirror of Kevin MacLeod's CC0 library (~1,000 tracks, grouped the way
 freepd.com grouped them); Lo-Fi is Moby's MobyGratis instrumentals as the
 OpenLo-Fi pack (166 tracks, 10 categories). Both shelves are scriptable:

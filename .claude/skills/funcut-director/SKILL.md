@@ -72,7 +72,22 @@ breath between sentences, so the read has an arc instead of one flat pace;
 long script, generate one WAV per emotional section with its own delivery
 and butt them together — a single monotone take is the most common reason
 a faceless video sounds cheap. The WAV lands in the project, returned in
-the job's status `output` → `media_import` it. If narration exists as audio/video,
+the job's status `output` → `media_import` it.
+**Repair a rough take before you analyze it.** A recorded or imported
+voiceover is graded before anything else reads it:
+`sense_voice_quality {action: "classify_recording_quality", audio}`. A
+verdict of `home` or `rough` (a high noise floor, SNR under ~12 dB, hum,
+clipping) is repaired FIRST — `remove_hiss_hum_rumble` when its `fixes`
+name a hum, then `sense_audio_repair {action: "enhance_speech"}` (its
+`fixes` name the chain; `targetLufs` picks the platform landing) — and
+the enhanced file the reply's `file` names becomes THE voiceover:
+import that, transcribe that, and run every later analysis
+(`analyze_silence`, `voice_signals`, beats) on the cleaned audio, never
+on the raw take. An un-repaired rough take puts its noise floor into
+every downstream signal; the enhance chain filters and never cuts, so
+timings survive the repair. A TTS take is clean by construction and
+skips this.
+If narration exists as audio/video,
 `transcribe` it with an ISO language hint when known; the default `base.en`
 model is English-only, so choose a multilingual model for non-English. Each
 segment returns with its `words` — MEASURED `{text,start,end}` triples from
@@ -157,9 +172,13 @@ deeper consumption readings — script quality, restarts, fillers, rhythm
 and meter, music structure, caption alignment — live behind the five
 family tools (`sense_discourse`, `sense_voice_quality`,
 `sense_prosody_style`, `sense_audio_repair`, `sense_captions`), each
-`action` naming one reading; call them where the edit needs them
-(`score_script_quality` before the read, `classify_recording_quality` +
-`enhance_speech` on a rough take, `detect_restarts` +
+`action` naming one reading. Three of them are wired into the pipeline,
+not left to judgment: `classify_recording_quality` + `enhance_speech` on
+a rough take BEFORE it is analyzed (Phase 1), `detect_music_segments`
+before any BGM is chosen (Phase 4), and `identify_music` as the
+copyright check on a take that already carries music (Phase 4). The
+rest are called where the edit needs them
+(`score_script_quality` before the read, `detect_restarts` +
 `classify_filler_type` for the punch-up, `analyze_music_structure` when
 cutting to music, `align_captions` + `clean_subtitles` before burning
 captions).
@@ -206,7 +225,22 @@ not creativeReady is a rejection, not a warning to wave through. Craft score
 below 7 means rewrite the plan, not proceed. Then compare the plan's `aspect` with `timeline_read`; if they
 differ, set the canvas with `project_set_video` BEFORE gathering assets.
 
-**Phase 4 — Gather (parallel if your harness allows).** All `openvid_search`
+**Phase 4 — Gather (parallel if your harness allows).**
+**The BGM gate runs before any music is searched.**
+`sense_audio_repair {action: "detect_music_segments", audio: <the
+voiceover>}`: when it answers `musicPresent: true` the take already
+carries music, and NO bed is searched, fetched or imported on top of it
+(its `editingAnswer` says the same — duck or replace, never stack): skip
+`bgm_search` entirely, or if the brief still wants a bed behind the
+spans the reading marked music-free, duck it deeper than the L floor
+(−15 to −18 dB under speech). A positive gate also runs the copyright
+check: `sense_audio_repair {action: "identify_music", audio}` reads the
+embedded track's tempo, key and mood (an offline descriptor — it cannot
+name the song), and you WARN THE USER at once, and again in the Phase-8
+report: this voiceover embeds a music track whose licence is unknown;
+confirm the rights or replace the take before publishing. Only a take
+that answers `musicPresent: false` gets the BGM searches below.
+All `openvid_search`
 calls, all `sounds_search` calls, the `bgm_search` — these are independent;
 fan them out when you can, and where you cannot, one `openvid_search_batch`
 carries the whole B-roll query list (two or three words per query, per
@@ -251,7 +285,9 @@ the naked hook, −12 under standard speech, −9 letting the reveal ride, −10
 behind the ask). The Phase-1c reading places the accents: an SFX peak lands
 ON an emphasis word, not merely near its line; the BGM obeys the reading's
 `bgm` decision (dry voice → bed it and duck; a take that already carries
-music → none added, duck only); and a `speakerChanges` time is staged like a
+music → none added — Phase 4's `detect_music_segments` gate already
+skipped the search — and the embedded bed rides, ducked deeper where it
+fights the words); and a `speakerChanges` time is staged like a
 section change — new angle, colour or lower-third at the change, never a
 cut that straddles it. Use `captions_add` for
 segment-timed captions. Group each logical chunk into one `edit_apply` batch.
@@ -330,7 +366,12 @@ itself survived the render: `transcribe` the exported file, then
 <the export's words>}` — matchRate ≥ 0.9, worst drift within toleranceMs
 (default 150), no duplicated words is the pass; a failure names clipped,
 shifted or duplicated audio the eye cannot see (check clip ends, trims and
-ripple cuts against the retime rule in Phase 2).
+ripple cuts against the retime rule in Phase 2). And if Phase 4's gate
+found embedded music, the closing report repeats the copyright warning
+before anything is published: the voiceover carries a pre-existing
+track (`identify_music` described it — tempo, key, mood; it cannot name
+the song), its licence is unknown, and publishing needs the user's
+confirmation of the rights.
 
 ## 2. Job and artifact hygiene
 
@@ -443,13 +484,18 @@ the reading's cut style (loud fast lines cut fast, quiet slow lines hold —
 never the reverse); an SFX peak or caption highlight lands on an emphasis
 word; the words the confidence gate flagged (below 0.5) are re-checked or
 dropped before `captions_animate`; a repeated motif brings its visual back;
-and the BGM decision comes from the measured noise floor, not from habit. A
+and the BGM decision comes from the measured noise floor and the music
+gate (`detect_music_segments`), not from habit — a rough take is
+repaired before it is read (Phase 1), and a take that already carries
+music never gets a second bed. A
 reading that was never taken is a note in the report, never a guess.
 
 **L — Loudness and music.** BGM rests at −4 to −6 dB, ducks to an absolute
 −12 dB under speech (−9 tight, −15 relaxed), rides up in gaps, section
 changes land on downbeats when `analyze_beats` gives a grid, and the piece
-ends on a downbeat.
+ends on a downbeat. No bed at all on a take `detect_music_segments`
+answered `musicPresent: true` — music never stacks on music; the take's
+own bed rides, ducked deeper where it fights the words.
 
 **N — Stickers are MIT (Fluent Emoji): safe in monetized/commercial videos.**
 No licence warning is needed; every `magick_search` result carries `license: "MIT"`.

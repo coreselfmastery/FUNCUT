@@ -281,8 +281,11 @@ CC0 does not require and the library does anyway. FreePD:
 https://freepd.com (site closed; the Archive item is the source).
 
 **Lo-Fi** (166 tracks) is Moby's MobyGratis instrumentals, republished as
-the OpenLo-Fi pack (https://github.com/btahir/open-lofi) under CC0 1.0,
-with Moby's own blessing at https://mobygratis.com. The catalog is the
+the OpenLo-Fi pack (https://github.com/btahir/open-lofi), with Moby's
+own blessing at https://mobygratis.com. MobyGratis grants free use for
+**non-commercial projects only** — the pack's own CC0 label does not
+widen what Moby granted, so treat these 166 tracks as non-commercial:
+never in monetized or client work. The catalog is the
 pack's own manifest and the tracks are read, one ranged read each, out of
 the pack's single zip on its GitHub release; the app credits each track
 to "Moby (MobyGratis)". MobyGratis: https://mobygratis.com.

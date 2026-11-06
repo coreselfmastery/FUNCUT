@@ -66,9 +66,12 @@ implemented here**.
 
 ## The other shelves
 
-- `sounds_search` / `bgm_search` serve the repository's own CC0 sound and
-  music collections. CC0 means no attribution is required, but check the
-  individual asset's metadata if you redistribute the raw files.
+- `sounds_search` serves the repository's own CC0 sound collection: CC0
+  means no attribution is required, but check the individual asset's
+  metadata if you redistribute the raw files. `bgm_search` serves two
+  music shelves under two licences: FreePD (1,025 whole-track CC0, no
+  attribution required) and MobyGratis/OpenLo-Fi (166 tracks, **free for
+  non-commercial use only** — never in monetized or client work).
 - `magick_search` overlays are Microsoft's Fluent Emoji, **MIT licence**
   — free for commercial and personal use, no attribution required, and
   every search result carries the licence in its `license` field. The

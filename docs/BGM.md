@@ -1,13 +1,13 @@
 # The background-music library
 
-The library's **Music** page (#71) puts two shelves of whole CC0 tracks
+The library's **Music** page (#71) puts two shelves of whole tracks
 beside the stock clips: **FreePD** - the Internet Archive's mirror of
-Kevin MacLeod's CC0 library, ~1,000 tracks grouped the way freepd.com
-grouped them (upbeat, epic, romantic, comedy, electronic, horror,
-scoring, world, misc, page2) - and **Lo-Fi** - Moby's MobyGratis
+Kevin MacLeod's CC0 library, ~1,000 whole-track CC0 tracks grouped the
+way freepd.com grouped them (upbeat, epic, romantic, comedy, electronic,
+horror, scoring, world, misc, page2) - and **Lo-Fi** - Moby's MobyGratis
 instrumentals, republished as the
 [OpenLo-Fi](https://github.com/btahir/open-lofi) pack (166 tracks, 10
-categories).
+categories, **free for non-commercial use only**).
 
 Nothing ships inside the app and nothing ships inside the repository. A
 shelf's catalog arrives the first time someone asks for it (a "Load the
@@ -98,9 +98,11 @@ nothing to refresh.
 
 ## Licences
 
-Everything on both shelves is **CC0 1.0** (public domain). FreePD's
-artists are named on each card (Kevin MacLeod, Frank Nora, Alexander
-Nakarada, Rafael Krux, Bryan Teoh, Komiku, Monplaisir, and others) - CC0
-owes no attribution, but it is kind to keep one, and the Lo-Fi pack's
-tracks are credited to Moby (MobyGratis) in the same place. See
-`THIRD_PARTY_NOTICES.md` for the full notice.
+The two shelves carry two licences. **FreePD is CC0 1.0** (public
+domain) - no attribution is required, and its artists are named on each
+card anyway (Kevin MacLeod, Frank Nora, Alexander Nakarada, Rafael Krux,
+Bryan Teoh, Komiku, Monplaisir, and others). **Lo-Fi is MobyGratis** -
+free for **non-commercial use only**: MobyGratis's own licence governs
+what Moby granted, so never put one of its 166 tracks in monetized or
+client work; the pack's tracks are credited to Moby (MobyGratis) in the
+same place. See `THIRD_PARTY_NOTICES.md` for the full notice.

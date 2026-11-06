@@ -149,7 +149,10 @@ packages)
 sources `pixabay|pexels|celebv|other`; orientation `vertical|horizontal|square`
 with ±5 % slack; sorts `relevance|aesthetic|motion|temporal|shortest|longest|
 surprise`) · `bgm_status/prepare/search/fetch/import` (FreePD 1,025 CC0
-tracks; MobyGratis/OpenLo-Fi 166; sorts `relevance|shortest|longest|surprise`) ·
+tracks; MobyGratis/OpenLo-Fi 166, free for NON-COMMERCIAL use only; sorts
+`relevance|shortest|longest|surprise`; run `sense_audio_repair {action:
+"detect_music_segments"}` on the voiceover before any `bgm_search` — a take
+that already carries music gets no bed) ·
 `sounds_search/add` (530 CC0 sounds; categories: Whoosh, Impact, Riser,
 Motion, UI, Notification, Keyboard, Digital, Foley, Writing, Ambience, Music;
 `sounds_add` starts the file at `start`; the search result's `syncAt` says
@@ -209,7 +212,15 @@ targetLufs?}` · `suggest_cuts {path, cuts?, minGap?, bpm?}`
   the ten discourse readings, the six voice-quality readings, the six
   prosody readings, the six audio-repair actions and the five caption
   readings; `selftest: true` proves one). Each reading names its own traps
-  in its reply; the family schema documents the shared inputs.
+  in its reply; the family schema documents the shared inputs. Three
+  audio-repair actions are wired into the pipeline itself:
+  `enhance_speech` (Phase 1 — a rough take is repaired before it is
+  analyzed, and every later reading runs on the enhanced `file`),
+  `detect_music_segments` (Phase 4 — the BGM gate before `bgm_search`:
+  `musicPresent: true` means no bed, duck or replace, never stack) and
+  `identify_music` (Phase 4 — the copyright check on a take that carries
+  music: an offline descriptor, never a title match; the user is warned
+  before publishing).
 
 - The loop that uses them is the skill's Phase 0 and §4 (and
   `prompts/quality_loop.md`): brief first, plan, `stock_contact_sheet` to SEE

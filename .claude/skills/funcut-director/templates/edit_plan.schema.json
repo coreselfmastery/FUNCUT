@@ -364,6 +364,87 @@
         }
       }
     },
+    "slots": {
+      "type": "array",
+      "maxItems": 60,
+      "description": "The footage slots the edit spends: one opening at a time, with the role it plays, the treatment that fills it, and the rich description a stock search ranks against. Optional - a plan without slots is a plan the segments alone describe. The validator keeps the b-roll share inside the 30-45% band and refuses past 60%.",
+      "items": {
+        "type": "object",
+        "required": [
+          "slotId",
+          "role",
+          "treatment",
+          "job",
+          "entry",
+          "exit",
+          "description",
+          "queries",
+          "hero",
+          "motionMin",
+          "durationS"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "slotId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The slot's own id, unique in the plan: \"hook.1\", \"reveal.hero\". The per-slot notes the critic sends back name it."
+          },
+          "role": {
+            "type": "string",
+            "enum": ["hook", "setup", "tension", "turn", "reveal", "proof", "cta"],
+            "description": "The dramaturgical role the slot plays - the same seven acts a segment's `act` names, because a slot spends a beat."
+          },
+          "treatment": {
+            "type": "string",
+            "enum": ["hold", "broll", "graphic", "black"],
+            "description": "What fills the slot's screen time. Only broll shops for stock; hold, graphic and black are treatments the edit draws itself and take no queries."
+          },
+          "job": {
+            "type": "string",
+            "enum": ["illustrate", "contrast", "punctuate", "transition", "breathe"],
+            "description": "The work the slot's picture does for the edit."
+          },
+          "entry": {
+            "type": "string",
+            "enum": ["on_emphasis", "before_line", "on_beat", "after_line"],
+            "description": "When the picture enters, against the words and the beat grid."
+          },
+          "exit": {
+            "type": "string",
+            "enum": ["before_next_emphasis", "on_beat", "source_cut", "early"],
+            "description": "How the picture leaves."
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The rich noun+adjective string the stock search ranks against, twelve to twenty-five words: what is in frame, what it is doing, what it feels like. The validator refuses anything under 40 characters - it is what CLIP ranks against."
+          },
+          "queries": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "The fallback keyword phrases only, for the BM25 pass. A treatment the edit draws itself (hold, graphic, black) takes none; broll takes at least one."
+          },
+          "hero": {
+            "type": "boolean",
+            "description": "Whether this slot is the shot the thumbnail and the first glance live on; a hero slot searches wider and ranks longer."
+          },
+          "motionMin": {
+            "type": "number",
+            "minimum": 0,
+            "description": "The least motion the slot's clip may carry, on the library's own motion scale."
+          },
+          "durationS": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "How long the slot's screen time runs, in seconds."
+          }
+        }
+      }
+    },
     "audio": {
       "type": "object",
       "description": "The audio beds.",

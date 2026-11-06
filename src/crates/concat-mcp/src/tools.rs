@@ -3136,6 +3136,81 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
             ));
         }
     }
+    // The footage slots: each slot's own contract first, then how much of
+    // the plan goes shopping for stock at all. A plan without slots is a
+    // plan the segments alone describe - the slots are how a director
+    // shops, and the share is what keeps stock coverage rather than
+    // collage. The band: 30-45% is coverage; under that the picture leans
+    // on the A-roll alone; past 45% it leans on the library; past 60% it
+    // is stock with gaps, and the plan is refused.
+    if let Some(slots) = object.get("slots").and_then(Value::as_array) {
+        let mut broll = 0_usize;
+        for (index, slot) in slots.iter().enumerate() {
+            let slot = slot
+                .as_object()
+                .ok_or_else(|| format!("slots[{index}] must be an object"))?;
+            let description = slot
+                .get("description")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("slots[{index}].description is required"))?;
+            if description.chars().count() < 40 {
+                return Err(format!(
+                    "slots[{index}].description is {} characters; it is what CLIP ranks against and must be at least 40",
+                    description.chars().count()
+                ));
+            }
+            let treatment = slot
+                .get("treatment")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("slots[{index}].treatment is required"))?;
+            let queries: Vec<&str> = slot
+                .get("queries")
+                .and_then(Value::as_array)
+                .map(|list| list.iter().filter_map(Value::as_str).collect())
+                .unwrap_or_default();
+            match treatment {
+                "broll" => {
+                    broll += 1;
+                    if queries.iter().all(|query| query.trim().is_empty()) {
+                        return Err(format!(
+                            "slots[{index}] is b-roll; it takes at least one non-empty query"
+                        ));
+                    }
+                }
+                "hold" | "graphic" | "black" => {
+                    if queries.iter().any(|query| !query.trim().is_empty()) {
+                        return Err(format!(
+                            "slots[{index}] is a {treatment} treatment; the edit draws it itself and takes no search queries"
+                        ));
+                    }
+                }
+                other => {
+                    return Err(format!("slots[{index}].treatment `{other}` is unsupported"));
+                }
+            }
+        }
+        if !slots.is_empty() {
+            let share = broll as f64 / slots.len() as f64;
+            if share > 0.60 {
+                return Err(format!(
+                    "b-roll covers {:.0}% of the slots; past 60% the edit is stock with gaps - hold some spans for the A-roll and the graphics",
+                    share * 100.0
+                ));
+            }
+            if share > 0.45 {
+                warnings.push(format!(
+                    "b-roll covers {:.0}% of the slots; the 30-45% band is where stock reads as coverage rather than collage",
+                    share * 100.0
+                ));
+            }
+            if share < 0.30 {
+                warnings.push(format!(
+                    "b-roll covers {:.0}% of the slots; under 30% the picture leans on the A-roll alone",
+                    share * 100.0
+                ));
+            }
+        }
+    }
     // A run of plain hard cuts is a slideshow, whatever the schema allows.
     let mut hard_run = 0_usize;
     let mut longest_hard_run = 0_usize;
@@ -5252,6 +5327,190 @@ mod tests {
             validate_edit_plan(&no_gap)
                 .unwrap_err()
                 .contains("captions_animate")
+        );
+    }
+
+    /// A plan's slots are validated with its segments: the description is
+    /// what CLIP ranks against and cannot be a keyword in disguise, and
+    /// the treatments keep their own queries law - b-roll shops, the
+    /// drawn treatments do not.
+    #[test]
+    fn plan_validator_rejects_a_slot_with_a_thin_description() {
+        let slot = |slot_id: &str, treatment: &str, queries: Value, description: &str| {
+            json!({
+                "slotId": slot_id,
+                "role": "setup",
+                "treatment": treatment,
+                "job": "illustrate",
+                "entry": "on_emphasis",
+                "exit": "on_beat",
+                "description": description,
+                "queries": queries,
+                "hero": false,
+                "motionMin": 1.0,
+                "durationS": 2.5
+            })
+        };
+        let base = json!({
+            "aspect": "9:16",
+            "audio": {},
+            "segments": [
+                { "start": 0.0, "end": 2.0, "visual": { "type": "broll", "query": "ocean" } },
+                { "start": 2.0, "end": 4.0, "visual": { "type": "textCard", "text": "SALT" } }
+            ]
+        });
+
+        // An empty description is refused, and so is a keyword wearing a
+        // description's clothes.
+        let mut thin = base.clone();
+        thin["slots"] = json!([slot("hook.1", "broll", json!(["city"]), "city dusk")]);
+        assert!(
+            validate_edit_plan(&thin)
+                .unwrap_err()
+                .contains("at least 40")
+        );
+        let mut empty = base.clone();
+        empty["slots"] = json!([slot("hook.1", "broll", json!(["city"]), "")]);
+        assert!(
+            validate_edit_plan(&empty)
+                .unwrap_err()
+                .contains("0 characters")
+        );
+
+        // A drawn treatment carrying search queries is refused: the edit
+        // draws it itself.
+        let mut drawn = base.clone();
+        drawn["slots"] = json!([slot(
+            "hook.1",
+            "hold",
+            json!(["city skyline"]),
+            "a slow aerial drift across the city skyline at dusk, camera gliding left"
+        )]);
+        assert!(
+            validate_edit_plan(&drawn)
+                .unwrap_err()
+                .contains("no search queries")
+        );
+        // And b-roll with nothing to search for is refused.
+        let mut starving = base.clone();
+        starving["slots"] = json!([slot(
+            "hook.1",
+            "broll",
+            json!([]),
+            "a slow aerial drift across the city skyline at dusk, camera gliding left"
+        )]);
+        assert!(
+            validate_edit_plan(&starving)
+                .unwrap_err()
+                .contains("at least one non-empty query")
+        );
+
+        // Slots that keep their own contract pass clean: a b-roll and a
+        // hold together - half the share, inside the band, and the hold
+        // carries no queries.
+        let mut valid = base.clone();
+        valid["slots"] = json!([
+            slot(
+                "hook.1",
+                "broll",
+                json!(["city skyline aerial"]),
+                "a slow aerial drift across the city skyline at dusk, camera gliding left"
+            ),
+            slot(
+                "setup.1",
+                "hold",
+                json!([]),
+                "the host's hands turn the page of a leather notebook on a wooden desk"
+            ),
+        ]);
+        assert!(validate_edit_plan(&valid).is_ok(), "valid slots pass");
+        // And a plan without slots is a plan the segments alone describe.
+        assert!(validate_edit_plan(&base).is_ok(), "no slots, no slot gate");
+    }
+
+    /// The b-roll share keeps the plan inside the 30-45% band: past 60%
+    /// the plan is refused outright, 45% and under-30% speak up as
+    /// warnings, and a plan shopping 35% passes without a word.
+    #[test]
+    fn plan_validator_keeps_the_broll_share_inside_the_band() {
+        let slot = |index: usize, treatment: &str| {
+            json!({
+                "slotId": format!("slot.{index}"),
+                "role": "setup",
+                "treatment": treatment,
+                "job": "illustrate",
+                "entry": "on_emphasis",
+                "exit": "on_beat",
+                "description": "a slow aerial drift across the city skyline at dusk, camera gliding left",
+                "queries": if treatment == "broll" { json!(["city skyline aerial"]) } else { json!([]) },
+                "hero": false,
+                "motionMin": 1.0,
+                "durationS": 2.5
+            })
+        };
+        let base = json!({
+            "aspect": "9:16",
+            "audio": {},
+            "segments": [
+                { "start": 0.0, "end": 2.0, "visual": { "type": "broll", "query": "ocean" } },
+                { "start": 2.0, "end": 4.0, "visual": { "type": "textCard", "text": "SALT" } }
+            ]
+        });
+        let slots = |broll: usize, total: usize| -> Vec<Value> {
+            (0..total)
+                .map(|index| {
+                    if index < broll {
+                        slot(index, "broll")
+                    } else {
+                        slot(index, "hold")
+                    }
+                })
+                .collect()
+        };
+
+        // Seventy percent stock is stock with gaps: refused.
+        let mut shopping = base.clone();
+        shopping["slots"] = Value::Array(slots(7, 10));
+        assert!(
+            validate_edit_plan(&shopping)
+                .unwrap_err()
+                .contains("past 60%")
+        );
+
+        // Fifty percent speaks up as a warning, not a refusal.
+        let mut leaning = base.clone();
+        leaning["slots"] = Value::Array(slots(5, 10));
+        let result = validate_edit_plan(&leaning).expect("a warning, not a refusal");
+        let warnings = result["warnings"].as_array().expect("warnings");
+        assert!(
+            warnings.iter().any(|warning| warning
+                .as_str()
+                .is_some_and(|text| text.contains("covers 50%"))),
+            "{warnings:?}"
+        );
+
+        // Thirty-five percent is inside the band: no share warning.
+        let mut coverage = base.clone();
+        coverage["slots"] = Value::Array(slots(7, 20));
+        let result = validate_edit_plan(&coverage).expect("a valid plan");
+        let warnings = result["warnings"].as_array().expect("warnings");
+        assert!(
+            warnings.iter().all(|warning| warning
+                .as_str()
+                .is_none_or(|text| !text.contains("b-roll covers"))),
+            "35% is coverage: {warnings:?}"
+        );
+
+        // Under thirty percent, the picture leans on the A-roll alone.
+        let mut a_roll = base.clone();
+        a_roll["slots"] = Value::Array(slots(2, 10));
+        let result = validate_edit_plan(&a_roll).expect("a warning, not a refusal");
+        let warnings = result["warnings"].as_array().expect("warnings");
+        assert!(
+            warnings.iter().any(|warning| warning
+                .as_str()
+                .is_some_and(|text| text.contains("covers 20%"))),
+            "{warnings:?}"
         );
     }
 

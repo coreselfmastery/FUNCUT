@@ -3935,7 +3935,7 @@ fn openvid_rank_for_slot(arguments: Value, backend: &mut dyn Backend) -> Result<
     // The hard filters, enforced on the page whatever came back: a clip
     // under the floor or already used is not there.
     let excluded: std::collections::HashSet<i64> = exclude_ids.into_iter().collect();
-    let mut page: Vec<Value> = found
+    let page: Vec<Value> = found
         .get("clips")
         .and_then(Value::as_array)
         .cloned()

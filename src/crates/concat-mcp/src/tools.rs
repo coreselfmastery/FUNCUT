@@ -4458,6 +4458,8 @@ mod tests {
                     "motion_min": 1.5,
                     "exclude_ids": [820_338_756_299i64],
                 }),
+            ),
+            (
                 "footage_continuity",
                 json!({ "clips": [
                     { "slotId": "hook.1", "clipId": "clip.1", "colorTemperature": 0.3, "motion": 2.0, "dominantDirection": "right", "shotScale": "wide", "category": "city", "motionMin": 1.0 },

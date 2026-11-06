@@ -1,0 +1,34 @@
+[package]
+name = "voice-signals"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The director's ears: prosody, forensic-audio, speaker and entity signals read out of a voiceover, extracted with spectral-prosody, oximedia-audio-analysis, polyvoice and anno."
+
+[dependencies]
+# The prosody ear: pitch contours, energy envelopes and rhythm layers via
+# spectral-graph decomposition of the prosody stream (MIT).
+spectral-prosody = "0.1.1"
+# The forensic ear: formants F1-F4, noise floor and SNR, spectral flux,
+# dynamics and voice quality (Apache-2.0).
+oximedia-audio-analysis = "0.2.1"
+# The speaker ear: energy VAD plus agglomerative clustering of speaker
+# embeddings, CPU-only and model-free (MIT). 0.17 is the newest line whose
+# MSRV (1.88) sits under the workspace's pinned 1.93.1 toolchain; the 1.0
+# and 0.18+ lines declare 1.94.
+polyvoice = { version = "0.17.0", default-features = false }
+# The text ear: offline named-entity extraction for names, numbers, dates
+# and money (MIT OR Apache-2.0). Default features stay off: the ONNX/GLiNER
+# stack is a heavy tree and the pattern backend answers offline, which is
+# the whole point on a laptop with no network.
+anno = { version = "0.14.0", default-features = false }
+# The WAV handoff the Python bridge writes and the selftest reads back
+# (Apache-2.0).
+hound = "3.5.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror.workspace = true
+
+[lints]
+workspace = true

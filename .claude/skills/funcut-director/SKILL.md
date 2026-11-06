@@ -115,8 +115,43 @@ one to copy, then store it as `brandKit` via `creative_brief`) is applied on
 the same call: its taboos are checked against every planned query, and a
 taboo hit is a blocker — replace the query, never the taboo.
 
+**Phase 1c — Read what the voiceover IS (the acoustic score).**
+`voice_signals {audio: <the voiceover>, transcript: <the transcribe output>,
+emotion: <the Phase-1b extract>, language: <the hint used>}` — one call,
+the whole reading. Every line returns its **momentary loudness relative to
+the take** (a line 3 LU over the mean is a punch line; 3 LU under is a
+confession), its **speech rate** (words-per-minute and syllables-per-second
+with a pace class: punchy / conversational / editorial / slow), its
+**sentence type** (? ! . or fragment — cross-checked against the pitch's
+terminal rise, so a statement that ends rising is marked), its **emphasis
+words** (where the energy peaks land — the SFX peaks and the caption
+highlights belong there), its **fillers** (um/uh are safe removals; like /
+you know / basically are context calls), per-word **confidence** (gated on
+measured timing, silence overlap and energy — or WhisperX scores when
+installed), its **speaker**, its formants and voice quality, and the
+**entities** it names: `$10,450` → a stat card, a name → a lower-third, a
+date → a timeline, PII → redact. Around the lines: the **pauses
+CLASSIFIED** (breath / beat / dramatic hold / scene turn / dead air), the
+**motifs** (a repeated phrase gets its visual back), the take's **rhythm
+layers** and phrase boundaries, the **noise floor** (the BGM decision), the
+**diarization** with change times, and `directorHints` — the cut style
+(fast / mixed / hold / building), the caption gate, the protected pauses,
+the font and music-genre hints for the detected script (Bengali gets a
+Bengali font). The Rust ears (prosody, forensics, speakers, NER) need the
+`voice-signals` binary built (`cargo build -p voice-signals`); without it
+the Python signals still answer and the reply says which ear was absent —
+never guess the missing ones. **This reading is what the edit cuts by:**
+Phase 2 cuts only the dead air and never a dramatic hold, Phase 3's pacing
+takes the cut style, Phase 5's SFX peaks land on the emphasis words and
+the BGM obeys the noise-floor decision, the captions drop or re-check the
+gated words, and a speaker change is staged like a scene change.
+
 **Phase 2 — Tighten the voice.** Feed the silence spans to `clip_cut_spans`
-(remove dead air; `-35` dB threshold, ≥0.5 s spans). **The padding rule the
+(remove dead air; `-35` dB threshold, ≥0.5 s spans) — but the Phase-1c
+reading already classified them: cut ONLY the `dead_air` pauses, keep every
+`breath`, `beat` and `dramatic` hold (a hold is the performance — removing
+it is the classic auto-edit failure), and treat each `scene_turn` as a
+placement cue, not a cut candidate. **The padding rule the
 tools will not apply for you:** `analyze_silence` reports spans WITH a
 `paddingMs` field that is *kept, not applied* — shrink each span by ~80 ms on
 each side yourself before cutting, so natural breaths survive at sentence
@@ -186,7 +221,12 @@ the incoming clip** (see §3.T, never `effect_layer_add`) — SFX
 (absolute dB: 0 is unchanged, −60 is the floor; **automate to the plan's
 per-segment `duckDb`** — the act's value from the emotion read: −15 under
 the naked hook, −12 under standard speech, −9 letting the reveal ride, −10
-behind the ask). Use `captions_add` for
+behind the ask). The Phase-1c reading places the accents: an SFX peak lands
+ON an emphasis word, not merely near its line; the BGM obeys the reading's
+`bgm` decision (dry voice → bed it and duck; a take that already carries
+music → none added, duck only); and a `speakerChanges` time is staged like a
+section change — new angle, colour or lower-third at the change, never a
+cut that straddles it. Use `captions_add` for
 segment-timed captions. Group each logical chunk into one `edit_apply` batch.
 
 **Phase 5b — Motion comps (design). Every finished piece goes through here.**
@@ -368,6 +408,16 @@ timed kinetic captions need MEASURED word times (`captions_animate` —
 whisper segments with per-word estimates are not timing). Captions: 2–4
 words a cue where the segment permits, bold (600+), stroke or plate
 contrast, no text touching frame edges, `offsetY` ≈ 0.35 default.
+
+**A — The voice is a score, not a bed.** The Phase-1c reading is measured,
+and the edit answers to it: only `dead_air` pauses are cut — a `dramatic`
+hold or a `scene_turn` gap survives to carry its weight; the pacing follows
+the reading's cut style (loud fast lines cut fast, quiet slow lines hold —
+never the reverse); an SFX peak or caption highlight lands on an emphasis
+word; the words the confidence gate flagged (below 0.5) are re-checked or
+dropped before `captions_animate`; a repeated motif brings its visual back;
+and the BGM decision comes from the measured noise floor, not from habit. A
+reading that was never taken is a note in the report, never a guess.
 
 **L — Loudness and music.** BGM rests at −4 to −6 dB, ducks to an absolute
 −12 dB under speech (−9 tight, −15 relaxed), rides up in gaps, section

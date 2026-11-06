@@ -350,9 +350,32 @@ return MCP `type: image` content blocks, so the model can actually look:
   applies it; `action "verify"` aligns the edit's words against the
   re-transcribed export — what a render loses, duplicates or shifts is a
   defect the eye cannot see.
+- `voice_signals` - the acoustic read of the voiceover, the other half of
+  the driver (see [docs/VOICE-SIGNALS.md](VOICE-SIGNALS.md) for the full
+  map). `action "extract"` takes the voiceover `audio`, the `transcript`
+  (for the word timings) and optionally the `emotion` extract (for the
+  arc), and returns per line: momentary **loudness relative to the take**,
+  the **speech rate** with a pace class, the **sentence type**
+  cross-checked against the pitch's terminal rise, the **emphasis words**
+  the energy peaks land on, **fillers**, per-word **confidence** (a
+  measured gate — or WhisperX scores when installed), the **speaker**, and
+  the **entities** the line names with the artefact each suggests
+  (`$10,450` → stat card, a name → lower-third, a date → timeline, PII →
+  redact); plus the **pauses CLASSIFIED** (breath / beat / dramatic hold /
+  scene turn / dead air — a hold is never cut), **motifs**, the take's
+  **rhythm layers**, the **noise floor** (the BGM decision), the
+  **diarization** with change times, and `directorHints` — the cut style,
+  the caption gate, the protected pauses, and the font and music-genre
+  hints for the detected script. Engines: ffmpeg ebur128 + silencedetect
+  and pure-Python regex always; the Rust `voice-signals` binary
+  (`cargo build -p voice-signals`) for prosody, forensics, speakers and
+  NER — an honest note when it is not built; WhisperX (pip) for aligned
+  words with scores. `action "selftest"` proves the whole chain on a
+  synthetic take.
 
 The intended loop: `creative_brief` -> `emotion` (extract, on the
-voiceover) -> `plan_validate` (creativeReady true) -> `stock_contact_sheet`
+voiceover) -> `voice_signals` (the acoustic score, with the emotion read
+for the arc) -> `plan_validate` (creativeReady true) -> `stock_contact_sheet`
 -> `emotion` (gate, before anything is placed) -> build -> `watch_render` ->
 `craft_critique` -> revise -> `watch_render` again -> export ->
 `watch_render {path}` + `measure_loudness` + `emotion` (verify) on the file
@@ -458,7 +481,7 @@ For scripts that do not speak MCP, the same API is served as JSON-RPC lines on a
 Three switches - two off by default for a server started bare, and the allowlist already on for the server this repository's own `.forge/mcp.toml` declares:
 
 - **`--mcp-read-only`** (binary) or **`CONCAT_MCP_READ_ONLY=1`** (the app's `concat --mcp` and anything else that starts it): every tool that changes something is refused by name - an edit, an export, a stock import, the reel's render half. The reads stay, and `motion_reel` keeps its look halves (`plan`, `frame`, `sheet`): they change nothing outside the project's cache, and taking them away takes away the only way to see a design before committing to it.
-- **`--mcp-allow a,b,c`** (binary) or **`CONCAT_MCP_ALLOW=a,b,c`**: the only tools this server serves. A tool not on the list is refused as if it were not there - its description still lists it, but the surface served is what the operator said, not what the build happens to carry. `.forge/mcp.toml` starts the repo's own server with the list already set (its `[servers.transport.env]` table: 97 of the 99 tools, everything but `project_close` and `export_cancel`), and carries the same list as a comment, ready to paste for a server started by hand.
+- **`--mcp-allow a,b,c`** (binary) or **`CONCAT_MCP_ALLOW=a,b,c`**: the only tools this server serves. A tool not on the list is refused as if it were not there - its description still lists it, but the surface served is what the operator said, not what the build happens to carry. `.forge/mcp.toml` starts the repo's own server with the list already set (its `[servers.transport.env]` table: 98 of the 100 tools, everything but `project_close` and `export_cancel`), and carries the same list as a comment, ready to paste for a server started by hand.
 - **Per-tool timeouts**: every tool carries its own limit (`Tool::timeout_secs` - the VLM download and the overlay encode 1200 s, transcribe 900 s, exports and the sense family 600 s, the renders and watches 300 s, everything else 60 s), and a call that outlives it is cancelled and answered for at the deadline, with the limit in the message. The client-side `call_timeout_secs` stays as the ceiling over all of them; the engine's own calls are bounded a second time, per call, by the Geneva guard (see `docs/MOTION.md`).
 
 ## The reel contact sheet

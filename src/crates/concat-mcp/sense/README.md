@@ -53,6 +53,7 @@ parseable.
 | `track` | The subject's path across a clip, frame by frame: samples up to 24 frames, finds the subject in each (what stands out from the frame and from the temporal median across samples), smooths the path - holding through occlusion and exits, entering from centre - and returns crop keyframes. The `track_subject` MCP tool turns them into clip_transform offsets. |
 | `vlm` | `status` / `setup` for the local vision model. |
 | `emotion` | The emotional read of the voiceover: per-line emotion, act, easing, colour, duck, vocabulary + the arc; `brand` / `gate` / `verify` / `template` beside it. |
+| `voice` | The acoustic read of the voiceover (`voice_signals.py`): per-line loudness, pauses classified, speech rate, sentence type, emphasis words, fillers, word confidence, speakers, entities + director hints; `selftest` beside it. |
 | `selftest` | Generate a synthetic PNG, decode it, measure it, and exercise the model-reply, loudness, cut-spread and subject-tracking parsers — no fixtures; the beat path (onset curve, click-track BPM) runs when an ffmpeg is on PATH. `vlm.py selftest` and `emotion.py selftest` check the critic and the reader the same way, and CI runs all three. |
 
 Example:
@@ -63,6 +64,7 @@ python3 sense.py sheet --spec '{"path":"render.mp4","samples":12,"audio":true}'
 python3 sense.py critique --spec '{"sheet": <sheet json>, "brief": {...}, "autoSetup":true}'
 python3 sense.py vlm --spec '{"action":"status"}'
 python3 sense.py emotion --spec '{"script":"You won't believe what they found."}'
+python3 sense.py voice --spec '{"action":"selftest"}'
 cat big-spec.json | python3 sense.py sheet --spec -
 ```
 
@@ -168,6 +170,40 @@ Commands (same `--spec` contract): `extract` (per-line read + the arc),
 export), `template` (a ready-to-edit brand guide) and `selftest`
 (deterministic, no network). The MCP tool is `emotion`; see
 `docs/EMOTION.md` for the full map.
+
+## The voice-signal read (`voice_signals.py`)
+
+`voice_signals.py` is the fourth sense: what the voiceover **is** as sound.
+The emotion read says how a line feels; this one says how it was said —
+loud or quiet, fast or slow, rising or falling, which word carries the
+stress, what it names, who is speaking, and where the pauses carry weight.
+It is the reading the director cuts by (the skill's Phase 1c and its
+"A — the voice is a score" law).
+
+Two halves, one JSON out. The Python half is pure stdlib plus ffmpeg:
+per-line momentary loudness (one `ebur128` pass, the 100 ms M-series
+folded per line, relative to the take's integrated level), pauses from
+`silencedetect` **classified** (breath / beat / dramatic hold / scene turn /
+dead air — only dead air is a cut candidate), speech rate (words per
+minute, vowel-group syllables per second, a pace class), sentence type
+from punctuation cross-checked against the prosody's terminal rise,
+fillers, repeated motifs, a measured word-confidence gate (timing,
+silence overlap, energy), Unicode-script language detection with font and
+music-genre hints, and the BGM decision from the noise floor. The Rust
+half is the `voice-signals` binary (`cargo build -p voice-signals`;
+found on `PATH`, beside the script, or via `FUNCUT_VOICE_SIGNALS_BIN`):
+spectral-prosody pitch contours, energy-envelope emphasis words, rhythm
+layers and phrase boundaries; oximedia formants, noise profile, SNR,
+spectral flux, dynamics and voice quality; polyvoice VAD + voice-print
+diarization with change times; anno offline NER for the entities
+(`$10,450` → stat card, a name → lower-third, a date → timeline, PII →
+redact). WhisperX, when `pip`-installed, replaces the whisper token
+timestamps with aligned words carrying real scores.
+
+Everything degrades loudly: `sources` names the ear that produced each
+family, and an absent ear is a note, never a guess. Commands: `extract`
+and `selftest` (a synthetic two-voice take with every pause class built
+in). The MCP tool is `voice_signals`; see `docs/VOICE-SIGNALS.md`.
 
 ## Licensing note
 

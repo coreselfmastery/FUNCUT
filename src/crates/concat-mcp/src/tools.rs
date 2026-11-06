@@ -127,6 +127,9 @@ pub enum Action {
     LocalVlm,
     /// The emotional read of the voiceover, and the gates it drives.
     Emotion,
+    /// The voiceover read as a score: loudness, pauses, rate, prosody,
+    /// speakers, entities - and the cut decisions they drive.
+    VoiceSignals,
     /// Read or write the project's persisted creative brief.
     CreativeBrief,
     /// Composite a transparent motion bake over real footage.
@@ -988,6 +991,15 @@ pub fn catalogue() -> Vec<Tool> {
             action: Action::Emotion,
         },
         Tool {
+            name: "voice_signals",
+            title: "Read the voiceover as a score",
+            description: "The acoustic read of the voiceover: what was said, how it was said, which word matters, what is named, who is speaking, and where every beat lands. `action: \"extract\"` (default) takes `audio` (the voiceover file), `transcript` (a transcribe job's output, for the word timings) and optionally `emotion` (an emotion extract's output, for the arc) and returns PER LINE: momentary loudness relative to the take (quiet vs loud for fast-cut vs slow-hold pacing), the speech rate in words-per-minute and syllables-per-second with a pace class, the sentence type (question/exclamation/statement/fragment, cross-checked against the pitch's terminal rise), the emphasis words the energy peaks land on (where SFX peaks and caption highlights belong), the fillers (um/uh are safe removals, discourse markers are context calls), per-word confidence (gated on timing, silence overlap and energy; or WhisperX scores when installed), the speaker, the formants and voice quality, and the entities the line names - `$10,450` as a stat card, a name as a lower-third, a date as a timeline, PII flagged for redaction - plus the pauses CLASSIFIED (breath / beat / dramatic hold / scene turn / dead air: a dramatic hold must never be cut, only dead air is a cut candidate), the motifs (repeated phrases that deserve the same visual back), the whole take's rhythm layers and phrase boundaries, the noise floor and SNR (the BGM decision: dry voice gets music, a take that already has music does not), the speaker diarization with change times (a speaker change is a scene change), and `directorHints`: the cut style (fast/mixed/hold/building), the caption gate, the BGM recommendation, the protected pauses and the font and music-genre hints for the detected language (Bengali gets a Bengali font). Engines: ffmpeg ebur128 + silencedetect and pure-Python regex always; the Rust `voice-signals` binary (spectral-prosody, oximedia-audio-analysis, polyvoice, anno - build with `cargo build -p voice-signals`) for prosody, forensics, speakers and NER entities, with an honest note when it is not built; WhisperX (pip install whisperx) for aligned word times with scores. `action: \"selftest\"` proves the whole chain on a synthetic take.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::VoiceSignals,
+        },
+        Tool {
             name: "creative_brief",
             title: "Set the creative intent",
             description: "Persist the WHY of the edit in the project folder so every turn works from the same intent. `action: \"set\"` merges `brief` into creative-brief.json; `action: \"get\"` reads it. Fields: audience, platform, goal, thesis, curiosityGap, payoff, emotionalArc, referenceStyle, tone, durationSeconds, brandKit, constraints, avoid. Returns a ready-to-use directorPrompt to give the AI director, and lists missingCoreFields. An edit without these fields is an edit without a point of view.",
@@ -1024,11 +1036,12 @@ impl Tool {
             "export_wait",
             // The sense family, whose own budgets are 240-480 s: a
             // critique, a cut suggestion, a loudness pass, an emotion
-            // read, a contact sheet with its ranking.
+            // read, a voice-signal read, a contact sheet with its ranking.
             "craft_critique",
             "suggest_cuts",
             "measure_loudness",
             "emotion",
+            "voice_signals",
             "stock_contact_sheet",
             // The library work whose cost is the network's: a semantic
             // stock search runs a 240 s rerank budget inside it, and an
@@ -1293,6 +1306,7 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
         | Action::CraftCritique
         | Action::LocalVlm
         | Action::Emotion
+        | Action::VoiceSignals
         | Action::CreativeBrief
         | Action::MotionOverlay
         | Action::MeasureLoudness
@@ -1483,6 +1497,20 @@ fn sense_schema(name: &str) -> Option<Value> {
             "expected": { "type": ["object", "array"], "description": "With action 'verify': the edit's words - a transcribe job's output or a [{text,start,end}] word list." },
             "actual": { "type": ["object", "array"], "description": "With action 'verify': the exported file's re-transcribed words." },
             "toleranceMs": { "type": "number", "default": 150, "minimum": 0, "description": "With action 'verify': how far a word may start from where the edit placed it." },
+        }),
+        "voice_signals" => json!({
+            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
+            "audio": string("The voiceover file (any format ffmpeg reads): the take the transcript timed."),
+            "transcript": { "type": "object", "description": "A transcribe job's output: {segments: [{text, start, end, words: [{text,start,end}]}]} - the word timings the per-line signals need." },
+            "lines": { "type": "array", "description": "Lines as [{text, start, end, words}] when there is no transcript.", "items": { "type": ["object", "string"] } },
+            "script": string("Raw narration text when there is no transcript or audio: only the text signals (sentence types, motifs, fillers, entities, language) answer."),
+            "language": string("The language hint the transcribe call used (ISO code); the script detection cross-checks it."),
+            "emotion": { "type": "object", "description": "An emotion extract's output; its arc (shape, variety, score, warnings) rides along and feeds the cut-style hint." },
+            "thresholdDb": { "type": "number", "default": 35, "description": "Silence threshold below full scale, as analysis.silence takes it (30 for a hot VO, 40 for a noisy room)." },
+            "minSilenceMs": { "type": "integer", "default": 350, "minimum": 50, "description": "Silences shorter than this are breaths, not spans (120 catches every breath; 500 only real gaps)." },
+            "maxSpeakers": { "type": "integer", "default": 4, "minimum": 1, "maximum": 8, "description": "The diarization's speaker ceiling." },
+            "speakerThreshold": { "type": "number", "default": 0.6, "description": "The cosine similarity at which two voice-print windows may share a speaker; lower merges more eagerly." },
+            "whisperx": { "type": ["string", "boolean"], "default": "auto", "description": "auto (default) uses WhisperX for word alignment when it is installed; off never does." },
         }),
         "creative_brief" => json!({
             "path": string("The project folder."),
@@ -2310,6 +2338,7 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         Action::CraftCritique => crate::sense::craft_critique(arguments, backend),
         Action::LocalVlm => crate::sense::local_vlm(arguments),
         Action::Emotion => crate::sense::emotion(arguments),
+        Action::VoiceSignals => crate::sense::voice_signals(arguments),
         Action::CreativeBrief => crate::sense::creative_brief(arguments, backend),
         Action::MotionOverlay => crate::sense::motion_overlay(arguments, backend),
         Action::MeasureLoudness => crate::sense::measure_loudness(arguments),
@@ -3816,6 +3845,10 @@ mod tests {
             ),
             ("measure_loudness", json!({ "path": "/tmp/render.mp4" })),
             (
+                "voice_signals",
+                json!({ "audio": "/tmp/voiceover.wav", "script": "You won't believe what they found." }),
+            ),
+            (
                 "track_subject",
                 json!({ "path": "/tmp/clip.mp4", "aspect": "9:16" }),
             ),
@@ -3987,6 +4020,7 @@ mod tests {
                 | Action::CraftCritique
                 | Action::LocalVlm
                 | Action::Emotion
+                | Action::VoiceSignals
                 | Action::CreativeBrief
                 | Action::MotionOverlay
                 | Action::MeasureLoudness

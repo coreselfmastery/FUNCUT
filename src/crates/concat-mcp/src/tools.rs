@@ -1357,9 +1357,10 @@ fn openvid_search_schema(schemas: &Schemas) -> Option<Value> {
 /// The schema a tool's arguments follow.
 fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
     match tool.action {
-        Action::Method { method, .. } if method == "openvid.search" => {
-            openvid_search_schema(schemas)
-        }
+        Action::Method {
+            method: "openvid.search",
+            ..
+        } => openvid_search_schema(schemas),
         Action::Method { method, .. } => schemas.method(method),
         Action::Command { op } => schemas.command(op),
         Action::Version => schemas.method("version"),

@@ -4790,16 +4790,21 @@ mod tests {
             [json!({ "clips": [], "total": 0 })].into(),
         );
         for description in ["", "   ", "\n\t "] {
-            let error = openvid_rank_for_slot(
+            let error = match openvid_rank_for_slot(
                 json!({ "description": description, "queries": ["city skyline"] }),
                 &mut backend,
-            )
-            .expect_err("an empty description refuses");
+            ) {
+                Err(error) => error,
+                Ok(_) => panic!("an empty description refuses"),
+            };
             assert!(error.to_string().contains("description"), "{error}");
         }
         assert!(backend.0.borrow().is_empty(), "no search ever ran");
-        let error = openvid_rank_for_slot(json!({ "queries": ["city skyline"] }), &mut backend)
-            .expect_err("no description at all refuses");
+        let error =
+            match openvid_rank_for_slot(json!({ "queries": ["city skyline"] }), &mut backend) {
+                Err(error) => error,
+                Ok(_) => panic!("no description at all refuses"),
+            };
         assert!(error.to_string().contains("description"), "{error}");
     }
 

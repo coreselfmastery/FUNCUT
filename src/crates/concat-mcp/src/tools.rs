@@ -4778,15 +4778,25 @@ mod tests {
                 .contains("at least one non-empty query")
         );
 
-        // A slot that keeps its own contract passes clean.
+        // Slots that keep their own contract pass clean: a b-roll and a
+        // hold together - half the share, inside the band, and the hold
+        // carries no queries.
         let mut valid = base.clone();
-        valid["slots"] = json!([slot(
-            "hook.1",
-            "broll",
-            json!(["city skyline aerial"]),
-            "a slow aerial drift across the city skyline at dusk, camera gliding left"
-        )]);
-        assert!(validate_edit_plan(&valid).is_ok(), "a valid slot passes");
+        valid["slots"] = json!([
+            slot(
+                "hook.1",
+                "broll",
+                json!(["city skyline aerial"]),
+                "a slow aerial drift across the city skyline at dusk, camera gliding left"
+            ),
+            slot(
+                "setup.1",
+                "hold",
+                json!([]),
+                "the host's hands turn the page of a leather notebook on a wooden desk"
+            ),
+        ]);
+        assert!(validate_edit_plan(&valid).is_ok(), "valid slots pass");
         // And a plan without slots is a plan the segments alone describe.
         assert!(validate_edit_plan(&base).is_ok(), "no slots, no slot gate");
     }

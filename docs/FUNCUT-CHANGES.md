@@ -2037,3 +2037,53 @@ with it, to **97** - the two footage tools join the loop they serve,
 on the allowlist and in the forge config, and the ten left off are the
 ten the policy always named. The canonical plan schema, the forge
 config, FEATURES.md and this ledger say so in the same breath.
+
+## 46. The director learns the footage layer: slots in the plan, the slot's own search, the gate before the fetch, and the revision that keeps its wins
+
+The layer's engine, schema, search and gates had all landed, and the
+director's own instructions still taught the keyword path: shop by
+query, judge by eye, revise by re-planning. The tools were on the
+allowlist and in the catalogue, but the skill that runs the loop never
+said a word about them - the documentation had advanced further than
+the director's actual orders. This change is the skill catching up to
+its own tools.
+
+- **The plan writes its slots.** SKILL.md's Phase 3 now teaches the slot
+  list beside the segments - the seven-act role, the treatment (only
+  `broll` shops), the job, entry and exit against the words and the
+  beat grid, the rich description of twelve to twenty-five words, the
+  fallback queries, `hero`, `motionMin`, `durationS` - and the
+  validator's laws (forty characters, no queries on a drawn treatment,
+  the 30-45% b-roll band) are the skill's laws too. The edit-plan
+  playbook carries the same fill order, FEATURES.md's phase list says
+  the same words, and the hard V floor now says the tools hold the
+  variety law for a slotted plan.
+- **The search is the slot's.** Phase 4 shops each broll slot with
+  `openvid_rank_for_slot` - the description verbatim, the hard filters
+  (`motion_min`, `exclude_ids`) riding the request and enforced again
+  on the page, every chosen id carried onto the next slot's exclude
+  list so the variety law is held by the tool - and
+  `broll_matching.md` gains the shopping-by-the-slot section beside its
+  keyword laws. The tool reference documents both footage tools'
+  arguments, defaults and gotchas.
+- **The gate runs before the fetch.** The filled manifest - motion from
+  the clip's own measurement, direction from its `camera`, scale and
+  category from the slot's vocabulary, colour read off the contact
+  sheet - goes to `footage_continuity`, and each flag's remedy is the
+  work: re-shop the slot with the avoid hint, or take the downgrade and
+  let the comp or the A-roll carry the span. `count: 0` is the clean
+  answer; nothing is fetched until it is.
+- **The revision keeps its wins.** Phase 7's loop now follows the
+  revision gate: below the 0.65 ship line, exactly the slots the critic
+  named re-shop (everything else stands), each attempt renders to its
+  own `edit_v1`/`edit_v2`/`edit_v3.mp4`, and after two revisions the
+  edit ships with the failures recorded per slot - shipping with a note
+  beats not shipping. The skill's own 7 bar stays; the gate is the
+  floor beneath it.
+
+The README's version badge moves to 0.2.8-funcut.10 with the release it
+names, and TESTING.md's count moves to the `564acdbe` snapshot that
+release was cut from: **1725** run and passed with the same fourteen
+skips, **8** documentation tests, **30** gRPC - a Rust total of
+**1763**, sixty-two over the 2026-11-04 follow-up's 1701, all of them
+the footage layer's.

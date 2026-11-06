@@ -1,6 +1,6 @@
 ---
 name: funcut-director
-description: Direct professional faceless video edits inside FUNCUT (the Concat video editor) through its MCP tools. Use this whenever the user asks to make, edit, cut, caption, score, color-grade, animate, or export a video — including a whole video from just a script or topic — or whenever a Forge run says to act as the video director. Covers the full pipeline: script analysis, TTS voiceover, transcription, silence removal, scene and beat analysis, B-roll from OpenVid, background music, SFX placement, titles, segment-timed captions, word-timed kinetic captions, motion comps, keyframe motion, color grading, transitions, self-verification with watch_render and craft_critique, and export. Professional rules only: hard floors on pacing and variety, never leave a visual gap, SFX peaks land on cuts, section changes land on downbeats, verify by thirds before claiming done.
+description: Direct professional faceless video edits inside FUNCUT (the Concat video editor) through its MCP tools. Use this whenever the user asks to make, edit, cut, caption, score, color-grade, animate, or export a video — including a whole video from just a script or topic — or whenever a Forge run says to act as the video director. Covers the full pipeline: script analysis, TTS voiceover, transcription, silence removal, scene and beat analysis, B-roll from OpenVid planned as footage slots (a description-ranked search, a continuity gate, and a revision loop that re-shops only what the critic named), background music, SFX placement, titles, segment-timed captions, word-timed kinetic captions, motion comps, keyframe motion, color grading, transitions, self-verification with watch_render and craft_critique, and export. Professional rules only: hard floors on pacing and variety, never leave a visual gap, SFX peaks land on cuts, section changes land on downbeats, verify by thirds before claiming done.
 ---
 
 # FUNCUT Director
@@ -225,6 +225,31 @@ not creativeReady is a rejection, not a warning to wave through. Craft score
 below 7 means rewrite the plan, not proceed. Then compare the plan's `aspect` with `timeline_read`; if they
 differ, set the canvas with `project_set_video` BEFORE gathering assets.
 
+**The plan carries its footage as slots beside its segments.** A segment
+says what the timeline plays; a slot says what one opening is *for*:
+`slotId` (`"hook.1"`, `"reveal.hero"` — the id the critic's notes
+name), `role` (the same seven acts), `treatment` (`broll` shops for
+stock; `hold`, `graphic` and `black` are drawn by the edit and take no
+queries), `job` (illustrate / contrast / punctuate / transition /
+breathe), `entry` and `exit` against the words and the beat grid
+(`on_emphasis`, `before_line`, `on_beat`, `after_line` in;
+`before_next_emphasis`, `on_beat`, `source_cut`, `early` out), the rich
+`description` — twelve to twenty-five words of nouns and adjectives,
+forty characters at least: what is in frame, what it is doing, what it
+feels like — the fallback `queries` (keywords only: the description is
+the ranked contract, the queries are what BM25 gets), `hero` (the shot
+the thumbnail and the first glance live on), `motionMin` (the least
+motion the slot may carry — a `breathe` slot wants stillness, a
+`punctuate` slot the opposite) and `durationS`. Derive the slot list
+where the engine's `suggest_footage` read would find it: the spans no
+words cover, the stretches no beat lands in — the Phase-1 readings
+already measured both. `plan_validate` holds the slot laws beside the
+rest: a description under forty characters is refused, a drawn
+treatment that carries queries is refused, b-roll without a query is
+refused, and the share of b-roll slots keeps the 30–45% band — warned
+past 45, refused past 60. A plan without slots is a plan the segments
+alone describe; under a voiceover, write the slots.
+
 **Phase 4 — Gather (parallel if your harness allows).**
 **The BGM gate runs before any music is searched.**
 `sense_audio_repair {action: "detect_music_segments", audio: <the
@@ -240,6 +265,25 @@ name the song), and you WARN THE USER at once, and again in the Phase-8
 report: this voiceover embeds a music track whose licence is unknown;
 confirm the rights or replace the take before publishing. Only a take
 that answers `musicPresent: false` gets the BGM searches below.
+
+**When the plan carries slots, shop the slot, not the keyword.** For
+each `broll` slot, in plan order: `openvid_rank_for_slot {description:
+<the slot's description, verbatim>, queries, hero, motion_min,
+exclude_ids: <every clip id this edit has already chosen>}`. The
+description is the contract — BM25 builds the page, the CLIP second
+pass re-orders it by what the clips SHOW, and the queries blend in as
+Jaccard similarity at `tag_weight` (0.3 by default: the description
+leads, the queries keep it honest). The hard filters are promises, not
+hopes: `motion_min` and `exclude_ids` ride the search request and are
+enforced again on what lands — a used clip or one under the floor is
+not ranked lower, it is not there. A `hero` slot asks for thirty
+candidates, any other for twelve, and every clip comes back carrying
+its `slotScore` and `slotRank`. Keep each chosen id on the next slot's
+`exclude_ids` as you go — the variety law held by the tool instead of
+by your memory. An empty description is an error that says why; never
+send one. The contact sheet and the placement gate below apply to slot
+pages exactly as to keyword pages — a slot's ranking is lexical and
+CLIP-side, and the eye and the gate still get the last word.
 All `openvid_search`
 calls, all `sounds_search` calls, the `bgm_search` — these are independent;
 fan them out when you can, and where you cannot, one `openvid_search_batch`
@@ -266,6 +310,27 @@ centre-crop of a square clip into 9:16. **The variety law
 applies at search time:** every segment's query names a NEW subject — write
 the query list, then delete any query whose noun you have already used within
 the last 30 seconds of plan.
+
+**The continuity gate, before anything is fetched.** With every slot
+filled, assemble the manifest — one entry per filled slot, in play
+order: `slotId`, `clipId`, `motion` (the clip's own measured score),
+`dominantDirection` (its `camera` string's lead: `pan_left+tilt_up` →
+`left`, `zoom_in` → `zoom_in`, `static` → `static`), `shotScale` and
+`category` (the slot's own vocabulary), `colorTemperature` (your read
+of the tile on the contact sheet, warm +1 through cool −1) and
+`motionMin` (the slot's floor). Then `footage_continuity {clips}`:
+it reads the manifest the way an editor scrubs it — nothing renders,
+nothing fetches; the arithmetic is over the numbers you just assembled
+— and flags every place the cut will jump: a colour jump past half the
+scale, a travel reversing its neighbour, two of one shot scale in a
+row, a run of three one category, a clip too still for the slot that
+picked it. Each flag names its slot, its rule and its remedy, and the
+remedy is the work: `replace` re-shops that slot alone, the `avoid`
+hint folded into the description and the rejected clip on its
+`exclude_ids`; `downgrade_to_graphic` or `downgrade_to_hold` ends the
+shopping — the treatment changes, the slot stops searching, and the
+comp or the A-roll carries the span. `count: 0` is the clean answer;
+fetch and import only when the gate is quiet.
 
 **Phase 5 — Place (sequential, batched).** Cut to the plan: add B-roll clips
 (`clips_add_sequence` or `clip_add`), trim so the video LEADS the narration
@@ -340,7 +405,22 @@ letterbox bars, flat/duplicate shots, static transitions, audio envelope).
 Then `craft_critique {sheet, brief, project}` for six 0-10 scores — hook,
 story, rhythm, shotChoice, design, sound — and a short list of concrete
 revisions. **You must act on at least one revision and call `watch_render`
-again** before exporting. A score below 7 is not ready. Run the checklist in
+again** before exporting. A score below 7 is not ready.
+
+**When the plan carries slots, the revision is the gate's, not a
+re-plan.** The engine's revision gate ships at 6.5 (0.65 on the
+critic's 0–1 scale) — the skill's bar stays 7, and the gate is the
+floor beneath the bar, not a licence under it. Below the line, exactly
+the slots the critic named go back to the planning step — re-shop
+those alone, their `exclude_ids` carrying what they had, everything
+else standing untouched (a re-shop of a passing slot can only lose
+what the edit already has). Each attempt renders to its own file —
+`edit_v1.mp4`, then `edit_v2`, then `edit_v3`; an attempt nobody can
+diff against the one before it is an attempt nobody learns from — and
+after two revisions the edit ships anyway with the failures recorded
+per slot: shipping with a note beats not shipping. A note-less pass
+below the line names nothing, and nothing is invented for it.
+Run the checklist in
 `prompts/review.md` too: no overlaps or gaps (`timeline_read`), captions
 readable and inside the safe area, the grade is present at both check points,
 every clip fits the canvas, SFX peaks hit their cuts, the BGM ducks under
@@ -430,7 +510,10 @@ cut-on-action, cut-on-beat — and a piece that only hard-cuts is a slideshow.
 per 60 s in longform, never twice in one section. Every segment's B-roll
 query names a new subject (no noun repeated within 30 s). Shot scale climbs
 within a section: wide → medium → close → detail. Captions and comps never
-repeat the same entrance twice in a row.
+repeat the same entrance twice in a row. When the plan carries slots the
+tools hold the first two of these for you — every chosen id rides the next
+slot's `exclude_ids`, and the continuity gate flags a repeated scale or a
+one-category run before anything is fetched.
 
 **M — Motion on every element.** Every clip enters and leaves on purpose:
 an entrance (pop 120–180 ms, slide 200 ms, punch zoom 150 ms, dissolve) and
@@ -531,7 +614,7 @@ No licence warning is needed; every `magick_search` result carries `license: "MI
 | --- | --- |
 | `prompts/script_analysis.md` | turning a topic into a script (hooks, beat sheets, reel vs longform, CTA frameworks) |
 | `prompts/edit_plan.md` | writing the plan JSON (with a worked 30 s example) |
-| `prompts/broll_matching.md` | choosing B-roll queries, scoring results, the fallback ladder, aspect fit |
+| `prompts/broll_matching.md` | choosing B-roll queries and slot descriptions, shopping by the slot, scoring results, the fallback ladder, aspect fit |
 | `prompts/cuts_and_pacing.md` | the twelve cut types, J/L feel, pacing curves by mode |
 | `prompts/transitions_guide.md` | the 122 transitions (classic 22 + the 100 viral pack), the clip-patch mechanics, when a plain cut wins |
 | `prompts/sfx_design.md` | sound design: categories, semantic mapping, sync peaks, anti-repetition |

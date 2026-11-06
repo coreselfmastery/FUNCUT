@@ -7,22 +7,21 @@ checked against a machine instead of a memory.
 
 ## The count
 
-As of the 2026-11-04 follow-up that retires the monitor's in-flight
-request on close, probes the proxy key with the file's bytes, and clears
-the Clippy failure that kept the engine lane from running its tests at
-all - ten tests over the 1653 at `4b528cfa` (the seven 8d43162 added but
-whose lane never ran, and this change's three), on the same fourteen
-skips:
+As of the 2026-11-06 footage layer at `564acdbe` - the plan's slot
+schema and its validator laws, the engine's `suggest_footage` reader,
+the continuity gate, the revision gate, the slot's own rank tool and
+the search's two hard filters - sixty-two tests over the 1663 the
+2026-11-04 follow-up counted, on the same fourteen skips:
 
 | Lane | What runs | Result |
 | --- | --- | --- |
-| Engine, workspace | `cargo nextest run --workspace` | **1663 tests run: 1663 passed, 14 skipped** |
+| Engine, workspace | `cargo nextest run --workspace` | **1725 tests run: 1725 passed, 14 skipped** |
 | Engine, documentation | `cargo test --workspace --doc` | **8 passed** |
 | Engine, gRPC feature | `cargo nextest run -p concat-server --features grpc` | **30 tests run: 30 passed** |
 | Analysis senses | `python3 src/crates/concat-api/analysis/tests/run_tests.py` | **21 checks ok** |
 | Cloud farm | `python3 src/crates/concat-mcp/sense/farm-sync.py selftest` | **8 checks ok** |
 
-**The Rust total: 1701** (1663 + 8 + 30). Every workspace member is
+**The Rust total: 1763** (1725 + 8 + 30). Every workspace member is
 counted - the workspace's test binaries cover all seventeen crates, their
 integration tests and their binaries.
 
@@ -37,7 +36,13 @@ identity fix's regression test in it - and the same day's follow-up
 - 1663, with the close retirement's test in the window crate and the
 same-size-same-time and key-stability tests beside the sub-second one
 in the host, over the seven 8d43162 added whose own lane went red on
-the lint and never counted them - are the table above. The five timing benchmarks of
+the lint and never counted them - are the table's predecessors. The
+2026-11-06 footage layer at `564acdbe` adds the sixty-two the table
+counts: the slot schema's own laws and its b-roll share, the suggester's
+gaps and monotony runs, the continuity gate's five rules and remedies,
+the revision gate's ship line and named slots, the rank tool's blend
+and its hard filters held twice, and the aliases the schema spells
+beside the camelCase names. The five timing benchmarks of
 2026-11-03 are
 `#[ignore]`d - counted as skipped, never as run. A number in a session
 or a document is a snapshot of a commit; this table names its commit,
@@ -73,7 +78,7 @@ Linux-only, so there is no "ignored on macOS" class to carry.
 
 - **The gRPC feature** (`concat-server`) is off by default - nothing in
   the workspace turns it on - so its 30 tests run in a lane of their own
-  and are not part of the 1653.
+  and are not part of the 1725.
 - **GPU tests fail rather than skip** when no adapter is usable
   (`CONCAT_REQUIRE_GPU`), so a green run proves the parity suite ran on
   the runner's software Vulkan driver, not that it quietly looked the
@@ -81,7 +86,7 @@ Linux-only, so there is no "ignored on macOS" class to carry.
 - **The Geneva lane** (`geneva.yml`) runs `cargo test -p concat-motion`
   and then renders the multi-layer example through the real sidecar on
   every push to `main` and every pull request; the motion crate's tests
-  are counted in the 1653, and the render is the check the count cannot
+  are counted in the 1725, and the render is the check the count cannot
   express. The lane also runs **the scene-quality regression**
   (`scripts/motion/scene-quality.py`): ten reference storyboards, each
   rendered through the sidecar at sampled instants, measured with the
@@ -124,7 +129,7 @@ version of the count itself:
 
 ```sh
 cd src
-cargo nextest run --workspace        # the 1653 lane
+cargo nextest run --workspace        # the 1725 lane
 cargo test --workspace --doc         # the 8
 cargo nextest run -p concat-server --features grpc   # the 30
 ```

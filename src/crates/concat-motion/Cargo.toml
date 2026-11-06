@@ -13,6 +13,16 @@ description = "Motion comps: the document model, the curves, and the engines tha
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror.workspace = true
+# The footage planner's engine room: gap coverage and B-roll selection,
+# colour-continuity flags and cut positions come from oximedia-auto rather
+# than being rebuilt here. Pinned patch-exact, like ort above: the planning
+# layer wires this one version's API, and a patch bump may change it
+# underneath without a commit saying so.
+oximedia-auto = "=0.1.8"
+# The planner's own clock: Timestamp and Rational from the core, the same
+# types oximedia-auto's beats and cuts carry, so a beat never crosses a
+# timebase boundary on the way in or out.
+oximedia-core = "0.1.8"
 
 [lints]
 workspace = true

@@ -73,6 +73,7 @@ pub mod curve;
 pub mod discipline;
 pub mod engine;
 pub mod farm;
+pub mod footage;
 pub mod geneva;
 pub mod grade;
 pub mod lint;
@@ -98,6 +99,7 @@ pub use engine::{
     BakeRequest, Baked, Choice, CompEngine, EngineKind, EnginePreference, MotionError, Probe,
     Sidecar,
 };
+pub use footage::{FootagePlan, suggest_footage};
 pub use geneva::{Breaker, CallLimits, Diagnostic, Geneva, fix_for};
 pub use lint::{Finding, RULES, Rule, rule_count};
 pub use looks::Look;

@@ -156,6 +156,9 @@ pub enum Action {
     CollisionCheck,
     /// `openvid.search` once per query, one reply.
     OpenvidSearchBatch,
+    /// Rank a page of stock against a slot's rich description: the CLIP
+    /// second pass, the tags blended in, the hard filters enforced twice.
+    OpenvidRankForSlot,
 }
 
 /// How a reply is shown to the agent.
@@ -390,6 +393,15 @@ pub fn catalogue() -> Vec<Tool> {
             destructive: false,
             idempotent: true,
             action: Action::OpenvidSearchBatch,
+        },
+        Tool {
+            name: "openvid_rank_for_slot",
+            title: "Rank stock against a slot",
+            description: "Rank a page of stock against a slot's rich description with the CLIP second pass, tags blended at tag_weight; used ids and clips under the motion floor are never returned.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::OpenvidRankForSlot,
         },
         method(
             "openvid_get",
@@ -1358,6 +1370,51 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
                 "additionalProperties": false,
             }))
         }
+        Action::OpenvidRankForSlot => Some(json!({
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "REQUIRED. The slot's rich description - the words CLIP ranks the page against. Empty or whitespace is an error, not a fallback to the queries.",
+                },
+                "queries": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "The slot's fallback keyword phrases, blended in at tag_weight.",
+                },
+                "k": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "description": "How many clips to return. Absent: 30 when hero, else 12.",
+                },
+                "hero": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Whether the slot is the shot the thumbnail and the first glance live on; widens the default k to 30.",
+                },
+                "tag_weight": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "default": 0.3,
+                    "description": "How much the tags count in the blend; the CLIP order carries the rest.",
+                },
+                "motion_min": {
+                    "type": "number",
+                    "description": "Hard floor: clips below this motion score are never returned. (motionMin accepted.)",
+                },
+                "exclude_ids": {
+                    "type": "array",
+                    "maxItems": 500,
+                    "items": { "type": "integer" },
+                    "description": "Hard filter: clip ids already used in this edit are never returned. (excludeIds accepted.)",
+                },
+            },
+            "required": ["description"],
+            "additionalProperties": false,
+        })),
         Action::MotionPresets
         | Action::MotionInspect
         | Action::SceneAnalysis
@@ -2438,6 +2495,7 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
             Ok(collision_report(summary::view(&result)))
         }
         Action::OpenvidSearchBatch => openvid_search_batch(arguments, backend),
+        Action::OpenvidRankForSlot => openvid_rank_for_slot(arguments, backend),
         Action::Mask => {
             let result = backend.call(mask(arguments)?)?;
             Ok(Outcome::json(summary::view(&result)))
@@ -3741,6 +3799,212 @@ fn openvid_search_batch(arguments: Value, backend: &mut dyn Backend) -> Result<O
     Ok(Outcome::json(json!({ "searches": searches })))
 }
 
+/// How wide the ranker's page is: the same pool the rerank scores, wide
+/// enough that the meaning has room to be on it, and wider than any k a
+/// slot asks for.
+const RANK_POOL: usize = 50;
+
+/// The page a slot asks for: a hero slot's first glance earns a wider
+/// answer. An explicit `k` is the caller's; the hero flag only fills the
+/// default - 30 for the shot the thumbnail lives on, 12 for any other.
+fn slot_k(explicit: Option<u64>, hero: bool) -> usize {
+    explicit
+        .map(|k| k.clamp(1, 100) as usize)
+        .unwrap_or(if hero { 30 } else { 12 })
+}
+
+/// The terms a slot ranks with: the description's and the queries'
+/// words, lowercased, filler dropped, deduplicated in order - the tags
+/// the captions are measured against.
+fn slot_terms(description: &str, queries: &[String]) -> Vec<String> {
+    /// The glue words every caption carries, which agree with nothing in
+    /// particular: a tag of `the` matches every clip and sorts none.
+    const STOPWORDS: [&str; 8] = ["the", "and", "but", "for", "that", "with", "from", "this"];
+    let mut terms: Vec<String> = Vec::new();
+    let mut push = |text: &str| {
+        for word in text.split(|c: char| !c.is_alphanumeric()) {
+            let word = word.to_lowercase();
+            if word.len() >= 3 && !STOPWORDS.contains(&word.as_str()) && !terms.contains(&word) {
+                terms.push(word);
+            }
+        }
+    };
+    push(description);
+    for query in queries {
+        push(query);
+    }
+    terms
+}
+
+/// Jaccard similarity between the slot's terms and a caption's words:
+/// 1.0 when the caption carries every term, 0.0 when it shares nothing.
+fn tag_similarity(terms: &[String], caption: &str) -> f64 {
+    if terms.is_empty() {
+        return 0.0;
+    }
+    let words: std::collections::BTreeSet<String> = caption
+        .split(|c: char| !c.is_alphanumeric())
+        .map(str::to_lowercase)
+        .filter(|word| !word.is_empty())
+        .collect();
+    let intersection = terms.iter().filter(|term| words.contains(*term)).count();
+    let union = terms.len() + words.len() - intersection;
+    if union == 0 {
+        0.0
+    } else {
+        intersection as f64 / union as f64
+    }
+}
+
+/// `openvid_rank_for_slot`: a page of stock, ranked the way a plan shops.
+///
+/// The slot's rich description is the query, so BM25 builds the page and
+/// the CLIP second pass re-orders it by what the clips SHOW - the same
+/// two steps `openvid_search` runs, against better words than a keyword.
+/// The slot's fallback queries blend in at `tag_weight` as Jaccard
+/// similarity against each caption, so a clip the description's
+/// shortlist treats well and the queries agree with wins. The hard
+/// filters - `motion_min`, `exclude_ids` - ride the search request and
+/// are enforced once more on what lands, because a hard filter is a
+/// promise, not a hope: a clip under the floor or already used in this
+/// edit is not ranked lower, it is not there.
+///
+/// An empty or whitespace description is an error, not a quiet fallback
+/// to the queries: ranking against the wrong words and saying nothing
+/// is how a plan shops badly.
+fn openvid_rank_for_slot(arguments: Value, backend: &mut dyn Backend) -> Result<Outcome, ApiError> {
+    let invalid = |why: &str| ApiError::invalid(format!("invalid arguments: {why}"));
+    let fields = arguments
+        .as_object()
+        .ok_or_else(|| invalid("the arguments are an object"))?;
+    let description = fields
+        .get("description")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|description| !description.is_empty())
+        .ok_or_else(|| {
+            invalid(
+                "`description` is required and may not be empty or whitespace: it is what CLIP ranks against, and falling back to the queries would rank against the wrong words quietly",
+            )
+        })?;
+    let queries: Vec<String> = fields
+        .get("queries")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    let hero = fields.get("hero").and_then(Value::as_bool).unwrap_or(false);
+    let k = slot_k(fields.get("k").and_then(Value::as_u64), hero);
+    let tag_weight = fields
+        .get("tag_weight")
+        .or_else(|| fields.get("tagWeight"))
+        .and_then(Value::as_f64)
+        .map(|weight| weight.clamp(0.0, 1.0))
+        .unwrap_or(0.3);
+    let motion_min = fields
+        .get("motion_min")
+        .or_else(|| fields.get("motionMin"))
+        .and_then(Value::as_f64);
+    let exclude_ids: Vec<i64> = fields
+        .get("exclude_ids")
+        .or_else(|| fields.get("excludeIds"))
+        .and_then(Value::as_array)
+        .map(|list| list.iter().filter_map(Value::as_i64).collect())
+        .unwrap_or_default();
+
+    let mut search = json!({
+        "query": description,
+        "sort": "relevance",
+        "limit": RANK_POOL,
+    });
+    if let Some(min) = motion_min {
+        search["minMotion"] = json!(min);
+    }
+    if !exclude_ids.is_empty() {
+        search["excludeIds"] = json!(exclude_ids);
+    }
+    let remembered = search.clone();
+    let found = backend.call(request("openvid.search", search)?)?;
+    let found = crate::sense::semantic_rerank(&remembered, found, backend);
+    let rerank = found.get("rerank").cloned().unwrap_or(Value::Null);
+
+    // The hard filters, enforced on the page whatever came back: a clip
+    // under the floor or already used is not there.
+    let excluded: std::collections::HashSet<i64> = exclude_ids.into_iter().collect();
+    let mut page: Vec<Value> = found
+        .get("clips")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|clip| {
+            let above_floor = motion_min
+                .map(|floor| {
+                    clip.get("motion")
+                        .and_then(Value::as_f64)
+                        .is_none_or(|motion| motion >= floor)
+                })
+                .unwrap_or(true);
+            let not_used = clip
+                .get("id")
+                .and_then(Value::as_i64)
+                .is_none_or(|id| !excluded.contains(&id));
+            above_floor && not_used
+        })
+        .collect();
+
+    // The blend: the page's order is the seeing order, the tags are the
+    // words' agreement. A rank position scores the seeing - 1.0 at the
+    // front of the page, sliding to 0.0 at its end - and the Jaccard
+    // similarity scores the words; `tag_weight` says how much the words
+    // count. 0.3 by default: the description leads, the queries keep it
+    // honest.
+    let terms = slot_terms(description, &queries);
+    let total = page.len();
+    let mut scored: Vec<(f64, Value)> = page
+        .into_iter()
+        .enumerate()
+        .map(|(index, clip)| {
+            let rank_score = if total <= 1 {
+                1.0
+            } else {
+                1.0 - index as f64 / (total - 1) as f64
+            };
+            let caption = clip.get("caption").and_then(Value::as_str).unwrap_or("");
+            let score =
+                (1.0 - tag_weight) * rank_score + tag_weight * tag_similarity(&terms, caption);
+            (score, clip)
+        })
+        .collect();
+    scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    let clips: Vec<Value> = scored
+        .into_iter()
+        .take(k)
+        .enumerate()
+        .map(|(index, (score, mut clip))| {
+            if let Some(slot) = clip.as_object_mut() {
+                slot.insert("slotScore".into(), json!((score * 1000.0).round() / 1000.0));
+                slot.insert("slotRank".into(), json!(index + 1));
+            }
+            clip
+        })
+        .collect();
+
+    Ok(Outcome::json(json!({
+        "description": description,
+        "hero": hero,
+        "k": k,
+        "tagWeight": tag_weight,
+        "total": found.get("total").cloned().unwrap_or(Value::Null),
+        "rerank": rerank,
+        "clips": clips,
+    })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4120,6 +4384,18 @@ mod tests {
                 "openvid_search_batch",
                 json!({ "queries": ["ocean sunset", "city skyline"], "limit": 5 }),
             ),
+            (
+                "openvid_rank_for_slot",
+                json!({
+                    "description": "a slow aerial drift across the city skyline at dusk",
+                    "queries": ["city skyline aerial"],
+                    "k": 12,
+                    "hero": false,
+                    "tag_weight": 0.3,
+                    "motion_min": 1.5,
+                    "exclude_ids": [820_338_756_299],
+                }),
+            ),
         ]
     }
 
@@ -4299,6 +4575,29 @@ mod tests {
                     }
                     request("openvid.search", sample)
                 }
+                Action::OpenvidRankForSlot => {
+                    // The page the ranker shops: the description is the
+                    // query, relevance the sort, the pool the width, and
+                    // the hard filters ride under their API names - the
+                    // blend, the k and the hero flag are the reply's
+                    // business, not the search's.
+                    let mut fields = sample.as_object().cloned().unwrap_or_default();
+                    let query = fields.remove("description").unwrap_or(Value::Null);
+                    let min_motion = fields.remove("motion_min");
+                    let exclude_ids = fields.remove("exclude_ids");
+                    let mut search = json!({
+                        "query": query,
+                        "sort": "relevance",
+                        "limit": RANK_POOL,
+                    });
+                    if let Some(min) = min_motion {
+                        search["minMotion"] = min;
+                    }
+                    if let Some(ids) = exclude_ids {
+                        search["excludeIds"] = ids;
+                    }
+                    request("openvid.search", search)
+                }
             };
             let built = built.unwrap_or_else(|error| panic!("{name}: {error}"));
             // Back again: the request as the API writes it fits the API's
@@ -4400,6 +4699,191 @@ mod tests {
         fn describe(&self) -> Value {
             json!({ "mode": "test" })
         }
+    }
+
+    /// `openvid_rank_for_slot` refuses to shop for a slot that cannot say
+    /// what it wants: an empty, whitespace or absent description is an
+    /// error naming itself, not a quiet fallback to the queries.
+    #[test]
+    fn an_empty_description_is_an_error_not_a_fallback() {
+        let mut backend = Answers(
+            std::cell::RefCell::new(Vec::new()),
+            [json!({ "clips": [], "total": 0 })].into(),
+        );
+        for description in ["", "   ", "\n\t "] {
+            let error = openvid_rank_for_slot(
+                json!({ "description": description, "queries": ["city skyline"] }),
+                &mut backend,
+            )
+            .expect_err("an empty description refuses");
+            assert!(error.to_string().contains("description"), "{error}");
+        }
+        assert!(backend.0.borrow().is_empty(), "no search ever ran");
+        let error = openvid_rank_for_slot(json!({ "queries": ["city skyline"] }), &mut backend)
+            .expect_err("no description at all refuses");
+        assert!(error.to_string().contains("description"), "{error}");
+    }
+
+    /// A slot that names the clips it has already used never sees them
+    /// again: the filter rides the search request, and what the reply
+    /// carries anyway is dropped before the ranking sees it. A clip under
+    /// the motion floor is dropped the same way.
+    #[test]
+    fn a_slot_with_excluded_ids_never_returns_an_excluded_clip() {
+        let mut backend = Answers(
+            std::cell::RefCell::new(Vec::new()),
+            [json!({ "total": 3, "clips": [
+                { "id": 1, "caption": "a city skyline at dusk", "motion": 2.0 },
+                { "id": 2, "caption": "waves on a beach", "motion": 3.0 },
+                { "id": 3, "caption": "a city street at night", "motion": 0.5 },
+            ] })]
+            .into(),
+        );
+        let outcome = openvid_rank_for_slot(
+            json!({
+                "description": "a slow aerial drift across the city skyline at dusk",
+                "queries": ["city skyline aerial"],
+                "exclude_ids": [2],
+                "motion_min": 1.5,
+            }),
+            &mut backend,
+        )
+        .expect("ranks");
+        assert!(!outcome.is_error);
+        let reply = outcome.structured.expect("structured");
+        let clips = reply["clips"].as_array().expect("clips");
+        let ids: Vec<i64> = clips.iter().filter_map(|clip| clip["id"].as_i64).collect();
+        assert_eq!(
+            ids,
+            vec![1],
+            "the used id and the low-motion id are gone: {clips:?}"
+        );
+
+        // And the hard filters rode the request, so a real index does the
+        // work before the ranking too.
+        let calls = backend.0.borrow();
+        assert_eq!(calls[0]["method"], "openvid.search");
+        assert_eq!(
+            calls[0]["excludeIds"],
+            json!([2]),
+            "the used ids ride the request"
+        );
+        assert_eq!(calls[0]["minMotion"], 1.5, "the floor rides the request");
+        assert_eq!(
+            calls[0]["query"],
+            "a slow aerial drift across the city skyline at dusk"
+        );
+        assert_eq!(calls[0]["sort"], "relevance");
+        assert_eq!(calls[0]["limit"], json!(RANK_POOL));
+    }
+
+    /// A hero slot asks for thirty, any other slot asks for twelve, and
+    /// an explicit k is the caller's own. The reply says which it used.
+    #[test]
+    fn hero_widens_the_default_k() {
+        assert_eq!(slot_k(None, true), 30);
+        assert_eq!(slot_k(None, false), 12);
+        assert_eq!(slot_k(Some(5), true), 5);
+        assert_eq!(slot_k(Some(5), false), 5);
+
+        let clips: Vec<Value> = (1..=6)
+            .map(|id| {
+                json!({ "id": id, "caption": format!("a city skyline shot {id}"), "motion": 2.0 })
+            })
+            .collect();
+        for (hero, expected) in [(true, 30), (false, 12)] {
+            let mut backend = Answers(
+                std::cell::RefCell::new(Vec::new()),
+                [json!({ "total": 6, "clips": clips.clone() })].into(),
+            );
+            let outcome = openvid_rank_for_slot(
+                json!({ "description": "a city skyline at dusk", "hero": hero }),
+                &mut backend,
+            )
+            .expect("ranks");
+            let reply = outcome.structured.expect("structured");
+            assert_eq!(
+                reply["k"],
+                json!(expected),
+                "the reply says the page a hero asks for"
+            );
+            assert_eq!(
+                reply["clips"].as_array().map(Vec::len),
+                Some(6),
+                "a six-clip page is all of it, at either k"
+            );
+        }
+
+        // An explicit k wins over the hero default.
+        let mut backend = Answers(
+            std::cell::RefCell::new(Vec::new()),
+            [json!({ "total": 6, "clips": clips })].into(),
+        );
+        let outcome = openvid_rank_for_slot(
+            json!({ "description": "a city skyline at dusk", "hero": true, "k": 5 }),
+            &mut backend,
+        )
+        .expect("ranks");
+        let reply = outcome.structured.expect("structured");
+        assert_eq!(reply["k"], json!(5));
+        assert_eq!(reply["clips"].as_array().map(Vec::len), Some(5));
+    }
+
+    /// The returned list is ordered by score, numbered by rank, and the
+    /// tags moved something: a caption carrying the slot's terms outscores
+    /// an equal-position caption sharing none of them.
+    #[test]
+    fn the_returned_list_is_ordered_by_score() {
+        let clips = vec![
+            json!({ "id": 1, "caption": "a random assortment of words", "motion": 2.0 }),
+            json!({ "id": 2, "caption": "a city skyline at dusk", "motion": 2.0 }),
+            json!({ "id": 3, "caption": "something else entirely", "motion": 2.0 }),
+        ];
+        let mut backend = Answers(
+            std::cell::RefCell::new(Vec::new()),
+            [json!({ "total": 3, "clips": clips })].into(),
+        );
+        let outcome = openvid_rank_for_slot(
+            json!({
+                "description": "a city skyline at dusk",
+                "tag_weight": 0.5,
+            }),
+            &mut backend,
+        )
+        .expect("ranks");
+        let reply = outcome.structured.expect("structured");
+        let clips = reply["clips"].as_array().expect("clips");
+        let scores: Vec<f64> = clips
+            .iter()
+            .filter_map(|clip| clip["slotScore"].as_f64)
+            .collect();
+        assert_eq!(scores.len(), 3, "every clip carries its score");
+        for pair in scores.windows(2) {
+            assert!(pair[0] >= pair[1], "the scores only go down: {scores:?}");
+        }
+        let ranks: Vec<u64> = clips
+            .iter()
+            .filter_map(|clip| clip["slotRank"].as_u64)
+            .collect();
+        assert_eq!(ranks, vec![1, 2, 3], "{clips:?}");
+        // The tag blend moved the agreeing clip to the front: the words
+        // count, not just the page order.
+        assert_eq!(clips[0]["id"], json!(2), "{clips:?}");
+    }
+
+    /// The tags are their own arithmetic: terms drop the glue words, and
+    /// a caption carrying every term is a perfect agreement.
+    #[test]
+    fn the_tags_score_the_words_the_slot_asked_for() {
+        let terms = slot_terms("a city skyline at dusk", &["city skyline aerial", "the"]);
+        assert_eq!(
+            terms,
+            vec!["city", "skyline", "dusk", "aerial"],
+            "{terms:?}"
+        );
+        assert_eq!(tag_similarity(&terms, "a city skyline at dusk"), 1.0);
+        assert!(tag_similarity(&terms, "waves on a beach") < 0.2);
+        assert_eq!(tag_similarity(&[], "anything"), 0.0);
     }
 
     /// The batch runs one `openvid.search` per query, carrying the shared

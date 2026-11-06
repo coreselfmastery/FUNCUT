@@ -4711,16 +4711,21 @@ mod tests {
             [json!({ "clips": [], "total": 0 })].into(),
         );
         for description in ["", "   ", "\n\t "] {
-            let error = openvid_rank_for_slot(
+            let error = match openvid_rank_for_slot(
                 json!({ "description": description, "queries": ["city skyline"] }),
                 &mut backend,
-            )
-            .expect_err("an empty description refuses");
+            ) {
+                Err(error) => error,
+                Ok(_) => panic!("an empty description refuses"),
+            };
             assert!(error.to_string().contains("description"), "{error}");
         }
         assert!(backend.0.borrow().is_empty(), "no search ever ran");
-        let error = openvid_rank_for_slot(json!({ "queries": ["city skyline"] }), &mut backend)
-            .expect_err("no description at all refuses");
+        let error =
+            match openvid_rank_for_slot(json!({ "queries": ["city skyline"] }), &mut backend) {
+                Err(error) => error,
+                Ok(_) => panic!("no description at all refuses"),
+            };
         assert!(error.to_string().contains("description"), "{error}");
     }
 
@@ -4752,7 +4757,10 @@ mod tests {
         assert!(!outcome.is_error);
         let reply = outcome.structured.expect("structured");
         let clips = reply["clips"].as_array().expect("clips");
-        let ids: Vec<i64> = clips.iter().filter_map(|clip| clip["id"].as_i64).collect();
+        let ids: Vec<i64> = clips
+            .iter()
+            .filter_map(|clip| clip["id"].as_i64())
+            .collect();
         assert_eq!(
             ids,
             vec![1],
@@ -4855,7 +4863,7 @@ mod tests {
         let clips = reply["clips"].as_array().expect("clips");
         let scores: Vec<f64> = clips
             .iter()
-            .filter_map(|clip| clip["slotScore"].as_f64)
+            .filter_map(|clip| clip["slotScore"].as_f64())
             .collect();
         assert_eq!(scores.len(), 3, "every clip carries its score");
         for pair in scores.windows(2) {
@@ -4863,9 +4871,9 @@ mod tests {
         }
         let ranks: Vec<u64> = clips
             .iter()
-            .filter_map(|clip| clip["slotRank"].as_u64)
+            .filter_map(|clip| clip["slotRank"].as_u64())
             .collect();
-        assert_eq!(ranks, vec![1, 2, 3], "{clips:?}");
+        assert_eq!(ranks, vec![1u64, 2, 3], "{clips:?}");
         // The tag blend moved the agreeing clip to the front: the words
         // count, not just the page order.
         assert_eq!(clips[0]["id"], json!(2), "{clips:?}");

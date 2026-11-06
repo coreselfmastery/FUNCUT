@@ -4957,7 +4957,10 @@ mod tests {
     /// a caption carrying every term is a perfect agreement.
     #[test]
     fn the_tags_score_the_words_the_slot_asked_for() {
-        let terms = slot_terms("a city skyline at dusk", &["city skyline aerial", "the"]);
+        let terms = slot_terms(
+            "a city skyline at dusk",
+            &["city skyline aerial".to_owned(), "the".to_owned()],
+        );
         assert_eq!(
             terms,
             vec!["city", "skyline", "dusk", "aerial"],

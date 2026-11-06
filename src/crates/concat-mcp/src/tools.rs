@@ -5007,8 +5007,10 @@ mod tests {
         assert_eq!(reply["flags"], json!([]));
 
         // And a manifest that does not read is refused, not guessed at.
-        let error = footage_continuity(json!({ "clips": [{ "slotId": 3 }] }))
-            .expect_err("a manifest that does not read refuses");
+        let error = match footage_continuity(json!({ "clips": [{ "slotId": 3 }] })) {
+            Err(error) => error,
+            Ok(_) => panic!("a manifest that does not read refuses"),
+        };
         assert!(error.to_string().contains("does not read"), "{error}");
     }
 

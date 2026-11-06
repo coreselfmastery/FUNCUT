@@ -177,6 +177,15 @@ def _ffmpeg(spec):
             shutil.which("ffprobe") or "ffprobe")
 
 
+def _ffmpeg_runs(spec=None):
+    """Whether a decoder this module can drive is actually on the machine.
+    The loudness and pause readings ride ffmpeg; everything else is
+    pure Python, and the selftest says which half it proved."""
+    ff, _ = _ffmpeg(spec or {})
+    rc, _, _ = _run([ff, "-hide_banner", "-version"], 10)
+    return rc == 0
+
+
 def _run(cmd, timeout=120):
     try:
         done = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -197,6 +206,8 @@ def _silence_spans(ff, path, threshold_db, min_silence):
            "-f", "null", "-"]
     rc, _, err = _run(cmd, 240)
     text = err.decode("utf-8", "replace")
+    if rc != 0:
+        raise RuntimeError(f"silencedetect failed (rc {rc}): {text.strip()[-200:] or 'no decoder - set FUNCUT_FFMPEG or install ffmpeg'}")
     duration = None
     total = re.search(r"Duration:\s*([0-9:.]+)", text)
     if total:
@@ -229,6 +240,8 @@ def _momentary_series(ff, path):
     cmd = [ff, "-hide_banner", "-nostats", "-i", path,
            "-filter_complex", "ebur128=peak=true", "-f", "null", "-"]
     rc, _, err = _run(cmd, 240)
+    if rc != 0:
+        raise RuntimeError("ebur128 pass failed (rc %d): %s" % (rc, err.decode("utf-8", "replace").strip()[-200:] or "no decoder - set FUNCUT_FFMPEG or install ffmpeg"))
     series = []
     for match in _MOMENTARY.finditer(err.decode("utf-8", "replace")):
         t = float(match.group(1))
@@ -806,7 +819,7 @@ def _signal_confidence(sources, audio, rust, wx_words, series, notes):
                                  "150 wpm")
 
     # Word confidence: whisperx scores or the measured gate.
-    if sources.get("wordConfidence", "").startswith("whisperx"):
+    if str(sources.get("wordConfidence") or "").startswith("whisperx"):
         entry("wordConfidence", 0.9, "whisperx alignment scores")
     elif sources.get("wordConfidence"):
         entry("wordConfidence", 0.6,
@@ -1212,18 +1225,31 @@ def selftest():
         if not result.get("ok"):
             return {"ok": False, "selftest": "extract failed", "error": result.get("error")}
         lines = result["lines"]
-        # The pause classes: breath, beat, dramatic and dead air all found.
-        kinds = {p["class"] for p in result["pauses"]}
-        for wanted in ("breath", "beat", "dramatic", "dead_air"):
-            if wanted not in kinds:
-                failures.append(f"pause class {wanted} not found in {sorted(kinds)}")
-        # The dramatic hold is protected.
-        if not all(p["keep"] for p in result["pauses"] if p["class"] != "dead_air"):
-            failures.append("a keep-class pause was marked cuttable")
-        # Per-line loudness exists and the first line is a question.
-        if not all(isinstance(l.get("loudness"), dict) and
-                   l["loudness"].get("meanLufsM") is not None for l in lines):
-            failures.append("per-line loudness missing")
+        # Half the signals ride ffmpeg (silencedetect, ebur128); the rest
+        # are pure Python. The selftest proves everything it can on this
+        # machine and names the half it proved.
+        measured = _ffmpeg_runs(spec)
+        if measured:
+            # The pause classes: breath, beat, dramatic and dead air all found.
+            kinds = {p["class"] for p in result["pauses"]}
+            for wanted in ("breath", "beat", "dramatic", "dead_air"):
+                if wanted not in kinds:
+                    failures.append(f"pause class {wanted} not found in {sorted(kinds)}")
+            # The dramatic hold is protected.
+            if not all(p["keep"] for p in result["pauses"] if p["class"] != "dead_air"):
+                failures.append("a keep-class pause was marked cuttable")
+            # Per-line loudness exists.
+            if not all(isinstance(l.get("loudness"), dict) and
+                       l["loudness"].get("meanLufsM") is not None for l in lines):
+                failures.append("per-line loudness missing")
+        else:
+            kinds = set()
+            # The honest absence, not a silent skip: the notes name the
+            # measurement that could not run.
+            if not any("failed" in str(n) or "no ffmpeg" in str(n) for n in result["notes"]):
+                failures.append(f"no ffmpeg and no note naming it: {result['notes']}")
+            if any(l.get("loudness") for l in lines):
+                failures.append("loudness answered without a decoder to measure it")
         if lines[0]["sentence"]["type"] != "question":
             failures.append(f"line 0 read as {lines[0]['sentence']['type']}, not question")
         if lines[2]["sentence"]["type"] != "statement":
@@ -1264,8 +1290,8 @@ def selftest():
             entry = signals.get(family)
             if not entry or "confidence" not in entry or not entry.get("basis"):
                 failures.append(f"no confidence for {family}: {entry}")
-        if signals.get("loudness", {}).get("confidence", 0) < 0.5:
-            failures.append("loudness confidence low on a real take")
+        if measured and signals.get("loudness", {}).get("confidence", 0) < 0.5:
+            failures.append("loudness confidence low on a real take with a decoder on it")
         # The decision policy: every decision names its signals.
         policy = result.get("decisionPolicy") or {}
         for decision in ("cut", "caption", "graphic", "bgm", "transition"):
@@ -1277,6 +1303,9 @@ def selftest():
         return {"ok": True, "selftest": "python signals answer",
                 "durationSec": round(duration, 3),
                 "pauseClasses": sorted(kinds),
+                "measured": "ffmpeg-backed signals proven" if measured
+                            else "no ffmpeg: the text, timing and confidence signals proven, "
+                                 "the loudness and pause readings named as absent in the notes",
                 "rustEars": "ran" if result.get("speaker") else "absent (build the binary for them)"}
     finally:
         shutil.rmtree(workdir, ignore_errors=True)

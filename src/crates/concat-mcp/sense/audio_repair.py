@@ -88,6 +88,19 @@ def _run_ffmpeg(ff, args, timeout=480):
     return True, None
 
 
+def _needs_ffmpeg(spec):
+    """The writing tools filter through ffmpeg; without a decoder they
+    refuse cleanly, naming the way to one, instead of dying on a missing
+    binary. The reading tools decode WAV natively and never get here."""
+    ff, _ = _vs._ffmpeg(spec)
+    rc, _, _ = _vs._run([ff, "-hide_banner", "-version"], 10)
+    if rc != 0:
+        return {"ok": False,
+                "error": "no ffmpeg on this machine: set FUNCUT_FFMPEG to a decoder "
+                         "(or install one) - the writing tools filter through it"}
+    return None
+
+
 def _output_path(spec, source, suffix):
     """Where a writing tool lands its file: the caller's `out`, else beside
     the input. The input itself is never the target."""
@@ -132,6 +145,8 @@ def _enhance_speech(spec):
     audio = spec.get("audio") or spec.get("path")
     if not audio or not Path(str(audio)).is_file():
         return {"ok": False, "error": f"no such audio file: {audio}"}
+    if (refusal := _needs_ffmpeg(spec)):
+        return refusal
     ff, _ = _vs._ffmpeg(spec)
     samples, _ = _vq._pcm(spec, audio)
     if samples is None or not len(samples):
@@ -214,6 +229,8 @@ def _remove_hiss_hum_rumble(spec):
     audio = spec.get("audio") or spec.get("path")
     if not audio or not Path(str(audio)).is_file():
         return {"ok": False, "error": f"no such audio file: {audio}"}
+    if (refusal := _needs_ffmpeg(spec)):
+        return refusal
     ff, _ = _vs._ffmpeg(spec)
     samples, _ = _vq._pcm(spec, audio)
     if samples is None or not len(samples):
@@ -366,6 +383,8 @@ def _normalize_loudness(spec):
     audio = spec.get("audio") or spec.get("path")
     if not audio or not Path(str(audio)).is_file():
         return {"ok": False, "error": f"no such audio file: {audio}"}
+    if (refusal := _needs_ffmpeg(spec)):
+        return refusal
     ff, _ = _vs._ffmpeg(spec)
 
     platform = str(spec.get("platform") or "").lower()
@@ -864,6 +883,12 @@ def selftest(only=None):
             "identify_music": {"audio": music},
             "analyze_music_structure": {"audio": music},
         }
+        # The three writers filter through ffmpeg; without a decoder they
+        # must refuse cleanly, naming the way to one - that refusal is
+        # what the selftest proves on a machine with no ffmpeg, beside
+        # the music reads, which decode WAV natively and prove fully.
+        writers = ("enhance_speech", "remove_hiss_hum_rumble", "normalize_loudness")
+        no_ffmpeg = (refusal := _needs_ffmpeg({})) is not None
         for name, handler in TOOLS.items():
             if only and name != only:
                 continue
@@ -871,7 +896,14 @@ def selftest(only=None):
             try:
                 out = handler(spec)
                 extra = None
-                if name in ("enhance_speech", "remove_hiss_hum_rumble", "normalize_loudness"):
+                if name in writers:
+                    if no_ffmpeg:
+                        refused_cleanly = (not out.get("ok")
+                                           and "FUNCUT_FFMPEG" in str(out.get("error") or ""))
+                        extra = "clean refusal (no ffmpeg)" if refused_cleanly else "no file!"
+                        checks.append({"tool": name, "ok": refused_cleanly,
+                                       "error": out.get("error"), "extra": extra})
+                        continue
                     made = out.get("file")
                     extra = "file written" if (made and Path(str(made)).is_file()) else "no file!"
                 checks.append({"tool": name, "ok": bool(out.get("ok")) and extra != "no file!",

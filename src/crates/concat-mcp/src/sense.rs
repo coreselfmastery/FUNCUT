@@ -1811,10 +1811,313 @@ const SENSE_FAMILY_TOOLS: &[SenseFamilyTool] = &[
     },
 ];
 
-/// The door the thirty-three family tools come through: the name selects
-/// the row, the row names the sidecar command and the fields that travel,
-/// and the budget scales with the lines the way `voice_signals`'s does -
-/// a transcript-heavy call is real work, a script-only call is not.
+/// The five family doors and the members each one serves: the catalogue
+/// names the family, the `action` argument names the member, and this
+/// table is the boundary between them - a member named through the wrong
+/// family is refused here, with the family that carries it named.
+const SENSE_FAMILIES: &[(&str, &[&str])] = &[
+    (
+        "discourse",
+        &[
+            "analyze_discourse",
+            "segment_topics",
+            "detect_speech_acts",
+            "classify_speech_acts",
+            "score_readability",
+            "extract_claim_graph",
+            "score_script_quality",
+            "detect_sarcasm",
+            "detect_code_switching",
+            "detect_cross_lingual_emotion",
+        ],
+    ),
+    (
+        "voiceq",
+        &[
+            "detect_vocal_events",
+            "classify_voice_quality",
+            "classify_recording_quality",
+            "measure_reverb",
+            "detect_restarts",
+            "classify_filler_type",
+        ],
+    ),
+    (
+        "prosody",
+        &[
+            "score_emphasis_type",
+            "detect_speaking_style",
+            "measure_rhythm_meter",
+            "detect_tempo_changes",
+            "detect_accent",
+            "measure_vocal_tract",
+        ],
+    ),
+    (
+        "audiorepair",
+        &[
+            "enhance_speech",
+            "remove_hiss_hum_rumble",
+            "normalize_loudness",
+            "detect_music_segments",
+            "identify_music",
+            "analyze_music_structure",
+        ],
+    ),
+    (
+        "captions",
+        &[
+            "evaluate_tts_quality",
+            "detect_ai_voice",
+            "seal_voice",
+            "align_captions",
+            "clean_subtitles",
+        ],
+    ),
+];
+
+/// One family tool's input schema: the `action` enum is the family's
+/// members, `selftest` runs the member's own proof, and the fields are
+/// the union of what the family's members take - each named only where a
+/// member reads it, so the schema stays one screen tall.
+pub(crate) fn sense_family_schema(name: &str) -> Value {
+    let Some((_, members)) = SENSE_FAMILIES
+        .iter()
+        .find(|(family, _)| *family == family_key(name))
+    else {
+        return json!({ "type": "object" });
+    };
+    let string = |description: &str| json!({ "type": "string", "description": description });
+    let transcript = || json!({ "type": "object", "description": "A transcribe job's output: {segments: [{text, start, end, words: [{text,start,end}]}]} - the word timings the timing reads need." });
+    let lines = || json!({ "type": "array", "description": "Lines as [{text, start, end, words}] (or bare strings) when there is no transcript.", "items": { "type": ["object", "string"] } });
+    let script = || json!({ "type": "string", "description": "Raw narration text when there is no transcript or audio; the text-only signals still answer." });
+    let mut props = Map::new();
+    props.insert(
+        "action".to_owned(),
+        json!({
+            "type": "string",
+            "enum": members,
+            "description": "The reading to run, one of this family's.",
+        }),
+    );
+    props.insert(
+        "selftest".to_owned(),
+        json!({
+            "type": "boolean",
+            "default": false,
+            "description": "Run the reading's built-in proof instead of an extract.",
+        }),
+    );
+    let takes_text = matches!(
+        name,
+        "sense_discourse" | "sense_voice_quality" | "sense_prosody_style"
+    );
+    let takes_audio = name != "sense_discourse";
+    if takes_audio {
+        props.insert(
+            "audio".to_owned(),
+            string(
+                "The voiceover file (any format ffmpeg reads) the reading needs; never modified.",
+            ),
+        );
+    }
+    if takes_text {
+        props.insert("transcript".to_owned(), transcript());
+        props.insert("lines".to_owned(), lines());
+        props.insert("script".to_owned(), script());
+    }
+    let member = |name: &str| members.contains(&name);
+    if member("segment_topics") {
+        props.insert(
+            "maxSegments".to_owned(),
+            json!({ "type": "integer", "minimum": 2, "maximum": 24, "default": 12, "description": "segment_topics: the most topic boundaries to cut at." }),
+        );
+    }
+    if member("score_script_quality") {
+        props.insert(
+            "targetSeconds".to_owned(),
+            json!({ "type": "number", "minimum": 3, "description": "score_script_quality: the duration the script must fit; the 150-wpm estimate names the word count to cut." }),
+        );
+    }
+    if member("detect_code_switching") || member("detect_cross_lingual_emotion") {
+        props.insert(
+            "language".to_owned(),
+            string("detect_code_switching / detect_cross_lingual_emotion: the language hint the transcribe call used (ISO code)."),
+        );
+    }
+    if member("measure_rhythm_meter") {
+        props.insert(
+            "bpm".to_owned(),
+            json!({ "type": "number", "minimum": 30, "maximum": 300, "description": "measure_rhythm_meter: a BPM hint - which syllable nuclei land on the beat grid." }),
+        );
+    }
+    if member("enhance_speech") || member("normalize_loudness") {
+        props.insert(
+            "out".to_owned(),
+            string("enhance_speech / remove_hiss_hum_rumble / normalize_loudness: the output file; defaults beside the input."),
+        );
+        props.insert(
+            "overwrite".to_owned(),
+            json!({ "type": "boolean", "default": false, "description": "Replace an existing output file." }),
+        );
+    }
+    if member("enhance_speech") {
+        props.insert(
+            "targetLufs".to_owned(),
+            json!({ "type": "number", "default": -16, "minimum": -40, "maximum": 0, "description": "enhance_speech: the loudness the chain lands on." }),
+        );
+        props.insert(
+            "targetTruePeakDbtp".to_owned(),
+            json!({ "type": "number", "default": -1.5, "minimum": -9, "maximum": 0, "description": "enhance_speech: the true-peak ceiling." }),
+        );
+    }
+    if member("remove_hiss_hum_rumble") {
+        props.insert(
+            "force".to_owned(),
+            json!({ "type": "boolean", "default": false, "description": "remove_hiss_hum_rumble: clean even when the take is cleaner than the cure." }),
+        );
+    }
+    if member("normalize_loudness") {
+        props.insert(
+            "platform".to_owned(),
+            json!({ "type": "string", "enum": ["youtube", "spotify", "reels-tiktok", "streaming", "podcast", "apple-podcast", "broadcast-eu", "broadcast-atsc", "quiet"], "description": "normalize_loudness: the platform whose loudness target to land on (-14 streaming, -16 podcast, -23 EBU, -24 ATSC)." }),
+        );
+        props.insert(
+            "targetLufs".to_owned(),
+            json!({ "type": "number", "default": -14, "minimum": -40, "maximum": 0, "description": "normalize_loudness: the loudness to land on; the platform default when absent." }),
+        );
+        props.insert(
+            "targetTruePeakDbtp".to_owned(),
+            json!({ "type": "number", "default": -1, "minimum": -9, "maximum": 0, "description": "normalize_loudness: the true-peak ceiling." }),
+        );
+    }
+    if member("seal_voice") {
+        props.insert(
+            "policy".to_owned(),
+            json!({ "type": "object", "description": "seal_voice: the usage record - {allowedUses: [string], expiry: ISO date, attribution, license, syntheticVoiceDisclosure}.", "properties": {
+                "allowedUses": { "type": "array", "items": { "type": "string" } },
+                "expiry": { "type": "string" },
+                "attribution": { "type": "string" },
+                "license": { "type": "string" },
+                "syntheticVoiceDisclosure": { "type": ["string", "boolean"] },
+            }, "additionalProperties": false }),
+        );
+    }
+    if member("evaluate_tts_quality") || member("align_captions") {
+        // The captions family's text inputs ride on the members that read
+        // them: transcript/lines for the TTS and alignment reads, script
+        // for alignment and subtitle hygiene.
+        props.insert("transcript".to_owned(), transcript());
+        props.insert("lines".to_owned(), lines());
+    }
+    if member("align_captions") || member("clean_subtitles") {
+        props.insert("script".to_owned(), script());
+    }
+    if member("align_captions") {
+        props.insert(
+            "maxCharsPerSecond".to_owned(),
+            json!({ "type": "number", "default": 17, "minimum": 5, "maximum": 40, "description": "align_captions: the caption pace ceiling." }),
+        );
+        props.insert(
+            "maxDurationSeconds".to_owned(),
+            json!({ "type": "number", "default": 5, "minimum": 1, "maximum": 15, "description": "align_captions: the longest a cue may hold." }),
+        );
+        props.insert(
+            "minDurationSeconds".to_owned(),
+            json!({ "type": "number", "default": 0.9, "minimum": 0.3, "maximum": 3, "description": "align_captions: the shortest a cue may flash." }),
+        );
+        props.insert(
+            "maxCharsPerLine".to_owned(),
+            json!({ "type": "integer", "default": 42, "minimum": 16, "maximum": 84, "description": "align_captions / clean_subtitles: the line length before wrapping." }),
+        );
+    }
+    if member("clean_subtitles") {
+        props.insert(
+            "srt".to_owned(),
+            string("clean_subtitles: raw SRT text to parse and clean."),
+        );
+        props.insert(
+            "stripFillers".to_owned(),
+            json!({ "type": "boolean", "default": true, "description": "clean_subtitles: take the um/uh out of the cues." }),
+        );
+        props.insert(
+            "format".to_owned(),
+            json!({ "type": "string", "enum": ["cues", "srt"], "default": "cues", "description": "clean_subtitles: the shape of the cleaned reply." }),
+        );
+    }
+    json!({
+        "type": "object",
+        "properties": props,
+        "required": ["action"],
+        "additionalProperties": false,
+    })
+}
+
+/// The catalogue's family tool name to the family key the sidecar's cmd
+/// uses: sense_audio_repair -> audiorepair, sense_voice_quality -> voiceq.
+fn family_key(tool: &str) -> &str {
+    match tool {
+        "sense_discourse" => "discourse",
+        "sense_voice_quality" => "voiceq",
+        "sense_prosody_style" => "prosody",
+        "sense_audio_repair" => "audiorepair",
+        _ => "captions",
+    }
+}
+
+/// The door the thirty-three consumption-layer readings come through
+/// from their five family tools: `action` names the member, the member's
+/// row names the sidecar command and the fields that travel, and the
+/// budget scales with the lines the way `voice_signals`'s does - a
+/// transcript-heavy call is real work, a script-only call is not.
+pub fn sense_family_action(family: &str, arguments: Value) -> Result<Outcome, ApiError> {
+    let members = SENSE_FAMILIES
+        .iter()
+        .find(|(key, _)| *key == family)
+        .map(|(_, members)| *members)
+        .ok_or_else(|| invalid(&format!("unknown sense family `{family}`")))?;
+    let fields = arguments
+        .as_object()
+        .cloned()
+        .ok_or_else(|| invalid("the arguments are an object"))?;
+    // `action` is the member: the family tool's whole shape. A missing or
+    // unknown one is refused with the family's real members named - the
+    // agent reads one refusal instead of a Python traceback.
+    let member = fields
+        .get("action")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| invalid(&format!("name `action`: one of {}", members.join(", "))))?;
+    if !members.contains(&member.as_str()) {
+        return Err(invalid(&format!(
+            "`{member}` is not one of this family's actions: {}",
+            members.join(", ")
+        )));
+    }
+    let selftest = fields.get("selftest").and_then(Value::as_bool) == Some(true);
+    // The selftest boolean becomes the member's own action; without it
+    // the sidecar's contract defaults to "extract".
+    let mut fields = fields;
+    fields.remove("action");
+    fields.remove("selftest");
+    if selftest {
+        fields.insert("action".to_owned(), json!("selftest"));
+    }
+    sense_family(&member, Value::Object(fields)).map(|mut outcome| {
+        // The reply names the member that answered, so a family call's
+        // result reads the same as the reading it ran.
+        if let Some(structured) = outcome.structured.as_mut() {
+            structured["action"] = json!(member);
+        }
+        outcome
+    })
+}
+
+/// The door the thirty-three family members come through when named
+/// directly (the internal dispatch `sense_family_action` lands on): the
+/// name selects the row, the row names the sidecar command and the
+/// fields that travel, and the budget scales with the lines the way
+/// `voice_signals`'s does.
 pub fn sense_family(name: &str, arguments: Value) -> Result<Outcome, ApiError> {
     let row = SENSE_FAMILY_TOOLS
         .iter()
@@ -2082,5 +2385,81 @@ mod tests {
     fn base64_round_trips_a_png_header() {
         let png = b"\x89PNG\r\n\x1a\n\x00\x01\xff";
         assert_eq!(base64(png), "iVBORw0KGgoAAf8=");
+    }
+
+    /// The five family doors: `action` names a member, a member named
+    /// through the wrong family is refused with both families' real
+    /// members, and the schemas carry every member in their enum. None
+    /// of this runs Python - the refusals answer before the sidecar is
+    /// ever asked.
+    #[test]
+    fn the_family_doors_name_their_members_and_refuse_the_wrong_family() {
+        // Every family's schema carries exactly its members as the
+        // action enum, and `action` is required.
+        let doors = [
+            ("sense_discourse", "discourse"),
+            ("sense_voice_quality", "voiceq"),
+            ("sense_prosody_style", "prosody"),
+            ("sense_audio_repair", "audiorepair"),
+            ("sense_captions", "captions"),
+        ];
+        let mut members = 0;
+        for (tool, family) in doors {
+            let schema = sense_family_schema(tool);
+            assert_eq!(schema["type"], "object", "{tool}");
+            assert_eq!(
+                schema["required"],
+                json!(["action"]),
+                "{tool}: action is required"
+            );
+            let choices = schema["properties"]["action"]["enum"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{tool}: the action enum"));
+            let (_, expected) = SENSE_FAMILIES
+                .iter()
+                .find(|(key, _)| *key == family)
+                .expect("the family");
+            assert_eq!(
+                choices.len(),
+                expected.len(),
+                "{tool}: the enum and the family table agree"
+            );
+            for name in *expected {
+                assert!(
+                    choices.contains(&json!(name)),
+                    "{tool}: {name} missing from the enum"
+                );
+            }
+            members += expected.len();
+        }
+        assert_eq!(members, 33, "thirty-three readings behind five doors");
+        // A member named through the wrong family is refused by name,
+        // with the family's real members listed - no Python involved.
+        let wrong = match sense_family_action(
+            "discourse",
+            json!({ "action": "enhance_speech", "audio": "/tmp/x.wav" }),
+        ) {
+            Err(wrong) => wrong,
+            Ok(_) => panic!("enhance_speech is not a discourse reading"),
+        };
+        assert!(
+            wrong.to_string().contains("enhance_speech"),
+            "the refusal names the member: {wrong}"
+        );
+        assert!(
+            wrong.to_string().contains("analyze_discourse"),
+            "the refusal names the family's members: {wrong}"
+        );
+        // A missing action is refused the same way.
+        let missing = match sense_family_action("voiceq", json!({ "audio": "/tmp/x.wav" })) {
+            Err(missing) => missing,
+            Ok(_) => panic!("action is required"),
+        };
+        assert!(
+            missing.to_string().contains("detect_vocal_events"),
+            "the refusal names the members: {missing}"
+        );
+        // An unknown family is refused too.
+        assert!(sense_family_action("nope", json!({ "action": "x" })).is_err());
     }
 }

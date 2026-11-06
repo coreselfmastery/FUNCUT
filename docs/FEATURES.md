@@ -8,7 +8,7 @@ detail elsewhere, the link says so.
 
 The one-paragraph version: FUNCUT is the Concat editor (a native Rust, GPU
 composited, CapCut-class video editor for Linux) tuned for small machines,
-plus an agent stack bolted onto it — a built-in MCP server with **133 tools**,
+plus an agent stack bolted onto it — a built-in MCP server with **105 tools**,
 an analysis/sense layer, an emotion-driven edit pipeline with a brand kit, a
 motion-graphics engine with its own sidecar, and two Claude skills (a director
 that runs a 12-phase measured pipeline, and maestro, a vendored design and
@@ -19,7 +19,7 @@ with one click.
 
 | What | Count | Where it lives |
 | --- | --- | --- |
-| MCP tools | **133** | `src/crates/concat-mcp/src/tools.rs` (`catalogue()`) |
+| MCP tools | **105** | `src/crates/concat-mcp/src/tools.rs` (`catalogue()`) |
 | JSON-RPC API methods | 48 requests + 8 progress notifications | `src/crates/concat-api/src/message.rs` |
 | Core edit commands (`edit.apply` ops) | **52** | `src/crates/concat-project/src/commands/mod.rs` |
 | Effect/filter/transition/audio packages | **327** = 57 filters + 123 effects + 122 transitions + 25 audio | `src/crates/concat-effects/packages/` |
@@ -165,7 +165,7 @@ Nothing here is bundled whole; indexes download once, media arrives per pick.
 
 ## The agent layer
 
-- **The MCP server** (`concat --mcp`, [docs/MCP.md](MCP.md)): **133 tools**
+- **The MCP server** (`concat --mcp`, [docs/MCP.md](MCP.md)): **105 tools**
   over stdio, both protocol eras (initialize handshake and per-request
   `_meta`), schemas generated from the API's own types so an agent cannot
   invent an argument. It reaches the engine through the open window
@@ -254,7 +254,11 @@ Nothing here is bundled whole; indexes download once, media arrives per pick.
   always; the Rust `voice-signals` crate (spectral-prosody,
   oximedia-audio-analysis, polyvoice 0.17, anno offline NER) for
   prosody, forensics, speakers and entities; WhisperX (pip) for aligned
-  words with scores. ~36 signals, each naming its source.
+  words with scores. ~36 signals, each naming its source, each carrying a
+  confidence and basis in `signalConfidence`; the `decisionPolicy` table
+  names the signals each editing decision reads, and the plan's
+  `signalLog` (checked by `plan_validate`) records which ones drove each
+  cut, caption, graphic, BGM and transition choice.
 - **The creative brief & the brand box** (`creative_brief`): the WHY of the
   edit persisted as `creative-brief.json` in the project — audience,
   platform, goal, thesis, curiosityGap, payoff, emotionalArc,
@@ -467,7 +471,7 @@ model at all.
 | Speech (whisper.cpp, three TTS families) | `src/crates/concat-speech` |
 | Motion engine (Geneva, presets, authoring) | `src/crates/concat-motion` |
 | The API (JSON-RPC methods, jobs) | `src/crates/concat-api` |
-| The MCP server (133 tools, senses, emotion, voice signals) | `src/crates/concat-mcp` |
+| The MCP server (105 tools, senses, emotion, voice signals) | `src/crates/concat-mcp` |
 | The socket server + CLI | `src/crates/concat-server`, `concat-cli` |
 | The window (Slint UI, studio controller) | `src/crates/concat` |
 | Session, proxies, models, templates, sounds | `src/crates/concat-host` |

@@ -130,11 +130,17 @@ pub enum Action {
     /// The voiceover read as a score: loudness, pauses, rate, prosody,
     /// speakers, entities - and the cut decisions they drive.
     VoiceSignals,
-    /// One of the thirty-three consumption-layer sense tools, named: the
-    /// name selects the Python family module and the row that says which
-    /// fields travel. Discourse, voice quality, prosody, audio repair and
-    /// captions - what the director DOES with the voice_signals reading.
+    /// One of the consumption-layer readings, reached through its
+    /// family tool: the name selects the Python family module and the
+    /// row that says which fields travel. Discourse, voice quality,
+    /// prosody, audio repair and captions - what the director DOES with
+    /// the voice_signals reading.
     Sense(&'static str),
+    /// A family door to the consumption-layer readings: `action` in the
+    /// arguments names one of the family's [`Sense`] members, and this
+    /// dispatch forwards to it - thirty-three readings, five tools, so
+    /// an agent's tool list stays small without losing a single one.
+    SenseFamily(&'static str),
     /// Read or write the project's persisted creative brief.
     CreativeBrief,
     /// Composite a transparent motion bake over real footage.
@@ -240,7 +246,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "concat_version",
             title: "Concat version",
-            description: "What this Concat speaks: the API version, the build, its capabilities, and how this MCP server reaches it (`mcp.mode`: \"window\" when it goes through the open Concat window's server, \"headless\" when it runs the editor engine itself). Call it first if unsure what is available.",
+            description: "The API version, build, capabilities and MCP mode (window or headless). Call it first when unsure what is available.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -249,7 +255,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "project_list",
             "Recent projects",
-            "The projects this machine opened most recently, newest first: each one's folder `path`, name, frame size and rate. A project is a folder; every other project tool names it by that `path`.",
+            "Recent projects on this machine, newest first: path, name, frame size and rate.",
             "project.list",
             Raw,
         )
@@ -257,14 +263,14 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "project_create",
             "Create a project",
-            "Creates a project folder named `name` inside the existing directory `location`, and opens it. `video` sets the frame and rate (1920×1080 at 30 fps when absent). Returns the project summary; its folder is `location/name`, which is the `path` later tools take. Refuses a folder that already holds a project.",
+            "Create and open a project folder `name` inside `location`; the summary's `path` is what later tools take.",
             "project.create",
             Summary,
         ),
         method(
             "project_open",
             "Open a project",
-            "Opens a project folder so it can be read and edited. Opening one already open returns it as it stands, unsaved edits included. Refused when the Concat window has that project open. Returns the project summary.",
+            "Open a project folder to read and edit it; opening one already open returns it as it stands, unsaved edits included.",
             "project.open",
             Summary,
         )
@@ -272,7 +278,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "project_save",
             "Save a project",
-            "Writes an open project's document to its folder; `name` renames the project as it saves. Edits autosave as they happen (the document is written after every applied edit), so this is rarely needed - a save now is for renaming or tidiness, not for keeping work.",
+            "Write an open project's document to its folder; edits autosave anyway, so this is for renaming or tidiness.",
             "project.save",
             Raw,
         )
@@ -280,7 +286,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "project_close",
             "Close a project",
-            "Closes an open project. Edits autosave as they happen, so nothing is lost either way; `save: true` writes the document once more before it goes.",
+            "Close an open project; `save: true` writes the document once more before it goes.",
             "project.close",
             Raw,
         )
@@ -288,7 +294,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "timeline_read",
             title: "Read the timeline",
-            description: "An open project's active timeline as a compact summary: frame size and fps, the lanes (`tracks`, top to bottom, with their ids), every clip in time order with its id, kind, track, start, duration and end in seconds and whatever is not at its default (speed, volume, opacity, transform, effects, keyframed properties, text), and the media bin with each item's id. Read this to learn the ids other tools need.",
+            description: "The active timeline as a compact summary: lanes, clips in time order with ids, the media bin. Read it for the ids other tools need.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -297,7 +303,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "plan_validate",
             title: "Validate an edit plan",
-            description: "Checks a director plan's canonical schema, cross-field constraints AND its creative readiness before edits. Returns valid (structure), creativeReady (craft gate), creativeBlockers (what to fix), craftScore 0-10, warnings and notes. A plan with no creativeBrief, no emotionalArc, a hook over 3 s, repeated visuals, no designed comp, or a run of plain hard cuts is valid but NOT creativeReady - fix the blockers and validate again. Read-only; asset availability and the final render still need stock_contact_sheet, watch_render and craft_critique.",
+            description: "Validate a director plan's schema, cross-field constraints AND creative readiness before editing; returns blockers, craft score, and checks the signalLog.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -306,7 +312,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "clip_audio_levels_db",
             title: "Set clip audio levels in dB",
-            description: "Sets base gain and optional automation in dB relative to source unity (0 dB = unchanged; −60 dB = silence floor; range −60 to +24). Converts to linear multipliers. Keyframe `gainDb` targets are absolute to unity; `baseDb` applies outside keyed regions. `replaceAutomation: true` clears existing volume keys in the same undoable batch.",
+            description: "Set a clip's base gain and automation in dB relative to unity (-60 to +24), as one undoable batch.",
             read_only: false,
             destructive: true,
             idempotent: true,
@@ -315,7 +321,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "collision_check",
             title: "Check for clips sharing a lane",
-            description: "Reads an open project's active timeline and reports every place two clips share one lane: each collision's `trackId`, the two clips' ids, starts, durations and ends, and the span they fight over (`from`, `to`). The placing tools never make one - a clip that would land on another lands at the nearest free start, and a move that cannot land does not move - so a collision here means a document written by hand or damaged; `timeline_read` and the placing tools are how one is unwound. `clean` is true when no lane is shared. Read-only.",
+            description: "Report every place two clips share a lane - only a damaged or hand-written document has them.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -324,7 +330,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "project_get",
             "Get the whole project",
-            "An open project's full state: every timeline, clip field, media item and setting, as the editor holds it. Large; `timeline_read` is usually enough.",
+            "An open project's full state; large, and `timeline_read` is usually enough.",
             "project.get",
             Raw,
         )
@@ -332,14 +338,14 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "project_set_video",
             "Set frame size and rate",
-            "Sets the active timeline's frame (width, height in pixels) and rate (rateNum/rateDen frames a second, e.g. 30000/1001 for 29.97) as one undoable edit.",
+            "Set the active timeline's frame size and rate as one undoable edit.",
             "project.setVideo",
             Summary,
         ),
         method(
             "media_probe",
             "Probe a media file",
-            "Reports what is inside a video, audio or image file - duration in seconds, streams, frame size and rate, codecs - without changing any project.",
+            "Report what is inside a media file - duration, streams, frame size, codecs - without touching any project.",
             "media.probe",
             Raw,
         )
@@ -347,7 +353,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "media_import",
             "Import media",
-            "Adds a file (an absolute path) to an open project's media bin, as dropping it on the window does. The new item's id is the summary's `createdId`; place it on the timeline with `clip_add`. Importing a path already in the bin changes nothing.",
+            "Add a file to an open project's media bin; the summary's `createdId` places it with clip_add.",
             "media.import",
             Summary,
         )
@@ -355,7 +361,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "openvid_status",
             "OpenVid library status",
-            "Where the OpenVid stock library stands: `state` is \"missing\" (its local index is not on this machine yet - call `openvid_prepare` once, ~435 MB, then poll this until `ready`), \"downloading\" (with `percent`), \"ready\" or \"failed\" (with `error`). When ready, `rows` is how many clips it holds (937,957: stock footage with captions and quality scores) and `measured` how many have had their frame size read so far.",
+            "The OpenVid stock library's state: missing, downloading (with percent), ready or failed, and how many clips it holds.",
             "openvid.status",
             Raw,
         )
@@ -363,7 +369,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "openvid_prepare",
             "Download the OpenVid index",
-            "Starts the one-time download of the OpenVid library's local index and returns at once; poll `openvid_status` until `state` is \"ready\". Nothing else downloads anything: every other `openvid` tool refuses until this has finished.",
+            "Start the one-time ~435 MB download of the OpenVid index; poll openvid_status until it is ready.",
             "openvid.prepare",
             Raw,
         )
@@ -371,7 +377,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "openvid_search",
             "Search stock clips",
-            "Searches 937,957 stock clips (the Pixabay, Pexels and CelebV shelves cut to 512x512, and the WebVid shelf of 720p and 1080p landscape footage) by what their captions say and by their quality numbers, without watching anything: each match carries the caption, `aesthetic` (0-6), `motion`, `temporal` consistency (0-1), `camera` motion, `fps`, `seconds`, `bytes` (the fetch cost), its shelf and its measured `dims`. Every filter is optional: `query` words are ANDed and prefix-matched (\"ocean sunset\"), `minAesthetic`/`minMotion`/`maxMotion`/`minTemporal` set the quality floor, `minSeconds`/`maxSeconds`/`minFps` the shape, `camera` takes a motion exactly as the library names it, `source` is pixabay/pexels/celebv/other, `orientation` is vertical/horizontal/square (measured from each clip's own MP4 header: the first shape search takes a one-time census of every shelf, a few seconds, after which square finds the three 512x512 shelves and horizontal the WebVid shelf's landscape footage, and nothing vertical has been measured in it), and `sort` is relevance/aesthetic/motion/temporal/shortest/longest/surprise. Returns up to `limit` (default 20, at most 100) from `offset`, with `total` saying how many match in all. A relevance search of more than ten matches then gets a semantic second pass: a local MobileCLIP2-S0 ONNX model looks at each candidate's real frames (already-fetched clips are read as they are, the rest are fetched once and cached, under a time budget) and re-orders the page by what the clips SHOW, not what their captions say - \"the moment a decision goes wrong\" reaches worried faces and hesitation, not every caption carrying \"decision\". Missing models or wheels leave the BM25 order untouched; the reply's `rerank` says whether it ran (`applied`, `scored`, `ms`) and why not when it did not. The models are two ONNX exports of MobileCLIP2-S0 found under `$FUNCUT_MOBILECLIP` or the app data dir's models/mobileclip2-s0/; the wheels are `pip install onnxruntime numpy transformers`.",
+            "Search 937,957 stock clips by caption words and quality numbers; a local CLIP rerank re-orders a relevance page by what the clips SHOW.",
             "openvid.search",
             Raw,
         )
@@ -379,7 +385,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "openvid_search_batch",
             title: "Search stock clips, several queries at once",
-            description: "The `openvid_search` search run once per entry of `queries` - two or three words each, a noun a camera could film, never a sentence - in one call, every entry with the same optional floors and filters: `minAesthetic`/`minMotion`/`maxMotion`/`minTemporal`, `minSeconds`/`maxSeconds`/`minFps`, `camera`, `source`, `orientation`, `sort`, `limit` (per query, default 20) and `offset`. The semantic second pass rides along exactly as it does in `openvid_search`: a relevance search of more than ten matches is re-read by the local MobileCLIP2 model, once per query, and re-ordered by what the clips SHOW - a batch is a row of the same search, not a second, lesser search. `rerank: false` skips the CLIP pass for a fast BM25-only sweep; the reply's `searches` carry one entry per query - its `query`, `total`, `clips` and `rerank` - in the order given, and the tool fails as `openvid_search` would (the OpenVid index must be prepared first). Shop a whole plan's B-roll in one round trip, then look before choosing with `stock_contact_sheet`.",
+            description: "The openvid_search search once per entry of `queries` - shop a whole plan's B-roll in one round trip, then look with stock_contact_sheet.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -388,7 +394,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "openvid_get",
             "Read clips in full",
-            "Everything about up to 20 clips by id, as `openvid_search` gave the ids: the full caption, every score, and `dims` - the frame size read from the clip's own MP4 header, measured on this first ask (one or two small network reads a clip, remembered after). Use it to check a candidate before committing to the fetch; captions and scores are words, not pictures - `stock_contact_sheet` (its `ids` name these same clips) is how a clip is SEEN before it is fetched.",
+            "Everything about up to 20 clips by id, for checking a candidate before committing to the fetch.",
             "openvid.get",
             Raw,
         )
@@ -396,7 +402,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "openvid_fetch",
             "Fetch a clip",
-            "Fetches one clip's MP4 from the Hub into the app's own cache - `clip.bytes` of bandwidth, nothing else - and returns the clip with `localPath`, its absolute path on this machine. Adds nothing to any project; `openvid_import` or `media_import` is what puts it in an edit.",
+            "Fetch one clip's MP4 into the app's cache and return its `localPath`; adds nothing to any project.",
             "openvid.fetch",
             Raw,
         )
@@ -404,14 +410,14 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "openvid_import",
             "Import stock clips",
-            "Fetches clips and adds them to an open project's media bin, each copied into the project's own `openvid` folder first so the project owns its files. With `start` (seconds) they are also laid on one lane in the order given, as one undoable step - `track` names the lane, or the first with room when absent. Returns `mediaIds` and the project summary; without `start`, place them with `clips_add_sequence` or `clip_add`. At most 20 clips a call.",
+            "Fetch stock clips and add them to a project's bin, each copied into the project's own openvid folder.",
             "openvid.import",
             Raw,
         ),
         method(
             "sounds_search",
             "Search the sound library",
-            "Searches the built-in CC0 sound library - 530 sounds: whooshes, impacts, risers, ambiences, music beds and logo stings, UI clicks, motion-design pops and transforms, notifications, keyboards, digital glitches and data sounds, foley and writing, plus a 100-sound trailer-grade Hollywood pack (cinematic slams, sub drops, braams, reverse sucks, flybys, glitch zaps, portal and magic reveals, drones, and logo stingers) - and returns the matches best first, without hearing anything: each carries its `id`, `name`, `category`, `tags`, `duration` in seconds, `bytes` (the download cost), `description` (what the sound is, a sentence), `useFor` (what it is for, as short lines), `syncAt` (seconds in where its peak lands, for placing it by the moment it is for) and `localPath` when the file is already on this machine. `query` words are ANDed and prefix-matched against the name, id, category, tags, use-for lines and description, ranked by where they matched - the name counts most, then the tags, then the description - so \"fast whoosh\" puts a *Whoosh, fast* ahead of a whoosh merely tagged fast, and \"card transition\" finds a swipe its use-for lines suggest; `category` narrows to Whoosh, Impact, Riser, Ambience, Music, UI, Motion, Notification, Keyboard, Digital, Foley or Writing. `sounds_add` places one by its id. Returns up to `limit` (default 20, at most 100) from `offset`, with `total` saying how many match in all.",
+            "Search freesound effects by words, category and length; candidates carry ids, durations and licenses.",
             "sounds.search",
             Raw,
         )
@@ -419,14 +425,14 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "sounds_add",
             "Add a sound",
-            "Adds one built-in sound (`id`, as `sounds_search` gave it) to an open project: downloaded into the app's cache when it is not there yet and checked against its digest, copied into the project's own `audio` folder, and imported into the bin - with `start` (seconds) also laid on one lane as one undoable step, `track` naming the lane or the first with room when absent. Returns `mediaId`, `clipId` when a clip was laid, and the project summary; without `start`, place it with `clip_add`.",
+            "Add a freesound sound to an open project's bin, and place it on the timeline when asked.",
             "sounds.add",
             Raw,
         ),
         method(
             "bgm_status",
             "Music library status",
-            "Where the background-music library stands, shelf by shelf: `freepd` (the Internet Archive's mirror of Kevin MacLeod's CC0 library) and `lofi` (Moby's MobyGratis instrumentals, as the OpenLo-Fi pack) are each \"missing\" (their list is not on this machine yet - call `bgm_prepare` once, a few MB, then poll this until \"ready\"), \"loading\" (with `percent`: the one-time measuring of the Lo-Fi zip, a few seconds), \"ready\" (with `freepdTracks`/`lofiTracks`, how many each holds: 1,025 and 166) or \"failed\" (with `error`). 1,191 whole CC0 tracks in all; none of them in the repository - a track's bytes move only when it is picked.",
+            "The background-music library's state: missing, downloading, ready or failed.",
             "bgm.status",
             Raw,
         )
@@ -434,7 +440,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "bgm_prepare",
             "Load the music library",
-            "Starts the shelves' one-time catalog fetches and returns at once; poll `bgm_status` until the shelf you read is \"ready\". Optional `source` (\"freepd\" or \"lofi\") narrows it to one shelf - worth it when the other is down. The FreePD list is the Archive item's own file listing (~1 MB) and the Lo-Fi list is the pack's manifest, beside which every track's place and length in the pack's 554 MB zip is measured once with one small ranged read a track (the `percent` you watch). Nothing else downloads anything: every other `bgm` tool refuses until the shelf it reads is ready.",
+            "Start the one-time download of the BGM library; poll bgm_status until it is ready.",
             "bgm.prepare",
             Raw,
         )
@@ -442,7 +448,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "bgm_search",
             "Search music",
-            "Searches 1,191 whole CC0 background-music tracks by what their titles, artists and categories say, without hearing anything: each match carries the title, the artist (Kevin MacLeod, Moby, Rafael Krux, ...), the category (FreePD's own folders - upbeat, epic, comedy, scoring, world, ... - and the Lo-Fi pack's - chillhop, late-night, ambient-lofi, ...), `seconds`, `bytes` (the fetch cost), whether it is already on this machine (`localPath`), and which shelf it is on (`source`: freepd or lofi). Every filter is optional: `query` words are ANDed and prefix-matched (\"city rain\"), `source` is freepd/lofi, `category` takes a shelf's own spelling, `minSeconds`/`maxSeconds` set the length (a track whose length is unknown is passed by rather than guessed at), and `sort` is relevance/shortest/longest/surprise. Returns up to `limit` (default 20, at most 100) from `offset`, with `total` saying how many match in all.",
+            "Search the free music library by mood words; candidates carry ids, durations and licenses.",
             "bgm.search",
             Raw,
         )
@@ -450,7 +456,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "bgm_fetch",
             "Fetch a track",
-            "Fetches one track into the app's own cache - FreePD as its own file from the Archive, Lo-Fi as one ranged read of exactly that track's span out of the pack's 554 MB zip, inflated and checked against the CRC the zip itself carries - and returns the track with `localPath`, its absolute path on this machine. `track.bytes` of bandwidth, nothing else. Adds nothing to any project; `bgm_import` or `media_import` is what puts it in an edit.",
+            "Fetch one music track into the app's cache and return its `localPath`.",
             "bgm.fetch",
             Raw,
         )
@@ -458,14 +464,14 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "bgm_import",
             "Import music",
-            "Fetches tracks and adds them to an open project's media bin, each copied into the project's own `bgm` folder first so the project owns its files. With `start` (seconds) they are also laid on one lane in the order given, as one undoable step - `track` names the lane, or the first with room when absent. Returns `mediaIds` and the project summary; without `start`, place them with `clips_add_sequence` or `clip_add`. At most 20 tracks a call.",
+            "Fetch a music track and add it to a project's bin, optionally placing it on the timeline.",
             "bgm.import",
             Raw,
         ),
         method(
             "magick_status",
             "Sticker library status",
-            "Where the sticker shelf stands: Microsoft's Fluent Emoji (MIT - free for commercial and personal use), 1,285 rendered 3D PNGs, is \"missing\" (call `magick_prepare` once, ~135 KB, then poll this), \"downloading\" (with `percent`), \"ready\" (with `magickRows`) or \"failed\" (with `error`). None of the pictures live in the repository - a picture's PNG moves only when picked.",
+            "The ImageMagick sticker library's state: missing, downloading, ready or failed.",
             "magick.status",
             Raw,
         )
@@ -473,7 +479,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "magick_prepare",
             "Load the sticker library",
-            "Starts the shelf's one-time index download (~135 KB, digest-checked) and returns at once; poll `magick_status` until it is \"ready\". Nothing else downloads anything: every other `magick` tool refuses until the shelf is ready.",
+            "Start the one-time download of the sticker index; poll magick_status until it is ready.",
             "magick.prepare",
             Raw,
         )
@@ -481,7 +487,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "magick_search",
             "Search stickers",
-            "Searches the sticker shelf - Microsoft's Fluent Emoji (MIT), 1,285 rendered 3D PNGs - by what the set's own names and keywords say: each match carries `id`, `source` (fluent), `subject` (the CLDR name), `license` (MIT) and `localPath` when the PNG is already on this machine. `query` words are ANDed and prefix-matched, ranked by where and how rarely the words matched, the whole phrase as one run counting most: \"party\" finds the popper, \"smile\" the grinning face. `source` narrows the shelf (the old names magick/openmoji still answer), `favourites` the heart's list, `limit` (1-100, default 20) and `offset` page. `magick_add` places one by id.",
+            "Search the sticker library by words and style; candidates carry ids and previews.",
             "magick.search",
             Raw,
         )
@@ -489,7 +495,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "magick_fetch",
             "Fetch a sticker",
-            "Fetches one emoji's PNG into the app's cache - one plain GET from the repository (or its jsDelivr mirror), checked to be a PNG that can hold transparency - and returns it with `localPath`, its absolute path here. Adds nothing to any project; `magick_add` is what puts one in an edit.",
+            "Fetch one sticker's file into the app's cache and return its `localPath`.",
             "magick.fetch",
             Raw,
         )
@@ -497,84 +503,84 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "magick_add",
             "Add a sticker",
-            "Adds one overlay (`id`, as `magick_search` gave it) to an open project: fetched, copied into the project's own `magick` folder, imported - with `start` (seconds) also laid *over* the picture, never beneath it: the first free lane above the highest occupied, as a title lands. Optional placement, one undoable step: `duration` (seconds), `track` (a lane by name, taken as `clip_add` takes one), `scale` (0.05-8, 1 fills the frame; a sticker usually wants ~0.2-0.4), `offsetX`/`offsetY` (frame fractions from centre, positive right/down), `rotation` (degrees). Returns `mediaId`, `clipId` when laid, and the summary.",
+            "Add a sticker to an open project, on the timeline when asked.",
             "magick.add",
             Raw,
         ),
         method(
             "edit_apply",
             "Apply an edit",
-            "Applies any one edit command to an open project, as one undoable step. `command` is an object tagged by `op` - every edit the window can make is one, with the same limits and refusals; the typed tools below are the common ones. `{\"op\": \"batch\", \"commands\": [...]}` applies several commands as one atomic, undoable step: all land or none does, and `createdId` is the last id minted inside. A refusal comes back as the sentence the window would show, with nothing changed. Returns the project summary; a command that creates something puts its id in `createdId`.",
+            "Apply one or many edit commands as one undoable batch - the whole editing vocabulary in one call.",
             "edit.apply",
             Summary,
         ),
         method(
             "edit_undo",
             "Undo",
-            "Steps an open project's history back one edit (a batch is one edit).",
+            "Undo the last applied edit - every edit tool's change, one step per batch.",
             "edit.undo",
             Summary,
         ),
         method(
             "edit_redo",
             "Redo",
-            "Steps an open project's history forward one edit.",
+            "Redo the last undone edit, after edit_undo took it back.",
             "edit.redo",
             Summary,
         ),
         command(
             "clip_add",
             "Place a clip",
-            "Places a clip of a media item (`mediaId`, from the bin) on a lane (`trackId`, from `timeline_read`) starting at `start` seconds - or, where another clip already sits, at the nearest free start, which the reply's summary carries. Its length is the media's (5 s for a still). `ripple: true` pushes later clips on that lane right instead of finding a gap. The new clip's id is `createdId`.",
+            "Place media from the bin on a lane as one undoable edit; a clip landing on another moves to the nearest free start.",
             "addClip",
         ),
         command(
             "clips_add_sequence",
             "Place clips end to end",
-            "Lays several media items (`mediaIds`, from the bin, in order) end to end starting at `start` seconds, each its media's length (5 s for a still), in one undoable step. With no `trackId` they go on the lowest lane free for the whole run; on a named lane, `ripple: true` makes room as a drop does while the plain form lands the run at the nearest gap that holds it. `createdId` is the last clip's id; `timeline_read` lists the rest, and `collision_check` confirms no lane was shared.",
+            "Lay media items on one lane back to back in the order given, as one undoable step.",
             "addClipsInSequence",
         ),
         command(
             "clip_trim",
             "Trim a clip",
-            "Moves one edge of a clip by `delta` seconds of timeline: `edge` \"start\" with a positive delta shortens it from the head (the picture does not slide), \"end\" with a positive delta lengthens it. A clip is never shorter than 1/60 s or longer than its media allows. `ripple: true` closes or opens the gap behind it on that lane, and on the main lane the other lanes follow while the timeline's linkage is on (`timeline_linkage`).",
+            "Move one edge of a clip by `delta` seconds; `ripple: true` closes or opens the gap behind it.",
             "trimClip",
         ),
         command(
             "clips_split",
             "Split clips",
-            "Cuts each named clip in two at `time` seconds on the timeline. The first part keeps the id; the second gets a new one. Clips the time does not fall inside are left alone.",
+            "Split one clip at a time into two, on the same lane.",
             "splitClips",
         ),
         command(
             "clip_cut_spans",
             "Cut spans out of a clip",
-            "Cuts spans out of the middle of a clip: `spans` is a list of [from, to] pairs in seconds from the clip's start, in any order; overlapping ones merge. What is left is re-cut into source-continuous pieces that each keep the clip's looks, the first keeping the clip's id (`createdId`); a piece too short to keep folds into the span beside it, and spans that cover the whole clip remove it. `ripple: true` closes the lane behind every cut, as a delete does. This is what the voiceover panel's pause removal does.",
+            "Cut spans out of a clip across its lane - the dead-air remover.",
             "removeSpans",
         ),
         command(
             "clips_move",
             "Move clips",
-            "Moves clips in one undoable step: each to a new `start` (seconds, at least 0) and `trackId`. A move that would land the group on clips that stay put lands it instead at the nearest free place, the whole group keeping its shape; a move whose own clips would cover each other does not happen and the reply says nothing was applied. Unknown ids are skipped.",
+            "Move clips to another lane or start, as one undoable step.",
             "moveClips",
         ),
         command(
             "clips_remove",
             "Delete clips",
-            "Deletes clips from the active timeline. `ripple: true` closes the gaps they leave on their lanes, and on the main lane the other lanes follow while the timeline's linkage is on (`timeline_linkage`); false leaves the gaps.",
+            "Remove clips from the timeline, as one undoable step.",
             "removeClips",
         )
         .destroying(),
         command(
             "clip_update",
             "Change a clip",
-            "Changes only the fields given in `patch`: volume (linear gain multiplier, 1 is unchanged, may exceed 1; not dB—use `clip_audio_levels_db` for decibel levels), fadeIn/fadeOut (seconds), opacity (0-1), muted, flipH/flipV, blend, crop (fractions off each edge, null to remove), videoEffects and filters (the whole chain: a list of {id, params}; ids from `effects_list`), transitionIn ({id, duration} on the cut into the clip, null to remove), text (a title's style, null to remove), mask (see `clip_mask`), background (the clip's own background, null to follow the timeline's) and audioStream.",
+            "Change a clip's fields - transform, speed, volume, opacity, effects, text - as one undoable patch.",
             "updateClip",
         ),
         Tool {
             name: "clip_mask",
             title: "Mask a clip",
-            description: "Keeps part of a clip's picture with a shape, or with `mask: null` takes the mask off. `shape` is linear, mirror, circle, rectangle, heart or star; `x`/`y` move its centre as fractions of the picture's width/height (positive right/down); `width`/`height` are fractions of the picture's shorter side; `rotation` in degrees; `roundness` (rectangle corners) and `feather` (edge softness) 0-1; `invert` keeps the outside. Fields left out take the default circle's. Animate it with `keyframe_set` on maskX, maskY, maskWidth, maskHeight, maskRotation, maskRoundness or maskFeather.",
+            description: "Set or clear one clip's mask: the shape that hides part of the picture.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -583,61 +589,61 @@ pub fn catalogue() -> Vec<Tool> {
         command(
             "clip_stabilize",
             "Stabilize a clip",
-            "Takes the camera's shake out of a video clip, or with `stabilize: null` stops. `smoothness` 0-1 (low keeps pans and removes jitter, high leaves only the slowest moves), `maxZoom` (at least 1) is how far the picture may be enlarged to hide the moving edges, `tripod: true` locks the frame entirely. The shake is measured when the clip is previewed or exported.",
+            "Stabilize a clip's camera shake; a job whose progress analysis_wait reports.",
             "setClipStabilize",
         ),
         command(
             "clip_frame",
             "Fit or fill the frame",
-            "Sizes a picture to the frame in one step: `framing` \"fit\" shows all of it (bars where the shapes differ), \"fill\" covers the frame and crops the overhang. Where the clip's scale is keyframed, the key goes at `at` (a fraction of the clip, 0-1).",
+            "Set a clip's crop/pan framing - fill (cover + crop) or fit - for the timeline's aspect.",
             "frameClip",
         ),
         command(
             "timeline_background",
             "Set the background",
-            "Sets what shows behind pictures that do not cover the frame, on a whole timeline (`timelineId` from `timeline_read`): `{\"kind\": \"none\"}` (black), `{\"kind\": \"blur\", \"amount\": 0-1}` (the clip itself, enlarged and blurred), `{\"kind\": \"color\", \"color\": \"#rrggbb\"}` or `{\"kind\": \"image\", \"mediaId\": ...}`. One clip's own background is `clip_update`'s `background`.",
+            "Set the timeline's background colour, gradient or blur plate.",
             "setTimelineBackground",
         ),
         command(
             "timeline_linkage",
             "Link the lanes to the main one",
-            "Turns linkage on or off for a timeline (`timelineId` from `timeline_read`, `on`). On - the default - a ripple on the main lane (the lowest one with a picture) moves the other lanes with it: clips after the edit follow, a clip running across it stays, and a title wholly over footage a ripple delete removed goes with it. Off, a ripple moves only its own lane.",
+            "Turn the timeline's ripple linkage between lanes on or off.",
             "setTimelineLinkage",
         ),
         command(
             "clip_transform",
             "Place, scale or rotate a clip",
-            "Sets a picture's placement; only the fields given change. scale 0.05-8 (1 fits the frame), offsetX/offsetY as fractions of the frame's width/height from the centre (positive is right/down, within ±3), rotation in degrees, stretchX/stretchY 0.1-10.",
+            "Set a clip's transform: position, scale, rotation, opacity, anchor.",
             "setClipTransform",
         ),
         command(
             "clip_speed",
             "Change a clip's speed",
-            "Plays a clip faster or slower: `speed` from 0.0625 to 16 (2 is double speed). The same stretch of source is kept, so the clip's length on the timeline changes.",
+            "Change a clip's playback speed, pitch-corrected when asked.",
             "setClipSpeed",
         ),
         command(
             "title_add",
             "Add a title",
-            "Places a title (text over the picture) at `start` seconds for `duration` seconds (4 s when absent). `style` sets the words and look - `content`, `fontFamily`, `fontSize` (fraction of frame height, 0.09 by default), `fontWeight` (100-900), `color` (\"#rrggbb\"), `align`, `background`, `strokeWidth`... - and needs only the fields that differ from the default. `offsetY` places it vertically as a fraction of frame height from the centre (positive is down). With no `trackId` and `above: true` it lands on a lane above the picture. The new clip's id is `createdId`. To give some of its words a look of their own afterwards, use `title_style_words`.",
+            "Add a styled title to a lane - the caption and text-card tool, with per-word styling.",
             "addTextClip",
         ),
         command(
             "title_style_words",
             "Style some of a title's words",
-            "Gives some of a title's words a look of their own, as dragging over them in the window's Text tab does: the characters `start` to `end` (counted in characters of the title's text, not bytes; `end` is one past the last) wear each field of `patch` - `color` (\"#rrggbb\"), `fontWeight` (100-900), `italic`, `underline`, `strikethrough`, `fontScale` (a multiple of the title's size, 0.1-10) and `strokeColor` - over the title's own look. Fields left out stay as they were on those characters; the rest of the title is untouched and keeps following its style. Typed words carry these looks along. `timeline_read` lists them as the clip's `textRuns`.",
+            "Style individual words of a title: the kinetic-caption look, per word.",
             "styleTextRange",
         ),
         command(
             "title_clear_word_styles",
             "Clear words' own looks",
-            "Gives a title's words back to its own look: every look of their own between the characters `start` and `end`, or on all of its words when they are left out.",
+            "Take a title's per-word styles off, back to the shared style.",
             "clearTextStyles",
         ),
         Tool {
             name: "captions_add",
             title: "Add captions",
-            description: "Places a run of captions in one undoable step: one title per entry, from `start` to `end` seconds, each on a lane above the picture. `style` applies to all of them (its `content` is ignored); without one they look like the window's captions - Hanken Grotesk, weight 600, 0.04 of the frame high. `offsetY` is where they sit, as a fraction of frame height from the centre: 0.35 (the default) is near the bottom, 0 the middle, -0.35 the top.",
+            description: "Add segment-timed captions to the timeline as one batch of titles.",
             read_only: false,
             destructive: false,
             idempotent: false,
@@ -646,38 +652,38 @@ pub fn catalogue() -> Vec<Tool> {
         command(
             "keyframe_set",
             "Set a keyframe",
-            "Animates a clip: puts a key on `property` (scale, offsetX, offsetY, rotation, opacity, volume, or a mask's maskX, maskY, maskWidth, maskHeight, maskRotation, maskRoundness, maskFeather) at `at`, a fraction of the clip's length from 0 (its start) to 1 (its end). `value` uses the property's stored units; notably `volume` is a linear gain multiplier (1 = unchanged), not dB. Use `clip_audio_levels_db` for absolute dB levels. A key already within a hair of `at` is replaced. `ease` is how the value is approached: [x1, y1, x2, y2] like a CSS cubic-bezier, linear when absent.",
+            "Set keyframes on a clip's property - the volume duck, the zoom, the fade.",
             "setClipKey",
         ),
         command(
             "keyframe_clear",
             "Remove a keyframe",
-            "Removes the key on `property` at `at` (a fraction of the clip's length), if there is one.",
+            "Clear the keyframes of one property on a clip.",
             "clearClipKey",
         )
         .destroying(),
         command(
             "effect_layer_add",
             "Add an effect layer",
-            "Places an effect or look as a layer over the timeline: from `start` for `duration` seconds (5 s when absent), it treats everything beneath it. `effectId` is a package id from `effects_list`; the layer's opacity (via `clip_update`) is how strongly it applies. To put an effect on one clip instead, set that clip's `videoEffects` with `clip_update`.",
+            "Add an effect as a timeline-wide layer - the grade - with its params.",
             "addLayerClip",
         ),
         command(
             "effect_key_set",
             "Animate an effect parameter",
-            "Puts a key on one parameter (`key`, from `effects_list`) of one effect in a clip's chain (`entry`, its index in the clip's videoEffects, from 0) at `at` (a fraction of the clip's length, 0-1), holding `value` in the parameter's own units. Keep the value within the range `effects_list` gives.",
+            "Keyframe one of an effect's parameters over time - the grade that breathes.",
             "setEffectKey",
         ),
         command(
             "track_add",
             "Add a lane",
-            "Adds a lane to the active timeline: on top, or with `bottom: true` under every other. Its id is `createdId`.",
+            "Add a lane (track) to the timeline for clips, titles or sounds.",
             "addTrack",
         ),
         method(
             "effects_list",
             "List effects",
-            "Every effect package this build has - id, name, kind (\"effect\", \"filter\", \"audio\", \"transition\" or \"generator\"), category and each parameter's key, range, default and unit - so an effect chain, a layer or a transition can be built correctly. `kind` narrows the list.",
+            "List the effect library: filters, transitions, their ids and params.",
             "catalogue.list",
             Raw,
         )
@@ -685,7 +691,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "template_list",
             "List templates",
-            "The template library: each template's folder, name and the slots (placeholder media ids) a project made from it must fill.",
+            "List the project templates available to instantiate.",
             "template.list",
             Raw,
         )
@@ -693,21 +699,21 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "template_instantiate",
             "Make a project from a template",
-            "Makes a project from a template - `template` (its folder), `location` and `name` as for `project_create` - with every slot filled by a file (`fills`: [{mediaId, file}]). Opens it and returns its summary.",
+            "Instantiate a template project into a new project.",
             "template.instantiate",
             Summary,
         ),
         method(
             "export_start",
             "Start an export",
-            "Starts rendering an open project's active timeline to `output` (an .mp4 path), as the window's Export does. Returns at once with a `job` id; follow it with `export_wait` or `export_status`. Optional: crf (quality, lower is better, 20 by default), preset (x264 speed, \"medium\"), width/height, rateNum/rateDen, codec (\"h264\", \"hevc\" or \"av1\"), tenBit, colorRange, hdr. One export runs at a time; another is refused as busy.",
+            "Start rendering the timeline to a movie; a job whose progress export_status reports.",
             "export.run",
             Raw,
         ),
         method(
             "export_status",
             "Export status",
-            "How an export job stands, at once: `state` (\"running\", \"done\", \"cancelled\" or \"failed\"), `stage` (\"cutout\", \"stabilize\", \"rendering\", \"mixing audio\" or \"muxing\"), frames done of total, `fraction` of the stage (0-1), and once done the file and its size, or the error.",
+            "An export job's state, stage and progress.",
             "export.status",
             Raw,
         )
@@ -715,7 +721,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "export_wait",
             title: "Wait for an export",
-            description: "Waits for an export job to end, up to `timeoutSeconds` (60 by default, 590 at most), reporting progress as it goes, and returns its status as `export_status` does. If it is still running when the time is up, call it again.",
+            description: "Poll an export until it ends or the time is up - the agent's wait-for-the-render call.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -724,7 +730,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "export_cancel",
             "Cancel an export",
-            "Stops a running export job at its next frame; it then ends as \"cancelled\".",
+            "Cancel a running export someone started; the partial file is not kept.",
             "export.cancel",
             Raw,
         )
@@ -732,7 +738,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "preview_frame",
             title: "Preview a frame",
-            description: "Renders the true composited frame at `time` seconds on an open project's timeline and returns it as an image to look at - titles, effects and transforms included. Without `width` and `height` it fits within 960 pixels, a file as much as an inline picture; give both for another size (8192 at most). With `output` (a .png path) the picture is written there instead - a file write, held to this session's write roots, which is why the tool is not marked read-only.",
+            description: "One frame of the timeline as an image the agent can see; name width/height for bigger.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -741,42 +747,42 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "analyze_scenes",
             "Find scene cuts",
-            "Finds where one shot becomes another in a video: a job returning {start, end} scenes in seconds (PySceneDetect). Wait with analysis_wait; the result is the status's `output`. Optional: threshold (3.0 default), detector (\"adaptive\" default), minSceneLen seconds (0.6 default). The reply says the pip line when the Python extras are missing.",
+            "Detect scene cuts in a media file; returns cut times with confidence.",
             "analysis.scenes",
             Raw,
         ),
         method(
             "analyze_beats",
             "Find the beat grid",
-            "Measures a piece of music on a job: bpm, the beat grid and onsets in milliseconds (beatsMs, downbeatsMs, onsetsMs), the numbers a beat-aligned cut is cut by. Wait with analysis_wait; the result is the status's `output`.",
+            "Detect musical beats in a media file; returns a beat grid (needs the Python extras).",
             "analysis.beats",
             Raw,
         ),
         method(
             "analyze_silence",
             "Find dead air",
-            "Finds a recording's silent spans on a job: spans and their complement speech, in seconds - the shape edit_apply's removeSpans cuts by. Wait with analysis_wait; the result is the status's `output`. Optional: thresholdDb (35 default), minSilenceMs (500 default).",
+            "Detect silences in a media file; returns spans with durations - the dead-air map.",
             "analysis.silence",
             Raw,
         ),
         method(
             "transcribe",
             "Transcribe a recording",
-            "Transcribes a media file on a job; output timed segments (`{start,end,text}`), each carrying its `words` as measured `{text,start,end}` triples from whisper's token timestamps - the word times `captions_animate` needs (never estimate words from segment times). `language` is a Whisper hint (ISO code/BCP-47); use a multilingual model for non-English (`base.en` default is English-only). Wait with analysis_wait; the result is in status.output.",
+            "Transcribe a media file's speech; a job returning segments and word timings.",
             "speech.transcribe",
             Raw,
         ),
         method(
             "tts_generate",
             "Speak a voiceover",
-            "Speaks `text` with a `voice` as a WAV in an open project's own audio folder - a voiceover in one call, ready for media_import. Wait with analysis_wait; the status's `output` is the WAV's path and length. Voices are the Settings > Speech ids (Kokoro 0-52); a missing model is fetched headless with models_download. DELIVERY: give `delivery` (neutral, conversational, urgent, excited, calm, awed, somber, authoritative) to set a director's pacing - rate AND the breath between sentences - instead of a flat read; `speed` (0.5-2) overrides its rate and `pauses` (0-1) overrides its breath. `steps` (1-16) is Pocket's quality dial. Match the delivery to the emotionalArc: urgent for the hook, calm or awed for the reveal, authoritative or warm for the CTA.",
+            "Generate speech from text with a local voice; a job returning an audio file.",
             "speech.generate",
             Raw,
         ),
         method(
             "models_list",
             "List speech models",
-            "Every voice (tts) and transcriber (whisper) model this build knows, with each one's download size and whether it is on disk - the ids are what models_download takes and what tts_generate's and transcribe's model arguments accept.",
+            "List the local AI models and which are missing.",
             "models.list",
             Raw,
         )
@@ -784,14 +790,14 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "models_download",
             "Download a speech model",
-            "Downloads one model from Concat's mirror on a job - the headless way to a voice or a transcriber, no window needed. kind is \"tts\" or \"whisper\"; ids come from models_list. A model already on disk ends at once. Wait with analysis_wait; the status's `output` confirms what landed.",
+            "Download a missing model - voice, transcriber, vision; a job, poll models_list.",
             "models.download",
             Raw,
         ),
         Tool {
             name: "motion_presets",
             title: "List the motion library",
-            description: "Every motion-graphics preset - lower thirds (glass and minimal), kinetic captions, stat cards, wordmark stings, pull quotes, chapter chips, numbered chapters, agenda lists, subscribe cards, end cards, terminals, code diffs, bar charts, progress bars, split compares, counting numbers, mesh backdrops - with its category, frame size, duration, slots to fill and the nodes it animates, plus whether the Geneva engine is on this machine to bake it. The vocabulary Phase 5b of the director skill designs with; `motion_inspect` sees inside one.",
+            description: "The motion-comp preset library, with each preset's availability.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -800,7 +806,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "motion_inspect",
             title: "Inspect a motion comp",
-            description: "What is in a motion comp before it is touched: every node with its kind, span, animated properties and first words, the slots it can be filled by, validation problems, and whether it needs the markup engine. Takes `preset` (an id from motion_presets) or `comp` (a file under the project's comps/), and applies an optional `ops` batch first - the same operations motion_bake applies - so an edit can be checked before it bakes.",
+            description: "One motion comp summarised: census, timing, text, legibility, assets and the lint.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -809,7 +815,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "scene_analysis",
             title: "Analyse a scene before a frame is drawn",
-            description: "A motion comp read as an engineer reads it, with no engine and no render: `motion_inspect` says what a comp holds; this says how well it is built. Answers the census (nodes by kind, animated against static, keyframes, the curves they ride, nesting depth, effects), the timing (first start, last end, what fraction of the comp anything is on screen, the gaps where nothing is), the text (sizes against the frame height, fonts, karaoke, plates, outlines, shadows, gradient ink), per-text legibility with a WCAG-shaped contrast ratio of the ink against the plate or background it actually draws over (honestly null over video or a mid-ramp gradient), the comp's assets checked against the disk a bake would stage from, and the lint's findings with their stable L### codes - L1xx structure, L2xx timing, L3xx assets, L4xx motion, L5xx determinism. Takes `preset` or `comp` (+ `project`), with an optional `ops` batch applied first. Read it before motion_frame and motion_bake: the small text and the low contrast are the retakes a render would otherwise have to tell you, and here they cost nothing to fix.",
+            description: "One comp read as an engineer reads it - no frame drawn: census, timing, text, legibility, lint.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -818,7 +824,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "motion_frame",
             title: "Draw one motion frame",
-            description: "One frame of a motion comp at `at` seconds - tens of milliseconds, no bake - returned as an INLINE IMAGE you can actually look at, and also written under the project's motion/. The look-before-you-bake of the design loop: mid-entrance, settled, mid-exit. Check legibility, contrast, safe margins and timing before baking. Takes `preset` or `comp` (+ `project`), optional `ops`, and `width` to draw at another size.",
+            description: "Draw one frame of a comp and write it under the project, for looking.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -827,7 +833,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "motion_preview",
             title: "Watch a comp's motion",
-            description: "The comp's motion, watched instead of guessed at: `frames` stills (1-12, six by default) spread evenly across the comp's duration - never the dead last instant, where an exit has usually already gone - drawn at a preview width (16-640, 480 by default) and returned as INLINE IMAGES in time order, plus the JSON that names each sample's time and file. The entrance, the hold and the exit at a glance, for the cost of a handful of frames instead of a bake: watch it here, then motion_bake the whole clip, or fix what the watch showed first. Takes `preset` or `comp` (+ `project`), an optional `ops` batch applied first, `frames` and `width`. motion_frame draws one exact time; this is the whole span.",
+            description: "The comp's motion watched: frames spread across the span.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -836,7 +842,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "motion_bake",
             title: "Bake a motion comp",
-            description: "Bakes a motion comp - `preset` or `comp`, edited by an optional `ops` batch (set-slot, set-text, set-words, set-track, slide-to, pop, fade-in, add-text, ...) - into PNG frames under the project's cache/comps/, content-addressed by the comp's hash, and with `encode: true` writes one video file under motion/ ready for media_import and clip_add (`name` picks its file name, with the comp's hash prepended when missing so export can find it; .webm is VP9, .mov ProRes 4444, otherwise H.264 - none carry alpha, which the PNG sequence keeps). For a transparent comp, take `dir` and `hash` from this reply to motion_overlay, which composites the RGBA frames over your real footage with the alpha honoured. Optional width/height - the project's own frame, read from its document, when absent, so a vertical project bakes vertical; clamped to 4096 for safety - fps, crf (0-51). A bake whose manifest already matches the comp, engine, size and rate is returned from the cache without re-rendering (cached: true in the reply).",
+            description: "Bake a comp to frames, and encode when asked - the render step.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -845,7 +851,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "captions_animate",
             title: "Caption a transcript word by word",
-            description: "A word-timed transcript in, one caption video out: words as [text, start, end] triples (or objects), broken into lines by the caption rules (word count, sentence ends, silences), each line one kinetic caption comp, the whole thing baked and encoded under the project's motion/ ready for media_import and clip_add at the voiceover's start. Word times must be measured (whisper segments with per-word estimates will not do); 1080x1920 30fps by default. Optional: preset (default funcut.caption.kinetic), wordsPerLine, maxLineSeconds, gapSeconds, leadSeconds, tailSeconds, width, height, fps, plate (a still the captions render over), name, curtain (true default; false gives hard cuts between lines, which read better when the reel sits over a voiceover), and kinetic (false default: the preset's own text node; true or an object {stagger: word|char, delay, entrance: blur-in|slide-up|scale-in, seconds, curve, weight: {from, to}} rebuilds the caption as markup whose per-word spans appear, light and settle on the recogniser's own word times - the karaoke highlight as a designed moment, the words' weights ramping from..to as a static font-weight per word, the crescendo the engine draws).",
+            description: "A word-timed transcript in, one kinetic caption video out.",
             read_only: false,
             destructive: false,
             idempotent: false,
@@ -854,7 +860,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "motion_reel",
             title: "Render a storyboard as one reel",
-            description: "A whole motion reel from one storyboard document: several scenes (a preset id or a comps/ file each, with ops, at, hold), MULTI-LAYER scenes (a scene's layers stack bottom first - plates under the comp, and with above:true grain, vignettes, light leaks and foreground cards over it - each with its own zoom, pan [x,y], offset, scale, fit, blend, opacity, fade_in/fade_out, start and hold; differing drift between layers is what reads as depth/parallax), shared assets by id (paths under the project), audio beds (gain_db, fades) and a curtain (color, open, close, dip, depth). plan:true lays it out and returns the timeline without rendering; frame:seconds renders one still and returns it as an INLINE IMAGE to check the stack before committing; otherwise it renders to <project>/motion/<name> (.mp4 H.264, .webm VP9, .mov ProRes 4444) ready for media_import and clip_add. Every error names the scene it stopped at. The same storyboard document the concat-motion-agent reel verb eats, so a reel that renders one way renders the other way too.",
+            description: "A whole storyboard document in, one animated reel out.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -863,7 +869,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "motion_probe",
             title: "Inspect a media file",
-            description: "What a media file IS, as the motion engine's own reader sees it: the streams, the frame size and rate, the duration, the audio's channels and layout, and the diagnostics a broken or truncated file earns - the same reader the renderer will use, asked before anything is built on the file. Takes a `path` (absolute, or relative to the project when `project` is given) to any picture, video or sound the engine reads. A file that is not there is refused outright, and one that is there but is not media comes back as the engine's own refusal with its diagnostics attached and `geneva explain` already consulted - not as a guess. Use it before pointing a comp, a plate or a bed at a file you have not rendered with before.",
+            description: "What the motion engine can do here: fonts, presets, availability.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -872,7 +878,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "scene_timeline",
             title: "Print a validated storyboard timeline",
-            description: "The look-before-you-render of a storyboard: lays the whole board out (the same plan motion_reel lays - scenes, layers, transitions, pulse, curtain and beds), stages it into a scratch of its own, and hands it to the engine's own validator - `geneva validate --probe`, which OPENS every asset to learn it is there and how long it runs - then returns the timeline the render would take together with the engine's verdict on it: every diagnostic with its location and a fix, the media's lengths and loudness as the engine itself measured them, and the plan's own warnings. A storyboard that does not validate comes back as the refusal that names the scene, with `geneva explain` already consulted for the first diagnostic's code. Takes `storyboard` (the document itself, an object) or `project` (the project whose plan is checked - optional). Nothing is rendered and nothing is written; use it to check a reel before committing to the render.",
+            description: "The validated timeline a storyboard becomes, printed as the engine reads it.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -881,7 +887,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "geneva_explain",
             title: "Explain a motion diagnostic code",
-            description: "What a Geneva diagnostic code means, in the engine's own words - `geneva explain E302` at the MCP surface. Takes `code`: the code itself (E103, W210), or a refusal sentence pasted whole, whose first code-shaped token is picked out. Returns the sentence that says what the engine meant and how to fix it. The refusals the motion tools return have already consulted this for their first diagnostic; call it directly for the second and third codes a refusal carries, or to read a code the engine printed anywhere else. The rest of the answer - the guide page a code points at - stays in the engine's manual.",
+            description: "What a diagnostic code means, in the engine's own words.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -890,7 +896,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "motion_farm_progress",
             title: "Read a farm render's progress",
-            description: "What a long farmed render is doing right now, without waiting for it: a `concat-motion-agent render --farm` run writes every state it passes through - the plan (parts, frames, audio), each part's start and landing or serving, the join, the done - as lines in the farm directory's progress.jsonl, and this reads them back live, from another process. Answers each part's state (pending, rendering, done, served), the frames finished against the frames planned, the percent, the seconds the drawn parts cost, an `etaSeconds` estimate from the pace of the parts drawn so far, and `out` when the render has finished. A farm that has said nothing is a whole farm pending - not an error. Takes `farm` (the farm directory, absolute, or relative to `project`) and optional `project`. Poll it while the render runs; nothing is rendered and nothing is written.",
+            description: "A farm render's progress stream, read live.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -899,7 +905,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "motion_farm_cloud",
             title: "The farm in the cloud: push, pull, or a worker's day",
-            description: "The resumable farm on object storage: `action` is push (upload a farm directory, and its staged render directory when `staged` names one - files whose stored sha256 already matches are skipped, so a re-push after a dead worker costs what changed), pull (download them back), status (what is remote, what is local, what differs), or work (a worker's whole day: pull, render ONE missing part through the sidecar with the farm's own atomic part-and-marker shapes and the joiner's own key, push it back - repeat until it answers done). The bucket, the endpoint and the credentials come from the operator's environment - FUNCUT_FARM_BUCKET, FUNCUT_FARM_PREFIX, FUNCUT_FARM_ENDPOINT (an S3-compatible host: MinIO, R2, a self-hosted one), FUNCUT_FARM_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY - and NEVER from these arguments, the VLM endpoint allow-list's own posture: a prompted agent cannot aim a render, or the credentials beside it, at a host the operator did not choose. `work` needs `staged` plus `parts` (or a progress.jsonl that says it); `geneva` names the sidecar, `part` picks a part, `prefix` overrides the key prefix. Uploads stream a block at a time; every request is SigV4-signed; a push that outlives the tool's 1200 s budget resumes cheaply.",
+            description: "The render farm on object storage: push, pull, status, or work one part - the bucket and keys come from the operator's env.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -908,7 +914,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "analysis_wait",
             title: "Wait for a job",
-            description: "Waits for any job - an analysis, a transcription, a voice, an export - to end, up to `timeoutSeconds` (60 by default, 600 at most), and returns its status; a finished analysis carries its JSON result in the status's `output`. If the job is still running when the time is up, call it again.",
+            description: "Wait for an analysis or model job (stabilize, transcribe, tts, download) to finish; polls until done.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -917,7 +923,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "watch_render",
             title: "Watch the cut",
-            description: "LOOK at the edit. Samples true composited frames across the open project's timeline (or a rendered movie at `path`) and returns ONE labelled contact sheet as an inline image, with measured craft facts: black frames, letterbox bars, flat/low-contrast shots, overexposed shots, duplicate shots (full-frame comparison), static transitions, per-shot colour saturation, per-shot energy-centroid cropHint, and an audio energy envelope when a movie is given. Call this after every render, read the notes, fix the edit, and call it again. The sheet is also written under the project's cache/sense/ and its path returned as pngPath, which is how craft_critique sees the same frames. Optional: samples (12 default, 24 max), times[] (explicit sample times), duration, cols, tileWidth, tileHeight, audio, out (write the PNG there). Writes the sheet, so not read-only; every write is held to this session's roots.",
+            description: "Sample a render or the timeline into a contact sheet the agent can SEE, with loudness and craft notes.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -926,7 +932,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "stock_contact_sheet",
             title: "Look at B-roll candidates",
-            description: "SEE stock footage before choosing it. Give a `query` (openvid_search's words), `ids` from openvid_search, or local `paths`; each candidate's real first frame is decoded into one labelled contact sheet returned as an inline image, with per-candidate pixel metrics, a cropHint and a ready-to-use reframeHint.clipTransform offset pair for the target aspect. With `rank: true` a local vision model re-ranks the candidates against `brief` (or the project's creative_brief) and suggests better queries. Never choose B-roll from captions alone again. Optional: limit (8 default, 12 max), minAesthetic, minMotion, orientation, source, sort, cols, tileWidth, out.",
+            description: "Look at B-roll candidates before choosing them: a labelled contact sheet image.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -935,7 +941,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "craft_critique",
             title: "Score the cut",
-            description: "The measured creative critic. Takes the `sheet` JSON returned by watch_render (its pngPath is how the critic sees the frames; a raw `pngB64` also works) and a `brief`, and returns six honest 0-10 scores - hook, story, rhythm, shotChoice, design, sound - plus notes, concrete revisions and a `fixes` array: structured patch operations, each {where, problem, change, op} with the number and unit in its change, a `confidence` of 0-1 saying how sure the critic is (high when the measured facts carry the fix, low when it is a read of taste), and the op from the scene builder's vocabulary (retime, shift, resize, restyle, replace) - and, when the critic measured the number rather than guessed it, a `patch` carrying the exact JSON its op reads ({\"shift\": 0.4} for a retime, {\"dx\": -180, \"dy\": 0} for a shift, {\"factor\": 1.2} for a resize, {\"curve\": \"spring-pop\"} for a restyle), applied as written with no sentence parsed. Apply them to a motion comp with the concat-motion critic module (`agent fix <comp.json> <fixes.json>` is its shell door), or the agent's edit verb. Baseline is REAL pixel/audio measurement: black frames, letterbox bars, flat and overexposed shots, duplicates, static transitions, opening-frame hook check, colour saturation (engine 'heuristic', confidence 0.5). With the bundled 0.5B local model it adds bounded visible-defect flags (engine 'local-vlm-flags', confidence 0.58, at most 1 point per axis: black frames, letterbox bars, readable text) - it CANNOT judge taste. Full six-axis VLM scoring and free-text fixes (engine 'local-vlm', confidence 0.78) needs a stronger critic: local_vlm {action:'configure', provider, apiKey} with a free-tier provider (groq, gemini, zai, openrouter), or FUNCUT_VLM_ENDPOINT pointing at any OpenAI-compatible vision server. With `project` it journals every pass (scores, revisions and fixes) to craft-history.json and returns pass, previousOverall, delta, improved and trend - a file write, so the tool is not read-only. Call it after EVERY watch_render. Optional: autoSetup, profile.",
+            description: "Score the cut on six craft axes from a contact sheet, with concrete revisions named.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -944,7 +950,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "suggest_cuts",
             title: "Find the musical cut points",
-            description: "Cut on energy, not on a fixed grid. Decodes the soundtrack with ffmpeg (NO librosa/python extras needed, unlike analyze_beats), estimates BPM from the energy-onset function, and returns beat-aligned cutTimes spread across the WHOLE piece plus an energy curve. Optional: path (music or voiceover file), cuts (12 default, 64 max), minGap seconds (0.35), bpm (a hint when the estimate is wrong), autoSetup. Use the times as section boundaries in plan_validate; keep a few cuts deliberately off-beat for surprise. Honest approximation, not librosa-grade beat tracking. Not read-only: it runs a decoder, and with autoSetup (the default) it downloads a pinned static ffmpeg into the app's own data folder when no decoder is on the machine.",
+            description: "Beat-aligned cut times from any soundtrack's energy onsets (no Python extras).",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -953,7 +959,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "measure_loudness",
             title: "Measure the mix",
-            description: "PROVE loudness compliance instead of guessing. Runs FFmpeg's EBU R128 meter on `path` (an exported movie or any media with audio) and returns integrated LUFS, true peak dBTP, loudness range LU, the error against the platform target, whether the target was met, and specific mix notes. export_wait reports no loudness, so this is the headless way to check. `targetLufs` is -14 by default (short-form platforms; -23 is broadcast EBU R128) and `targetTruePeakDbtp` is -1. Fix with clip_audio_levels_db and measure again. Not read-only: it runs a decoder, and with autoSetup (the default) it downloads a pinned static ffmpeg into the app's own data folder when no decoder is on the machine.",
+            description: "Measure an exported mix's integrated LUFS, true peak and LRA against a platform target.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -962,7 +968,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "track_subject",
             title: "Follow the subject",
-            description: "The single-frame cropHint answers WHERE THE SUBJECT IS; this answers WHERE IT GOES - the top feature for short-form H->V edits. Samples up to 24 frames across `path` (or a `from`/`to` span), finds the subject in each (what stands out from the frame AND from the temporal median across every sample, so a static background cancels), and returns a smoothed crop path: held through occlusion and exits rather than snapping to centre, entered from centre when the subject arrives late, reduced to keyframes at the path's turns - each with the exact clip_transform offsetX/offsetY for `aspect` (9:16 default), ready to keyframe_set on the clip so the vertical crop follows the subject instead of centre-cropping it. `moved: false` means a static subject: the single reframeHint is enough, key nothing. Optional: samples (12 default), from, to, times[], minConfidence (0.18), aspect (9:16 default), autoSetup. Not read-only: it runs a decoder, and with autoSetup (the default) it downloads a pinned static ffmpeg into the app's own data folder when no decoder is on the machine.",
+            description: "The subject's path across a clip, frame by frame, as crop keyframes.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -971,7 +977,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "motion_overlay",
             title: "Composite motion over footage",
-            description: "Fixes the opaque-caption-reel problem. Takes a baked RGBA PNG sequence (`frames`, or `hash` + `project` to find it) and composites it OVER real footage (`plate`, a video path) at `at` seconds, honouring the comp's transparency, and writes an ordinary H.264 clip ready for media_import and clip_add. Without a plate it composites over a solid `background` at the given width/height. The sidecar's video codecs cannot carry alpha and FFmpeg's WebM muxer does not reliably write VP9 AlphaMode, so this is the honest alpha path: transparency is honoured at the compositing step, not faked in an encoder. The encode rides the machine's GPU when it has one (`gpu`: auto by default - h264_vaapi where a VAAPI driver and render node exist; on asks for it and falls back to libx264 with a note when they do not; off encodes with libx264; FUNCUT_OVERLAY_ENCODER is the operator's pin). The reply says which encoder ran. Optional: fps (30), width, height, at (0), crf (18), background, x, y, out (defaults to <project>/motion/overlay.mp4).",
+            description: "Composite a transparent motion bake over real footage.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -980,7 +986,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "local_vlm",
             title: "Local or hosted vision critic",
-            description: "The vision critic behind craft_critique, on any of three rungs. `action: \"status\"` reports what is reachable right now. `action: \"setup\"` downloads, once and into the app's own data folder (no system install, no pip), the 0.5B SmolVLM2 model + projector (~546 MB) and a pinned llama.cpp CPU server - a bounded flag detector, not a taste judge. `action: \"providers\"` lists the free-tier hosted vision APIs (groq, gemini, zai, openrouter) with their endpoints, default model ids and honest free-tier notes. `action: \"configure\"` with `provider` + `apiKey` wires one up in a single call (key stored in vlm.json in the app's data dir, masked in every reply; HOSTED means contact-sheet frames go to that provider's API - the local paths never leave the machine) and unlocks full six-axis VLM scoring in craft_critique. `action: \"clear\"` removes the saved config. FUNCUT_VLM_ENDPOINT / FUNCUT_VLM_API_KEY / FUNCUT_VLM_MODEL env vars do the same without a config file; any OpenAI-compatible server works.",
+            description: "Status or first-use setup of the local sub-1B vision critic.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -989,7 +995,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "emotion",
             title: "Read what the voiceover feels",
-            description: "The emotional read of the voiceover that drives every layer. `action: \"extract\"` (default) takes `transcript` (a transcribe job's output), `lines` [{text,start,end}] or `script` text and returns PER LINE: one of 7 emotions with intensity, the act (hook/setup/tension/turn/reveal/proof/cta), a hormone shorthand, the TTS `delivery` and `speed`, the easing curve as exact concat-motion authoring JSON (tense lines ease in, warm ones ease out, a burst pops), colour temperature with a grade hint, the SFX register, the BGM duck depth in dB, pacing and 2-3 word stock `queries` - plus the whole piece's arc (shape, score, warnings) checked against the brief's emotionalArc. Engines: a stem lexicon always (confidence 0.55, English-only), or tabularisai/multilingual-emotion-classification - XLM-RoBERTa across 23 languages, its 11 labels folded onto the edit's 7 - on HuggingFace's free Inference API when FUNCUT_EMOTION_API_KEY / HF_TOKEN is set (75/25 blend, confidence 0.85; a non-English script without a key is answered with an honest note, not a silent neutral). `project` loads the creative brief automatically. `action: \"gate\"` checks stock candidates (openvid_search / stock_contact_sheet results) against a beat's `segment` {emotion, act} and `brand`: 0-1 failed checks passes, 2+ REJECTS the candidate, every candidate rejected = DROP THE BEAT - never pad with a bad match. `action: \"brand\"` validates a brand guide (`action: \"template\"` returns a ready-to-edit example) and applies it to lines. `action: \"verify\"` aligns the edit's words (`expected`) against the re-transcribed export (`actual`): what a render loses, duplicates or shifts (toleranceMs, default 150) is a defect the eye cannot see.",
+            description: "The voiceover's emotional read per line - emotion, act, delivery, colour, duck depth - and the stock gates it drives.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -998,316 +1004,67 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "voice_signals",
             title: "Read the voiceover as a score",
-            description: "The acoustic read of the voiceover: what was said, how it was said, which word matters, what is named, who is speaking, and where every beat lands. `action: \"extract\"` (default) takes `audio` (the voiceover file), `transcript` (a transcribe job's output, for the word timings) and optionally `emotion` (an emotion extract's output, for the arc) and returns PER LINE: momentary loudness relative to the take (quiet vs loud for fast-cut vs slow-hold pacing), the speech rate in words-per-minute and syllables-per-second with a pace class, the sentence type (question/exclamation/statement/fragment, cross-checked against the pitch's terminal rise), the emphasis words the energy peaks land on (where SFX peaks and caption highlights belong), the fillers (um/uh are safe removals, discourse markers are context calls), per-word confidence (gated on timing, silence overlap and energy; or WhisperX scores when installed), the speaker, the formants and voice quality, and the entities the line names - `$10,450` as a stat card, a name as a lower-third, a date as a timeline, PII flagged for redaction - plus the pauses CLASSIFIED (breath / beat / dramatic hold / scene turn / dead air: a dramatic hold must never be cut, only dead air is a cut candidate), the motifs (repeated phrases that deserve the same visual back), the whole take's rhythm layers and phrase boundaries, the noise floor and SNR (the BGM decision: dry voice gets music, a take that already has music does not), the speaker diarization with change times (a speaker change is a scene change), and `directorHints`: the cut style (fast/mixed/hold/building), the caption gate, the BGM recommendation, the protected pauses and the font and music-genre hints for the detected language (Bengali gets a Bengali font). Engines: ffmpeg ebur128 + silencedetect and pure-Python regex always; the Rust `voice-signals` binary (spectral-prosody, oximedia-audio-analysis, polyvoice, anno - build with `cargo build -p voice-signals`) for prosody, forensics, speakers and NER entities, with an honest note when it is not built; WhisperX (pip install whisperx) for aligned word times with scores. `action: \"selftest\"` proves the whole chain on a synthetic take.",
+            description: "The voiceover read as a score: loudness, pauses, rate, emphasis, speakers, entities - with per-signal confidence, the decision policy and the cut decisions they drive.",
             read_only: true,
             destructive: false,
             idempotent: true,
             action: Action::VoiceSignals,
         },
-        // The thirty-three consumption-layer tools: what the director DOES
-        // with the readings. Five families, one Python module each - and
-        // every one degrades loudly, never silently.
+        // The five family doors to the thirty-three consumption-layer
+        // readings: what the director DOES with the voice_signals profile,
+        // grouped so an agent's tool list stays small without losing a
+        // single reading - the `action` names the reading, the family
+        // names the Python module behind it, and every one degrades
+        // loudly, never silently.
         Tool {
-            name: "analyze_discourse",
-            title: "Read the script's connective tissue",
-            description: "The discourse read: connectives by relation (comparison / contingency / temporal / expansion / signposting - the families the Penn Discourse Treebank uses), the given-new overlap between consecutive lines, and the cohesion profile of the whole script. Takes `transcript`, `lines` or raw `script` text and returns per line: the markers with their relation and position, the lexical overlap with the line before, and an `abruptTransition` flag where a new idea arrives with neither overlap nor connective - the exact places a chapter card, a scene change or one connective sentence earns its keep. A 'but' or 'however' is the emotional pivot: the visual should turn with it. Pure-python marker lexicon and Jaccard overlap; no audio needed. `action: \"selftest\"` proves the chain.",
+            name: "sense_discourse",
+            title: "The script as language",
+            description: "The script as language, behind one `action`: connectives, topics, speech acts, readability, claim graph, script quality, sarcasm, code switching, cross-lingual emotion.",
             read_only: true,
             destructive: false,
             idempotent: true,
-            action: Action::Sense("analyze_discourse"),
+            action: Action::SenseFamily("discourse"),
         },
         Tool {
-            name: "segment_topics",
-            title: "Find where one topic ends and the next begins",
-            description: "Topic segmentation by lexical cohesion: a Texttiling read that slides windows over the lines, computes adjacent-window similarity, and cuts at the valleys (depth-scored against their neighbouring peaks). Returns `segments` with start/end times, startLine/endLine, keywords (locally frequent, globally rare), a generated headline, and per-segment cohesion - the visual chapter map. Each boundary is a scene-change or chapter-card point; each segment's keywords are its b-roll shot list. A segment with low cohesion mixes two ideas and wants its visuals split. Takes `transcript`, `lines` or `script`; needs 3+ lines. `maxSegments` caps the cut count.",
+            name: "sense_voice_quality",
+            title: "The take's health",
+            description: "The take's health, behind one `action`: vocal events, voice class, recording class, reverb, restarts, filler types.",
             read_only: true,
             destructive: false,
             idempotent: true,
-            action: Action::Sense("segment_topics"),
+            action: Action::SenseFamily("voiceq"),
         },
         Tool {
-            name: "detect_speech_acts",
-            title: "Read what each line is doing on the surface",
-            description: "The surface speech-act read per line: question, rhetorical question, exclamation, imperative, promise, warning, invitation, quote, conditional, negation, enumeration, superlative claim - each with the cue that fired. A question line deserves a visual that answers late (hold the reveal one beat past the answer); an imperative is the eye-contact moment for a direct-address caption; a quote line is an attribution lower-third waiting to happen; an enumeration wants a kinetic sequence with equal shot lengths. Takes `transcript`, `lines` or `script`. Punctuation plus syntactic cue patterns, pure python.",
+            name: "sense_prosody_style",
+            title: "How the delivery moves",
+            description: "The delivery, behind one `action`: emphasis types, speaking style, rhythm and meter, tempo changes, accent, vocal tract.",
             read_only: true,
             destructive: false,
             idempotent: true,
-            action: Action::Sense("detect_speech_acts"),
+            action: Action::SenseFamily("prosody"),
         },
         Tool {
-            name: "classify_speech_acts",
-            title: "Classify each line into Searle's five acts",
-            description: "The deep pragmatic read: Searle's taxonomy - assertive (claims the world is so), directive (tries to make the viewer do something), commissive (commits the speaker), expressive (vents a psychological state), declaration (changes the world by being said). Each line gets its class, the cues that fired, a confidence, and the visual treatment that class earns: assertive -> b-roll that shows the claim (a stat card when numbers ride it); directive -> CTA card or direct-address caption; commissive -> a plant for a visual callback; expressive -> reaction shot or grade shift; declaration -> title card. The balance check tells you when a script is all assertives - a lecture - and one line in five wants to be a directive or an expressive.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("classify_speech_acts"),
-        },
-        Tool {
-            name: "score_readability",
-            title: "Grade the script and set the caption pace",
-            description: "Flesch Reading Ease, Flesch-Kincaid grade, Gunning Fog, words-per-sentence, passive-voice hits (be-verb + participle), nominalizations (-tion/-ment/-ance/-ity), and the caption pacing the grade can carry (20 CPS easy down to 11 CPS difficult - captions read ~25% slower than prose). Non-Latin scripts get an honest note that grade formulas are Latin-alphabet instruments plus the word and line stats that still answer. Passive constructions hide the doer - an active rewrite is free clarity; nominalizations deaden narration; dense lines need splitting, not speeding. Takes `transcript`, `lines` or `script`.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("score_readability"),
-        },
-        Tool {
-            name: "extract_claim_graph",
-            title: "Map claims, evidence, hedges and counters",
-            description: "The fact-check graph under the edit: claims (assertive un-hedged lines) with a strength from their evidence cues, evidence nodes (because / since / according to / studies show / numbers), hedged lines (might / could / I think), and the edges between them - supported_by, countered_by (but / however / critics), elaborates (which means / in other words), follows. The `uncoveredClaims` list is the punchlist: claims riding with no evidence need proof b-roll, a source lower-third, or a softer rewrite. A countered claim is the tension beat - visual contradiction, hard cut on 'but'. Hedged lines are weak beats: commit or make the hedge the point.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("extract_claim_graph"),
-        },
-        Tool {
-            name: "score_script_quality",
-            title: "Score the script and name the fixes",
-            description: "The script doctor, scored 0-100 across six axes with the fixes named: HOOK (25 - question, number or money, direct address, curiosity gap, bold claim, opening short enough), STRUCTURE (25 - hook present, CTA present in the closing lines, a twist cue in the middle third, a payoff cue), CLARITY (15 - Flesch inside the 50-75 sweet spot), RHYTHM (15 - sentence-length variety and at least one line under six words: the beat that lands), PAYOFF/CTA (10 - and it must be the LAST thing heard), CONCISION (10 - fillers and redundant lines). Pass `targetSeconds` and the 150-wpm estimate says how many words to cut or where there is room to breathe. Verdict: strong / workable / needs a rewrite.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("score_script_quality"),
-        },
-        Tool {
-            name: "detect_sarcasm",
-            title: "Find the irony before it cuts you",
-            description: "Sarcasm detection by cue, never by verdict: scare quotes and markers (sure, obviously, yeah right, just what I needed), positive words after a negative run (the classic irony setup), mixed sentiment inside one line, and - when `audio` with word timings is given - the delivery cross-check: flat energy on a positive word (under 3 LU of momentary movement where emphasis belongs). Returns per line: a sarcasm band (high / medium / low), the weight, and every cue that fired. A sarcastic line earns irony cuts - cheerful stock over bitter words - and the deadpan pause after it is where the laugh lives, so keep it. This is a heuristic that says which cues fired, not a mind reader.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("detect_sarcasm"),
-        },
-        Tool {
-            name: "detect_code_switching",
-            title: "Find the language switches in a mixed take",
-            description: "Per-line Unicode-script scan (Bengali, Devanagari, Arabic, Cyrillic, CJK, Hangul, Thai, Tamil, Latin...): the dominant script, the scripts mixed in, romanized borrowings (khushi, dukkho, bhalobasha - the Dhaka register), the switch points between lines, and what a mixed take needs: per-script font fallback (Bengali gets Noto Sans Bengali), caption pacing per language, and a multilingual voice or per-language TTS segments - a single-voice TTS mangles the switches. Each switch point is a natural scene or caption-style change: the language turn IS the beat. `language` cross-checks the caller's hint.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("detect_code_switching"),
-        },
-        Tool {
-            name: "detect_cross_lingual_emotion",
-            title: "Read emotion in Bengali, Hindi, Spanish, French",
-            description: "The offline emotion read for the languages the English lexicon cannot hear: native-script Bengali, romanized Bengali, Hindi, Spanish and French, each folding onto the edit's seven emotions (per-line emotion, intensity, confidence, and the lexicon coverage behind it). This is the precision-core fallback for when FUNCUT_EMOTION_API_KEY is not set and the script is not English - every hit names the emotion it found, and a line with no hit reads neutral at low confidence, never a guess. Low-coverage lines should default to the brief's tone, not to neutral visuals. For depth, the hosted multilingual model (emotion tool with the key) is the stronger read.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("detect_cross_lingual_emotion"),
-        },
-        Tool {
-            name: "detect_vocal_events",
-            title: "Find the laughs, sighs, breaths and coughs",
-            description: "The non-speech events in the take, found in the 100 Hz envelope and named by their shape: a laugh is a train of 3-9 Hz quaver pulses, voiced; a sigh a long voiced low-energy span; a breath a short one beside speech; a cough or throat clear a sharp unvoiced transient (doubled, it is a throat clear). Written cues in the script ([laughs], *sigh*, haha) confirm and name events too short to see. Returns each event with time, confidence, cues and its editing verdict: coughs and throat clears are cut candidates that read as mistakes; laughs and sighs are authentic delivery the visual should react to, not remove. Takes `audio` plus `transcript`/`lines` for the cues.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("detect_vocal_events"),
-        },
-        Tool {
-            name: "classify_voice_quality",
-            title: "Classify the voice itself",
-            description: "The voice, measured and classified: resonant (strong periodicity, dark tilt), breathy (high-band noise over voiced frames), tense (elevated period and amplitude variability), creaky (a quarter of frames under 85 Hz), or natural when no extreme cue fires. The measures behind the classes: F0 mean and range, a jitter proxy, a shimmer proxy, voicing strength, spectral tilt, breath-band noise - each named as the autocorrelation-at-16-kHz proxy it is, good for ranking takes, not for diagnosing voices. The genre fit follows: a resonant take carries slow holds and long dissolves, a bright tilt reads on phones for commercial work, breathy and creaky registers want subtitles to carry clarity.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("classify_voice_quality"),
-        },
-        Tool {
-            name: "classify_recording_quality",
-            title: "Grade the take's health",
-            description: "The recording verdict: noise floor (quietest quartile of 250 ms windows), SNR, peak and clipped runs (samples at the rails in runs), DC offset, hum tones at 50/60 Hz and harmonics (FFT of the quietest window, 6 dB over their neighbourhood), and effective bandwidth. The verdict - broadcast / clean / home / rough - comes with its fixes (notch the hum first, then remove_hiss_hum_rumble and enhance_speech; clipping needs a re-record, EQ cannot fix it) and the BGM decision: a clean floor lets the bed whisper at -28 LUFS ducked 12 dB, an audible floor needs BGM at or above it to mask - or a real cleanup first.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("classify_recording_quality"),
-        },
-        Tool {
-            name: "measure_reverb",
-            title: "Measure the room in the take",
-            description: "RT60 the honest way it can be measured offline: Schroeder backward integration over the decay after each strong transient onset, the median across onsets, plus the early-to-late energy ratio (0-50 ms vs 50-400 ms after the onset) as the direct-to-reverb proxy. Room classes: dry (<0.25 s), studio/vocal booth, small room, large room/hall. The edit hints follow: gate and music-attack releases want to sit under a quarter of the RT60 so tails are kept, not chopped; a dry room means ADR inserts will match; a ringing room means B-roll audio will clash - cut to music, not to room sound. Continuous speech or a very dry take says so instead of inventing a reading.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("measure_reverb"),
-        },
-        Tool {
-            name: "detect_restarts",
-            title: "Find the false starts and self-repairs",
-            description: "Every restart, typed and timed: stalling repeats (a 1-3 word n-gram repeated back to back, with the gap measured), elongations (a word held over twice its length-class duration), fragments (hyphen-cut abandoned words) and abandoned clauses (a line left unfinished whose next line re-anchors the thought - a rewrite or a pickup, NOT a cut). Each restart carries its span and a cutSafe verdict from the word timings; the punchUpPotentialSeconds total is what a tight cut saves. Every stalling repeat and elongation is a safe cut when its neighbours are clean - this is the punch-up tool the classify_filler_type recommendations point at.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("detect_restarts"),
-        },
-        Tool {
-            name: "classify_filler_type",
-            title: "Type the fillers, not just count them",
-            description: "Beyond um/uh: the filler taxonomy that tells you what each one costs. filled pauses (um, uh, erm - safe removals), discourse markers (well, so, anyway, basically - a style dial: keep for conversational, cut for punchy), hedges (kind of, sort of, I think - cut for authority, keep for honesty), intensifiers (really, very, super - punch candidates: where SFX and zoom punches land), backchannels (mm-hmm, right - the listener's half of an interview, keep), stalling repeats (the the - also caught by detect_restarts). Per instance: word, class, times, recommendation; the aggregate profile says conversational-and-warm or tight, and safeRemovalSeconds is the punch-up budget.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("classify_filler_type"),
-        },
-        Tool {
-            name: "score_emphasis_type",
-            title: "Type every emphasis word",
-            description: "Every emphasis word, typed by what the emphasis IS: contrastive (the word after but / however / only / actually - the pivot is the edit point: split screen or a hard match cut), new information (this / that / here / today introducing it - the b-roll reveal lands exactly there, not before), list (an enumeration head - one item per beat, same treatment, same rhythm), intensity (an amplifier or its target - zoom punch, SFX hit, caption scale-up), written (capitals or marks in the script - highlight the word, not the line). Emphasis candidates come from the voice-signals energy peaks when the Rust ear is built, else from the script's own emphasis grammar. Each hit carries its type, cue and the visual it earns.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("score_emphasis_type"),
-        },
-        Tool {
-            name: "detect_speaking_style",
-            title: "Name the delivery style",
-            description: "The delivery read that picks the cut style for you: conversational (fast, dynamic, breathing often - jump cuts on the pauses, handheld energy, captions that pop), presenter (measured with deliberate pauses and wide pitch - holds on the key lines, one clean cut per phrase), newsread (even pace, narrow pitch - b-roll packages under every phrase, cut on the phrase boundary), podcast (relaxed mid pace - two-camera rhythm, subtle zooms, long dissolves), documentary-narration (slow, even, close to the floor - slow dissolves, establishing holds, no jump cuts), high-energy (the ad read - cut every 0.8-1.5 s, flash frames on the emphasis words). Evidence: WPM, pauses per minute, F0 mean and spread, dynamics - all named, so a caller can disagree.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("detect_speaking_style"),
-        },
-        Tool {
-            name: "measure_rhythm_meter",
-            title: "Measure the speech rhythm and the beat lock",
-            description: "The rhythm read: syllable nuclei timed from the energy peaks inside each word, the PVI (pairwise variability index) over successive nuclei - stress-timed (English) vs syllable-timed vs mixed - the regularity of the stress grid (a metronomic delivery reads near-zero CV), syllables per second, and the beatSync map: pass `bpm` and every nucleus is tested against the grid with a swept phase, returning which words land on the downbeat - exactly the words to align cuts to when editing to music. A stress-timed voice cuts well to drum music; a syllable-timed one wants smoother beds. Needs `audio` plus word timings.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("measure_rhythm_meter"),
-        },
-        Tool {
-            name: "detect_tempo_changes",
-            title: "Find the accelerandos and the rallentandos",
-            description: "The tempo curve of the delivery: word rate in a sliding 4-word window, segmented where it sustains a slope - accelerating spans (rising tension: shorten the shots progressively), decelerating spans (gravity arriving: hold the shot, let the pause breathe), plateaus, and the trend changes flagged as the edit points the delivery already made. The `dramatic` list keeps only the spans at least 1.5 s long with a real rate change; the full curve rides along for custom reads. Needs `audio` and word timings (8+ words). Cut ON the trend changes.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("detect_tempo_changes"),
-        },
-        Tool {
-            name: "detect_accent",
-            title: "Read fluency for caption pacing",
-            description: "An honest L2-likeness proxy that exists for ONE purpose: making the edit CLEARER, never for labelling people. The cues: article-pattern slips in the transcript (a apple, go to home), article density per 100 words, filled-pause rate, mid-line timing breaks while formulating - each named with its weight, summed into a band (native-like / possibly L2 / likely L2) at confidence 0.5. The output that matters is `captionPacing`: L2-informed reading budgets (12 CPS, more time on screen for key terms) and a mix note (a light bed with fewer transients keeps narration intelligible). The note says it plainly: accents are normal speech; this tool informs caption pacing and mix clarity, it is NOT a verdict on the speaker.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("detect_accent"),
-        },
-        Tool {
-            name: "measure_vocal_tract",
-            title: "Read the voice's physical signature",
-            description: "The physical read behind 'this voice sounds like X': F0 mean, formant readings (F1-F4 from the voice-signals LPC ear when the binary is built; band proxies 250-850 / 850-2500 / 2500-3500 Hz otherwise, each labelled as the proxy it is), the vowel-space spread, the quarter-wave tract-length estimate in cm, and the timbre descriptors (dark/warm, balanced, bright/forward; low/mid/high register). The voiceMatch block is for multi-voice edits: match F0 within 15 Hz and the F2/F1 ratio within 15% before panning two narrators side by side - the ear hears the seam otherwise. A dark timbre wants warm grades and slower motion; a bright one cuts faster.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("measure_vocal_tract"),
-        },
-        Tool {
-            name: "enhance_speech",
-            title: "Clean and level a voiceover",
-            description: "The measured voice chain, written to a NEW file (the input is never touched): highpass at 75 Hz (the room lives below), lowpass at 14 kHz (nothing a phone speaker can use above), de-esser before compression so sibilance does not pump, a compressor riding 6 dB under THIS take's measured speech level, a gate 8 dB over the measured floor (it must not eat soft speech), a limiter at the true-peak ceiling, and loudnorm to the target (`targetLufs`, default -16). Every filter decision is returned with the why; the before/after table carries integrated LUFS, true peak and SNR measured the same way classify_recording_quality measures. Video containers keep their video stream (stream-copied). `out` defaults beside the input as <name>_enhanced.<ext>; pass `overwrite` to replace an existing output.",
+            name: "sense_audio_repair",
+            title: "The clean and the music",
+            description: "The clean and the music, behind one `action`: enhance speech, remove hiss/hum/rumble, normalize loudness, detect/identify/structure music.",
             read_only: false,
             destructive: false,
             idempotent: true,
-            action: Action::Sense("enhance_speech"),
+            action: Action::SenseFamily("audiorepair"),
         },
         Tool {
-            name: "remove_hiss_hum_rumble",
-            title: "Notch the hum, cut the rumble, denoise the hiss",
-            description: "Find it, then remove it - each removal proven with a before/after SNR table. The hum: FFT of the quietest window, 50/60 Hz families standing 6 dB over their neighbourhood, notched at -14 dB Q8 (up to 4 harmonics). The rumble: sub-60 Hz energy over -32 dB gets a 70 Hz highpass (else a conservative 60 Hz). The hiss: high-band energy in the quiet windows over the speech band gets afftdn at a strength matched to what was measured. When the take is cleaner than the cure - denoise artefacts cost more than the noise - the tool SAYS so and writes nothing unless `force` is true. Output to `out` (default <name>_clean.<ext>); the input is never touched.",
+            name: "sense_captions",
+            title: "The words made to agree with the take",
+            description: "The words made to agree with the take, behind one `action`: TTS quality, AI-voice detection, voice sealing, caption alignment, subtitle hygiene.",
             read_only: false,
             destructive: false,
             idempotent: true,
-            action: Action::Sense("remove_hiss_hum_rumble"),
-        },
-        Tool {
-            name: "normalize_loudness",
-            title: "Two-pass loudness to the platform target",
-            description: "The mastering pass: ebur128 measurement first, then loudnorm applied with the measured values - linear (one gain, no dynamics touched) when the take is within range, dynamic when the range itself needs reshaping - and the after-measurement to prove it. Targets by `platform` (youtube / spotify / reels-tiktok -14 LUFS, podcast -16, broadcast-eu -23 EBU R128, broadcast-atsc -24 ATSC A/85) or explicit `targetLufs` and `targetTruePeakDbtp` (defaults -14 / -1). The reply names the mode honestly and warns when a true-peak or range constraint pushed the result off target - measure and decide, do not stack passes. Output to `out` (default <name>_<target>lufs.<ext>); video containers keep their video; the input is never touched.",
-            read_only: false,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("normalize_loudness"),
-        },
-        Tool {
-            name: "detect_music_segments",
-            title: "Find the music, speech and silence spans",
-            description: "Per-second classification of what the audio IS: music (onset autocorrelation beat strength over 0.35, duty cycle over 85%, stable spectral centroid), speech (phrases with gaps), silence, or music_or_dense_speech when the numbers cannot settle it - each span with its duty cycle, beat strength, BPM hint and centroid stability. The editing answer is the point: a take that already carries music must NOT get a doubled bed (duck or replace, never stack), while a clean speech take wants a BGM bed started under the first speech and ducked 10-14 dB under words. Silences over 2 s are breathing room or cut candidates - check the pause classes in voice_signals.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("detect_music_segments"),
-        },
-        Tool {
-            name: "identify_music",
-            title: "Identify the music offline, honestly",
-            description: "Offline music identification: tempo (onset autocorrelation, 60-190 BPM), key and mode (chroma from high-resolution FFTs correlated with the Krumhansl profiles, with a confidence), spectral balance (bass / mid / high with the instrumentation hints each implies), energy, and mood tags. The honest core: NAMING the exact song needs an online fingerprint service (AcrCloud / Shazam APIs) and this tool does not pretend otherwise - instead it returns `libraryQuery`, the descriptor string that IS the music-library search ('120 BPM, A minor, moody, driving'): paste it into bgm_search and let the libraries answer. This is the descriptor that makes stock-music replacement a query instead of an afternoon.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("identify_music"),
-        },
-        Tool {
-            name: "analyze_music_structure",
-            title: "Map the music's structure",
-            description: "The structure map a cut-to-music edit is drawn on: BPM with confidence, the bar grid (4 beats, phase found by searching for the onset-aligned downbeat), sections from 2-bar energy self-similarity with roles (intro/outro, verse/groove, build, peak/chorus), the drops (energy jumps over 35% of peak - save the strongest visual for the drop and hold a beat before it), the per-bar energy curve, and cutSafePoints: the bar boundaries where every cut lands musical. Intro and outro sections are the natural title and CTA homes. Needs 8+ seconds of music; when no tempo is found it says to check detect_music_segments for what is actually in the file.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("analyze_music_structure"),
-        },
-        Tool {
-            name: "evaluate_tts_quality",
-            title: "Judge whether a TTS take is alive",
-            description: "Is this synthetic take alive: pitch range in semitones and pitch variability over voiced frames (monotone is the classic tell), word-gap variability (metronomic timing is the other), pause placement against the punctuation (does a comma actually earn a pause), and word-level dynamics (no emphasis shape, no life). Returns a naturalness score and verdict (alive / workable / robotic) with every robotic cue named, and the fixes that address them: regenerate with a voice that varies pitch, edit the script's punctuation so the engine breathes, SSML prosody marks or post EQ for emphasis - and at minimum, human-record the hook, because a robotic take undercuts every emotion-led cut. Needs `audio` plus its word-timed transcript.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("evaluate_tts_quality"),
-        },
-        Tool {
-            name: "detect_ai_voice",
-            title: "Score synthetic-voice likelihood for disclosure",
-            description: "The synthetic-media disclosure heuristic: a noise floor too clean (no room, no mic self-noise), no breaths between phrases (nobody is breathing), period jitter near zero (natural voices carry 0.5-2% - this reads the same proxy classify_voice_quality does), and machine-regular word gaps. Each cue adds its weight to an aiLikeness score with a prior, and human markers subtract; the band is likely synthetic / uncertain / likely human. The purpose is disclosure: label synthetic voices honestly - platforms and audiences both ask now - and pair synthetic narration with a human-recorded hook. The note is part of the tool: a heuristic modern TTS can pass and noisy humans can fail; it informs disclosure, it never proves anything about a person.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("detect_ai_voice"),
-        },
-        Tool {
-            name: "seal_voice",
-            title: "Seal a voice take's provenance and permissions",
-            description: "The provenance and permission record a licensed or synthetic voice deserves. `action: \"seal\"` hashes the audio (SHA-256 over the bytes), freezes a short voiceprint (F0 mean and spread, voiced fraction, duration - enough to recognise the same voice, never enough to synthesise it) and writes voice-seal.json beside the audio with the `policy`: allowedUses, expiry, attribution, license, syntheticVoiceDisclosure. `action: \"verify\"` recomputes the hash and says intact or TAMPERED - any edit, re-encode or replacement breaks the seal, by design - and checks policy expiry. `action: \"status\"` reads the seal. The one file that answers 'what is this take and what may it be used for' long after the session that made it.",
-            read_only: false,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("seal_voice"),
-        },
-        Tool {
-            name: "align_captions",
-            title: "Re-time caption cues to the audio",
-            description: "Make the words agree with the take: drift correction first (the median offset of word starts to the nearest energy onset - a consistent offset is clock drift, and it is snapped out), then cue building under reading-speed budgets (`maxCharsPerSecond` 17 default, `maxDurationSeconds` 5, `minDurationSeconds` 0.9, `maxCharsPerLine` 42), sentence and long-gap boundaries honoured, then cue edges snapped to nearby silence spans so captions breathe with the voice. Returns cues as [{text, start, end, cps}] that fit captions_add directly, the drift it found and removed, and how many boundaries snapped. Needs word timings (`transcript` with words); `audio` enables the drift and snap passes.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("align_captions"),
-        },
-        Tool {
-            name: "clean_subtitles",
-            title: "Clean subtitles into shape",
-            description: "Subtitle hygiene, every fix counted: punctuation completed, casing fixed, fillers stripped (optional, on by default), duplicates merged, long lines split at word boundaries under `maxCharsPerLine` (42), short neighbours merged, overlaps repaired, sub-40 ms gaps closed, and reading speed enforced (`maxCharsPerSecond` 17 - dense cues get their time stretched, not their readers rushed). Input: raw `srt` text (parsed with a pure-stdlib reader), or `transcript` / `lines` / `script`. Output: cleaned cues ready for captions_add, or `format: \"srt\"` for a ready-to-burn SRT, plus the changeLog of exactly what was fixed. Untimed lines ride through for align_captions to place.",
-            read_only: true,
-            destructive: false,
-            idempotent: true,
-            action: Action::Sense("clean_subtitles"),
+            action: Action::SenseFamily("captions"),
         },
         Tool {
             name: "creative_brief",
             title: "Set the creative intent",
-            description: "Persist the WHY of the edit in the project folder so every turn works from the same intent. `action: \"set\"` merges `brief` into creative-brief.json; `action: \"get\"` reads it. Fields: audience, platform, goal, thesis, curiosityGap, payoff, emotionalArc, referenceStyle, tone, durationSeconds, brandKit, constraints, avoid. Returns a ready-to-use directorPrompt to give the AI director, and lists missingCoreFields. An edit without these fields is an edit without a point of view.",
+            description: "Read or write the project's persisted creative brief - the WHY a plan is validated against.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -1342,47 +1099,20 @@ impl Tool {
             // The sense family, whose own budgets are 240-480 s: a
             // critique, a cut suggestion, a loudness pass, an emotion
             // read, a voice-signal read, a contact sheet with its ranking,
-            // and the thirty-three consumption-layer tools - the discourse,
-            // voice-quality, prosody, audio-repair and caption families.
+            // and the five family doors behind which the thirty-three
+            // consumption-layer readings live (their member budgets are
+            // the sense.rs table's own).
             "craft_critique",
             "suggest_cuts",
             "measure_loudness",
             "emotion",
             "voice_signals",
             "stock_contact_sheet",
-            "analyze_discourse",
-            "segment_topics",
-            "detect_speech_acts",
-            "classify_speech_acts",
-            "score_readability",
-            "extract_claim_graph",
-            "score_script_quality",
-            "detect_sarcasm",
-            "detect_code_switching",
-            "detect_cross_lingual_emotion",
-            "detect_vocal_events",
-            "classify_voice_quality",
-            "classify_recording_quality",
-            "measure_reverb",
-            "detect_restarts",
-            "classify_filler_type",
-            "score_emphasis_type",
-            "detect_speaking_style",
-            "measure_rhythm_meter",
-            "detect_tempo_changes",
-            "detect_accent",
-            "measure_vocal_tract",
-            "enhance_speech",
-            "remove_hiss_hum_rumble",
-            "normalize_loudness",
-            "detect_music_segments",
-            "identify_music",
-            "analyze_music_structure",
-            "evaluate_tts_quality",
-            "detect_ai_voice",
-            "seal_voice",
-            "align_captions",
-            "clean_subtitles",
+            "sense_discourse",
+            "sense_voice_quality",
+            "sense_prosody_style",
+            "sense_audio_repair",
+            "sense_captions",
             // The library work whose cost is the network's: a semantic
             // stock search runs a 240 s rerank budget inside it, and an
             // import fetches and copies up to twenty items - a slow link
@@ -1653,6 +1383,7 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
         | Action::MeasureLoudness
         | Action::SuggestCuts
         | Action::TrackSubject => sense_schema(tool.name),
+        Action::SenseFamily(_) => Some(crate::sense::sense_family_schema(tool.name)),
         Action::Mask => {
             let update = schemas.command("updateClip")?;
             let mut mask = schemas.def("ClipMask")?;
@@ -1722,11 +1453,6 @@ fn sense_schema(name: &str) -> Option<Value> {
             "default": default, "description": description,
         })
     };
-    // The three inputs every text-reading sense tool takes, one
-    // description each so the family schemas stay one screen tall.
-    let transcript_field = || json!({ "type": "object", "description": "A transcribe job's output: {segments: [{text, start, end, words: [{text,start,end}]}]} - the word timings the timing reads need." });
-    let lines_field = || json!({ "type": "array", "description": "Lines as [{text, start, end, words}] (or bare strings) when there is no transcript.", "items": { "type": ["object", "string"] } });
-    let script_field = || json!({ "type": "string", "description": "Raw narration text when there is no transcript or audio; the text-only signals still answer." });
     let times = json!({
         "type": "array", "description": "Explicit sample times in seconds; overrides `samples`.",
         "items": { "type": "number", "minimum": 0 },
@@ -1784,13 +1510,13 @@ fn sense_schema(name: &str) -> Option<Value> {
             "cuts": { "type": "integer", "minimum": 1, "maximum": 64, "default": 12 },
             "minGap": { "type": "number", "minimum": 0.05, "maximum": 10, "default": 0.35 },
             "bpm": { "type": "number", "minimum": 30, "maximum": 300, "description": "Optional BPM hint when the estimate is wrong." },
-            "autoSetup": { "type": "boolean", "default": true },
+            "autoSetup": { "type": "boolean", "default": true, "description": "Bootstrap a pinned static ffmpeg into the app's data folder when no decoder is on the machine." },
         }),
         "measure_loudness" => json!({
             "path": string("The media file with an audio stream to measure."),
-            "targetLufs": { "type": "number", "default": -14, "minimum": -70, "maximum": 0 },
+            "targetLufs": { "type": "number", "default": -14, "minimum": -70, "maximum": 0, "description": "The platform loudness target; -14 short-form, -23 broadcast EBU R128." },
             "targetTruePeakDbtp": { "type": "number", "default": -1, "minimum": -20, "maximum": 6 },
-            "autoSetup": { "type": "boolean", "default": true },
+            "autoSetup": { "type": "boolean", "default": true, "description": "Bootstrap a pinned static ffmpeg into the app's data folder when no decoder is on the machine." },
         }),
         "track_subject" => json!({
             "path": string("The media file whose subject the crop should follow."),
@@ -1862,153 +1588,6 @@ fn sense_schema(name: &str) -> Option<Value> {
             "path": string("The project folder."),
             "action": { "type": "string", "enum": ["get", "set"], "default": "get" },
             "brief": { "type": "object", "description": "Fields to merge: audience, platform, goal, thesis, curiosityGap, payoff, emotionalArc, referenceStyle, tone, durationSeconds, brandKit, constraints, avoid." },
-        }),
-        // The thirty-three consumption-layer tools, one schema each: the
-        // fields the sense.rs table forwards are the fields the schema
-        // names, nothing more.
-        "analyze_discourse"
-        | "detect_speech_acts"
-        | "classify_speech_acts"
-        | "score_readability"
-        | "extract_claim_graph" => json!({
-            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
-            "transcript": transcript_field(),
-            "lines": lines_field(),
-            "script": script_field(),
-        }),
-        "segment_topics" => json!({
-            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
-            "transcript": transcript_field(),
-            "lines": lines_field(),
-            "script": script_field(),
-            "maxSegments": count(2, 24, 12, "The most topic boundaries to cut at."),
-        }),
-        "score_script_quality" => json!({
-            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
-            "transcript": transcript_field(),
-            "lines": lines_field(),
-            "script": script_field(),
-            "targetSeconds": { "type": "number", "minimum": 3, "description": "The duration the script must fit; the 150-wpm estimate names the word count to cut." },
-        }),
-        "detect_sarcasm" => json!({
-            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
-            "audio": string("The voiceover file: enables the flat-delivery cross-check on positive words."),
-            "transcript": transcript_field(),
-            "lines": lines_field(),
-            "script": script_field(),
-        }),
-        "detect_code_switching" | "detect_cross_lingual_emotion" => json!({
-            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
-            "transcript": transcript_field(),
-            "lines": lines_field(),
-            "script": script_field(),
-            "language": string("The language hint the transcribe call used (ISO code); cross-checked against the detected script."),
-        }),
-        "detect_vocal_events" => json!({
-            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
-            "audio": string("The voiceover file to scan for laughs, sighs, breaths and coughs."),
-            "transcript": transcript_field(),
-            "lines": lines_field(),
-            "script": script_field(),
-        }),
-        "classify_voice_quality" | "classify_recording_quality" | "measure_reverb" => json!({
-            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
-            "audio": string("The voiceover file (any format ffmpeg reads)."),
-        }),
-        "detect_restarts" | "classify_filler_type" => json!({
-            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
-            "audio": string("The voiceover file, for the timing reads when word timings are present."),
-            "transcript": transcript_field(),
-            "lines": lines_field(),
-            "script": script_field(),
-        }),
-        "score_emphasis_type"
-        | "detect_speaking_style"
-        | "detect_tempo_changes"
-        | "detect_accent"
-        | "measure_vocal_tract" => json!({
-            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
-            "audio": string("The voiceover file (any format ffmpeg reads)."),
-            "transcript": transcript_field(),
-            "lines": lines_field(),
-            "script": script_field(),
-        }),
-        "measure_rhythm_meter" => json!({
-            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
-            "audio": string("The voiceover file (any format ffmpeg reads)."),
-            "transcript": transcript_field(),
-            "lines": lines_field(),
-            "script": script_field(),
-            "bpm": { "type": "number", "minimum": 30, "maximum": 300, "description": "A BPM hint: returns which syllable nuclei land on the beat grid (the cut-to-music map)." },
-        }),
-        "enhance_speech" => json!({
-            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
-            "audio": string("The voiceover file to enhance; never modified."),
-            "out": string("The enhanced output file; defaults beside the input as <name>_enhanced.<ext>."),
-            "overwrite": { "type": "boolean", "default": false, "description": "Replace an existing output file." },
-            "targetLufs": { "type": "number", "default": -16, "minimum": -40, "maximum": 0, "description": "The loudness the chain lands on." },
-            "targetTruePeakDbtp": { "type": "number", "default": -1.5, "minimum": -9, "maximum": 0 },
-        }),
-        "remove_hiss_hum_rumble" => json!({
-            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
-            "audio": string("The file to clean; never modified."),
-            "out": string("The cleaned output file; defaults beside the input as <name>_clean.<ext>."),
-            "overwrite": { "type": "boolean", "default": false },
-            "force": { "type": "boolean", "default": false, "description": "Clean even when the take is cleaner than the cure." },
-        }),
-        "normalize_loudness" => json!({
-            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
-            "audio": string("The file to normalise; never modified."),
-            "out": string("The normalised output; defaults beside the input as <name>_<target>lufs.<ext>."),
-            "overwrite": { "type": "boolean", "default": false },
-            "platform": { "type": "string", "enum": ["youtube", "spotify", "reels-tiktok", "streaming", "podcast", "apple-podcast", "broadcast-eu", "broadcast-atsc", "quiet"], "description": "The platform whose loudness target to land on (-14 streaming, -16 podcast, -23 EBU, -24 ATSC)." },
-            "targetLufs": { "type": "number", "default": -14, "minimum": -40, "maximum": 0 },
-            "targetTruePeakDbtp": { "type": "number", "default": -1, "minimum": -9, "maximum": 0 },
-        }),
-        "detect_music_segments" | "identify_music" | "analyze_music_structure" => json!({
-            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
-            "audio": string("The media file whose audio carries the music (or the voiceover to prove it has none)."),
-        }),
-        "evaluate_tts_quality" | "detect_ai_voice" => json!({
-            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
-            "audio": string("The TTS take (any format ffmpeg reads)."),
-            "transcript": transcript_field(),
-            "lines": lines_field(),
-        }),
-        "seal_voice" => json!({
-            "action": { "type": "string", "enum": ["seal", "verify", "status", "selftest"], "default": "seal" },
-            "audio": string("The voice take to seal, verify or inspect."),
-            "out": string("Where the seal lands; defaults to voice-seal.json beside the audio."),
-            "overwrite": { "type": "boolean", "default": false },
-            "policy": { "type": "object", "description": "The usage record: {allowedUses: [string], expiry: ISO date, attribution, license, syntheticVoiceDisclosure}.", "properties": {
-                "allowedUses": { "type": "array", "items": { "type": "string" } },
-                "expiry": { "type": "string" },
-                "attribution": { "type": "string" },
-                "license": { "type": "string" },
-                "syntheticVoiceDisclosure": { "type": ["string", "boolean"] },
-            }, "additionalProperties": false },
-        }),
-        "align_captions" => json!({
-            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
-            "audio": string("The voiceover file: enables drift correction and silence snapping."),
-            "transcript": transcript_field(),
-            "lines": lines_field(),
-            "script": script_field(),
-            "maxCharsPerSecond": { "type": "number", "default": 17, "minimum": 5, "maximum": 40 },
-            "maxDurationSeconds": { "type": "number", "default": 5, "minimum": 1, "maximum": 15 },
-            "minDurationSeconds": { "type": "number", "default": 0.9, "minimum": 0.3, "maximum": 3 },
-            "maxCharsPerLine": { "type": "integer", "default": 42, "minimum": 16, "maximum": 84 },
-        }),
-        "clean_subtitles" => json!({
-            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
-            "srt": string("Raw SRT text to parse and clean."),
-            "transcript": transcript_field(),
-            "lines": lines_field(),
-            "script": script_field(),
-            "stripFillers": { "type": "boolean", "default": true },
-            "maxCharsPerLine": { "type": "integer", "default": 42, "minimum": 16, "maximum": 84 },
-            "maxCharsPerSecond": { "type": "number", "default": 17, "minimum": 5, "maximum": 40 },
-            "format": { "type": "string", "enum": ["cues", "srt"], "default": "cues" },
         }),
         _ => return None,
     };
@@ -2101,6 +1680,21 @@ fn plan_validate_schema() -> Option<Value> {
                             "brandKit": {},
                             "constraints": {},
                             "avoid": {}
+                        }
+                    },
+                    "signalLog": {
+                        "type": "array",
+                        "description": "The decision log: for each cut, caption, graphic, BGM and transition choice, which voice_signals signals drove it. An entry is {at: seconds, decision: cut|caption|graphic|bgm|transition, signals: [names from the profile's decisionPolicy], note?}. A plan with a voiceover and no signalLog is not creativeReady.",
+                        "items": {
+                            "type": "object",
+                            "required": ["at", "decision", "signals"],
+                            "properties": {
+                                "at": { "type": "number", "minimum": 0 },
+                                "decision": { "type": "string", "enum": ["cut", "caption", "graphic", "bgm", "transition"] },
+                                "signals": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+                                "note": { "type": "string" }
+                            },
+                            "additionalProperties": false
                         }
                     }
                 }
@@ -2833,6 +2427,7 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         Action::Emotion => crate::sense::emotion(arguments),
         Action::VoiceSignals => crate::sense::voice_signals(arguments),
         Action::Sense(name) => crate::sense::sense_family(name, arguments),
+        Action::SenseFamily(family) => crate::sense::sense_family_action(family, arguments),
         Action::CreativeBrief => crate::sense::creative_brief(arguments, backend),
         Action::MotionOverlay => crate::sense::motion_overlay(arguments, backend),
         Action::MeasureLoudness => crate::sense::measure_loudness(arguments),
@@ -3556,7 +3151,8 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
         Some(_) => return Err("export must be an object when supplied".to_owned()),
     }
     let creative = creative_gate(plan, segments, runtime, &warnings);
-    Ok(json!({
+    let signal_log = signal_log_gate(plan, segments, runtime);
+    let mut result = json!({
         "valid": true,
         "aspect": aspect,
         "segmentCount": segments.len(),
@@ -3566,8 +3162,150 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
         "creativeBlockers": creative["blockers"],
         "craftScore": creative["score"],
         "creativeNotes": creative["notes"],
-        "next": "If creativeReady is false, call creative_brief, fix the blockers, and validate again. Structure is not craft.",
-    }))
+        "signalLog": signal_log,
+        "next": "If creativeReady is false, call creative_brief, fix the blockers, and validate again. If signalDriven is false, read the voiceover with voice_signals and record the signals behind each decision in the plan's signalLog. Structure is not craft.",
+    });
+    // A plan with a voiceover and no signal log is not creativeReady: it
+    // was written without reading the take it cuts.
+    if signal_log["driven"].as_bool() == Some(false)
+        && plan
+            .pointer("/audio/voiceover")
+            .is_some_and(|voiceover| !voiceover.is_null())
+    {
+        let blockers = result["creativeBlockers"]
+            .as_array_mut()
+            .expect("the creative gate answers blockers");
+        blockers.push(json!("the plan has a voiceover but no signalLog: read the take with voice_signals and record which signals drove each cut, caption, graphic, BGM and transition"));
+        result["creativeReady"] = json!(false);
+    }
+    Ok(result)
+}
+
+/// The signal vocabulary a log entry may name: the families the
+/// voice_signals profile answers and the decision policy reads. A signal
+/// matches when it names one, exactly or as its prefix
+/// (`pause.class=dead_air` names `pause`).
+const SIGNAL_VOCABULARY: &[&str] = &[
+    "pause",
+    "emphasisWords",
+    "speechRate",
+    "rhythmLayers",
+    "motifs",
+    "words",
+    "language",
+    "sentence",
+    "entities",
+    "speechActs",
+    "claims",
+    "forensic",
+    "musicSegments",
+    "speechRatio",
+    "speakerChanges",
+    "topics",
+    "discourseMarkers",
+    "loudness",
+    "prosody",
+    "fillers",
+    "arc",
+    "emotion",
+    "formants",
+    "speaker",
+    "noiseFloor",
+];
+
+/// The decision log's gate: which signals drove each choice. A plan that
+/// carries entries names, for every cut, caption, graphic, BGM and
+/// transition decision, the signals from the voice_signals profile
+/// behind it - so the reading becomes a decision instead of a data dump,
+/// and a choice with no signals behind it is visible as one. Entries are
+/// checked against the vocabulary and the plan's runtime; a plan with no
+/// log at all reports `driven: false` and the voiceover check above
+/// turns that into a creative blocker.
+fn signal_log_gate(plan: &Value, segments: &[Value], runtime: f64) -> Value {
+    let entries = plan
+        .get("signalLog")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let mut problems: Vec<String> = Vec::new();
+    let mut counts = std::collections::BTreeMap::<&str, usize>::new();
+    for (at, entry) in entries.iter().enumerate() {
+        let decision = entry
+            .get("decision")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if !matches!(
+            decision,
+            "cut" | "caption" | "graphic" | "bgm" | "transition"
+        ) {
+            problems.push(format!(
+                "entry {at}: decision {decision:?} is not one of cut, caption, graphic, bgm, transition"
+            ));
+            continue;
+        }
+        if let Some(time) = entry.get("at").and_then(Value::as_f64)
+            && !(0.0..=runtime + 0.05).contains(&time)
+        {
+            problems.push(format!(
+                "entry {at}: at {time} lies outside the plan's 0-{runtime} s"
+            ));
+        }
+        let signals = entry
+            .get("signals")
+            .and_then(Value::as_array)
+            .map(|signals| {
+                signals
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        if signals.is_empty() {
+            problems.push(format!(
+                "entry {at}: no signals named - a decision the profile did not drive"
+            ));
+        }
+        for signal in &signals {
+            if !SIGNAL_VOCABULARY.iter().any(|known| {
+                signal == *known
+                    || signal.starts_with(&format!("{known}."))
+                    || signal.starts_with(&format!("{known}["))
+            }) {
+                problems.push(format!(
+                    "entry {at}: signal {signal:?} is not one the voice_signals profile answers"
+                ));
+            }
+        }
+        *counts.entry(decision).or_default() += 1;
+    }
+    let driven = !entries.is_empty() && problems.is_empty();
+    // The decisions a plan this size owes a log for: the cuts are the
+    // segment boundaries, and one BGM choice, one caption style and one
+    // grade are the video-wide minimum. Entries beyond the minimum are
+    // welcome; the coverage names how many there are.
+    let expected_cuts = segments.len().saturating_sub(1);
+    let logged_cuts = *counts.get("cut").unwrap_or(&0);
+    let coverage = if entries.is_empty() {
+        0.0
+    } else {
+        (logged_cuts as f64 / expected_cuts.max(1) as f64).min(1.0)
+    };
+    let mut per_decision = serde_json::Map::new();
+    for decision in ["cut", "caption", "graphic", "bgm", "transition"] {
+        per_decision.insert(
+            decision.to_owned(),
+            json!(*counts.get(decision).unwrap_or(&0)),
+        );
+    }
+    json!({
+        "driven": driven,
+        "entries": entries.len(),
+        "coverage": (coverage * 100.0).round() / 100.0,
+        "perDecision": per_decision,
+        "problems": problems,
+        "how": "voice_signals (action extract) on the take, then record {at, decision, signals, note} for each choice; the profile's decisionPolicy names the signals each decision reads.",
+    })
 }
 
 /// The creative gate. Structural validity is not the same thing as a good
@@ -4342,134 +4080,27 @@ mod tests {
                 "voice_signals",
                 json!({ "audio": "/tmp/voiceover.wav", "script": "You won't believe what they found." }),
             ),
-            // The thirty-three consumption-layer tools: one sample each,
-            // the arguments each schema above accepts.
+            // The five family doors: one sample each, `action` naming a
+            // member the schema's enum accepts.
             (
-                "analyze_discourse",
-                json!({ "script": "Most people think it is willpower. But the data says systems. Because automation saves twice as much." }),
+                "sense_discourse",
+                json!({ "action": "analyze_discourse", "script": "Most people think it is willpower. But the data says systems. Because automation saves twice as much." }),
             ),
             (
-                "segment_topics",
-                json!({ "script": "First, the leak in the basement. Then the plumber found more. Now imagine the bill. But here is the fix." }),
+                "sense_voice_quality",
+                json!({ "action": "detect_vocal_events", "audio": "/tmp/voiceover.wav", "script": "So anyway [laughs] we tried it. *sigh* It did not work." }),
             ),
             (
-                "detect_speech_acts",
-                json!({ "script": "Have you ever wondered why? Look closer. I promise this works. But be careful with step three." }),
+                "sense_prosody_style",
+                json!({ "action": "score_emphasis_type", "audio": "/tmp/voiceover.wav", "script": "But THIS is the first thing. Really matters. Second, here today, the numbers tell the story." }),
             ),
             (
-                "classify_speech_acts",
-                json!({ "script": "I will show you the numbers. Follow for part two. Wow, that is a big claim. This makes it official." }),
+                "sense_audio_repair",
+                json!({ "action": "enhance_speech", "audio": "/tmp/voiceover.wav", "out": "/tmp/voiceover_enhanced.wav" }),
             ),
             (
-                "score_readability",
-                json!({ "script": "The implementation of the optimization resulted in a significant improvement of the utilization metrics." }),
-            ),
-            (
-                "extract_claim_graph",
-                json!({ "script": "Studies show automation doubles savings. But critics say it fails. Because the data tracks twelve months. Maybe the effect is smaller." }),
-            ),
-            (
-                "score_script_quality",
-                json!({ "script": "Nobody tracks their subscriptions. So the average house loses $219 a month. But here is the catch. Try the free tracker in the link.", "targetSeconds": 30 }),
-            ),
-            (
-                "detect_sarcasm",
-                json!({ "audio": "/tmp/voiceover.wav", "script": "Oh sure, because that always works. Just what I needed today. Great job everyone." }),
-            ),
-            (
-                "detect_code_switching",
-                json!({ "script": "Today we talk about the market. কিন্তু আসল গল্পটা অন্য জায়গায়। The numbers tell it." }),
-            ),
-            (
-                "detect_cross_lingual_emotion",
-                json!({ "script": "আজ আমরা একটা ভয়ংকর গল্প শুনব। তারপর সবাই খুশি হবে। কান্না থাকবে না।", "language": "bn" }),
-            ),
-            (
-                "detect_vocal_events",
-                json!({ "audio": "/tmp/voiceover.wav", "script": "So anyway [laughs] we tried it. *sigh* It did not work. [coughs] Let me explain." }),
-            ),
-            (
-                "classify_voice_quality",
-                json!({ "audio": "/tmp/voiceover.wav" }),
-            ),
-            (
-                "classify_recording_quality",
-                json!({ "audio": "/tmp/voiceover.wav" }),
-            ),
-            ("measure_reverb", json!({ "audio": "/tmp/voiceover.wav" })),
-            (
-                "detect_restarts",
-                json!({ "transcript": { "segments": [{ "text": "So the the first thing is", "start": 0.1, "end": 1.4, "words": [
-                    { "text": "so", "start": 0.1, "end": 0.2 }, { "text": "the", "start": 0.25, "end": 0.33 },
-                    { "text": "the", "start": 0.35, "end": 0.43 }, { "text": "first", "start": 0.45, "end": 0.62 },
-                    { "text": "thing", "start": 0.64, "end": 0.85 }, { "text": "is", "start": 0.87, "end": 1.0 } ] }] } }),
-            ),
-            (
-                "classify_filler_type",
-                json!({ "script": "So basically, um, the kind of thing that really matters is, you know, very simple." }),
-            ),
-            (
-                "score_emphasis_type",
-                json!({ "script": "But THIS is the first thing. Really matters. Second, here today, the numbers tell the story." }),
-            ),
-            (
-                "detect_speaking_style",
-                json!({ "audio": "/tmp/voiceover.wav" }),
-            ),
-            (
-                "measure_rhythm_meter",
-                json!({ "audio": "/tmp/voiceover.wav", "bpm": 120.0 }),
-            ),
-            (
-                "detect_tempo_changes",
-                json!({ "audio": "/tmp/voiceover.wav" }),
-            ),
-            ("detect_accent", json!({ "audio": "/tmp/voiceover.wav" })),
-            (
-                "measure_vocal_tract",
-                json!({ "audio": "/tmp/voiceover.wav" }),
-            ),
-            (
-                "enhance_speech",
-                json!({ "audio": "/tmp/voiceover.wav", "out": "/tmp/voiceover_enhanced.wav" }),
-            ),
-            (
-                "remove_hiss_hum_rumble",
-                json!({ "audio": "/tmp/voiceover.wav", "out": "/tmp/voiceover_clean.wav" }),
-            ),
-            (
-                "normalize_loudness",
-                json!({ "audio": "/tmp/render.mp4", "platform": "youtube", "out": "/tmp/render_youtube.mp4" }),
-            ),
-            (
-                "detect_music_segments",
-                json!({ "audio": "/tmp/render.mp4" }),
-            ),
-            ("identify_music", json!({ "audio": "/tmp/music.wav" })),
-            (
-                "analyze_music_structure",
-                json!({ "audio": "/tmp/music.wav" }),
-            ),
-            (
-                "evaluate_tts_quality",
-                json!({ "audio": "/tmp/tts.wav", "transcript": { "segments": [{ "text": "this is the voice", "start": 0.1, "end": 1.2, "words": [
-                    { "text": "this", "start": 0.1, "end": 0.3 }, { "text": "is", "start": 0.32, "end": 0.44 },
-                    { "text": "the", "start": 0.46, "end": 0.58 }, { "text": "voice", "start": 0.6, "end": 1.0 } ] }] } }),
-            ),
-            ("detect_ai_voice", json!({ "audio": "/tmp/tts.wav" })),
-            (
-                "seal_voice",
-                json!({ "audio": "/tmp/voiceover.wav", "action": "seal", "policy": { "allowedUses": ["youtube", "client-work"], "expiry": "2027-01-01" } }),
-            ),
-            (
-                "align_captions",
-                json!({ "audio": "/tmp/voiceover.wav", "transcript": { "segments": [{ "text": "one two three", "start": 0.1, "end": 1.4, "words": [
-                    { "text": "one", "start": 0.1, "end": 0.4 }, { "text": "two", "start": 0.5, "end": 0.8 },
-                    { "text": "three", "start": 0.9, "end": 1.3 } ] }] } }),
-            ),
-            (
-                "clean_subtitles",
-                json!({ "srt": "1\n00:00:00,000 --> 00:00:02,000\num, this is the FIRST line\n\n2\n00:00:02,100 --> 00:00:04,500\nand this is line two with no stop\n" }),
+                "sense_captions",
+                json!({ "action": "seal_voice", "audio": "/tmp/voiceover.wav", "policy": { "allowedUses": ["youtube", "client-work"], "expiry": "2027-01-01" } }),
             ),
             (
                 "track_subject",
@@ -4645,6 +4276,7 @@ mod tests {
                 | Action::Emotion
                 | Action::VoiceSignals
                 | Action::Sense(_)
+                | Action::SenseFamily(_)
                 | Action::CreativeBrief
                 | Action::MotionOverlay
                 | Action::MeasureLoudness
@@ -5113,6 +4745,124 @@ mod tests {
         );
     }
 
+    /// The decision log: a plan with a voiceover and no signalLog is not
+    /// creativeReady; a log that names the profile's signals drives the
+    /// plan; a log citing signals the profile does not answer is a named
+    /// problem.
+    #[test]
+    fn the_signal_log_gates_the_plan() {
+        let cut = |start: f64, end: f64| {
+            json!({
+                "start": start,
+                "end": end,
+                "visual": { "type": "broll", "query": "ocean" },
+                "cutType": "hard",
+            })
+        };
+        let base = json!({
+            "aspect": "9:16",
+            "mode": "reel",
+            "audio": { "voiceover": { "source": "tts", "voice": 2 } },
+            "grade": { "filter": "concat.teal-orange", "intensityKey": "amount", "intensity": 65 },
+            "sections": [
+                { "role": "hook", "start": 0.0, "end": 2.0 },
+                { "role": "body", "start": 2.0, "end": 8.0 },
+                { "role": "cta", "start": 8.0, "end": 10.0 }
+            ],
+            "segments": [
+                cut(0.0, 2.0),
+                cut(2.0, 3.5),
+                cut(3.5, 5.0),
+                cut(5.0, 6.5),
+                cut(6.5, 8.0),
+                cut(8.0, 10.0)
+            ]
+        });
+        // No voiceover, no log needed: a music-only plan is not blocked.
+        let mut quiet = base.clone();
+        quiet["audio"] = json!({});
+        let result = validate_edit_plan(&quiet).expect("valid");
+        assert_eq!(result["signalLog"]["driven"], json!(false), "{result}");
+        // A voiceover with no log is a blocker: the take was never read.
+        let result = validate_edit_plan(&base).expect("valid");
+        assert_eq!(result["signalLog"]["driven"], json!(false));
+        assert_eq!(result["creativeReady"], json!(false), "{result}");
+        assert!(
+            result["creativeBlockers"]
+                .as_array()
+                .expect("blockers")
+                .iter()
+                .any(|blocker| blocker
+                    .as_str()
+                    .is_some_and(|text| text.contains("signalLog"))),
+            "the blocker names the signalLog: {result}"
+        );
+        // A log that names real signals drives the plan.
+        let mut driven = base.clone();
+        driven["signalLog"] = json!([
+            { "at": 2.0, "decision": "cut", "signals": ["pause.class=dead_air", "emphasisWords"],
+              "note": "dead air before the emphasis word" },
+            { "at": 3.5, "decision": "cut", "signals": ["speechRate.pace"] },
+            { "at": 5.0, "decision": "cut", "signals": ["rhythmLayers"] },
+            { "at": 6.5, "decision": "cut", "signals": ["motifs"] },
+            { "at": 8.0, "decision": "cut", "signals": ["pause.class=dead_air"] },
+            { "at": 0.0, "decision": "bgm", "signals": ["forensic.noiseFloorDbfs", "speechRatio"],
+              "note": "dry take: bed it" },
+            { "at": 2.0, "decision": "caption", "signals": ["emphasisWords", "words[].confidence"] },
+            { "at": 4.0, "decision": "graphic", "signals": ["entities", "sentence.type"],
+              "note": "the money line gets a stat card" },
+            { "at": 8.0, "decision": "transition", "signals": ["speakerChanges", "topics"] }
+        ]);
+        let result = validate_edit_plan(&driven).expect("valid");
+        assert_eq!(result["signalLog"]["driven"], json!(true), "{result}");
+        assert_eq!(result["signalLog"]["entries"], json!(9));
+        assert!(
+            result["creativeBlockers"]
+                .as_array()
+                .expect("blockers")
+                .is_empty()
+                || !result["creativeBlockers"]
+                    .as_array()
+                    .expect("blockers")
+                    .iter()
+                    .any(|blocker| blocker
+                        .as_str()
+                        .is_some_and(|text| text.contains("signalLog"))),
+            "the signalLog blocker is gone: {result}"
+        );
+        // A signal the profile does not answer is a named problem.
+        let mut invented = base.clone();
+        invented["signalLog"] = json!([
+            { "at": 2.0, "decision": "cut", "signals": ["the_vibe"] }
+        ]);
+        let result = validate_edit_plan(&invented).expect("valid");
+        assert_eq!(result["signalLog"]["driven"], json!(false));
+        assert!(
+            result["signalLog"]["problems"]
+                .as_array()
+                .expect("problems")
+                .iter()
+                .any(|problem| problem
+                    .as_str()
+                    .is_some_and(|text| text.contains("the_vibe"))),
+            "the invented signal is named: {result}"
+        );
+        // A time outside the plan is a named problem too.
+        let mut late = base.clone();
+        late["signalLog"] = json!([
+            { "at": 99.0, "decision": "cut", "signals": ["pause"] }
+        ]);
+        let result = validate_edit_plan(&late).expect("valid");
+        assert!(
+            result["signalLog"]["problems"]
+                .as_array()
+                .expect("problems")
+                .iter()
+                .any(|problem| problem.as_str().is_some_and(|text| text.contains("99"))),
+            "the out-of-plan time is named: {result}"
+        );
+    }
+
     #[test]
     fn a_wrong_argument_is_refused_by_the_schema_and_by_the_type_alike() {
         let toolbox = Toolbox::new();
@@ -5258,41 +5008,31 @@ mod tests {
             }
         }
 
-        // The Forge allowlist: every name it carries must be a tool this
-        // build serves, and the director's paste-ready list must leave
-        // out exactly the two tools its comment names - no more, so a
-        // tool like motion_probe cannot ship unlisted, and no fewer, so
-        // the list cannot quietly drop a tool the loop wants. This reads
-        // the paste-ready comment; the active list in the env table is
-        // held to it by its own test below,
-        // `the_forge_allowlist_is_active_and_names_every_tool_but_the_two`.
+        // The Forge allowlist, held to the director-surface policy: the
+        // file's LAST paste-ready list is the whole catalogue, comma for
+        // comma - so a tool added without its paste-ready line caught up
+        // fails here rather than shipping advice the full surface does
+        // not follow. The director default itself (the env table's
+        // active list and the first paste-ready list) is held by its own
+        // test below, `the_forge_allowlist_serves_the_directors_surface`.
         let forge = read(".forge/mcp.toml");
-        let allow: Vec<&str> = forge
+        let paste_ready: Vec<&str> = forge
             .lines()
             .filter_map(|line| line.strip_prefix("# CONCAT_MCP_ALLOW="))
             .next_back()
-            .expect("the paste-ready allowlist")
+            .expect("the paste-ready whole-catalogue allowlist")
             .split(',')
+            .map(str::trim)
             .collect();
-        let names: Vec<&str> = catalogue().iter().map(|tool| tool.name).collect();
-        for name in &allow {
-            assert!(
-                names.contains(name),
-                "the Forge allowlist names {name}, which catalogue() does not carry"
-            );
-        }
-        let mut left_off: Vec<&str> = names
-            .iter()
-            .filter(|name| !allow.contains(name))
-            .copied()
-            .collect();
-        left_off.sort_unstable();
+        let mut names: Vec<&str> = catalogue().iter().map(|tool| tool.name).collect();
+        names.sort_unstable();
+        let mut pasted = paste_ready.clone();
+        pasted.sort_unstable();
         assert_eq!(
-            left_off,
-            ["export_cancel", "project_close"],
-            "the paste-ready allowlist leaves out exactly the two its comment names"
+            pasted, names,
+            "the paste-ready whole-catalogue list is the catalogue, comma for comma"
         );
-        // And the count the comment claims: "89 of the 91 tools".
+        // And the count the comment claims: "95 of the 105 tools".
         if let Some(rest) = forge.split(" of the ").nth(1) {
             let said: usize = rest
                 .split(|c: char| !c.is_ascii_digit())
@@ -5307,17 +5047,19 @@ mod tests {
     }
 
     /// The allowlist the Forge server this repository declares runs
-    /// behind, held to the catalogue it serves. The list is not a
+    /// behind, held to the director-surface policy. The list is not a
     /// comment's advice but the env the server starts with - an
     /// assignment in the `[servers.transport.env]` table - and it must
-    /// name every tool the catalogue carries except the two a harness
-    /// must never call by surprise. The paste-ready comment must agree
-    /// with it, or the two lists drift: a tool added to one and not the
-    /// other ships advice the active server does not follow (or the
-    /// reverse). The refusal itself is proven where it happens, in
-    /// `protocol`'s own tests.
+    /// name only tools the catalogue carries, leaving out exactly the
+    /// ten the director never calls by surprise (the farm pair, the
+    /// specialist motion reads, track_subject, geneva_explain, and the
+    /// two a harness must never call: project_close and export_cancel).
+    /// The first paste-ready comment must agree with it, or the two
+    /// lists drift: a tool added to one and not the other ships advice
+    /// the active server does not follow (or the reverse). The refusal
+    /// itself is proven where it happens, in `protocol`'s own tests.
     #[test]
-    fn the_forge_allowlist_is_active_and_names_every_tool_but_the_two() {
+    fn the_forge_allowlist_serves_the_directors_surface() {
         let Some(root) = repository() else {
             // Not a checkout: nothing to hold. CI and every clone carry
             // the marker file, so this is the standalone-crate case.
@@ -5340,10 +5082,16 @@ mod tests {
             .0;
         let allow: Vec<&str> = list.split(',').map(str::trim).collect();
         let names: Vec<&str> = catalogue().iter().map(|tool| tool.name).collect();
-        // The catalogue's missing are exactly the two - no more, so a
-        // tool like motion_probe cannot ship unlisted, and no fewer, so
-        // the list cannot quietly drop a tool the loop wants - and no
-        // dead name rides along beside them.
+        for name in &allow {
+            assert!(
+                names.contains(name),
+                "the active list names {name}, which catalogue() does not carry"
+            );
+        }
+        // Exactly the ten the policy names are left off - no more, so a
+        // specialist tool cannot sneak onto the default surface, and no
+        // fewer, so the director's documented loop never meets a
+        // refusal it did not earn.
         let mut left_off: Vec<&str> = names
             .iter()
             .filter(|name| !allow.contains(name))
@@ -5352,21 +5100,34 @@ mod tests {
         left_off.sort_unstable();
         assert_eq!(
             left_off,
-            ["export_cancel", "project_close"],
-            "the active allowlist leaves out exactly the two its comment names"
+            [
+                "export_cancel",
+                "geneva_explain",
+                "motion_farm_cloud",
+                "motion_farm_progress",
+                "motion_preview",
+                "motion_probe",
+                "project_close",
+                "scene_analysis",
+                "scene_timeline",
+                "track_subject",
+            ],
+            "the active allowlist leaves out exactly the ten the policy names"
         );
         assert_eq!(
-            allow.len(),
-            names.len() - left_off.len(),
-            "the active list carries a name the catalogue does not"
+            allow.len() + left_off.len(),
+            names.len(),
+            "the active list carries no name twice"
         );
 
-        // The paste-ready comment says the same list, comma for comma.
+        // The FIRST paste-ready comment says the same list, comma for
+        // comma - the whole-catalogue one further down is the other
+        // test's business.
         let paste_ready = forge
             .lines()
             .filter_map(|line| line.strip_prefix("# CONCAT_MCP_ALLOW="))
-            .next_back()
-            .expect("the paste-ready allowlist");
+            .next()
+            .expect("the paste-ready director allowlist");
         assert_eq!(
             paste_ready.split(',').map(str::trim).collect::<Vec<_>>(),
             allow,

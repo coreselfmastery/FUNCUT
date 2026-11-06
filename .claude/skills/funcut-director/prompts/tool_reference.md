@@ -75,7 +75,11 @@ packages)
   the structure: `mode` (a 70 s "reel" is refused), `sections` (hook first,
   ordered roles, covering the runtime, boundaries on cuts), cut variety (a run
   of six hards is named), entrances (floor M), comp density (one per 15 s) and
-  SFX spacing (no id twice within 30 s). Errors refuse the plan; warnings are
+  SFX spacing (no id twice within 30 s). It also checks the plan's
+  **`signalLog`** — the decision log naming the voice_signals readings behind
+  each cut, caption, graphic, BGM and transition choice: a plan with a
+  voiceover and no signalLog is refused as not creativeReady, and an entry
+  citing a signal the profile does not answer is a named problem. Errors refuse the plan; warnings are
   the director's conscience — read them, then fix the plan, not the wording.
   Run it before asset gathering/editing; fix errors and revalidate. It cannot
   verify asset availability.
@@ -189,8 +193,23 @@ providers|configure|clear, profile?}` · `stock_contact_sheet {query|ids|paths,
 limit?, cols?, rank?, brief?}` · `watch_render {path|project, samples?, times?,
 cols?, audio?, targetLufs?, targetTruePeakDbtp?}` · `craft_critique {sheet|pngPath|pngB64,
 brief?, autoSetup?, profile?}` · `emotion {action:
-extract|brand|gate|verify|template, project?}` · `measure_loudness {path,
+extract|brand|gate|verify|template, project?}` · `voice_signals {action:
+extract|selftest, audio?, transcript?, lines?, script?, emotion?}` ·
+`sense_discourse` · `sense_voice_quality` · `sense_prosody_style` ·
+`sense_audio_repair` · `sense_captions` · `measure_loudness {path,
 targetLufs?}` · `suggest_cuts {path, cuts?, minGap?, bpm?}`
+
+- `voice_signals` is Phase 1c's reader — the acoustic score the plan cuts
+  by. Its reply carries `signalConfidence` (how much to lean on each signal
+  family, and why), `decisionPolicy` (which signals drive each decision) and
+  `directorHints` (the cut style, the caption gate, the BGM call). The plan's
+  `signalLog` cites its signals; `plan_validate` holds the citations.
+- The five `sense_*` family tools are the consumption layer: `action` names
+  the reading (`sense_discourse {action: "score_script_quality", script}` —
+  the ten discourse readings, the six voice-quality readings, the six
+  prosody readings, the six audio-repair actions and the five caption
+  readings; `selftest: true` proves one). Each reading names its own traps
+  in its reply; the family schema documents the shared inputs.
 
 - The loop that uses them is the skill's Phase 0 and §4 (and
   `prompts/quality_loop.md`): brief first, plan, `stock_contact_sheet` to SEE

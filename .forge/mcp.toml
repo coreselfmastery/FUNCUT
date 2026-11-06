@@ -33,46 +33,52 @@ command = "concat"
 # where the server serves; the env table below says what it serves.
 args = ["--mcp", "auto"]
 
-# THE ALLOWLIST IS ON. This is the boundary the server this file declares
-# runs behind, and a tool not on it is refused by the MCP server as if
-# it were not there. The default must be restrictive, so a
-# prompt-injected agent cannot reach project_close or export_cancel -
-# the two left off below - without an explicit opt-in. Do not delete
-# this line to "fix" a tool that is refused: name the tool on the list,
-# deliberately, in its own change.
+# THE ALLOWLIST IS ON, and it is the DIRECTOR'S SURFACE - 95 of the
+# 105 tools - : the creative
+# loop the funcut-director skill documents - measure, plan, edit,
+# verify, export - plus the remedies its own refusals point at (the
+# library prepares, the model downloads) and the five sense family
+# doors. A tool not on the list is neither listed in tools/list nor
+# callable, as if it were not there. Do not delete this line to "fix" a
+# tool that is refused: name the tool on the list, deliberately, in its
+# own change - or serve the whole catalogue with CONCAT_MCP_ALLOW=all.
 [servers.transport.env]
-CONCAT_MCP_ALLOW = "align_captions,analysis_wait,analyze_beats,analyze_discourse,analyze_music_structure,analyze_scenes,analyze_silence,bgm_fetch,bgm_import,bgm_prepare,bgm_search,bgm_status,captions_add,captions_animate,classify_filler_type,classify_recording_quality,classify_speech_acts,classify_voice_quality,clean_subtitles,clip_add,clip_audio_levels_db,clip_cut_spans,clip_frame,clip_mask,clip_speed,clip_stabilize,clip_transform,clip_trim,clip_update,clips_add_sequence,clips_move,clips_remove,clips_split,collision_check,concat_version,craft_critique,creative_brief,detect_accent,detect_ai_voice,detect_code_switching,detect_cross_lingual_emotion,detect_music_segments,detect_restarts,detect_sarcasm,detect_speaking_style,detect_speech_acts,detect_tempo_changes,detect_vocal_events,edit_apply,edit_redo,edit_undo,effect_key_set,effect_layer_add,effects_list,emotion,enhance_speech,evaluate_tts_quality,export_start,export_status,export_wait,extract_claim_graph,geneva_explain,identify_music,keyframe_clear,keyframe_set,local_vlm,magick_add,magick_fetch,magick_prepare,magick_search,magick_status,measure_loudness,measure_reverb,measure_rhythm_meter,measure_vocal_tract,media_import,media_probe,models_download,models_list,motion_bake,motion_farm_cloud,motion_farm_progress,motion_frame,motion_inspect,motion_overlay,motion_presets,motion_preview,motion_probe,motion_reel,normalize_loudness,openvid_fetch,openvid_get,openvid_import,openvid_prepare,openvid_search,openvid_search_batch,openvid_status,plan_validate,preview_frame,project_create,project_get,project_list,project_open,project_save,project_set_video,remove_hiss_hum_rumble,scene_analysis,scene_timeline,score_emphasis_type,score_readability,score_script_quality,seal_voice,segment_topics,sounds_add,sounds_search,stock_contact_sheet,suggest_cuts,template_instantiate,template_list,timeline_background,timeline_linkage,timeline_read,title_add,title_clear_word_styles,title_style_words,track_add,track_subject,transcribe,tts_generate,voice_signals,watch_render"
+CONCAT_MCP_ALLOW = "analysis_wait,analyze_beats,analyze_scenes,analyze_silence,bgm_fetch,bgm_import,bgm_prepare,bgm_search,bgm_status,captions_add,captions_animate,clip_add,clip_audio_levels_db,clip_cut_spans,clip_frame,clip_mask,clip_speed,clip_stabilize,clip_transform,clip_trim,clip_update,clips_add_sequence,clips_move,clips_remove,clips_split,collision_check,concat_version,craft_critique,creative_brief,edit_apply,edit_redo,edit_undo,effect_key_set,effect_layer_add,effects_list,emotion,export_start,export_status,export_wait,keyframe_clear,keyframe_set,local_vlm,magick_add,magick_fetch,magick_prepare,magick_search,magick_status,measure_loudness,media_import,media_probe,models_download,models_list,motion_bake,motion_frame,motion_inspect,motion_overlay,motion_presets,motion_reel,openvid_fetch,openvid_get,openvid_import,openvid_prepare,openvid_search,openvid_search_batch,openvid_status,plan_validate,preview_frame,project_create,project_get,project_list,project_open,project_save,project_set_video,sense_audio_repair,sense_captions,sense_discourse,sense_prosody_style,sense_voice_quality,sounds_add,sounds_search,stock_contact_sheet,suggest_cuts,template_instantiate,template_list,timeline_background,timeline_linkage,timeline_read,title_add,title_clear_word_styles,title_style_words,track_add,transcribe,tts_generate,voice_signals,watch_render"
 
 # The allowlist is per tool, not per server, and the env table above is
 # how this file's own server runs behind one. The switches, for a
 # server started anywhere else:
 #
-#   - the binary's flag, for a server started by hand:
+#   - the binary's flags, for a server started by hand:
 #       concat-mcp auto --mcp-allow timeline_read,clip_add,...
+#       concat-mcp auto --full-tools        (or --mcp-allow all)
 #   - the environment, for this window's server (which `concat --mcp`
 #     runs) and for anything else that starts it:
-
-# CONCAT_MCP_ALLOW=align_captions,analysis_wait,analyze_beats,analyze_discourse,analyze_music_structure,analyze_scenes,analyze_silence,bgm_fetch,bgm_import,bgm_prepare,bgm_search,bgm_status,captions_add,captions_animate,classify_filler_type,classify_recording_quality,classify_speech_acts,classify_voice_quality,clean_subtitles,clip_add,clip_audio_levels_db,clip_cut_spans,clip_frame,clip_mask,clip_speed,clip_stabilize,clip_transform,clip_trim,clip_update,clips_add_sequence,clips_move,clips_remove,clips_split,collision_check,concat_version,craft_critique,creative_brief,detect_accent,detect_ai_voice,detect_code_switching,detect_cross_lingual_emotion,detect_music_segments,detect_restarts,detect_sarcasm,detect_speaking_style,detect_speech_acts,detect_tempo_changes,detect_vocal_events,edit_apply,edit_redo,edit_undo,effect_key_set,effect_layer_add,effects_list,emotion,enhance_speech,evaluate_tts_quality,export_start,export_status,export_wait,extract_claim_graph,geneva_explain,identify_music,keyframe_clear,keyframe_set,local_vlm,magick_add,magick_fetch,magick_prepare,magick_search,magick_status,measure_loudness,measure_reverb,measure_rhythm_meter,measure_vocal_tract,media_import,media_probe,models_download,models_list,motion_bake,motion_farm_cloud,motion_farm_progress,motion_frame,motion_inspect,motion_overlay,motion_presets,motion_preview,motion_probe,motion_reel,normalize_loudness,openvid_fetch,openvid_get,openvid_import,openvid_prepare,openvid_search,openvid_search_batch,openvid_status,plan_validate,preview_frame,project_create,project_get,project_list,project_open,project_save,project_set_video,remove_hiss_hum_rumble,scene_analysis,scene_timeline,score_emphasis_type,score_readability,score_script_quality,seal_voice,segment_topics,sounds_add,sounds_search,stock_contact_sheet,suggest_cuts,template_instantiate,template_list,timeline_background,timeline_linkage,timeline_read,title_add,title_clear_word_styles,title_style_words,track_add,track_subject,transcribe,tts_generate,voice_signals,watch_render
 #
-# A tool not on the list is refused as if it were not there - its
-# description still lists it, but the surface served is what the operator
-# said, not what the build happens to carry. CONCAT_MCP_READ_ONLY=1 is
-# the other switch: every tool that changes something is refused, except
-# motion_reel's plan, frame and sheet halves, which are how an agent looks.
+# CONCAT_MCP_ALLOW=analysis_wait,analyze_beats,analyze_scenes,analyze_silence,bgm_fetch,bgm_import,bgm_prepare,bgm_search,bgm_status,captions_add,captions_animate,clip_add,clip_audio_levels_db,clip_cut_spans,clip_frame,clip_mask,clip_speed,clip_stabilize,clip_transform,clip_trim,clip_update,clips_add_sequence,clips_move,clips_remove,clips_split,collision_check,concat_version,craft_critique,creative_brief,edit_apply,edit_redo,edit_undo,effect_key_set,effect_layer_add,effects_list,emotion,export_start,export_status,export_wait,keyframe_clear,keyframe_set,local_vlm,magick_add,magick_fetch,magick_prepare,magick_search,magick_status,measure_loudness,media_import,media_probe,models_download,models_list,motion_bake,motion_frame,motion_inspect,motion_overlay,motion_presets,motion_reel,openvid_fetch,openvid_get,openvid_import,openvid_prepare,openvid_search,openvid_search_batch,openvid_status,plan_validate,preview_frame,project_create,project_get,project_list,project_open,project_save,project_set_video,sense_audio_repair,sense_captions,sense_discourse,sense_prosody_style,sense_voice_quality,sounds_add,sounds_search,stock_contact_sheet,suggest_cuts,template_instantiate,template_list,timeline_background,timeline_linkage,timeline_read,title_add,title_clear_word_styles,title_style_words,track_add,transcribe,tts_generate,voice_signals,watch_render
 #
-# The list this repository means is the director's creative loop, ready
-# to paste: 131 of the 133 tools, the two left off being the ones a harness
-# never needs by surprise - project_close (drops the session's whole
-# project) and export_cancel (cancels a render someone else is watching).
-# models_download is ON the list: the director skill names it as the
-# headless remedy for a missing voice or transcriber, and an overnight
-# queue that hits one should not dead-end - it is a job, it is
-# idempotent, and a model already on disk ends at once. motion_probe and
-# scene_timeline are on it too: they are the look-before-you-build, read
-# only, and an agent that plans should have them. Take one back off
-# by deleting it; take more back by naming them.
+# A tool not on the list is neither listed nor called - the surface
+# served is what the operator said, not what the build happens to carry.
+# CONCAT_MCP_READ_ONLY=1 is the other switch: every tool that changes
+# something is refused, except motion_reel's plan, frame and sheet
+# halves, which are how an agent looks.
 #
-# CONCAT_MCP_ALLOW=align_captions,analysis_wait,analyze_beats,analyze_discourse,analyze_music_structure,analyze_scenes,analyze_silence,bgm_fetch,bgm_import,bgm_prepare,bgm_search,bgm_status,captions_add,captions_animate,classify_filler_type,classify_recording_quality,classify_speech_acts,classify_voice_quality,clean_subtitles,clip_add,clip_audio_levels_db,clip_cut_spans,clip_frame,clip_mask,clip_speed,clip_stabilize,clip_transform,clip_trim,clip_update,clips_add_sequence,clips_move,clips_remove,clips_split,collision_check,concat_version,craft_critique,creative_brief,detect_accent,detect_ai_voice,detect_code_switching,detect_cross_lingual_emotion,detect_music_segments,detect_restarts,detect_sarcasm,detect_speaking_style,detect_speech_acts,detect_tempo_changes,detect_vocal_events,edit_apply,edit_redo,edit_undo,effect_key_set,effect_layer_add,effects_list,emotion,enhance_speech,evaluate_tts_quality,export_start,export_status,export_wait,extract_claim_graph,geneva_explain,identify_music,keyframe_clear,keyframe_set,local_vlm,magick_add,magick_fetch,magick_prepare,magick_search,magick_status,measure_loudness,measure_reverb,measure_rhythm_meter,measure_vocal_tract,media_import,media_probe,models_download,models_list,motion_bake,motion_farm_cloud,motion_farm_progress,motion_frame,motion_inspect,motion_overlay,motion_presets,motion_preview,motion_probe,motion_reel,normalize_loudness,openvid_fetch,openvid_get,openvid_import,openvid_prepare,openvid_search,openvid_search_batch,openvid_status,plan_validate,preview_frame,project_create,project_get,project_list,project_open,project_save,project_set_video,remove_hiss_hum_rumble,scene_analysis,scene_timeline,score_emphasis_type,score_readability,score_script_quality,seal_voice,segment_topics,sounds_add,sounds_search,stock_contact_sheet,suggest_cuts,template_instantiate,template_list,timeline_background,timeline_linkage,timeline_read,title_add,title_clear_word_styles,title_style_words,track_add,track_subject,transcribe,tts_generate,voice_signals,watch_render
+# THE WHOLE CATALOGUE, when a specialist needs it: CONCAT_MCP_ALLOW=all
+# (or --full-tools, or --mcp-allow all) serves every tool the build
+# carries. The ten the director's default leaves off are the ones a
+# director never calls by surprise - project_close (drops the session's
+# whole project), export_cancel (cancels a render someone else is
+# watching), the farm pair (motion_farm_cloud, motion_farm_progress),
+# the specialist motion reads (motion_probe, motion_preview,
+# scene_analysis, scene_timeline), track_subject and geneva_explain -
+# each one a deliberate opt-in, not a missing piece.
+#
+# CONCAT_MCP_ALLOW=all
+#
+# The paste-ready whole-catalogue list, for an operator who wants to
+# name every tool instead:
+#
+# CONCAT_MCP_ALLOW=analysis_wait,analyze_beats,analyze_scenes,analyze_silence,bgm_fetch,bgm_import,bgm_prepare,bgm_search,bgm_status,captions_add,captions_animate,clip_add,clip_audio_levels_db,clip_cut_spans,clip_frame,clip_mask,clip_speed,clip_stabilize,clip_transform,clip_trim,clip_update,clips_add_sequence,clips_move,clips_remove,clips_split,collision_check,concat_version,craft_critique,creative_brief,edit_apply,edit_redo,edit_undo,effect_key_set,effect_layer_add,effects_list,emotion,export_cancel,export_start,export_status,export_wait,geneva_explain,keyframe_clear,keyframe_set,local_vlm,magick_add,magick_fetch,magick_prepare,magick_search,magick_status,measure_loudness,media_import,media_probe,models_download,models_list,motion_bake,motion_farm_cloud,motion_farm_progress,motion_frame,motion_inspect,motion_overlay,motion_presets,motion_preview,motion_probe,motion_reel,openvid_fetch,openvid_get,openvid_import,openvid_prepare,openvid_search,openvid_search_batch,openvid_status,plan_validate,preview_frame,project_close,project_create,project_get,project_list,project_open,project_save,project_set_video,scene_analysis,scene_timeline,sense_audio_repair,sense_captions,sense_discourse,sense_prosody_style,sense_voice_quality,sounds_add,sounds_search,stock_contact_sheet,suggest_cuts,template_instantiate,template_list,timeline_background,timeline_linkage,timeline_read,title_add,title_clear_word_styles,title_style_words,track_add,track_subject,transcribe,tts_generate,voice_signals,watch_render
 
 [allow]
 servers = ["funcut"]

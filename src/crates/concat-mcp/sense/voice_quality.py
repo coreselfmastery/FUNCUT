@@ -72,28 +72,76 @@ _PCM_CACHE = {}
 
 def _pcm(spec, path):
     """Decode `path` to (samples, rate) mono. Cached: several tools in one
-    process would otherwise each pay the decode."""
+    process would otherwise each pay the decode. A WAV file decodes with
+    the standard library alone - the selftests' contract says no ffmpeg,
+    and a WAV voiceover is exactly the take these tools are pointed at;
+    every other container stays ffmpeg's business."""
     key = str(path)
     if key in _PCM_CACHE:
         return _PCM_CACHE[key]
-    ff, _ = _vs._ffmpeg(spec)
     if not Path(str(path)).is_file():
         return None, None
-    cmd = [ff, "-hide_banner", "-nostdin", "-i", str(path),
-           "-ac", "1", "-ar", str(RATE), "-c:a", "pcm_s16le", "-f", "wav", "-"]
-    rc, out, _err = _vs._run(cmd, 240)
-    if rc != 0 or not out:
-        return None, None
+    samples = None
+    rate = None
     try:
-        with wave.open(io.BytesIO(out)) as handle:
+        with wave.open(str(path), "rb") as handle:
+            channels = handle.getnchannels()
+            width = handle.getsampwidth()
             rate = handle.getframerate()
-            n = handle.getnframes()
-            raw = handle.readframes(n)
-        samples = array("h", raw)
-    except Exception:  # noqa: BLE001
-        return None, None
-    if len(raw) % 2:
-        samples = samples[:len(samples) - 1]
+            raw = handle.readframes(handle.getnframes())
+        if width == 2:
+            frames = array("h", raw[: len(raw) // 2 * 2])
+        elif width == 1:
+            # 8-bit unsigned PCM: centre it on the 16-bit scale.
+            frames = array("h", ((byte - 128) * 256 for byte in raw))
+        elif width == 4:
+            wide = array("i", raw[: len(raw) // 4 * 4])
+            frames = array("h", (max(-32768, min(32767, s >> 16)) for s in wide))
+        else:
+            raise ValueError(f"{width}-byte PCM is not a shape this reader takes")
+        if channels > 1:
+            mono = array("h", bytes(len(frames) // channels * 2))
+            for i in range(0, len(frames) - channels + 1, channels):
+                mono[i // channels] = sum(frames[i : i + channels]) // channels
+            frames = mono
+        if rate != RATE:
+            # Linear resample to the 16 kHz every measure here assumes:
+            # honest for envelopes, F0 and jitter, which is what these
+            # tools read.
+            step = rate / RATE
+            frames = array(
+                "h",
+                (
+                    int(
+                        frames[int(i * step)]
+                        + (frames[min(len(frames) - 1, int(i * step) + 1)] - frames[int(i * step)])
+                        * ((i * step) % 1.0)
+                    )
+                    for i in range(int(len(frames) / step))
+                ),
+            )
+            rate = RATE
+        samples = frames
+    except (wave.Error, ValueError, EOFError):
+        # Not a WAV this reader takes: ffmpeg's business below.
+        samples = None
+    if samples is None:
+        ff, _ = _vs._ffmpeg(spec)
+        cmd = [ff, "-hide_banner", "-nostdin", "-i", str(path),
+               "-ac", "1", "-ar", str(RATE), "-c:a", "pcm_s16le", "-f", "wav", "-"]
+        rc, out, _err = _vs._run(cmd, 240)
+        if rc != 0 or not out:
+            return None, None
+        try:
+            with wave.open(io.BytesIO(out)) as handle:
+                rate = handle.getframerate()
+                n = handle.getnframes()
+                raw = handle.readframes(n)
+            samples = array("h", raw)
+        except Exception:  # noqa: BLE001
+            return None, None
+        if len(raw) % 2:
+            samples = samples[:len(samples) - 1]
     result = (samples, rate)
     _PCM_CACHE[key] = result
     return result

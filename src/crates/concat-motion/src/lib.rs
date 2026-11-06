@@ -78,6 +78,7 @@ pub mod grade;
 pub mod lint;
 pub mod looks;
 pub mod noise;
+pub mod plan;
 pub mod presets;
 pub mod progress;
 pub mod pulse;
@@ -101,6 +102,10 @@ pub use engine::{
 pub use geneva::{Breaker, CallLimits, Diagnostic, Geneva, fix_for};
 pub use lint::{Finding, RULES, Rule, rule_count};
 pub use looks::Look;
+// The plan's footage Slot lives at `concat_motion::plan::Slot`: the root
+// name belongs to the comp's template Slot, and two Slots on one root is
+// an ambiguity, not a convenience.
+pub use plan::{Entry, Exit, SlotJob, SlotRole, Treatment, broll_share};
 pub use pulse::{BeatGrid, Driven, Pulse, curve_for_act, sound_starts_at};
 pub use reel::{ReelReport, SceneOutcome, render_reel, scene_key};
 pub use route::{BeatType, Decision, Routing, route};

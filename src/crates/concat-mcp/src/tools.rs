@@ -159,6 +159,10 @@ pub enum Action {
     /// Rank a page of stock against a slot's rich description: the CLIP
     /// second pass, the tags blended in, the hard filters enforced twice.
     OpenvidRankForSlot,
+    /// The plan-level continuity gate over a filled manifest: colour,
+    /// motion, scale, monotony, stillness - each flag with its slot,
+    /// rule and remedy.
+    FootageContinuity,
 }
 
 /// How a reply is shown to the agent.
@@ -402,6 +406,15 @@ pub fn catalogue() -> Vec<Tool> {
             destructive: false,
             idempotent: true,
             action: Action::OpenvidRankForSlot,
+        },
+        Tool {
+            name: "footage_continuity",
+            title: "Check the filled slots' continuity",
+            description: "Read a filled manifest the way an editor scrubs: colour jumps, reversed travels, repeated scales, one-category runs, clips under their slot's motion floor - each flag names its slot, rule and remedy.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::FootageContinuity,
         },
         method(
             "openvid_get",
@@ -1413,6 +1426,33 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
                 },
             },
             "required": ["description"],
+            "additionalProperties": false,
+        })),
+        Action::FootageContinuity => Some(json!({
+            "type": "object",
+            "properties": {
+                "clips": {
+                    "type": "array",
+                    "maxItems": 200,
+                    "description": "The filled slots, in play order. Each carries the slot's id, the clip that filled it, and what the search measured: colour bias, motion, travel, scale, category - and the motion floor the slot asked for.",
+                    "items": {
+                        "type": "object",
+                        "required": ["slotId", "clipId"],
+                        "additionalProperties": false,
+                        "properties": {
+                            "slotId": { "type": "string", "minLength": 1 },
+                            "clipId": { "type": "string", "minLength": 1 },
+                            "colorTemperature": { "type": "number", "minimum": -1, "maximum": 1, "description": "Colour bias, -1.0 cool through +1.0 warm." },
+                            "motion": { "type": "number", "description": "How much moves, on the library's own motion scale." },
+                            "dominantDirection": { "type": "string", "enum": ["left", "right", "up", "down", "zoom_in", "zoom_out", "static"] },
+                            "shotScale": { "type": "string", "enum": ["wide", "medium", "close_up"] },
+                            "category": { "type": "string", "description": "The clip's broad category, as the plan's vocabulary names it." },
+                            "motionMin": { "type": "number", "description": "The least motion the slot would take." },
+                        },
+                    },
+                },
+            },
+            "required": ["clips"],
             "additionalProperties": false,
         })),
         Action::MotionPresets
@@ -2496,6 +2536,7 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         }
         Action::OpenvidSearchBatch => openvid_search_batch(arguments, backend),
         Action::OpenvidRankForSlot => openvid_rank_for_slot(arguments, backend),
+        Action::FootageContinuity => footage_continuity(arguments),
         Action::Mask => {
             let result = backend.call(mask(arguments)?)?;
             Ok(Outcome::json(summary::view(&result)))
@@ -4005,6 +4046,28 @@ fn openvid_rank_for_slot(arguments: Value, backend: &mut dyn Backend) -> Result<
     })))
 }
 
+/// `footage_continuity`: the plan-level continuity gate, as a tool.
+///
+/// The filled manifest goes in - what each slot got, with the numbers
+/// the search measured - and the flags come out: where the cut will
+/// jump, which rule caught it, and whether to shop again or let the
+/// treatment downgrade. Nothing renders, nothing fetches; the gate is
+/// arithmetic over the manifest's own numbers, and a manifest that does
+/// not read is refused with words, not guessed at.
+fn footage_continuity(arguments: Value) -> Result<Outcome, ApiError> {
+    let manifest: concat_motion::continuity::AssetManifest = serde_json::from_value(arguments)
+        .map_err(|error| {
+            ApiError::invalid(format!(
+                "invalid arguments: the manifest does not read: {error}"
+            ))
+        })?;
+    let flags = concat_motion::continuity::check_continuity(&manifest);
+    Ok(Outcome::json(json!({
+        "count": flags.len(),
+        "flags": flags,
+    })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4395,6 +4458,11 @@ mod tests {
                     "motion_min": 1.5,
                     "exclude_ids": [820_338_756_299],
                 }),
+                "footage_continuity",
+                json!({ "clips": [
+                    { "slotId": "hook.1", "clipId": "clip.1", "colorTemperature": 0.3, "motion": 2.0, "dominantDirection": "right", "shotScale": "wide", "category": "city", "motionMin": 1.0 },
+                    { "slotId": "setup.1", "clipId": "clip.2", "colorTemperature": 0.1, "motion": 2.5, "dominantDirection": "right", "shotScale": "close_up", "category": "ocean", "motionMin": 1.0 },
+                ] }),
             ),
         ]
     }
@@ -4597,6 +4665,17 @@ mod tests {
                         search["excludeIds"] = ids;
                     }
                     request("openvid.search", search)
+                }
+                Action::FootageContinuity => {
+                    // The gate is arithmetic over the manifest's own
+                    // numbers, so the sample runs for real - and the
+                    // sample is clean: two slots, varied in everything
+                    // the gate reads.
+                    let manifest: concat_motion::continuity::AssetManifest =
+                        serde_json::from_value(sample).expect("the sample reads");
+                    let flags = concat_motion::continuity::check_continuity(&manifest);
+                    assert!(flags.is_empty(), "{flags:?}");
+                    continue;
                 }
             };
             let built = built.unwrap_or_else(|error| panic!("{name}: {error}"));
@@ -4884,6 +4963,53 @@ mod tests {
         assert_eq!(tag_similarity(&terms, "a city skyline at dusk"), 1.0);
         assert!(tag_similarity(&terms, "waves on a beach") < 0.2);
         assert_eq!(tag_similarity(&[], "anything"), 0.0);
+    }
+
+    /// The continuity gate, as the tool: a warm-to-cool pair and a
+    /// wide-to-wide pair come back as flags carrying slots, rules and
+    /// remedies, a clean manifest answers an empty list, and a manifest
+    /// that does not read is refused with words.
+    #[test]
+    fn footage_continuity_flags_the_jumps_the_cut_will_feel() {
+        let outcome = footage_continuity(json!({ "clips": [
+            { "slotId": "a", "clipId": "clip.a", "colorTemperature": 0.8, "motion": 2.0, "dominantDirection": "static", "shotScale": "wide", "category": "city", "motionMin": 0.0 },
+            { "slotId": "b", "clipId": "clip.b", "colorTemperature": -0.6, "motion": 2.0, "dominantDirection": "static", "shotScale": "wide", "category": "ocean", "motionMin": 0.0 },
+        ] }))
+        .expect("flags");
+        assert!(!outcome.is_error);
+        let reply = outcome.structured.expect("structured");
+        assert_eq!(reply["count"], 1, "{reply}");
+        assert_eq!(reply["flags"][0]["slotId"], "b");
+        assert_eq!(reply["flags"][0]["rule"], "colour");
+        assert_eq!(
+            reply["flags"][0]["remedy"],
+            json!({ "replace": { "avoid": "a clip cooler than slot `a`'s" } })
+        );
+
+        // Two wides in a row: the scale rule, the second slot's name.
+        let outcome = footage_continuity(json!({ "clips": [
+            { "slotId": "a", "clipId": "clip.a", "shotScale": "wide", "category": "city" },
+            { "slotId": "b", "clipId": "clip.b", "shotScale": "wide", "category": "ocean" },
+        ] }))
+        .expect("flags");
+        let reply = outcome.structured.expect("structured");
+        assert_eq!(reply["count"], 1, "{reply}");
+        assert_eq!(reply["flags"][0]["rule"], "scale");
+
+        // Clean: two varied slots answer nothing.
+        let outcome = footage_continuity(json!({ "clips": [
+            { "slotId": "a", "clipId": "clip.a", "colorTemperature": 0.3, "motion": 2.0, "dominantDirection": "right", "shotScale": "wide", "category": "city", "motionMin": 1.0 },
+            { "slotId": "b", "clipId": "clip.b", "colorTemperature": 0.1, "motion": 2.5, "dominantDirection": "right", "shotScale": "close_up", "category": "ocean", "motionMin": 1.0 },
+        ] }))
+        .expect("clean");
+        let reply = outcome.structured.expect("structured");
+        assert_eq!(reply["count"], 0, "{reply}");
+        assert_eq!(reply["flags"], json!([]));
+
+        // And a manifest that does not read is refused, not guessed at.
+        let error = footage_continuity(json!({ "clips": [{ "slotId": 3 }] }))
+            .expect_err("a manifest that does not read refuses");
+        assert!(error.to_string().contains("does not read"), "{error}");
     }
 
     /// The batch runs one `openvid.search` per query, carrying the shared

@@ -82,6 +82,7 @@ pub mod presets;
 pub mod progress;
 pub mod pulse;
 pub mod reel;
+pub mod revision;
 pub mod route;
 pub mod sequence;
 pub mod storyboard;
@@ -103,6 +104,9 @@ pub use lint::{Finding, RULES, Rule, rule_count};
 pub use looks::Look;
 pub use pulse::{BeatGrid, Driven, Pulse, curve_for_act, sound_starts_at};
 pub use reel::{ReelReport, SceneOutcome, render_reel, scene_key};
+pub use revision::{
+    GateDecision, MAX_RETRIES, SHIP_SCORE, SlotRevision, attempt_path, decide, failing_slot_ids,
+};
 pub use route::{BeatType, Decision, Routing, route};
 pub use track::{Key, Track, Tracks, Value};
 pub use transition::{Cut, Direction};

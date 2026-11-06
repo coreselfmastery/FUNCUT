@@ -4456,7 +4456,7 @@ mod tests {
                     "hero": false,
                     "tag_weight": 0.3,
                     "motion_min": 1.5,
-                    "exclude_ids": [820_338_756_299],
+                    "exclude_ids": [820_338_756_299i64],
                 }),
                 "footage_continuity",
                 json!({ "clips": [

@@ -74,3 +74,7 @@ desktop.ini
 # never inputs, and a warm one on a contributor's machine is not a
 # change to the reel.
 check/
+# The CI dependency set this checkout fetched and verified (deps.lock):
+# the ffmpeg-dev and onnxruntime extracts, warm-machine archives.
+/onnxruntime-linux-x64-*/
+

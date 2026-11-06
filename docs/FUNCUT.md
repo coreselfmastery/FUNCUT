@@ -64,7 +64,7 @@ The script looks for a release **on this fork first**, and falls back to
 Concat's own releases when the fork has none yet. The fallback is a working
 editor, but it is not this one: upstream carries none of FUNCUT's own work -
 no OpenVid, sticker or sound shelves, no Forge page, 42 MCP tools instead of
-the **100 tools** this build carries - so if the fork has a published
+the **133 tools** this build carries - so if the fork has a published
 release, that is the one you want. (A release the workflows build starts as
 a draft, and a draft is invisible to this script; see the note below.)
 

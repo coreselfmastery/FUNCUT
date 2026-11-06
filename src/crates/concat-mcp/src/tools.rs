@@ -130,6 +130,11 @@ pub enum Action {
     /// The voiceover read as a score: loudness, pauses, rate, prosody,
     /// speakers, entities - and the cut decisions they drive.
     VoiceSignals,
+    /// One of the thirty-three consumption-layer sense tools, named: the
+    /// name selects the Python family module and the row that says which
+    /// fields travel. Discourse, voice quality, prosody, audio repair and
+    /// captions - what the director DOES with the voice_signals reading.
+    Sense(&'static str),
     /// Read or write the project's persisted creative brief.
     CreativeBrief,
     /// Composite a transparent motion bake over real footage.
@@ -999,6 +1004,306 @@ pub fn catalogue() -> Vec<Tool> {
             idempotent: true,
             action: Action::VoiceSignals,
         },
+        // The thirty-three consumption-layer tools: what the director DOES
+        // with the readings. Five families, one Python module each - and
+        // every one degrades loudly, never silently.
+        Tool {
+            name: "analyze_discourse",
+            title: "Read the script's connective tissue",
+            description: "The discourse read: connectives by relation (comparison / contingency / temporal / expansion / signposting - the families the Penn Discourse Treebank uses), the given-new overlap between consecutive lines, and the cohesion profile of the whole script. Takes `transcript`, `lines` or raw `script` text and returns per line: the markers with their relation and position, the lexical overlap with the line before, and an `abruptTransition` flag where a new idea arrives with neither overlap nor connective - the exact places a chapter card, a scene change or one connective sentence earns its keep. A 'but' or 'however' is the emotional pivot: the visual should turn with it. Pure-python marker lexicon and Jaccard overlap; no audio needed. `action: \"selftest\"` proves the chain.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("analyze_discourse"),
+        },
+        Tool {
+            name: "segment_topics",
+            title: "Find where one topic ends and the next begins",
+            description: "Topic segmentation by lexical cohesion: a Texttiling read that slides windows over the lines, computes adjacent-window similarity, and cuts at the valleys (depth-scored against their neighbouring peaks). Returns `segments` with start/end times, startLine/endLine, keywords (locally frequent, globally rare), a generated headline, and per-segment cohesion - the visual chapter map. Each boundary is a scene-change or chapter-card point; each segment's keywords are its b-roll shot list. A segment with low cohesion mixes two ideas and wants its visuals split. Takes `transcript`, `lines` or `script`; needs 3+ lines. `maxSegments` caps the cut count.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("segment_topics"),
+        },
+        Tool {
+            name: "detect_speech_acts",
+            title: "Read what each line is doing on the surface",
+            description: "The surface speech-act read per line: question, rhetorical question, exclamation, imperative, promise, warning, invitation, quote, conditional, negation, enumeration, superlative claim - each with the cue that fired. A question line deserves a visual that answers late (hold the reveal one beat past the answer); an imperative is the eye-contact moment for a direct-address caption; a quote line is an attribution lower-third waiting to happen; an enumeration wants a kinetic sequence with equal shot lengths. Takes `transcript`, `lines` or `script`. Punctuation plus syntactic cue patterns, pure python.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("detect_speech_acts"),
+        },
+        Tool {
+            name: "classify_speech_acts",
+            title: "Classify each line into Searle's five acts",
+            description: "The deep pragmatic read: Searle's taxonomy - assertive (claims the world is so), directive (tries to make the viewer do something), commissive (commits the speaker), expressive (vents a psychological state), declaration (changes the world by being said). Each line gets its class, the cues that fired, a confidence, and the visual treatment that class earns: assertive -> b-roll that shows the claim (a stat card when numbers ride it); directive -> CTA card or direct-address caption; commissive -> a plant for a visual callback; expressive -> reaction shot or grade shift; declaration -> title card. The balance check tells you when a script is all assertives - a lecture - and one line in five wants to be a directive or an expressive.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("classify_speech_acts"),
+        },
+        Tool {
+            name: "score_readability",
+            title: "Grade the script and set the caption pace",
+            description: "Flesch Reading Ease, Flesch-Kincaid grade, Gunning Fog, words-per-sentence, passive-voice hits (be-verb + participle), nominalizations (-tion/-ment/-ance/-ity), and the caption pacing the grade can carry (20 CPS easy down to 11 CPS difficult - captions read ~25% slower than prose). Non-Latin scripts get an honest note that grade formulas are Latin-alphabet instruments plus the word and line stats that still answer. Passive constructions hide the doer - an active rewrite is free clarity; nominalizations deaden narration; dense lines need splitting, not speeding. Takes `transcript`, `lines` or `script`.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("score_readability"),
+        },
+        Tool {
+            name: "extract_claim_graph",
+            title: "Map claims, evidence, hedges and counters",
+            description: "The fact-check graph under the edit: claims (assertive un-hedged lines) with a strength from their evidence cues, evidence nodes (because / since / according to / studies show / numbers), hedged lines (might / could / I think), and the edges between them - supported_by, countered_by (but / however / critics), elaborates (which means / in other words), follows. The `uncoveredClaims` list is the punchlist: claims riding with no evidence need proof b-roll, a source lower-third, or a softer rewrite. A countered claim is the tension beat - visual contradiction, hard cut on 'but'. Hedged lines are weak beats: commit or make the hedge the point.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("extract_claim_graph"),
+        },
+        Tool {
+            name: "score_script_quality",
+            title: "Score the script and name the fixes",
+            description: "The script doctor, scored 0-100 across six axes with the fixes named: HOOK (25 - question, number or money, direct address, curiosity gap, bold claim, opening short enough), STRUCTURE (25 - hook present, CTA present in the closing lines, a twist cue in the middle third, a payoff cue), CLARITY (15 - Flesch inside the 50-75 sweet spot), RHYTHM (15 - sentence-length variety and at least one line under six words: the beat that lands), PAYOFF/CTA (10 - and it must be the LAST thing heard), CONCISION (10 - fillers and redundant lines). Pass `targetSeconds` and the 150-wpm estimate says how many words to cut or where there is room to breathe. Verdict: strong / workable / needs a rewrite.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("score_script_quality"),
+        },
+        Tool {
+            name: "detect_sarcasm",
+            title: "Find the irony before it cuts you",
+            description: "Sarcasm detection by cue, never by verdict: scare quotes and markers (sure, obviously, yeah right, just what I needed), positive words after a negative run (the classic irony setup), mixed sentiment inside one line, and - when `audio` with word timings is given - the delivery cross-check: flat energy on a positive word (under 3 LU of momentary movement where emphasis belongs). Returns per line: a sarcasm band (high / medium / low), the weight, and every cue that fired. A sarcastic line earns irony cuts - cheerful stock over bitter words - and the deadpan pause after it is where the laugh lives, so keep it. This is a heuristic that says which cues fired, not a mind reader.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("detect_sarcasm"),
+        },
+        Tool {
+            name: "detect_code_switching",
+            title: "Find the language switches in a mixed take",
+            description: "Per-line Unicode-script scan (Bengali, Devanagari, Arabic, Cyrillic, CJK, Hangul, Thai, Tamil, Latin...): the dominant script, the scripts mixed in, romanized borrowings (khushi, dukkho, bhalobasha - the Dhaka register), the switch points between lines, and what a mixed take needs: per-script font fallback (Bengali gets Noto Sans Bengali), caption pacing per language, and a multilingual voice or per-language TTS segments - a single-voice TTS mangles the switches. Each switch point is a natural scene or caption-style change: the language turn IS the beat. `language` cross-checks the caller's hint.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("detect_code_switching"),
+        },
+        Tool {
+            name: "detect_cross_lingual_emotion",
+            title: "Read emotion in Bengali, Hindi, Spanish, French",
+            description: "The offline emotion read for the languages the English lexicon cannot hear: native-script Bengali, romanized Bengali, Hindi, Spanish and French, each folding onto the edit's seven emotions (per-line emotion, intensity, confidence, and the lexicon coverage behind it). This is the precision-core fallback for when FUNCUT_EMOTION_API_KEY is not set and the script is not English - every hit names the emotion it found, and a line with no hit reads neutral at low confidence, never a guess. Low-coverage lines should default to the brief's tone, not to neutral visuals. For depth, the hosted multilingual model (emotion tool with the key) is the stronger read.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("detect_cross_lingual_emotion"),
+        },
+        Tool {
+            name: "detect_vocal_events",
+            title: "Find the laughs, sighs, breaths and coughs",
+            description: "The non-speech events in the take, found in the 100 Hz envelope and named by their shape: a laugh is a train of 3-9 Hz quaver pulses, voiced; a sigh a long voiced low-energy span; a breath a short one beside speech; a cough or throat clear a sharp unvoiced transient (doubled, it is a throat clear). Written cues in the script ([laughs], *sigh*, haha) confirm and name events too short to see. Returns each event with time, confidence, cues and its editing verdict: coughs and throat clears are cut candidates that read as mistakes; laughs and sighs are authentic delivery the visual should react to, not remove. Takes `audio` plus `transcript`/`lines` for the cues.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("detect_vocal_events"),
+        },
+        Tool {
+            name: "classify_voice_quality",
+            title: "Classify the voice itself",
+            description: "The voice, measured and classified: resonant (strong periodicity, dark tilt), breathy (high-band noise over voiced frames), tense (elevated period and amplitude variability), creaky (a quarter of frames under 85 Hz), or natural when no extreme cue fires. The measures behind the classes: F0 mean and range, a jitter proxy, a shimmer proxy, voicing strength, spectral tilt, breath-band noise - each named as the autocorrelation-at-16-kHz proxy it is, good for ranking takes, not for diagnosing voices. The genre fit follows: a resonant take carries slow holds and long dissolves, a bright tilt reads on phones for commercial work, breathy and creaky registers want subtitles to carry clarity.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("classify_voice_quality"),
+        },
+        Tool {
+            name: "classify_recording_quality",
+            title: "Grade the take's health",
+            description: "The recording verdict: noise floor (quietest quartile of 250 ms windows), SNR, peak and clipped runs (samples at the rails in runs), DC offset, hum tones at 50/60 Hz and harmonics (FFT of the quietest window, 6 dB over their neighbourhood), and effective bandwidth. The verdict - broadcast / clean / home / rough - comes with its fixes (notch the hum first, then remove_hiss_hum_rumble and enhance_speech; clipping needs a re-record, EQ cannot fix it) and the BGM decision: a clean floor lets the bed whisper at -28 LUFS ducked 12 dB, an audible floor needs BGM at or above it to mask - or a real cleanup first.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("classify_recording_quality"),
+        },
+        Tool {
+            name: "measure_reverb",
+            title: "Measure the room in the take",
+            description: "RT60 the honest way it can be measured offline: Schroeder backward integration over the decay after each strong transient onset, the median across onsets, plus the early-to-late energy ratio (0-50 ms vs 50-400 ms after the onset) as the direct-to-reverb proxy. Room classes: dry (<0.25 s), studio/vocal booth, small room, large room/hall. The edit hints follow: gate and music-attack releases want to sit under a quarter of the RT60 so tails are kept, not chopped; a dry room means ADR inserts will match; a ringing room means B-roll audio will clash - cut to music, not to room sound. Continuous speech or a very dry take says so instead of inventing a reading.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("measure_reverb"),
+        },
+        Tool {
+            name: "detect_restarts",
+            title: "Find the false starts and self-repairs",
+            description: "Every restart, typed and timed: stalling repeats (a 1-3 word n-gram repeated back to back, with the gap measured), elongations (a word held over twice its length-class duration), fragments (hyphen-cut abandoned words) and abandoned clauses (a line left unfinished whose next line re-anchors the thought - a rewrite or a pickup, NOT a cut). Each restart carries its span and a cutSafe verdict from the word timings; the punchUpPotentialSeconds total is what a tight cut saves. Every stalling repeat and elongation is a safe cut when its neighbours are clean - this is the punch-up tool the classify_filler_type recommendations point at.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("detect_restarts"),
+        },
+        Tool {
+            name: "classify_filler_type",
+            title: "Type the fillers, not just count them",
+            description: "Beyond um/uh: the filler taxonomy that tells you what each one costs. filled pauses (um, uh, erm - safe removals), discourse markers (well, so, anyway, basically - a style dial: keep for conversational, cut for punchy), hedges (kind of, sort of, I think - cut for authority, keep for honesty), intensifiers (really, very, super - punch candidates: where SFX and zoom punches land), backchannels (mm-hmm, right - the listener's half of an interview, keep), stalling repeats (the the - also caught by detect_restarts). Per instance: word, class, times, recommendation; the aggregate profile says conversational-and-warm or tight, and safeRemovalSeconds is the punch-up budget.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("classify_filler_type"),
+        },
+        Tool {
+            name: "score_emphasis_type",
+            title: "Type every emphasis word",
+            description: "Every emphasis word, typed by what the emphasis IS: contrastive (the word after but / however / only / actually - the pivot is the edit point: split screen or a hard match cut), new information (this / that / here / today introducing it - the b-roll reveal lands exactly there, not before), list (an enumeration head - one item per beat, same treatment, same rhythm), intensity (an amplifier or its target - zoom punch, SFX hit, caption scale-up), written (capitals or marks in the script - highlight the word, not the line). Emphasis candidates come from the voice-signals energy peaks when the Rust ear is built, else from the script's own emphasis grammar. Each hit carries its type, cue and the visual it earns.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("score_emphasis_type"),
+        },
+        Tool {
+            name: "detect_speaking_style",
+            title: "Name the delivery style",
+            description: "The delivery read that picks the cut style for you: conversational (fast, dynamic, breathing often - jump cuts on the pauses, handheld energy, captions that pop), presenter (measured with deliberate pauses and wide pitch - holds on the key lines, one clean cut per phrase), newsread (even pace, narrow pitch - b-roll packages under every phrase, cut on the phrase boundary), podcast (relaxed mid pace - two-camera rhythm, subtle zooms, long dissolves), documentary-narration (slow, even, close to the floor - slow dissolves, establishing holds, no jump cuts), high-energy (the ad read - cut every 0.8-1.5 s, flash frames on the emphasis words). Evidence: WPM, pauses per minute, F0 mean and spread, dynamics - all named, so a caller can disagree.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("detect_speaking_style"),
+        },
+        Tool {
+            name: "measure_rhythm_meter",
+            title: "Measure the speech rhythm and the beat lock",
+            description: "The rhythm read: syllable nuclei timed from the energy peaks inside each word, the PVI (pairwise variability index) over successive nuclei - stress-timed (English) vs syllable-timed vs mixed - the regularity of the stress grid (a metronomic delivery reads near-zero CV), syllables per second, and the beatSync map: pass `bpm` and every nucleus is tested against the grid with a swept phase, returning which words land on the downbeat - exactly the words to align cuts to when editing to music. A stress-timed voice cuts well to drum music; a syllable-timed one wants smoother beds. Needs `audio` plus word timings.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("measure_rhythm_meter"),
+        },
+        Tool {
+            name: "detect_tempo_changes",
+            title: "Find the accelerandos and the rallentandos",
+            description: "The tempo curve of the delivery: word rate in a sliding 4-word window, segmented where it sustains a slope - accelerating spans (rising tension: shorten the shots progressively), decelerating spans (gravity arriving: hold the shot, let the pause breathe), plateaus, and the trend changes flagged as the edit points the delivery already made. The `dramatic` list keeps only the spans at least 1.5 s long with a real rate change; the full curve rides along for custom reads. Needs `audio` and word timings (8+ words). Cut ON the trend changes.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("detect_tempo_changes"),
+        },
+        Tool {
+            name: "detect_accent",
+            title: "Read fluency for caption pacing",
+            description: "An honest L2-likeness proxy that exists for ONE purpose: making the edit CLEARER, never for labelling people. The cues: article-pattern slips in the transcript (a apple, go to home), article density per 100 words, filled-pause rate, mid-line timing breaks while formulating - each named with its weight, summed into a band (native-like / possibly L2 / likely L2) at confidence 0.5. The output that matters is `captionPacing`: L2-informed reading budgets (12 CPS, more time on screen for key terms) and a mix note (a light bed with fewer transients keeps narration intelligible). The note says it plainly: accents are normal speech; this tool informs caption pacing and mix clarity, it is NOT a verdict on the speaker.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("detect_accent"),
+        },
+        Tool {
+            name: "measure_vocal_tract",
+            title: "Read the voice's physical signature",
+            description: "The physical read behind 'this voice sounds like X': F0 mean, formant readings (F1-F4 from the voice-signals LPC ear when the binary is built; band proxies 250-850 / 850-2500 / 2500-3500 Hz otherwise, each labelled as the proxy it is), the vowel-space spread, the quarter-wave tract-length estimate in cm, and the timbre descriptors (dark/warm, balanced, bright/forward; low/mid/high register). The voiceMatch block is for multi-voice edits: match F0 within 15 Hz and the F2/F1 ratio within 15% before panning two narrators side by side - the ear hears the seam otherwise. A dark timbre wants warm grades and slower motion; a bright one cuts faster.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("measure_vocal_tract"),
+        },
+        Tool {
+            name: "enhance_speech",
+            title: "Clean and level a voiceover",
+            description: "The measured voice chain, written to a NEW file (the input is never touched): highpass at 75 Hz (the room lives below), lowpass at 14 kHz (nothing a phone speaker can use above), de-esser before compression so sibilance does not pump, a compressor riding 6 dB under THIS take's measured speech level, a gate 8 dB over the measured floor (it must not eat soft speech), a limiter at the true-peak ceiling, and loudnorm to the target (`targetLufs`, default -16). Every filter decision is returned with the why; the before/after table carries integrated LUFS, true peak and SNR measured the same way classify_recording_quality measures. Video containers keep their video stream (stream-copied). `out` defaults beside the input as <name>_enhanced.<ext>; pass `overwrite` to replace an existing output.",
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("enhance_speech"),
+        },
+        Tool {
+            name: "remove_hiss_hum_rumble",
+            title: "Notch the hum, cut the rumble, denoise the hiss",
+            description: "Find it, then remove it - each removal proven with a before/after SNR table. The hum: FFT of the quietest window, 50/60 Hz families standing 6 dB over their neighbourhood, notched at -14 dB Q8 (up to 4 harmonics). The rumble: sub-60 Hz energy over -32 dB gets a 70 Hz highpass (else a conservative 60 Hz). The hiss: high-band energy in the quiet windows over the speech band gets afftdn at a strength matched to what was measured. When the take is cleaner than the cure - denoise artefacts cost more than the noise - the tool SAYS so and writes nothing unless `force` is true. Output to `out` (default <name>_clean.<ext>); the input is never touched.",
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("remove_hiss_hum_rumble"),
+        },
+        Tool {
+            name: "normalize_loudness",
+            title: "Two-pass loudness to the platform target",
+            description: "The mastering pass: ebur128 measurement first, then loudnorm applied with the measured values - linear (one gain, no dynamics touched) when the take is within range, dynamic when the range itself needs reshaping - and the after-measurement to prove it. Targets by `platform` (youtube / spotify / reels-tiktok -14 LUFS, podcast -16, broadcast-eu -23 EBU R128, broadcast-atsc -24 ATSC A/85) or explicit `targetLufs` and `targetTruePeakDbtp` (defaults -14 / -1). The reply names the mode honestly and warns when a true-peak or range constraint pushed the result off target - measure and decide, do not stack passes. Output to `out` (default <name>_<target>lufs.<ext>); video containers keep their video; the input is never touched.",
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("normalize_loudness"),
+        },
+        Tool {
+            name: "detect_music_segments",
+            title: "Find the music, speech and silence spans",
+            description: "Per-second classification of what the audio IS: music (onset autocorrelation beat strength over 0.35, duty cycle over 85%, stable spectral centroid), speech (phrases with gaps), silence, or music_or_dense_speech when the numbers cannot settle it - each span with its duty cycle, beat strength, BPM hint and centroid stability. The editing answer is the point: a take that already carries music must NOT get a doubled bed (duck or replace, never stack), while a clean speech take wants a BGM bed started under the first speech and ducked 10-14 dB under words. Silences over 2 s are breathing room or cut candidates - check the pause classes in voice_signals.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("detect_music_segments"),
+        },
+        Tool {
+            name: "identify_music",
+            title: "Identify the music offline, honestly",
+            description: "Offline music identification: tempo (onset autocorrelation, 60-190 BPM), key and mode (chroma from high-resolution FFTs correlated with the Krumhansl profiles, with a confidence), spectral balance (bass / mid / high with the instrumentation hints each implies), energy, and mood tags. The honest core: NAMING the exact song needs an online fingerprint service (AcrCloud / Shazam APIs) and this tool does not pretend otherwise - instead it returns `libraryQuery`, the descriptor string that IS the music-library search ('120 BPM, A minor, moody, driving'): paste it into bgm_search and let the libraries answer. This is the descriptor that makes stock-music replacement a query instead of an afternoon.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("identify_music"),
+        },
+        Tool {
+            name: "analyze_music_structure",
+            title: "Map the music's structure",
+            description: "The structure map a cut-to-music edit is drawn on: BPM with confidence, the bar grid (4 beats, phase found by searching for the onset-aligned downbeat), sections from 2-bar energy self-similarity with roles (intro/outro, verse/groove, build, peak/chorus), the drops (energy jumps over 35% of peak - save the strongest visual for the drop and hold a beat before it), the per-bar energy curve, and cutSafePoints: the bar boundaries where every cut lands musical. Intro and outro sections are the natural title and CTA homes. Needs 8+ seconds of music; when no tempo is found it says to check detect_music_segments for what is actually in the file.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("analyze_music_structure"),
+        },
+        Tool {
+            name: "evaluate_tts_quality",
+            title: "Judge whether a TTS take is alive",
+            description: "Is this synthetic take alive: pitch range in semitones and pitch variability over voiced frames (monotone is the classic tell), word-gap variability (metronomic timing is the other), pause placement against the punctuation (does a comma actually earn a pause), and word-level dynamics (no emphasis shape, no life). Returns a naturalness score and verdict (alive / workable / robotic) with every robotic cue named, and the fixes that address them: regenerate with a voice that varies pitch, edit the script's punctuation so the engine breathes, SSML prosody marks or post EQ for emphasis - and at minimum, human-record the hook, because a robotic take undercuts every emotion-led cut. Needs `audio` plus its word-timed transcript.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("evaluate_tts_quality"),
+        },
+        Tool {
+            name: "detect_ai_voice",
+            title: "Score synthetic-voice likelihood for disclosure",
+            description: "The synthetic-media disclosure heuristic: a noise floor too clean (no room, no mic self-noise), no breaths between phrases (nobody is breathing), period jitter near zero (natural voices carry 0.5-2% - this reads the same proxy classify_voice_quality does), and machine-regular word gaps. Each cue adds its weight to an aiLikeness score with a prior, and human markers subtract; the band is likely synthetic / uncertain / likely human. The purpose is disclosure: label synthetic voices honestly - platforms and audiences both ask now - and pair synthetic narration with a human-recorded hook. The note is part of the tool: a heuristic modern TTS can pass and noisy humans can fail; it informs disclosure, it never proves anything about a person.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("detect_ai_voice"),
+        },
+        Tool {
+            name: "seal_voice",
+            title: "Seal a voice take's provenance and permissions",
+            description: "The provenance and permission record a licensed or synthetic voice deserves. `action: \"seal\"` hashes the audio (SHA-256 over the bytes), freezes a short voiceprint (F0 mean and spread, voiced fraction, duration - enough to recognise the same voice, never enough to synthesise it) and writes voice-seal.json beside the audio with the `policy`: allowedUses, expiry, attribution, license, syntheticVoiceDisclosure. `action: \"verify\"` recomputes the hash and says intact or TAMPERED - any edit, re-encode or replacement breaks the seal, by design - and checks policy expiry. `action: \"status\"` reads the seal. The one file that answers 'what is this take and what may it be used for' long after the session that made it.",
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("seal_voice"),
+        },
+        Tool {
+            name: "align_captions",
+            title: "Re-time caption cues to the audio",
+            description: "Make the words agree with the take: drift correction first (the median offset of word starts to the nearest energy onset - a consistent offset is clock drift, and it is snapped out), then cue building under reading-speed budgets (`maxCharsPerSecond` 17 default, `maxDurationSeconds` 5, `minDurationSeconds` 0.9, `maxCharsPerLine` 42), sentence and long-gap boundaries honoured, then cue edges snapped to nearby silence spans so captions breathe with the voice. Returns cues as [{text, start, end, cps}] that fit captions_add directly, the drift it found and removed, and how many boundaries snapped. Needs word timings (`transcript` with words); `audio` enables the drift and snap passes.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("align_captions"),
+        },
+        Tool {
+            name: "clean_subtitles",
+            title: "Clean subtitles into shape",
+            description: "Subtitle hygiene, every fix counted: punctuation completed, casing fixed, fillers stripped (optional, on by default), duplicates merged, long lines split at word boundaries under `maxCharsPerLine` (42), short neighbours merged, overlaps repaired, sub-40 ms gaps closed, and reading speed enforced (`maxCharsPerSecond` 17 - dense cues get their time stretched, not their readers rushed). Input: raw `srt` text (parsed with a pure-stdlib reader), or `transcript` / `lines` / `script`. Output: cleaned cues ready for captions_add, or `format: \"srt\"` for a ready-to-burn SRT, plus the changeLog of exactly what was fixed. Untimed lines ride through for align_captions to place.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::Sense("clean_subtitles"),
+        },
         Tool {
             name: "creative_brief",
             title: "Set the creative intent",
@@ -1036,13 +1341,48 @@ impl Tool {
             "export_wait",
             // The sense family, whose own budgets are 240-480 s: a
             // critique, a cut suggestion, a loudness pass, an emotion
-            // read, a voice-signal read, a contact sheet with its ranking.
+            // read, a voice-signal read, a contact sheet with its ranking,
+            // and the thirty-three consumption-layer tools - the discourse,
+            // voice-quality, prosody, audio-repair and caption families.
             "craft_critique",
             "suggest_cuts",
             "measure_loudness",
             "emotion",
             "voice_signals",
             "stock_contact_sheet",
+            "analyze_discourse",
+            "segment_topics",
+            "detect_speech_acts",
+            "classify_speech_acts",
+            "score_readability",
+            "extract_claim_graph",
+            "score_script_quality",
+            "detect_sarcasm",
+            "detect_code_switching",
+            "detect_cross_lingual_emotion",
+            "detect_vocal_events",
+            "classify_voice_quality",
+            "classify_recording_quality",
+            "measure_reverb",
+            "detect_restarts",
+            "classify_filler_type",
+            "score_emphasis_type",
+            "detect_speaking_style",
+            "measure_rhythm_meter",
+            "detect_tempo_changes",
+            "detect_accent",
+            "measure_vocal_tract",
+            "enhance_speech",
+            "remove_hiss_hum_rumble",
+            "normalize_loudness",
+            "detect_music_segments",
+            "identify_music",
+            "analyze_music_structure",
+            "evaluate_tts_quality",
+            "detect_ai_voice",
+            "seal_voice",
+            "align_captions",
+            "clean_subtitles",
             // The library work whose cost is the network's: a semantic
             // stock search runs a 240 s rerank budget inside it, and an
             // import fetches and copies up to twenty items - a slow link
@@ -1307,6 +1647,7 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
         | Action::LocalVlm
         | Action::Emotion
         | Action::VoiceSignals
+        | Action::Sense(_)
         | Action::CreativeBrief
         | Action::MotionOverlay
         | Action::MeasureLoudness
@@ -1381,6 +1722,11 @@ fn sense_schema(name: &str) -> Option<Value> {
             "default": default, "description": description,
         })
     };
+    // The three inputs every text-reading sense tool takes, one
+    // description each so the family schemas stay one screen tall.
+    let transcript_field = || json!({ "type": "object", "description": "A transcribe job's output: {segments: [{text, start, end, words: [{text,start,end}]}]} - the word timings the timing reads need." });
+    let lines_field = || json!({ "type": "array", "description": "Lines as [{text, start, end, words}] (or bare strings) when there is no transcript.", "items": { "type": ["object", "string"] } });
+    let script_field = || json!({ "type": "string", "description": "Raw narration text when there is no transcript or audio; the text-only signals still answer." });
     let times = json!({
         "type": "array", "description": "Explicit sample times in seconds; overrides `samples`.",
         "items": { "type": "number", "minimum": 0 },
@@ -1516,6 +1862,153 @@ fn sense_schema(name: &str) -> Option<Value> {
             "path": string("The project folder."),
             "action": { "type": "string", "enum": ["get", "set"], "default": "get" },
             "brief": { "type": "object", "description": "Fields to merge: audience, platform, goal, thesis, curiosityGap, payoff, emotionalArc, referenceStyle, tone, durationSeconds, brandKit, constraints, avoid." },
+        }),
+        // The thirty-three consumption-layer tools, one schema each: the
+        // fields the sense.rs table forwards are the fields the schema
+        // names, nothing more.
+        "analyze_discourse"
+        | "detect_speech_acts"
+        | "classify_speech_acts"
+        | "score_readability"
+        | "extract_claim_graph" => json!({
+            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
+            "transcript": transcript_field(),
+            "lines": lines_field(),
+            "script": script_field(),
+        }),
+        "segment_topics" => json!({
+            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
+            "transcript": transcript_field(),
+            "lines": lines_field(),
+            "script": script_field(),
+            "maxSegments": count(2, 24, 12, "The most topic boundaries to cut at."),
+        }),
+        "score_script_quality" => json!({
+            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
+            "transcript": transcript_field(),
+            "lines": lines_field(),
+            "script": script_field(),
+            "targetSeconds": { "type": "number", "minimum": 3, "description": "The duration the script must fit; the 150-wpm estimate names the word count to cut." },
+        }),
+        "detect_sarcasm" => json!({
+            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
+            "audio": string("The voiceover file: enables the flat-delivery cross-check on positive words."),
+            "transcript": transcript_field(),
+            "lines": lines_field(),
+            "script": script_field(),
+        }),
+        "detect_code_switching" | "detect_cross_lingual_emotion" => json!({
+            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
+            "transcript": transcript_field(),
+            "lines": lines_field(),
+            "script": script_field(),
+            "language": string("The language hint the transcribe call used (ISO code); cross-checked against the detected script."),
+        }),
+        "detect_vocal_events" => json!({
+            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
+            "audio": string("The voiceover file to scan for laughs, sighs, breaths and coughs."),
+            "transcript": transcript_field(),
+            "lines": lines_field(),
+            "script": script_field(),
+        }),
+        "classify_voice_quality" | "classify_recording_quality" | "measure_reverb" => json!({
+            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
+            "audio": string("The voiceover file (any format ffmpeg reads)."),
+        }),
+        "detect_restarts" | "classify_filler_type" => json!({
+            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
+            "audio": string("The voiceover file, for the timing reads when word timings are present."),
+            "transcript": transcript_field(),
+            "lines": lines_field(),
+            "script": script_field(),
+        }),
+        "score_emphasis_type"
+        | "detect_speaking_style"
+        | "detect_tempo_changes"
+        | "detect_accent"
+        | "measure_vocal_tract" => json!({
+            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
+            "audio": string("The voiceover file (any format ffmpeg reads)."),
+            "transcript": transcript_field(),
+            "lines": lines_field(),
+            "script": script_field(),
+        }),
+        "measure_rhythm_meter" => json!({
+            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
+            "audio": string("The voiceover file (any format ffmpeg reads)."),
+            "transcript": transcript_field(),
+            "lines": lines_field(),
+            "script": script_field(),
+            "bpm": { "type": "number", "minimum": 30, "maximum": 300, "description": "A BPM hint: returns which syllable nuclei land on the beat grid (the cut-to-music map)." },
+        }),
+        "enhance_speech" => json!({
+            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
+            "audio": string("The voiceover file to enhance; never modified."),
+            "out": string("The enhanced output file; defaults beside the input as <name>_enhanced.<ext>."),
+            "overwrite": { "type": "boolean", "default": false, "description": "Replace an existing output file." },
+            "targetLufs": { "type": "number", "default": -16, "minimum": -40, "maximum": 0, "description": "The loudness the chain lands on." },
+            "targetTruePeakDbtp": { "type": "number", "default": -1.5, "minimum": -9, "maximum": 0 },
+        }),
+        "remove_hiss_hum_rumble" => json!({
+            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
+            "audio": string("The file to clean; never modified."),
+            "out": string("The cleaned output file; defaults beside the input as <name>_clean.<ext>."),
+            "overwrite": { "type": "boolean", "default": false },
+            "force": { "type": "boolean", "default": false, "description": "Clean even when the take is cleaner than the cure." },
+        }),
+        "normalize_loudness" => json!({
+            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
+            "audio": string("The file to normalise; never modified."),
+            "out": string("The normalised output; defaults beside the input as <name>_<target>lufs.<ext>."),
+            "overwrite": { "type": "boolean", "default": false },
+            "platform": { "type": "string", "enum": ["youtube", "spotify", "reels-tiktok", "streaming", "podcast", "apple-podcast", "broadcast-eu", "broadcast-atsc", "quiet"], "description": "The platform whose loudness target to land on (-14 streaming, -16 podcast, -23 EBU, -24 ATSC)." },
+            "targetLufs": { "type": "number", "default": -14, "minimum": -40, "maximum": 0 },
+            "targetTruePeakDbtp": { "type": "number", "default": -1, "minimum": -9, "maximum": 0 },
+        }),
+        "detect_music_segments" | "identify_music" | "analyze_music_structure" => json!({
+            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
+            "audio": string("The media file whose audio carries the music (or the voiceover to prove it has none)."),
+        }),
+        "evaluate_tts_quality" | "detect_ai_voice" => json!({
+            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
+            "audio": string("The TTS take (any format ffmpeg reads)."),
+            "transcript": transcript_field(),
+            "lines": lines_field(),
+        }),
+        "seal_voice" => json!({
+            "action": { "type": "string", "enum": ["seal", "verify", "status", "selftest"], "default": "seal" },
+            "audio": string("The voice take to seal, verify or inspect."),
+            "out": string("Where the seal lands; defaults to voice-seal.json beside the audio."),
+            "overwrite": { "type": "boolean", "default": false },
+            "policy": { "type": "object", "description": "The usage record: {allowedUses: [string], expiry: ISO date, attribution, license, syntheticVoiceDisclosure}.", "properties": {
+                "allowedUses": { "type": "array", "items": { "type": "string" } },
+                "expiry": { "type": "string" },
+                "attribution": { "type": "string" },
+                "license": { "type": "string" },
+                "syntheticVoiceDisclosure": { "type": ["string", "boolean"] },
+            }, "additionalProperties": false },
+        }),
+        "align_captions" => json!({
+            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
+            "audio": string("The voiceover file: enables drift correction and silence snapping."),
+            "transcript": transcript_field(),
+            "lines": lines_field(),
+            "script": script_field(),
+            "maxCharsPerSecond": { "type": "number", "default": 17, "minimum": 5, "maximum": 40 },
+            "maxDurationSeconds": { "type": "number", "default": 5, "minimum": 1, "maximum": 15 },
+            "minDurationSeconds": { "type": "number", "default": 0.9, "minimum": 0.3, "maximum": 3 },
+            "maxCharsPerLine": { "type": "integer", "default": 42, "minimum": 16, "maximum": 84 },
+        }),
+        "clean_subtitles" => json!({
+            "action": { "type": "string", "enum": ["extract", "selftest"], "default": "extract" },
+            "srt": string("Raw SRT text to parse and clean."),
+            "transcript": transcript_field(),
+            "lines": lines_field(),
+            "script": script_field(),
+            "stripFillers": { "type": "boolean", "default": true },
+            "maxCharsPerLine": { "type": "integer", "default": 42, "minimum": 16, "maximum": 84 },
+            "maxCharsPerSecond": { "type": "number", "default": 17, "minimum": 5, "maximum": 40 },
+            "format": { "type": "string", "enum": ["cues", "srt"], "default": "cues" },
         }),
         _ => return None,
     };
@@ -2339,6 +2832,7 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         Action::LocalVlm => crate::sense::local_vlm(arguments),
         Action::Emotion => crate::sense::emotion(arguments),
         Action::VoiceSignals => crate::sense::voice_signals(arguments),
+        Action::Sense(name) => crate::sense::sense_family(name, arguments),
         Action::CreativeBrief => crate::sense::creative_brief(arguments, backend),
         Action::MotionOverlay => crate::sense::motion_overlay(arguments, backend),
         Action::MeasureLoudness => crate::sense::measure_loudness(arguments),
@@ -3848,6 +4342,135 @@ mod tests {
                 "voice_signals",
                 json!({ "audio": "/tmp/voiceover.wav", "script": "You won't believe what they found." }),
             ),
+            // The thirty-three consumption-layer tools: one sample each,
+            // the arguments each schema above accepts.
+            (
+                "analyze_discourse",
+                json!({ "script": "Most people think it is willpower. But the data says systems. Because automation saves twice as much." }),
+            ),
+            (
+                "segment_topics",
+                json!({ "script": "First, the leak in the basement. Then the plumber found more. Now imagine the bill. But here is the fix." }),
+            ),
+            (
+                "detect_speech_acts",
+                json!({ "script": "Have you ever wondered why? Look closer. I promise this works. But be careful with step three." }),
+            ),
+            (
+                "classify_speech_acts",
+                json!({ "script": "I will show you the numbers. Follow for part two. Wow, that is a big claim. This makes it official." }),
+            ),
+            (
+                "score_readability",
+                json!({ "script": "The implementation of the optimization resulted in a significant improvement of the utilization metrics." }),
+            ),
+            (
+                "extract_claim_graph",
+                json!({ "script": "Studies show automation doubles savings. But critics say it fails. Because the data tracks twelve months. Maybe the effect is smaller." }),
+            ),
+            (
+                "score_script_quality",
+                json!({ "script": "Nobody tracks their subscriptions. So the average house loses $219 a month. But here is the catch. Try the free tracker in the link.", "targetSeconds": 30 }),
+            ),
+            (
+                "detect_sarcasm",
+                json!({ "audio": "/tmp/voiceover.wav", "script": "Oh sure, because that always works. Just what I needed today. Great job everyone." }),
+            ),
+            (
+                "detect_code_switching",
+                json!({ "script": "Today we talk about the market. কিন্তু আসল গল্পটা অন্য জায়গায়। The numbers tell it." }),
+            ),
+            (
+                "detect_cross_lingual_emotion",
+                json!({ "script": "আজ আমরা একটা ভয়ংকর গল্প শুনব। তারপর সবাই খুশি হবে। কান্না থাকবে না।", "language": "bn" }),
+            ),
+            (
+                "detect_vocal_events",
+                json!({ "audio": "/tmp/voiceover.wav", "script": "So anyway [laughs] we tried it. *sigh* It did not work. [coughs] Let me explain." }),
+            ),
+            (
+                "classify_voice_quality",
+                json!({ "audio": "/tmp/voiceover.wav" }),
+            ),
+            (
+                "classify_recording_quality",
+                json!({ "audio": "/tmp/voiceover.wav" }),
+            ),
+            ("measure_reverb", json!({ "audio": "/tmp/voiceover.wav" })),
+            (
+                "detect_restarts",
+                json!({ "transcript": { "segments": [{ "text": "So the the first thing is", "start": 0.1, "end": 1.4, "words": [
+                    { "text": "so", "start": 0.1, "end": 0.2 }, { "text": "the", "start": 0.25, "end": 0.33 },
+                    { "text": "the", "start": 0.35, "end": 0.43 }, { "text": "first", "start": 0.45, "end": 0.62 },
+                    { "text": "thing", "start": 0.64, "end": 0.85 }, { "text": "is", "start": 0.87, "end": 1.0 } ] }] } }),
+            ),
+            (
+                "classify_filler_type",
+                json!({ "script": "So basically, um, the kind of thing that really matters is, you know, very simple." }),
+            ),
+            (
+                "score_emphasis_type",
+                json!({ "script": "But THIS is the first thing. Really matters. Second, here today, the numbers tell the story." }),
+            ),
+            (
+                "detect_speaking_style",
+                json!({ "audio": "/tmp/voiceover.wav" }),
+            ),
+            (
+                "measure_rhythm_meter",
+                json!({ "audio": "/tmp/voiceover.wav", "bpm": 120.0 }),
+            ),
+            (
+                "detect_tempo_changes",
+                json!({ "audio": "/tmp/voiceover.wav" }),
+            ),
+            ("detect_accent", json!({ "audio": "/tmp/voiceover.wav" })),
+            (
+                "measure_vocal_tract",
+                json!({ "audio": "/tmp/voiceover.wav" }),
+            ),
+            (
+                "enhance_speech",
+                json!({ "audio": "/tmp/voiceover.wav", "out": "/tmp/voiceover_enhanced.wav" }),
+            ),
+            (
+                "remove_hiss_hum_rumble",
+                json!({ "audio": "/tmp/voiceover.wav", "out": "/tmp/voiceover_clean.wav" }),
+            ),
+            (
+                "normalize_loudness",
+                json!({ "audio": "/tmp/render.mp4", "platform": "youtube", "out": "/tmp/render_youtube.mp4" }),
+            ),
+            (
+                "detect_music_segments",
+                json!({ "audio": "/tmp/render.mp4" }),
+            ),
+            ("identify_music", json!({ "audio": "/tmp/music.wav" })),
+            (
+                "analyze_music_structure",
+                json!({ "audio": "/tmp/music.wav" }),
+            ),
+            (
+                "evaluate_tts_quality",
+                json!({ "audio": "/tmp/tts.wav", "transcript": { "segments": [{ "text": "this is the voice", "start": 0.1, "end": 1.2, "words": [
+                    { "text": "this", "start": 0.1, "end": 0.3 }, { "text": "is", "start": 0.32, "end": 0.44 },
+                    { "text": "the", "start": 0.46, "end": 0.58 }, { "text": "voice", "start": 0.6, "end": 1.0 } ] }] } }),
+            ),
+            ("detect_ai_voice", json!({ "audio": "/tmp/tts.wav" })),
+            (
+                "seal_voice",
+                json!({ "audio": "/tmp/voiceover.wav", "action": "seal", "policy": { "allowedUses": ["youtube", "client-work"], "expiry": "2027-01-01" } }),
+            ),
+            (
+                "align_captions",
+                json!({ "audio": "/tmp/voiceover.wav", "transcript": { "segments": [{ "text": "one two three", "start": 0.1, "end": 1.4, "words": [
+                    { "text": "one", "start": 0.1, "end": 0.4 }, { "text": "two", "start": 0.5, "end": 0.8 },
+                    { "text": "three", "start": 0.9, "end": 1.3 } ] }] } }),
+            ),
+            (
+                "clean_subtitles",
+                json!({ "srt": "1\n00:00:00,000 --> 00:00:02,000\num, this is the FIRST line\n\n2\n00:00:02,100 --> 00:00:04,500\nand this is line two with no stop\n" }),
+            ),
             (
                 "track_subject",
                 json!({ "path": "/tmp/clip.mp4", "aspect": "9:16" }),
@@ -4021,6 +4644,7 @@ mod tests {
                 | Action::LocalVlm
                 | Action::Emotion
                 | Action::VoiceSignals
+                | Action::Sense(_)
                 | Action::CreativeBrief
                 | Action::MotionOverlay
                 | Action::MeasureLoudness

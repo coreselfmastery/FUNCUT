@@ -13,9 +13,12 @@
 # It looks for a published release on this repository first, and falls
 # back to the upstream Concat releases when the fork has none - the two
 # are the same program, built by the same workflows. A release built by
-# the Release workflow starts as a *draft*: publish it from the
-# repository's Releases page before this script (or the website, or
-# anything but your own login) can see it.
+# the Release workflow publishes itself: CI passes on the tag first, and
+# every bundle is launched where it was built before it uploads, so what
+# this script finds is already public - nothing waits on a person to
+# click Publish. (Drafts and pre-releases are still skipped below, the
+# way they always were - a hand-made draft is none of this script's
+# business until a person publishes it.)
 #
 # Beside the app it offers the motion sidecar - Geneva v1.6.0, pinned by
 # checksum - into ~/.local/bin: the editor runs without it (a comp with

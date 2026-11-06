@@ -5169,8 +5169,8 @@ mod tests {
         let outcome = openvid_search_batch(
             json!({
                 "queries": ["ocean sunset", "city skyline"],
-                "excludeIds": [820_338_756_299, 42],
-                "exclude_ids": [69_067_789_059],
+                "excludeIds": [820_338_756_299i64, 42],
+                "exclude_ids": [69_067_789_059i64],
                 "minMotion": 1.5,
             }),
             &mut backend,
@@ -5183,12 +5183,12 @@ mod tests {
             assert_eq!(call["method"], "openvid.search");
             assert_eq!(
                 call["excludeIds"],
-                json!([820_338_756_299, 42]),
+                json!([820_338_756_299i64, 42]),
                 "the camelCase list rides along"
             );
             assert_eq!(
                 call["exclude_ids"],
-                json!([69_067_789_059]),
+                json!([69_067_789_059i64]),
                 "the snake_case spelling rides along to the API's alias"
             );
             assert_eq!(call["minMotion"], 1.5, "the floor rides along");

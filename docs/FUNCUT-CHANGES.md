@@ -2032,8 +2032,8 @@ moves, each one branch and one pull request:
   `edit_v1`/`edit_v2`/`edit_v3.mp4`, and after that the edit ships
   exhausted with the failures recorded per slot.
 
-The catalogue grows to **107** tools; the director's default stays at
-95 - the two footage tools are named deliberately on the forge's own
-allowlist (97 there), the whole-catalogue copy carrying all 107 - and
-the canonical plan schema, the forge config, FEATURES.md and this ledger
-say so in the same breath.
+The catalogue grows to **107** tools, and the director's default grows
+with it, to **97** - the two footage tools join the loop they serve,
+on the allowlist and in the forge config, and the ten left off are the
+ten the policy always named. The canonical plan schema, the forge
+config, FEATURES.md and this ledger say so in the same breath.

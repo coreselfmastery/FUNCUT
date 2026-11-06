@@ -377,7 +377,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "openvid_search",
             "Search stock clips",
-            "Search 937,957 stock clips by caption words and quality numbers; a local CLIP rerank re-orders a relevance page by what the clips SHOW.",
+            "Search 937,957 stock clips by caption words and quality numbers; excludeIds drops clips this edit already used, minMotion floors the motion; a CLIP rerank re-orders the page by what clips SHOW.",
             "openvid.search",
             Raw,
         )
@@ -385,7 +385,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "openvid_search_batch",
             title: "Search stock clips, several queries at once",
-            description: "The openvid_search search once per entry of `queries` - shop a whole plan's B-roll in one round trip, then look with stock_contact_sheet.",
+            description: "The openvid_search search once per entry of `queries` - shop a whole plan in one round trip; excludeIds and minMotion hold for every query, then look with stock_contact_sheet.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -1300,9 +1300,41 @@ impl Default for Toolbox {
     }
 }
 
+/// The `openvid_search` tool's argument schema: the API's own, with the
+/// snake_case aliases the footage brief spells (`motion_min`,
+/// `exclude_ids`) spelled beside their camelCase names. The API accepts
+/// either spelling, and the schema says so, so a client reading the
+/// schema and a client reading the brief send the same filter and land
+/// in the same place.
+fn openvid_search_schema(schemas: &Schemas) -> Option<Value> {
+    let mut schema = schemas.method("openvid.search")?;
+    if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
+        properties.insert(
+            "motion_min".to_owned(),
+            json!({
+                "type": "number",
+                "description": "Alias for minMotion: the motion score at least this (0-131 in this library).",
+            }),
+        );
+        properties.insert(
+            "exclude_ids".to_owned(),
+            json!({
+                "type": "array",
+                "maxItems": 500,
+                "items": { "type": "integer" },
+                "description": "Alias for excludeIds: clip ids this edit already used; none of them come back, whatever they score.",
+            }),
+        );
+    }
+    Some(schema)
+}
+
 /// The schema a tool's arguments follow.
 fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
     match tool.action {
+        Action::Method { method, .. } if method == "openvid.search" => {
+            openvid_search_schema(schemas)
+        }
         Action::Method { method, .. } => schemas.method(method),
         Action::Command { op } => schemas.command(op),
         Action::Version => schemas.method("version"),
@@ -1324,9 +1356,10 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
         Action::CollisionCheck => schemas.method("project.get"),
         Action::OpenvidSearchBatch => {
             // The same shape `openvid_search` takes, one query a list of
-            // them: the properties are cut from the API's own schema so
-            // the floors and filters cannot drift from it.
-            let search = schemas.method("openvid.search")?;
+            // them: the properties are cut from the API's own schema -
+            // aliases and all - so the floors and filters cannot drift
+            // from it.
+            let search = openvid_search_schema(schemas)?;
             let mut properties = search
                 .get("properties")
                 .and_then(Value::as_object)
@@ -4402,10 +4435,69 @@ mod tests {
         }
     }
 
-    /// The batch runs one `openvid.search` per query, carrying the shared
-    /// filters, and the reply keeps the queries apart. The CLIP rerank
-    /// rides along - these pages are tiny, so it is a no-op here, and the
-    /// flag is consumed by the batch and never forwarded to the API.
+    /// The footage filters reach the search: the tool's schema spells the
+    /// snake_case aliases beside the camelCase names, and the batch holds
+    /// the shared `excludeIds` and motion floor for every query it runs.
+    #[test]
+    fn the_footage_filters_reach_the_search_schema_and_every_batch_query() {
+        let toolbox = Toolbox::new();
+        let (_, schema) = toolbox.find("openvid_search").expect("the search tool");
+        let properties = schema["properties"].as_object().expect("properties");
+        assert!(
+            properties.contains_key("minMotion") && properties.contains_key("motion_min"),
+            "the floor under both spellings"
+        );
+        assert!(
+            properties.contains_key("excludeIds") && properties.contains_key("exclude_ids"),
+            "the used-clip list under both spellings"
+        );
+
+        // And the batch carries them into every search it runs, whatever
+        // spelling the caller used - the API's aliases land them on the
+        // same fields.
+        let mut backend = Answers(
+            std::cell::RefCell::new(Vec::new()),
+            [
+                json!({ "clips": [{ "id": 4 }], "total": 1 }),
+                json!({ "clips": [{ "id": 5 }], "total": 1 }),
+            ]
+            .into(),
+        );
+        let outcome = openvid_search_batch(
+            json!({
+                "queries": ["ocean sunset", "city skyline"],
+                "excludeIds": [820_338_756_299, 42],
+                "exclude_ids": [69_067_789_059],
+                "minMotion": 1.5,
+            }),
+            &mut backend,
+        )
+        .expect("searches");
+        assert!(!outcome.is_error);
+        let calls = backend.0.borrow();
+        assert_eq!(calls.len(), 2, "one call a query");
+        for call in calls.iter() {
+            assert_eq!(call["method"], "openvid.search");
+            assert_eq!(
+                call["excludeIds"],
+                json!([820_338_756_299, 42]),
+                "the camelCase list rides along"
+            );
+            assert_eq!(
+                call["exclude_ids"],
+                json!([69_067_789_059]),
+                "the snake_case spelling rides along to the API's alias"
+            );
+            assert_eq!(call["minMotion"], 1.5, "the floor rides along");
+            assert!(call.get("queries").is_none(), "the list is not forwarded");
+        }
+    }
+
+    /// `openvid_search_batch` runs one search per query, carrying the
+    /// shared filters, and the reply keeps the queries apart. The CLIP
+    /// rerank rides along - these pages are tiny, so it is a no-op here,
+    /// and the flag is consumed by the batch and never forwarded to the
+    /// API.
     #[test]
     fn openvid_search_batch_runs_one_search_per_query() {
         let mut backend = Answers(

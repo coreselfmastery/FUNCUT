@@ -259,6 +259,86 @@ pub struct Query {
     pub limit: u32,
     /// Skip this many from the front, for the next page.
     pub offset: u32,
+    /// The clips a caller has already used in this edit, by id: none of
+    /// them come back, whatever they score. The footage planner's way of
+    /// not shopping the same clip twice, and the one filter that works
+    /// before the ranking does - an excluded id is not ordered lower, it
+    /// is not there.
+    pub exclude_ids: Vec<i64>,
+}
+
+/// How many excluded ids one search may carry. The clause is a NOT IN
+/// with a bind an id, and SQLite's bind ceiling is far away but not
+/// infinite; five hundred is a plan's worth of used clips with room, and
+/// past it the search refuses rather than silently dropping ids.
+pub const MAX_EXCLUDE_IDS: usize = 500;
+
+/// The scalar filters a query asks for, as WHERE parts and their binds,
+/// in the fixed order the search builds them: aesthetic, the motion
+/// band, temporal, the seconds band, fps, camera, shelf, and the ids a
+/// caller has already used. Pure, so the clause a filter makes is
+/// testable without an index - and every value is bound, never spliced,
+/// so the ids are data like the words are. The shape filter is the
+/// caller's: it needs the census.
+///
+/// An exclusion list past [`MAX_EXCLUDE_IDS`] is an error, not a search
+/// that quietly forgets some of the ids it was told never to return.
+fn scalar_filters(query: &Query) -> Result<(Vec<String>, Vec<Bind>), String> {
+    let mut where_parts: Vec<String> = Vec::new();
+    let mut binds: Vec<Bind> = Vec::new();
+    if let Some(value) = query.min_aesthetic {
+        where_parts.push("clips.aesthetic >= ?".to_owned());
+        binds.push(Bind::Real(value));
+    }
+    if let Some(value) = query.min_motion {
+        where_parts.push("clips.motion >= ?".to_owned());
+        binds.push(Bind::Real(value));
+    }
+    if let Some(value) = query.max_motion {
+        where_parts.push("clips.motion <= ?".to_owned());
+        binds.push(Bind::Real(value));
+    }
+    if let Some(value) = query.min_temporal {
+        where_parts.push("clips.temporal >= ?".to_owned());
+        binds.push(Bind::Real(value));
+    }
+    if let Some(value) = query.min_seconds {
+        where_parts.push("clips.seconds >= ?".to_owned());
+        binds.push(Bind::Real(value));
+    }
+    if let Some(value) = query.max_seconds {
+        where_parts.push("clips.seconds <= ?".to_owned());
+        binds.push(Bind::Real(value));
+    }
+    if let Some(value) = query.min_fps {
+        where_parts.push("clips.fps >= ?".to_owned());
+        binds.push(Bind::Real(value));
+    }
+    if let Some(value) = query.camera.as_deref() {
+        where_parts.push("clips.camera = ?".to_owned());
+        binds.push(Bind::Text(value.to_owned()));
+    }
+    if let Some(source) = query.source {
+        where_parts.push("clips.source = ?".to_owned());
+        binds.push(Bind::Integer(source.number()));
+    }
+    if !query.exclude_ids.is_empty() {
+        if query.exclude_ids.len() > MAX_EXCLUDE_IDS {
+            return Err(format!(
+                "at most {MAX_EXCLUDE_IDS} excluded ids a search, not {}",
+                query.exclude_ids.len()
+            ));
+        }
+        let placeholders = query
+            .exclude_ids
+            .iter()
+            .map(|_| "?")
+            .collect::<Vec<_>>()
+            .join(", ");
+        where_parts.push(format!("clips.id NOT IN ({placeholders})"));
+        binds.extend(query.exclude_ids.iter().map(|id| Bind::Integer(*id)));
+    }
+    Ok((where_parts, binds))
 }
 
 /// A frame's shape, as the orientation filter asks for it.
@@ -646,43 +726,13 @@ impl Library {
         } else {
             from.to_owned()
         };
-        // Every scalar filter, in a fixed order, each a bound parameter.
-        if let Some(value) = query.min_aesthetic {
-            where_parts.push("clips.aesthetic >= ?".to_owned());
-            binds.push(Bind::Real(value));
-        }
-        if let Some(value) = query.min_motion {
-            where_parts.push("clips.motion >= ?".to_owned());
-            binds.push(Bind::Real(value));
-        }
-        if let Some(value) = query.max_motion {
-            where_parts.push("clips.motion <= ?".to_owned());
-            binds.push(Bind::Real(value));
-        }
-        if let Some(value) = query.min_temporal {
-            where_parts.push("clips.temporal >= ?".to_owned());
-            binds.push(Bind::Real(value));
-        }
-        if let Some(value) = query.min_seconds {
-            where_parts.push("clips.seconds >= ?".to_owned());
-            binds.push(Bind::Real(value));
-        }
-        if let Some(value) = query.max_seconds {
-            where_parts.push("clips.seconds <= ?".to_owned());
-            binds.push(Bind::Real(value));
-        }
-        if let Some(value) = query.min_fps {
-            where_parts.push("clips.fps >= ?".to_owned());
-            binds.push(Bind::Real(value));
-        }
-        if let Some(value) = query.camera.as_deref() {
-            where_parts.push("clips.camera = ?".to_owned());
-            binds.push(Bind::Text(value.to_owned()));
-        }
-        if let Some(source) = query.source {
-            where_parts.push("clips.source = ?".to_owned());
-            binds.push(Bind::Integer(source.number()));
-        }
+        // Every scalar filter, in a fixed order, each a bound parameter -
+        // built once by [`scalar_filters`], shared by the count and the
+        // page, and pure enough to test without an index.
+        let (filter_parts, filter_binds) = scalar_filters(query)
+            .map_err(|why| format!("the OpenVid index would not search: {why}"))?;
+        where_parts.extend(filter_parts);
+        binds.extend(filter_binds);
         if let Some(orientation) = query.orientation {
             let (predicate, shelf_binds) = orientation_predicate(orientation, &censused);
             where_parts.push(predicate);
@@ -1697,6 +1747,66 @@ mod tests {
         assert_eq!(fts_words("Rain on a window"), "\"rain\"* \"window\"*");
         assert_eq!(fts_words("ocean ocean WAVES"), "\"ocean\"* \"waves\"*");
         assert_eq!(fts_words("a 42 the"), "");
+    }
+
+    /// The exclusion list becomes one NOT IN clause with a bind an id, the
+    /// motion floor one >=, and both together keep the fixed order: an
+    /// id's absence is not a score's opinion. Past the cap the search
+    /// refuses rather than quietly forgetting ids it was told never to
+    /// return.
+    #[test]
+    fn the_exclude_list_becomes_one_not_in_clause() {
+        let query = Query {
+            exclude_ids: vec![820_338_756_299, 69_067_789_059],
+            ..Query::default()
+        };
+        let (parts, binds) = scalar_filters(&query).expect("within the cap");
+        assert_eq!(parts, vec!["clips.id NOT IN (?, ?)".to_owned()]);
+        let values: Vec<rusqlite::types::Value> = binds.iter().map(Bind::value).collect();
+        assert_eq!(
+            values,
+            vec![
+                rusqlite::types::Value::Integer(820_338_756_299),
+                rusqlite::types::Value::Integer(69_067_789_059),
+            ]
+        );
+
+        // The motion floor is its own part, and both together keep the
+        // fixed order: floor first, exclusion last.
+        let query = Query {
+            min_motion: Some(1.5),
+            exclude_ids: vec![42],
+            ..Query::default()
+        };
+        let (parts, binds) = scalar_filters(&query).expect("within the cap");
+        assert_eq!(
+            parts,
+            vec![
+                "clips.motion >= ?".to_owned(),
+                "clips.id NOT IN (?)".to_owned()
+            ]
+        );
+        let values: Vec<rusqlite::types::Value> = binds.iter().map(Bind::value).collect();
+        assert_eq!(
+            values,
+            vec![
+                rusqlite::types::Value::Real(1.5),
+                rusqlite::types::Value::Integer(42),
+            ]
+        );
+
+        // No filters, no parts: an unfiltered search is the library as it
+        // comes.
+        let (parts, binds) = scalar_filters(&Query::default()).expect("nothing asked");
+        assert!(parts.is_empty() && binds.is_empty());
+
+        // Past the cap: refused, with the number said.
+        let query = Query {
+            exclude_ids: vec![0; MAX_EXCLUDE_IDS + 1],
+            ..Query::default()
+        };
+        let error = scalar_filters(&query).unwrap_err();
+        assert!(error.contains("at most 500"), "{error}");
     }
 
     /// When the exact phrasing matches nothing, the retry ORs the terms

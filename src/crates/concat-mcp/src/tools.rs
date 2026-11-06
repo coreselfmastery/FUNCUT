@@ -4831,7 +4831,10 @@ mod tests {
         assert!(!outcome.is_error);
         let reply = outcome.structured.expect("structured");
         let clips = reply["clips"].as_array().expect("clips");
-        let ids: Vec<i64> = clips.iter().filter_map(|clip| clip["id"].as_i64).collect();
+        let ids: Vec<i64> = clips
+            .iter()
+            .filter_map(|clip| clip["id"].as_i64())
+            .collect();
         assert_eq!(
             ids,
             vec![1],
@@ -4934,7 +4937,7 @@ mod tests {
         let clips = reply["clips"].as_array().expect("clips");
         let scores: Vec<f64> = clips
             .iter()
-            .filter_map(|clip| clip["slotScore"].as_f64)
+            .filter_map(|clip| clip["slotScore"].as_f64())
             .collect();
         assert_eq!(scores.len(), 3, "every clip carries its score");
         for pair in scores.windows(2) {
@@ -4942,9 +4945,9 @@ mod tests {
         }
         let ranks: Vec<u64> = clips
             .iter()
-            .filter_map(|clip| clip["slotRank"].as_u64)
+            .filter_map(|clip| clip["slotRank"].as_u64())
             .collect();
-        assert_eq!(ranks, vec![1, 2, 3], "{clips:?}");
+        assert_eq!(ranks, vec![1u64, 2, 3], "{clips:?}");
         // The tag blend moved the agreeing clip to the front: the words
         // count, not just the page order.
         assert_eq!(clips[0]["id"], json!(2), "{clips:?}");

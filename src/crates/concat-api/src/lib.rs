@@ -514,6 +514,7 @@ impl Api {
                 sort,
                 limit,
                 offset,
+                exclude_ids,
             } => Ok(Reply::OpenvidFound(self.openvid_search(
                 query,
                 min_aesthetic,
@@ -529,6 +530,7 @@ impl Api {
                 sort,
                 limit,
                 offset,
+                exclude_ids,
             )?)),
             Request::OpenvidGet { ids } => Ok(Reply::OpenvidClips(self.openvid_get(&ids)?)),
             Request::OpenvidFetch { id } => Ok(Reply::OpenvidClips(self.openvid_fetch(id)?)),
@@ -1024,6 +1026,7 @@ impl Api {
         sort: Option<String>,
         limit: Option<u32>,
         offset: Option<u32>,
+        exclude_ids: Vec<i64>,
     ) -> Result<OpenvidFound, ApiError> {
         self.openvid_ready()?;
         let source = source
@@ -1077,6 +1080,7 @@ impl Api {
             sort,
             limit: limit.unwrap_or(20).clamp(1, 100),
             offset: offset.unwrap_or(0),
+            exclude_ids,
         };
         let found = self.library().search(&search).map_err(ApiError::failed)?;
         Ok(OpenvidFound {
@@ -2586,6 +2590,67 @@ mod tests {
             Response::Result(_) => panic!("worked, unexpectedly"),
             Response::Error(error) => error,
         }
+    }
+
+    /// The footage filters accept the snake_case spellings the footage
+    /// brief uses, landing on exactly the fields their camelCase names
+    /// carry - a caller following the brief and a caller following the
+    /// schema send the same filter.
+    #[test]
+    fn the_footage_filters_accept_their_snake_case_aliases() {
+        let request: Request = serde_json::from_value(json!({
+            "method": "openvid.search",
+            "query": "ocean sunset",
+            "motion_min": 1.5,
+            "exclude_ids": [820_338_756_299i64, 42],
+        }))
+        .expect("the aliases deserialize");
+        let Request::OpenvidSearch {
+            min_motion,
+            exclude_ids,
+            ..
+        } = request
+        else {
+            panic!("the search request");
+        };
+        assert_eq!(min_motion, Some(1.5));
+        assert_eq!(exclude_ids, vec![820_338_756_299, 42]);
+
+        // And the camelCase names, unchanged.
+        let request: Request = serde_json::from_value(json!({
+            "method": "openvid.search",
+            "minMotion": 2.0,
+            "excludeIds": [7],
+        }))
+        .expect("the camelCase names deserialize");
+        let Request::OpenvidSearch {
+            min_motion,
+            exclude_ids,
+            ..
+        } = request
+        else {
+            panic!("the search request");
+        };
+        assert_eq!(min_motion, Some(2.0));
+        assert_eq!(exclude_ids, vec![7]);
+
+        // A search that names neither filter filters nothing: the field
+        // defaults are empty and absent, the library as it comes.
+        let request: Request = serde_json::from_value(json!({
+            "method": "openvid.search",
+            "query": "ocean",
+        }))
+        .expect("no filters at all");
+        let Request::OpenvidSearch {
+            min_motion,
+            exclude_ids,
+            ..
+        } = request
+        else {
+            panic!("the search request");
+        };
+        assert_eq!(min_motion, None);
+        assert!(exclude_ids.is_empty());
     }
 
     fn view(reply: Reply) -> EditorView {

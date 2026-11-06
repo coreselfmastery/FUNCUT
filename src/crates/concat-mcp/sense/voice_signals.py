@@ -59,7 +59,60 @@ import unicodedata
 import wave
 from pathlib import Path
 
-SCHEMA = "funcut.voice-signals/1"
+SCHEMA = "funcut.voice-signals/2"
+
+# The decision policy: for each editing decision, which signals drive it
+# and in what priority order - the table a director reads beside the
+# profile so the readings become choices instead of a data dump. The
+# signal names are the log's vocabulary: a signalLog entry that names one
+# of these is a decision the profile can stand behind.
+DECISION_POLICY = {
+    "cut": {
+        "signals": ["pause.class=dead_air", "emphasisWords", "speechRate.pace",
+                    "rhythmLayers", "motifs"],
+        "rule": "Cut on dead air and at emphasis boundaries, never inside a "
+                "dramatic hold or a scene turn; the pace class sets the cut "
+                "length (punchy 0.8-1.5 s, editorial 2.5 s+).",
+    },
+    "caption": {
+        "signals": ["emphasisWords", "words[].confidence", "language.script",
+                    "sentence.type"],
+        "rule": "Highlight the emphasis words, gate or re-check words under "
+                "0.5 confidence, and give non-Latin scripts their fonts and "
+                "pacing; a question line's caption holds past its answer.",
+    },
+    "graphic": {
+        "signals": ["entities", "sentence.type", "speechActs", "claims"],
+        "rule": "Numbers and money become stat cards, names become lower "
+                "thirds, dates become timelines; PII is redacted, and an "
+                "uncovered claim gets proof b-roll or a source card.",
+    },
+    "bgm": {
+        "signals": ["forensic.noiseFloorDbfs", "musicSegments", "speechRatio"],
+        "rule": "A dry voice (floor under -45 dBFS) gets music and ducking; "
+                "a take that already carries music gets none added; a low "
+                "SNR gets cleaned first.",
+    },
+    "transition": {
+        "signals": ["speakerChanges", "topics", "discourseMarkers",
+                    "sentence.type"],
+        "rule": "A speaker change, a topic boundary or a contrastive "
+                "'but' earns the transition (whip, dissolve, chapter card); "
+                "inside a topic the cuts stay hard.",
+    },
+}
+
+
+def _decision_policy_out():
+    """The policy as it ships with the profile, with the signal
+    vocabulary the log validates against."""
+    return {
+        decision: {
+            "signals": list(entry["signals"]),
+            "rule": entry["rule"],
+        }
+        for decision, entry in DECISION_POLICY.items()
+    }
 
 # ---------------------------------------------------------------------------
 # The transcript in
@@ -706,6 +759,94 @@ def _whisperx_words(audio, lines, language):
 # ---------------------------------------------------------------------------
 
 
+def _signal_confidence(sources, audio, rust, wx_words, series, notes):
+    """One confidence per signal family, with the basis a director can
+    weigh: which ear answered, and what it was built on. A signal with a
+    low confidence is not wrong - it is one the plan should lean on less,
+    and the basis says why. Formants on a phone-band take, reverb from a
+    single-channel envelope, emphasis without word timings: each is
+    honest about what it is."""
+    rust_up = bool(rust)
+    has_audio = bool(audio)
+    band = None
+    forensic = (rust or {}).get("forensic", {}).get("whole") or {}
+    sample_rate = forensic.get("sampleRateHz") or forensic.get("sampleRate")
+    if isinstance(sample_rate, (int, float)) and sample_rate > 0:
+        band = min(sample_rate / 2.0, 20000.0)
+    lines = []
+
+    def entry(name, confidence, basis):
+        lines.append({"signal": name, "confidence": round(confidence, 2),
+                      "basis": basis})
+
+    # Loudness: ebur128 measured on the real take, or nothing.
+    if sources.get("loudness"):
+        entry("loudness", 0.9,
+              f"ffmpeg ebur128 momentary series over the take"
+              + (f"; bandwidth {band/1000:.1f} kHz" if band else ""))
+    else:
+        entry("loudness", 0.0, "no audio: the loudness signals are absent")
+
+    # Pauses: silencedetect thresholds are honest but class-dependent.
+    if sources.get("pauses"):
+        entry("pauses", 0.75,
+              "ffmpeg silencedetect; the class boundaries (breath/beat/"
+              "dramatic/dead air) are heuristic, the spans are measured")
+    else:
+        entry("pauses", 0.0, "no audio: no silence spans")
+
+    # Speech rate: arithmetic on word timings; as good as the timings.
+    if wx_words:
+        entry("speechRate", 0.9, "whisperx-aligned word times")
+    elif audio:
+        entry("speechRate", 0.7, "whisper token timestamps; syllables are "
+                                 "vowel-group estimates")
+    else:
+        entry("speechRate", 0.4, "no timings: estimated from the script at "
+                                 "150 wpm")
+
+    # Word confidence: whisperx scores or the measured gate.
+    if sources.get("wordConfidence", "").startswith("whisperx"):
+        entry("wordConfidence", 0.9, "whisperx alignment scores")
+    elif sources.get("wordConfidence"):
+        entry("wordConfidence", 0.6,
+              "measured gate (timing, silence overlap, energy) - a screen, "
+              "not a score")
+    else:
+        entry("wordConfidence", 0.3, "no audio: word confidence is absent")
+
+    # Text signals: regex and lexicons, language-dependent.
+    entry("sentenceType", 0.8, "punctuation and cue patterns; cross-checked "
+                               "against terminal pitch rise when prosody ran")
+    entry("fillers", 0.65, "regex lexicon, English core; other languages "
+                           "under-read")
+    entry("motifs", 0.7, "n-gram overlap; a motif shorter than three words "
+                         "can be coincidence")
+    entry("language", 0.85, "Unicode script census")
+
+    # The Rust ears.
+    if rust_up:
+        entry("prosody", 0.85, "spectral-prosody (Rust): F0, energy, "
+                               "flux onsets, rhythm layers")
+        entry("forensic", 0.8, "oximedia-audio-analysis (Rust): noise floor, "
+                               "SNR, flatness; reverb reads carry roughly "
+                               "+/-20% on a single channel")
+        entry("speaker", 0.7, "polyvoice voice-prints (Rust); two speakers "
+                              "with similar voices can merge")
+        entry("entities", 0.8, "anno NER (Rust) with a regex complement")
+        entry("formants", (0.55 if band and band < 5000 else 0.75),
+              "vocal-tract formants"
+              + (" on a narrow-band take (phone audio): the higher "
+                 "formants are missing" if band and band < 5000 else ""))
+    else:
+        for name in ("prosody", "forensic", "speaker", "entities", "formants"):
+            basis = next((n for n in notes if "voice-signals binary" in n), None)
+            entry(name, 0.0, basis or "the Rust ear is not built: "
+                                     "cargo build -p voice-signals")
+
+    return {"ok": True, "perSignal": lines}
+
+
 def _director_hints(lines_out, pauses, rust, language, arc, bgm):
     """The decisions the signals exist to make, in the words a director
     reads: cut style, caption gates, BGM, speaker changes, repeats."""
@@ -944,6 +1085,7 @@ def extract(spec):
         speech_ratio = max(0.0, min(1.0, spoken / max(0.1, duration)))
     bgm = _bgm_decision(rust, speech_ratio)
     hints = _director_hints(lines_out, pauses, rust, language, arc, bgm)
+    confidence = _signal_confidence(sources, audio, rust, wx_words, series, notes)
 
     out = {
         "ok": True,
@@ -967,6 +1109,8 @@ def extract(spec):
             "speechRatio": round(speech_ratio, 3) if speech_ratio is not None else None,
         },
         "directorHints": hints,
+        "signalConfidence": confidence,
+        "decisionPolicy": _decision_policy_out(),
         "sources": {k: v for k, v in sources.items() if v},
         "notes": notes,
     }
@@ -1111,6 +1255,23 @@ def selftest():
             failures.append("no cut style")
         if result["directorHints"]["bgm"]["recommendation"] not in ("add", "skip", "duck_only"):
             failures.append(f"bgm said {result['directorHints']['bgm']}")
+        # The confidence block: one entry per signal family, each with a
+        # basis, and the loudness family confident on a real take.
+        per_signal = result.get("signalConfidence", {}).get("perSignal") or []
+        signals = {entry["signal"]: entry for entry in per_signal}
+        for family in ("loudness", "pauses", "speechRate", "prosody",
+                       "forensic", "speaker", "entities"):
+            entry = signals.get(family)
+            if not entry or "confidence" not in entry or not entry.get("basis"):
+                failures.append(f"no confidence for {family}: {entry}")
+        if signals.get("loudness", {}).get("confidence", 0) < 0.5:
+            failures.append("loudness confidence low on a real take")
+        # The decision policy: every decision names its signals.
+        policy = result.get("decisionPolicy") or {}
+        for decision in ("cut", "caption", "graphic", "bgm", "transition"):
+            entry = policy.get(decision)
+            if not entry or not entry.get("signals") or not entry.get("rule"):
+                failures.append(f"no decision policy for {decision}: {entry}")
         if failures:
             return {"ok": False, "selftest": "failures", "failures": failures}
         return {"ok": True, "selftest": "python signals answer",

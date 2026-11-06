@@ -38,6 +38,10 @@ impl Agent {
             .env_remove("CONCAT_API_ADDRESS")
             .env_remove("CONCAT_API_TOKEN")
             .env_remove("CONCAT_MCP_ROOTS")
+            // The end-to-end walk is of the WHOLE server, not the
+            // director's default surface: the specialist reads it
+            // touches (motion_probe, scene_timeline) live behind `all`.
+            .env("CONCAT_MCP_ALLOW", "all")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());

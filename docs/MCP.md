@@ -370,16 +370,24 @@ return MCP `type: image` content blocks, so the model can actually look:
   and pure-Python regex always; the Rust `voice-signals` binary
   (`cargo build -p voice-signals`) for prosody, forensics, speakers and
   NER — an honest note when it is not built; WhisperX (pip) for aligned
-  words with scores. `action "selftest"` proves the whole chain on a
+  words with scores. The reading also answers `signalConfidence` (one
+  confidence and basis per signal family - lean less on a low one) and
+  `decisionPolicy` (the table naming which signals drive each cut,
+  caption, graphic, BGM and transition decision); the plan's
+  `signalLog`, checked by `plan_validate`, records which signals drove
+  each choice, and a plan with a voiceover and no signalLog is not
+  creativeReady. `action "selftest"` proves the whole chain on a
   synthetic take.
 
-**The consumption layer** — thirty-three tools in five families, what the
-director DOES with the readings (each takes `transcript` / `lines` /
-`script`, the acoustic ones also `audio`; each supports
-`action "selftest"`; the whole family shares the voiceover tools' honest
-degradation contract):
+**The consumption layer** — thirty-three readings behind five family
+tools, what the director DOES with the readings. One tool per family:
+`action` names the reading, the family's other arguments are the inputs
+it reads (`transcript` / `lines` / `script`, the acoustic ones also
+`audio`), `selftest: true` runs the reading's own proof, and every
+family shares the voiceover tools' honest degradation contract. The
+thirty-three readings behind the five doors:
 
-*The script as language* (`discourse`):
+*The script as language* — `sense_discourse` (`discourse`):
 
 - `analyze_discourse` - connectives by relation (comparison / contingency /
   temporal / expansion / signposting), given-new overlap between lines,
@@ -409,7 +417,7 @@ degradation contract):
   edit's seven — the fallback when there is no emotion-API key and the
   script is not English.
 
-*The take's health* (`voiceq`):
+*The take's health* — `sense_voice_quality` (`voiceq`):
 
 - `detect_vocal_events` - laughs (quaver pulse trains), sighs, breaths,
   coughs and throat clears in the envelope, cross-checked against written
@@ -428,7 +436,7 @@ degradation contract):
   intensifiers vs backchannels: what each costs the cut, per instance,
   with `safeRemovalSeconds`.
 
-*The delivery* (`prosody`):
+*The delivery* — `sense_prosody_style` (`prosody`):
 
 - `score_emphasis_type` - every emphasis word typed (contrastive / new
   information / list / intensity / written) with the visual it earns;
@@ -448,8 +456,8 @@ degradation contract):
   otherwise), vowel space, tract length, timbre descriptors, and the
   voiceMatch tolerances for multi-narrator edits.
 
-*The clean and the music* (`audiorepair` — the first three WRITE a new
-file; the input is never touched):
+*The clean and the music* — `sense_audio_repair` (`audiorepair`;
+enhance / remove / normalize WRITE a new file; the input is never touched):
 
 - `enhance_speech` - the measured chain (highpass, de-esser, compressor at
   the take's own level, gate over the measured floor, limiter, loudnorm)
@@ -470,7 +478,7 @@ file; the input is never touched):
   drops, the energy curve and `cutSafePoints`: where every cut lands
   musical.
 
-*The words and the take, made to agree* (`captions`):
+*The words and the take, made to agree* — `sense_captions` (`captions`):
 
 - `evaluate_tts_quality` - is this TTS take alive: pitch range and
   variability, word-gap regularity, pause placement against punctuation,
@@ -603,7 +611,7 @@ For scripts that do not speak MCP, the same API is served as JSON-RPC lines on a
 Three switches - two off by default for a server started bare, and the allowlist already on for the server this repository's own `.forge/mcp.toml` declares:
 
 - **`--mcp-read-only`** (binary) or **`CONCAT_MCP_READ_ONLY=1`** (the app's `concat --mcp` and anything else that starts it): every tool that changes something is refused by name - an edit, an export, a stock import, the reel's render half. The reads stay, and `motion_reel` keeps its look halves (`plan`, `frame`, `sheet`): they change nothing outside the project's cache, and taking them away takes away the only way to see a design before committing to it.
-- **`--mcp-allow a,b,c`** (binary) or **`CONCAT_MCP_ALLOW=a,b,c`**: the only tools this server serves. A tool not on the list is refused as if it were not there - its description still lists it, but the surface served is what the operator said, not what the build happens to carry. `.forge/mcp.toml` starts the repo's own server with the list already set (its `[servers.transport.env]` table: 131 of the 133 tools, everything but `project_close` and `export_cancel`), and carries the same list as a comment, ready to paste for a server started by hand.
+- **`--mcp-allow a,b,c|all`** (binary), **`--full-tools`** (binary) or **`CONCAT_MCP_ALLOW=a,b,c|all`**: the only tools this server serves - in `tools/list` and at `tools/call` alike. A tool not on the list is neither listed nor called, as if it were not there: the surface served is what the operator said, not what the build happens to carry. An operator who sets no list gets the **director's default** - 95 of the 105 tools, the creative loop the funcut-director skill documents plus its remedies (the library prepares, the model downloads) and the five sense family doors; the ten left off are the ones a director never calls by surprise (`project_close`, `export_cancel`, the farm pair, the specialist motion reads, `track_subject`, `geneva_explain`). `CONCAT_MCP_ALLOW=all` (or `--full-tools`, or `--mcp-allow all`) serves the whole catalogue. `.forge/mcp.toml` starts the repo's own server with the director's list already set (its `[servers.transport.env]` table), and carries both that list and the whole-catalogue list as comments, ready to paste for a server started by hand.
 - **Per-tool timeouts**: every tool carries its own limit (`Tool::timeout_secs` - the VLM download and the overlay encode 1200 s, transcribe 900 s, exports and the sense family 600 s, the renders and watches 300 s, everything else 60 s), and a call that outlives it is cancelled and answered for at the deadline, with the limit in the message. The client-side `call_timeout_secs` stays as the ceiling over all of them; the engine's own calls are bounded a second time, per call, by the Geneva guard (see `docs/MOTION.md`).
 
 ## The reel contact sheet

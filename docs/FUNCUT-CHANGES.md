@@ -1928,3 +1928,55 @@ proven end to end through the real MCP binary: 36 lib tests, 7 e2e
 tests, ten sense-module selftests, and a 12-point protocol probe
 (handshake, tools/list, and one call per family including the
 seal/verify round trip and a loudness pass that writes its file).
+
+## 44. The usable surface: descriptions to one line, five family doors, the director's default, and the decision log
+
+Section 43 shipped 133 tools and a 320,624-character tool list - most of
+that description prose (75,611 characters, 569 a tool) rather than the
+parameter schemas that carry the arguments. No model holds that plus a
+conversation plus a task. Four changes made the surface one an agent can
+actually use, with nothing lost:
+
+- **Every description is one line** - what a tool does and when to reach
+  for it, under 200 characters, held by a test. The parameters, their
+  units and their traps live in the schema (where an agent reads them
+  when it calls) and the deep semantics in the director skill's
+  `prompts/tool_reference.md`, where they always did: 75,611 -> under
+  9,000 characters.
+- **The thirty-three consumption-layer readings moved behind five family
+  doors** - `sense_discourse`, `sense_voice_quality`,
+  `sense_prosody_style`, `sense_audio_repair`, `sense_captions`, the
+  `action` argument naming the reading (`sense_discourse {action:
+  "score_script_quality", script}`), `selftest: true` proving one. 133
+  tools became **105**; every reading survives, and a member named
+  through the wrong family is refused with the family's real members
+  listed.
+- **`tools/list` now serves what the allowlist serves** - a tool off the
+  list is neither listed nor callable, as if it were not there. The
+  default an operator gets naming no list is the **director's surface**,
+  95 of the 105: the creative loop the skill documents plus the remedies
+  its own refusals point at. The ten left off (project_close,
+  export_cancel, the farm pair, the specialist motion reads,
+  track_subject, geneva_explain) are deliberate opt-ins;
+  `CONCAT_MCP_ALLOW=all`, `--mcp-allow all` and the new `--full-tools`
+  flag serve the whole catalogue.
+- **The reading is now consumed**: `voice_signals` answers
+  `signalConfidence` (one confidence and basis per signal family -
+  formants on a phone-band take, reverb ±20% on a single channel,
+  emphasis reliable) and `decisionPolicy` (which signals drive each cut,
+  caption, graphic, BGM and transition decision, in priority order);
+  the plan carries a **`signalLog`** - one entry per decision naming the
+  signals behind it - and `plan_validate` checks it against the
+  vocabulary, reports coverage, and refuses creativeReady to a plan with
+  a voiceover and no log. The director skill's Phase 1c and Phase 3 and
+  the canonical edit_plan.schema.json (v2, with signalLog) teach the
+  loop.
+
+Measured after: the whole catalogue 233,617 characters over 105 tools
+(the cap follows, at 240 kB), the director's default 220,003 over 95
+(its own 230 kB cap), the description guard at 200 characters a tool.
+The crate: 40 lib tests, 7 e2e, ten sense-module selftests, clippy and
+rustfmt clean, and the chain proven live through the real binary - a
+family dispatch per door, the schema refusal naming a wrong family's
+members, and a `voice_signals` extract answering `signalConfidence`
+(13 families) and `decisionPolicy` (5 decisions) on a synthetic take.

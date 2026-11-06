@@ -137,14 +137,32 @@ layers** and phrase boundaries, the **noise floor** (the BGM decision), the
 **diarization** with change times, and `directorHints` — the cut style
 (fast / mixed / hold / building), the caption gate, the protected pauses,
 the font and music-genre hints for the detected script (Bengali gets a
-Bengali font). The Rust ears (prosody, forensics, speakers, NER) need the
+Bengali font). The reading also carries **`signalConfidence`** — one
+confidence and basis per signal family (formants on a phone-band take,
+reverb ±20% on a single channel, emphasis reliable): lean less on a signal
+whose confidence is low, and never treat an absent ear's silence as a
+neutral reading — and **`decisionPolicy`** — the table that says which
+signals drive each decision (cut: pause class, emphasis, pace; caption:
+emphasis, word confidence, script; graphic: entities, sentence type; BGM:
+noise floor, music segments; transition: speaker change, topic,
+discourse). The Rust ears (prosody, forensics, speakers, NER) need the
 `voice-signals` binary built (`cargo build -p voice-signals`); without it
 the Python signals still answer and the reply says which ear was absent —
 never guess the missing ones. **This reading is what the edit cuts by:**
 Phase 2 cuts only the dead air and never a dramatic hold, Phase 3's pacing
 takes the cut style, Phase 5's SFX peaks land on the emphasis words and
 the BGM obeys the noise-floor decision, the captions drop or re-check the
-gated words, and a speaker change is staged like a scene change.
+gated words, and a speaker change is staged like a scene change. The
+deeper consumption readings — script quality, restarts, fillers, rhythm
+and meter, music structure, caption alignment — live behind the five
+family tools (`sense_discourse`, `sense_voice_quality`,
+`sense_prosody_style`, `sense_audio_repair`, `sense_captions`), each
+`action` naming one reading; call them where the edit needs them
+(`score_script_quality` before the read, `classify_recording_quality` +
+`enhance_speech` on a rough take, `detect_restarts` +
+`classify_filler_type` for the punch-up, `analyze_music_structure` when
+cutting to music, `align_captions` + `clean_subtitles` before burning
+captions).
 
 **Phase 2 — Tighten the voice.** Feed the silence spans to `clip_cut_spans`
 (remove dead air; `-35` dB threshold, ≥0.5 s spans) — but the Phase-1c
@@ -172,9 +190,18 @@ a video with no grade is a rough cut, not a finished piece). Segments under
 a voiceover also carry the Phase-1b read — **emotion, act, easing,
 colourTemp, duckDb** — copied from the extract's lines (the schema documents
 them, the example shows them); they are what Phases 4–6 answer to. Put the
-Phase-0 brief in `plan.creativeBrief`. Call `plan_validate` on the completed JSON;
+Phase-0 brief in `plan.creativeBrief`. **The plan also carries the
+`signalLog` — the decision log**: one entry per cut, caption highlight,
+graphic, BGM choice and transition, naming the Phase-1c signals that drove
+it (`{"at": 4.2, "decision": "cut", "signals": ["pause.class=dead_air",
+"emphasisWords"], "note": "2.1s of dead air before the emphasis word"}`).
+The profile's `decisionPolicy` says which signals each decision reads; a
+plan with a voiceover and no signalLog is NOT creativeReady — the reading
+exists to be consumed, not admired. Call `plan_validate` on the completed JSON;
 fix every reported error AND every `creativeBlockers` entry until BOTH
-`valid: true` and `creativeReady: true`. A structurally valid plan that is
+`valid: true` and `creativeReady: true` — including `signalLog.driven:
+true`, whose `problems` name any entry that cites a signal the profile does
+not answer. A structurally valid plan that is
 not creativeReady is a rejection, not a warning to wave through. Craft score
 below 7 means rewrite the plan, not proceed. Then compare the plan's `aspect` with `timeline_read`; if they
 differ, set the canvas with `project_set_video` BEFORE gathering assets.

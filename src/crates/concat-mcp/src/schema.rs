@@ -494,52 +494,21 @@ mod tests {
     #[test]
     fn the_tool_list_fits_an_agents_context() {
         // Every tool's schema may sit in an agent's context for the whole
-        // session. Keep the full list comfortably below the cap; a harness
-        // that defers discovery can fetch individual schemas on demand, but
-        // a tool list that grows past this budget deserves a review. The
-        // headless model tools (models_list, models_download) took it over
-        // 172 000 and the five motion tools (motion_presets, motion_inspect,
-        // motion_frame, motion_bake, captions_animate) over 180 000; both
-        // growths were reviewed and the cap raised with them. So was this
-        // one: collision_check and openvid_search_batch (which carries the
-        // whole openvid.search filter set), and the additionalProperties:
-        // false every generated schema now ends in, together the last
-        // review's worth of growth. The latest is motion_reel, whose
-        // storyboard schema carries the whole multi-layer scene vocabulary
-        // (scenes, layers with zoom/pan/offset/scale/fit/blend/opacity/
-        // fades/timing, assets, audio beds, a curtain) so an agent can write
-        // a reel without a second round trip - reviewed with this change.
-        // Reviewed once more for geneva_explain (the engine's refusal
-        // explanations as a tool of its own, 1.1 kB) and the whip pan's
-        // blur field named in the storyboard schema's transition -
-        // together 1.6 kB over the last cap: the catalogue's 91st tool
-        // and a field an agent writes reels by, neither of them a
-        // schema an agent can defer. Measured once more after the day
-        // that added four tools at once - track_subject, the title
-        // word-styling pair, timeline_linkage - and grew five schemas
-        // that already stood (edit_apply +5.4 kB for the new edit ops,
-        // title_add and captions_add +2.8 kB each for the word styles,
-        // clip_update for the patch fields, craft_critique for the
-        // patch verb): 253,800 at 95 tools, and the cap follows it.
-        // Measured once more for the Geneva roadmap's own last stretch -
-        // scene_analysis, motion_preview and motion_farm_cloud, three
-        // tools an agent plans, watches and farms by, none of them a
-        // schema an agent can defer: 263,742 at 99 tools, and the cap
-        // follows that too. And once more for the voice-signal ear, the
-        // reading the director cuts by: 268,680 at 100 tools. Reviewed
-        // once more for the consumption layer - the thirty-three tools
-        // that consume the voice-signal reading: the discourse family
-        // (connectives, topics, speech acts, readability, claims, script
-        // quality, sarcasm, code switching, cross-lingual emotion), the
-        // voice-quality family (vocal events, voice and recording
-        // classes, reverb, restarts, filler types), the prosody family
-        // (emphasis types, speaking style, rhythm and meter, tempo,
-        // accent, vocal tract), the audio-repair family (enhance, hum
-        // removal, loudness, music detection, identification and
-        // structure) and the caption family (TTS quality, AI-voice
-        // disclosure, sealing, alignment, subtitle hygiene) - every one
-        // a tool an agent directs by, none of them deferrable:
-        // 320,624 at 133 tools, and the cap follows.
+        // session. Two budgets hold it: the WHOLE catalogue's, and - the
+        // one an agent actually meets - the director's default surface's.
+        // The history this guard carries: 172k at the model tools, 180k
+        // at the motion five, 253,800 at 95 tools, 263,742 at 99,
+        // 268,680 at 100, and 320,624 at 133 - a growth the descriptions
+        // themselves were two-thirds of, at 75,611 characters of prose,
+        // 569 a tool, while the schemas carried the parameters. The day
+        // this comment was written for, the descriptions were cut to one
+        // line each (75,611 -> under 9,000) and the thirty-three
+        // consumption-layer tools were grouped behind five family doors
+        // (133 -> 105), and the cap was re-measured on the result.
+        // Descriptions stay one line: 200 characters is the ceiling a
+        // tool's WHAT-and-WHEN owes the list; the parameters, their
+        // units and their traps live in the schema, where an agent reads
+        // them when it calls.
         let toolbox = crate::tools::Toolbox::new();
         let sizes: Vec<(String, usize)> = toolbox
             .list()
@@ -547,10 +516,45 @@ mod tests {
             .map(|tool| (tool["name"].to_string(), tool.to_string().len()))
             .collect();
         let total: usize = sizes.iter().map(|(_, size)| size).sum();
-        assert!(total < 330_000, "{total}: {sizes:?}");
+        eprintln!(
+            "CONTEXT whole catalogue: {total} over {} tools",
+            sizes.len()
+        );
+        assert!(total < 240_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }
+        // One line, every description: the bloat this guard buried.
+        for tool in toolbox.list() {
+            let name = tool["name"].as_str().unwrap_or_default();
+            let description = tool["description"].as_str().unwrap_or_default();
+            assert!(
+                description.len() <= 200 && !description.contains('\n'),
+                "{name}'s description is {}/200 characters or spans lines",
+                description.len()
+            );
+        }
+        // The director's default surface: what `concat --mcp` serves an
+        // agent that names no list. It must stay a surface an agent can
+        // hold - the specialist tools (the farm, the deep motion reads,
+        // the debugging aids) are the whole-catalogue budget's business.
+        let director: usize = toolbox
+            .list()
+            .iter()
+            .filter(|tool| {
+                crate::protocol::DIRECTOR_ALLOWLIST
+                    .contains(&tool["name"].as_str().unwrap_or_default())
+            })
+            .map(|tool| tool.to_string().len())
+            .sum();
+        eprintln!(
+            "CONTEXT director surface: {director} over {} tools",
+            crate::protocol::DIRECTOR_ALLOWLIST.len()
+        );
+        assert!(
+            director < 230_000,
+            "the director's default surface is {director} characters - too much for an agent to hold"
+        );
     }
 
     #[test]

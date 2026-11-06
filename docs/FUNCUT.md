@@ -64,7 +64,7 @@ The script looks for a release **on this fork first**, and falls back to
 Concat's own releases when the fork has none yet. The fallback is a working
 editor, but it is not this one: upstream carries none of FUNCUT's own work -
 no OpenVid, sticker or sound shelves, no Forge page, 42 MCP tools instead of
-the **133 tools** this build carries - so if the fork has a published
+the **105 tools** this build carries - so if the fork has a published
 release, that is the one you want. (A release the workflows build starts as
 a draft, and a draft is invisible to this script; see the note below.)
 
@@ -169,6 +169,37 @@ cache that evicts sooner evicts to the same LRU it always did. The proxy
 system (a smaller working copy of any file as large as HD) and the preview
 quality tiers (half-size until you ask for more) are upstream's own
 potato-laptop machinery, and this fork keeps all of it.
+
+## The agent's surface, kept holdable
+
+The MCP server grew to 133 tools, and the tool list an agent meets grew
+with it - 320,624 characters of it, most of that description prose (75,611
+characters; 569 a tool) rather than the parameter schemas that carry the
+arguments. Three changes made the surface one an agent can actually hold:
+
+- **Every description is one line** (under 200 characters, a test holds
+  it): what a tool does and when to reach for it. The parameters, their
+  units and their traps live in the schema - where an agent reads them
+  when it calls - and the deep semantics live in the director skill's
+  `prompts/tool_reference.md`, where they always did.
+- **The thirty-three consumption-layer readings are grouped behind five
+  family tools** (`sense_discourse`, `sense_voice_quality`,
+  `sense_prosody_style`, `sense_audio_repair`, `sense_captions`), the
+  `action` argument naming the reading - 133 tools became **105**, and
+  not one reading was lost.
+- **The default surface is the director's** - 95 of the 105, the creative
+  loop the skill documents plus its remedies; `tools/list` now serves
+  what the allowlist serves (a tool off the list is neither listed nor
+  callable). The ten left off are the ones a director never calls by
+  surprise; `CONCAT_MCP_ALLOW=all` (or `--full-tools`, or `--mcp-allow
+  all`) serves the whole catalogue.
+
+And the reading is now *used*: `voice_signals` answers with
+`signalConfidence` (how much to lean on each signal family, and why),
+`decisionPolicy` (which signals drive each decision) and the plan carries
+a `signalLog` - one entry per cut, caption, graphic, BGM and transition
+choice naming the signals behind it, which `plan_validate` checks: a plan
+with a voiceover and no signalLog is not creativeReady.
 
 ## Getting your own builds
 

@@ -119,10 +119,13 @@ struct Incoming {
 ///   the mode a harness or a stranger gets. `motion_reel` keeps its
 ///   look-before-you-render halves (`plan`, `frame`) and loses only its
 ///   render.
-/// - **The allowlist** names the only tools this server serves: a tool
-///   not on the list is refused as if it were not there, though its
-///   description still lists it - the server's surface is what the
-///   operator said, not what the build happens to carry.
+/// - **The allowlist** names the only tools this server serves, in
+///   `tools/list` and at `tools/call` alike: a tool not on the list is
+///   neither shown nor called, as if it were not there. The surface is
+///   what the operator said, not what the build happens to carry. An
+///   operator who sets no list gets the director's default (see
+///   [`DIRECTOR_ALLOWLIST`]); `CONCAT_MCP_ALLOW=all` (or `--mcp-allow
+///   all`, or `--full-tools`) serves everything the build carries.
 /// - **Per-tool timeouts** answer for a call that outlives its tool's
 ///   own limit (see [`crate::tools::Tool::timeout_secs`]): the reply
 ///   goes out at the deadline with the limit in it, and the cancel flag
@@ -137,16 +140,136 @@ pub struct Serving {
     pub allowed: Option<Vec<String>>,
 }
 
+/// The tools a director's agent needs: the creative loop the funcut-director
+/// skill documents (measure, plan, edit, verify, export), plus the remedies
+/// its own refusals point at (the library prepares, the model downloads)
+/// and the five sense family doors. This is the default surface an agent
+/// meets when an operator names no list: small enough to hold in context,
+/// whole enough to direct a cut. Everything else the build carries (the
+/// farm, the specialist motion reads, the debugging aids) is one
+/// `CONCAT_MCP_ALLOW=all` away.
+pub(crate) const DIRECTOR_ALLOWLIST: &[&str] = &[
+    // Identity and projects.
+    "concat_version",
+    "project_list",
+    "project_create",
+    "project_open",
+    "project_get",
+    "project_save",
+    "project_set_video",
+    // Reading the timeline and validating the plan.
+    "timeline_read",
+    "collision_check",
+    "plan_validate",
+    // Media in.
+    "media_probe",
+    "media_import",
+    // The voice and the readings.
+    "transcribe",
+    "tts_generate",
+    "models_list",
+    "models_download",
+    "voice_signals",
+    "emotion",
+    "creative_brief",
+    "sense_discourse",
+    "sense_voice_quality",
+    "sense_prosody_style",
+    "sense_audio_repair",
+    "sense_captions",
+    // The analysis senses.
+    "analyze_silence",
+    "analyze_beats",
+    "analyze_scenes",
+    "analysis_wait",
+    // Stock, sounds and music, with their prepares.
+    "openvid_status",
+    "openvid_prepare",
+    "openvid_search",
+    "openvid_search_batch",
+    "openvid_get",
+    "openvid_fetch",
+    "openvid_import",
+    "stock_contact_sheet",
+    "sounds_search",
+    "sounds_add",
+    "bgm_status",
+    "bgm_prepare",
+    "bgm_search",
+    "bgm_fetch",
+    "bgm_import",
+    "magick_status",
+    "magick_prepare",
+    "magick_search",
+    "magick_fetch",
+    "magick_add",
+    // Editing.
+    "edit_apply",
+    "edit_undo",
+    "edit_redo",
+    "clip_add",
+    "clips_add_sequence",
+    "clip_trim",
+    "clips_split",
+    "clip_cut_spans",
+    "clips_move",
+    "clips_remove",
+    "clip_update",
+    "clip_mask",
+    "clip_stabilize",
+    "clip_frame",
+    "clip_transform",
+    "clip_speed",
+    "clip_audio_levels_db",
+    "timeline_background",
+    "timeline_linkage",
+    "track_add",
+    "keyframe_set",
+    "keyframe_clear",
+    "effect_layer_add",
+    "effect_key_set",
+    "effects_list",
+    // Text and templates.
+    "title_add",
+    "title_style_words",
+    "title_clear_word_styles",
+    "captions_add",
+    "captions_animate",
+    "template_list",
+    "template_instantiate",
+    // Motion comps.
+    "motion_presets",
+    "motion_inspect",
+    "motion_frame",
+    "motion_bake",
+    "motion_reel",
+    "motion_overlay",
+    // Verify and export.
+    "preview_frame",
+    "watch_render",
+    "craft_critique",
+    "measure_loudness",
+    "suggest_cuts",
+    "local_vlm",
+    "export_start",
+    "export_status",
+    "export_wait",
+];
+
 impl Serving {
     /// The switches from the environment the app's own `concat --mcp`
     /// reads, so a server started by the window has the same safety net
     /// as one started by hand: `CONCAT_MCP_READ_ONLY=1` and
-    /// `CONCAT_MCP_ALLOW=a,b,c`.
+    /// `CONCAT_MCP_ALLOW=a,b,c`. A list of exactly `all` serves
+    /// everything; no list at all serves the director's default.
     pub fn from_environment() -> Serving {
         Serving {
             read_only: std::env::var("CONCAT_MCP_READ_ONLY")
                 .is_ok_and(|value| value != "0" && !value.is_empty()),
             allowed: std::env::var("CONCAT_MCP_ALLOW").ok().and_then(|value| {
+                if value.trim().eq_ignore_ascii_case("all") {
+                    return None;
+                }
                 let names: Vec<String> = value
                     .split(',')
                     .map(str::trim)
@@ -155,6 +278,26 @@ impl Serving {
                     .collect();
                 (!names.is_empty()).then_some(names)
             }),
+        }
+        .with_director_default()
+    }
+
+    /// The director's default where nothing else was said. A list the
+    /// operator named (or `all`, already `None`) stands; a server with
+    /// no switches meets the surface the director's own skill walks.
+    fn with_director_default(self) -> Serving {
+        match self.allowed {
+            Some(_) => self,
+            None if std::env::var("CONCAT_MCP_ALLOW").is_ok() => self,
+            None => Serving {
+                read_only: self.read_only,
+                allowed: Some(
+                    DIRECTOR_ALLOWLIST
+                        .iter()
+                        .map(|name| (*name).to_owned())
+                        .collect(),
+                ),
+            },
         }
     }
 
@@ -561,7 +704,25 @@ impl Server {
                 reply["result"]["resultType"] = json!("complete");
                 cacheable(reply)
             }
-            "tools/list" => cacheable(success(id, json!({ "tools": self.toolbox.list() }), params)),
+            "tools/list" => {
+                // The list is the surface: what an operator allowed is
+                // what an agent is shown. A tool off the list is neither
+                // listed nor callable - listing a tool this server would
+                // refuse is a lie told to the agent's context.
+                let tools: Vec<Value> = self
+                    .toolbox
+                    .list()
+                    .into_iter()
+                    .filter(|tool| {
+                        self.serving.allowed.as_ref().is_none_or(|allowed| {
+                            tool["name"]
+                                .as_str()
+                                .is_some_and(|name| allowed.iter().any(|allowed| allowed == name))
+                        })
+                    })
+                    .collect();
+                cacheable(success(id, json!({ "tools": tools }), params))
+            }
             "tools/call" => self.call(id, params, backend, cancelled),
             _ => failure(
                 id.clone(),
@@ -912,16 +1073,27 @@ mod tests {
         unsafe {
             std::env::remove_var("CONCAT_MCP_ALLOW");
         }
-        let expected = crate::tools::catalogue().len() - 2;
+        let names: Vec<&str> = crate::tools::catalogue()
+            .iter()
+            .map(|tool| tool.name)
+            .collect();
+        let served = serving.allowed.as_ref().expect("the file's list was read");
         assert_eq!(
-            serving.allowed.as_ref().map(Vec::len),
-            Some(expected),
+            served.len(),
+            list.split(',').count(),
             "the environment read the list the file declares"
         );
+        for name in served {
+            assert!(
+                names.contains(&name.as_str()),
+                "the Forge list names {name}, which the catalogue does not carry"
+            );
+        }
 
         // The two the list leaves off are refused as if they were not
-        // there; a tool it names is served.
-        for tool in ["project_close", "export_cancel"] {
+        // there, and so is a specialist tool the director's default
+        // does not name; a tool it names is served.
+        for tool in ["project_close", "export_cancel", "motion_farm_cloud"] {
             let replies = serve_safety(call(tool, json!({})).as_bytes(), serving.clone());
             assert_eq!(replies.len(), 1, "{tool}: {replies:?}");
             assert!(refused(&replies[0]), "{tool}: {replies:?}");
@@ -940,9 +1112,63 @@ mod tests {
     }
 
     #[test]
+    fn the_list_without_a_switch_is_the_directors_surface() {
+        // No list named: the agent meets the director's default, not the
+        // whole catalogue - the surface the funcut-director skill walks,
+        // small enough to hold in context. `all` takes the whole
+        // catalogue back.
+        let _held = ENV.lock().expect("the environment's lock");
+        unsafe {
+            std::env::remove_var("CONCAT_MCP_ALLOW");
+        }
+        let serving = Serving::from_environment();
+        let names: Vec<String> = DIRECTOR_ALLOWLIST
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect();
+        assert_eq!(serving.allowed, Some(names));
+        unsafe {
+            std::env::set_var("CONCAT_MCP_ALLOW", "all");
+        }
+        let serving = Serving::from_environment();
+        assert_eq!(serving.allowed, None, "`all` serves everything");
+        unsafe {
+            std::env::remove_var("CONCAT_MCP_ALLOW");
+        }
+    }
+
+    #[test]
+    fn tools_list_shows_only_what_the_allowlist_serves() {
+        // The list IS the surface: an allowlisted server shows the tools
+        // it serves and hides the ones it would refuse, and `all` shows
+        // the whole catalogue.
+        let list = br#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}
+"#;
+        let serving = Serving {
+            read_only: false,
+            allowed: Some(vec!["timeline_read".to_owned(), "plan_validate".to_owned()]),
+        };
+        let replies = serve_safety(list, serving);
+        let tools = replies[0]["result"]["tools"]
+            .as_array()
+            .expect("a tools array");
+        let shown: Vec<&str> = tools
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect();
+        assert_eq!(shown, ["timeline_read", "plan_validate"], "{shown:?}");
+        let replies = serve_safety(list, Serving::default());
+        let tools = replies[0]["result"]["tools"]
+            .as_array()
+            .expect("a tools array");
+        assert_eq!(tools.len(), crate::tools::catalogue().len());
+    }
+
+    #[test]
     fn the_default_serving_changes_nothing() {
         // No switches: every tool is served as it always was, which is
-        // the server an agent has always had.
+        // the server a direct `serve` caller (and only that caller -
+        // the app's own door reads the environment) hands an agent.
         let serving = Serving::default();
         assert!(!serving.read_only);
         assert_eq!(serving.allowed, None);

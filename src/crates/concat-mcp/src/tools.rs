@@ -4973,7 +4973,9 @@ mod tests {
             vec!["city", "skyline", "dusk", "aerial"],
             "{terms:?}"
         );
-        assert_eq!(tag_similarity(&terms, "a city skyline at dusk"), 1.0);
+        // Three of the four terms the caption carries - `aerial` is the
+        // query's ask, not the caption's words - is half the union.
+        assert_eq!(tag_similarity(&terms, "a city skyline at dusk"), 0.5);
         assert!(tag_similarity(&terms, "waves on a beach") < 0.2);
         assert_eq!(tag_similarity(&[], "anything"), 0.0);
     }

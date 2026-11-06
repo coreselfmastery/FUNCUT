@@ -145,7 +145,8 @@ packages)
 
 ## Libraries
 
-`openvid_status/prepare/search/search_batch/get/fetch/import` (937k clips;
+`openvid_status/prepare/search/search_batch/rank_for_slot/get/fetch/import`
+(937k clips;
 sources `pixabay|pexels|celebv|other`; orientation `vertical|horizontal|square`
 with ±5 % slack; sorts `relevance|aesthetic|motion|temporal|shortest|longest|
 surprise`) · `bgm_status/prepare/search/fetch/import` (FreePD 1,025 CC0
@@ -164,6 +165,24 @@ where its peak lands) · `magick_status/prepare/search/fetch/add` (shelves:
   same search once per entry of `queries` (1–8, two or three words each) in
   one call — the reply's `searches` carry one `{query, total, clips}` per
   entry. This is how a plan's whole B-roll list is shopped in one round trip.
+
+- `openvid_rank_for_slot {description, queries?, hero?, k?, tag_weight?,
+  motion_min?, exclude_ids?}` is the slot's own search — the rich
+  description is the query (BM25 page, CLIP second pass), the fallback
+  queries blend in as Jaccard similarity at `tag_weight` (0.3 default),
+  and the hard filters are enforced twice, on the request and on the
+  page: a used id or a clip under `motion_min` is not ranked lower, it
+  is not there. `hero` asks for thirty candidates, any other slot for
+  twelve; every clip returns with `slotScore` and `slotRank`. An empty
+  `description` is an error, never a quiet fallback to the queries.
+  `footage_continuity {clips: [{slotId, clipId, colorTemperature, motion,
+  dominantDirection, shotScale, category, motionMin}]}` reads the
+  filled manifest — colour jumps past 0.5 on the −1..+1 scale, reversed
+  travels, repeated scales, three of one category in a row, clips under
+  their slot's floor — and answers `{count, flags}`, each flag naming
+  its slot, rule and remedy: `replace {avoid}` or
+  `downgrade_to_graphic` / `downgrade_to_hold`. The shopping discipline
+  is `prompts/broll_matching.md`'s first section.
 
 - `prepare` warms a library's index (OpenVid's is ~435 MB — check
   `openvid_status` first; it reports `missing|downloading|ready|failed`).

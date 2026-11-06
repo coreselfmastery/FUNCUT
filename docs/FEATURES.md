@@ -313,10 +313,17 @@ instead of randomly calling tools. **Phases 0–8 plus sub-phases 1b and 5b**:
 3. **Write the edit plan** — one JSON contract
    (`templates/edit_plan.schema.json`, v2) with sections, per-segment
    emotion/act/easing/colourTemp/duckDb, visuals, cut types, entrances and
-   exits, SFX with peak times, captions, one required grade; validated by
-   `plan_validate` until **both** `valid` and `creativeReady` are true.
-4. **Gather (parallel)** — batched library searches; candidates are SEEN
-   (`stock_contact_sheet`) and gated (`emotion {action:"gate"}`).
+   exits, SFX with peak times, captions, one required grade, and the
+   footage slots — one per opening, with its treatment, job, entry/exit,
+   rich description, fallback queries, `hero` and `motionMin` — validated
+   by `plan_validate` until **both** `valid` and `creativeReady` are true.
+4. **Gather (parallel)** — batched library searches; each `broll` slot
+   ranked against its own description (`openvid_rank_for_slot`: used ids
+   and under-floor clips never returned); candidates are SEEN
+   (`stock_contact_sheet`) and gated (`emotion {action:"gate"}`); the
+   filled manifest read by `footage_continuity` — colour jumps, reversed
+   travels, repeated scales, one-category runs — with each flag's remedy
+   applied before anything is fetched.
 5. **Place (sequential, batched)** — atomic `edit_apply` batches; J-cut
    lead, entrance/exit motion from the plan, SFX at peak time, BGM ducked
    per act.
@@ -325,7 +332,10 @@ instead of randomly calling tools. **Phases 0–8 plus sub-phases 1b and 5b**:
    card); inspect → ops → frames → bake → overlay.
 6. **Grade** — one look per video, proved at 25 % and 75 % of runtime.
 7. **Watch the whole cut** — `watch_render` → `craft_critique`; at least one
-   revision acted on and re-watched, or it is not done.
+   revision acted on and re-watched, or it is not done — and when the plan
+   carries slots, the revision gate decides what re-shops: below the 0.65
+   ship line exactly the slots the critic named, two revisions, each
+   render its own file, then ship with the failures recorded per slot.
 8. **Export and watch the file** — the exported file gets its own
    `watch_render` + `craft_critique` (≥7), `measure_loudness` against the
    platform target, and `emotion {action:"verify"}` proving the speech

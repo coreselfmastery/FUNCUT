@@ -4,6 +4,23 @@ Stock footage is the floor of the edit, not the ceiling. This is how the
 floor stays interesting: every segment a new subject, every clip fitted
 to the frame, nothing reused until it has been forgotten.
 
+## Shopping by the slot (when the plan carries slots)
+
+A keyword query is what BM25 gets; a slot's `description` is what CLIP
+ranks against. When the plan carries `slots`, shop each `broll` slot
+with `openvid_rank_for_slot`: the slot's description verbatim, its
+fallback queries, `hero`, `motion_min`, and `exclude_ids` carrying every
+clip id the edit has already chosen — the hard filters are promises, not
+hopes: a used id or a clip under the floor is not ranked lower, it is
+not there. With every slot filled, assemble the manifest (each clip's
+measured `motion`, its `camera` lead as the direction, the slot's own
+scale and category, the colour bias read off the contact sheet) and run
+`footage_continuity`; apply each flag's remedy — re-shop that slot with
+the `avoid` hint and the rejected id excluded, or take the downgrade and
+let the comp or the A-roll carry the span — before anything is fetched.
+The keyword laws below still govern the fallback `queries`, and
+slot-less plans shop exactly as the next section says.
+
 ## Queries: one new noun per segment
 
 Write the whole query list in the plan BEFORE searching. Then apply the

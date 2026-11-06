@@ -14,6 +14,17 @@ assets; it validates structure and timeline continuity, not creative quality.
 2. **A visual for every segment** — `broll` with a query, or
    `textCard`/`titleCard` when search fails or the beat is typographic.
    Choose motion per `prompts/keyframes_motion.md`.
+2b. **Slots for the footage openings**, beside the segments. One slot per
+   opening the picture must spend: `slotId` (act plus number, `"hook.1"`),
+   `role` (the seven acts), `treatment` (`broll` shops; `hold`/`graphic`/
+   `black` are drawn and take no queries), `job`, `entry`/`exit` (against
+   the emphasis words and the beat grid), the rich `description` (twelve
+   to twenty-five words of nouns and adjectives, forty characters
+   minimum — the search's ranked contract), fallback `queries` (keywords
+   only; b-roll takes at least one), `hero`, `motionMin`, `durationS`.
+   The b-roll share of slots keeps the 30–45% band. Phase 4 shops each
+   b-roll slot with `openvid_rank_for_slot` and gates the filled
+   manifest with `footage_continuity` before anything is fetched.
 3. **SFX with `peakAt` on the segment's first frame** (the cut), not the word.
    See `prompts/sfx_design.md` for query writing.
 4. **`transitionIn` only where the SECTION changes** — most segments take a
@@ -49,6 +60,10 @@ assets; it validates structure and timeline continuity, not creative quality.
   within 20 s (no visible reuse).
 - [ ] Every query is concrete: noun + action/setting + shot feel ("aerial
   canyon river sunrise"), not a mood word alone.
+- [ ] Every slot description is twelve to twenty-five words of nouns and
+  adjectives (forty characters minimum); drawn treatments carry no queries,
+  b-roll at least one; the b-roll share of slots sits inside the 30–45%
+  band, and shot scale climbs slot to slot within a section.
 - [ ] Captions use measured segment timing (the default transcription output
   is not word-aligned); keep text concise where cue duration permits, with
   style fields and safe area set (offsetY 0.30–0.40, fontSize 0.04–0.06).

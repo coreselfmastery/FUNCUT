@@ -187,6 +187,8 @@ pub(crate) const DIRECTOR_ALLOWLIST: &[&str] = &[
     "openvid_prepare",
     "openvid_search",
     "openvid_search_batch",
+    "footage_continuity",
+    "openvid_rank_for_slot",
     "openvid_get",
     "openvid_fetch",
     "openvid_import",

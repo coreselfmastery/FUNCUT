@@ -32,6 +32,11 @@ const SENSE_PY: &str = include_str!("../sense/sense.py");
 const VLM_PY: &str = include_str!("../sense/vlm.py");
 const EMOTION_PY: &str = include_str!("../sense/emotion.py");
 const VOICE_SIGNALS_PY: &str = include_str!("../sense/voice_signals.py");
+const DISCOURSE_PY: &str = include_str!("../sense/discourse.py");
+const VOICE_QUALITY_PY: &str = include_str!("../sense/voice_quality.py");
+const PROSODY_STYLE_PY: &str = include_str!("../sense/prosody_style.py");
+const AUDIO_REPAIR_PY: &str = include_str!("../sense/audio_repair.py");
+const CAPTIONS_PY: &str = include_str!("../sense/captions.py");
 const FARM_SYNC_PY: &str = include_str!("../sense/farm-sync.py");
 /// The semantic search step, at the repo's `analysis/rerank.py`: the CLIP
 /// rerank `openvid_search` runs behind BM25. It lands in the same runtime
@@ -90,6 +95,11 @@ fn runtime() -> Result<&'static PathBuf, ApiError> {
         fs::write(dir.join("vlm.py"), VLM_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("emotion.py"), EMOTION_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("voice_signals.py"), VOICE_SIGNALS_PY).map_err(|e| e.to_string())?;
+        fs::write(dir.join("discourse.py"), DISCOURSE_PY).map_err(|e| e.to_string())?;
+        fs::write(dir.join("voice_quality.py"), VOICE_QUALITY_PY).map_err(|e| e.to_string())?;
+        fs::write(dir.join("prosody_style.py"), PROSODY_STYLE_PY).map_err(|e| e.to_string())?;
+        fs::write(dir.join("audio_repair.py"), AUDIO_REPAIR_PY).map_err(|e| e.to_string())?;
+        fs::write(dir.join("captions.py"), CAPTIONS_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("farm-sync.py"), FARM_SYNC_PY).map_err(|e| e.to_string())?;
         fs::write(dir.join("rerank.py"), RERANK_PY).map_err(|e| e.to_string())?;
         Ok(dir)
@@ -1540,6 +1550,310 @@ pub fn voice_signals(arguments: Value) -> Result<Outcome, ApiError> {
         60
     };
     let result = run("voice", &spec, Duration::from_secs(budget.min(480)))?;
+    Ok(Outcome::json(result))
+}
+
+/// One tool served by the Python sense families: which command sense.py
+/// dispatches on, and which argument fields travel into the spec. The
+/// tool's own name rides along as `tool`, and the module inside the
+/// sidecar does the rest - the same one-spec-one-JSON contract every
+/// other sense script keeps.
+struct SenseFamilyTool {
+    /// The tool an agent names.
+    tool: &'static str,
+    /// The cmd sense.py takes: one per family module.
+    cmd: &'static str,
+    /// The argument names forwarded into the spec verbatim.
+    fields: &'static [&'static str],
+    /// The budget's floor: the families that run ffmpeg passes or write
+    /// files need more room than the pure-text readers.
+    base: u64,
+}
+
+/// The thirty-three consumption-layer tools, five families: discourse
+/// (the script as language), voiceq (the take's health), prosody (the
+/// delivery), audiorepair (the clean and the music) and captions (the
+/// words made to agree with the take).
+const SENSE_FAMILY_TOOLS: &[SenseFamilyTool] = &[
+    // discourse.py - the script read as language
+    SenseFamilyTool {
+        tool: "analyze_discourse",
+        cmd: "discourse",
+        base: 90,
+        fields: &["transcript", "lines", "script"],
+    },
+    SenseFamilyTool {
+        tool: "segment_topics",
+        cmd: "discourse",
+        base: 90,
+        fields: &["transcript", "lines", "script", "maxSegments"],
+    },
+    SenseFamilyTool {
+        tool: "detect_speech_acts",
+        cmd: "discourse",
+        base: 90,
+        fields: &["transcript", "lines", "script"],
+    },
+    SenseFamilyTool {
+        tool: "classify_speech_acts",
+        cmd: "discourse",
+        base: 90,
+        fields: &["transcript", "lines", "script"],
+    },
+    SenseFamilyTool {
+        tool: "score_readability",
+        cmd: "discourse",
+        base: 90,
+        fields: &["transcript", "lines", "script"],
+    },
+    SenseFamilyTool {
+        tool: "extract_claim_graph",
+        cmd: "discourse",
+        base: 90,
+        fields: &["transcript", "lines", "script"],
+    },
+    SenseFamilyTool {
+        tool: "score_script_quality",
+        cmd: "discourse",
+        base: 90,
+        fields: &["transcript", "lines", "script", "targetSeconds"],
+    },
+    SenseFamilyTool {
+        tool: "detect_sarcasm",
+        cmd: "discourse",
+        base: 150,
+        fields: &["audio", "transcript", "lines", "script"],
+    },
+    SenseFamilyTool {
+        tool: "detect_code_switching",
+        cmd: "discourse",
+        base: 90,
+        fields: &["transcript", "lines", "script", "language"],
+    },
+    SenseFamilyTool {
+        tool: "detect_cross_lingual_emotion",
+        cmd: "discourse",
+        base: 90,
+        fields: &["transcript", "lines", "script", "language"],
+    },
+    // voice_quality.py - the voice itself, measured
+    SenseFamilyTool {
+        tool: "detect_vocal_events",
+        cmd: "voiceq",
+        base: 150,
+        fields: &["audio", "transcript", "lines", "script"],
+    },
+    SenseFamilyTool {
+        tool: "classify_voice_quality",
+        cmd: "voiceq",
+        base: 150,
+        fields: &["audio"],
+    },
+    SenseFamilyTool {
+        tool: "classify_recording_quality",
+        cmd: "voiceq",
+        base: 150,
+        fields: &["audio"],
+    },
+    SenseFamilyTool {
+        tool: "measure_reverb",
+        cmd: "voiceq",
+        base: 150,
+        fields: &["audio"],
+    },
+    SenseFamilyTool {
+        tool: "detect_restarts",
+        cmd: "voiceq",
+        base: 90,
+        fields: &["audio", "transcript", "lines", "script"],
+    },
+    SenseFamilyTool {
+        tool: "classify_filler_type",
+        cmd: "voiceq",
+        base: 90,
+        fields: &["audio", "transcript", "lines", "script"],
+    },
+    // prosody_style.py - how the voice moves
+    SenseFamilyTool {
+        tool: "score_emphasis_type",
+        cmd: "prosody",
+        base: 150,
+        fields: &["audio", "transcript", "lines", "script"],
+    },
+    SenseFamilyTool {
+        tool: "detect_speaking_style",
+        cmd: "prosody",
+        base: 150,
+        fields: &["audio", "transcript", "lines", "script"],
+    },
+    SenseFamilyTool {
+        tool: "measure_rhythm_meter",
+        cmd: "prosody",
+        base: 150,
+        fields: &["audio", "transcript", "lines", "script", "bpm"],
+    },
+    SenseFamilyTool {
+        tool: "detect_tempo_changes",
+        cmd: "prosody",
+        base: 150,
+        fields: &["audio", "transcript", "lines", "script"],
+    },
+    SenseFamilyTool {
+        tool: "detect_accent",
+        cmd: "prosody",
+        base: 150,
+        fields: &["audio", "transcript", "lines", "script"],
+    },
+    SenseFamilyTool {
+        tool: "measure_vocal_tract",
+        cmd: "prosody",
+        base: 150,
+        fields: &["audio", "transcript", "lines", "script"],
+    },
+    // audio_repair.py - the clean and the music
+    SenseFamilyTool {
+        tool: "enhance_speech",
+        cmd: "audiorepair",
+        base: 240,
+        fields: &[
+            "audio",
+            "out",
+            "overwrite",
+            "targetLufs",
+            "targetTruePeakDbtp",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "remove_hiss_hum_rumble",
+        cmd: "audiorepair",
+        base: 240,
+        fields: &["audio", "out", "overwrite", "force"],
+    },
+    SenseFamilyTool {
+        tool: "normalize_loudness",
+        cmd: "audiorepair",
+        base: 240,
+        fields: &[
+            "audio",
+            "out",
+            "overwrite",
+            "platform",
+            "targetLufs",
+            "targetTruePeakDbtp",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "detect_music_segments",
+        cmd: "audiorepair",
+        base: 180,
+        fields: &["audio"],
+    },
+    SenseFamilyTool {
+        tool: "identify_music",
+        cmd: "audiorepair",
+        base: 180,
+        fields: &["audio"],
+    },
+    SenseFamilyTool {
+        tool: "analyze_music_structure",
+        cmd: "audiorepair",
+        base: 180,
+        fields: &["audio"],
+    },
+    // captions.py - the words and the take, made to agree
+    SenseFamilyTool {
+        tool: "evaluate_tts_quality",
+        cmd: "captions",
+        base: 150,
+        fields: &["audio", "transcript", "lines"],
+    },
+    SenseFamilyTool {
+        tool: "detect_ai_voice",
+        cmd: "captions",
+        base: 150,
+        fields: &["audio", "transcript", "lines"],
+    },
+    SenseFamilyTool {
+        tool: "seal_voice",
+        cmd: "captions",
+        base: 150,
+        fields: &["audio", "out", "overwrite", "policy"],
+    },
+    SenseFamilyTool {
+        tool: "align_captions",
+        cmd: "captions",
+        base: 150,
+        fields: &[
+            "audio",
+            "transcript",
+            "lines",
+            "script",
+            "maxCharsPerSecond",
+            "maxDurationSeconds",
+            "minDurationSeconds",
+            "maxCharsPerLine",
+        ],
+    },
+    SenseFamilyTool {
+        tool: "clean_subtitles",
+        cmd: "captions",
+        base: 90,
+        fields: &[
+            "srt",
+            "transcript",
+            "lines",
+            "script",
+            "stripFillers",
+            "maxCharsPerLine",
+            "maxCharsPerSecond",
+            "format",
+        ],
+    },
+];
+
+/// The door the thirty-three family tools come through: the name selects
+/// the row, the row names the sidecar command and the fields that travel,
+/// and the budget scales with the lines the way `voice_signals`'s does -
+/// a transcript-heavy call is real work, a script-only call is not.
+pub fn sense_family(name: &str, arguments: Value) -> Result<Outcome, ApiError> {
+    let row = SENSE_FAMILY_TOOLS
+        .iter()
+        .find(|row| row.tool == name)
+        .ok_or_else(|| invalid(&format!("unknown sense tool `{name}`")))?;
+    let fields = arguments
+        .as_object()
+        .cloned()
+        .ok_or_else(|| invalid("the arguments are an object"))?;
+    let mut spec = json!({ "tool": name });
+    if let Some(action) = fields.get("action") {
+        spec["action"] = action.clone();
+    }
+    for key in row.fields {
+        if let Some(value) = fields.get(*key) {
+            spec[*key] = value.clone();
+        }
+    }
+    // The budget: the family's floor plus the per-line work a transcript
+    // carries, capped where the outer table takes over.
+    let transcript_lines = fields.get("transcript").map_or(0, |v| match v {
+        Value::Array(list) => list.len(),
+        Value::Object(map) => map
+            .get("segments")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len),
+        _ => 0,
+    });
+    let lined = fields
+        .get("lines")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    let scripted = fields
+        .get("script")
+        .and_then(Value::as_str)
+        .map_or(0, |text| text.lines().count());
+    let lines = transcript_lines.max(lined).max(scripted);
+    let budget = row.base + 8 * lines as u64;
+    let result = run(row.cmd, &spec, Duration::from_secs(budget.min(480)))?;
     Ok(Outcome::json(result))
 }
 

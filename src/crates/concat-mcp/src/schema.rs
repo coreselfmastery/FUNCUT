@@ -526,7 +526,20 @@ mod tests {
         // tools an agent plans, watches and farms by, none of them a
         // schema an agent can defer: 263,742 at 99 tools, and the cap
         // follows that too. And once more for the voice-signal ear, the
-        // reading the director cuts by: 268,680 at 100 tools.
+        // reading the director cuts by: 268,680 at 100 tools. Reviewed
+        // once more for the consumption layer - the thirty-three tools
+        // that consume the voice-signal reading: the discourse family
+        // (connectives, topics, speech acts, readability, claims, script
+        // quality, sarcasm, code switching, cross-lingual emotion), the
+        // voice-quality family (vocal events, voice and recording
+        // classes, reverb, restarts, filler types), the prosody family
+        // (emphasis types, speaking style, rhythm and meter, tempo,
+        // accent, vocal tract), the audio-repair family (enhance, hum
+        // removal, loudness, music detection, identification and
+        // structure) and the caption family (TTS quality, AI-voice
+        // disclosure, sealing, alignment, subtitle hygiene) - every one
+        // a tool an agent directs by, none of them deferrable:
+        // 320,624 at 133 tools, and the cap follows.
         let toolbox = crate::tools::Toolbox::new();
         let sizes: Vec<(String, usize)> = toolbox
             .list()
@@ -534,7 +547,7 @@ mod tests {
             .map(|tool| (tool["name"].to_string(), tool.to_string().len()))
             .collect();
         let total: usize = sizes.iter().map(|(_, size)| size).sum();
-        assert!(total < 272_000, "{total}: {sizes:?}");
+        assert!(total < 330_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }

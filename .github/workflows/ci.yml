@@ -85,6 +85,27 @@ jobs:
       # hosted-critic setup once broke silently.
       - run: python3 src/crates/concat-mcp/sense/vlm.py selftest
         if: ${{ !cancelled() }}
+      # The voice-signal reader's own selftest: the six wired signals, the
+      # three regex signals and the engine notes, on a synthetic take.
+      - run: python3 src/crates/concat-mcp/sense/voice_signals.py selftest
+        if: ${{ !cancelled() }}
+      # The consumption layer's five family selftests: discourse (the
+      # script as language), voiceq (the take's health), prosody (the
+      # delivery), audiorepair (the clean and the music - the three
+      # writing tools write to a scratch dir and prove their files) and
+      # captions (the words and the take made to agree, including the
+      # seal round trip). Pure stdlib plus ffmpeg, synthetic fixtures,
+      # no network.
+      - run: python3 src/crates/concat-mcp/sense/discourse.py selftest
+        if: ${{ !cancelled() }}
+      - run: python3 src/crates/concat-mcp/sense/voice_quality.py selftest
+        if: ${{ !cancelled() }}
+      - run: python3 src/crates/concat-mcp/sense/prosody_style.py selftest
+        if: ${{ !cancelled() }}
+      - run: python3 src/crates/concat-mcp/sense/audio_repair.py selftest
+        if: ${{ !cancelled() }}
+      - run: python3 src/crates/concat-mcp/sense/captions.py selftest
+        if: ${{ !cancelled() }}
 
   # The analysis senses against real fixtures: beats, silence and scene
   # cuts measured on generated media, so the JSON the API parses is

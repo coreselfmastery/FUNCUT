@@ -1884,3 +1884,47 @@ heuristic, not a neural model. 23 new tests in the crate, the
 concat-mcp suite green end to end (36 lib, 7 e2e) on the CI dependency
 set, and both selftests - the crate's synthetic two-voice take and the
 sense script's - answer. Full map: docs/VOICE-SIGNALS.md.
+
+## 43. The consumption layer: thirty-three tools in five families, item 12 - what the director DOES with the score
+
+`voice_signals` (section 42) is the extraction layer: what the voice
+contains. Thirty-three proposed tools were listed across the work and
+never built - the consumption layer, what the director does with the
+readings. All thirty-three now exist, in five pure-stdlib Python
+families served through one table-driven door in sense.rs
+(`Action::Sense(name)`): **discourse.py** (the script as language -
+analyze_discourse, segment_topics, detect_speech_acts,
+classify_speech_acts, score_readability, extract_claim_graph,
+score_script_quality, detect_sarcasm, detect_code_switching,
+detect_cross_lingual_emotion), **voice_quality.py** (the take's health -
+detect_vocal_events, classify_voice_quality,
+classify_recording_quality, measure_reverb, detect_restarts,
+classify_filler_type; one 16 kHz mono decode per call, a pure-Python
+radix-2 FFT where a spectrum is needed, numpy used when installed and
+never required), **prosody_style.py** (the delivery - score_emphasis_type,
+detect_speaking_style, measure_rhythm_meter, detect_tempo_changes,
+detect_accent, measure_vocal_tract), **audio_repair.py** (the clean and
+the music - enhance_speech, remove_hiss_hum_rumble, normalize_loudness
+write a NEW file with every filter decision measured from THIS take and
+returned with its why; detect_music_segments, identify_music,
+analyze_music_structure read: BPM, the Krumhansl-key chroma, bar grids,
+sections, drops and cutSafePoints), and **captions.py** (the words and
+the take made to agree - evaluate_tts_quality, detect_ai_voice,
+seal_voice, align_captions, clean_subtitles).
+
+The honest-degradation contract holds everywhere: identify_music says
+naming a song needs an online fingerprint service and hands back the
+libraryQuery that IS the bgm_search; detect_accent exists for caption
+pacing and says in its own reply that it is not a verdict on the
+speaker; detect_ai_voice is a disclosure heuristic that states what
+modern TTS can pass; classify_voice_quality names its jitter and
+shimmer as autocorrelation proxies; remove_hiss_hum_rumble refuses to
+write anything when the take is cleaner than the cure. The catalogue
+carries **133 tools** (every doc, the README badge and the Forge
+allowlist held to it by the tests that already did), the tool-list
+context budget reviewed to 330 kB at 320,624 measured, CI runs the
+five family selftests beside sense.py's own, and the whole chain is
+proven end to end through the real MCP binary: 36 lib tests, 7 e2e
+tests, ten sense-module selftests, and a 12-point protocol probe
+(handshake, tools/list, and one call per family including the
+seal/verify round trip and a loudness pass that writes its file).

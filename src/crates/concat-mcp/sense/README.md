@@ -1,6 +1,6 @@
 # concat-sense — giving the editor eyes and a feel for the voice
 
-Three standard-library Python files, shipped inside the `concat-mcp` binary
+Eight standard-library Python files, shipped inside the `concat-mcp` binary
 via `include_str!`. They need **no pip install, no Python packages, no
 system-wide installation**. Python 3 itself is required (Concat already
 needs it for `analyze_scenes` / `transcribe`); set `FUNCUT_PYTHON` if it is
@@ -54,7 +54,12 @@ parseable.
 | `vlm` | `status` / `setup` for the local vision model. |
 | `emotion` | The emotional read of the voiceover: per-line emotion, act, easing, colour, duck, vocabulary + the arc; `brand` / `gate` / `verify` / `template` beside it. |
 | `voice` | The acoustic read of the voiceover (`voice_signals.py`): per-line loudness, pauses classified, speech rate, sentence type, emphasis words, fillers, word confidence, speakers, entities + director hints; `selftest` beside it. |
-| `selftest` | Generate a synthetic PNG, decode it, measure it, and exercise the model-reply, loudness, cut-spread and subject-tracking parsers — no fixtures; the beat path (onset curve, click-track BPM) runs when an ffmpeg is on PATH. `vlm.py selftest` and `emotion.py selftest` check the critic and the reader the same way, and CI runs all three. |
+| `discourse` | The script read as language (`discourse.py`, ten tools named in `spec.tool`): connectives and cohesion, topic tiling, surface and Searle speech acts, readability, the claim graph, script quality, sarcasm, code switching, and the cross-lingual emotion read for Bengali / Hindi / Spanish / French. |
+| `voiceq` | The take's health (`voice_quality.py`, six tools): vocal events, voice quality class, recording quality verdict, reverb RT60, restarts, filler types. Decodes once to 16 kHz mono PCM; numpy used when installed, never required. |
+| `prosody` | How the voice moves (`prosody_style.py`, six tools): emphasis types, speaking style, rhythm and meter with the beatSync map, tempo changes, the accent proxy (caption pacing only), the vocal-tract read. |
+| `audiorepair` | The clean and the music (`audio_repair.py`, six tools): the measured enhance chain, hum/hiss/rumble removal, two-pass loudness (the three that WRITE a new file - the input is never touched), music-vs-speech spans, offline identification with the libraryQuery, and the structure map with cutSafePoints. |
+| `captions` | The words and the take, made to agree (`captions.py`, five tools): TTS quality, the AI-voice disclosure heuristic, the SHA-256 voice seal (seal / verify / status), caption alignment with drift correction, and subtitle hygiene with the changeLog. |
+| `selftest` | Generate a synthetic PNG, decode it, measure it, and exercise the model-reply, loudness, cut-spread and subject-tracking parsers — no fixtures; the beat path (onset curve, click-track BPM) runs when an ffmpeg is on PATH. `vlm.py selftest`, `emotion.py selftest` and `voice_signals.py selftest` check the critic and the readers the same way, and the five family modules' own `selftest` proves all thirty-three consumption-layer tools on synthetic takes — CI runs every one. |
 
 Example:
 

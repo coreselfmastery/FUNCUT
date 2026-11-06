@@ -373,13 +373,135 @@ return MCP `type: image` content blocks, so the model can actually look:
   words with scores. `action "selftest"` proves the whole chain on a
   synthetic take.
 
+**The consumption layer** — thirty-three tools in five families, what the
+director DOES with the readings (each takes `transcript` / `lines` /
+`script`, the acoustic ones also `audio`; each supports
+`action "selftest"`; the whole family shares the voiceover tools' honest
+degradation contract):
+
+*The script as language* (`discourse`):
+
+- `analyze_discourse` - connectives by relation (comparison / contingency /
+  temporal / expansion / signposting), given-new overlap between lines,
+  `abruptTransition` flags where a chapter card or scene change earns its
+  keep, and the cohesion profile. A "but" is the emotional pivot.
+- `segment_topics` - TextTiling-lite: segments with keywords, a headline
+  and cohesion; each boundary is a scene-change point, each segment's
+  keywords are its b-roll shot list.
+- `detect_speech_acts` - the surface act per line: question, imperative,
+  promise, warning, quote, enumeration — with the visual each earns.
+- `classify_speech_acts` - Searle's five (assertive / directive /
+  commissive / expressive / declaration) with the visual treatment per
+  class and the "all assertives = a lecture" balance check.
+- `score_readability` - Flesch, Flesch-Kincaid, Gunning Fog, passive voice,
+  nominalizations, and the caption CPS budget the grade carries.
+- `extract_claim_graph` - claims, evidence, hedges and the edges between
+  them; `uncoveredClaims` is the proof-b-roll punchlist.
+- `score_script_quality` - hook / structure / clarity / rhythm / CTA /
+  concision scored 0-100 with the fixes named.
+- `detect_sarcasm` - marker cues, sentiment contrast, and the flat-delivery
+  cross-check on positive words when audio is given. A heuristic that
+  names its cues, never a verdict.
+- `detect_code_switching` - per-line Unicode-script scan with switch
+  points, romanized borrowings, and the fonts / voices a mixed take needs.
+- `detect_cross_lingual_emotion` - the offline emotion read for Bengali
+  (native and romanized), Hindi, Spanish and French, folded onto the
+  edit's seven — the fallback when there is no emotion-API key and the
+  script is not English.
+
+*The take's health* (`voiceq`):
+
+- `detect_vocal_events` - laughs (quaver pulse trains), sighs, breaths,
+  coughs and throat clears in the envelope, cross-checked against written
+  cues; coughs are cut candidates, laughs are authentic delivery.
+- `classify_voice_quality` - resonant / breathy / tense / creaky from
+  jitter, shimmer, voicing strength and spectral tilt — named proxies,
+  plus the genre fit.
+- `classify_recording_quality` - noise floor, SNR, clipping runs, hum at
+  50/60 Hz + harmonics, DC offset, bandwidth → broadcast / clean / home /
+  rough with its fixes and the BGM decision.
+- `measure_reverb` - RT60 by Schroeder backward integration over onset
+  tails, early/late ratio, the room class, gate and ADR hints.
+- `detect_restarts` - stalling repeats, elongations, fragments, abandoned
+  clauses — each with its span and cutSafe verdict; the punch-up tool.
+- `classify_filler_type` - filled pauses vs discourse markers vs hedges vs
+  intensifiers vs backchannels: what each costs the cut, per instance,
+  with `safeRemovalSeconds`.
+
+*The delivery* (`prosody`):
+
+- `score_emphasis_type` - every emphasis word typed (contrastive / new
+  information / list / intensity / written) with the visual it earns;
+  contrastive emphasis IS the edit point.
+- `detect_speaking_style` - conversational / presenter / newsread / podcast
+  / documentary-narration / high-energy from rate, pauses, pitch spread
+  and dynamics — with the cut style each implies.
+- `measure_rhythm_meter` - syllable-nuclei timing, the PVI (stress-timed
+  vs syllable-timed), stress regularity, and the beatSync map when `bpm`
+  is given: which words land on the downbeat.
+- `detect_tempo_changes` - accelerando / rallentando / plateau segments of
+  the speech rate — cut ON the trend changes.
+- `detect_accent` - an L2-likeness proxy for caption pacing and mix
+  clarity ONLY (the note says it plainly: accents are normal speech; this
+  is not a verdict on the speaker).
+- `measure_vocal_tract` - formants (LPC ear when built, band proxies
+  otherwise), vowel space, tract length, timbre descriptors, and the
+  voiceMatch tolerances for multi-narrator edits.
+
+*The clean and the music* (`audiorepair` — the first three WRITE a new
+file; the input is never touched):
+
+- `enhance_speech` - the measured chain (highpass, de-esser, compressor at
+  the take's own level, gate over the measured floor, limiter, loudnorm)
+  with every decision's why and the before/after table.
+- `remove_hiss_hum_rumble` - finds the hum (50/60 Hz families) and notches
+  it, cuts the rumble, denoises the hiss at measured strength — and says
+  so when the take is cleaner than the cure.
+- `normalize_loudness` - two-pass ebur128 loudnorm to the platform target
+  (streaming -14, podcast -16, EBU -23, ATSC -24), linear when possible,
+  with the honest after-measurement.
+- `detect_music_segments` - music / speech / silence / mixed per span, and
+  the editing answer: never double a bed over existing music.
+- `identify_music` - tempo, key and mode (Krumhansl chroma), balance,
+  mood tags, and `libraryQuery` — the descriptor string that IS the
+  bgm_search query. Naming the exact song needs an online fingerprint
+  service and it says so.
+- `analyze_music_structure` - BPM, the bar grid, sections with roles, the
+  drops, the energy curve and `cutSafePoints`: where every cut lands
+  musical.
+
+*The words and the take, made to agree* (`captions`):
+
+- `evaluate_tts_quality` - is this TTS take alive: pitch range and
+  variability, word-gap regularity, pause placement against punctuation,
+  word dynamics → naturalness score with the fixes.
+- `detect_ai_voice` - the disclosure heuristic: too-clean floor, no
+  breaths, near-zero jitter, machine-regular gaps → an aiLikeness band.
+  It informs disclosure; it never proves anything about a person.
+- `seal_voice` - `seal` / `verify` / `status`: SHA-256 + voiceprint +
+  usage policy in voice-seal.json — the provenance and permission record
+  any edit to the audio breaks, by design.
+- `align_captions` - drift correction against energy onsets, cue building
+  under reading-speed budgets, boundaries snapped to silence; the cues fit
+  `captions_add` directly.
+- `clean_subtitles` - punctuation, casing, filler stripping, merge/split
+  under CPL and CPS budgets, overlap and gap repairs, with the changeLog;
+  SRT in, cues or SRT out.
+
 The intended loop: `creative_brief` -> `emotion` (extract, on the
 voiceover) -> `voice_signals` (the acoustic score, with the emotion read
-for the arc) -> `plan_validate` (creativeReady true) -> `stock_contact_sheet`
+for the arc) -> the consumption layer where the edit needs it
+(`score_script_quality` before the read, `classify_recording_quality` +
+`enhance_speech`/`normalize_loudness` on a rough take,
+`detect_restarts` + `classify_filler_type` for the punch-up pass,
+`analyze_music_structure` + `measure_rhythm_meter`'s beatSync when cutting
+to music, `align_captions` + `clean_subtitles` before burning captions)
+-> `plan_validate` (creativeReady true) -> `stock_contact_sheet`
 -> `emotion` (gate, before anything is placed) -> build -> `watch_render` ->
 `craft_critique` -> revise -> `watch_render` again -> export ->
-`watch_render {path}` + `measure_loudness` + `emotion` (verify) on the file
-that shipped. See `src/crates/concat-mcp/sense/README.md` and the
+`normalize_loudness` on the shipped file -> `watch_render {path}` +
+`measure_loudness` + `emotion` (verify) on the file that shipped. See
+`src/crates/concat-mcp/sense/README.md` and the
 director skill's `prompts/quality_loop.md`.
 
 The first three need a Python 3 with the extras named in the analysis
@@ -481,7 +603,7 @@ For scripts that do not speak MCP, the same API is served as JSON-RPC lines on a
 Three switches - two off by default for a server started bare, and the allowlist already on for the server this repository's own `.forge/mcp.toml` declares:
 
 - **`--mcp-read-only`** (binary) or **`CONCAT_MCP_READ_ONLY=1`** (the app's `concat --mcp` and anything else that starts it): every tool that changes something is refused by name - an edit, an export, a stock import, the reel's render half. The reads stay, and `motion_reel` keeps its look halves (`plan`, `frame`, `sheet`): they change nothing outside the project's cache, and taking them away takes away the only way to see a design before committing to it.
-- **`--mcp-allow a,b,c`** (binary) or **`CONCAT_MCP_ALLOW=a,b,c`**: the only tools this server serves. A tool not on the list is refused as if it were not there - its description still lists it, but the surface served is what the operator said, not what the build happens to carry. `.forge/mcp.toml` starts the repo's own server with the list already set (its `[servers.transport.env]` table: 98 of the 100 tools, everything but `project_close` and `export_cancel`), and carries the same list as a comment, ready to paste for a server started by hand.
+- **`--mcp-allow a,b,c`** (binary) or **`CONCAT_MCP_ALLOW=a,b,c`**: the only tools this server serves. A tool not on the list is refused as if it were not there - its description still lists it, but the surface served is what the operator said, not what the build happens to carry. `.forge/mcp.toml` starts the repo's own server with the list already set (its `[servers.transport.env]` table: 131 of the 133 tools, everything but `project_close` and `export_cancel`), and carries the same list as a comment, ready to paste for a server started by hand.
 - **Per-tool timeouts**: every tool carries its own limit (`Tool::timeout_secs` - the VLM download and the overlay encode 1200 s, transcribe 900 s, exports and the sense family 600 s, the renders and watches 300 s, everything else 60 s), and a call that outlives it is cancelled and answered for at the deadline, with the limit in the message. The client-side `call_timeout_secs` stays as the ceiling over all of them; the engine's own calls are bounded a second time, per call, by the Geneva guard (see `docs/MOTION.md`).
 
 ## The reel contact sheet

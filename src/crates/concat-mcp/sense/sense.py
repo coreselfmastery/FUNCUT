@@ -50,6 +50,26 @@ try:
     import voice_signals as voice_read
 except Exception:  # pragma: no cover - sense must work without the voice-signal reader
     voice_read = None
+try:
+    import discourse as discourse_read
+except Exception:  # pragma: no cover
+    discourse_read = None
+try:
+    import voice_quality as voiceq_read
+except Exception:  # pragma: no cover
+    voiceq_read = None
+try:
+    import prosody_style as prosody_read
+except Exception:  # pragma: no cover
+    prosody_read = None
+try:
+    import audio_repair as audiorepair_read
+except Exception:  # pragma: no cover
+    audiorepair_read = None
+try:
+    import captions as captions_read
+except Exception:  # pragma: no cover
+    captions_read = None
 
 
 # ---------------------------------------------------------------------------
@@ -2145,10 +2165,28 @@ def voice_command(spec):
     return voice_read.command(spec)
 
 
+# The five new families: one cmd each, the spec's `tool` naming the exact
+# tool inside the module. Same degradation contract as voice_command.
+_FAMILY = {
+    "discourse": discourse_read,
+    "voiceq": voiceq_read,
+    "prosody": prosody_read,
+    "audiorepair": audiorepair_read,
+    "captions": captions_read,
+}
+
+
+def family_command(cmd, spec):
+    module = _FAMILY.get(cmd)
+    if module is None:
+        return {"ok": False, "error": f"{cmd}.py missing from sense runtime"}
+    return module.command(spec)
+
+
 def main():
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["sheet", "critique", "rank", "overlay", "loudness", "rhythm", "track", "vlm", "emotion", "voice", "selftest"])
+    ap.add_argument("cmd", choices=["sheet", "critique", "rank", "overlay", "loudness", "rhythm", "track", "vlm", "emotion", "voice", "discourse", "voiceq", "prosody", "audiorepair", "captions", "selftest"])
     ap.add_argument("--spec", default="{}")
     args = ap.parse_args()
     try:
@@ -2188,6 +2226,8 @@ def main():
             out = emotion_command(spec)
         elif args.cmd == "voice":
             out = voice_command(spec)
+        elif args.cmd in ("discourse", "voiceq", "prosody", "audiorepair", "captions"):
+            out = family_command(args.cmd, spec)
         else:
             # No external dependencies: generate a synthetic gradient sheet and
             # measure it. Proves ffmpeg, PNG encoding and metrics all work.

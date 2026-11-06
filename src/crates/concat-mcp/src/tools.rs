@@ -5097,7 +5097,7 @@ mod tests {
     fn footage_continuity_flags_the_jumps_the_cut_will_feel() {
         let outcome = footage_continuity(json!({ "clips": [
             { "slotId": "a", "clipId": "clip.a", "colorTemperature": 0.8, "motion": 2.0, "dominantDirection": "static", "shotScale": "wide", "category": "city", "motionMin": 0.0 },
-            { "slotId": "b", "clipId": "clip.b", "colorTemperature": -0.6, "motion": 2.0, "dominantDirection": "static", "shotScale": "wide", "category": "ocean", "motionMin": 0.0 },
+            { "slotId": "b", "clipId": "clip.b", "colorTemperature": -0.6, "motion": 2.0, "dominantDirection": "static", "shotScale": "close_up", "category": "ocean", "motionMin": 0.0 },
         ] }))
         .expect("flags");
         assert!(!outcome.is_error);

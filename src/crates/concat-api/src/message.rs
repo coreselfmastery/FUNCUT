@@ -193,8 +193,10 @@ pub enum Request {
         /// Aesthetic score (0-6, higher is better-looking) at least this.
         #[serde(default)]
         min_aesthetic: Option<f64>,
-        /// Motion score at least this (0-131 in this library).
-        #[serde(default)]
+        /// Motion score at least this (0-131 in this library). The
+        /// snake_case `motion_min` is accepted as the same floor, so a
+        /// caller following the footage brief's spelling lands here too.
+        #[serde(default, alias = "motion_min")]
         min_motion: Option<f64>,
         /// Motion score at most this.
         #[serde(default)]
@@ -241,6 +243,14 @@ pub enum Request {
         /// Skip this many from the front, for the next page.
         #[serde(default)]
         offset: Option<u32>,
+        /// The clip ids this edit already used: none of them come back,
+        /// whatever they score, and the filter works before the ranking
+        /// does - an excluded id is not ordered lower, it is not there.
+        /// At most 500 a search. The snake_case `exclude_ids` is accepted
+        /// as the same list, so a caller following the footage brief's
+        /// spelling lands here too.
+        #[serde(default, alias = "exclude_ids")]
+        exclude_ids: Vec<i64>,
     },
 
     /// Everything about one or more clips by id, including the frame size

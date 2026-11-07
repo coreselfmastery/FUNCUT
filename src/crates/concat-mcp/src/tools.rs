@@ -307,6 +307,14 @@ pub fn catalogue() -> Vec<Tool> {
             idempotent: true,
             action: Action::TimelineRead,
         },
+        method(
+            "timeline_seek",
+            "Scrub the window's playhead",
+            "Move the open window's playhead to `time` seconds - scrub the timeline for the user while you edit. Needs --mcp window; headless refuses.",
+            "window.seek",
+            Raw,
+        )
+        .idempotent(),
         Tool {
             name: "plan_validate",
             title: "Validate an edit plan",
@@ -1146,6 +1154,19 @@ impl Tool {
             "openvid_search",
             "openvid_import",
             "bgm_import",
+            // The synchronous fetches: a whole clip, a whole track, a
+            // sticker's PNG or a sound's file, downloaded inside the call
+            // itself. A clip off a slow CDN outlives the 60 s default
+            // with the download still healthy; the tool's own work has
+            // no inner deadline, so this is the only net it has.
+            "openvid_fetch",
+            "bgm_fetch",
+            "magick_fetch",
+            "magick_add",
+            "sounds_add",
+            // An import probes and copies the file into the project: a
+            // long recording off a slow disk is a copy, not a hang.
+            "media_import",
         ];
         const RENDER: &[&str] = &[
             "motion_bake",
@@ -4195,6 +4216,10 @@ mod tests {
             ("project_save", json!({ "path": "/tmp/Cut" })),
             ("project_close", json!({ "path": "/tmp/Cut", "save": true })),
             ("timeline_read", json!({ "path": "/tmp/Cut" })),
+            (
+                "timeline_seek",
+                json!({ "time": 42.5, "path": "/tmp/Cut" }),
+            ),
             (
                 "plan_validate",
                 json!({ "plan": {

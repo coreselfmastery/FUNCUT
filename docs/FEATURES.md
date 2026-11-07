@@ -8,7 +8,7 @@ detail elsewhere, the link says so.
 
 The one-paragraph version: FUNCUT is the Concat editor (a native Rust, GPU
 composited, CapCut-class video editor for Linux) tuned for small machines,
-plus an agent stack bolted onto it — a built-in MCP server with **107 tools**,
+plus an agent stack bolted onto it — a built-in MCP server with **108 tools**,
 an analysis/sense layer, an emotion-driven edit pipeline with a brand kit, a
 motion-graphics engine with its own sidecar, and two Claude skills (a director
 that runs a 12-phase measured pipeline, and maestro, a vendored design and
@@ -167,7 +167,7 @@ Nothing here is bundled whole; indexes download once, media arrives per pick.
 
 ## The agent layer
 
-- **The MCP server** (`concat --mcp`, [docs/MCP.md](MCP.md)): **107 tools**
+- **The MCP server** (`concat --mcp`, [docs/MCP.md](MCP.md)): **108 tools**
   over stdio, both protocol eras (initialize handshake and per-request
   `_meta`), schemas generated from the API's own types so an agent cannot
   invent an argument. It reaches the engine through the open window
@@ -484,7 +484,7 @@ model at all.
 | Speech (whisper.cpp, three TTS families) | `src/crates/concat-speech` |
 | Motion engine (Geneva, presets, authoring) | `src/crates/concat-motion` |
 | The API (JSON-RPC methods, jobs) | `src/crates/concat-api` |
-| The MCP server (107 tools, senses, emotion, voice signals) | `src/crates/concat-mcp` |
+| The MCP server (108 tools, senses, emotion, voice signals) | `src/crates/concat-mcp` |
 | The socket server + CLI | `src/crates/concat-server`, `concat-cli` |
 | The window (Slint UI, studio controller) | `src/crates/concat` |
 | Session, proxies, models, templates, sounds | `src/crates/concat-host` |

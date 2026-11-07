@@ -773,6 +773,21 @@ pub enum Request {
         /// The model's id, from `models.list`.
         id: String,
     },
+
+    /// Moves the window's playhead - the editor's own scrub, driven by a
+    /// caller. Only a window that shares its playhead serves this: the
+    /// headless API answers with the honest refusal instead.
+    #[serde(rename = "window.seek")]
+    WindowSeek {
+        /// Where to move the playhead, in seconds on the timeline.
+        time: f64,
+        /// The project folder the caller means, when it knows it. The
+        /// window holds one project; a `path` that is not the one it
+        /// holds is refused with the held project named, so a caller
+        /// never scrubs a timeline it cannot see.
+        #[serde(default)]
+        path: Option<String>,
+    },
 }
 
 /// One template slot and the file that takes it.
@@ -889,6 +904,8 @@ pub enum Reply {
     /// [`Request::ModelsList`].
     #[cfg(feature = "speech")]
     Models(ModelsState),
+    /// [`Request::WindowSeek`].
+    WindowSeek(WindowSought),
     /// [`Request::PreviewFrame`] with an output: the file written.
     Written(Written),
     /// [`Request::PreviewFrame`] without one: the picture itself.
@@ -909,6 +926,17 @@ pub struct ModelsState {
     pub tts: Vec<concat_speech::tts::ModelStatus>,
     /// The transcriber models.
     pub transcriber: Vec<concat_speech::transcribe::ModelStatus>,
+}
+
+/// What a successful `window.seek` answers: where the playhead now is,
+/// and the project whose timeline it moved on.
+#[derive(Clone, PartialEq, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowSought {
+    /// The project folder the window holds.
+    pub path: String,
+    /// Where the playhead is now, in seconds.
+    pub time: f64,
 }
 
 /// The OpenVid library's state, as `openvid.status` reports it and

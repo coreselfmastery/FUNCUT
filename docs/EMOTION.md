@@ -88,8 +88,13 @@ distribution), `valence` and `arousal` (circumplex coordinates, arousal
 cooled by calm words), the TTS `delivery` + `speed` that would read the
 line, `easing` (a name a person reads AND the exact authoring JSON
 concat-motion's `curve` field takes), `colourTemp` (a temperature + a
-grade hint), `sfxType`, `duckDb` (the act's BGM duck depth), `pacing`, and
-`queries` (2–3 words: the emotion's visual register × the act's shot).
+grade hint), `sfxType`, `duckDb` (the act's BGM duck depth), `pacing`,
+`queries` (2–3 words: the emotion's visual register × the act's shot),
+and `bgmWords` — the two `bgm_search` queries the line's bed wants:
+the first with the act's bend (a hook adds energy, a reveal adds
+triumph), the second a shelf category the search always matches
+(`upbeat`, `epic`, `horror`, `scoring`…), so the music choice starts
+from the read rather than from prose.
 
 Plus the arc: `arcShape` (flat / rise / fall / dip-rise / rollercoaster /
 drift), the valence and arousal curves, `distinctEmotions`, `longestRun`,

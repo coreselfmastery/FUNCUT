@@ -163,8 +163,8 @@ home (or `CONCAT_MCP_ROOTS`), never touching the window's open projects.
 Everything in `docs/MCP.md` — the projects, media, cuts, captions, effects, motion, export and analysis tools, plus the five **sense** tools (`creative_brief`, `stock_contact_sheet`, `watch_render`, `craft_critique`, `local_vlm`) that let the agent see and score its own work. Six analysis/speech tools:
 `analyze_scenes` (PySceneDetect cut points), `analyze_beats` (librosa BPM/beat
 grid), `analyze_silence` (dead-air spans), `analysis_wait` (job results
-inline), `transcribe` (Whisper text segments with start/end times, not
-word-aligned), and `tts_generate` (Kokoro/Pocket/Chatterbox narration WAV,
+inline), `transcribe` (Whisper text segments with start/end times and measured
+per-word timing inside each), and `tts_generate` (Kokoro/Pocket/Chatterbox narration WAV,
 imported straight into the project). The director workflow also has
 `plan_validate` and `clip_audio_levels_db` for pre-edit checks and unit-safe
 volume automation.

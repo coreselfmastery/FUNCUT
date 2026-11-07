@@ -88,7 +88,7 @@ the job's status `output` → `media_import` it.
 voiceover is graded before anything else reads it:
 `sense_voice_quality {action: "classify_recording_quality", audio}`. A
 verdict of `home` or `rough` (a high noise floor, SNR under ~12 dB, hum,
-clipping) is repaired FIRST — `sense_voice_quality {action:
+clipping) is repaired FIRST — `sense_audio_repair {action:
 "remove_hiss_hum_rumble", audio}` when its `fixes` name a hum, then
 `sense_audio_repair {action: "enhance_speech"}` (its
 `fixes` name the chain; `targetLufs` picks the platform landing) — and
@@ -379,6 +379,14 @@ fights the words); and a `speakerChanges` time is staged like a
 section change — new angle, colour or lower-third at the change, never a
 cut that straddles it. Use `captions_add` for
 segment-timed captions. Group each logical chunk into one `edit_apply` batch.
+
+**Let the user watch.** When the server is the window's own (`concat
+--mcp window` — the Forge page's voiceover run is not, and its refusal
+of `timeline_seek` is expected there), scrub as you place: after each
+`edit_apply` batch lands, `timeline_seek` to the moment just placed.
+The playhead moves on the timeline the user is looking at, so the edit
+arrives as a thing being made rather than a file that appears — and
+the refusal on a headless server costs one line, not the run.
 
 **Phase 5b — Motion comps (design). Every finished piece goes through here.**
 This is what separates an edit from a video. The motion layer is six MCP

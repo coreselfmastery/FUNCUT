@@ -106,8 +106,9 @@ carries its JSON result in the status's `output`:
 - `analyze_silence` - the dead air of a recording, `spans` and their
   complement `speech` in seconds, the shape `edit.apply`'s `removeSpans`
   cuts by. Optional thresholdDb (35 default) and minSilenceMs (500).
-- `transcribe` - Whisper's timed text segments `{start,end,text}`; this is
-  segment-level timing, not word alignment. The optional language hint is
+- `transcribe` - Whisper's timed text: segments `{start,end,text}` and, inside
+  each, the measured per-word times the kinetic captions and the SFX-peak
+  placement read (docs claim the words; the engine measured them). The optional language hint is
   passed to Whisper (ISO code or BCP-47 tag; the primary tag is used).
   English-only models reject explicit non-English hints; choose a multilingual
   model such as `small` or `base` for other languages. `base.en` is the default.

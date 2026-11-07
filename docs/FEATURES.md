@@ -347,7 +347,7 @@ instead of randomly calling tools. **Phases 0–8 plus sub-phases 1b and 5b**:
    platform target, and `emotion {action:"verify"}` proving the speech
    survived the render.
 
-Backed by **13 hard floors** (motion is the driver, transition mechanics,
+Backed by **14 hard floors** (motion is the driver, transition mechanics,
 pacing bands by words-per-minute, variety laws, motion on every element,
 grade not optional, frame fitting with the no-vertical-OpenVid fact, sound
 variety, one text system, the memory journal, honest captions, loudness
@@ -444,7 +444,7 @@ always win; maestro refines how a floor is met, never lowers it. See
   accents + custom, playhead colour, UI scale 100–200 %), Transcriber,
   Speech, **Automation** (the API server, token, MCP pointer), About (copy
   system info, show log), Version (update/rollback), Shortcuts.
-- **28 rebindable keyboard actions** with conflict eviction and reset;
+- **30 rebindable keyboard actions** with conflict eviction and reset;
   26 languages with user-drop-in locale overrides; Wayland drag-and-drop;
   undo/redo everywhere; toasts; tooltips; context menus.
 

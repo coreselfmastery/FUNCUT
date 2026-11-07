@@ -828,6 +828,208 @@ pub fn preview(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiEr
     })
 }
 
+/// `motion_import`: motion made elsewhere, read here. Two doors, one
+/// rule - nothing converts silently.
+///
+/// `action: "lottie"` turns a bodymovin JSON (what After Effects exports,
+/// what LottieFiles hands over) into a comp under the project's `comps/`:
+/// solids, images, shape layers, grouped and nested transforms,
+/// keyframed properties with their eases, parenting and in/out points.
+/// `action: "gsap"` applies a GSAP-style timeline to a comp the project
+/// already holds (or a preset), writing the animated result as a new
+/// comp: tweens on x, y, scale, rotation, opacity and blur, with delay,
+/// stagger, repeat and yoyo.
+///
+/// Both answer with the comp's summary - the same `motion_inspect` read
+/// - and the adapter's notes: everything the conversion skipped,
+/// approximated or clamped, in the adapter's own words. A conversion
+/// with no notes lost nothing the source asked for; one with `skipped:`
+/// notes draws less than the source did, and the caller decides whether
+/// that is acceptable. The comp validates and lints by the same rules a
+/// hand-written one does before it is written, so an import that cannot
+/// bake says so here rather than at the oven.
+pub fn import(arguments: Value) -> Result<Outcome, ApiError> {
+    let fields = arguments
+        .as_object()
+        .cloned()
+        .ok_or_else(|| ApiError::invalid("invalid arguments: the arguments are an object"))?;
+    let known = ["action", "project", "file", "name", "preset", "comp", "timeline"];
+    for key in fields.keys() {
+        if !known.contains(&key.as_str()) {
+            return Err(ApiError::invalid(format!(
+                "invalid arguments: unknown field `{key}`"
+            )));
+        }
+    }
+    let action = fields
+        .get("action")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ApiError::invalid("invalid arguments: `action` is `lottie` or `gsap`"))?;
+    let project = fields
+        .get("project")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            ApiError::invalid("invalid arguments: `project` names the folder the comp lands in")
+        })?;
+    if !project.is_dir() {
+        return Err(ApiError::new(
+            ErrorCode::NotFound,
+            format!("no project at {}", project.display()),
+        ));
+    }
+    // The name the comp is written under: a file name inside comps/,
+    // never a path out of it. Defaulted from the source, and `.json` is
+    // added when the caller left it off - a name is a name, not a
+    // format.
+    let clean_name = |name: &str| -> Result<String, ApiError> {
+        if name.contains("..") || name.starts_with('/') || name.is_empty() {
+            return Err(ApiError::invalid(
+                "invalid arguments: `name` is a file name under the project's comps/, not a path out of it",
+            ));
+        }
+        Ok(if name.ends_with(".json") {
+            name.to_owned()
+        } else {
+            format!("{name}.json")
+        })
+    };
+    let (comp, notes, name, from) = match action {
+        "lottie" => {
+            let file = fields
+                .get("file")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    ApiError::invalid(
+                        "invalid arguments: `file` is the Lottie JSON to read (a .json bodymovin export)",
+                    )
+                })?;
+            let text = std::fs::read_to_string(file).map_err(|error| {
+                ApiError::new(
+                    ErrorCode::NotFound,
+                    format!("could not read {file}: {error}"),
+                )
+            })?;
+            let document: Value = serde_json::from_str(&text).map_err(|error| {
+                ApiError::invalid(format!("{file} is not JSON: {error}"))
+            })?;
+            // A JSON file that is not a Lottie document refuses here
+            // rather than converting into an empty comp: the adapter's
+            // own refusal words carry the detail.
+            let imported = geneva_adapter::lottie::import(&document)
+                .map_err(|error| ApiError::invalid(format!("the Lottie document does not convert: {error}")))?;
+            let name = clean_name(
+                fields.get("name").and_then(Value::as_str).unwrap_or_else(|| {
+                    Path::new(file)
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .unwrap_or("imported")
+                }),
+            )?;
+            (imported.comp, imported.notes, name, file.to_owned())
+        }
+        "gsap" => {
+            let timeline = fields
+                .get("timeline")
+                .filter(|value| !value.is_null())
+                .ok_or_else(|| {
+                    ApiError::invalid("invalid arguments: `timeline` is the GSAP-style timeline JSON to apply")
+                })?;
+            // The comp the timeline animates: a preset, or a file under
+            // the project's comps/ - the same resolution every other
+            // comp tool makes, `ops` included. resolve_comp refuses any
+            // field but its own four, so it is handed exactly those.
+            let mut naming = Map::new();
+            for key in ["preset", "comp", "project", "ops"] {
+                if let Some(value) = fields.get(key) {
+                    naming.insert(key.to_owned(), value.clone());
+                }
+            }
+            let (base, _source) = resolve_comp(&naming)?;
+            let (comp, applied) = geneva_adapter::gsap::apply(&base, timeline).map_err(
+                |error| ApiError::invalid(format!("the timeline does not apply: {error}")),
+            )?;
+            let default = match (fields.get("comp"), fields.get("preset")) {
+                (Some(named), _) => format!(
+                    "{}-animated",
+                    Path::new(named.as_str().unwrap_or_default())
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .unwrap_or("comp")
+                ),
+                (_, Some(preset)) => format!("{}-animated", preset.as_str().unwrap_or("comp")),
+                _ => "animated".to_owned(),
+            };
+            let name = clean_name(
+                fields
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&default),
+            )?;
+            let from = fields
+                .get("comp")
+                .and_then(Value::as_str)
+                .or_else(|| fields.get("preset").and_then(Value::as_str))
+                .unwrap_or("a comp")
+                .to_owned();
+            (comp, applied, name, from)
+        }
+        _ => {
+            return Err(ApiError::invalid(
+                "invalid arguments: `action` is `lottie` or `gsap`",
+            ));
+        }
+    };
+    // The library's own bar, before anything is written: a comp that
+    // does not validate is refused with its problems named, so a broken
+    // import never reaches the bake.
+    let problems = comp.validate();
+    if !problems.is_empty() {
+        let said: Vec<String> = problems
+            .iter()
+            .map(|problem| {
+                format!(
+                    "{} at {}{}",
+                    problem.message,
+                    problem.path,
+                    problem
+                        .help
+                        .as_ref()
+                        .map(|help| format!(" ({help})"))
+                        .unwrap_or_default()
+                )
+            })
+            .collect();
+        return Err(ApiError::failed(format!(
+            "the converted comp does not validate: {}",
+            said.join("; ")
+        )));
+    }
+    std::fs::create_dir_all(comps_dir(&project))
+        .map_err(|error| ApiError::failed(format!("could not create comps/: {error}")))?;
+    let target = comps_dir(&project).join(&name);
+    let text = serde_json::to_string_pretty(&comp)
+        .map_err(|error| ApiError::failed(format!("could not serialise the comp: {error}")))?;
+    std::fs::write(&target, text)
+        .map_err(|error| ApiError::failed(format!("{}: {error}", target.display())))?;
+    let skipped = notes
+        .iter()
+        .filter(|note| note.starts_with("skipped: "))
+        .count();
+    let reply = json!({
+        "ok": true,
+        "action": action,
+        "from": from,
+        "file": target.display().to_string(),
+        "name": name,
+        "comp": summary_of(&comp),
+        "notes": notes,
+        "skipped": skipped,
+        "next": "motion_frame to see it, motion_bake to render it, ops to edit it",
+    });
+    Ok(Outcome::json(reply))
+}
+
 /// `motion_bake`: a comp - a preset or a file, edited by `ops` - baked to
 /// PNG frames in the project's cache and, when `encode` is set, written as
 /// one video file under `motion/` ready for `media_import`.

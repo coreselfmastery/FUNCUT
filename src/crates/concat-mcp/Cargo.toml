@@ -19,6 +19,9 @@ concat-server.workspace = true
 # bakes and word-timed caption reels - the design door an agent had no way
 # through before, which the director skill's Phase 5b always assumed.
 concat-motion.workspace = true
+# The Lottie and GSAP adapters motion_import exposes: motion made
+# elsewhere, read here.
+geneva-adapter.workspace = true
 serde_json.workspace = true
 # The reel contact sheet decodes and encodes PNG frames: the same crate
 # the API's frame method hands back through.

@@ -145,6 +145,9 @@ pub enum Action {
     CreativeBrief,
     /// Composite a transparent motion bake over real footage.
     MotionOverlay,
+    /// Motion made elsewhere, read here: a Lottie document become a
+    /// comp, or a GSAP-style timeline applied to one.
+    MotionImport,
     /// Measure an exported mix's integrated LUFS and true peak.
     MeasureLoudness,
     /// Beat-aligned cut times from the soundtrack, no Python extras.
@@ -1017,6 +1020,15 @@ pub fn catalogue() -> Vec<Tool> {
             action: Action::MotionOverlay,
         },
         Tool {
+            name: "motion_import",
+            title: "Motion made elsewhere, read here",
+            description: "Turn a Lottie (bodymovin) JSON into a comp, or apply a GSAP-style timeline to one; the notes say what was skipped or approximated.",
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            action: Action::MotionImport,
+        },
+        Tool {
             name: "local_vlm",
             title: "Local or hosted vision critic",
             description: "Status or first-use setup of the local sub-1B vision critic.",
@@ -1521,6 +1533,7 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
         | Action::MediaProbe
         | Action::SceneTimeline
         | Action::GenevaExplain
+        | Action::MotionImport
         | Action::MotionFarmProgress
         | Action::MotionFarmCloud => motion_schema(tool.name),
         Action::WatchRender
@@ -1916,6 +1929,62 @@ fn motion_schema(name: &str) -> Option<Value> {
         "motion_presets" => object(Map::new(), &[]),
         "motion_inspect" => object(shared, &[]),
         "scene_analysis" => object(shared, &[]),
+        "motion_import" => {
+            // The two doors share `project` and `name`; `file` is the
+            // Lottie document, `timeline` the GSAP-style JSON. The
+            // comp-naming fields are the same shared four for the gsap
+            // door's base, but the ops vocabulary is not repeated here -
+            // motion_inspect owns it, and an agent that far in has read
+            // it there.
+            let mut properties = Map::new();
+            properties.insert(
+                "action".to_owned(),
+                json!({
+                    "type": "string",
+                    "enum": ["lottie", "gsap"],
+                    "description": "lottie: a bodymovin JSON becomes a comp. gsap: a GSAP-style timeline is applied to a comp."
+                }),
+            );
+            properties.insert(
+                "project".to_owned(),
+                shared.get("project").cloned().unwrap(),
+            );
+            properties.insert(
+                "file".to_owned(),
+                json!({
+                    "type": "string",
+                    "description": "The Lottie JSON to read (action lottie), any readable path."
+                }),
+            );
+            properties.insert(
+                "timeline".to_owned(),
+                json!({
+                    "type": ["object", "array"],
+                    "description": "The GSAP-style timeline (action gsap): tweens on x, y, scale, rotation, opacity, blur, with ease, delay, stagger, repeat, yoyo."
+                }),
+            );
+            for key in ["preset", "comp"] {
+                if let Some(value) = shared.get(key) {
+                    properties.insert(key.to_owned(), value.clone());
+                }
+            }
+            properties.insert(
+                "ops".to_owned(),
+                json!({
+                    "type": "array",
+                    "items": { "type": "object" },
+                    "description": "Authoring operations applied to the base comp first; the same ops motion_inspect documents."
+                }),
+            );
+            properties.insert(
+                "name".to_owned(),
+                json!({
+                    "type": "string",
+                    "description": "The comp's file name under the project's comps/; defaults to the source's stem or '<comp>-animated'."
+                }),
+            );
+            object(properties, &["action", "project"])
+        }
         "motion_frame" => object(
             with(
                 shared,
@@ -2582,6 +2651,7 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         Action::SenseFamily(family) => crate::sense::sense_family_action(family, arguments),
         Action::CreativeBrief => crate::sense::creative_brief(arguments, backend),
         Action::MotionOverlay => crate::sense::motion_overlay(arguments, backend),
+        Action::MotionImport => crate::motion::import(arguments),
         Action::MeasureLoudness => crate::sense::measure_loudness(arguments),
         Action::SuggestCuts => crate::sense::suggest_cuts(arguments),
         Action::TrackSubject => crate::sense::track_subject(arguments),
@@ -4533,6 +4603,10 @@ mod tests {
                 json!({ "project": "/tmp/Cut", "hash": "abc123", "plate": "/tmp/plate.mp4" }),
             ),
             (
+                "motion_import",
+                json!({ "action": "lottie", "project": "/tmp/Cut", "file": "/tmp/logo.json" }),
+            ),
+            (
                 "suggest_cuts",
                 json!({ "path": "/tmp/music.wav", "cuts": 8 }),
             ),
@@ -4624,8 +4698,9 @@ mod tests {
             .iter()
             .position(|name| *name == "timeline_read")
             .expect("timeline_read is listed");
-        assert_eq!(ordered_names[timeline + 1], "plan_validate");
-        assert_eq!(ordered_names[timeline + 2], "clip_audio_levels_db");
+        assert_eq!(ordered_names[timeline + 1], "timeline_seek");
+        assert_eq!(ordered_names[timeline + 2], "plan_validate");
+        assert_eq!(ordered_names[timeline + 3], "clip_audio_levels_db");
         for tool in &listed {
             let name = tool["name"].as_str().expect("named");
             assert!(
@@ -4712,6 +4787,50 @@ mod tests {
                     let said = outcome.structured.unwrap();
                     assert_eq!(said["live"], serde_json::json!(true), "{said}");
                     assert!(said.get("out").is_some_and(|out| out.is_null()), "{said}");
+                    continue;
+                }
+                Action::MotionImport => {
+                    // The lottie door runs for real: a minimal bodymovin
+                    // document, a throwaway project, and the comp must
+                    // land under comps/ with the summary and no notes -
+                    // a conversion that lost nothing.
+                    let dir = tempfile::tempdir().expect("a scratch folder");
+                    let project = dir.path().join("Cut");
+                    std::fs::create_dir_all(&project).expect("the project folder");
+                    let source = dir.path().join("plate.json");
+                    std::fs::write(
+                        &source,
+                        serde_json::json!({
+                            "v": "5.7.4", "fr": 30, "ip": 0, "op": 90, "w": 512, "h": 512,
+                            "nm": "fixture", "layers": [{
+                                "ind": 1, "ty": 1, "nm": "plate", "ip": 0, "op": 90, "st": 0,
+                                "sw": 200, "sh": 100, "sc": "#336699",
+                                "ks": {
+                                    "o": {"a": 0, "k": 100},
+                                    "r": {"a": 0, "k": 0},
+                                    "p": {"a": 0, "k": [256, 256, 0]},
+                                    "a": {"a": 0, "k": [100, 50, 0]},
+                                    "s": {"a": 0, "k": [100, 100, 100]},
+                                },
+                            }],
+                        })
+                        .to_string(),
+                    )
+                    .expect("the fixture");
+                    let mut sample = sample.clone();
+                    sample["project"] = project.display().to_string().into();
+                    sample["file"] = source.display().to_string().into();
+                    let outcome = crate::motion::import(sample).expect("the sample imports");
+                    let said = outcome.structured.expect("the import is JSON");
+                    assert_eq!(said["ok"], serde_json::json!(true), "{said}");
+                    assert_eq!(said["notes"], serde_json::json!([]), "{said}");
+                    assert!(
+                        said["file"]
+                            .as_str()
+                            .is_some_and(|file| file.ends_with("comps/plate.json")),
+                        "{said}"
+                    );
+                    assert!(said["comp"].is_object(), "{said}");
                     continue;
                 }
                 Action::MotionFarmCloud => {

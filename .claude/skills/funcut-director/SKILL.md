@@ -372,15 +372,20 @@ arrives as a thing being made rather than a file that appears — and
 the refusal on a headless server costs one line, not the run.
 
 **Phase 5b — Motion comps (design). Every finished piece goes through here.**
-This is what separates an edit from a video. The motion layer is six MCP
+This is what separates an edit from a video. The motion layer is seven MCP
 tools: `motion_presets` (the library), `motion_inspect` (nodes, slots —
 never guess), `motion_frame` (look before you bake — it now returns an inline
 image, so check legibility, contrast and safe margins with your eyes), `motion_bake`
 (encode a piece in one call), `captions_animate` (word-timed kinetic
-captions from measured word times), and `motion_reel` (a whole storyboard
+captions from measured word times), `motion_reel` (a whole storyboard
 as one reel — scenes with MULTI-LAYER stacks: plates under the comp and
 grain, light leaks, vignettes and foreground cards over it, each on its own
-drift and clock; check one still with `frame: seconds` before rendering). The floor is one designed beat per
+drift and clock; check one still with `frame: seconds` before rendering),
+and `motion_import` (motion made elsewhere: a designer's Lottie/bodymovin
+JSON become a comp, or a GSAP-style timeline applied to one — read the
+reply's `notes` aloud to the user, because a `skipped:` note means the comp
+draws less than the source did, and the user decides whether that is
+acceptable). The floor is one designed beat per
 section and at least one per 15 s of runtime — and a floor is a floor, not
 a target: a reel where a quarter or more of the segments carry a comp, and
 a longform where an eighth or more do, reads as designed rather than

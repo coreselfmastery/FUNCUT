@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
+import { Payload } from "../util.slint";
 import { I18n } from "../i18n.slint";
 import { Theme, Glyph, Icon } from "../primitives/primitives.slint";
 import { SourcePreview } from "source-preview.slint";
@@ -134,77 +135,87 @@ export component MusicRow inherits Rectangle {
 
     animate background { duration: 100ms; easing: cubic-bezier(0.4, 0, 0.2, 1); }
 
-    HorizontalLayout {
-        padding-left: 6px;
-        padding-right: 6px;
-        spacing: 8px;
+    // A card drags to the lanes: the clip is fetched and imported
+    // when the drop lands, the way a sound card is.
+    drag := DragArea {
+        data: Payload.of("bgm:\{root.item.id}");
+        drag-image: Payload.preview("bgm:\{root.item.id}");
+        drag-image-offset-x: -8;
+        drag-image-offset-y: -4;
+        allow-copy: true;
 
-        VerticalLayout {
-            alignment: center;
-            Rectangle {
-                width: 32px;
-                height: 32px;
-                border-radius: Theme.r-sm;
-                background: Theme.kind-audio-well;
+        HorizontalLayout {
+            padding-left: 6px;
+            padding-right: 6px;
+            spacing: 8px;
 
-                Icon {
-                    x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
-                    glyph: root.item.busy ? Glyph.import
-                        : root.item.ready ? Glyph.play : Glyph.music;
-                    size: parent.width * 0.42;
-                    tint: Theme.kind-audio;
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 32px;
+                    height: 32px;
+                    border-radius: Theme.r-sm;
+                    background: Theme.kind-audio-well;
+
+                    Icon {
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        glyph: root.item.busy ? Glyph.import
+                            : root.item.ready ? Glyph.play : Glyph.music;
+                        size: parent.width * 0.42;
+                        tint: Theme.kind-audio;
+                    }
+                }
+            }
+
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                spacing: 2px;
+
+                Text {
+                    text: root.item.title;
+                    color: Theme.fg;
+                    font-size: Theme.fs-sm;
+                    overflow: elide;
+                }
+                Text {
+                    text: root.item.detail;
+                    color: Theme.fg-dim;
+                    font-size: Theme.fs-xs;
+                    overflow: elide;
+                }
+                Text {
+                    text: root.item.meta;
+                    color: Theme.fg-muted;
+                    font-family: Theme.font-technical;
+                    font-size: Theme.fs-xs;
+                    overflow: elide;
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                RowButton {
+                    glyph: Glyph.plus;
+                    clicked => { root.add(); }
                 }
             }
         }
 
-        VerticalLayout {
-            horizontal-stretch: 1;
-            alignment: center;
-            spacing: 2px;
-
-            Text {
-                text: root.item.title;
-                color: Theme.fg;
-                font-size: Theme.fs-sm;
-                overflow: elide;
-            }
-            Text {
-                text: root.item.detail;
-                color: Theme.fg-dim;
-                font-size: Theme.fs-xs;
-                overflow: elide;
-            }
-            Text {
-                text: root.item.meta;
-                color: Theme.fg-muted;
-                font-family: Theme.font-technical;
-                font-size: Theme.fs-xs;
-                overflow: elide;
-            }
+        // How far the one playing has got, as a line along its foot.
+        if root.playing-row: Rectangle {
+            x: 0;
+            y: parent.height - 2px;
+            width: parent.width * Math.clamp(SourcePreview.progress, 0, 1);
+            height: 2px;
+            background: Theme.accent;
         }
 
-        VerticalLayout {
-            alignment: center;
-            RowButton {
-                glyph: Glyph.plus;
-                clicked => { root.add(); }
-            }
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.preview(); }
         }
-    }
-
-    // How far the one playing has got, as a line along its foot.
-    if root.playing-row: Rectangle {
-        x: 0;
-        y: parent.height - 2px;
-        width: parent.width * Math.clamp(SourcePreview.progress, 0, 1);
-        height: 2px;
-        background: Theme.accent;
-    }
-
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.preview(); }
     }
 }
 

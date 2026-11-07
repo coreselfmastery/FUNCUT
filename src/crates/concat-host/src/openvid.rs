@@ -852,11 +852,14 @@ impl Library {
                 let Some((file, pos, size, source)) = range else {
                     return Ok(None);
                 };
-                let agent = crate::net::agent(
+                // Through the proxy when the machine names one - the Hub
+                // is one of the hosts it exists to reach.
+                let shelf = crate::net::Shelf::new(
+                    DATASET_URL,
                     std::time::Duration::from_secs(20),
                     std::time::Duration::from_secs(60),
                 );
-                self.read_dims(&file, pos, size, source, &agent)?
+                self.read_dims(&file, pos, size, source, &shelf)?
             }
         };
         match read {
@@ -1045,10 +1048,12 @@ impl Library {
         let Some(first) = sample.first() else {
             return;
         };
-        // One agent, shared by the readers: the census is one burst of
+        // One shelf, shared by the readers: the census is one burst of
         // small reads, and a connection each is the difference between
-        // seconds and tens of them.
-        let agent = crate::net::agent(
+        // seconds and tens of them. Every read rides the proxy when the
+        // machine names one.
+        let shelf = crate::net::Shelf::new(
+            DATASET_URL,
             std::time::Duration::from_secs(20),
             std::time::Duration::from_secs(60),
         );
@@ -1056,7 +1061,7 @@ impl Library {
         // there, and nothing else is worth trying. An error here is not
         // a verdict - no row is written, and the next search tries again.
         if self
-            .read_dims(&first.1, first.2, first.3, first.4, &agent)
+            .read_dims(&first.1, first.2, first.3, first.4, &shelf)
             .is_err()
         {
             return;
@@ -1079,7 +1084,7 @@ impl Library {
                             }
                             let (id, file, pos, size, source) = &sample[at];
                             if let Ok(Some(dims)) =
-                                self.read_dims(file, *pos, *size, *source, &agent)
+                                self.read_dims(file, *pos, *size, *source, &shelf)
                             {
                                 found.push((*id, *source, dims));
                             }
@@ -1184,11 +1189,11 @@ impl Library {
         pos: u64,
         size: u64,
         source: Source,
-        agent: &ureq::Agent,
+        shelf: &crate::net::Shelf,
     ) -> Result<Option<(u32, u32)>, String> {
         let read = |start: u64| -> Result<Option<(u32, u32)>, String> {
             let length = size.min(TRAILER);
-            let bytes: Vec<u8> = ranged_with(agent, file, start, length)?;
+            let bytes: Vec<u8> = ranged_with(shelf, file, start, length)?;
             Ok(frame_size_of(&bytes))
         };
         // A clip smaller than the trailer window is one read from either
@@ -1238,16 +1243,21 @@ impl Library {
         let url = format!("{DATASET_URL}/{file}");
         // The clips are small - the largest is tens of megabytes - so one
         // ranged GET is the whole fetch; the models downloader's resume
-        // machinery is for the index, not for these.
-        let agent = crate::net::agent(
+        // machinery is for the index, not for these. Through the proxy
+        // when the machine names one: the clip bytes are the traffic the
+        // proxy is there to carry on a network that cannot reach the Hub
+        // directly, and until now they were the one download that went
+        // without it.
+        let shelf = crate::net::Shelf::new(
+            DATASET_URL,
             std::time::Duration::from_secs(20),
             std::time::Duration::from_secs(60),
         );
-        let response = agent
-            .get(&url)
-            .set("Range", &format!("bytes={pos}-{}", pos + size - 1))
-            .call()
-            .map_err(|error| format!("the Hub did not answer: {error}"))?;
+        let start = pos;
+        let end = pos + size - 1;
+        let response = shelf
+            .get(&url, &|request| request.set("Range", &format!("bytes={start}-{end}")))
+            .map_err(|failure| format!("the Hub did not answer: {failure}"))?;
         if response.status() != 206 {
             return Err(format!(
                 "the Hub would not serve a byte range (status {})",
@@ -1404,7 +1414,7 @@ pub fn shared(dirs: &AppDirs) -> &'static Library {
 /// 200 would mean the range was ignored and the whole 16 GB file was
 /// about to arrive, which is stopped here rather than read.
 fn ranged_with(
-    agent: &ureq::Agent,
+    shelf: &crate::net::Shelf,
     file: &str,
     start: u64,
     length: u64,
@@ -1424,11 +1434,11 @@ fn ranged_with(
             "a read of {length} bytes at {start} is not a range anything can serve"
         ));
     };
-    let response = agent
-        .get(&url)
-        .set("Range", &format!("bytes={start}-{end}"))
-        .call()
-        .map_err(|error| format!("the Hub did not answer: {error}"))?;
+    let response = shelf
+        .get(&url, &|request| {
+            request.set("Range", &format!("bytes={start}-{end}"))
+        })
+        .map_err(|failure| format!("the Hub did not answer: {failure}"))?;
     if response.status() != 206 {
         return Err(format!(
             "the Hub would not serve a byte range (status {})",

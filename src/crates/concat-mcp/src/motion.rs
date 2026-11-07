@@ -853,7 +853,9 @@ pub fn import(arguments: Value) -> Result<Outcome, ApiError> {
         .as_object()
         .cloned()
         .ok_or_else(|| ApiError::invalid("invalid arguments: the arguments are an object"))?;
-    let known = ["action", "project", "file", "name", "preset", "comp", "timeline"];
+    let known = [
+        "action", "project", "file", "name", "preset", "comp", "timeline",
+    ];
     for key in fields.keys() {
         if !known.contains(&key.as_str()) {
             return Err(ApiError::invalid(format!(
@@ -910,22 +912,22 @@ pub fn import(arguments: Value) -> Result<Outcome, ApiError> {
                     format!("could not read {file}: {error}"),
                 )
             })?;
-            let document: Value = serde_json::from_str(&text).map_err(|error| {
-                ApiError::invalid(format!("{file} is not JSON: {error}"))
-            })?;
+            let document: Value = serde_json::from_str(&text)
+                .map_err(|error| ApiError::invalid(format!("{file} is not JSON: {error}")))?;
             // A JSON file that is not a Lottie document refuses here
             // rather than converting into an empty comp: the adapter's
             // own refusal words carry the detail.
-            let imported = geneva_adapter::lottie::import(&document)
-                .map_err(|error| ApiError::invalid(format!("the Lottie document does not convert: {error}")))?;
-            let name = clean_name(
-                fields.get("name").and_then(Value::as_str).unwrap_or_else(|| {
+            let imported = geneva_adapter::lottie::import(&document).map_err(|error| {
+                ApiError::invalid(format!("the Lottie document does not convert: {error}"))
+            })?;
+            let name = clean_name(fields.get("name").and_then(Value::as_str).unwrap_or_else(
+                || {
                     Path::new(file)
                         .file_stem()
                         .and_then(|stem| stem.to_str())
                         .unwrap_or("imported")
-                }),
-            )?;
+                },
+            ))?;
             (imported.comp, imported.notes, name, file.to_owned())
         }
         "gsap" => {
@@ -933,7 +935,9 @@ pub fn import(arguments: Value) -> Result<Outcome, ApiError> {
                 .get("timeline")
                 .filter(|value| !value.is_null())
                 .ok_or_else(|| {
-                    ApiError::invalid("invalid arguments: `timeline` is the GSAP-style timeline JSON to apply")
+                    ApiError::invalid(
+                        "invalid arguments: `timeline` is the GSAP-style timeline JSON to apply",
+                    )
                 })?;
             // The comp the timeline animates: a preset, or a file under
             // the project's comps/ - the same resolution every other
@@ -946,9 +950,10 @@ pub fn import(arguments: Value) -> Result<Outcome, ApiError> {
                 }
             }
             let (base, _source) = resolve_comp(&naming)?;
-            let (comp, applied) = geneva_adapter::gsap::apply(&base, timeline).map_err(
-                |error| ApiError::invalid(format!("the timeline does not apply: {error}")),
-            )?;
+            let (comp, applied) =
+                geneva_adapter::gsap::apply(&base, timeline).map_err(|error| {
+                    ApiError::invalid(format!("the timeline does not apply: {error}"))
+                })?;
             let default = match (fields.get("comp"), fields.get("preset")) {
                 (Some(named), _) => format!(
                     "{}-animated",

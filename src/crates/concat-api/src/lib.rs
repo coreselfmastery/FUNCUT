@@ -64,9 +64,8 @@ pub use message::{
     API_VERSION, ApiError, BgmFound, BgmImport, BgmState, BgmTrack, Dirs, Done, ErrorCode, Event,
     ExportSpec, Fill, JobState, JobStatus, MagickAdd, MagickEntry, MagickFound, MagickState,
     OpenvidClip, OpenvidFound, OpenvidImport, OpenvidRerank, OpenvidState, PackageInfo, ParamInfo,
-    Picture, Reply,
-    Request, Response, SoundEntry, SoundsAdded, SoundsFound, Started, VersionInfo, WindowSought,
-    Written,
+    Picture, Reply, Request, Response, SoundEntry, SoundsAdded, SoundsFound, Started, VersionInfo,
+    WindowSought, Written,
 };
 
 /// The export sheet's middle quality, and what an export gets when the
@@ -86,7 +85,9 @@ const DEFAULT_PRESET: &str = "medium";
 /// scrub that did not happen. Cheap to clone; every clone is the same
 /// control.
 #[derive(Clone)]
-pub struct PlayheadControl(Arc<dyn Fn(Option<&str>, f64) -> Result<WindowSought, String> + Send + Sync>);
+pub struct PlayheadControl(
+    Arc<dyn Fn(Option<&str>, f64) -> Result<WindowSought, String> + Send + Sync>,
+);
 
 impl PlayheadControl {
     /// Makes a control around `seek`: given the project folder the caller
@@ -3553,7 +3554,9 @@ mod seek_tests {
         let sought = std::sync::Arc::new(Mutex::new(Vec::<(Option<String>, f64)>::new()));
         let seen = std::sync::Arc::clone(&sought);
         api.share_playhead(PlayheadControl::new(move |path, time| {
-            seen.lock().expect("seen").push((path.map(str::to_owned), time));
+            seen.lock()
+                .expect("seen")
+                .push((path.map(str::to_owned), time));
             Ok(WindowSought {
                 path: "/tmp/Cut".to_owned(),
                 time,
@@ -3597,7 +3600,10 @@ mod seek_tests {
         api.share_playhead(PlayheadControl::new(|_, _| {
             Err("the window closed".to_owned())
         }));
-        let reply = api.dispatch(Request::WindowSeek { time: 1.0, path: None });
+        let reply = api.dispatch(Request::WindowSeek {
+            time: 1.0,
+            path: None,
+        });
         assert!(matches!(reply, Response::Error(_)));
     }
 }

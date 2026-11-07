@@ -63,7 +63,8 @@ use concat_project::model::{MediaKind, VideoSettings};
 pub use message::{
     API_VERSION, ApiError, BgmFound, BgmImport, BgmState, BgmTrack, Dirs, Done, ErrorCode, Event,
     ExportSpec, Fill, JobState, JobStatus, MagickAdd, MagickEntry, MagickFound, MagickState,
-    OpenvidClip, OpenvidFound, OpenvidImport, OpenvidState, PackageInfo, ParamInfo, Picture, Reply,
+    OpenvidClip, OpenvidFound, OpenvidImport, OpenvidRerank, OpenvidState, PackageInfo, ParamInfo,
+    Picture, Reply,
     Request, Response, SoundEntry, SoundsAdded, SoundsFound, Started, VersionInfo, WindowSought,
     Written,
 };
@@ -1026,7 +1027,6 @@ impl Api {
     fn library(&self) -> &'static openvid::Library {
         openvid::shared(&self.dirs)
     }
-
     /// [`Request::OpenvidStatus`].
     pub fn openvid_state(&self) -> OpenvidState {
         let library = self.library();
@@ -1041,6 +1041,7 @@ impl Api {
             percent,
             rows: library.rows(),
             measured: library.measured(),
+            rerank: rerank_state(&self.dirs),
             error,
         }
     }
@@ -2517,6 +2518,62 @@ fn resolved(path: &Path) -> PathBuf {
             }
             _ => return path.to_path_buf(),
         }
+    }
+}
+
+/// The semantic rerank's state: whether the two MobileCLIP2-S0 ONNX
+/// files `analysis/rerank.py` looks for are on this machine. The same
+/// three places, in the same order, so what this reports is what the
+/// search will do - and the reply a director reads names the folder to
+/// put the files in rather than leaving the half silent.
+fn rerank_state(dirs: &concat_host::dirs::AppDirs) -> OpenvidRerank {
+    /// The two files, by the names the rerank looks for.
+    const FILES: [&str; 2] = ["mobileclip2_s0_vision.onnx", "mobileclip2_s0_text.onnx"];
+    /// Whether both files sit in `dir`.
+    fn holds_both(dir: &Path) -> bool {
+        FILES.iter().all(|file| dir.join(file).is_file())
+    }
+    let candidates: [(PathBuf, &str); 3] = [
+        (
+            std::env::var_os("FUNCUT_MOBILECLIP")
+                .map(PathBuf::from)
+                .unwrap_or_default(),
+            "$FUNCUT_MOBILECLIP",
+        ),
+        (
+            dirs.data.join("models").join("mobileclip2-s0"),
+            "the app data dir's models/mobileclip2-s0",
+        ),
+        (
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .map(|home| home.join(".cache").join("concat").join("mobileclip2-s0"))
+                .unwrap_or_default(),
+            "~/.cache/concat/mobileclip2-s0",
+        ),
+    ];
+    for (dir, _) in &candidates {
+        if holds_both(dir) {
+            return OpenvidRerank {
+                available: true,
+                dir: dir.to_string_lossy().into_owned(),
+                files: FILES,
+            };
+        }
+    }
+    // Not there: name the place to put them, the first real one.
+    let (dir, place) = candidates
+        .iter()
+        .find(|(dir, _)| !dir.as_os_str().is_empty())
+        .unwrap_or(&candidates[1]);
+    OpenvidRerank {
+        available: false,
+        dir: if dir.as_os_str().is_empty() {
+            (*place).to_owned()
+        } else {
+            dir.to_string_lossy().into_owned()
+        },
+        files: FILES,
     }
 }
 

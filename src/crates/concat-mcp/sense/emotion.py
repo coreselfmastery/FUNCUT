@@ -380,6 +380,43 @@ _ACT_MARKERS = (
                "back in", "every day", "here s how")),
 )
 
+# What each emotion wants under it, as `bgm_search` words. The fallback is
+# a shelf category name (FreePD's own: upbeat, epic, horror, scoring,
+# electronic, comedy, romantic, world), which the search matches exactly -
+# so the second call always has something to find when the first's
+# adjective narrows past what the shelf carries. This is the code the
+# plan's music choice leans on; prompts/music_and_duck.md adds the taste.
+BGM_WORDS = {
+    "anger": ("epic intense driving", "epic"),
+    "disgust": ("horror grim uneasy", "horror"),
+    "fear": ("horror suspense tension", "horror"),
+    "joy": ("upbeat uplifting happy", "upbeat"),
+    "neutral": ("scoring minimal calm", "scoring"),
+    "sadness": ("scoring melancholy piano", "scoring"),
+    "surprise": ("epic dramatic cinematic", "epic"),
+}
+
+# How the act bends the bed: the hook wants energy from the first second,
+# the reveal wants the lift, the ask wants the warmth behind it. The
+# word is prepended only when it does not repeat what is already there.
+_ACT_BGM = {
+    "hook": "energy",
+    "tension": "tension",
+    "reveal": "triumphant",
+    "cta": "uplifting",
+}
+
+
+def _bgm_words(emotion, act):
+    """The two `bgm_search` queries a line's bed wants: the primary with
+    the act's bend, and the bare category the shelf always holds."""
+    primary, fallback = BGM_WORDS[emotion]
+    bend = _ACT_BGM.get(act)
+    if bend and bend not in primary:
+        primary = f"{primary} {bend}"
+    return [primary, fallback]
+
+
 # The hormone lens: a creative shorthand for the viewer's state, not
 # physiology. Priority order matters - laughter outranks everything, and a
 # positive reveal is dopamine even when the line reads surprised.
@@ -920,6 +957,7 @@ def extract(spec):
             "pacing": profile["pacing"],
             "vocabulary": list(profile["vocabulary"]),
             "queries": _queries(profile, text, act),
+            "bgmWords": _bgm_words(emotion, act),
             "start": line.get("start"),
             "end": line.get("end"),
         }
@@ -1352,6 +1390,21 @@ def selftest():
         ["hook", "setup", "turn", "reveal", "proof", "cta"], \
         [line["act"] for line in acts["lines"]]
     out["acts"] = "ok"
+
+    # The music bed: every line carries the two bgm_search queries its
+    # emotion and act want, and the fallback is always a shelf category
+    # the search matches exactly - a director never meets an empty bed.
+    for line in acts["lines"]:
+        words = line["bgmWords"]
+        assert isinstance(words, list) and len(words) == 2 and all(words), line
+    assert acts["lines"][0]["bgmWords"][1] in \
+        ("upbeat", "epic", "horror", "scoring", "electronic",
+         "comedy", "romantic", "world"), acts["lines"][0]["bgmWords"]
+    fear_bed = extract_lines("The whole building is about to collapse, run NOW!!")
+    assert fear_bed["lines"][0]["bgmWords"][0].startswith("horror suspense tension"), \
+        fear_bed["lines"][0]["bgmWords"]
+    assert fear_bed["lines"][0]["bgmWords"][1] == "horror", fear_bed["lines"][0]["bgmWords"]
+    out["bgm"] = "ok"
 
     # Hormones: a burst of fear is adrenaline, a joyful reveal is dopamine,
     # tender sadness is oxytocin, calm joy is serotonin.

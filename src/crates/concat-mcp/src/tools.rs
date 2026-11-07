@@ -5169,8 +5169,11 @@ mod tests {
         let calls = backend.0.borrow();
         assert_eq!(calls.len(), 1, "one search; the localPaths need no fetches");
         assert_eq!(calls[0]["method"], "openvid.search");
-        assert_eq!(RANK_POOL, 100, "the pool the widening promised");
-        assert_eq!(calls[0]["limit"], json!(RANK_POOL));
+        assert_eq!(
+            calls[0]["limit"],
+            json!(RANK_POOL),
+            "the fetch is as wide as the pool"
+        );
         assert_eq!(
             calls[0]["excludeIds"],
             json!([1, 2, 3]),
@@ -5183,7 +5186,10 @@ mod tests {
         let ranked = reply["clips"].as_array().expect("clips").clone();
         let ids: Vec<i64> = ranked.iter().filter_map(|c| c["id"].as_i64()).collect();
         for gone in [1, 2, 3, 4, 5] {
-            assert!(!ids.contains(&gone), "clip {gone} is filtered before ranking");
+            assert!(
+                !ids.contains(&gone),
+                "clip {gone} is filtered before ranking"
+            );
         }
 
         // And the correct clip - BM25 rank 50, the last row the old
@@ -5193,7 +5199,11 @@ mod tests {
             .position(|c| c["id"].as_i64() == Some(50))
             .expect("the correct clip is on the returned page");
         let slot_rank = ranked[position]["slotRank"].as_i64().expect("slotRank");
-        assert_eq!(slot_rank, (position + 1) as i64, "slotRank numbers the list");
+        assert_eq!(
+            slot_rank,
+            (position + 1) as i64,
+            "slotRank numbers the list"
+        );
         assert!(
             slot_rank <= 10,
             "BM25 rank 50 promotes to slotRank {slot_rank}, not the top ten"

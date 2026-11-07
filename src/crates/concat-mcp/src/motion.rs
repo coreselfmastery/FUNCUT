@@ -840,8 +840,8 @@ pub fn preview(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiEr
 /// comp: tweens on x, y, scale, rotation, opacity and blur, with delay,
 /// stagger, repeat and yoyo.
 ///
-/// Both answer with the comp's summary - the same `motion_inspect` read
-/// - and the adapter's notes: everything the conversion skipped,
+/// Both answer with the comp's summary (the same `motion_inspect` read)
+/// and the adapter's notes: everything the conversion skipped,
 /// approximated or clamped, in the adapter's own words. A conversion
 /// with no notes lost nothing the source asked for; one with `skipped:`
 /// notes draws less than the source did, and the caller decides whether

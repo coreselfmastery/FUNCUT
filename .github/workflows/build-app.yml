@@ -553,6 +553,15 @@ jobs:
           cp "$STAGE/concat.desktop" "$appdir/usr/share/applications/concat.desktop"
           cp "$STAGE/concat.png" "$appdir/concat.png"
           cp "$STAGE/concat.png" "$appdir/usr/share/icons/hicolor/256x256/apps/concat.png"
+          # The fork's own menu identity beside Concat's: packaging/ holds
+          # the FUNCUT desktop entry (Name=FUNCUT, Icon=funcut) and the
+          # 256x256 icon it names, and both go where a menu looks - the
+          # AppDir root for the AppImage tool, usr/share for the desktop
+          # itself. Same files for every architecture this matrix builds.
+          cp packaging/funcut.desktop "$appdir/funcut.desktop"
+          cp packaging/funcut.desktop "$appdir/usr/share/applications/funcut.desktop"
+          cp packaging/icons/hicolor/256x256/apps/funcut.png "$appdir/funcut.png"
+          cp packaging/icons/hicolor/256x256/apps/funcut.png "$appdir/usr/share/icons/hicolor/256x256/apps/funcut.png"
           ln -s concat.png "$appdir/.DirIcon"
           ln -s usr/bin/concat "$appdir/AppRun"
           # The tool and the runtime it puts at the head of the AppImage,

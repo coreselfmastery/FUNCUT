@@ -162,6 +162,37 @@ jobs:
           ls -l
           sha256sum -- * > SHA256SUMS
 
+      # The FUNCUT menu entry ships in every bundle's AppDir: build-app.yml
+      # copies packaging/funcut.desktop and the funcut icon into the AppDir
+      # root and the freedesktop paths
+      # (usr/share/applications/funcut.desktop,
+      # usr/share/icons/hicolor/256x256/apps/funcut.png) beside Concat's
+      # own entry, for every architecture it builds. This job cannot
+      # execute the aarch64 AppImage's runtime on this x86_64 runner, so
+      # it re-checks the one it can, and relies on build-app.yml's
+      # per-architecture copies for the other.
+      - name: The FUNCUT desktop entry is in the AppImage
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          checked=0
+          for img in bundles/Concat-*-x86_64.AppImage; do
+            chmod +x "$img"
+            dir=$(mktemp -d)
+            (cd "$dir" && "$OLDPWD/$img" --appimage-extract >/dev/null)
+            for f in funcut.desktop funcut.png \
+                     usr/share/applications/funcut.desktop \
+                     usr/share/icons/hicolor/256x256/apps/funcut.png; do
+              test -f "$dir/squashfs-root/$f" \
+                || { echo "::error::$img does not carry $f"; exit 1; }
+            done
+            grep -q '^Name=FUNCUT$' "$dir/squashfs-root/funcut.desktop"
+            rm -rf "$dir"
+            checked=$((checked + 1))
+            echo "$img carries the FUNCUT desktop entry and icon"
+          done
+          test "$checked" -ge 1 || { echo "::error::no AppImage was checked"; exit 1; }
+
       # The notes are the commits since the previous tag; see the script.
       # For a release, the previous tag is the previous release: its own
       # candidates (v0.2.7-rc.2 before v0.2.7) are ancestors too, and from

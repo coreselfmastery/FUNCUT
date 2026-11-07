@@ -23,6 +23,33 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::message::{ApiError, ErrorCode, Event, JobStatus, ModelsState, Started};
 use crate::{Api, AppDirs, EventSink};
 
+/// A transcript with its times rounded to the millisecond, the shape the
+/// answer keeps and the digits it does not: whisper's token timestamps
+/// carry sixteen digits of f64, and a 25-minute voiceover's words at
+/// ~24 characters of fraction each were tens of thousands of tokens of
+/// precision no frame can use - a 30 fps frame is 33 ms wide, and 1 ms
+/// is thirty times finer than that. Every consumer of the transcript -
+/// the silence cuts, the captions, the SFX peaks - works to frame
+/// tolerances; the rounding changes none of them and roughly halves
+/// what a long video's transcript costs an agent's context.
+fn rounded(
+    segments: Vec<concat_speech::transcribe::Segment>,
+) -> Vec<concat_speech::transcribe::Segment> {
+    let millisecond = |time: f64| (time * 1000.0).round() / 1000.0;
+    segments
+        .into_iter()
+        .map(|mut segment| {
+            segment.start = millisecond(segment.start);
+            segment.end = millisecond(segment.end);
+            for word in &mut segment.words {
+                word.start = millisecond(word.start);
+                word.end = millisecond(word.end);
+            }
+            segment
+        })
+        .collect()
+}
+
 /// The whisper model a transcription gets when the caller says nothing:
 /// the fast English one. `small` is the multilingual choice.
 const DEFAULT_TRANSCRIBER: &str = "base.en";
@@ -278,7 +305,7 @@ impl SpeechJob {
                 .transcribe_with_language(&self.dirs, request, language.as_deref(), |_| {})
                 .map(|segments| {
                     serde_json::json!({
-                        "segments": segments,
+                        "segments": rounded(segments),
                         "language": language,
                     })
                     .to_string()

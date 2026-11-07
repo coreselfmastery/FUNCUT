@@ -1256,7 +1256,9 @@ impl Library {
         let start = pos;
         let end = pos + size - 1;
         let response = shelf
-            .get(&url, &|request| request.set("Range", &format!("bytes={start}-{end}")))
+            .get(&url, &|request| {
+                request.set("Range", &format!("bytes={start}-{end}"))
+            })
             .map_err(|failure| format!("the Hub did not answer: {failure}"))?;
         if response.status() != 206 {
             return Err(format!(

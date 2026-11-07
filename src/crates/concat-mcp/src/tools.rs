@@ -4286,10 +4286,7 @@ mod tests {
             ("project_save", json!({ "path": "/tmp/Cut" })),
             ("project_close", json!({ "path": "/tmp/Cut", "save": true })),
             ("timeline_read", json!({ "path": "/tmp/Cut" })),
-            (
-                "timeline_seek",
-                json!({ "time": 42.5, "path": "/tmp/Cut" }),
-            ),
+            ("timeline_seek", json!({ "time": 42.5, "path": "/tmp/Cut" })),
             (
                 "plan_validate",
                 json!({ "plan": {

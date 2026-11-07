@@ -293,10 +293,15 @@ impl Shelf {
             }
             (None, _) => (&self.direct, None),
         };
-        log::debug!("network: {url} through the proxy {}", shown.unwrap_or("(none)"));
+        log::debug!(
+            "network: {url} through the proxy {}",
+            shown.unwrap_or("(none)")
+        );
         let proxied = match send(agent, shown) {
             Ok(response) => return Ok(response),
-            Err(failure) if matches!(failure.error, ureq::Error::Status(..)) => return Err(failure),
+            Err(failure) if matches!(failure.error, ureq::Error::Status(..)) => {
+                return Err(failure);
+            }
             Err(failure) => failure,
         };
         log::info!("network: {url} failed through the proxy, trying directly: {proxied}");

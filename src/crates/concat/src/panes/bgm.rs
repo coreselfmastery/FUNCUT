@@ -39,12 +39,15 @@ use crate::ui::MusicCardData;
 const PAGE: u32 = 40;
 
 /// What to do with a track once its bytes have arrived.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Then {
     /// Play it through the source preview.
     Preview,
     /// Lay it at the playhead.
     Place,
+    /// Lay it where a drag dropped it: the lane the pointer named, when
+    /// it named one, and the moment it landed on.
+    PlaceAt(Option<String>, f64),
 }
 
 /// Everything that can happen to the page.
@@ -69,6 +72,9 @@ pub enum MusicMsg {
     Searched(Result<Found, String>, bool, u64),
     /// The next page of what the last search found.
     More,
+    /// A card dragged onto the lanes: fetch it if need be, then lay it
+    /// on the lane and at the moment the drop named.
+    Place { id: String, track_id: Option<String>, start: f64 },
     /// A card clicked: preview the track, fetching it first if need be.
     Preview(String),
     /// A card's plus: lay the track at the playhead, fetching it first.
@@ -274,6 +280,9 @@ impl MusicPane {
             }
             MusicMsg::Preview(id) => self.take(id, Then::Preview, studio),
             MusicMsg::Add(id) => self.take(id, Then::Place, studio),
+            MusicMsg::Place { id, track_id, start } => {
+                self.take(id, Then::PlaceAt(track_id, start), studio)
+            }
             MusicMsg::Download => {
                 let Some(dirs) = self.dirs.clone() else {
                     return;
@@ -357,6 +366,9 @@ impl MusicPane {
                     Ok(path) => match then {
                         Then::Preview => studio.preview_file(&id, &name, &path),
                         Then::Place => studio.place_bgm(&name, &id, &path),
+                        Then::PlaceAt(track_id, start) => {
+                            studio.place_bgm_at(&name, &id, &path, track_id, start)
+                        }
                     },
                     Err(error) if error == "cancelled" => {}
                     Err(error) => studio.notify(&tf("bgm.fetchFailed", &[&name, &error]), true),
@@ -428,6 +440,9 @@ impl MusicPane {
             match then {
                 Then::Preview => studio.preview_file(&id, &name, &path),
                 Then::Place => studio.place_bgm(&name, &id, &path),
+                Then::PlaceAt(track_id, start) => {
+                    studio.place_bgm_at(&name, &id, &path, track_id, start)
+                }
             }
             return;
         }
@@ -522,7 +537,28 @@ impl Studio {
     /// finds the copy already there - then cut onto the first lane with
     /// room at the playhead. Selects what it made, as laying a sound or a
     /// stock clip does.
+    /// One result's title and seconds, for the ghost a drag shows while
+    /// it crosses the lanes. `None` when the id is not on the page.
+    pub fn summary(&self, id: &str) -> Option<(String, f64)> {
+        self.results
+            .iter()
+            .find(|track| track.id == id)
+            .map(|track| (track.title.clone(), track.duration))
+    }
+
     pub fn place_bgm(&mut self, name: &str, id: &str, path: &PathBuf) {
+        self.place_bgm_at(name, id, path, None, f64::from(self.playhead.max(0.0)));
+    }
+
+    /// [`Studio::place_bgm`], where a drag dropped the track.
+    pub fn place_bgm_at(
+        &mut self,
+        name: &str,
+        id: &str,
+        path: &PathBuf,
+        track_id: Option<String>,
+        start: f64,
+    ) {
         let media_id = match self.adopt_bgm(name, id, path) {
             Ok(id) => id,
             Err(error) => {
@@ -531,12 +567,21 @@ impl Studio {
             }
         };
         self.close_source();
-        let start = f64::from(self.playhead.max(0.0));
-        let created = self.apply(concat_project::Command::AddClipAtFirstFree {
-            media_id,
-            start,
-            above: false,
-        });
+        let created = match track_id {
+            // A track dragged onto a lane never ripples it - a bed is
+            // layered over the picture, the way a sound card is.
+            Some(track_id) => self.apply(concat_project::Command::AddClip {
+                media_id,
+                track_id,
+                start,
+                ripple: false,
+            }),
+            None => self.apply(concat_project::Command::AddClipAtFirstFree {
+                media_id,
+                start,
+                above: false,
+            }),
+        };
         if let Some(id) = created {
             self.selection = vec![id];
         }

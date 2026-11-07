@@ -77,8 +77,9 @@ the job's status `output` → `media_import` it.
 voiceover is graded before anything else reads it:
 `sense_voice_quality {action: "classify_recording_quality", audio}`. A
 verdict of `home` or `rough` (a high noise floor, SNR under ~12 dB, hum,
-clipping) is repaired FIRST — `remove_hiss_hum_rumble` when its `fixes`
-name a hum, then `sense_audio_repair {action: "enhance_speech"}` (its
+clipping) is repaired FIRST — `sense_voice_quality {action:
+"remove_hiss_hum_rumble", audio}` when its `fixes` name a hum, then
+`sense_audio_repair {action: "enhance_speech"}` (its
 `fixes` name the chain; `targetLufs` picks the platform landing) — and
 the enhanced file the reply's `file` names becomes THE voiceover:
 import that, transcribe that, and run every later analysis
@@ -173,15 +174,20 @@ and meter, music structure, caption alignment — live behind the five
 family tools (`sense_discourse`, `sense_voice_quality`,
 `sense_prosody_style`, `sense_audio_repair`, `sense_captions`), each
 `action` naming one reading. Three of them are wired into the pipeline,
-not left to judgment: `classify_recording_quality` + `enhance_speech` on
-a rough take BEFORE it is analyzed (Phase 1), `detect_music_segments`
-before any BGM is chosen (Phase 4), and `identify_music` as the
-copyright check on a take that already carries music (Phase 4). The
-rest are called where the edit needs them
-(`score_script_quality` before the read, `detect_restarts` +
-`classify_filler_type` for the punch-up, `analyze_music_structure` when
-cutting to music, `align_captions` + `clean_subtitles` before burning
-captions).
+not left to judgment: `sense_voice_quality {action:
+"classify_recording_quality"}` + `sense_audio_repair {action:
+"enhance_speech"}` on a rough take BEFORE it is analyzed (Phase 1),
+`sense_audio_repair {action: "detect_music_segments"}` before any BGM is
+chosen (Phase 4), and `sense_audio_repair {action: "identify_music"}` as
+the copyright check on a take that already carries music (Phase 4). The
+rest are called where the edit needs them, each as its door's `action`
+(`sense_discourse {action: "score_script_quality"}` before the read,
+`sense_discourse {action: "detect_restarts"}` + `sense_discourse
+{action: "classify_filler_type"}` for the punch-up, `sense_prosody_style
+{action: "analyze_music_structure"}` when cutting to music,
+`sense_captions {action: "align_captions"}` + `sense_captions {action:
+"clean_subtitles"}` before burning captions). A bare reading name is
+never a tool - always the door with its action.
 
 **Phase 2 — Tighten the voice.** Feed the silence spans to `clip_cut_spans`
 (remove dead air; `-35` dB threshold, ≥0.5 s spans) — but the Phase-1c

@@ -1126,6 +1126,12 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         let row = state.row_at(y);
         if let Some(plan) = state.plan(payload.as_str(), seconds, row) {
             state.place(&plan);
+        } else if !payload.is_empty() && state.incoming(payload.as_str()).is_some() {
+            // A card the timeline knows, refused where it landed: the lane
+            // is locked, or the timeline has no lanes. Said, rather than
+            // nothing happening - a nothing reads as the drag having
+            // failed, which it did not.
+            state.notify(&crate::i18n::t("timeline.dropRefused"), true);
         }
     }));
     editor.on_band_selected(on_lanes!(
@@ -1574,9 +1580,15 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     {
         let forge = app.global::<crate::ui::Forge>();
         forge.on_forge_start(on_window!(
-            |state, script: SharedString, voice: i32, niche: i32, mood: i32| {
+            |state,
+             script: SharedString,
+             source: i32,
+             voice: i32,
+             niche: i32,
+             mood: i32| {
                 state.handle(Msg::Forge(crate::panes::forge::ForgeMsg::Start {
                     script: script.to_string(),
+                    source,
                     voice,
                     niche,
                     mood,

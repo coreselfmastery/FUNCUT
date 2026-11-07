@@ -10,9 +10,11 @@ so work survives without `project_save`.
 
 ## Jobs (the long work)
 
-`export_start` · `analysis_wait` · `export_wait` · `export_status` · `export_cancel` ·
+`export_start` · `analysis_wait` · `export_wait` · `export_status` ·
 `analyze_scenes` · `analyze_beats` · `analyze_silence` · `transcribe` · `tts_generate` ·
 `models_list` · `models_download`
+(`export_cancel` and `project_close` need `CONCAT_MCP_ALLOW=all` - the
+default surface a director runs on refuses both, deliberately.)
 
 Start tools return `{"job":"jN"}` at once. Wait with `analysis_wait` /
 `export_wait` `{job, timeoutSeconds}` (default 60, max 600; call again while
@@ -57,7 +59,7 @@ rule: surface the pip hint.
 ## Projects and reading
 
 `concat_version` · `project_list` · `project_create {location,name,video?}` ·
-`project_open {path}` · `project_save` · `project_close {path,save}` ·
+`project_open {path}` · `project_save` ·
 `project_set_video` · `project_get {path}` · `timeline_read {path}` ·
 `collision_check {path}` · `plan_validate {plan}` · `media_probe {path}` ·
 `media_import {path,file}` · `effects_list {kind}` (the effect/filter/transition/audio
@@ -196,7 +198,7 @@ where its peak lands) · `magick_status/prepare/search/fetch/add` (shelves:
 `template_list` · `template_instantiate {template, location, name, fills:
 [{mediaId, file}]}` · `export_start {path, output, crf?, preset?, width?,
 height?, rateNum?, rateDen?, codec?, tenBit?, colorRange?, hdr?}` ·
-`export_status` · `export_wait` · `export_cancel`
+`export_status` · `export_wait`
 
 - Export: crf 20 default (63 max, lower = better), preset "medium",
   codec `h264|hevc|av1`. Stages you will see in status: `cutout`, `stabilize`,

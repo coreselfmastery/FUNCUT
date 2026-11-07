@@ -3367,6 +3367,12 @@ export component MediaPane inherits Rectangle {
                         // Effects apply directly on single-click to the selected clip —
                         // auditions:false means click = apply, no monitor overlay confusion.
                         auditions: false;
+                        // And a card DRAGGED to the lanes lands as an effect layer over
+                        // the span it was dropped on - the same layer clip a filter
+                        // leaves, with an effect's own package id. A click still applies
+                        // to the selection; the drag is for the span a selection cannot
+                        // name, and for a timeline with nothing selected.
+                        payload-kind: "filter";
                         applied(id, label) => {
                             if (root.audio-shelf) {
                                 root.apply-audio(id);

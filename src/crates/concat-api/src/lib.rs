@@ -85,9 +85,12 @@ const DEFAULT_PRESET: &str = "medium";
 /// scrub that did not happen. Cheap to clone; every clone is the same
 /// control.
 #[derive(Clone)]
-pub struct PlayheadControl(
-    Arc<dyn Fn(Option<&str>, f64) -> Result<WindowSought, String> + Send + Sync>,
-);
+pub struct PlayheadControl(PlayheadSeek);
+
+/// What [`PlayheadControl`] holds: the project folder the caller means,
+/// if it named one, and a time in seconds, to the window's answer - or
+/// the sentence that says why the playhead did not move.
+type PlayheadSeek = Arc<dyn Fn(Option<&str>, f64) -> Result<WindowSought, String> + Send + Sync>;
 
 impl PlayheadControl {
     /// Makes a control around `seek`: given the project folder the caller

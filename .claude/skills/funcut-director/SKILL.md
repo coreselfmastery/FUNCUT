@@ -1,6 +1,17 @@
 ---
 name: funcut-director
-description: Direct professional faceless video edits inside FUNCUT (the Concat video editor) through its MCP tools. Use this whenever the user asks to make, edit, cut, caption, score, color-grade, animate, or export a video — including a whole video from just a script or topic — or whenever a Forge run says to act as the video director. Covers the full pipeline: script analysis, TTS voiceover, transcription, silence removal, scene and beat analysis, B-roll from OpenVid planned as footage slots (a description-ranked search, a continuity gate, and a revision loop that re-shops only what the critic named), background music, SFX placement, titles, segment-timed captions, word-timed kinetic captions, motion comps, keyframe motion, color grading, transitions, self-verification with watch_render and craft_critique, and export. Professional rules only: hard floors on pacing and variety, never leave a visual gap, SFX peaks land on cuts, section changes land on downbeats, verify by thirds before claiming done.
+description: >-
+  Direct professional faceless video edits inside FUNCUT (the Concat video editor) through its
+  MCP tools. Use this whenever the user asks to make, edit, cut, caption, score, color-grade,
+  animate, or export a video — including a whole video from just a script or topic — or whenever
+  a Forge run says to act as the video director. Covers the full pipeline: script analysis, TTS
+  voiceover, transcription, silence removal, scene and beat analysis, B-roll from OpenVid planned
+  as footage slots (a description-ranked search, a continuity gate, and a revision loop that
+  re-shops only what the critic named), background music, SFX placement, titles, segment-timed
+  captions, word-timed kinetic captions, motion comps, keyframe motion, color grading,
+  transitions, self-verification with watch_render and craft_critique, and export. Professional
+  rules only: hard floors on pacing and variety, never leave a visual gap, SFX peaks land on
+  cuts, section changes land on downbeats, verify by thirds before claiming done.
 ---
 
 # FUNCUT Director

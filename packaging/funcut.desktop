@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=FUNCUT
+Exec=concat %F
+Icon=funcut
+Type=Application
+Categories=AudioVideo;Video;

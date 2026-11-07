@@ -549,11 +549,18 @@ jobs:
           for lib in libxkbcommon.so.0 libxkbcommon-x11.so.0 libxcb-xkb.so.1; do
             cp -L "$(ldconfig -p | awk -v lib="$lib" '$1 == lib { print $NF; exit }')" "$appdir/usr/bin/lib/$lib"
           done
-          cp "$STAGE/concat.desktop" "$appdir/concat.desktop"
-          cp "$STAGE/concat.desktop" "$appdir/usr/share/applications/concat.desktop"
-          cp "$STAGE/concat.png" "$appdir/concat.png"
-          cp "$STAGE/concat.png" "$appdir/usr/share/icons/hicolor/256x256/apps/concat.png"
-          ln -s concat.png "$appdir/.DirIcon"
+          # The AppImage's menu identity comes from packaging/: the FUNCUT
+          # desktop entry and its hicolor icon, checked in beside the build
+          # that ships them. They land at the AppDir root, where appimagetool
+          # reads them, and under usr/share/applications and
+          # usr/share/icons/hicolor, where a desktop that integrates the
+          # AppImage's files finds them - so an installed FUNCUT shows its
+          # name and its icon in the menu, not nothing.
+          cp packaging/funcut.desktop "$appdir/funcut.desktop"
+          cp packaging/funcut.desktop "$appdir/usr/share/applications/funcut.desktop"
+          cp packaging/icons/hicolor/256x256/apps/funcut.png "$appdir/funcut.png"
+          cp packaging/icons/hicolor/256x256/apps/funcut.png "$appdir/usr/share/icons/hicolor/256x256/apps/funcut.png"
+          ln -s funcut.png "$appdir/.DirIcon"
           ln -s usr/bin/concat "$appdir/AppRun"
           # The tool and the runtime it puts at the head of the AppImage,
           # both a named release: left to itself the tool downloads the

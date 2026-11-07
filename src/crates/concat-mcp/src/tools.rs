@@ -450,7 +450,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "sounds_search",
             "Search the sound library",
-            "Search freesound effects by words, category and length; candidates carry ids, durations and licenses.",
+            "Search the bundled CC0 sound shelf (530 effects) by words, category and length; candidates carry ids, durations and licenses.",
             "sounds.search",
             Raw,
         )
@@ -458,7 +458,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "sounds_add",
             "Add a sound",
-            "Add a freesound sound to an open project's bin, and place it on the timeline when asked.",
+            "Add one of the bundled CC0 sounds to an open project's bin, and place it on the timeline when asked.",
             "sounds.add",
             Raw,
         ),

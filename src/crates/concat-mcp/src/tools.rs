@@ -3949,10 +3949,12 @@ fn openvid_search_batch(arguments: Value, backend: &mut dyn Backend) -> Result<O
     Ok(Outcome::json(json!({ "searches": searches })))
 }
 
-/// How wide the ranker's page is: the same pool the rerank scores, wide
-/// enough that the meaning has room to be on it, and wider than any k a
-/// slot asks for.
-const RANK_POOL: usize = 50;
+/// How wide the ranker's page is: the BM25 fetch the ranker shops from,
+/// wide enough that the meaning has room to be on it, and wider than any
+/// k a slot asks for. The CLIP second pass re-reads the front of it; the
+/// tag blend scores the whole width, so a clip the CLIP pass never looked
+/// at can still be promoted by its words.
+const RANK_POOL: usize = 100;
 
 /// The page a slot asks for: a hero slot's first glance earns a wider
 /// answer. An explicit `k` is the caller's; the hero flag only fills the
@@ -4011,7 +4013,12 @@ fn tag_similarity(terms: &[String], caption: &str) -> f64 {
 /// The slot's rich description is the query, so BM25 builds the page and
 /// the CLIP second pass re-orders it by what the clips SHOW - the same
 /// two steps `openvid_search` runs, against better words than a keyword.
-/// The slot's fallback queries blend in at `tag_weight` as Jaccard
+/// The fetch is the front [`RANK_POOL`] of BM25's answer - a hundred,
+/// twice what the CLIP pass re-reads - so the recall the description
+/// pays for reaches past the rerank's own shortlist: the clips the CLIP
+/// pass never looked at still land on the page, where the hard filters
+/// hold them to their promises and the tag blend can promote them. The
+/// slot's fallback queries blend in at `tag_weight` as Jaccard
 /// similarity against each caption, so a clip the description's
 /// shortlist treats well and the queries agree with wins. The hard
 /// filters - `motion_min`, `exclude_ids` - ride the search request and
@@ -4891,6 +4898,28 @@ mod tests {
         }
     }
 
+    /// An index that answers `openvid.search` out of a seeded page,
+    /// honouring the request's `limit` the way the real one does: the
+    /// wider the fetch, the deeper into the seed the page it returns
+    /// reaches. A clip past the limit is never seen, which is exactly the
+    /// recall the pool's width is about - an `Answers` that ignores the
+    /// limit would hand the handler clips it never asked for.
+    struct PagedIndex(std::cell::RefCell<Vec<Value>>, Vec<Value>);
+
+    impl Backend for PagedIndex {
+        fn call(&mut self, request: Request) -> Result<Value, ApiError> {
+            let written = serde_json::to_value(&request).expect("writes");
+            self.0.borrow_mut().push(written.clone());
+            let limit = written["limit"].as_u64().unwrap_or(RANK_POOL as u64) as usize;
+            let clips: Vec<Value> = self.1.iter().take(limit).cloned().collect();
+            Ok(json!({ "total": self.1.len(), "clips": clips }))
+        }
+
+        fn describe(&self) -> Value {
+            json!({ "mode": "test" })
+        }
+    }
+
     /// `openvid_rank_for_slot` refuses to shop for a slot that cannot say
     /// what it wants: an empty, whitespace or absent description is an
     /// error naming itself, not a quiet fallback to the queries.
@@ -5087,6 +5116,98 @@ mod tests {
         assert_eq!(tag_similarity(&terms, "a city skyline at dusk"), 0.5);
         assert!(tag_similarity(&terms, "waves on a beach") < 0.2);
         assert_eq!(tag_similarity(&[], "anything"), 0.0);
+    }
+
+    /// The widened fetch is the recall it promised: one hundred clips
+    /// seeded, the correct one at BM25 rank 50 - the last row of the old
+    /// fifty-wide page, where its sliding rank score was zero and it
+    /// could not surface - is fetched by the hundred-wide pool, survives
+    /// the hard filters, and the re-rank blend carries it into the
+    /// returned top ten. The hard filters stay ahead of the ranking:
+    /// `exclude_ids` and `motion_min` ride the request, and what the page
+    /// carries anyway is dropped before the blend scores it. Every clip
+    /// carries a `localPath`, so the CLIP half needs no `openvid.fetch`
+    /// round trips - and with no real frames behind those paths the
+    /// sidecar itself declines, which leaves the page in BM25 order for
+    /// the blend to reorder.
+    #[test]
+    fn a_hundred_wide_fetch_promotes_bm25_rank_fifty_into_the_top_ten() {
+        let clips: Vec<Value> = (1..=100_i64)
+            .map(|id| {
+                let caption = if id == 50 {
+                    "slow aerial drift across city skyline dusk".to_owned()
+                } else {
+                    format!("macro water droplet number {id} on green leaf")
+                };
+                // Two clips sit under the floor the test sends, so the
+                // handler's second-stage filter has something to drop.
+                let motion = if id == 4 || id == 5 { 0.5 } else { 2.0 };
+                json!({
+                    "id": id,
+                    "caption": caption,
+                    "motion": motion,
+                    "localPath": format!("/tmp/openvid/never-rendered-{id}.mp4"),
+                })
+            })
+            .collect();
+        let mut backend = PagedIndex(std::cell::RefCell::new(Vec::new()), clips);
+        let outcome = openvid_rank_for_slot(
+            json!({
+                "description": "a slow aerial drift across the city skyline at dusk",
+                "queries": ["city skyline aerial"],
+                "exclude_ids": [1, 2, 3],
+                "motion_min": 1.5,
+            }),
+            &mut backend,
+        )
+        .expect("ranks");
+        assert!(!outcome.is_error);
+        let reply = outcome.structured.expect("structured");
+
+        // The fetch is the hundred the widening promised, with the hard
+        // filters riding under their API names.
+        let calls = backend.0.borrow();
+        assert_eq!(calls.len(), 1, "one search; the localPaths need no fetches");
+        assert_eq!(calls[0]["method"], "openvid.search");
+        assert_eq!(
+            calls[0]["limit"],
+            json!(RANK_POOL),
+            "the fetch is as wide as the pool"
+        );
+        assert_eq!(
+            calls[0]["excludeIds"],
+            json!([1, 2, 3]),
+            "the used ids ride the request"
+        );
+        assert_eq!(calls[0]["minMotion"], 1.5, "the floor rides the request");
+
+        // The filters held ahead of the ranking: the excluded ids and the
+        // two under the floor are gone from the page the blend scored.
+        let ranked = reply["clips"].as_array().expect("clips").clone();
+        let ids: Vec<i64> = ranked.iter().filter_map(|c| c["id"].as_i64()).collect();
+        for gone in [1, 2, 3, 4, 5] {
+            assert!(
+                !ids.contains(&gone),
+                "clip {gone} is filtered before ranking"
+            );
+        }
+
+        // And the correct clip - BM25 rank 50, the last row the old
+        // fifty-wide fetch ever saw - returns inside the top ten.
+        let position = ranked
+            .iter()
+            .position(|c| c["id"].as_i64() == Some(50))
+            .expect("the correct clip is on the returned page");
+        let slot_rank = ranked[position]["slotRank"].as_i64().expect("slotRank");
+        assert_eq!(
+            slot_rank,
+            (position + 1) as i64,
+            "slotRank numbers the list"
+        );
+        assert!(
+            slot_rank <= 10,
+            "BM25 rank 50 promotes to slotRank {slot_rank}, not the top ten"
+        );
     }
 
     /// The continuity gate, as the tool: a warm-to-cool pair and a

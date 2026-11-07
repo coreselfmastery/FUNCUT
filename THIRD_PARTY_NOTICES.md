@@ -374,6 +374,21 @@ attribution table — including sources that informed the distilled layer only
 `.claude/skills/maestro/NOTICE.md`; the upstream-drift pins for re-syncing
 the vendor live in `scripts/maestro/` (see `scripts/maestro/README.md`).
 
+## The clip-skills skill (editing craft for agents)
+
+**clip-skills** (https://github.com/appergb/ClipSkills), by appergb, is a
+bilingual (Chinese body, English triggers) editing-craft skill for AI
+agents: where to cut, how to shape the audio spine, B-roll matching,
+pacing, grading workflow, voice processing and export numbers. This
+repository redistributes it at `.claude/skills/clip-skills/`, vendored at
+upstream commit `4d85c26` **plus** a documented FUNCUT delta (the
+`editor-funcut.md` execution guide and three added knowledge modules —
+subtitles, transitions, voice — the same delta
+`.claude/skills/clip-skills/NOTICE.md` lists). Upstream text is **MIT**
+(`.claude/skills/clip-skills/LICENSE.txt`); the FUNCUT-authored additions
+are AGPL-3.0-or-later with the rest of this repository. The upstream
+drift pin for re-syncing the vendor lives in `scripts/clipskills/`.
+
 ## The voice-signal crates (linked into the `voice-signals` binary)
 
 The `voice_signals` sense tool's Rust half links four analysis crates and a

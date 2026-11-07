@@ -18,11 +18,19 @@ match) while you warn the user that its licence is unknown. A dry take
 
 `bgm_search` (shelves: freepd 1,025 CC0 tracks; lofi 166, free for
 non-commercial use only; a search that
-names no shelf searches whichever are ready). Match by:
+names no shelf searches whichever are ready). The words come from the
+read, not from you: every line of the Phase-1b extract carries
+`bgmWords` — two queries its emotion and act want, the second a shelf
+category the search always matches (`upbeat`, `epic`, `horror`,
+`scoring`…). Start from the arc's dominant line's `bgmWords[0]`; if the
+shelf answers thin, `bgmWords[1]` is the guaranteed hit. What this page
+adds on top of the code's words:
 
-- **Niche register**: finance/tech → clean electronic, minimal keys;
-  motivation → building orchestral or hybrid; documentary → sparse
-  piano/strings; history → era-adjacent; gaming → synth energy.
+- **Register**: finance/tech → keep the code's words but lean minimal
+  keys; motivation → building orchestral or hybrid; documentary →
+  sparse piano/strings; history → era-adjacent; gaming → synth energy.
+  A register nudges the choice among candidates, it does not override
+  the emotion's words.
 - **Length vs runtime**: the track must outlast the piece or loop
   gracefully; `maxSeconds` filters at search.
 - **Vocal-free** for narration pieces, always.

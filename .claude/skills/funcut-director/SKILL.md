@@ -205,10 +205,14 @@ its **mode** (`reel` ≤ 60 s or `longform`), its **sections** by role
 visual (B-roll query or a motion comp), its **cutType**, its **in/out**
 entrance and exit, its `transitionIn` at section changes, its SFX with the
 time its PEAK must land on, its caption style, and the **grade** (required —
-a video with no grade is a rough cut, not a finished piece). Segments under
+a video with no grade is a rough cut, not a finished piece). Consult
+clip-skills' audio-driven cutting module. The cut lands on the emphasis
+word and the beat, not the line boundary. Segments under
 a voiceover also carry the Phase-1b read — **emotion, act, easing,
 colourTemp, duckDb** — copied from the extract's lines (the schema documents
-them, the example shows them); they are what Phases 4–6 answer to. Put the
+them, the example shows them); they are what Phases 4–6 answer to. Consult
+maestro's shot cards for scale, motion, and register. Pick the card that
+matches the beat's emotion and act. Put the
 Phase-0 brief in `plan.creativeBrief`. **The plan also carries the
 `signalLog` — the decision log**: one entry per cut, caption highlight,
 graphic, BGM choice and transition, naming the Phase-1c signals that drove
@@ -266,7 +270,9 @@ report: this voiceover embeds a music track whose licence is unknown;
 confirm the rights or replace the take before publishing. Only a take
 that answers `musicPresent: false` gets the BGM searches below.
 
-**When the plan carries slots, shop the slot, not the keyword.** For
+**When the plan carries slots, shop the slot, not the keyword.** Consult
+clip-skills' B-roll matching module. The B-roll reinforces the line's job
+(contrast / punctuate / breathe), not its literal content. For
 each `broll` slot, in plan order: `openvid_rank_for_slot {description:
 <the slot's description, verbatim>, queries, hero, motion_min,
 exclude_ids: <every clip id this edit has already chosen>}`. The

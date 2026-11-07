@@ -182,7 +182,9 @@ over real footage, documented with the perception tools below:
 - `captions_animate` - a measured word-timed transcript as one caption
   video: lines by the caption rules, each line a kinetic comp, baked and
   encoded in one call. This is the word-synced caption path; the
-  timeline's own `captions_add` stays segment-timed.
+  timeline's own `captions_add` stays segment-timed. The canvas follows
+  the `project`'s own frame when one is named (the way a bake's does);
+  a caller that names neither gets the reel default, 1080x1920.
 - `motion_reel` - a whole storyboard as one reel: several scenes (preset
   or comp file each, with `ops`, `at`, `hold`), **multi-layer scenes** -
   a scene's `layers` stack bottom first, plates under the comp and, with

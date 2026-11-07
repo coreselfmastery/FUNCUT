@@ -1299,15 +1299,28 @@ pub fn captions_animate(arguments: Value, backend: &dyn Backend) -> Result<Outco
             "invalid arguments: `words` holds at least one word",
         ));
     }
+    // The caption canvas follows the project the way a bake's does: a
+    // caller that names a `project` gets its own frame, read from its
+    // document, so a 16:9 edit's captions are not a vertical reel's
+    // default. A caller that names neither keeps the reel default -
+    // caption video is short-form, and the library's reels are portrait
+    // unless the caller says otherwise.
+    let frame = fields
+        .get("project")
+        .and_then(Value::as_str)
+        .map(Path::new)
+        .and_then(frame_of);
     let width = fields
         .get("width")
         .and_then(Value::as_u64)
         .map(|value| value as u32)
+        .or(frame.map(|(width, _)| width))
         .unwrap_or(1080);
     let height = fields
         .get("height")
         .and_then(Value::as_u64)
         .map(|value| value as u32)
+        .or(frame.map(|(_, height)| height))
         .unwrap_or(1920);
     let fps = fields
         .get("fps")

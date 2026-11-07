@@ -15,6 +15,15 @@ the Lottie engine; the adapter is for when the motion should become *document* â
 editable, lintable, fillable by a slot, baked by whichever engine the project
 prefers.
 
+## The MCP door
+
+The `motion_import` MCP tool is the door an agent uses (on the director's
+default surface): `action: "lottie"` with `file` reads a bodymovin JSON and
+writes the comp under the project's `comps/`; `action: "gsap"` with `timeline`
+applies a GSAP-style timeline to a preset or comp and writes the animated
+result as a new comp. Both replies carry the comp's summary and the notes,
+with `skipped` counted, so nothing converts silently over MCP either.
+
 ## The command line
 
 ```text

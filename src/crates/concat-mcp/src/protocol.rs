@@ -248,6 +248,8 @@ pub(crate) const DIRECTOR_ALLOWLIST: &[&str] = &[
     "motion_bake",
     "motion_reel",
     "motion_overlay",
+    // Motion made elsewhere, read here: the Lottie and GSAP doors.
+    "motion_import",
     // Verify and export.
     "preview_frame",
     "watch_render",

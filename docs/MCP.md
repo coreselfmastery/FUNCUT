@@ -132,11 +132,12 @@ carries its JSON result in the status's `output`:
   status.
 
 The motion layer - the design door the director skill's Phase 5b assumes -
-is fourteen tools: ten thin wrappers over the `concat-motion` crate here (the same
+is fifteen tools: ten thin wrappers over the `concat-motion` crate here (the same
 vocabulary the `concat-motion-agent` CLI speaks), `geneva_explain` for the
 engine's own diagnostic codes, `motion_farm_progress` for reading a farmed
 render's progress live, `motion_farm_cloud` for the farm's legs on object
-storage, plus `motion_overlay`, the compositing path
+storage, `motion_import` for motion made elsewhere (Lottie and GSAP), plus
+`motion_overlay`, the compositing path
 over real footage, documented with the perception tools below:
 
 - `motion_presets` - the eighteen motion-graphics presets (lower thirds,
@@ -148,6 +149,15 @@ over real footage, documented with the perception tools below:
 - `motion_inspect` - what is in a comp before it is touched: nodes, spans,
   animated properties, slots, validation problems; an optional `ops` batch
   is applied first, so an edit can be checked before it bakes.
+- `motion_import` - motion made elsewhere, read here, nothing converting
+  silently. `action: "lottie"` turns a bodymovin JSON (the After Effects
+  export, the LottieFiles download) into a comp under the project's
+  `comps/`; `action: "gsap"` applies a GSAP-style timeline to a comp the
+  project already holds (or a preset) and writes the animated result as a
+  new one. The reply carries the comp's summary and the adapter's notes -
+  every skip, approximation and clamp in the adapter's own words, with
+  `skipped` counted - because a conversion that does not say what it lost
+  is a logo that comes back wrong.
 - `scene_analysis` - the comp read as an engineer reads it, before a frame
   is drawn: the census (nodes by kind, animated against static, keyframes,
   curves, depth), the timing (coverage of the comp's span, the gaps),
@@ -584,7 +594,7 @@ Tools are named for what they do, and their argument schemas are generated from 
 | Speech | `transcribe`, `tts_generate`, `models_list`, `models_download` |
 | Anything else | `edit_apply` (any edit command, or a batch of them as one undo step), `edit_undo`, `edit_redo` |
 | Templates | `template_list`, `template_instantiate` |
-| Motion design | `motion_presets`, `motion_inspect`, `scene_analysis`, `motion_frame`, `motion_preview`, `motion_bake`, `motion_overlay`, `captions_animate`, `motion_reel`, `motion_probe`, `scene_timeline`, `motion_farm_cloud` |
+| Motion design | `motion_presets`, `motion_inspect`, `motion_import`, `scene_analysis`, `motion_frame`, `motion_preview`, `motion_bake`, `motion_overlay`, `captions_animate`, `motion_reel`, `motion_probe`, `scene_timeline`, `motion_farm_cloud` |
 | Export | `export_start`, `export_status`, `export_wait` (with progress), `export_cancel` |
 | Looking | `preview_frame` (the composited frame as an image) |
 | Perception and the creative loop | `creative_brief`, `stock_contact_sheet`, `watch_render`, `craft_critique`, `suggest_cuts`, `measure_loudness`, `track_subject`, `local_vlm`, `emotion` |
@@ -614,7 +624,7 @@ For scripts that do not speak MCP, the same API is served as JSON-RPC lines on a
 Three switches - two off by default for a server started bare, and the allowlist already on for the server this repository's own `.forge/mcp.toml` declares:
 
 - **`--mcp-read-only`** (binary) or **`CONCAT_MCP_READ_ONLY=1`** (the app's `concat --mcp` and anything else that starts it): every tool that changes something is refused by name - an edit, an export, a stock import, the reel's render half. The reads stay, and `motion_reel` keeps its look halves (`plan`, `frame`, `sheet`): they change nothing outside the project's cache, and taking them away takes away the only way to see a design before committing to it.
-- **`--mcp-allow a,b,c|all`** (binary), **`--full-tools`** (binary) or **`CONCAT_MCP_ALLOW=a,b,c|all`**: the only tools this server serves - in `tools/list` and at `tools/call` alike. A tool not on the list is neither listed nor called, as if it were not there: the surface served is what the operator said, not what the build happens to carry. An operator who sets no list gets the **director's default** - 98 of the 108 tools, the creative loop the funcut-director skill documents plus its remedies (the library prepares, the model downloads) and the five sense family doors, the footage layer's two included (`openvid_rank_for_slot`, `footage_continuity`) and the playhead (`timeline_seek`); the ten left off are the ones a director never calls by surprise (`project_close`, `export_cancel`, the farm pair, the specialist motion reads, `track_subject`, `geneva_explain`). `CONCAT_MCP_ALLOW=all` (or `--full-tools`, or `--mcp-allow all`) serves the whole catalogue. `.forge/mcp.toml` starts the repo's own server with the director's list already set (its `[servers.transport.env]` table), and carries both that list and the whole-catalogue list as comments, ready to paste for a server started by hand.
+- **`--mcp-allow a,b,c|all`** (binary), **`--full-tools`** (binary) or **`CONCAT_MCP_ALLOW=a,b,c|all`**: the only tools this server serves - in `tools/list` and at `tools/call` alike. A tool not on the list is neither listed nor called, as if it were not there: the surface served is what the operator said, not what the build happens to carry. An operator who sets no list gets the **director's default** - 99 of the 109 tools, the creative loop the funcut-director skill documents plus its remedies (the library prepares, the model downloads) and the five sense family doors, the footage layer's two included (`openvid_rank_for_slot`, `footage_continuity`) and the playhead (`timeline_seek`); the ten left off are the ones a director never calls by surprise (`project_close`, `export_cancel`, the farm pair, the specialist motion reads, `track_subject`, `geneva_explain`). `CONCAT_MCP_ALLOW=all` (or `--full-tools`, or `--mcp-allow all`) serves the whole catalogue. `.forge/mcp.toml` starts the repo's own server with the director's list already set (its `[servers.transport.env]` table), and carries both that list and the whole-catalogue list as comments, ready to paste for a server started by hand.
 - **Per-tool timeouts**: every tool carries its own limit (`Tool::timeout_secs` - the VLM download and the overlay encode 1200 s, transcribe 900 s, exports and the sense family 600 s, the renders and watches 300 s, everything else 60 s), and a call that outlives it is cancelled and answered for at the deadline, with the limit in the message. The client-side `call_timeout_secs` stays as the ceiling over all of them; the engine's own calls are bounded a second time, per call, by the Geneva guard (see `docs/MOTION.md`).
 
 ## The reel contact sheet

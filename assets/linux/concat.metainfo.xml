@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Concat's AppStream metainfo: what GNOME Software, Discover and the
+     Flathub-style catalogs read. The id matches the .desktop file's name
+     (concat.desktop), which is what the spec says a desktop-application
+     component's id must match; the screenshots point at upstream's site,
+     which hosts them for every release.
+
+     A new release: add a <release> block here, with the version and the
+     date, and a paragraph a person can read. The version numbers come
+     from src/Cargo.toml's workspace version (the release workflow's own
+     version step is the source of truth for the tag).
+-->
+<component type="desktop-application">
+  <id>concat</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-or-later</project_license>
+  <name>Concat</name>
+  <summary>Free and open source video editor</summary>
+  <description>
+    <p>
+      Concat is a free, open source video editor and a CapCut alternative
+      for Linux. It covers what people actually open CapCut for:
+      auto-captions, text-to-speech, background removal, keyframe
+      animation, effects and titles, multi-track cutting, 4K export.
+      With none of the catches: no watermark, no account, no
+      subscription, no upload.
+    </p>
+    <p>
+      Everything runs locally on a native Rust engine with a GPU
+      compositor. Install it, drop in footage, cut. The AI models for
+      captions, voices and cutout download once and work offline after
+      that. Your footage never leaves your disk.
+    </p>
+  </description>
+  <launchable type="desktop-id">concat.desktop</launchable>
+  <url type="homepage">https://concatenate.pages.dev</url>
+  <url type="bugtracker">https://github.com/jub0t/Concat/issues</url>
+  <url type="donation">https://github.com/sponsors/jub0t</url>
+  <developer_name>Concat contributors</developer_name>
+  <content_rating type="oars-1.1" />
+  <categories>
+    <category>AudioVideo</category>
+    <category>Video</category>
+  </categories>
+  <requires>
+    <!-- The memory the editor itself needs; the models it downloads
+         want more, and the fork's small-machine notes measure both. -->
+    <memory>2048</memory>
+  </requires>
+  <releases>
+    <release version="0.2.8" date="2026-10-23">
+      <description>
+        <p>Auto-captions with local Whisper, text-to-speech with free
+           local voices, background removal, keyframes, 327 GPU-rendered
+           effects, filters and transitions, multi-track cutting and 4K
+           export; a built-in MCP server for AI agents.</p>
+      </description>
+    </release>
+  </releases>
+</component>

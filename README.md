@@ -18,7 +18,9 @@
 > measured pipeline, the vendored maestro design judgment and clip-skills
 > editing craft riding beside it, and a Forge page
 > in the editor that starts a whole faceless video with one click. Stock
-> (937,957 clips), music (1,025 CC0 tracks + 166 MobyGratis, non-commercial only), sounds (530, incl. a 100-sound Hollywood trailer pack) and stickers
+> (937,957 clips — the OpenVid **research dataset**, not rights-cleared stock:
+> [docs/STOCK_LICENSING.md](docs/STOCK_LICENSING.md)), music (1,025 CC0 tracks + 166 MobyGratis,
+> **non-commercial only — never in monetized or client work**), sounds (530, incl. a 100-sound Hollywood trailer pack) and stickers
 > (1,285 MIT-licensed Fluent Emoji) are all searched locally and fetched per use. The complete
 > verified inventory — every tool, page, engine and model, read from the
 > source — is [docs/FEATURES.md](docs/FEATURES.md); the fork's change
@@ -64,13 +66,23 @@ Everything runs locally on a native Rust engine with a GPU compositor. Install i
 ## Highlights
 
 - 🚫 **No watermarks. No account. No paywall.** Ever.
-- 🔒 **100% local.** Nothing uploads. Works offline.
+- 🔒 **100% local.** Your footage never leaves your disk, and the editor
+  works offline. One exception, said plainly: the *hosted* AI features -
+  the emotion reading's cloud model, the vision critic's hosted rung,
+  Forge's LLM - send what you give them to the provider you configure
+  ([docs/VLM.md](docs/VLM.md), [docs/EMOTION.md](docs/EMOTION.md)).
 - 💬 **Auto-captions.** Local Whisper. Pick a model size, get styled captions on the timeline.
 - 🗣️ **Text-to-speech + voice cloning.** Free local voices, or any voice from a few seconds of a recording.
 - 🧍 **Background removal.** People, objects, or paint the mask yourself.
 - 🎞️ **Keyframes.** Position, scale, rotation, opacity, volume, effect parameters. Curve editor built in.
 - ✨ **327 effects, filters, transitions and audio packages** — including a 100-pack of viral transitions (zooms, whips, glitches, shape reveals, flashes) and a 100-pack of effects (light, retro tape, distortion, particles, stylise). GPU-rendered, live in the preview, FFmpeg fallbacks for export without a GPU.
-- 🎵 **A music library that costs nothing to hold.** 1,191 background tracks on two shelves - 1,025 whole-track CC0 from FreePD (Kevin MacLeod and friends) and 166 from Moby's MobyGratis instrumentals (free for non-commercial use only) - searched locally, fetched one track at a time. The Lo-Fi pack's 554 MB zip is never downloaded: each of its tracks is one ranged read of exactly that track's span.
+- 🎵 **A music library that costs nothing to hold — with one licence to
+  read first.** 1,191 background tracks on two shelves - 1,025 whole-track
+  CC0 from FreePD (Kevin MacLeod and friends) and 166 from Moby's
+  MobyGratis instrumentals (**free for non-commercial use only — never in
+  monetized or client work**) - searched locally, fetched one track at a
+  time. The Lo-Fi pack's 554 MB zip is never downloaded: each of its
+  tracks is one ranged read of exactly that track's span.
 - ✂️ **Cut fast.** Split, trim, ripple, merge, freeze frame, speed. Magnetic timeline if you want it.
 - 🎚️ **Multi-track, multi-timeline.** Overlays and picture-in-picture: stack video, stills and titles on as many tracks as you like. Several cuts in one project. Blend modes (screen, add, multiply…), crop, flips.
 - 📝 **Titles.** Fonts, stroke, shadow, background plate. Presets to start from.

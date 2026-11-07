@@ -26,8 +26,8 @@ with one click.
 | Text presets | 31 named + default | `src/crates/concat/text-presets/` |
 | Motion presets | 18 | `src/crates/concat-motion/src/presets.rs` |
 | Bundled CC0 sounds | 530 (16 MB, 12 categories; 110 of them designed in-repo — the 100-sound Hollywood pack and ten risers and sweeps) | `audio/` |
-| BGM library | 1,025 CC0 tracks (FreePD) + 166 MobyGratis (non-commercial only) | fetched on demand |
-| Stock clips (OpenVid) | 937,957 | ~435 MB local index, fetched per clip |
+| BGM library | 1,025 CC0 tracks (FreePD) + 166 MobyGratis (**non-commercial only**) | fetched on demand |
+| Stock clips (OpenVid) | 937,957 — the OpenVid-1M **research dataset**, not rights-cleared stock | ~435 MB local index, fetched per clip |
 | Stickers | 1,285 (Fluent Emoji, MIT) | ~135 KB index, fetched per sticker |
 | Bundled fonts | 41 title faces + 6 script fallbacks + UI face | `src/crates/concat-text/src/lib.rs` |
 | UI languages | 26 | `src/crates/concat/src/i18n.rs` |
@@ -123,16 +123,22 @@ Everything upstream Concat is, verified in this tree:
 
 Nothing here is bundled whole; indexes download once, media arrives per pick.
 
-- **OpenVid stock footage — 937,957 clips** with captions and quality
+- **OpenVid stock footage — 937,957 clips, a research dataset, not
+  rights-cleared stock.** The clips carry captions and quality
   numbers (aesthetic, motion, temporal consistency, camera motion), searched
   locally (SQLite FTS5 BM25 with stop-word drop and concept fallback), frame
   sizes measured from each clip's own MP4 header, and a semantic second pass:
   a local MobileCLIP2-S0 model re-orders >10-match relevance pages by what
   the clips actually **show**. `openvid_search_batch` shops a whole plan's
-  B-roll in one call. See [docs/STOCK_LICENSING.md](STOCK_LICENSING.md).
-- **Music — 1,025 CC0 tracks + 166 non-commercial**: FreePD (Kevin MacLeod
+  B-roll in one call. The library is the OpenVid-1M text-video research
+  dataset: no per-clip licence metadata, no model or property releases -
+  fine for internal and prototype work, verify-and-clear for monetised or
+  client work, and the person clips are never for endorsements. See
+  [docs/STOCK_LICENSING.md](STOCK_LICENSING.md).
+- **Music — 1,025 CC0 tracks + 166 NON-COMMERCIAL (read that half
+  before shipping anything monetised)**: FreePD (Kevin MacLeod
   and friends, 1,025, whole-track CC0) and Moby's MobyGratis instrumentals
-  as OpenLo-Fi (166, free for non-commercial use only — never in monetized
+  as OpenLo-Fi (166, free for **non-commercial use only** — never in monetized
   or client work) — a Lo-Fi
   track is one ranged read of exactly its span out of the 554 MB zip. See
   [docs/BGM.md](BGM.md).

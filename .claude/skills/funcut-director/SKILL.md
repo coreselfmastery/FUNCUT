@@ -244,7 +244,9 @@ feels like — the fallback `queries` (keywords only: the description is
 the ranked contract, the queries are what BM25 gets), `hero` (the shot
 the thumbnail and the first glance live on), `motionMin` (the least
 motion the slot may carry — a `breathe` slot wants stillness, a
-`punctuate` slot the opposite) and `durationS`. Derive the slot list
+`punctuate` slot the opposite) and `durationS`. Consult maestro's shot
+cards for scale, motion, and register. Pick the card that matches the
+beat's emotion and act. Derive the slot list
 where the engine's `suggest_footage` read would find it: the spans no
 words cover, the stretches no beat lands in — the Phase-1 readings
 already measured both. `plan_validate` holds the slot laws beside the
@@ -279,7 +281,9 @@ exclude_ids: <every clip id this edit has already chosen>}`. The
 description is the contract — BM25 builds the page, the CLIP second
 pass re-orders it by what the clips SHOW, and the queries blend in as
 Jaccard similarity at `tag_weight` (0.3 by default: the description
-leads, the queries keep it honest). The hard filters are promises, not
+leads, the queries keep it honest). Consult clip-skills' B-roll matching
+module. The B-roll reinforces the line's job (contrast / punctuate /
+breathe), not its literal content. The hard filters are promises, not
 hopes: `motion_min` and `exclude_ids` ride the search request and are
 enforced again on what lands — a used clip or one under the floor is
 not ranked lower, it is not there. A `hero` slot asks for thirty

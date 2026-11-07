@@ -3949,10 +3949,11 @@ fn openvid_search_batch(arguments: Value, backend: &mut dyn Backend) -> Result<O
     Ok(Outcome::json(json!({ "searches": searches })))
 }
 
-/// How wide the ranker's page is: the same pool the rerank scores, wide
-/// enough that the meaning has room to be on it, and wider than any k a
-/// slot asks for.
-const RANK_POOL: usize = 50;
+/// How wide the ranker's page is: BM25's recall, twice the pool the
+/// rerank scores - a clip whose caption words the description missed can
+/// still reach the CLIP pass from deep in the page - and wider than any
+/// k a slot asks for.
+const RANK_POOL: usize = 100;
 
 /// The page a slot asks for: a hero slot's first glance earns a wider
 /// answer. An explicit `k` is the caller's; the hero flag only fills the
@@ -4011,6 +4012,9 @@ fn tag_similarity(terms: &[String], caption: &str) -> f64 {
 /// The slot's rich description is the query, so BM25 builds the page and
 /// the CLIP second pass re-orders it by what the clips SHOW - the same
 /// two steps `openvid_search` runs, against better words than a keyword.
+/// The page BM25 builds is [`RANK_POOL`] wide, twice what the CLIP pass
+/// scores, so a clip the words alone would rank fiftieth still reaches
+/// the seeing half, and the seeing can overrule the words.
 /// The slot's fallback queries blend in at `tag_weight` as Jaccard
 /// similarity against each caption, so a clip the description's
 /// shortlist treats well and the queries agree with wins. The hard
@@ -5087,6 +5091,110 @@ mod tests {
         assert_eq!(tag_similarity(&terms, "a city skyline at dusk"), 0.5);
         assert!(tag_similarity(&terms, "waves on a beach") < 0.2);
         assert_eq!(tag_similarity(&[], "anything"), 0.0);
+    }
+
+    /// The recall is wider than the pool the CLIP pass scores: BM25's page
+    /// is a hundred clips, so one ranked fiftieth - deep enough that the
+    /// words alone would keep it out of every answer - is still on the
+    /// page the CLIP pass re-orders, and the seeing half can lift it into
+    /// the answer's front. The CLIP half runs stubbed, through
+    /// `FUNCUT_PYTHON` pointing at a script that answers this test's one
+    /// query with the fiftieth clip first - the verdict the real model
+    /// returns when the frames show what the description asks for - and
+    /// hands every other interpreter call to the real one, so nothing
+    /// else is misled. The guard puts the environment back even when an
+    /// assert fails.
+    #[test]
+    fn a_clip_ranked_fiftieth_in_bm25_is_promoted_by_the_clip_rerank() {
+        // A hundred clips in BM25 order, none of whose captions share a
+        // word with the description: the blend's tag half scores zero for
+        // every clip, so the answer's order is the rerank's order alone.
+        let clips: Vec<Value> = (1..=100)
+            .map(|id| {
+                json!({
+                    "id": id,
+                    "caption": format!("filler clip number {id} plain"),
+                    "motion": 2.0,
+                    "seconds": 2.0,
+                    "localPath": format!("/tmp/funcut-rank-test/{id}.mp4"),
+                })
+            })
+            .collect();
+        let mut backend = Answers(
+            std::cell::RefCell::new(Vec::new()),
+            [json!({ "total": 100, "clips": clips })].into(),
+        );
+
+        let dir = std::env::temp_dir().join(format!("funcut-rerank-stub-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a stub dir");
+        let stub = dir.join("python-stub.sh");
+        std::fs::write(
+            &stub,
+            r#"#!/bin/sh
+# A FUNCUT_PYTHON stub for one test: this test's rerank query is answered
+# with a fixed CLIP order (clip 50 first); anything else goes to the real
+# interpreter, stdin intact.
+spec=$(cat)
+case "$spec" in
+  *"a slow aerial drift across the city skyline at dusk"*)
+    printf '{"order":[50],"scored":50,"ms":1}'
+    ;;
+  *)
+    printf '%s' "$spec" | python3 "$@"
+    ;;
+esac
+"#,
+        )
+        .expect("the stub writes");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755))
+                .expect("the stub is runnable");
+        }
+
+        // FUNCUT_PYTHON is process-wide, so the guard takes it back out
+        // and removes the stub whether the test passes, fails or panics.
+        struct Restore(std::path::PathBuf);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                unsafe { std::env::remove_var("FUNCUT_PYTHON") };
+                let _ = std::fs::remove_file(&self.0);
+            }
+        }
+        let _restore = Restore(stub.clone());
+        unsafe { std::env::set_var("FUNCUT_PYTHON", &stub) };
+
+        let outcome = openvid_rank_for_slot(
+            json!({
+                "description": "a slow aerial drift across the city skyline at dusk",
+                "queries": ["city skyline aerial"],
+            }),
+            &mut backend,
+        )
+        .expect("ranks");
+        let reply = outcome.structured.expect("structured");
+
+        // The recall rode the request: a hundred wide, twice the pool the
+        // CLIP pass scores.
+        let calls = backend.0.borrow();
+        assert_eq!(calls[0]["method"], "openvid.search");
+        assert_eq!(calls[0]["limit"], json!(RANK_POOL));
+        assert_eq!(calls[0]["limit"], json!(100));
+
+        // The CLIP pass ran, and its verdict leads the answer: clip 50,
+        // ranked fiftieth by the words, sits at the front of the top ten.
+        assert_eq!(reply["rerank"]["applied"], json!(true), "{reply}");
+        let answer = reply["clips"].as_array().expect("clips");
+        let position = answer
+            .iter()
+            .position(|clip| clip["id"] == json!(50))
+            .expect("the fiftieth clip is in the answer");
+        assert!(
+            position < 10,
+            "clip 50 sits at answer position {position}, not the top ten: {answer:?}"
+        );
+        assert_eq!(answer[0]["id"], json!(50));
+        assert_eq!(answer[0]["slotRank"], json!(1));
     }
 
     /// The continuity gate, as the tool: a warm-to-cool pair and a

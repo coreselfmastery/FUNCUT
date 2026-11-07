@@ -1288,6 +1288,7 @@ dependencies = [
  "concat-api",
  "concat-motion",
  "concat-server",
+ "geneva-adapter",
  "png 0.17.16",
  "serde_json",
  "tempfile",

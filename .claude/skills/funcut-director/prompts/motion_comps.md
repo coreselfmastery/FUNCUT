@@ -21,7 +21,7 @@ becomes a comp (`funcut.ticker.count`, `funcut.chart.bars`, `funcut.stats.tripty
 `funcut.compare.split`) — never a plain text card. A piece whose only design is its captions has
 not been through this layer.
 
-1. **A library preset that is already close.** Twelve exist; filling a slot is three fields and the
+1. **A library preset that is already close.** Eighteen exist; filling a slot is three fields and the
    result will look designed. **Edit it anyway** — its copy, its timing, one element removed.
 2. **A preset plus operations** — retime it, re-word it, slide it, re-colour it, delete what this edit
    does not need, `pop` what should arrive with weight.
@@ -58,7 +58,7 @@ becomes a five-layer scene nobody can read; the router exists so that cannot hap
 
 **Five decisions, before the first operation** (the whole of `motion` §4):
 
-1. **The idea** — one sentence the piece proves. *"Here are the twelve presets"* is not one.
+1. **The idea** — one sentence the piece proves. *"Here are the eighteen presets"* is not one.
 2. **One accent colour**, present in every scene, over under ~10% of the frame.
 3. **Two faces** — one display (700–900, tight), one workhorse (300–500, open). Never three.
 4. **A rhythm map** — the scene lengths written out before any JSON, and no four in a row the same.

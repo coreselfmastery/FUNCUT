@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
+import { Payload } from "../util.slint";
 import { I18n } from "../i18n.slint";
 import { Theme, Fmt, Glyph, Icon, Tip } from "../primitives/primitives.slint";
 import { SearchField } from "../inspector/controls.slint";
@@ -140,91 +141,101 @@ export component OpenVidRow inherits Rectangle {
 
     animate background { duration: 100ms; easing: cubic-bezier(0.4, 0, 0.2, 1); }
 
-    HorizontalLayout {
-        padding-left: 6px;
-        padding-right: 6px;
-        spacing: 8px;
+    // A card drags to the lanes: the clip is fetched and imported
+    // when the drop lands, the way a sound card is.
+    drag := DragArea {
+        data: Payload.of("openvid:\{root.item.id}");
+        drag-image: Payload.preview("openvid:\{root.item.id}");
+        drag-image-offset-x: -8;
+        drag-image-offset-y: -4;
+        allow-copy: true;
 
-        VerticalLayout {
-            alignment: center;
-            Rectangle {
-                width: 32px;
-                height: 32px;
-                border-radius: Theme.r-sm;
-                background: Theme.kind-video-well;
+        HorizontalLayout {
+            padding-left: 6px;
+            padding-right: 6px;
+            spacing: 8px;
 
-                Icon {
-                    x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
-                    glyph: root.item.busy ? Glyph.import
-                        : root.item.ready ? Glyph.play : Glyph.circle-play;
-                    size: parent.width * 0.46;
-                    tint: Theme.kind-video;
+            VerticalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 32px;
+                    height: 32px;
+                    border-radius: Theme.r-sm;
+                    background: Theme.kind-video-well;
+
+                    Icon {
+                        x: (parent.width - self.width) / 2;
+                        y: (parent.height - self.height) / 2;
+                        glyph: root.item.busy ? Glyph.import
+                            : root.item.ready ? Glyph.play : Glyph.circle-play;
+                        size: parent.width * 0.46;
+                        tint: Theme.kind-video;
+                    }
                 }
             }
-        }
 
-        VerticalLayout {
-            horizontal-stretch: 1;
-            alignment: center;
-            spacing: 2px;
-
-            Text {
-                text: root.item.name;
-                color: Theme.fg;
-                font-size: Theme.fs-sm;
-                overflow: elide;
-            }
-            // The caption, clipped at two lines: enough to judge a clip
-            // by, with the whole of it one `openvid_get` away for an
-            // agent and the preview a click away for a person.
-            Rectangle {
-                height: 2.5 * Theme.fs-xs;
-                clip: true;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                alignment: center;
+                spacing: 2px;
 
                 Text {
-                    y: 0;
-                    text: root.item.caption;
-                    color: Theme.fg-dim;
+                    text: root.item.name;
+                    color: Theme.fg;
+                    font-size: Theme.fs-sm;
+                    overflow: elide;
+                }
+                // The caption, clipped at two lines: enough to judge a clip
+                // by, with the whole of it one `openvid_get` away for an
+                // agent and the preview a click away for a person.
+                Rectangle {
+                    height: 2.5 * Theme.fs-xs;
+                    clip: true;
+
+                    Text {
+                        y: 0;
+                        text: root.item.caption;
+                        color: Theme.fg-dim;
+                        font-size: Theme.fs-xs;
+                        wrap: word-wrap;
+                    }
+                }
+                Text {
+                    text: root.item.meta;
+                    color: Theme.fg-muted;
+                    font-family: Theme.font-technical;
                     font-size: Theme.fs-xs;
-                    wrap: word-wrap;
+                    overflow: elide;
                 }
             }
-            Text {
-                text: root.item.meta;
-                color: Theme.fg-muted;
-                font-family: Theme.font-technical;
-                font-size: Theme.fs-xs;
-                overflow: elide;
+
+            VerticalLayout {
+                alignment: center;
+                // The aesthetic score as a badge: the number a stock library
+                // is judged by, alone, where the eye lands on its way to the
+                // plus.
+                Text {
+                    text: root.item.quality;
+                    color: Theme.fg-muted;
+                    font-family: Theme.font-technical;
+                    font-size: Theme.fs-sm;
+                    horizontal-alignment: right;
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                RowButton {
+                    glyph: Glyph.plus;
+                    clicked => { root.add(); }
+                }
             }
         }
 
-        VerticalLayout {
-            alignment: center;
-            // The aesthetic score as a badge: the number a stock library
-            // is judged by, alone, where the eye lands on its way to the
-            // plus.
-            Text {
-                text: root.item.quality;
-                color: Theme.fg-muted;
-                font-family: Theme.font-technical;
-                font-size: Theme.fs-sm;
-                horizontal-alignment: right;
-            }
+        touch := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.preview(); }
         }
-
-        VerticalLayout {
-            alignment: center;
-            RowButton {
-                glyph: Glyph.plus;
-                clicked => { root.add(); }
-            }
-        }
-    }
-
-    touch := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.preview(); }
     }
 }
 

@@ -2,7 +2,8 @@
 
 The library's **Music** page (#71) puts two shelves of whole tracks
 beside the stock clips: **FreePD** - the Internet Archive's mirror of
-Kevin MacLeod's CC0 library, ~1,000 whole-track CC0 tracks grouped the
+Kevin MacLeod's CC0 library, 1,025 whole-track CC0 tracks (the Archive's
+own count at the time of writing) grouped the
 way freepd.com grouped them (upbeat, epic, romantic, comedy, electronic,
 horror, scoring, world, misc, page2) - and **Lo-Fi** - Moby's MobyGratis
 instrumentals, republished as the

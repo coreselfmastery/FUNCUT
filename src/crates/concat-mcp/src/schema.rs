@@ -509,6 +509,14 @@ mod tests {
         // tool's WHAT-and-WHEN owes the list; the parameters, their
         // units and their traps live in the schema, where an agent reads
         // them when it calls.
+        //
+        // The whole-catalogue cap rose once since, 240,000 -> 242,000 at
+        // 109 tools: the catalogue gained four real tools (the footage
+        // layer's two, timeline_seek, motion_import) after the cap was
+        // measured at 105, and the growth is function, not prose. The
+        // director's default surface - what `concat --mcp` serves an
+        // agent that names no list, and the budget that matters by
+        // default - keeps its own, tighter cap below.
         let toolbox = crate::tools::Toolbox::new();
         let sizes: Vec<(String, usize)> = toolbox
             .list()
@@ -520,7 +528,7 @@ mod tests {
             "CONTEXT whole catalogue: {total} over {} tools",
             sizes.len()
         );
-        assert!(total < 240_000, "{total}: {sizes:?}");
+        assert!(total < 242_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }

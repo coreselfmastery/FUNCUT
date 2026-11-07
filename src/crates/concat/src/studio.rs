@@ -67,6 +67,10 @@ use crate::host::{
 };
 use crate::i18n::{self, t, tf};
 use crate::keymap;
+use crate::panes::Msg;
+use crate::panes::bgm::MusicMsg;
+use crate::panes::magick::MagickMsg;
+use crate::panes::openvid::OpenvidMsg;
 use crate::panes::settings::installed;
 use crate::platform;
 use crate::prefs::Preferences;
@@ -1325,7 +1329,7 @@ fn package_art(
 /// Whether two project paths name one folder: the same string, or the same
 /// folder once both are resolved, so a path spelled another way is not
 /// mistaken for another project.
-fn same_folder(a: &str, b: &str) -> bool {
+pub(crate) fn same_folder(a: &str, b: &str) -> bool {
     a == b
         || matches!(
             (std::fs::canonicalize(a), std::fs::canonicalize(b)),
@@ -4189,6 +4193,46 @@ impl Studio {
                 duration: LAYER_DURATION,
                 row: 0,
             }),
+            // An OpenVid clip dragged from the Stock page: not in the bin
+            // yet, so its card rides in `media` behind `openvid:`, and the
+            // drop fetches it and imports it before it lands.
+            "openvid" => {
+                let (name, seconds) = self.openvid.summary(id)?;
+                Some(DropPlan {
+                    kind: ClipKind::Video,
+                    label: name,
+                    media: format!("openvid:{id}"),
+                    start: 0.0,
+                    duration: (seconds as f32).max(MIN_DURATION),
+                    row: 0,
+                })
+            }
+            // A track dragged from the Music page: fetched and imported by
+            // the drop, the way a sound card is.
+            "bgm" => {
+                let (title, seconds) = self.music.summary(id)?;
+                Some(DropPlan {
+                    kind: ClipKind::Audio,
+                    label: title,
+                    media: format!("bgm:{id}"),
+                    start: 0.0,
+                    duration: (seconds as f32).max(MIN_DURATION),
+                    row: 0,
+                })
+            }
+            // A sticker dragged from the Stickers page: a still, laid over
+            // the picture when no lane was named.
+            "magick" => {
+                let (subject, _) = self.magick.summary(id)?;
+                Some(DropPlan {
+                    kind: ClipKind::Image,
+                    label: subject,
+                    media: format!("magick:{id}"),
+                    start: 0.0,
+                    duration: LAYER_DURATION,
+                    row: 0,
+                })
+            }
             _ => None,
         }
     }
@@ -4237,6 +4281,30 @@ impl Studio {
         };
         if let Some(card) = plan.media.strip_prefix("sound:") {
             self.place_card(card, Some(track_id), f64::from(plan.start));
+            return;
+        }
+        if let Some(card) = plan.media.strip_prefix("openvid:") {
+            self.handle(Msg::Openvid(OpenvidMsg::Place {
+                id: card.to_owned(),
+                track_id: Some(track_id),
+                start: f64::from(plan.start),
+            }));
+            return;
+        }
+        if let Some(card) = plan.media.strip_prefix("bgm:") {
+            self.handle(Msg::Music(MusicMsg::Place {
+                id: card.to_owned(),
+                track_id: Some(track_id),
+                start: f64::from(plan.start),
+            }));
+            return;
+        }
+        if let Some(card) = plan.media.strip_prefix("magick:") {
+            self.handle(Msg::Magick(MagickMsg::Place {
+                id: card.to_owned(),
+                track_id: Some(track_id),
+                start: f64::from(plan.start),
+            }));
             return;
         }
         let created = if plan.kind == ClipKind::Text {
@@ -4299,6 +4367,30 @@ impl Studio {
         let start = f64::from(self.playhead.max(0.0));
         if let Some(card) = plan.media.strip_prefix("sound:") {
             self.place_card(card, None, start);
+            return;
+        }
+        if let Some(card) = plan.media.strip_prefix("openvid:") {
+            self.handle(Msg::Openvid(OpenvidMsg::Place {
+                id: card.to_owned(),
+                track_id: None,
+                start,
+            }));
+            return;
+        }
+        if let Some(card) = plan.media.strip_prefix("bgm:") {
+            self.handle(Msg::Music(MusicMsg::Place {
+                id: card.to_owned(),
+                track_id: None,
+                start,
+            }));
+            return;
+        }
+        if let Some(card) = plan.media.strip_prefix("magick:") {
+            self.handle(Msg::Magick(MagickMsg::Place {
+                id: card.to_owned(),
+                track_id: None,
+                start,
+            }));
             return;
         }
         let created = if plan.kind == ClipKind::Text {

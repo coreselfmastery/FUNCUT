@@ -65,8 +65,10 @@ Concat's own releases when the fork has none yet. The fallback is a working
 editor, but it is not this one: upstream carries none of FUNCUT's own work -
 no OpenVid, sticker or sound shelves, no Forge page, 42 MCP tools instead of
 the **107 tools** this build carries - so if the fork has a published
-release, that is the one you want. (A release the workflows build starts as
-a draft, and a draft is invisible to this script; see the note below.)
+release, that is the one you want. (A release the workflows build is
+published by the run itself - `draft: false` in release.yml - so it is
+visible to this script the moment the run goes green; see the note
+below.)
 
 > **A private fork needs a token.** This repository's releases are public,
 > so the anonymous GitHub API sees them; a private fork's releases it
@@ -96,9 +98,11 @@ on Linux, `Concat-<version>-linux-x86_64.deb` (or `aarch64`), the matching
 `.rpm`, and `Concat-<version>-x86_64.AppImage` - the AppImage needs nothing
 installed, just `chmod +x` and run.
 
-> **A release built by the workflows starts as a draft.** Nothing - not this
-> script, not the website, not a friend - can see a draft but you. Publish it
-> from the repository's Releases page after it finishes building. See
+> **A release built by the workflows publishes itself.** `release.yml`
+> creates it with `draft: false` - published by the run, not held for a
+> manual click - once CI has passed on the tag and every bundle has been
+> built and launched where it was built. Nothing waits on the Releases
+> page; watch the run instead. See
 > [Getting your own builds](#getting-your-own-builds).
 
 ### First run
@@ -217,11 +221,13 @@ FUNCUT's releases for you:
    git push origin v0.2.8-funcut.1
    ```
 
-3. **Wait, then publish.** The Release workflow runs the tests, builds
-   every platform and architecture, launches each bundle before it is
-   uploaded, and files everything under a **draft** release on the
-   Releases page. Look it over and publish it - until you do, only you can
-   see it.
+3. **Wait; it publishes itself.** The Release workflow runs the tests,
+   builds every platform and architecture, launches each bundle before it
+   is uploaded, and then publishes the release automatically - the
+   workflow's `gh-release` step runs with `draft: false`, so the release
+   is live the moment the run goes green, not filed under a draft only
+   you can see. A `-funcut.N` tag is published as a full release; any
+   other suffix (alpha, beta, rc) is published as a pre-release.
 
 Code signing is the only thing that needs secrets, and the workflows skip
 it when they are absent: a build from a fork is ad-hoc signed and opens

@@ -21,6 +21,11 @@ the search's two hard filters - sixty-two tests over the 1663 the
 | Analysis senses | `python3 src/crates/concat-api/analysis/tests/run_tests.py` | **21 checks ok** |
 | Cloud farm | `python3 src/crates/concat-mcp/sense/farm-sync.py selftest` | **8 checks ok** |
 
+Re-read from the newest green engine lane's own log (2026-11-07, the
+auto-trigger run at `9743a2f7`, whose tree is main's plus one script):
+the same **1725 tests run: 1725 passed, 14 skipped**, the same 8 and
+the same 30 - a fresh green run printing the number this table holds.
+
 **The Rust total: 1763** (1725 + 8 + 30). Every workspace member is
 counted - the workspace's test binaries cover all seventeen crates, their
 integration tests and their binaries.

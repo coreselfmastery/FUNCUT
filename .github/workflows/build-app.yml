@@ -319,27 +319,18 @@ jobs:
       # fetched geneva, so a .deb / .rpm / AppImage install had no motion
       # engine and motion_bake failed until the user ran an extra installer.
       # Geneva::discover looks beside the executable first, so ship the
-      # pinned, checksum-checked binary there. The two digests are the same
-      # ones install-linux.sh checks (verified 2026-10-27).
+      # pinned, checksum-checked binary there: the two rows in
+      # scripts/ci/deps.lock are the same builds install-linux.sh checks
+      # (verified 2026-10-27), fetched through scripts/ci/fetch.sh so this
+      # download gets the same five-attempt backoff against the CDN's 504s
+      # as every other one.
       - name: Geneva motion sidecar (Linux)
         if: matrix.platform == 'linux'
         shell: bash
         run: |
           set -euo pipefail
-          case "${{ matrix.arch }}" in
-            x86_64)
-              arch="x86_64-unknown-linux-gnu"
-              sha="c2c9d3b2f82621ba6e7cfd36b36a8a3df9d9ba2b7374d06245248e2fb4120e16"
-              ;;
-            aarch64)
-              arch="aarch64-unknown-linux-gnu"
-              sha="8066d4ff388b5f2557678e168bca1e70c49d9624ee61cedad2bfcf0d008f1243"
-              ;;
-            *) echo "no geneva build for ${{ matrix.arch }}" >&2; exit 1 ;;
-          esac
-          url="https://github.com/geneva-render/geneva/releases/download/v1.6.0/geneva-v1.6.0-$arch.tar.gz"
-          curl -fsSL --retry 3 --max-time 180 "$url" -o geneva.tar.gz
-          printf '%s  %s\n' "$sha" geneva.tar.gz | sha256sum -c -
+          name="geneva-$( [ "${{ matrix.arch }}" = x86_64 ] && echo linux64 || echo linuxarm64 )"
+          scripts/ci/fetch.sh "$name" geneva.tar.gz
           mkdir -p geneva-out
           tar -xzf geneva.tar.gz -C geneva-out
           bin=$(find geneva-out -type f -name geneva | head -n 1)

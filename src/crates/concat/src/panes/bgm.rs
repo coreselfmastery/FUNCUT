@@ -74,7 +74,11 @@ pub enum MusicMsg {
     More,
     /// A card dragged onto the lanes: fetch it if need be, then lay it
     /// on the lane and at the moment the drop named.
-    Place { id: String, track_id: Option<String>, start: f64 },
+    Place {
+        id: String,
+        track_id: Option<String>,
+        start: f64,
+    },
     /// A card clicked: preview the track, fetching it first if need be.
     Preview(String),
     /// A card's plus: lay the track at the playhead, fetching it first.
@@ -280,9 +284,11 @@ impl MusicPane {
             }
             MusicMsg::Preview(id) => self.take(id, Then::Preview, studio),
             MusicMsg::Add(id) => self.take(id, Then::Place, studio),
-            MusicMsg::Place { id, track_id, start } => {
-                self.take(id, Then::PlaceAt(track_id, start), studio)
-            }
+            MusicMsg::Place {
+                id,
+                track_id,
+                start,
+            } => self.take(id, Then::PlaceAt(track_id, start), studio),
             MusicMsg::Download => {
                 let Some(dirs) = self.dirs.clone() else {
                     return;

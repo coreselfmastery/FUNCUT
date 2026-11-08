@@ -254,9 +254,11 @@ impl MagickPane {
             }
             MagickMsg::Preview(id) => self.take(id, Then::Preview, studio),
             MagickMsg::Add(id) => self.take(id, Then::Place, studio),
-            MagickMsg::Place { id, track_id, start } => {
-                self.take(id, Then::PlaceAt(track_id, start), studio)
-            }
+            MagickMsg::Place {
+                id,
+                track_id,
+                start,
+            } => self.take(id, Then::PlaceAt(track_id, start), studio),
             MagickMsg::Heart(id) => {
                 let Some(library) = self.library() else {
                     return;

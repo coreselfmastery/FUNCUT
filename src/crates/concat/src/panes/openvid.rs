@@ -72,7 +72,11 @@ pub enum OpenvidMsg {
     More,
     /// A card dragged onto the lanes: fetch it if need be, then lay it
     /// on the lane and at the moment the drop named.
-    Place { id: String, track_id: Option<String>, start: f64 },
+    Place {
+        id: String,
+        track_id: Option<String>,
+        start: f64,
+    },
     /// A card clicked: preview the clip, fetching it first if need be.
     Preview(String),
     /// A card's plus: lay the clip at the playhead, fetching it first.
@@ -263,9 +267,11 @@ impl OpenvidPane {
             }
             OpenvidMsg::Preview(id) => self.take(id, Then::Preview, studio),
             OpenvidMsg::Add(id) => self.take(id, Then::Place, studio),
-            OpenvidMsg::Place { id, track_id, start } => {
-                self.take(id, Then::PlaceAt(track_id, start), studio)
-            }
+            OpenvidMsg::Place {
+                id,
+                track_id,
+                start,
+            } => self.take(id, Then::PlaceAt(track_id, start), studio),
             OpenvidMsg::Download => {
                 let Some(dirs) = self.dirs.clone() else {
                     return;
@@ -531,13 +537,7 @@ impl Studio {
     /// lane with room at the playhead. Selects what it made, as laying a
     /// sound does.
     pub fn place_openvid(&mut self, name: &str, id: &str, path: &PathBuf) {
-        self.place_openvid_at(
-            name,
-            id,
-            path,
-            None,
-            f64::from(self.playhead.max(0.0)),
-        );
+        self.place_openvid_at(name, id, path, None, f64::from(self.playhead.max(0.0)));
     }
 
     /// [`Studio::place_openvid`], where a drag dropped the clip: the lane

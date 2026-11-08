@@ -1580,12 +1580,7 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     {
         let forge = app.global::<crate::ui::Forge>();
         forge.on_forge_start(on_window!(
-            |state,
-             script: SharedString,
-             source: i32,
-             voice: i32,
-             niche: i32,
-             mood: i32| {
+            |state, script: SharedString, source: i32, voice: i32, niche: i32, mood: i32| {
                 state.handle(Msg::Forge(crate::panes::forge::ForgeMsg::Start {
                     script: script.to_string(),
                     source,

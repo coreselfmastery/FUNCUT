@@ -455,7 +455,11 @@ fn voiceover_project(studio: &Studio) -> Result<VoiceoverSource, String> {
     });
     let mut files: Vec<String> = Vec::new();
     for clip in audio {
-        let Some(item) = timeline.media.iter().find(|media| media.id == clip.media_id) else {
+        let Some(item) = timeline
+            .media
+            .iter()
+            .find(|media| media.id == clip.media_id)
+        else {
             continue;
         };
         if !item.path.is_empty() && !files.contains(&item.path) {

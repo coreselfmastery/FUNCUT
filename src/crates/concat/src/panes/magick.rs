@@ -37,12 +37,15 @@ use crate::ui::MagickCardData;
 const PAGE: u32 = 48;
 
 /// What to do with a picture once its bytes have arrived.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Then {
     /// Show it through the source preview.
     Preview,
     /// Lay it over the video at the playhead.
     Place,
+    /// Lay it where a drag dropped it: the lane the pointer named, when
+    /// it named one, and the moment it landed on.
+    PlaceAt(Option<String>, f64),
 }
 
 /// Everything that can happen to the page.
@@ -152,6 +155,16 @@ impl MagickPane {
     /// The library this pane reads, when it has folders to read from.
     fn library(&self) -> Option<&'static library::Library> {
         self.dirs.as_ref().map(library::shared)
+    }
+
+    /// One result's subject, for the ghost a drag shows while it
+    /// crosses the lanes. `None` when the id is not on the page. A
+    /// sticker is a still: the ghost's length is the layer's own.
+    pub fn summary(&self, id: &str) -> Option<(String, f64)> {
+        self.results
+            .iter()
+            .find(|sticker| sticker.id == id)
+            .map(|sticker| (sticker.subject.clone(), 5.0))
     }
 
     /// How many pictures a shelf holds, once ready.
@@ -425,7 +438,7 @@ impl MagickPane {
         if self.fetching.contains_key(&id) {
             return;
         }
-        self.fetching.insert(id.clone(), then);
+        self.fetching.insert(id.clone(), then.clone());
         let cancel = AtomicBool::new(false);
         // The worker takes its own copy of the id: the completion's copy
         // is the one the message carries.
@@ -517,16 +530,6 @@ impl Studio {
     /// lane *above* the highest occupied at the playhead, so a sticker
     /// never hides beneath the video. Selects what it made, as laying a
     /// sound or a stock clip does.
-    /// One result's subject, for the ghost a drag shows while it
-    /// crosses the lanes. `None` when the id is not on the page. A
-    /// sticker is a still: the ghost's length is the layer's own.
-    pub fn summary(&self, id: &str) -> Option<(String, f64)> {
-        self.results
-            .iter()
-            .find(|sticker| sticker.id == id)
-            .map(|sticker| (sticker.subject.clone(), 5.0))
-    }
-
     pub fn place_magick(&mut self, name: &str, id: &str, path: &PathBuf) {
         self.place_magick_at(name, id, path, None, f64::from(self.playhead.max(0.0)));
     }

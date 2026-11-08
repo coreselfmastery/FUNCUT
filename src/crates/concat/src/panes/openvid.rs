@@ -459,7 +459,7 @@ impl OpenvidPane {
         if self.fetching.contains_key(&id) {
             return;
         }
-        self.fetching.insert(id.clone(), then);
+        self.fetching.insert(id.clone(), then.clone());
         let cancel = AtomicBool::new(false);
         crate::host::spawn(
             move || library.fetch(number, &cancel),

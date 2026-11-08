@@ -439,13 +439,15 @@ fn voiceover_project(studio: &Studio) -> Result<VoiceoverSource, String> {
     let Some(session) = studio.session.as_ref() else {
         return Err(t("forge.needProject"));
     };
-    let timeline = studio.project().active();
+    let project = studio.project();
+    let timeline = project.active();
     // The voiceover is the timeline's audio clips, in time order: a take
     // the voiceover panel recorded, or a file imported and placed. Distinct
     // files once each - a take split into pieces is one voiceover.
     let mut audio: Vec<&concat_project::model::Clip> = timeline
         .clips
         .iter()
+        .map(|clip| clip.as_ref())
         .filter(|clip| clip.kind == ClipKind::Audio)
         .collect();
     audio.sort_by(|a, b| {
@@ -455,11 +457,9 @@ fn voiceover_project(studio: &Studio) -> Result<VoiceoverSource, String> {
     });
     let mut files: Vec<String> = Vec::new();
     for clip in audio {
-        let Some(item) = timeline
-            .media
-            .iter()
-            .find(|media| media.id == clip.media_id)
-        else {
+        // The bin lives on the project, not the timeline: a clip names its
+        // media by id, and the project holds what that id is.
+        let Some(item) = project.media_by_id(&clip.media_id) else {
             continue;
         };
         if !item.path.is_empty() && !files.contains(&item.path) {

@@ -831,7 +831,7 @@ impl SettingsPane {
                                         }
                                         studio.pause();
                                         studio.seek(time as f32);
-                                        studio.publish(app, &shell.models);
+                                        studio.publish(&app, &shell.models);
                                         Ok(concat_api::WindowSought {
                                             path: held,
                                             time: f64::from(studio.playhead),

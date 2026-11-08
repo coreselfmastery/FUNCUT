@@ -154,6 +154,15 @@ impl MusicPane {
         self.dirs.as_ref().map(library::shared)
     }
 
+    /// One result's title and seconds, for the ghost a drag shows while
+    /// it crosses the lanes. `None` when the id is not on the page.
+    pub fn summary(&self, id: &str) -> Option<(String, f64)> {
+        self.results
+            .iter()
+            .find(|track| track.id == id)
+            .map(|track| (track.title.clone(), track.duration))
+    }
+
     /// Both shelves' own groupings, as the filter lists them: the
     /// category's own spelling for the search, and the same word with its
     /// first letter standing up for the row.
@@ -455,7 +464,7 @@ impl MusicPane {
         if self.fetching.contains_key(&id) {
             return;
         }
-        self.fetching.insert(id.clone(), then);
+        self.fetching.insert(id.clone(), then.clone());
         let cancel = AtomicBool::new(false);
         // The worker takes its own copy of the id: the completion's copy
         // is the one the message carries.
@@ -543,15 +552,6 @@ impl Studio {
     /// finds the copy already there - then cut onto the first lane with
     /// room at the playhead. Selects what it made, as laying a sound or a
     /// stock clip does.
-    /// One result's title and seconds, for the ghost a drag shows while
-    /// it crosses the lanes. `None` when the id is not on the page.
-    pub fn summary(&self, id: &str) -> Option<(String, f64)> {
-        self.results
-            .iter()
-            .find(|track| track.id == id)
-            .map(|track| (track.title.clone(), track.duration))
-    }
-
     pub fn place_bgm(&mut self, name: &str, id: &str, path: &PathBuf) {
         self.place_bgm_at(name, id, path, None, f64::from(self.playhead.max(0.0)));
     }

@@ -395,22 +395,42 @@ def run_pipeline(
         queries = visual.get("queries")
         if not isinstance(queries, list) or not queries:
             queries = [query]
-        reply = advance(
-            "openvid_rank_for_slot",
-            {
-                "description": description,
-                "queries": queries,
-                "hero": bool(visual.get("hero", False)),
-                "motion_min": visual.get("motionMin"),
-                "exclude_ids": list(excluded),
-            },
-        )
-        clips = reply.get("clips", []) if isinstance(reply, dict) else []
-        if not clips:
-            raise PipelineError(f"{slot_id}: OpenVid returned no usable footage")
-        chosen[slot_id] = clips[0]
+        target_duration = float(segment["end"]) - float(segment["start"])
+        candidate = None
+        # Do not place a stock shot that ends before its story beat. Search
+        # again with the rejected id excluded; at most three candidates per
+        # slot, then stop before any timeline mutation.
+        for attempt in range(3):
+            reply = advance(
+                "openvid_rank_for_slot",
+                {
+                    "description": description,
+                    "queries": queries,
+                    "hero": bool(visual.get("hero", False)),
+                    "motion_min": visual.get("motionMin"),
+                    "exclude_ids": list(excluded),
+                },
+            )
+            clips = reply.get("clips", []) if isinstance(reply, dict) else []
+            if not clips:
+                break
+            candidate = clips[0]
+            clip_id = candidate.get("id")
+            seconds = candidate.get("seconds")
+            if isinstance(seconds, (int, float)) and seconds + 0.05 < target_duration:
+                log(f"{slot_id}: rejecting {candidate.get('name', clip_id)}; {seconds:.2f}s is shorter than the {target_duration:.2f}s beat")
+                if isinstance(clip_id, int):
+                    excluded.append(clip_id)
+                candidate = None
+                continue
+            break
+        if candidate is None:
+            raise PipelineError(
+                f"{slot_id}: no candidate is long enough for its {target_duration:.2f}s story beat"
+            )
+        chosen[slot_id] = candidate
         slot_segments[slot_id] = (index, segment)
-        clip_id = clips[0].get("id")
+        clip_id = candidate.get("id")
         if isinstance(clip_id, int):
             excluded.append(clip_id)
 
@@ -500,6 +520,11 @@ def run_pipeline(
         if placed is None:
             raise PipelineError(f"{slot_id}: imported media is not present on the timeline")
         actual_duration = float(placed["duration"])
+        if actual_duration + 0.05 < target_duration:
+            raise PipelineError(
+                f"{slot_id}: imported clip duration {actual_duration:.2f}s is shorter "
+                f"than the required {target_duration:.2f}s segment"
+            )
         if actual_duration > target_duration + 0.05:
             delta = target_duration - actual_duration
             advance(

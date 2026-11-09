@@ -326,18 +326,10 @@ def run_pipeline(
     validation = advance("plan_validate", {"plan": plan})
     if not isinstance(validation, dict):
         raise PipelineError("plan_validate returned no structured result")
-    if validation.get("valid") is not True:
+    if validation.get("ready") is not True:
         raise PipelineError(
-            "plan_validate refused the plan: "
-            + json.dumps(validation.get("errors", validation), ensure_ascii=False)
-        )
-    if validation.get("creativeReady") is not True:
-        raise PipelineError(
-            "plan_validate says creativeReady is not true: "
-            + json.dumps(
-                validation.get("creativeBlockers", validation.get("blockers", [])),
-                ensure_ascii=False,
-            )
+            "plan_validate says the plan is not ready: "
+            + json.dumps(validation.get("blockers", validation), ensure_ascii=False)
         )
 
     # 5: cut the dead air only; the dramatic holds ride untouched.
@@ -498,7 +490,7 @@ SELF_TEST_REPLIES = {
     },
     "emotion": {"lines": [{"text": "one", "emotion": "curious"}]},
     "clip_cut_spans": {"ok": True},
-    "plan_validate": {"valid": True, "creativeReady": True},
+    "plan_validate": {"ready": True, "blockers": [], "score": 8.0},
     "openvid_rank_for_slot": {
         "clips": [{"id": 7, "name": "city", "motion": 2.0, "slotRank": 1}]
     },
@@ -566,9 +558,8 @@ def self_test() -> int:
     # A plan that is not creatively ready must stop BEFORE the first edit.
     unready_replies = dict(SELF_TEST_REPLIES)
     unready_replies["plan_validate"] = {
-        "valid": True,
-        "creativeReady": False,
-        "creativeBlockers": ["missing signal log"],
+        "ready": False,
+        "blockers": ["no designed comp or text card anywhere"],
     }
     unready = MockMcp(unready_replies)
     try:
@@ -583,7 +574,7 @@ def self_test() -> int:
         if mutated:
             print(f"FAIL: timeline mutation preceded readiness: {mutated}")
             return 1
-    print("readiness gate ok: no timeline mutation before creativeReady")
+    print("readiness gate ok: no timeline mutation before plan readiness")
 
     print("SELF-TEST PASS")
     return 0

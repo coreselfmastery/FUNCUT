@@ -261,8 +261,8 @@ def phase_plan(plan: dict[str, Any]) -> list[tuple[str, str]]:
         ("transcribe", "transcribe"),
         ("voice_signals", "voice_signals"),
         ("emotion", "emotion (extract)"),
+        ("plan_validate", "plan_validate (before timeline edits)"),
         ("clip_cut_spans", "clip_cut_spans (dead air only)"),
-        ("plan_validate", "plan_validate"),
     ]
     for slot in broll_slots(plan):
         phases.append(
@@ -311,13 +311,36 @@ def run_pipeline(
         {"audio": audio, "transcript": transcript},
     )
 
-    # 3: what every line feels - the extract the plan's slots answer to.
-    advance(
+    # 3: what every line feels - retain the reading for the run report.
+    emotion = advance(
         "emotion",
         {"action": "extract", "transcript": transcript, "project": project},
     )
+    if isinstance(emotion, dict):
+        arc = emotion.get("arc")
+        if arc is not None:
+            log(f"voice emotion arc: {json.dumps(arc, ensure_ascii=False)}")
 
-    # 4: cut the dead air only; the dramatic holds ride untouched.
+    # 4: validate before any timeline mutation. A structurally valid but
+    # creatively unready plan is not safe to execute.
+    validation = advance("plan_validate", {"plan": plan})
+    if not isinstance(validation, dict):
+        raise PipelineError("plan_validate returned no structured result")
+    if validation.get("valid") is not True:
+        raise PipelineError(
+            "plan_validate refused the plan: "
+            + json.dumps(validation.get("errors", validation), ensure_ascii=False)
+        )
+    if validation.get("creativeReady") is not True:
+        raise PipelineError(
+            "plan_validate says creativeReady is not true: "
+            + json.dumps(
+                validation.get("creativeBlockers", validation.get("blockers", [])),
+                ensure_ascii=False,
+            )
+        )
+
+    # 5: cut the dead air only; the dramatic holds ride untouched.
     spans, holds = dead_air_spans(voice)
     log(f"dead air: {len(spans)} span(s) to cut, {holds} dramatic hold(s) protected")
     advance(
@@ -329,9 +352,6 @@ def run_pipeline(
             "ripple": True,
         },
     )
-
-    # 5: the plan itself, against the schema and the creative floors.
-    advance("plan_validate", {"plan": plan})
 
     # 6: shop every broll slot; each chosen clip is excluded from the next.
     excluded: list[int] = []
@@ -500,8 +520,8 @@ def self_test() -> int:
         "transcribe",
         "voice_signals",
         "emotion",
-        "clip_cut_spans",
         "plan_validate",
+        "clip_cut_spans",
         "openvid_rank_for_slot",
         "openvid_rank_for_slot",  # once per broll slot: two
         "footage_continuity",
@@ -535,12 +555,35 @@ def self_test() -> int:
         return 1
     except PipelineError:
         later = [tool for tool, _ in broken.calls if tool in {
-            "plan_validate", "footage_continuity", "motion_reel", "export_start",
-        } or (tool == "openvid_rank_for_slot")]
+            "plan_validate", "clip_cut_spans", "footage_continuity",
+            "motion_reel", "export_start",
+        } or tool == "openvid_rank_for_slot"]
         if later:
             print(f"FAIL: phases ran past the failure: {later}")
             return 1
     print("failure ok: the run stopped at emotion, nothing later ran")
+
+    # A plan that is not creatively ready must stop BEFORE the first edit.
+    unready_replies = dict(SELF_TEST_REPLIES)
+    unready_replies["plan_validate"] = {
+        "valid": True,
+        "creativeReady": False,
+        "creativeBlockers": ["missing signal log"],
+    }
+    unready = MockMcp(unready_replies)
+    try:
+        run_pipeline(unready, "/edits/SelfTest", audio, SELF_TEST_PLAN)
+        print("FAIL: a creatively unready plan was executed")
+        return 1
+    except PipelineError:
+        mutated = [
+            tool for tool, _ in unready.calls
+            if tool in {"clip_cut_spans", "openvid_import", "clip_add", "edit_apply"}
+        ]
+        if mutated:
+            print(f"FAIL: timeline mutation preceded readiness: {mutated}")
+            return 1
+    print("readiness gate ok: no timeline mutation before creativeReady")
 
     print("SELF-TEST PASS")
     return 0

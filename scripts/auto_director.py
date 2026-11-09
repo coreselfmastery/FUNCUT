@@ -328,7 +328,10 @@ def phase_plan(plan: dict[str, Any]) -> list[tuple[str, str]]:
         ])
     for index, segment in placed_existing:
         if segment["visual"].get("file"):
-            phases.append(("media_import", f"import existing source segment {index + 1}"))
+            phases.extend([
+                ("media_import", f"import existing source segment {index + 1}"),
+                ("project_get", f"read imported existing source {index + 1}"),
+            ])
         phases.extend([
             ("clip_add", f"place existing source segment {index + 1}"),
             ("clip_trim", f"trim existing source segment {index + 1}"),
@@ -834,11 +837,32 @@ def run_pipeline(
         start_at = float(segment["start"])
         target_duration = float(segment["end"]) - start_at
         media_id = visual.get("mediaId")
+        media_item = existing_media_refs.get(index)
         if not media_id:
             imported = advance("media_import", {"path": project, "file": visual["file"]})
             media_id = imported.get("createdId") if isinstance(imported, dict) else None
+            imported_media = imported.get("media", []) if isinstance(imported, dict) else []
+            media_item = next(
+                (
+                    item for item in imported_media
+                    if isinstance(item, dict) and item.get("id") == media_id
+                ),
+                None,
+            )
+            if media_item is None:
+                refreshed = advance("project_get", {"path": project})
+                refreshed_media = refreshed.get("media", []) if isinstance(refreshed, dict) else []
+                media_item = next(
+                    (
+                        item for item in refreshed_media
+                        if isinstance(item, dict) and item.get("id") == media_id
+                    ),
+                    None,
+                )
         if not isinstance(media_id, str) or not media_id:
             raise PipelineError(f"segment-{index + 1}: existing source import returned no media id")
+        if not isinstance(media_item, dict) or not isinstance(media_item.get("duration"), (int, float)):
+            raise PipelineError(f"segment-{index + 1}: cannot verify the existing source duration")
         placed = advance(
             "clip_add",
             {
@@ -851,11 +875,7 @@ def run_pipeline(
         clip_id = placed.get("createdId") if isinstance(placed, dict) else None
         if not isinstance(clip_id, str) or not clip_id:
             raise PipelineError(f"segment-{index + 1}: existing media placement returned no clip id")
-        media_item = next(
-            (item for item in media if isinstance(item, dict) and item.get("id") == media_id),
-            None,
-        )
-        actual_duration = float(media_item.get("duration", target_duration)) if media_item else target_duration
+        actual_duration = float(media_item["duration"])
         if actual_duration + 0.05 < target_duration:
             raise PipelineError(
                 f"segment-{index + 1}: existing media is shorter than its planned segment"

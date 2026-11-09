@@ -965,7 +965,7 @@ def self_test() -> int:
     if waited.get("job") != "j1":
         print(f"FAIL: export job was not awaited: {waited}")
         return 1
-    verified = next(args for tool, args in by_tool if tool == "emotion")
+    verified = next(args for tool, args in by_tool if tool == "emotion" and args.get("action") == "verify")
     if verified.get("action") != "verify" or verified.get("toleranceMs") != 150:
         print(f"FAIL: exported speech was not verified against the source: {verified}")
         return 1

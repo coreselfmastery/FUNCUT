@@ -1818,13 +1818,37 @@ fn plan_validate_schema() -> Option<Value> {
                                     "type": "object",
                                     "required": ["type"],
                                     "properties": {
-                                        "type": { "type": "string", "enum": ["broll", "textCard", "titleCard", "existing"] }
+                                        "type": { "type": "string", "enum": ["broll", "textCard", "titleCard", "existing"] },
+                                        "query": { "type": "string" },
+                                        "description": { "type": "string", "minLength": 40 },
+                                        "queries": { "type": "array", "items": { "type": "string" } },
+                                        "hero": { "type": "boolean" },
+                                        "motionMin": { "type": "number", "minimum": 0 },
+                                        "shotScale": { "type": "string", "enum": ["wide", "medium", "close_up"] },
+                                        "storyboard": {
+                                            "type": "object",
+                                            "required": ["scenes"],
+                                            "description": "A complete motion_reel storyboard for textCard/titleCard segments.",
+                                            "properties": {
+                                                "width": { "type": "integer", "minimum": 1 },
+                                                "height": { "type": "integer", "minimum": 1 },
+                                                "fps": { "type": "number", "minimum": 1 },
+                                                "scenes": { "type": "array", "minItems": 1, "items": { "type": "object" } },
+                                                "assets": { "type": "object" },
+                                                "audio": { "type": "array" },
+                                                "curtain": { "type": "object" }
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
                     },
                     "audio": { "type": "object" },
+                    "audioClipId": {
+                        "type": "string",
+                        "description": "Optional existing audio clip id to reuse; its timeline must already match the plan's segment times."
+                    },
                     "creativeBrief": {
                         "type": "object",
                         "description": "The WHY of the piece. Without it plan_validate returns creativeReady=false with blockers. audience, platform, goal, thesis, curiosityGap, payoff, emotionalArc (3+ beats), referenceStyle, tone, brandKit, constraints, avoid.",

@@ -533,6 +533,10 @@ def run_pipeline(
             raise PipelineError(
                 f"audioClipId {requested_audio_clip!r} is not an audio clip in the active timeline"
             )
+        if audio_clip.get("media") != audio_media_id:
+            raise PipelineError(
+                f"audioClipId {requested_audio_clip!r} does not reference the supplied voiceover media"
+            )
         audio_clip_id = str(requested_audio_clip)
     else:
         audio_clip = next(

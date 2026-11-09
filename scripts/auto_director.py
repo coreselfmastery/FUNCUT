@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -214,12 +215,51 @@ def load_plan(path: str) -> dict[str, Any]:
         return json.load(handle)
 
 
-def broll_slots(plan: dict[str, Any]) -> list[dict[str, Any]]:
-    return [s for s in plan.get("slots", []) if s.get("treatment") == "broll"]
+def plan_segments(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    """The canonical edit-plan schema stores timed visuals in segments."""
+    return [s for s in plan.get("segments", []) if isinstance(s, dict)]
 
 
-def graphic_slots(plan: dict[str, Any]) -> list[dict[str, Any]]:
-    return [s for s in plan.get("slots", []) if s.get("treatment") == "graphic"]
+def broll_segments(plan: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
+    return [
+        (index, segment)
+        for index, segment in enumerate(plan_segments(plan))
+        if isinstance(segment.get("visual"), dict)
+        and segment["visual"].get("type") == "broll"
+    ]
+
+
+def _walk_dicts(value: Any):
+    """Yield nested dictionaries without assuming one EditorView wrapper."""
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from _walk_dicts(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _walk_dicts(child)
+
+
+def _clip_for_media(view: Any, media_id: str, start: float) -> dict[str, Any] | None:
+    candidates = [
+        item for item in _walk_dicts(view)
+        if item.get("mediaId") == media_id and isinstance(item.get("id"), str)
+        and isinstance(item.get("duration"), (int, float))
+        and isinstance(item.get("start"), (int, float))
+    ]
+    return min(candidates, key=lambda item: abs(float(item["start"]) - start), default=None)
+
+
+def _direction(camera: Any) -> str:
+    value = str(camera or "").lower()
+    for needle, direction in (
+        ("left", "left"), ("right", "right"), ("up", "up"), ("down", "down"),
+        ("zoom_in", "zoom_in"), ("zoom-in", "zoom_in"),
+        ("zoom_out", "zoom_out"), ("zoom-out", "zoom_out"),
+    ):
+        if needle in value:
+            return direction
+    return "static"
 
 
 def dead_air_spans(voice_reply: Any) -> tuple[list[list[float]], int]:
@@ -254,29 +294,31 @@ def dead_air_spans(voice_reply: Any) -> tuple[list[list[float]], int]:
 
 
 def phase_plan(plan: dict[str, Any]) -> list[tuple[str, str]]:
-    """The concrete phase list for one plan: the nine phases in the fixed
-    order, with the per-slot phases repeated once per slot they serve -
-    so the run's numbering and the log name what actually happens."""
+    """Describe the real segment-based execution order for the run log."""
     phases = [
         ("transcribe", "transcribe"),
         ("voice_signals", "voice_signals"),
         ("emotion", "emotion (extract)"),
         ("plan_validate", "plan_validate (before timeline edits)"),
-        ("clip_cut_spans", "clip_cut_spans (dead air only)"),
     ]
-    for slot in broll_slots(plan):
-        phases.append(
-            (
-                "openvid_rank_for_slot",
-                f"openvid_rank_for_slot ({slot.get('slotId', '?')})",
-            )
+    if plan.get("audioClipId"):
+        phases.append(("clip_cut_spans", "clip_cut_spans (dead air only)"))
+    phases.extend(
+        ("openvid_rank_for_slot", f"rank B-roll segment {index + 1}")
+        for index, _ in broll_segments(plan)
+    )
+    if broll_segments(plan):
+        phases.append(("footage_continuity", "footage_continuity and repair"))
+        phases.extend(
+            ("openvid_import", f"import and place B-roll segment {index + 1}")
+            for index, _ in broll_segments(plan)
         )
-    phases.append(("footage_continuity", "footage_continuity"))
-    for slot in graphic_slots(plan):
-        phases.append(
-            ("motion_reel", f"motion_reel ({slot.get('slotId', '?')})")
-        )
-    phases.append(("export_start", "export"))
+    phases.extend([
+        ("export_start", "export"),
+        ("export_wait", "wait for completed export"),
+        ("watch_render", "inspect rendered frames and audio"),
+        ("craft_critique", "score the rendered cut"),
+    ])
     return phases
 
 
@@ -286,11 +328,7 @@ def run_pipeline(
     audio: str,
     plan: dict[str, Any],
 ) -> list[tuple[str, dict[str, Any]]]:
-    """The phases, in order, logged; the first failure stops the run.
-
-    Returns the calls that were made - the self-test's evidence, and the
-    honest count when a run stops partway.
-    """
+    """Validate, source, repair, place, export and inspect a real segment plan."""
     phases = phase_plan(plan)
     total = len(phases)
     done: list[tuple[str, dict[str, Any]]] = []
@@ -299,105 +337,230 @@ def run_pipeline(
     def advance(tool: str, arguments: dict[str, Any]) -> Any:
         nonlocal step
         step += 1
-        log(f"phase {step}/{total}: {phases[step - 1][1]}")
+        label = phases[step - 1][1] if step <= len(phases) else tool
+        log(f"phase {step}/{total}: {label}")
         reply = transport.call(tool, arguments)
         done.append((tool, arguments))
         return reply
 
-    # 1-2: the words, then the score they are spoken to.
     transcript = advance("transcribe", {"path": audio})
-    voice = advance(
-        "voice_signals",
-        {"audio": audio, "transcript": transcript},
-    )
-
-    # 3: what every line feels - retain the reading for the run report.
+    voice = advance("voice_signals", {"audio": audio, "transcript": transcript})
     emotion = advance(
-        "emotion",
-        {"action": "extract", "transcript": transcript, "project": project},
+        "emotion", {"action": "extract", "transcript": transcript, "project": project}
     )
-    if isinstance(emotion, dict):
-        arc = emotion.get("arc")
-        if arc is not None:
-            log(f"voice emotion arc: {json.dumps(arc, ensure_ascii=False)}")
+    if isinstance(emotion, dict) and emotion.get("arc") is not None:
+        log(f"voice emotion arc: {json.dumps(emotion['arc'], ensure_ascii=False)}")
 
-    # 4: validate before any timeline mutation. A structurally valid but
-    # creatively unready plan is not safe to execute.
+    # Gate all plan and voice-signal readiness before changing the timeline.
     validation = advance("plan_validate", {"plan": plan})
-    if not isinstance(validation, dict):
-        raise PipelineError("plan_validate returned no structured result")
-    if validation.get("valid") is not True:
+    if not isinstance(validation, dict) or validation.get("valid") is not True:
         raise PipelineError(
             "plan_validate rejected the plan: "
-            + json.dumps(validation.get("errors", validation), ensure_ascii=False)
+            + json.dumps(validation, ensure_ascii=False)
         )
     if validation.get("creativeReady") is not True:
         raise PipelineError(
-            "plan_validate says creativeReady is false: "
+            "plan is not creatively ready: "
             + json.dumps(validation.get("creativeBlockers", []), ensure_ascii=False)
         )
+    signal_log = validation.get("signalLog")
+    if isinstance(signal_log, dict) and signal_log.get("driven") is False:
+        raise PipelineError(
+            "the plan's signalLog is not driven by the measured voice: "
+            + json.dumps(signal_log.get("blockers", []), ensure_ascii=False)
+        )
 
-    # 5: cut the dead air only; the dramatic holds ride untouched.
-    spans, holds = dead_air_spans(voice)
-    log(f"dead air: {len(spans)} span(s) to cut, {holds} dramatic hold(s) protected")
-    advance(
-        "clip_cut_spans",
-        {
-            "path": project,
-            "clipId": plan.get("audioClipId", ""),
-            "spans": spans,
-            "ripple": True,
-        },
-    )
+    if plan.get("audioClipId"):
+        spans, holds = dead_air_spans(voice)
+        log(f"dead air: {len(spans)} span(s) to cut, {holds} dramatic hold(s) protected")
+        if spans:
+            advance(
+                "clip_cut_spans",
+                {"path": project, "clipId": plan["audioClipId"], "spans": spans, "ripple": True},
+            )
 
-    # 6: shop every broll slot; each chosen clip is excluded from the next.
+    # Rank one unique candidate per actual timed B-roll segment.
     excluded: list[int] = []
-    chosen: dict[str, Any] = {}
-    for slot in broll_slots(plan):
+    chosen: dict[str, dict[str, Any]] = {}
+    slot_segments: dict[str, tuple[int, dict[str, Any]]] = {}
+    for index, segment in broll_segments(plan):
+        visual = segment["visual"]
+        slot_id = str(segment.get("slotId") or f"segment-{index + 1}")
+        query = str(visual.get("query") or "").strip()
+        if not query:
+            raise PipelineError(f"{slot_id}: B-roll segment has no real visual.query")
+        description = str(
+            visual.get("description") or segment.get("spoken") or query
+        ).strip()
+        queries = visual.get("queries")
+        if not isinstance(queries, list) or not queries:
+            queries = [query]
         reply = advance(
             "openvid_rank_for_slot",
             {
-                "description": slot.get("description", ""),
-                "queries": slot.get("queries", []),
-                "hero": bool(slot.get("hero", False)),
-                "motion_min": slot.get("motionMin"),
+                "description": description,
+                "queries": queries,
+                "hero": bool(visual.get("hero", False)),
+                "motion_min": visual.get("motionMin"),
                 "exclude_ids": list(excluded),
             },
         )
         clips = reply.get("clips", []) if isinstance(reply, dict) else []
-        if clips:
-            chosen[slot.get("slotId", "?")] = clips[0]
-            clip_id = clips[0].get("id")
-            if isinstance(clip_id, int):
-                excluded.append(clip_id)
+        if not clips:
+            raise PipelineError(f"{slot_id}: OpenVid returned no usable footage")
+        chosen[slot_id] = clips[0]
+        slot_segments[slot_id] = (index, segment)
+        clip_id = clips[0].get("id")
+        if isinstance(clip_id, int):
+            excluded.append(clip_id)
 
-    # 7: the filled manifest, read the way an editor scrubs it.
-    manifest = [
-        {
-            "slotId": slot_id,
-            "clipId": clip.get("name", clip.get("id")),
-            "motion": clip.get("motion"),
-            "shotScale": clip.get("shotScale"),
-            "category": clip.get("category"),
-        }
-        for slot_id, clip in chosen.items()
-    ]
-    advance("footage_continuity", {"clips": manifest})
+    # Continuity reads measured library metadata. Replace flagged shots once
+    # with the remedy's avoid hint; never silently pretend unknown metadata
+    # (colour/scale) was measured.
+    if chosen:
+        def continuity_manifest() -> list[dict[str, Any]]:
+            result = []
+            for slot_id, clip in chosen.items():
+                index, segment = slot_segments[slot_id]
+                visual = segment["visual"]
+                result.append({
+                    "slotId": slot_id,
+                    "clipId": str(clip.get("id", clip.get("name", slot_id))),
+                    "colorTemperature": float(clip.get("colorTemperature", 0.0)),
+                    "motion": float(clip.get("motion", 0.0)),
+                    "dominantDirection": _direction(clip.get("camera")),
+                    "shotScale": visual.get("shotScale", "medium"),
+                    "category": str(clip.get("category") or clip.get("source") or "unknown"),
+                    "motionMin": float(visual.get("motionMin") or 0.0),
+                })
+            return result
 
-    # 8: a reel for every graphic slot the plan carries.
-    for slot in graphic_slots(plan):
-        advance(
-            "motion_reel",
-            {
-                "project": project,
-                "storyboard": slot.get("storyboard", {}),
-                "name": slot.get("slotId", "reel"),
-            },
+        continuity = advance("footage_continuity", {"clips": continuity_manifest()})
+        flags = continuity.get("flags", []) if isinstance(continuity, dict) else []
+        for flag in flags:
+            slot_id = flag.get("slotId")
+            remedy = flag.get("remedy", {})
+            replace = remedy.get("replace") if isinstance(remedy, dict) else None
+            if not isinstance(slot_id, str) or slot_id not in chosen:
+                continue
+            if not isinstance(replace, dict):
+                raise PipelineError(
+                    f"continuity requires a non-replacement treatment for {slot_id}: "
+                    + json.dumps(flag, ensure_ascii=False)
+                )
+            index, segment = slot_segments[slot_id]
+            visual = segment["visual"]
+            avoid = str(replace.get("avoid") or "the previous shot's look")
+            old_id = chosen[slot_id].get("id")
+            retry = advance(
+                "openvid_rank_for_slot",
+                {
+                    "description": f"{visual.get('description') or segment.get('spoken') or visual.get('query', '')}; avoid {avoid}",
+                    "queries": visual.get("queries") or [visual.get("query")],
+                    "hero": bool(visual.get("hero", False)),
+                    "motion_min": visual.get("motionMin"),
+                    "exclude_ids": list(set(excluded + ([old_id] if isinstance(old_id, int) else []))),
+                },
+            )
+            alternatives = retry.get("clips", []) if isinstance(retry, dict) else []
+            alternatives = [c for c in alternatives if c.get("id") != old_id]
+            if not alternatives:
+                raise PipelineError(f"continuity could not find a replacement for {slot_id}: {avoid}")
+            chosen[slot_id] = alternatives[0]
+            new_id = alternatives[0].get("id")
+            if isinstance(new_id, int):
+                excluded.append(new_id)
+        if flags:
+            second = advance("footage_continuity", {"clips": continuity_manifest()})
+            remaining = second.get("flags", []) if isinstance(second, dict) else []
+            if remaining:
+                raise PipelineError(
+                    "continuity still has unresolved flags after one repair pass: "
+                    + json.dumps(remaining, ensure_ascii=False)
+                )
+
+    # Import and place each chosen source at its segment's real timeline start.
+    for slot_id, clip in chosen.items():
+        index, segment = slot_segments[slot_id]
+        start_at = float(segment["start"])
+        target_duration = float(segment["end"]) - start_at
+        imported = advance(
+            "openvid_import",
+            {"path": project, "ids": [int(clip["id"])], "start": start_at},
+        )
+        media_ids = imported.get("mediaIds", []) if isinstance(imported, dict) else []
+        if not media_ids:
+            raise PipelineError(f"{slot_id}: OpenVid import did not return a media id")
+        media_id = str(media_ids[0])
+        view = imported.get("view") if isinstance(imported, dict) else None
+        placed = _clip_for_media(view, media_id, start_at)
+        if placed is None:
+            view = transport.call("project_get", {"path": project})
+            placed = _clip_for_media(view, media_id, start_at)
+        if placed is None:
+            raise PipelineError(f"{slot_id}: imported media is not present on the timeline")
+        actual_duration = float(placed["duration"])
+        if actual_duration > target_duration + 0.05:
+            delta = target_duration - actual_duration
+            advance(
+                "clip_trim",
+                {
+                    "path": project,
+                    "clipId": placed["id"],
+                    "edge": "end",
+                    "delta": delta,
+                    "ripple": False,
+                },
+            )
+        log(
+            f"{slot_id}: imported {clip.get('name', clip['id'])} at {start_at:.2f}s "
+            f"for {min(actual_duration, target_duration):.2f}s"
         )
 
-    # 9: the finished timeline, out.
-    advance("export_start", {"path": project})
-    log(f"pipeline complete: {len(done)} call(s) over {total} phases")
+    # A render is not complete until the export job reports a terminal state.
+    export = plan.get("export") if isinstance(plan.get("export"), dict) else {}
+    output = export.get("output")
+    if not isinstance(output, str) or not output.strip():
+        output = os.path.join(project, f"funcut-final-{time.strftime('%Y%m%d-%H%M%S')}.mp4")
+    started = advance(
+        "export_start",
+        {
+            "path": project,
+            "output": output,
+            "crf": int(export.get("crf", 20)),
+            "codec": export.get("codec", "h264"),
+        },
+    )
+    job = started.get("job") if isinstance(started, dict) else None
+    if not job:
+        raise PipelineError("export_start did not return a job id")
+    status: Any = None
+    for attempt in range(4):
+        status = advance("export_wait", {"job": job, "timeoutSeconds": 900})
+        if not isinstance(status, dict) or status.get("state") != "running":
+            break
+    if not isinstance(status, dict) or status.get("state") == "running":
+        raise PipelineError(f"export did not finish within the wait budget: {status}")
+    if status.get("state") not in {"done", "completed", "succeeded"}:
+        raise PipelineError(f"export finished unsuccessfully: {status}")
+    rendered = status.get("output") or output
+
+    inspection = advance("watch_render", {"path": rendered, "samples": 12})
+    if not isinstance(inspection, dict) or not inspection.get("pngPath"):
+        raise PipelineError(f"render inspection did not produce a contact sheet: {inspection}")
+    critique = advance(
+        "craft_critique",
+        {"sheet": inspection, "project": project},
+    )
+    score = None
+    if isinstance(critique, dict):
+        score = critique.get("score", critique.get("craftScore"))
+    if isinstance(score, (int, float)) and score < 7:
+        raise PipelineError(
+            f"rendered cut scored {score}/10; revision is required before publishing: "
+            + json.dumps(critique, ensure_ascii=False)
+        )
+    log(f"pipeline complete: {len(done)} call(s); rendered {rendered}; craft score {score}")
     return done
 
 

@@ -36,11 +36,11 @@ THE PIPELINE (in order; each phase logged; any failure stops the run)
 1.  `transcribe`            the voiceover's words and timings
 2.  `voice_signals`         the take read as a score (pauses, emphasis)
 3.  `emotion` (extract)     what every line feels
-4.  `clip_cut_spans`        cut ONLY dead air - pauses the reading
-                            classified `dead_air`; dramatic holds are
-                            protected and never cut
-5.  `plan_validate`         the edit plan (from `--plan`) against the
-                            schema and the creative floors
+4.  `plan_validate`         validate schema and creative readiness;
+                             refuse before any timeline mutation if false
+5.  `clip_cut_spans`        cut ONLY dead air - pauses the reading
+                             classified `dead_air`; dramatic holds are
+                             protected and never cut
 6.  `openvid_rank_for_slot` once per `broll` slot in the plan
 7.  `footage_continuity`    the filled slots read the way an editor scrubs
 8.  `motion_reel`           once per `graphic` slot in the plan

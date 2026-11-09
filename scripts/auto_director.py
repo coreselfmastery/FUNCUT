@@ -342,6 +342,8 @@ def phase_plan(plan: dict[str, Any]) -> list[tuple[str, str]]:
     phases.extend([
         ("export_start", "export"),
         ("export_wait", "wait for completed export"),
+        ("transcribe", "verify exported speech"),
+        ("emotion", "compare source and rendered speech timing"),
         ("watch_render", "inspect rendered frames and audio"),
         ("craft_critique", "score the rendered cut"),
     ])
@@ -662,7 +664,27 @@ def run_pipeline(
         raise PipelineError(f"export finished unsuccessfully: {status}")
     rendered = status.get("output") or output
 
-    inspection = advance("watch_render", {"path": rendered, "samples": 12})
+    exported_transcript = advance("transcribe", {"path": rendered})
+    verification = advance(
+        "emotion",
+        {
+            "action": "verify",
+            "expected": transcript,
+            "actual": exported_transcript,
+            "toleranceMs": 150,
+        },
+    )
+    if not isinstance(verification, dict) or verification.get("verdict") != "pass":
+        raise PipelineError(
+            "exported speech failed transcript/timing verification: "
+            + json.dumps(verification, ensure_ascii=False)
+        )
+    log(
+        f"speech verification passed: matchRate={verification.get('matchRate')} "
+        f"maxDriftMs={verification.get('maxDriftMs')}"
+    )
+
+    inspection = advance("watch_render", {"path": rendered, "samples": 12, "audio": True})
     if not isinstance(inspection, dict) or not inspection.get("pngPath"):
         raise PipelineError(f"render inspection did not produce a contact sheet: {inspection}")
     critique = advance(
@@ -799,7 +821,11 @@ SELF_TEST_REPLIES = {
             ]
         }
     },
-    "emotion": {"lines": [{"text": "one", "emotion": "curious"}], "arc": ["curiosity", "clarity"]},
+    "emotion": lambda args: (
+        {"verdict": "pass", "matchRate": 1.0, "maxDriftMs": 0.0}
+        if args.get("action") == "verify"
+        else {"lines": [{"text": "one", "emotion": "curious"}], "arc": ["curiosity", "clarity"]}
+    ),
     "plan_validate": {
         "valid": True,
         "creativeReady": True,
@@ -884,7 +910,11 @@ def self_test() -> int:
     if waited.get("job") != "j1":
         print(f"FAIL: export job was not awaited: {waited}")
         return 1
-    print("export ok: job awaited, rendered file inspected, craft critique received")
+    verified = next(args for tool, args in by_tool if tool == "emotion")
+    if verified.get("action") != "verify" or verified.get("toleranceMs") != 150:
+        print(f"FAIL: exported speech was not verified against the source: {verified}")
+        return 1
+    print("export ok: job awaited, speech timing verified, render inspected and critiqued")
 
     # A failure stops the run: no timeline or export work follows it.
     broken = MockMcp(dict(SELF_TEST_REPLIES), fail_on="emotion")

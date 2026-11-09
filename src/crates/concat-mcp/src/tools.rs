@@ -1776,6 +1776,48 @@ fn canonical_plan_schema() -> Option<Value> {
     .ok()
 }
 
+/// The motion storyboard schema is kept outside the parent json! macro
+/// so the tool schema stays below serde_json's macro recursion limit.
+fn motion_storyboard_schema() -> Value {
+    json!({
+        "type": "object",
+        "required": ["scenes"],
+        "description": "A complete motion_reel storyboard for textCard/titleCard segments.",
+        "properties": {
+            "width": { "type": "integer", "minimum": 1 },
+            "height": { "type": "integer", "minimum": 1 },
+            "fps": { "type": "number", "minimum": 1 },
+            "scenes": { "type": "array", "minItems": 1, "items": { "type": "object" } },
+            "assets": { "type": "object" },
+            "audio": { "type": "array" },
+            "curtain": { "type": "object" }
+        }
+    })
+}
+
+/// The canonical visual segment contract, shared by plan validation and the
+/// segment executor.
+fn director_visual_schema() -> Value {
+    json!({
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+            "type": { "type": "string", "enum": ["broll", "textCard", "titleCard", "existing"] },
+            "query": { "type": "string" },
+            "description": { "type": "string", "minLength": 40 },
+            "queries": { "type": "array", "items": { "type": "string" } },
+            "hero": { "type": "boolean" },
+            "motionMin": { "type": "number", "minimum": 0 },
+            "shotScale": { "type": "string", "enum": ["wide", "medium", "close_up"] },
+            "category": { "type": "string", "description": "A concise semantic continuity category for this shot, such as people, landscape, machinery, or data." },
+            "storyboard": motion_storyboard_schema(),
+            "clipId": { "type": ["string", "null"] },
+            "mediaId": { "type": "string" },
+            "file": { "type": "string" }
+        }
+    })
+}
+
 /// The compact MCP input schema. The full canonical schema is also checked
 /// at runtime; this keeps a 7 KB plan template out of every client's tool list.
 fn plan_validate_schema() -> Option<Value> {
@@ -1814,34 +1856,7 @@ fn plan_validate_schema() -> Option<Value> {
                             "properties": {
                                 "start": { "type": "number", "minimum": 0 },
                                 "end": { "type": "number", "minimum": 0 },
-                                "visual": {
-                                    "type": "object",
-                                    "required": ["type"],
-                                    "properties": {
-                                        "type": { "type": "string", "enum": ["broll", "textCard", "titleCard", "existing"] },
-                                        "query": { "type": "string" },
-                                        "description": { "type": "string", "minLength": 40 },
-                                        "queries": { "type": "array", "items": { "type": "string" } },
-                                        "hero": { "type": "boolean" },
-                                        "motionMin": { "type": "number", "minimum": 0 },
-                                        "shotScale": { "type": "string", "enum": ["wide", "medium", "close_up"] },
-                                        "category": { "type": "string", "description": "A concise semantic continuity category for this shot, such as people, landscape, machinery, or data." },
-                                        "storyboard": {
-                                            "type": "object",
-                                            "required": ["scenes"],
-                                            "description": "A complete motion_reel storyboard for textCard/titleCard segments.",
-                                            "properties": {
-                                                "width": { "type": "integer", "minimum": 1 },
-                                                "height": { "type": "integer", "minimum": 1 },
-                                                "fps": { "type": "number", "minimum": 1 },
-                                                "scenes": { "type": "array", "minItems": 1, "items": { "type": "object" } },
-                                                "assets": { "type": "object" },
-                                                "audio": { "type": "array" },
-                                                "curtain": { "type": "object" }
-                                            }
-                                        }
-                                    }
-                                }
+                                "visual": director_visual_schema()
                             }
                         }
                     },

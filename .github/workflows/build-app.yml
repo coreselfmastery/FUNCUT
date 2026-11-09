@@ -95,7 +95,6 @@ jobs:
             nfpm: amd64
             appimage: x86_64
             ggml: variants
-            cargo_jobs: "4"
           - platform: linux
             arch: aarch64
             os: ubuntu-24.04-arm
@@ -105,21 +104,11 @@ jobs:
             ort: aarch64
             nfpm: arm64
             appimage: aarch64
-            cargo_jobs: "1"
     runs-on: ${{ matrix.os }}
     # The steps that can hang have timeouts of their own, so a stuck step
     # is named by its own timeout; this is for a job stuck anywhere else.
     timeout-minutes: 190
     env:
-      # One rustc at a time on aarch64, four on x86_64. The ARM build met
-      # its memory ceiling six times in one afternoon - the whole VM went
-      # with it each time, "The runner has received a shutdown signal",
-      # exit 143, always at the same stretch of the same compile - and the
-      # x86_64 job built the same tree green in seventeen minutes. The
-      # same cure CI's own engine lane takes: one heavy thing at a time.
-      # The wall time is the sum of the lanes, and the budget above holds
-      # it.
-      CARGO_BUILD_JOBS: ${{ matrix.cargo_jobs }}
       # What whisper's CPU kernels are built for on x86_64, by the matrix's
       # `ggml` row. ggml's own switches default to AVX2 with FMA, F16C and
       # BMI2, compiled into the whole CPU backend - and the editor died at

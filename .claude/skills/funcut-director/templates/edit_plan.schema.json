@@ -140,7 +140,45 @@
               },
               "query": {
                 "type": "string",
-                "description": "broll: the openvid_search query. Follow prompts/broll_matching.md."
+                "description": "broll: the primary OpenVid search query. Follow prompts/broll_matching.md."
+              },
+              "description": {
+                "type": "string",
+                "minLength": 40,
+                "description": "A visual-specific, semantic shot description for CLIP reranking; name subject, action, composition and mood."
+              },
+              "queries": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 },
+                "description": "Fallback BM25 search phrases for this B-roll segment."
+              },
+              "hero": {
+                "type": "boolean",
+                "description": "Whether this is the hero shot; widens candidate search."
+              },
+              "motionMin": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Minimum measured motion score accepted for this shot."
+              },
+              "shotScale": {
+                "type": "string",
+                "enum": ["wide", "medium", "close_up"],
+                "description": "The intended shot scale, used by the continuity check."
+              },
+              "storyboard": {
+                "type": "object",
+                "required": ["scenes"],
+                "description": "A complete motion_reel storyboard for textCard/titleCard segments. Use the same storyboard schema as the motion_reel MCP tool; the rendered reel is imported and placed at this segment's start.",
+                "properties": {
+                  "width": { "type": "integer", "minimum": 1 },
+                  "height": { "type": "integer", "minimum": 1 },
+                  "fps": { "type": "number", "minimum": 1 },
+                  "scenes": { "type": "array", "minItems": 1, "items": { "type": "object" } },
+                  "assets": { "type": "object" },
+                  "audio": { "type": "array" },
+                  "curtain": { "type": "object" }
+                }
               },
               "sort": {
                 "type": "string",

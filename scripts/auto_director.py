@@ -614,38 +614,50 @@ def watch(transport: Any, project: str, plan: dict[str, Any], poll: float) -> No
 
 
 SELF_TEST_PLAN = {
-    "aspect": "9:16",
-    "mode": "reel",
-    "sections": [{"role": "hook", "start": 0.0, "end": 4.0}],
-    "segments": [{"start": 0.0, "end": 4.0, "cutType": "hard"}],
-    "audio": {"clipId": "c1"},
-    "grade": {"filter": "warm", "intensityKey": "medium", "intensity": 0.5},
-    "audioClipId": "c1",
-    "slots": [
+    "aspect": "16:9",
+    "mode": "longform",
+    "sections": [
+        {"role": "hook", "start": 0.0, "end": 4.0},
+        {"role": "body", "start": 4.0, "end": 8.0},
+    ],
+    "segments": [
         {
-            "slotId": "hook.1",
-            "treatment": "broll",
-            "description": "a slow aerial drift across the city skyline at dusk",
-            "queries": ["city skyline aerial"],
-            "motionMin": 1.0,
+            "start": 0.0,
+            "end": 4.0,
+            "spoken": "The city changes after dark",
+            "visual": {
+                "type": "broll",
+                "query": "cinematic city skyline at dusk",
+                "description": "A slow aerial drift across a dense city skyline at dusk",
+                "motionMin": 1.0,
+            },
         },
         {
-            "slotId": "reveal.hero",
-            "treatment": "broll",
-            "hero": True,
-            "description": "a decision landing on one worried face, close up",
-            "queries": ["worried face closeup"],
-        },
-        {
-            "slotId": "title.card",
-            "treatment": "graphic",
-            "storyboard": {"scenes": [{"id": "s1", "kind": "title"}]},
+            "start": 4.0,
+            "end": 8.0,
+            "spoken": "The evidence becomes clear",
+            "visual": {"type": "textCard", "text": "THE EVIDENCE"},
         },
     ],
+    "audio": {"voiceover": {"source": "file"}},
+    "grade": {"filter": "concat.warm", "intensityKey": "amount", "intensity": 35},
+    "creativeBrief": {
+        "audience": "curious beginners",
+        "platform": "youtube",
+        "goal": "understand the story",
+        "thesis": "The evidence changes the common explanation",
+        "curiosityGap": "What actually happened?",
+        "payoff": "The evidence reveals the cause",
+        "emotionalArc": ["curiosity", "tension", "clarity"],
+    },
+    "signalLog": [
+        {"at": 0.0, "decision": "cut", "signals": ["emphasisWords"]},
+    ],
+    "export": {"output": "/tmp/funcut-selftest/final.mp4", "crf": 20, "codec": "h264"},
 }
 
+
 SELF_TEST_REPLIES = {
-    "project_get": {"project": {}, "timeline": {}, "media": []},
     "transcribe": {"segments": [{"text": "one", "start": 0.0, "end": 1.0}]},
     "voice_signals": {
         "signals": {
@@ -656,63 +668,80 @@ SELF_TEST_REPLIES = {
             ]
         }
     },
-    "emotion": {"lines": [{"text": "one", "emotion": "curious"}]},
-    "clip_cut_spans": {"ok": True},
+    "emotion": {"lines": [{"text": "one", "emotion": "curious"}], "arc": ["curiosity", "clarity"]},
     "plan_validate": {
         "valid": True,
         "creativeReady": True,
         "creativeBlockers": [],
+        "signalLog": {"driven": True, "blockers": []},
         "craftScore": 8.0,
     },
     "openvid_rank_for_slot": {
-        "clips": [{"id": 7, "name": "city", "motion": 2.0, "slotRank": 1}]
+        "clips": [{
+            "id": 7, "name": "city", "motion": 2.0, "camera": "pan_left",
+            "source": "pexels", "seconds": 8.0, "slotRank": 1,
+        }]
     },
     "footage_continuity": {"count": 0, "flags": []},
-    "motion_reel": {"path": "/tmp/reel.mp4"},
+    "openvid_import": {
+        "mediaIds": ["m-stock-7"],
+        "view": {
+            "timeline": {
+                "clips": [{
+                    "id": "c-stock-7", "mediaId": "m-stock-7",
+                    "start": 0.0, "duration": 8.0,
+                }]
+            }
+        },
+    },
+    "clip_trim": {"ok": True},
     "export_start": {"job": "j1"},
+    "export_wait": {"state": "done", "output": "/tmp/funcut-selftest/final.mp4"},
+    "watch_render": {"pngPath": "/tmp/funcut-selftest/contact.png", "samples": 12},
+    "craft_critique": {"score": 8.5, "notes": []},
 }
 
 
 def self_test() -> int:
-    """A synthetic audio path through a mocked server: the order is the test."""
+    """A synthetic canonical plan exercises the real execution contract."""
     audio = "/tmp/funcut-selftest/voiceover.wav"
     transport = MockMcp(dict(SELF_TEST_REPLIES))
-
     calls = run_pipeline(transport, "/edits/SelfTest", audio, SELF_TEST_PLAN)
-    order = [tool for tool, _ in calls]
-
+    by_tool = [(tool, args) for tool, args in calls]
+    order = [tool for tool, _ in by_tool]
     expected = [
-        "transcribe",
-        "voice_signals",
-        "emotion",
-        "plan_validate",
-        "clip_cut_spans",
-        "openvid_rank_for_slot",
-        "openvid_rank_for_slot",  # once per broll slot: two
-        "footage_continuity",
-        "motion_reel",
-        "export_start",
+        "transcribe", "voice_signals", "emotion", "plan_validate",
+        "openvid_rank_for_slot", "footage_continuity", "openvid_import",
+        "clip_trim", "export_start", "export_wait", "watch_render", "craft_critique",
     ]
     if order != expected:
         print(f"FAIL: phase order\n  want: {expected}\n  got:  {order}")
         return 1
     print(f"order ok: {' -> '.join(order)}")
 
-    # The dead air is cut, the dramatic hold is not.
-    cut = dict(calls)["clip_cut_spans"]["spans"]
-    if cut != [[1.2, 2.4], [6.0, 6.5]]:
-        print(f"FAIL: dead-air spans {cut} - the dramatic hold must survive")
+    rank = next(args for tool, args in by_tool if tool == "openvid_rank_for_slot")
+    if rank["description"] != "A slow aerial drift across a dense city skyline at dusk":
+        print(f"FAIL: rank did not use the segment's creative description: {rank}")
         return 1
-    print("dead air ok: 2 spans cut, the dramatic hold protected")
-
-    # The second broll slot shopped with the first's choice excluded.
-    ranks = [args for tool, args in calls if tool == "openvid_rank_for_slot"]
-    if ranks[1].get("exclude_ids") != [7]:
-        print(f"FAIL: the second slot did not exclude the first's clip: {ranks[1]}")
+    imported = next(args for tool, args in by_tool if tool == "openvid_import")
+    if imported.get("ids") != [7] or imported.get("start") != 0.0:
+        print(f"FAIL: selected footage was not imported at its segment start: {imported}")
         return 1
-    print("slots ok: the hero slot shopped past the first choice")
+    print("stock ok: ranked result 7 imported and placed at 0.0s")
 
-    # A failure stops the run: nothing later than the failing phase runs.
+    trim = next(args for tool, args in by_tool if tool == "clip_trim")
+    if trim.get("clipId") != "c-stock-7" or trim.get("delta") != -4.0:
+        print(f"FAIL: footage was not trimmed to the segment duration: {trim}")
+        return 1
+    print("timing ok: eight-second source trimmed to the four-second story beat")
+
+    waited = next(args for tool, args in by_tool if tool == "export_wait")
+    if waited.get("job") != "j1":
+        print(f"FAIL: export job was not awaited: {waited}")
+        return 1
+    print("export ok: job awaited, rendered file inspected, craft critique received")
+
+    # A failure stops the run: no timeline or export work follows it.
     broken = MockMcp(dict(SELF_TEST_REPLIES), fail_on="emotion")
     try:
         run_pipeline(broken, "/edits/SelfTest", audio, SELF_TEST_PLAN)
@@ -720,20 +749,20 @@ def self_test() -> int:
         return 1
     except PipelineError:
         later = [tool for tool, _ in broken.calls if tool in {
-            "plan_validate", "clip_cut_spans", "footage_continuity",
-            "motion_reel", "export_start",
-        } or tool == "openvid_rank_for_slot"]
+            "plan_validate", "clip_cut_spans", "openvid_import", "clip_trim",
+            "export_start", "export_wait", "watch_render",
+        }]
         if later:
             print(f"FAIL: phases ran past the failure: {later}")
             return 1
-    print("failure ok: the run stopped at emotion, nothing later ran")
+    print("failure ok: a failed analysis stops before any timeline mutation")
 
-    # A plan that is not creatively ready must stop BEFORE the first edit.
     unready_replies = dict(SELF_TEST_REPLIES)
     unready_replies["plan_validate"] = {
         "valid": True,
         "creativeReady": False,
         "creativeBlockers": ["missing signal log"],
+        "signalLog": {"driven": False, "blockers": ["missing signal log"]},
     }
     unready = MockMcp(unready_replies)
     try:
@@ -743,13 +772,12 @@ def self_test() -> int:
     except PipelineError:
         mutated = [
             tool for tool, _ in unready.calls
-            if tool in {"clip_cut_spans", "openvid_import", "clip_add", "edit_apply"}
+            if tool in {"clip_cut_spans", "openvid_import", "clip_add", "edit_apply", "export_start"}
         ]
         if mutated:
             print(f"FAIL: timeline mutation preceded readiness: {mutated}")
             return 1
-    print("readiness gate ok: no timeline mutation before creative readiness")
-
+    print("readiness gate ok: no edit or export before creativeReady")
     print("SELF-TEST PASS")
     return 0
 

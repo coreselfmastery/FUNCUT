@@ -253,31 +253,20 @@ not creativeReady is a rejection, not a warning to wave through. Craft score
 below 7 means rewrite the plan, not proceed. Then compare the plan's `aspect` with `timeline_read`; if they
 differ, set the canvas with `project_set_video` BEFORE gathering assets.
 
-**The plan carries its footage as slots beside its segments.** A segment
-says what the timeline plays; a slot says what one opening is *for*:
-`slotId` (`"hook.1"`, `"reveal.hero"` — the id the critic's notes
-name), `role` (the same seven acts), `treatment` (`broll` shops for
-stock; `hold`, `graphic` and `black` are drawn by the edit and take no
-queries), `job` (illustrate / contrast / punctuate / transition /
-breathe), `entry` and `exit` against the words and the beat grid
-(`on_emphasis`, `before_line`, `on_beat`, `after_line` in;
-`before_next_emphasis`, `on_beat`, `source_cut`, `early` out), the rich
-`description` — twelve to twenty-five words of nouns and adjectives,
-forty characters at least: what is in frame, what it is doing, what it
-feels like — the fallback `queries` (keywords only: the description is
-the ranked contract, the queries are what BM25 gets), `hero` (the shot
-the thumbnail and the first glance live on), `motionMin` (the least
-motion the slot may carry — a `breathe` slot wants stillness, a
-`punctuate` slot the opposite) and `durationS`. Derive the slot list
-where the engine's `suggest_footage` read would find it: the spans no
-words cover, the stretches no beat lands in — the Phase-1 readings
-already measured both. `plan_validate` holds the slot laws beside the
-rest: a description under forty characters is refused, a drawn
-treatment that carries queries is refused, and b-roll without a query is
-refused. There is no universal footage/graphics/hold percentage: choose
-the mix from this film's story, evidence, emotion, and available material.
-A plan without slots is a plan the segments alone describe; under a
-voiceover, write slots when they help make the intended coverage explicit.
+**The canonical plan is segment-based.** `segments[]` is the timeline
+contract the validator and `scripts/auto_director.py` execute; do not add a
+separate `slots[]` array to the canonical JSON. For every timed segment,
+the `visual` object says what actually plays. A `broll` visual carries
+`query`, a 40+ character semantic `description`, optional fallback
+`queries`, `hero`, `motionMin`, intended `shotScale`, and semantic
+`category`. A `textCard`/`titleCard` that needs designed motion carries a
+complete `visual.storyboard` accepted by `motion_reel`; an asset that is
+not rendered and placed is not an executed visual decision. An `existing`
+visual must name a real clip/media id already in the project. Slot-like
+shot notes may help your internal reasoning, but they are not a second
+serialized source of truth. There is no universal footage/graphics/hold
+percentage: choose the mix from this film's story, evidence, emotion, and
+available material.
 
 **Phase 4 — Gather (parallel if your harness allows).**
 **The BGM gate runs before any music is searched.**
@@ -295,26 +284,21 @@ report: this voiceover embeds a music track whose licence is unknown;
 confirm the rights or replace the take before publishing. Only a take
 that answers `musicPresent: false` gets the BGM searches below.
 
-**When the plan carries slots, shop the slot, not the keyword.** Consult
+**Shop each timed B-roll segment, not a generic keyword.** Consult
 clip-skills' B-roll matching module. The B-roll reinforces the line's job
-(contrast / punctuate / breathe), not its literal content. For
-each `broll` slot, in plan order: `openvid_rank_for_slot {description:
-<the slot's description, verbatim>, queries, hero, motion_min,
-exclude_ids: <every clip id this edit has already chosen>}`. The
-description is the contract — BM25 builds the page, the CLIP second
-pass re-orders it by what the clips SHOW, and the queries blend in as
-Jaccard similarity at `tag_weight` (0.3 by default: the description
-leads, the queries keep it honest). The hard filters are promises, not
-hopes: `motion_min` and `exclude_ids` ride the search request and are
-enforced again on what lands — a used clip or one under the floor is
-not ranked lower, it is not there. A `hero` slot asks for thirty
-candidates, any other for twelve, and every clip comes back carrying
-its `slotScore` and `slotRank`. Keep each chosen id on the next slot's
-`exclude_ids` as you go — the variety law held by the tool instead of
-by your memory. An empty description is an error that says why; never
-send one. The contact sheet and the placement gate below apply to slot
-pages exactly as to keyword pages — a slot's ranking is lexical and
-CLIP-side, and the eye and the gate still get the last word.
+(contrast / punctuate / breathe), not its literal content. For each
+`segments[i]` whose `visual.type` is `broll`, call
+`openvid_rank_for_slot {description: visual.description, queries:
+visual.queries || [visual.query], hero: visual.hero, motion_min:
+visual.motionMin, exclude_ids: <every clip id already chosen>}`. The
+description is the semantic contract — BM25 builds the page, the CLIP
+second pass re-orders it by what the clips SHOW, and the queries blend in
+as Jaccard similarity at `tag_weight` (0.3 by default). Reject candidates
+shorter than the segment; keep every chosen id in the next request's
+`exclude_ids`. Inspect the contact sheet and run the placement gate before
+importing. The automatic runner performs the ranking, duration rejection,
+continuity check, targeted replacement, import, placement and end trim;
+if you invoke it, verify those placed clips rather than adding duplicates.
 All `openvid_search`
 calls, all `sounds_search` calls, the `bgm_search` — these are independent;
 fan them out when you can, and where you cannot, one `openvid_search_batch`

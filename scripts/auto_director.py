@@ -543,7 +543,7 @@ def run_pipeline(
                     "motion": float(clip.get("motion", 0.0)),
                     "dominantDirection": _direction(clip.get("camera")),
                     "shotScale": visual.get("shotScale", "medium"),
-                    "category": str(clip.get("category") or clip.get("source") or "unknown"),
+                    "category": str(visual.get("category") or clip.get("category") or clip.get("source") or "unknown"),
                     "motionMin": float(visual.get("motionMin") or 0.0),
                 })
             return result

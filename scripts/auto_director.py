@@ -275,34 +275,6 @@ def _direction(camera: Any) -> str:
     return "static"
 
 
-def dead_air_spans(voice_reply: Any) -> tuple[list[list[float]], int]:
-    """The spans `clip_cut_spans` may cut: `dead_air` pauses only.
-
-    A dramatic hold is a pause the reading kept on purpose - the beat the
-    edit breathes through - and protecting it is the difference between a
-    tight take and a flattened one. Returns the cut spans and how many
-    holds were protected, for the log.
-    """
-    if not isinstance(voice_reply, dict):
-        return [], 0
-    pauses = voice_reply.get("pauses")
-    if pauses is None:
-        signals = voice_reply.get("signals")
-        pauses = signals.get("pauses") if isinstance(signals, dict) else None
-    if not isinstance(pauses, list):
-        return [], 0
-    spans: list[list[float]] = []
-    holds = 0
-    for pause in pauses:
-        if not isinstance(pause, dict):
-            continue
-        if pause.get("class") == "dead_air":
-            spans.append([float(pause["start"]), float(pause["end"])])
-        else:
-            holds += 1
-    return spans, holds
-
-
 # --------------------------------------------------------------- the pipeline
 
 

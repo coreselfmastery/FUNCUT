@@ -37,7 +37,7 @@ THE PIPELINE (in order; each phase logged; any failure stops the run)
 2.  `voice_signals`         measured pauses, emphasis and delivery
 3.  `emotion`               emotional read of the narration
 4.  `plan_validate`         schema, creative readiness and signal-driven gate
-5.  `clip_cut_spans`        dead air only, when an audioClipId is supplied
+5.  `project_get`           find or import the voiceover and place it on its own lane
 6.  `openvid_rank_for_slot` each timed B-roll segment, with duration checks
 7.  `footage_continuity`    check the selected clips; replace flagged shots once
 8.  `openvid_import`        import and place stock at the segment start; trim
@@ -998,7 +998,6 @@ SELF_TEST_REPLIES = {
             "source": "pexels", "seconds": 8.0, "slotRank": 1,
         }]
     },
-    "clip_cut_spans": {"ok": True},
     "footage_continuity": {"count": 0, "flags": []},
     "openvid_import": {
         "mediaIds": ["m-stock-7"],
@@ -1090,7 +1089,7 @@ def self_test() -> int:
         return 1
     except PipelineError:
         later = [tool for tool, _ in broken.calls if tool in {
-            "plan_validate", "clip_cut_spans", "openvid_import", "clip_trim",
+            "plan_validate", "openvid_import", "clip_trim",
             "export_start", "export_wait", "watch_render",
         }]
         if later:

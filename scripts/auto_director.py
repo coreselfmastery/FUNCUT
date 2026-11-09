@@ -317,7 +317,6 @@ def phase_plan(plan: dict[str, Any]) -> list[tuple[str, str]]:
         ("project_get", "read the project bin and active timeline"),
         ("track_add", "create a dedicated voiceover lane when needed"),
         ("clip_add", "place the voiceover when it is not already on the timeline"),
-        ("clip_cut_spans", "cut measured dead air from the placed voiceover"),
     ]
     phases.extend(
         ("openvid_rank_for_slot", f"rank B-roll segment {index + 1}")
@@ -499,13 +498,7 @@ def run_pipeline(
             if not isinstance(audio_clip_id, str) or not audio_clip_id:
                 raise PipelineError("clip_add did not return the placed voiceover clip id")
 
-    spans, holds = dead_air_spans(voice)
-    log(f"dead air: {len(spans)} span(s) to cut, {holds} dramatic hold(s) protected")
-    if spans:
-        advance(
-            "clip_cut_spans",
-            {"path": project, "clipId": audio_clip_id, "spans": spans, "ripple": True},
-        )
+    log(f"voiceover ready on timeline: clip {audio_clip_id}; timing remains unchanged by the runner")
 
     # Rank one unique candidate per actual timed B-roll segment.
     excluded: list[int] = []
@@ -1039,7 +1032,7 @@ def self_test() -> int:
     order = [tool for tool, _ in by_tool]
     expected = [
         "transcribe", "analysis_wait", "voice_signals", "emotion", "plan_validate",
-        "project_get", "track_add", "clip_add", "clip_cut_spans",
+        "project_get", "track_add", "clip_add",
         "openvid_rank_for_slot", "footage_continuity", "openvid_import",
         "clip_trim", "track_add", "motion_reel", "media_import", "clip_add",
         "export_start", "export_wait", "transcribe", "analysis_wait", "emotion",
@@ -1120,7 +1113,7 @@ def self_test() -> int:
     except PipelineError:
         mutated = [
             tool for tool, _ in unready.calls
-            if tool in {"project_get", "track_add", "clip_cut_spans", "media_import", "openvid_import", "clip_add", "edit_apply", "export_start"}
+            if tool in {"project_get", "track_add", "media_import", "openvid_import", "clip_add", "edit_apply", "export_start"}
         ]
         if mutated:
             print(f"FAIL: timeline mutation preceded readiness: {mutated}")

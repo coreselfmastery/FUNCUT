@@ -1069,6 +1069,66 @@ def self_test() -> int:
         return 1
     print("export ok: job awaited, speech timing verified, render inspected and critiqued")
 
+    # A continuity replacement must exclude the rejected shot and place the
+    # replacement, then pass the second continuity read before importing.
+    repair_rank_calls: list[dict[str, Any]] = []
+    continuity_calls = [0]
+
+    def repair_rank(args: dict[str, Any]) -> dict[str, Any]:
+        repair_rank_calls.append(args)
+        return {
+            "clips": [{
+                "id": 7 if len(repair_rank_calls) == 1 else 8,
+                "name": "first" if len(repair_rank_calls) == 1 else "replacement",
+                "motion": 2.0,
+                "camera": "pan_left" if len(repair_rank_calls) == 1 else "pan_right",
+                "source": "pexels",
+                "seconds": 8.0,
+            }]
+        }
+
+    def repair_continuity(args: dict[str, Any]) -> dict[str, Any]:
+        continuity_calls[0] += 1
+        if continuity_calls[0] == 1:
+            return {
+                "count": 1,
+                "flags": [{
+                    "slotId": "segment-1",
+                    "remedy": {"replace": {"avoid": "a leftward camera pan"}},
+                }],
+            }
+        return {"count": 0, "flags": []}
+
+    repair_replies = dict(SELF_TEST_REPLIES)
+    repair_replies["openvid_rank_for_slot"] = repair_rank
+    repair_replies["footage_continuity"] = repair_continuity
+    repair_replies["openvid_import"] = lambda args: {
+        "mediaIds": ["m-stock-8"],
+        "view": {
+            "timeline": {
+                "clips": [{
+                    "id": "c-stock-8", "mediaId": "m-stock-8",
+                    "start": 0.0, "duration": 8.0,
+                }]
+            }
+        },
+    }
+    repaired = MockMcp(repair_replies)
+    repaired_calls = run_pipeline(
+        repaired, "/edits/SelfTest", audio, SELF_TEST_PLAN
+    )
+    replacement_rank = repair_rank_calls[1]
+    imported_choice = next(
+        args for tool, args in repaired_calls if tool == "openvid_import"
+    )
+    if 7 not in replacement_rank.get("exclude_ids", []) or imported_choice.get("ids") != [8]:
+        print(f"FAIL: continuity did not replace the rejected clip: {replacement_rank}, {imported_choice}")
+        return 1
+    if continuity_calls[0] != 2:
+        print(f"FAIL: continuity was not rechecked after replacement: {continuity_calls}")
+        return 1
+    print("continuity ok: rejected footage excluded, replacement placed, second gate clean")
+
     # A failure stops the run: no timeline or export work follows it.
     broken = MockMcp(dict(SELF_TEST_REPLIES), fail_on="emotion")
     try:

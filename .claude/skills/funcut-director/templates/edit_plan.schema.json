@@ -392,27 +392,56 @@
           },
           "role": {
             "type": "string",
-            "enum": ["hook", "setup", "tension", "turn", "reveal", "proof", "cta"],
+            "enum": [
+              "hook",
+              "setup",
+              "tension",
+              "turn",
+              "reveal",
+              "proof",
+              "cta"
+            ],
             "description": "The dramaturgical role the slot plays - the same seven acts a segment's `act` names, because a slot spends a beat."
           },
           "treatment": {
             "type": "string",
-            "enum": ["hold", "broll", "graphic", "black"],
+            "enum": [
+              "hold",
+              "broll",
+              "graphic",
+              "black"
+            ],
             "description": "What fills the slot's screen time. Only broll shops for stock; hold, graphic and black are treatments the edit draws itself and take no queries."
           },
           "job": {
             "type": "string",
-            "enum": ["illustrate", "contrast", "punctuate", "transition", "breathe"],
+            "enum": [
+              "illustrate",
+              "contrast",
+              "punctuate",
+              "transition",
+              "breathe"
+            ],
             "description": "The work the slot's picture does for the edit."
           },
           "entry": {
             "type": "string",
-            "enum": ["on_emphasis", "before_line", "on_beat", "after_line"],
+            "enum": [
+              "on_emphasis",
+              "before_line",
+              "on_beat",
+              "after_line"
+            ],
             "description": "When the picture enters, against the words and the beat grid."
           },
           "exit": {
             "type": "string",
-            "enum": ["before_next_emphasis", "on_beat", "source_cut", "early"],
+            "enum": [
+              "before_next_emphasis",
+              "on_beat",
+              "source_cut",
+              "early"
+            ],
             "description": "How the picture leaves."
           },
           "description": {
@@ -441,6 +470,54 @@
             "type": "number",
             "exclusiveMinimum": 0,
             "description": "How long the slot's screen time runs, in seconds."
+          },
+          "visualRationale": {
+            "type": "object",
+            "description": "A concise, film-specific reason for this visual choice. Required in practice for major beats; it must explain intent rather than repeat a template.",
+            "properties": {
+              "job": {
+                "type": "string",
+                "minLength": 1,
+                "description": "What this beat must communicate or make the viewer feel."
+              },
+              "medium": {
+                "type": "string",
+                "enum": [
+                  "footage",
+                  "motion",
+                  "chart",
+                  "typography",
+                  "generated",
+                  "hold",
+                  "hybrid"
+                ],
+                "description": "The selected visual medium."
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Why this medium is stronger than the plausible alternatives for this beat."
+              },
+              "style": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The film-specific visual treatment: composition, palette, type, movement, texture, or camera language."
+              },
+              "transition": {
+                "type": "string",
+                "description": "Why and how the visual enters or leaves in relation to story, speech, and rhythm."
+              },
+              "fallback": {
+                "type": "string",
+                "description": "A meaningful alternative if the selected asset, model, or renderer is unavailable."
+              }
+            },
+            "required": [
+              "job",
+              "medium",
+              "reason",
+              "style"
+            ]
           }
         }
       }
@@ -469,7 +546,7 @@
             },
             "speed": {
               "type": "number",
-              "default": 1.0
+              "default": 1
             },
             "model": {
               "type": "string",
@@ -669,7 +746,7 @@
     },
     "maxSegmentSeconds": {
       "type": "number",
-      "default": 4.0,
+      "default": 4,
       "description": "Hard floor P: no visual segment runs past this (4.0 energetic niches, 6.0 calm)."
     },
     "text": {
@@ -804,7 +881,11 @@
       "description": "The decision log: which voice_signals signals drove each choice. One entry per cut, caption, graphic, BGM and transition decision, naming the signals (from the profile's decisionPolicy) behind it. A plan with a voiceover and no signalLog is NOT creativeReady.",
       "items": {
         "type": "object",
-        "required": ["at", "decision", "signals"],
+        "required": [
+          "at",
+          "decision",
+          "signals"
+        ],
         "properties": {
           "at": {
             "type": "number",
@@ -813,7 +894,13 @@
           },
           "decision": {
             "type": "string",
-            "enum": ["cut", "caption", "graphic", "bgm", "transition"],
+            "enum": [
+              "cut",
+              "caption",
+              "graphic",
+              "bgm",
+              "transition"
+            ],
             "description": "The kind of choice: where to cut, what a caption highlights, what graphic to add, whether to add BGM, where to transition."
           },
           "signals": {

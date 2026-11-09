@@ -1825,6 +1825,7 @@ fn plan_validate_schema() -> Option<Value> {
                                         "hero": { "type": "boolean" },
                                         "motionMin": { "type": "number", "minimum": 0 },
                                         "shotScale": { "type": "string", "enum": ["wide", "medium", "close_up"] },
+                                        "category": { "type": "string", "description": "A concise semantic continuity category for this shot, such as people, landscape, machinery, or data." },
                                         "storyboard": {
                                             "type": "object",
                                             "required": ["scenes"],

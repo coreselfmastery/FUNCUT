@@ -749,7 +749,16 @@ SELF_TEST_PLAN = {
             "start": 4.0,
             "end": 8.0,
             "spoken": "The evidence becomes clear",
-            "visual": {"type": "textCard", "text": "THE EVIDENCE"},
+            "visual": {
+                "type": "textCard",
+                "text": "THE EVIDENCE",
+                "storyboard": {
+                    "width": 1920,
+                    "height": 1080,
+                    "fps": 30,
+                    "scenes": [{"preset": "funcut.chapter.chip", "hold": 4.0}],
+                },
+            },
         },
     ],
     "audio": {"voiceover": {"source": "file"}},
@@ -808,6 +817,10 @@ SELF_TEST_REPLIES = {
         },
     },
     "clip_trim": {"ok": True},
+    "track_add": {"createdId": "t-motion"},
+    "motion_reel": {"file": "/tmp/funcut-selftest/motion.mp4", "duration": 4.0},
+    "media_import": {"createdId": "m-motion"},
+    "clip_add": {"createdId": "c-motion"},
     "export_start": {"job": "j1"},
     "export_wait": {"state": "done", "output": "/tmp/funcut-selftest/final.mp4"},
     "watch_render": {"pngPath": "/tmp/funcut-selftest/contact.png", "samples": 12},
@@ -847,6 +860,16 @@ def self_test() -> int:
         print(f"FAIL: footage was not trimmed to the segment duration: {trim}")
         return 1
     print("timing ok: eight-second source trimmed to the four-second story beat")
+
+    motion_call = next(args for tool, args in by_tool if tool == "motion_reel")
+    if motion_call.get("storyboard", {}).get("scenes", [{}])[0].get("preset") != "funcut.chapter.chip":
+        print(f"FAIL: motion storyboard was not passed to the renderer: {motion_call}")
+        return 1
+    placement = next(args for tool, args in by_tool if tool == "clip_add")
+    if placement.get("mediaId") != "m-motion" or placement.get("trackId") != "t-motion" or placement.get("start") != 4.0:
+        print(f"FAIL: rendered motion was not placed on the dedicated lane: {placement}")
+        return 1
+    print("motion ok: storyboard rendered, imported, and placed on a top overlay track")
 
     waited = next(args for tool, args in by_tool if tool == "export_wait")
     if waited.get("job") != "j1":

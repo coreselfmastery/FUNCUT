@@ -777,62 +777,62 @@ def run_pipeline(
                     "ripple": False,
                 },
             )
-        for index, segment in graphics:
-            visual = segment["visual"]
-            storyboard = visual.get("storyboard")
-            if not isinstance(storyboard, dict) or not isinstance(storyboard.get("scenes"), list):
-                raise PipelineError(
-                    f"segment-{index + 1}: {visual.get('type')} needs an authored storyboard; "
-                    "refusing to export an empty graphic beat"
-                )
-            start_at = float(segment["start"])
-            target_duration = float(segment["end"]) - start_at
-            reel = advance(
-                "motion_reel",
-                {
-                    "project": project,
-                    "storyboard": storyboard,
-                    "name": f"director-segment-{index + 1}.mp4",
-                    "crf": 18,
-                },
+    for index, segment in graphics:
+        visual = segment["visual"]
+        storyboard = visual.get("storyboard")
+        if not isinstance(storyboard, dict) or not isinstance(storyboard.get("scenes"), list):
+            raise PipelineError(
+                f"segment-{index + 1}: {visual.get('type')} needs an authored storyboard; "
+                "refusing to export an empty graphic beat"
             )
-            motion_file = reel.get("file") if isinstance(reel, dict) else None
-            if not isinstance(motion_file, str) or not motion_file:
-                raise PipelineError(f"segment-{index + 1}: motion_reel returned no rendered file")
-            rendered_duration = float(reel.get("duration", target_duration))
-            if rendered_duration + 0.05 < target_duration:
-                raise PipelineError(
-                    f"segment-{index + 1}: rendered motion is {rendered_duration:.2f}s, "
-                    f"shorter than the {target_duration:.2f}s story beat"
-                )
-            imported = advance("media_import", {"path": project, "file": motion_file})
-            media_id = imported.get("createdId") if isinstance(imported, dict) else None
-            if not isinstance(media_id, str) or not media_id:
-                raise PipelineError(f"segment-{index + 1}: media_import returned no media id")
-            placed = advance(
-                "clip_add",
+        start_at = float(segment["start"])
+        target_duration = float(segment["end"]) - start_at
+        reel = advance(
+            "motion_reel",
+            {
+                "project": project,
+                "storyboard": storyboard,
+                "name": f"director-segment-{index + 1}.mp4",
+                "crf": 18,
+            },
+        )
+        motion_file = reel.get("file") if isinstance(reel, dict) else None
+        if not isinstance(motion_file, str) or not motion_file:
+            raise PipelineError(f"segment-{index + 1}: motion_reel returned no rendered file")
+        rendered_duration = float(reel.get("duration", target_duration))
+        if rendered_duration + 0.05 < target_duration:
+            raise PipelineError(
+                f"segment-{index + 1}: rendered motion is {rendered_duration:.2f}s, "
+                f"shorter than the {target_duration:.2f}s story beat"
+            )
+        imported = advance("media_import", {"path": project, "file": motion_file})
+        media_id = imported.get("createdId") if isinstance(imported, dict) else None
+        if not isinstance(media_id, str) or not media_id:
+            raise PipelineError(f"segment-{index + 1}: media_import returned no media id")
+        placed = advance(
+            "clip_add",
+            {
+                "path": project,
+                "mediaId": media_id,
+                "trackId": track_id,
+                "start": start_at,
+            },
+        )
+        clip_id = placed.get("createdId") if isinstance(placed, dict) else None
+        if not isinstance(clip_id, str) or not clip_id:
+            raise PipelineError(f"segment-{index + 1}: clip_add returned no timeline clip id")
+        if rendered_duration > target_duration + 0.05:
+            advance(
+                "clip_trim",
                 {
                     "path": project,
-                    "mediaId": media_id,
-                    "trackId": track_id,
-                    "start": start_at,
+                    "clipId": clip_id,
+                    "edge": "end",
+                    "delta": target_duration - rendered_duration,
+                    "ripple": False,
                 },
             )
-            clip_id = placed.get("createdId") if isinstance(placed, dict) else None
-            if not isinstance(clip_id, str) or not clip_id:
-                raise PipelineError(f"segment-{index + 1}: clip_add returned no timeline clip id")
-            if rendered_duration > target_duration + 0.05:
-                advance(
-                    "clip_trim",
-                    {
-                        "path": project,
-                        "clipId": clip_id,
-                        "edge": "end",
-                        "delta": target_duration - rendered_duration,
-                        "ripple": False,
-                    },
-                )
-            log(f"segment-{index + 1}: rendered and placed motion at {start_at:.2f}s")
+        log(f"segment-{index + 1}: rendered and placed motion at {start_at:.2f}s")
 
     # Place imported existing media on the same overlay lane. A supplied
     # clipId was already verified to exist at the correct time above.

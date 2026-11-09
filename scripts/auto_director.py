@@ -33,18 +33,22 @@ saying out loud:
 
 THE PIPELINE (in order; each phase logged; any failure stops the run)
 ---------------------------------------------------------------------
-1.  `transcribe`            the voiceover's words and timings
-2.  `voice_signals`         the take read as a score (pauses, emphasis)
-3.  `emotion` (extract)     what every line feels
-4.  `plan_validate`         validate schema and creative readiness;
-                             refuse before any timeline mutation if false
-5.  `clip_cut_spans`        cut ONLY dead air - pauses the reading
-                             classified `dead_air`; dramatic holds are
-                             protected and never cut
-6.  `openvid_rank_for_slot` once per `broll` slot in the plan
-7.  `footage_continuity`    the filled slots read the way an editor scrubs
-8.  `motion_reel`           once per `graphic` slot in the plan
-9.  `export_start`          the finished timeline to a movie
+1.  `transcribe`            words and timings from the voiceover
+2.  `voice_signals`         measured pauses, emphasis and delivery
+3.  `emotion`               emotional read of the narration
+4.  `plan_validate`         schema, creative readiness and signal-driven gate
+5.  `clip_cut_spans`        dead air only, when an audioClipId is supplied
+6.  `openvid_rank_for_slot` each timed B-roll segment, with duration checks
+7.  `footage_continuity`    check the selected clips; replace flagged shots once
+8.  `openvid_import`        import and place stock at the segment start; trim
+9.  `motion_reel`           render supplied text/title storyboards
+10. `media_import` + `clip_add` place motion movies on a dedicated top lane
+11. `export_start` + `export_wait` render and wait for a terminal job state
+12. `watch_render` + `craft_critique` inspect the actual output and score it
+
+The watcher is an execution layer, not a topic-to-plan author: the Director
+agent must supply a validated canonical edit plan. A craft score below 7
+stops the run for creative revision; this script does not invent a new plan.
 
 The calls go through the editor's MCP server over stdio (newline-delimited
 JSON-RPC 2.0 - `tools/call`), the same surface the funcut-director skill

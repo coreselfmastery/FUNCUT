@@ -32,7 +32,8 @@ assets; it validates structure and timeline continuity, not creative quality.
 2. **A visual for every segment** — the canonical plan is segment-based;
    do not create a separate `slots` array. For `broll`, provide a concrete
    `query`, a 40+ character semantic `description`, optional fallback
-   `queries`, `hero`, `motionMin`, and intended `shotScale`. The Director
+   `queries`, `hero`, `motionMin`, intended `shotScale`, and semantic
+   `category` for continuity. The Director
    ranks unique candidates, checks continuity, imports them, places them at
    the segment start, and trims them to the segment duration.
 3. **Designed motion is executable, not a label.** For a `textCard` or

@@ -1037,7 +1037,7 @@ SELF_TEST_PLAN = {
     "mode": "longform",
     "sections": [
         {"role": "hook", "start": 0.0, "end": 4.0},
-        {"role": "body", "start": 4.0, "end": 8.0},
+        {"role": "body", "start": 4.0, "end": 12.0},
     ],
     "segments": [
         {
@@ -1066,6 +1066,12 @@ SELF_TEST_PLAN = {
                 },
             },
         },
+        {
+            "start": 8.0,
+            "end": 12.0,
+            "spoken": "The final proof is visible",
+            "visual": {"type": "existing", "mediaId": "m-existing"},
+        },
     ],
     "audio": {"voiceover": {"source": "file"}},
     "grade": {"filter": "concat.warm", "intensityKey": "amount", "intensity": 35},
@@ -1088,11 +1094,19 @@ SELF_TEST_PLAN = {
 SELF_TEST_REPLIES = {
     "transcribe": {"job": "speech-job"},
     "project_get": {
-        "media": [{
-            "id": "m-voice",
-            "path": "/tmp/funcut-selftest/voiceover.wav",
-            "kind": "audio",
-        }],
+        "media": [
+            {
+                "id": "m-voice",
+                "path": "/tmp/funcut-selftest/voiceover.wav",
+                "kind": "audio",
+            },
+            {
+                "id": "m-existing",
+                "path": "/tmp/funcut-selftest/existing.mp4",
+                "kind": "video",
+                "duration": 8.0,
+            },
+        ],
         "timeline": {"tracks": [], "clips": []},
     },
     "analysis_wait": {
@@ -1142,7 +1156,13 @@ SELF_TEST_REPLIES = {
     "track_add": lambda args: {"createdId": "t-voice" if args.get("bottom") else "t-motion"},
     "motion_reel": {"file": "/tmp/funcut-selftest/motion.mp4", "duration": 4.0},
     "media_import": {"createdId": "m-motion"},
-    "clip_add": lambda args: {"createdId": "c-voice" if args.get("mediaId") == "m-voice" else "c-motion"},
+    "clip_add": lambda args: {
+        "createdId": (
+            "c-voice" if args.get("mediaId") == "m-voice"
+            else "c-existing" if args.get("mediaId") == "m-existing"
+            else "c-motion"
+        )
+    },
     "export_start": {"job": "j1"},
     "export_wait": {"state": "done", "output": "/tmp/funcut-selftest/final.mp4"},
     "watch_render": {"pngPath": "/tmp/funcut-selftest/contact.png", "samples": 12},
@@ -1162,6 +1182,7 @@ def self_test() -> int:
         "project_get", "track_add", "clip_add",
         "openvid_rank_for_slot", "footage_continuity", "openvid_import",
         "clip_trim", "track_add", "motion_reel", "media_import", "clip_add",
+        "clip_add", "clip_trim",
         "export_start", "export_wait", "transcribe", "analysis_wait", "emotion",
         "watch_render", "craft_critique",
     ]
@@ -1214,6 +1235,22 @@ def self_test() -> int:
         print(f"FAIL: rendered motion was not placed on the dedicated lane: {placement}")
         return 1
     print("motion ok: storyboard rendered, imported, and placed on a top overlay track")
+
+    existing_place = next(
+        args for tool, args in by_tool
+        if tool == "clip_add" and args.get("mediaId") == "m-existing"
+    )
+    existing_trim = next(
+        args for tool, args in by_tool
+        if tool == "clip_trim" and args.get("clipId") == "c-existing"
+    )
+    if existing_place.get("trackId") != "t-motion" or existing_place.get("start") != 8.0:
+        print(f"FAIL: existing media was not placed on the overlay lane: {existing_place}")
+        return 1
+    if existing_trim.get("delta") != -4.0:
+        print(f"FAIL: existing media was not trimmed to its segment: {existing_trim}")
+        return 1
+    print("existing visual ok: project media placed and trimmed to its timed segment")
 
     waited = next(args for tool, args in by_tool if tool == "export_wait")
     if waited.get("job") != "j1":

@@ -38,28 +38,27 @@ assets; it validates structure and timeline continuity, not creative quality.
    film's story, evidence, emotion, and available material. Phase 4 shops each
    b-roll slot with `openvid_rank_for_slot` and gates the filled
    manifest with `footage_continuity` before anything is fetched.
-3. **SFX with `peakAt` on the segment's first frame** (the cut), not the word.
+4. **SFX with `peakAt` on the segment's first frame** (the cut), not the word.
    See `prompts/sfx_design.md` for query writing.
-4. **`transitionIn` only where the SECTION changes** — most segments take a
+5. **`transitionIn` only where the SECTION changes** — most segments take a
    plain cut (`null`). The 122 transitions and their uses:
    `prompts/transitions_guide.md`.
-5. **Audio beds** — voiceover block mirrors the TTS you already made; bgm
+6. **Audio beds** — voiceover block mirrors the TTS you already made; bgm
    query per `prompts/music_and_duck.md` with `alignTo` and absolute `duckDb`
    gain targets. `sounds_add` has no gain field: apply each planned SFX dB
    value to its actual clip id with `clip_audio_levels_db`.
-6. **Captions + grade** — style per niche (`prompts/niche_playbooks.md`,
+7. **Captions + grade** — style per niche (`prompts/niche_playbooks.md`,
    `prompts/color_grading.md`), ONE filter for the whole video.
-7. **Export block** — `output` path, crf 20, codec h264, platform if told.
+8. **Export block** — `output` path, crf 20, codec h264, platform if told.
 
 ## The math that makes the plan executable
 
-- **B-roll runs long, then trims:** prefer a source clip 1.5–2× the segment's
-  length; set `trimIn` past the clip's soft opening (first ~0.5 s often
-  settles) and let `trimOut` overshoot — `clip_trim` lands the exact edge
-  after placing.
-- **J-cut feel:** the visual for segment N+1 enters 100–200 ms before its
-  narration starts. Compute: `visualStart = max(0, segment.start - 0.15)` so
-  the first shot never starts before the timeline.
+- **B-roll runs long, then trims:** choose a source at least as long as the
+  segment. The Director rejects too-short candidates before editing, imports
+  the selected source, and trims its end to the planned segment duration.
+- **Motion reels are placed, not just rendered:** the storyboard's rendered
+  duration must cover the segment; the resulting movie is imported and placed
+  on a dedicated top video track at the segment start.
 - **Peaks on cuts:** `sfx.peakAt = segment.start` (± 1 frame). If the SFX is
   a riser, it must ARRIVE at the cut: `peakAt = segment.start`, started
   1–2 s earlier — sounds support the cut, they never follow it.
@@ -73,11 +72,11 @@ assets; it validates structure and timeline continuity, not creative quality.
   within 20 s (no visible reuse).
 - [ ] Every query is concrete: noun + action/setting + shot feel ("aerial
   canyon river sunrise"), not a mood word alone.
-- [ ] Every slot description is twelve to twenty-five words of nouns and
-  adjectives (forty characters minimum); drawn treatments carry no queries,
-  b-roll at least one; choose the footage/graphics/holds balance for this
-  story rather than meeting a universal percentage, and vary shot scale
-  intentionally within each section.
+- [ ] Every B-roll segment has a concrete query and a 40+ character semantic
+  description; no invented clip ids. Motion-led text/title segments have a
+  valid storyboard; existing footage names a real imported clip/media id.
+  Choose the footage/graphics/holds balance for this story rather than a
+  universal percentage, and vary shot scale intentionally within each section.
 - [ ] Captions use measured segment timing (the default transcription output
   is not word-aligned); keep text concise where cue duration permits, with
   style fields and safe area set (offsetY 0.30–0.40, fontSize 0.04–0.06).
@@ -89,5 +88,9 @@ assets; it validates structure and timeline continuity, not creative quality.
 ## After the plan
 
 Emit it in your reply (it is the artifact the user reviews), then execute
-Phase 4–8 of SKILL.md. Changes mid-execution are amendments — restate the
+the segment-based Director pipeline: validate readiness, rank footage,
+repair continuity, import/place/trim stock, render/import/place/trim motion,
+export and wait, inspect the rendered frames/audio, and score the result.
+A craft score below 7 is a stop requiring a new creative revision; never
+publish it as complete. Changes mid-execution are amendments — restate the
 affected segment, do not silently drift from the written plan.

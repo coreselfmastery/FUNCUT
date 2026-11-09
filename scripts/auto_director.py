@@ -511,15 +511,23 @@ def run_pipeline(
             if not isinstance(slot_id, str) or slot_id not in chosen:
                 continue
             if not isinstance(replace, dict):
+                if isinstance(remedy, dict) and "downgrade_to_graphic" in remedy:
+                    index, segment = slot_segments[slot_id]
+                    if isinstance(segment["visual"].get("storyboard"), dict):
+                        segment["visual"]["type"] = "textCard"
+                        chosen.pop(slot_id, None)
+                        slot_segments.pop(slot_id, None)
+                        log(f"{slot_id}: continuity downgraded the shot to its authored motion storyboard")
+                        continue
                 raise PipelineError(
-                    f"continuity requires a non-replacement treatment for {slot_id}: "
+                    f"continuity requires a treatment this runner cannot safely execute for {slot_id}: "
                     + json.dumps(flag, ensure_ascii=False)
                 )
             index, segment = slot_segments[slot_id]
             visual = segment["visual"]
             avoid = str(replace.get("avoid") or "the previous shot's look")
             old_id = chosen[slot_id].get("id")
-            retry = advance(
+            retry =
                 "openvid_rank_for_slot",
                 {
                     "description": f"{visual.get('description') or segment.get('spoken') or visual.get('query', '')}; avoid {avoid}",
@@ -530,9 +538,17 @@ def run_pipeline(
                 },
             )
             alternatives = retry.get("clips", []) if isinstance(retry, dict) else []
-            alternatives = [c for c in alternatives if c.get("id") != old_id]
+            required_duration = float(segment["end"]) - float(segment["start"])
+            alternatives = [
+                candidate for candidate in alternatives
+                if candidate.get("id") != old_id
+                and isinstance(candidate.get("seconds"), (int, float))
+                and float(candidate["seconds"]) + 0.05 >= required_duration
+            ]
             if not alternatives:
-                raise PipelineError(f"continuity could not find a replacement for {slot_id}: {avoid}")
+                raise PipelineError(
+                    f"continuity could not find a replacement long enough for {slot_id}: {avoid}"
+                )
             chosen[slot_id] = alternatives[0]
             new_id = alternatives[0].get("id")
             if isinstance(new_id, int):

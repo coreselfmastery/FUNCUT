@@ -185,12 +185,17 @@
           # one heavy thing at a time. The hook that runs the build passes
           # its own `-j $NIX_BUILD_CORES` on the command line - an env var
           # would be written over by it - but it runs this hook first, so
-          # the cores themselves are what is narrowed: two, where the
-          # builder's four were. The build was twenty-nine minutes at the
-          # old width; this keeps it inside the job's two hours with room
-          # for a slower runner.
+          # the cores themselves are what is narrowed. Two held while the
+          # window crate was the size it was; the director's power pass
+          # grew it again (Forge's own page, the adapters' door, the stock
+          # and music panes rebuilt), and a pair of heavy rustcs was more
+          # than the builder held a second time - the concat crate's was
+          # killed beside a neighbour's ("rustc was terminated by a deadly
+          # signal", twice on the same pull request). One: the window
+          # crate's rustc now runs alone, and the wall time is the sum of
+          # the lanes, which the job's two hours still holds with room.
           preBuild = ''
-            export NIX_BUILD_CORES=2
+            export NIX_BUILD_CORES=1
           '';
 
           nativeBuildInputs = (nativeInputs pkgs) ++ [

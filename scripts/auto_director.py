@@ -527,7 +527,7 @@ def run_pipeline(
             visual = segment["visual"]
             avoid = str(replace.get("avoid") or "the previous shot's look")
             old_id = chosen[slot_id].get("id")
-            retry =
+            retry = advance(
                 "openvid_rank_for_slot",
                 {
                     "description": f"{visual.get('description') or segment.get('spoken') or visual.get('query', '')}; avoid {avoid}",

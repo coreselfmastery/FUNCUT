@@ -863,7 +863,7 @@ SELF_TEST_REPLIES = {
     "transcribe": {"job": "speech-job"},
     "analysis_wait": {
         "state": "done",
-        "output": "{\\"segments\\":[{\\"text\\":\\"one\\",\\"start\\":0.0,\\"end\\":1.0}]}",
+        'output': '{"segments":[{"text":"one","start":0.0,"end":1.0}]}',
     },
     "voice_signals": {
         "signals": {

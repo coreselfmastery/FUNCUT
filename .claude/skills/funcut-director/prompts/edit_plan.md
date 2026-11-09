@@ -25,7 +25,10 @@ assets; it validates structure and timeline continuity, not creative quality.
    them; adjacent segments share boundaries; a gap or overlap is a plan error.
    Set root `audioClipId` only when `project_get` has returned the real
    timeline clip id of the already-placed voiceover; otherwise omit it. The
-   runner will only cut measured dead-air spans when that id is present.
+   runner reuses that clip, or imports and places the supplied voiceover on
+   its own lane. It never cuts or retimes audio behind the plan's back. If
+   dead air was cut before planning, use that edited timeline clip and write
+   segment times against its edited duration.
 2. **A visual for every segment** — the canonical plan is segment-based;
    do not create a separate `slots` array. For `broll`, provide a concrete
    `query`, a 40+ character semantic `description`, optional fallback

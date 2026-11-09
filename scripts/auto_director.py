@@ -654,7 +654,7 @@ def run_pipeline(
         raise PipelineError("export_start did not return a job id")
     status: Any = None
     for attempt in range(4):
-        status = advance("export_wait", {"job": job, "timeoutSeconds": 900})
+        status = advance("export_wait", {"job": job, "timeoutSeconds": 590})
         if not isinstance(status, dict) or status.get("state") != "running":
             break
     if not isinstance(status, dict) or status.get("state") == "running":

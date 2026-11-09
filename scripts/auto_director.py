@@ -229,6 +229,15 @@ def broll_segments(plan: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
     ]
 
 
+def motion_segments(plan: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
+    return [
+        (index, segment)
+        for index, segment in enumerate(plan_segments(plan))
+        if isinstance(segment.get("visual"), dict)
+        and segment["visual"].get("type") in {"textCard", "titleCard"}
+    ]
+
+
 def _walk_dicts(value: Any):
     """Yield nested dictionaries without assuming one EditorView wrapper."""
     if isinstance(value, dict):
@@ -243,7 +252,7 @@ def _walk_dicts(value: Any):
 def _clip_for_media(view: Any, media_id: str, start: float) -> dict[str, Any] | None:
     candidates = [
         item for item in _walk_dicts(view)
-        if item.get("mediaId") == media_id and isinstance(item.get("id"), str)
+        if item.get("mediaId", item.get("media")) == media_id and isinstance(item.get("id"), str)
         and isinstance(item.get("duration"), (int, float))
         and isinstance(item.get("start"), (int, float))
     ]
@@ -313,6 +322,19 @@ def phase_plan(plan: dict[str, Any]) -> list[tuple[str, str]]:
             ("openvid_import", f"import and place B-roll segment {index + 1}")
             for index, _ in broll_segments(plan)
         )
+        phases.extend(
+            ("clip_trim", f"trim B-roll segment {index + 1}")
+            for index, _ in broll_segments(plan)
+        )
+    if motion_segments(plan):
+        phases.append(("track_add", "create a dedicated motion overlay lane"))
+        for index, _ in motion_segments(plan):
+            phases.extend([
+                ("motion_reel", f"render motion segment {index + 1}"),
+                ("media_import", f"import motion segment {index + 1}"),
+                ("clip_add", f"place motion segment {index + 1}"),
+                ("clip_trim", f"trim motion segment {index + 1}"),
+            ])
     phases.extend([
         ("export_start", "export"),
         ("export_wait", "wait for completed export"),
@@ -541,6 +563,72 @@ def run_pipeline(
             f"{slot_id}: imported {clip.get('name', clip['id'])} at {start_at:.2f}s "
             f"for {min(actual_duration, target_duration):.2f}s"
         )
+
+    # Render authored motion storyboards and place the resulting video
+    # overlays on a dedicated top lane. A text/title segment without an
+    # authored storyboard is not silently represented as completed motion.
+    graphics = motion_segments(plan)
+    if graphics:
+        track_reply = advance("track_add", {"path": project, "bottom": False})
+        track_id = track_reply.get("createdId") if isinstance(track_reply, dict) else None
+        if not isinstance(track_id, str) or not track_id:
+            raise PipelineError("track_add did not return the dedicated motion track id")
+        for index, segment in graphics:
+            visual = segment["visual"]
+            storyboard = visual.get("storyboard")
+            if not isinstance(storyboard, dict) or not isinstance(storyboard.get("scenes"), list):
+                raise PipelineError(
+                    f"segment-{index + 1}: {visual.get('type')} needs an authored storyboard; "
+                    "refusing to export an empty graphic beat"
+                )
+            start_at = float(segment["start"])
+            target_duration = float(segment["end"]) - start_at
+            reel = advance(
+                "motion_reel",
+                {
+                    "project": project,
+                    "storyboard": storyboard,
+                    "name": f"director-segment-{index + 1}.mp4",
+                    "crf": 18,
+                },
+            )
+            motion_file = reel.get("file") if isinstance(reel, dict) else None
+            if not isinstance(motion_file, str) or not motion_file:
+                raise PipelineError(f"segment-{index + 1}: motion_reel returned no rendered file")
+            imported = advance("media_import", {"path": project, "file": motion_file})
+            media_id = imported.get("createdId") if isinstance(imported, dict) else None
+            if not isinstance(media_id, str) or not media_id:
+                raise PipelineError(f"segment-{index + 1}: media_import returned no media id")
+            placed = advance(
+                "clip_add",
+                {
+                    "path": project,
+                    "mediaId": media_id,
+                    "trackId": track_id,
+                    "start": start_at,
+                },
+            )
+            clip_id = placed.get("createdId") if isinstance(placed, dict) else None
+            if not isinstance(clip_id, str) or not clip_id:
+                raise PipelineError(f"segment-{index + 1}: clip_add returned no timeline clip id")
+            rendered_duration = float(reel.get("duration", target_duration))
+            if rendered_duration + 0.05 < target_duration:
+                raise PipelineError(
+                    f"segment-{index + 1}: rendered motion is {rendered_duration:.2f}s, "
+                    f"shorter than the {target_duration:.2f}s story beat"
+                )
+            if rendered_duration > target_duration + 0.05:
+                advance(
+                    "clip_trim",
+                    {
+                        "path": project,
+                        "clipId": clip_id,
+                        "edge": "end",
+                        "delta": target_duration - rendered_duration,
+                        "ripple": False,
+                    },
+                )
+            log(f"segment-{index + 1}: rendered and placed motion at {start_at:.2f}s")
 
     # A render is not complete until the export job reports a terminal state.
     export = plan.get("export") if isinstance(plan.get("export"), dict) else {}

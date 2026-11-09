@@ -3129,11 +3129,6 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
             }
             None => missing_entrances += 1,
         }
-        if segment
-            .get("comp")
-            .is_some_and(|comp| !comp.is_null() && comp.as_object().is_some_and(|c| !c.is_empty()))
-        {
-        }
         previous_end = Some(end);
         runtime = end;
     }

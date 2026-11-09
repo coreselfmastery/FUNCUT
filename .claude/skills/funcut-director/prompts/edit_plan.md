@@ -2,7 +2,10 @@
 
 One reasoning pass, one JSON object, per `templates/edit_plan.schema.json`
 (a complete worked example sits beside it). The plan is your contract: you
-execute what you wrote, and the review checks it. After drafting, call
+execute what you wrote, and the review checks it.
+
+Before writing the plan, read prompts/creative_visual_direction.md. The plan must be an original response to this film's story, not a reusable layout. Choose the visual medium beat by beat from the communication job; do not enforce a universal B-roll/motion percentage. Major visual beats need a short rationale (job, medium, reason, film-specific style, transition, fallback). Use presets as starting points only; inspect, customize, preview, bake, import, place, and verify designed motion. Stock candidates must be inspected and continuity feedback acted upon. A generated asset that is not on the timeline does not count as executed.
+ After drafting, call
 `plan_validate` with the complete object and fix errors before gathering
 assets; it validates structure and timeline continuity, not creative quality.
 

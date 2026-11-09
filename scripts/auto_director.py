@@ -872,7 +872,9 @@ def self_test() -> int:
     expected = [
         "transcribe", "voice_signals", "emotion", "plan_validate",
         "openvid_rank_for_slot", "footage_continuity", "openvid_import",
-        "clip_trim", "export_start", "export_wait", "watch_render", "craft_critique",
+        "clip_trim", "track_add", "motion_reel", "media_import", "clip_add",
+        "export_start", "export_wait", "transcribe", "emotion",
+        "watch_render", "craft_critique",
     ]
     if order != expected:
         print(f"FAIL: phase order\n  want: {expected}\n  got:  {order}")

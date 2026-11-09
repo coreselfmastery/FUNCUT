@@ -275,6 +275,11 @@
                   "blurPlate"
                 ],
                 "description": "fill = clip_frame framing 'fill' (cover + crop; the default on every aspect mismatch - OpenVid is landscape-only, so 9:16 canvases fill from landscape sources). blurPlate = timeline_background blur as a deliberate style. A letterboxed frame at review is a defect."
+              },
+              "category": {
+                "type": "string",
+                "minLength": 1,
+                "description": "A concise semantic continuity category for this shot, such as people, landscape, machinery, or data."
               }
             }
           },

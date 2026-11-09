@@ -613,6 +613,27 @@ own bed rides, ducked deeper where it fights the words.
 **N — Stickers are MIT (Fluent Emoji): safe in monetized/commercial videos.**
 No licence warning is needed; every `magick_search` result carries `license: "MIT"`.
 
+## Automation boundary — what the Python runner actually does
+
+`scripts/auto_director.py` is an execution helper for a plan the Director has
+already authored; it does not invent a topic, script or edit plan. It waits
+for source transcription, reads voice signals/emotion, validates the plan,
+reuses or places the voiceover without silently retiming it, ranks and
+duration-checks B-roll, checks continuity and attempts targeted replacements,
+imports/places/trims stock, renders supplied motion storyboards and places
+them on a top lane, exports and waits, transcribes the exported file, verifies
+speech timing, samples the actual render and scores it. A score below 7,
+missing asset/storyboard, unresolved continuity flag, or failed verification
+stops the run.
+
+The runner does **not** yet author and apply a new creative revision after a
+low score, or execute every optional finishing operation (SFX/BGM design,
+captions, transitions and the final grade) by itself. The Director agent must
+perform those remaining phases through this skill and then re-run the review.
+The OpenVid index also does not supply measured colour temperature; do not
+pretend the automated continuity pass measured a colour jump it cannot see.
+Use the stock contact sheet for that visual judgment.
+
 ## 4. Hard rules
 
 1. Never claim "done" before `export_wait` reports the file written, the

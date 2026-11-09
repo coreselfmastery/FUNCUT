@@ -172,10 +172,18 @@
           # the window crate - mostly the Slint compiler's output, one
           # enormous module - then wants more memory than a sandboxed
           # builder has, and rustc is killed part way through ("rustc was
-          # terminated by a deadly signal"). Sixteen units keep every piece
-          # a size a builder can hold; the thin LTO still joins them.
+          # terminated by a deadly signal"). Sixteen units kept every piece
+          # a size a builder could hold while the window crate was the size
+          # it was; the director's power pass grew it again (Forge's own
+          # page, the adapters' door, the stock and music panes rebuilt),
+          # and at sixteen the single rustc was killed on its own - no
+          # neighbour to blame, one crate, one process, dead at the same
+          # line three times on this pull request. Thirty-two: every piece
+          # half the size, the same cure this knob gave when it was a
+          # builder's whole problem (jub0t/Concat#225); the thin LTO still
+          # joins them, and the joiner is a linker, not a rustc.
           # https://github.com/jub0t/Concat/issues/225
-          env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "16";
+          env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "32";
           # And the crate beside its neighbours: at cargo's default width
           # the window crate's rustc ran beside slint's, motion's and the
           # mcp's at once, and after the interface grew three and a half
@@ -185,12 +193,17 @@
           # one heavy thing at a time. The hook that runs the build passes
           # its own `-j $NIX_BUILD_CORES` on the command line - an env var
           # would be written over by it - but it runs this hook first, so
-          # the cores themselves are what is narrowed: two, where the
-          # builder's four were. The build was twenty-nine minutes at the
-          # old width; this keeps it inside the job's two hours with room
-          # for a slower runner.
+          # the cores themselves are what is narrowed. Two held while the
+          # window crate was the size it was; the director's power pass
+          # grew it again (Forge's own page, the adapters' door, the stock
+          # and music panes rebuilt), and a pair of heavy rustcs was more
+          # than the builder held a second time - the concat crate's was
+          # killed beside a neighbour's ("rustc was terminated by a deadly
+          # signal", twice on the same pull request). One: the window
+          # crate's rustc now runs alone, and the wall time is the sum of
+          # the lanes, which the job's two hours still holds with room.
           preBuild = ''
-            export NIX_BUILD_CORES=2
+            export NIX_BUILD_CORES=1
           '';
 
           nativeBuildInputs = (nativeInputs pkgs) ++ [

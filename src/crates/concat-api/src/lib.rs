@@ -63,8 +63,9 @@ use concat_project::model::{MediaKind, VideoSettings};
 pub use message::{
     API_VERSION, ApiError, BgmFound, BgmImport, BgmState, BgmTrack, Dirs, Done, ErrorCode, Event,
     ExportSpec, Fill, JobState, JobStatus, MagickAdd, MagickEntry, MagickFound, MagickState,
-    OpenvidClip, OpenvidFound, OpenvidImport, OpenvidState, PackageInfo, ParamInfo, Picture, Reply,
-    Request, Response, SoundEntry, SoundsAdded, SoundsFound, Started, VersionInfo, Written,
+    OpenvidClip, OpenvidFound, OpenvidImport, OpenvidRerank, OpenvidState, PackageInfo, ParamInfo,
+    Picture, Reply, Request, Response, SoundEntry, SoundsAdded, SoundsFound, Started, VersionInfo,
+    WindowSought, Written,
 };
 
 /// The export sheet's middle quality, and what an export gets when the
@@ -72,6 +73,40 @@ pub use message::{
 const DEFAULT_CRF: u8 = 20;
 /// The x264 preset every export uses unless told otherwise.
 const DEFAULT_PRESET: &str = "medium";
+
+/// The window's playhead, when a window embeds this API.
+///
+/// The window installs one - see [`Api::share_playhead`] - so a caller
+/// over a socket can scrub the timeline the window is showing: the
+/// `window.seek` method hands the time here, and the control moves the
+/// playhead on the window's event loop and answers with the project it
+/// moved on. A control that cannot reach the window - it closed, its loop
+/// is gone - answers with the honest error, so a caller never believes a
+/// scrub that did not happen. Cheap to clone; every clone is the same
+/// control.
+#[derive(Clone)]
+pub struct PlayheadControl(PlayheadSeek);
+
+/// What [`PlayheadControl`] holds: the project folder the caller means,
+/// if it named one, and a time in seconds, to the window's answer - or
+/// the sentence that says why the playhead did not move.
+type PlayheadSeek = Arc<dyn Fn(Option<&str>, f64) -> Result<WindowSought, String> + Send + Sync>;
+
+impl PlayheadControl {
+    /// Makes a control around `seek`: given the project folder the caller
+    /// means, if it named one, and a time in seconds, move the playhead
+    /// and answer with where it is, or the sentence that says why not.
+    pub fn new(
+        seek: impl Fn(Option<&str>, f64) -> Result<WindowSought, String> + Send + Sync + 'static,
+    ) -> Self {
+        PlayheadControl(Arc::new(seek))
+    }
+
+    /// Moves the playhead, as the window was asked to.
+    pub fn seek(&self, path: Option<&str>, time: f64) -> Result<WindowSought, String> {
+        (self.0)(path, time)
+    }
+}
 
 /// What every build of the API serves, before what is decided by the
 /// build or the embedder is added; see [`VersionInfo::capabilities`].
@@ -241,6 +276,9 @@ pub struct Api {
     /// Which project folders are open on this machine, across this API
     /// and a window it is embedded in.
     open: OpenProjects,
+    /// The window's playhead, when a window embeds this API. `None` - a
+    /// headless API - makes `window.seek` refuse with the reason.
+    playhead: Option<PlayheadControl>,
     titles: Titles,
     cutouts: Arc<Cutouts>,
     stabilizers: Arc<Stabilizers>,
@@ -317,6 +355,7 @@ impl Api {
             sessions: BTreeMap::new(),
             roots: Vec::new(),
             open: OpenProjects::default(),
+            playhead: None,
             events,
             jobs: Jobs::default(),
             dirs,
@@ -371,6 +410,14 @@ impl Api {
     /// at a time" holds across a window and this API together.
     pub fn share_exporter(&mut self, exporter: Exporter) {
         self.exporter = exporter;
+    }
+
+    /// Takes an embedder's playhead in place of nothing: with it,
+    /// `window.seek` moves the playhead of the timeline the window is
+    /// showing, which is how an agent scrubs while it edits.
+    pub fn share_playhead(&mut self, playhead: PlayheadControl) {
+        self.playhead = Some(playhead);
+        self.add_capability("window.seek");
     }
 
     /// Takes an embedder's register of open projects in place of its own,
@@ -743,6 +790,27 @@ impl Api {
                 ErrorCode::Refused,
                 "this build does not speak: it was built without the speech feature",
             )),
+            Request::WindowSeek { time, path } => {
+                let control = self.playhead.as_ref().ok_or_else(|| {
+                    ApiError::new(
+                        ErrorCode::Failed,
+                        "no window is serving this API, so there is no playhead to move \
+                         - start the editor, turn Settings > Automation on, and connect \
+                         with --mcp window"
+                            .to_owned(),
+                    )
+                })?;
+                if !time.is_finite() {
+                    return Err(ApiError::new(
+                        ErrorCode::Failed,
+                        "time must be a finite number of seconds".to_owned(),
+                    ));
+                }
+                let sought = control
+                    .seek(path.as_deref(), time.max(0.0))
+                    .map_err(ApiError::failed)?;
+                Ok(Reply::WindowSeek(sought))
+            }
         }
     }
 
@@ -963,7 +1031,6 @@ impl Api {
     fn library(&self) -> &'static openvid::Library {
         openvid::shared(&self.dirs)
     }
-
     /// [`Request::OpenvidStatus`].
     pub fn openvid_state(&self) -> OpenvidState {
         let library = self.library();
@@ -978,6 +1045,7 @@ impl Api {
             percent,
             rows: library.rows(),
             measured: library.measured(),
+            rerank: rerank_state(&self.dirs),
             error,
         }
     }
@@ -2457,6 +2525,62 @@ fn resolved(path: &Path) -> PathBuf {
     }
 }
 
+/// The semantic rerank's state: whether the two MobileCLIP2-S0 ONNX
+/// files `analysis/rerank.py` looks for are on this machine. The same
+/// three places, in the same order, so what this reports is what the
+/// search will do - and the reply a director reads names the folder to
+/// put the files in rather than leaving the half silent.
+fn rerank_state(dirs: &concat_host::dirs::AppDirs) -> OpenvidRerank {
+    /// The two files, by the names the rerank looks for.
+    const FILES: [&str; 2] = ["mobileclip2_s0_vision.onnx", "mobileclip2_s0_text.onnx"];
+    /// Whether both files sit in `dir`.
+    fn holds_both(dir: &Path) -> bool {
+        FILES.iter().all(|file| dir.join(file).is_file())
+    }
+    let candidates: [(PathBuf, &str); 3] = [
+        (
+            std::env::var_os("FUNCUT_MOBILECLIP")
+                .map(PathBuf::from)
+                .unwrap_or_default(),
+            "$FUNCUT_MOBILECLIP",
+        ),
+        (
+            dirs.data.join("models").join("mobileclip2-s0"),
+            "the app data dir's models/mobileclip2-s0",
+        ),
+        (
+            std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .map(|home| home.join(".cache").join("concat").join("mobileclip2-s0"))
+                .unwrap_or_default(),
+            "~/.cache/concat/mobileclip2-s0",
+        ),
+    ];
+    for (dir, _) in &candidates {
+        if holds_both(dir) {
+            return OpenvidRerank {
+                available: true,
+                dir: dir.to_string_lossy().into_owned(),
+                files: FILES,
+            };
+        }
+    }
+    // Not there: name the place to put them, the first real one.
+    let (dir, place) = candidates
+        .iter()
+        .find(|(dir, _)| !dir.as_os_str().is_empty())
+        .unwrap_or(&candidates[1]);
+    OpenvidRerank {
+        available: false,
+        dir: if dir.as_os_str().is_empty() {
+            (*place).to_owned()
+        } else {
+            dir.to_string_lossy().into_owned()
+        },
+        files: FILES,
+    }
+}
+
 fn key_of(path: &str) -> String {
     std::fs::canonicalize(path)
         .map(|canonical| canonical.to_string_lossy().into_owned())
@@ -3381,5 +3505,108 @@ mod tests {
             "{}",
             refused.message
         );
+    }
+}
+
+#[cfg(test)]
+mod seek_tests {
+    use super::*;
+    use crate::message::WindowSought;
+
+    fn api() -> (Api, tempfile::TempDir, Arc<Mutex<Vec<Event>>>) {
+        let scratch = tempfile::tempdir().expect("scratch");
+        let dirs = AppDirs {
+            config: scratch.path().join("config"),
+            data: scratch.path().join("data"),
+        };
+        let events: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&events);
+        let api = Api::with_dirs(
+            dirs,
+            Arc::new(move |event| sink.lock().expect("events").push(event)),
+        );
+        (api, scratch, events)
+    }
+
+    /// A headless API - one with no window behind it - refuses the seek
+    /// with the reason, and never pretends a scrub happened.
+    #[test]
+    fn headless_refuses_the_seek() {
+        let (mut api, _scratch, _events) = api();
+        let reply = api.dispatch(Request::WindowSeek {
+            time: 12.5,
+            path: None,
+        });
+        let Response::Error(error) = reply else {
+            panic!("a headless seek must refuse");
+        };
+        assert!(
+            error.message.contains("no window"),
+            "the refusal says why: {}",
+            error.message
+        );
+    }
+
+    /// A windowed API seeks through the shared control: the control is
+    /// called with the clamped time, and the caller's `path` is handed
+    /// through so the window can refuse a project it does not hold. The
+    /// capability is named from the moment the control is shared.
+    #[test]
+    fn a_shared_playhead_seeks() {
+        let (mut api, _scratch, _events) = api();
+        let sought = std::sync::Arc::new(Mutex::new(Vec::<(Option<String>, f64)>::new()));
+        let seen = std::sync::Arc::clone(&sought);
+        api.share_playhead(PlayheadControl::new(move |path, time| {
+            seen.lock()
+                .expect("seen")
+                .push((path.map(str::to_owned), time));
+            Ok(WindowSought {
+                path: "/tmp/Cut".to_owned(),
+                time,
+            })
+        }));
+        assert!(
+            api.version()
+                .capabilities
+                .iter()
+                .any(|name| name == "window.seek"),
+            "sharing a playhead names the capability"
+        );
+        // A negative time is clamped to zero on the way in: a playhead
+        // before the start of the timeline is not a thing to ask a window
+        // to show.
+        let reply = api.dispatch(Request::WindowSeek {
+            time: -3.0,
+            path: Some("/tmp/Cut".to_owned()),
+        });
+        let Response::Result(Reply::WindowSeek(answered)) = reply else {
+            panic!("a windowed seek answers");
+        };
+        assert_eq!(answered.path, "/tmp/Cut");
+        assert_eq!(answered.time, 0.0);
+        assert_eq!(
+            sought.lock().expect("seen").as_slice(),
+            [(Some("/tmp/Cut".to_owned()), 0.0)],
+            "the control saw the clamped time and the named path"
+        );
+        // A time that is not a number at all is refused before the window
+        // is bothered.
+        let reply = api.dispatch(Request::WindowSeek {
+            time: f64::NAN,
+            path: None,
+        });
+        assert!(
+            matches!(reply, Response::Error(_)),
+            "a NaN time is refused, not scrubbed"
+        );
+        // A window that cannot be reached says so in its own words.
+        api.share_playhead(PlayheadControl::new(|_, _| {
+            Err("the window closed".to_owned())
+        }));
+        let reply = api.dispatch(Request::WindowSeek {
+            time: 1.0,
+            path: None,
+        });
+        assert!(matches!(reply, Response::Error(_)));
     }
 }

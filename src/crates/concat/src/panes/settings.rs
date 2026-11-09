@@ -790,6 +790,64 @@ impl SettingsPane {
                     let mut api = concat_api::Api::new(events)?;
                     api.share_exporter(exporter);
                     api.share_open_projects(open_projects);
+                    // The window's playhead, so a caller over the socket
+                    // can scrub the timeline on screen: `window.seek`
+                    // (the timeline_seek MCP tool) hops to the event
+                    // loop, moves the playhead the way a hand on the
+                    // ruler does, and answers with the project it moved
+                    // on. A window with no project, a voiceover take
+                    // that holds the playhead, or a named path the window
+                    // does not hold is refused with the reason - a scrub
+                    // that did not happen must never be said to have.
+                    api.share_playhead(concat_api::PlayheadControl::new(
+                        |path, time| {
+                            let asked = path.map(str::to_owned);
+                            let (done, back) = std::sync::mpsc::channel::<
+                                Result<concat_api::WindowSought, String>,
+                            >();
+                            let queued = slint::invoke_from_event_loop(move || {
+                                let answer = std::cell::RefCell::new(Err(
+                                    "the window is gone".to_owned(),
+                                ));
+                                crate::host::Shell::with(|shell, app| {
+                                    let mut studio = shell.studio.borrow_mut();
+                                    *answer.borrow_mut() = (|| {
+                                        let session = studio.session.as_ref().ok_or_else(
+                                            || "the window has no project open".to_owned(),
+                                        )?;
+                                        let held = session.path().to_owned();
+                                        if let Some(asked) = asked.as_deref()
+                                            && !crate::studio::same_folder(asked, &held)
+                                        {
+                                            return Err(format!(
+                                                "the window holds {held}; pass that path, or none at all to scrub it"
+                                            ));
+                                        }
+                                        if studio.voiceover.holds_playhead() {
+                                            return Err(
+                                                "a voiceover take holds the playhead; seek again when the take is done"
+                                                    .to_owned(),
+                                            );
+                                        }
+                                        studio.pause();
+                                        studio.seek(time as f32);
+                                        studio.publish(&app, &shell.models);
+                                        Ok(concat_api::WindowSought {
+                                            path: held,
+                                            time: f64::from(studio.playhead),
+                                        })
+                                    })();
+                                });
+                                let _ = done.send(answer.into_inner());
+                            });
+                            if queued.is_err() {
+                                return Err("the window's event loop is gone".to_owned());
+                            }
+                            back.recv_timeout(std::time::Duration::from_secs(3)).unwrap_or_else(
+                                |_| Err("the window did not answer within 3 s".to_owned()),
+                            )
+                        },
+                    ));
                     Ok(api)
                 })
             });

@@ -216,6 +216,103 @@ fn routed(route: Option<&Route>, connect: Duration, read: Duration, trust: Trust
     builder.build()
 }
 
+/// A shelf's pair of agents: one through the proxy the machine names, one
+/// direct. A shelf is for the reads that come in bursts - a clip's byte
+/// ranges, a catalogue's census - where [`get`]'s one fresh agent per
+/// request is the difference between seconds and tens of them, and where
+/// the host is one the proxy is there to reach (Hugging Face, GitHub, the
+/// Internet Archive): the same hosts the models and the manifests already
+/// ride it for, which until now the clip bytes and the music never did.
+///
+/// Every request goes through the proxy first and directly when the proxy
+/// cannot carry it, the same order and the same refusal to retry a status
+/// [`get`] keeps. The agents are shared, so the shelf is `Send + Sync`
+/// and one shelf serves a whole census of parallel readers.
+pub struct Shelf {
+    /// The proxy's agent, and the name it shows in a failure, when the
+    /// machine names a proxy for the shelf's own host. A request for a
+    /// host the route says something else about builds its own agent
+    /// rather than riding this one.
+    proxied: Option<(String, ureq::Agent)>,
+    /// The direct agent, the one [`agent`] builds.
+    direct: ureq::Agent,
+    /// The timeouts both were built with, for the one-off agent a
+    /// differently-routed host needs.
+    connect: Duration,
+    read: Duration,
+}
+
+impl Shelf {
+    /// The agents for a shelf that serves `for_url`, trusting the
+    /// system's roots beside the shipped ones - the trust of a file whose
+    /// digest the shelf's own manifest already vouches for.
+    pub fn new(for_url: &str, connect: Duration, read: Duration) -> Shelf {
+        let proxied = crate::route::for_url(for_url).map(|route| {
+            let agent = routed(Some(&route), connect, read, Trust::System);
+            (route.shown, agent)
+        });
+        Shelf {
+            proxied,
+            direct: routed(None, connect, read, Trust::System),
+            connect,
+            read,
+        }
+    }
+
+    /// One GET, made ready by `prepare`, through the proxy when the
+    /// machine names one for `url` and directly when it does not or the
+    /// proxy cannot carry the request. A status is an answer and is not
+    /// retried; when both ways fail, the failure kept is the one that
+    /// says more about why. The failure's words name the proxy when the
+    /// proxy was the one that failed.
+    pub fn get(
+        &self,
+        url: &str,
+        prepare: &dyn Fn(ureq::Request) -> ureq::Request,
+    ) -> Result<ureq::Response, Box<Failure>> {
+        let send = |agent: &ureq::Agent, proxied: Option<&str>| {
+            prepare(agent.get(url)).call().map_err(|error| {
+                let cause = classify(&error, proxied.is_some());
+                Box::new(Failure {
+                    error,
+                    cause,
+                    proxy: proxied.map(str::to_owned),
+                })
+            })
+        };
+        let route = crate::route::for_url(url);
+        // The shared proxied agent only serves the route it was built
+        // for; another host the route names differently gets its own,
+        // built once for this one request.
+        let own;
+        let (agent, shown): (&ureq::Agent, Option<&str>) = match (&route, &self.proxied) {
+            (Some(route), Some((shown, agent))) if *shown == route.shown => (agent, Some(shown)),
+            (Some(route), _) => {
+                own = routed(Some(route), self.connect, self.read, Trust::System);
+                (&own, Some(route.shown.as_str()))
+            }
+            (None, _) => (&self.direct, None),
+        };
+        log::debug!(
+            "network: {url} through the proxy {}",
+            shown.unwrap_or("(none)")
+        );
+        let proxied = match send(agent, shown) {
+            Ok(response) => return Ok(response),
+            Err(failure) if matches!(failure.error, ureq::Error::Status(..)) => {
+                return Err(failure);
+            }
+            Err(failure) => failure,
+        };
+        log::info!("network: {url} failed through the proxy, trying directly: {proxied}");
+        match send(&self.direct, None) {
+            Ok(response) => Ok(response),
+            Err(direct) if direct.cause.weight() > proxied.cause.weight() => Err(direct),
+            Err(_) => Err(proxied),
+        }
+    }
+}
+
 /// The class `error` falls in. `proxied` because a connection refused or a
 /// name not found is the proxy's when there is one: it is the only host
 /// the machine connects to.

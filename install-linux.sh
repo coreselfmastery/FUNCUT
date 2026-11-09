@@ -10,6 +10,22 @@
 #   ./install-linux.sh --use-upstream  take Concat's own releases when the fork
 #                                       has none; OWNER/NAME after it, for a fork of a fork
 #
+# What comes down beside the app. The default is everything a first run
+# needs: the core models (whisper base.en for captions, Kokoro int8 for
+# speech, the person-cutout and enhance networks), the sound library's
+# manifest and the sticker shelf's index - all digest-checked, all into
+# the app's own data folder, exactly where the editor's Settings page
+# would put them, so the first run asks for nothing. Two flags tune it:
+#
+#   --no-models      install the app alone; the downloads stay where they
+#                    always were, in Settings on first use
+#   --all-models     every model in models/manifest.toml (~2.7 GB: every
+#                    whisper size, both Kokoro builds, Pocket TTS, the
+#                    whole Chatterbox bundle, both cutout networks and
+#                    the SAM brushes)
+#   --with-openvid   also the ~435 MB OpenVid stock index, so the stock
+#                    shelf is ready the first time it is opened
+#
 # It looks for a published release on this repository first, and falls
 # back to the upstream Concat releases when the fork has none - the two
 # are the same program, built by the same workflows. A release built by
@@ -52,6 +68,13 @@ FALLBACK="$UPSTREAM_REPO"
 # ── what to install ───────────────────────────────────────────────────
 KIND="appimage"
 LIST_ONLY="no"
+# Which of the app's own downloads come down now, at install time,
+# rather than on the first run that needs them: "core" (the default),
+# "all" or "none".
+MODELS="core"
+# The OpenVid stock index (~435 MB) is the one piece big enough to
+# stay opt-in: --with-openvid brings it too.
+WITH_OPENVID="no"
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'install: %s\n' "$*" >&2; exit 1; }
@@ -63,6 +86,17 @@ while [ $# -gt 0 ]; do
         --rpm) KIND="rpm" ;;
         --pacman) KIND="pacman" ;;
         --list) LIST_ONLY="yes" ;;
+        --no-models) MODELS="none" ;;
+        --all-models) MODELS="all" ;;
+        --models)
+            [ $# -ge 2 ] || die "--models needs core, all or none after it"
+            case "$2" in
+                core|all|none) MODELS="$2" ;;
+                *) die "--models wants core, all or none" ;;
+            esac
+            shift
+            ;;
+        --with-openvid) WITH_OPENVID="yes" ;;
         --repo)
             [ $# -ge 2 ] || die "--repo needs OWNER/NAME after it"
             REPO="$2"
@@ -512,8 +546,40 @@ case "$KIND" in
         # The fork's own name for the same program, for the muscle
         # memory this repository is named for.
         ln -sf concat "$BIN_DIR/funcut"
-        say ""
+        # The start menu: an AppImage in ~/.local/bin is invisible to a
+        # desktop until something writes the entry, so this does - a
+        # user-level .desktop naming the installed path, and the icons it
+        # names, in the sizes the desktop looks for. No root needed, and
+        # a later package install (which writes /usr/share/applications)
+        # simply outranks it.
+        APPS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+        ICONS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons"
+        mkdir -p "$APPS_DIR"
+        cat > "$APPS_DIR/concat.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=FUNCUT
+Comment=Video editor
+Exec=$DEST %U
+Icon=concat
+Categories=AudioVideo;Video;
+Terminal=false
+StartupWMClass=concat
+DESKTOP
+        for SIZE in 16 32 64 128 256 512; do
+            mkdir -p "$ICONS_DIR/hicolor/${SIZE}x${SIZE}/apps"
+            # The repository this script installs from carries the marks;
+            # the upstream it falls back to carries the same ones.
+            fetch "https://raw.githubusercontent.com/$REPO/main/assets/icons/concat_logo_${SIZE}.png" \
+                "$ICONS_DIR/hicolor/${SIZE}x${SIZE}/apps/concat.png" \
+                || fetch "https://raw.githubusercontent.com/$FALLBACK/main/assets/icons/concat_logo_${SIZE}.png" \
+                "$ICONS_DIR/hicolor/${SIZE}x${SIZE}/apps/concat.png" \
+                || rm -f "$ICONS_DIR/hicolor/${SIZE}x${SIZE}/apps/concat.png"
+        done
+        command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APPS_DIR" >/dev/null 2>&1 || true
         say "installed: $DEST"
+        say "start menu: $APPS_DIR/concat.desktop"
+        say ""
         case ":$PATH:" in
             *":$BIN_DIR:"*) ;;
             *) say "note: $BIN_DIR is not on your PATH - add it to use 'concat' from a terminal" ;;
@@ -551,15 +617,201 @@ case "$KIND" in
         ;;
 esac
 
+# ── the first run's downloads, now ──────────────────────────────
+# Everything the editor would otherwise ask for on the first run that
+# needs it, fetched here so a fresh install opens ready: the core models
+# (whisper base.en, Kokoro int8, the person cutout, the enhance network),
+# the sound shelf's manifest and the sticker shelf's index - each into
+# the app's own data folder, at the exact path and name the editor's
+# Settings page would have written, and each checked against the digest
+# models/manifest.toml pins before it is moved into place. A file that
+# is already there, whole, is left alone: rerunning the installer never
+# re-downloads what it already installed.
+#
+# --no-models skips all of this; --all-models takes every row of the
+# manifest (~2.7 GB); --with-openvid adds the stock index (~435 MB).
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/app.concat.editor"
+
+# One model row from the manifest, by id: prints "file sha256 bytes
+# family" for the row, nothing when the id is not there.
+manifest_row() {
+    awk -v want="$1" '
+        /^\[\[model\]\]/ { id = ""; file = ""; sha = ""; bytes = ""; family = "" }
+        /^id = / { gsub(/"/, ""); id = $3 }
+        /^family = / { gsub(/"/, ""); family = $3 }
+        /^file = / { gsub(/"/, ""); file = $3 }
+        /^sha256 = / { gsub(/"/, ""); sha = $3 }
+        /^bytes = / { gsub(/"/, ""); bytes = $3 }
+        id == want && file != "" && sha != "" && bytes != "" {
+            print file, sha, bytes, family; found = 1; exit
+        }
+        END { exit !found }
+    ' "$MANIFEST"
+}
+
+# Checks a downloaded file against a digest, the way the app itself
+# does: a mismatch is deleted, never installed.
+digest_ok() {
+    # digest_ok FILE SHA256
+    if command -v sha256sum >/dev/null 2>&1; then
+        printf '%s  %s\n' "$2" "$1" | sha256sum -c - >/dev/null 2>&1
+    elif command -v shasum >/dev/null 2>&1; then
+        printf '%s  %s\n' "$2" "$1" | shasum -a 256 -c - >/dev/null 2>&1
+    else
+        # No tool to check with: the file is not installed unchecked.
+        return 1
+    fi
+}
+
+# Places one model row: download from the mirror, check, put it where
+# the engine looks. Says what it did; never dies - a download that
+# cannot happen today is a download the editor will offer again on the
+# first run that needs it.
+install_model() {
+    # install_model ID
+    MID="$1"
+    row=$(manifest_row "$MID") || { say "  $MID: no such row in the manifest - left for the editor"; return 0; }
+    set -- $row
+    MFILE="$1"; MSHA="$2"; MBYTES="$3"; MFAMILY="$4"
+    case "$MFAMILY" in
+        whisper) MTARGET="$DATA_DIR/whisper-models/$MFILE" ;;
+        cutout)  MTARGET="$DATA_DIR/cutout-models/$MFILE" ;;
+        tts)
+            # The archive unpacks to tts-models/<id>/, which is what
+            # counts as downloaded once its .onnx is in place.
+            MTARGET="$DATA_DIR/tts-models/${MID%%.tar.bz2}/model.onnx"
+            ;;
+        chatterbox)
+            # Nine files that land under tts-models/chatterbox-turbo-q8/,
+            # each under the name its graph expects (the engine's own
+            # FILES table: tokenizer.json at the root, the graphs in
+            # onnx/, the prefix dropped).
+            MLOCAL="${MFILE#chatterbox-turbo-}"
+            MTARGET="$DATA_DIR/tts-models/chatterbox-turbo-q8/$MLOCAL"
+            ;;
+        *) say "  $MID: unknown family $MFAMILY - left for the editor"; return 0 ;;
+    esac
+    [ -n "$MTARGET" ] || return 0
+    if [ -e "$MTARGET" ]; then
+        say "  $MID: already there"
+        return 0
+    fi
+    MB_HUMAN=$(awk -v b="$MBYTES" 'BEGIN { printf "%.0f MB", b / 1048576 }')
+    if ! fetch "https://github.com/$FORK_REPO/releases/download/models-v1/$MFILE" "$TMP/model-file"; then
+        say "  $MID: could not download it - the editor will offer it again"
+        return 0
+    fi
+    if ! digest_ok "$TMP/model-file" "$MSHA"; then
+        rm -f "$TMP/model-file"
+        say "  $MID: checksum FAILED - not installed; the editor will offer it again"
+        return 0
+    fi
+    mkdir -p "$(dirname "$MTARGET")"
+    case "$MFAMILY" in
+        tts)
+            # Unpack beside the target and move the id folder in whole,
+            # the same two steps the app's own download takes, so a
+            # half-unpacked bundle is never what the engine finds.
+            rm -rf "$TMP/model-unpack"
+            mkdir -p "$TMP/model-unpack"
+            if ! tar -xjf "$TMP/model-file" -C "$TMP/model-unpack"; then
+                say "  $MID: could not unpack it - the editor will offer it again"
+                rm -rf "$TMP/model-unpack"; rm -f "$TMP/model-file"
+                return 0
+            fi
+            rm -rf "$DATA_DIR/tts-models/${MID%%.tar.bz2}"
+            mv "$TMP/model-unpack/${MID%%.tar.bz2}" "$DATA_DIR/tts-models/${MID%%.tar.bz2}" \
+                || say "  $MID: could not place it - the editor will offer it again"
+            ;;
+        *)
+            mv -f "$TMP/model-file" "$MTARGET"
+            ;;
+    esac
+    rm -rf "$TMP/model-unpack" "$TMP/model-file"
+    say "  $MID: installed ($MB_HUMAN)"
+}
+
+if [ "$MODELS" != none ] && [ "$LIST_ONLY" = no ]; then
+    say ""
+    say "the editor's own downloads, now (so the first run asks for nothing):"
+    MANIFEST="$TMP/manifest.toml"
+    if fetch "https://raw.githubusercontent.com/$FORK_REPO/main/models/manifest.toml" "$MANIFEST"; then
+        # The core set: what a first session touches - captions, speech,
+        # background removal, enhance - with the sizes a small machine
+        # can hold. --all-models takes every row instead.
+        if [ "$MODELS" = all ]; then
+            MODEL_IDS=$(awk '/^\[\[model\]\]/ { infound = 1; next } infound && /^id = / { gsub(/"/, ""); print $3; infound = 0 }' "$MANIFEST")
+        else
+            MODEL_IDS="whisper-base.en kokoro-int8-multi-lang-v1_0 cutout-person enhance-upscale"
+        fi
+        for MODEL_ID in $MODEL_IDS; do
+            install_model "$MODEL_ID"
+        done
+        # The sound shelf's manifest: the 530-effect CC0 library's index,
+        # read by the Audio page and the director's sounds_search alike.
+        mkdir -p "$DATA_DIR/sounds"
+        if [ ! -e "$DATA_DIR/sounds/manifest.json" ]; then
+            if fetch "https://raw.githubusercontent.com/$FORK_REPO/main/audio/manifest.json" "$DATA_DIR/sounds/manifest.json"; then
+                say "  the sound shelf's manifest: installed (530 effects, fetched one at a time as used)"
+            else
+                rm -f "$DATA_DIR/sounds/manifest.json"
+                say "  the sound shelf's manifest: could not fetch it - the editor will offer it again"
+            fi
+        else
+            say "  the sound shelf's manifest: already there"
+        fi
+        # The sticker shelf's index: 1,285 Fluent Emoji, digest-checked
+        # by the app on load, so the same check runs here first.
+        mkdir -p "$DATA_DIR/magick"
+        if [ ! -e "$DATA_DIR/magick/fluent_index.tsv" ]; then
+            if fetch "https://github.com/$FORK_REPO/releases/download/fluent-emoji-index-v1/fluent_index.tsv" "$TMP/fluent_index.tsv" \
+                && digest_ok "$TMP/fluent_index.tsv" "bd12802847f2ec64787a89c17e46a792abbaa9fee7152b9e943a50600545cc8a"; then
+                mv -f "$TMP/fluent_index.tsv" "$DATA_DIR/magick/fluent_index.tsv"
+                say "  the sticker shelf's index: installed (1,285 stickers, fetched one at a time as used)"
+            else
+                rm -f "$TMP/fluent_index.tsv"
+                say "  the sticker shelf's index: could not fetch it - the editor will offer it again"
+            fi
+        else
+            say "  the sticker shelf's index: already there"
+        fi
+    else
+        say "  could not fetch the models manifest - the editor's Settings page"
+        say "  offers every one of these on first use, unchanged"
+    fi
+    if [ "$WITH_OPENVID" = yes ]; then
+        # The stock shelf's index: ~435 MB, the one download big enough
+        # to stay behind its own flag. Digest-checked against the same
+        # constant the app pins (openvid.rs's INDEX_SHA256).
+        mkdir -p "$DATA_DIR/openvid"
+        if [ -e "$DATA_DIR/openvid/openvid-index.sqlite" ]; then
+            say "  the OpenVid stock index: already there"
+        elif fetch "https://github.com/$FORK_REPO/releases/download/openvid-index-v1/openvid-index.sqlite" "$TMP/openvid-index.partial" \
+            && digest_ok "$TMP/openvid-index.partial" "9d3e83f190bcab9906910fa98b901d74ec9944674a891797d50a731d28682c09"; then
+            mv -f "$TMP/openvid-index.partial" "$DATA_DIR/openvid/openvid-index.sqlite"
+            say "  the OpenVid stock index: installed (937,957 clips)"
+        else
+            rm -f "$TMP/openvid-index.partial"
+            say "  the OpenVid stock index: could not fetch it - the stock page's own"
+            say "  one-time download offers it again"
+        fi
+    fi
+fi
+
 # ── the motion sidecar ───────────────────────────────────────
 # Geneva draws a markup comp: the browserless HTML/CSS renderer the
 # motion layer bakes with, one pinned binary. The Linux .deb/.rpm/
-# AppImage built by CI already bundle it beside the executable; this
-# branch covers source and tarball installs, where a machine that never
-# touches a comp need never download one. The editor runs without it
-# (a comp with no markup bakes on the native engine), so every failure
-# here is said and carried on, never fatal.
-if ! command -v geneva >/dev/null 2>&1; then
+# AppImage built by CI already bundle it beside the executable - /opt/
+# concat/geneva for the packages, which the engine's own discovery finds
+# next to the binary without it being on PATH - so those installs are
+# covered here too and not re-downloaded. What is left is source and
+# tarball installs, where a machine that never touches a comp need
+# never download one. The editor runs without it (a comp with no
+# markup bakes on the native engine), so every failure here is said
+# and carried on, never fatal.
+if ! command -v geneva >/dev/null 2>&1 \
+    && [ ! -x /opt/concat/geneva ] \
+    && [ ! -x "$HOME/.local/bin/geneva" ]; then
     say ""
     case "$ARCH" in
         x86_64)
@@ -613,28 +865,45 @@ if ! command -v geneva >/dev/null 2>&1; then
         say "  could not download it - the editor runs without it"
     fi
 
-    # The motion presets draw in three faces - Inter for text, Archivo for
-    # display, JetBrains Mono for code - all OFL, vendored in this
-    # repository under assets/fonts. Geneva resolves a family name through
-    # fontconfig, so a machine without them falls back to whatever is
-    # installed and the comps' metrics move: same comp, different look.
-    # Installed into the user's own fonts folder, no root needed.
-    FONTS_SRC="$(cd "$(dirname "$0")" && pwd)/assets/fonts"
-    if [ -d "$FONTS_SRC" ]; then
-        mkdir -p "$HOME/.local/share/fonts"
-        FONTS_COPIED=0
-        for FACE in "$FONTS_SRC"/*.ttf; do
-            [ -f "$FACE" ] || continue
-            cp "$FACE" "$HOME/.local/share/fonts/" && FONTS_COPIED=$((FONTS_COPIED + 1))
-        done
-        if [ "$FONTS_COPIED" -gt 0 ]; then
-            command -v fc-cache >/dev/null 2>&1 && fc-cache -f "$HOME/.local/share/fonts" >/dev/null 2>&1
-            say "  motion fonts installed: $FONTS_COPIED faces for the comps' own look"
-        fi
-    fi
 else
     say ""
-    say "the motion sidecar: geneva is already on PATH - left as it is"
+    say "the motion sidecar: geneva is already installed - left as it is"
+fi
+
+# ── the motion fonts ──────────────────────────────────────
+# The motion presets draw in three faces - Inter for text, Archivo for
+# display, JetBrains Mono for code - all OFL, vendored in this
+# repository under assets/fonts. Geneva resolves a family name through
+# fontconfig, so a machine without them falls back to whatever is
+# installed and the comps' metrics move: same comp, different look.
+# From a checkout the files are copied; over curl|bash they are fetched
+# from the repository raw, which carries the same bytes. Installed into
+# the user's own fonts folder, no root needed - and never fatal.
+say ""
+FONTS_SRC="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/assets/fonts"
+FONTS_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/fonts"
+mkdir -p "$FONTS_HOME"
+FONTS_COPIED=0
+if [ -d "$FONTS_SRC" ]; then
+    for FACE in "$FONTS_SRC"/*.ttf; do
+        [ -f "$FACE" ] || continue
+        cp "$FACE" "$FONTS_HOME/" && FONTS_COPIED=$((FONTS_COPIED + 1))
+    done
+else
+    for FACE in Archivo-Variable.ttf Inter-Variable.ttf JetBrainsMono-Variable.ttf; do
+        [ -e "$FONTS_HOME/$FACE" ] && { FONTS_COPIED=$((FONTS_COPIED + 1)); continue; }
+        if fetch "https://raw.githubusercontent.com/$FORK_REPO/main/assets/fonts/$FACE" "$FONTS_HOME/$FACE"; then
+            FONTS_COPIED=$((FONTS_COPIED + 1))
+        else
+            rm -f "$FONTS_HOME/$FACE"
+        fi
+    done
+fi
+if [ "$FONTS_COPIED" -gt 0 ]; then
+    command -v fc-cache >/dev/null 2>&1 && fc-cache -f "$FONTS_HOME" >/dev/null 2>&1
+    say "motion fonts installed: $FONTS_COPIED faces for the comps' own look"
+else
+    say "motion fonts: none installed - comps fall back to the machine's faces"
 fi
 
 say ""

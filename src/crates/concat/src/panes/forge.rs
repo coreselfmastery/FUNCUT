@@ -36,8 +36,14 @@ const LOG_KEPT: usize = 150;
 /// The voices the page's select offers, in its order: Kokoro's names, as
 /// Settings > Speech shows them.
 const VOICES: [&str; 5] = ["af_bella", "af_river", "am_adam", "am_fenrir", "am_onyx"];
-/// The niches the page's select offers: the playbooks the skill carries.
-const NICHES: [&str; 10] = [
+/// The niche the director picks itself: no playbook is forced, the
+/// creative brief and the material decide the look. Row 0 of the select.
+const UNIVERSAL: &str = "Director decides";
+/// The niches the page's select offers: the director's own choice first,
+/// then the playbooks the skill carries as optional presets. A niche is
+/// a starting point for a look, never a rail the edit must stay on.
+const NICHES: [&str; 11] = [
+    UNIVERSAL,
     "Science",
     "History",
     "Tech",
@@ -49,6 +55,11 @@ const NICHES: [&str; 10] = [
     "Gaming",
     "How-to",
 ];
+/// Where a run's narration comes from: row 0 of the Source select - the
+/// script box, read by TTS - or row 1 - the voiceover already on the
+/// timeline, which the run builds a whole edit around without TTS.
+const SOURCE_SCRIPT: i32 = 0;
+const SOURCE_VOICEOVER: i32 = 1;
 /// The music moods the page's select offers: bgm_search words.
 const MOODS: [&str; 6] = [
     "ambient wonder",
@@ -62,10 +73,15 @@ const MOODS: [&str; 6] = [
 /// Everything that can happen to the Forge page.
 #[derive(Clone, Debug)]
 pub enum ForgeMsg {
-    /// Start: the script and the three choices.
+    /// Start: the script and the choices.
     Start {
-        /// The words the voiceover will say.
+        /// The words the voiceover will say, or - when the source is the
+        /// timeline's own voiceover - extra directions for the director,
+        /// which may be empty.
         script: String,
+        /// The Source select's row: the script box read by TTS (0), or
+        /// the voiceover already on the timeline (1).
+        source: i32,
         /// [`VOICES`]'s row.
         voice: i32,
         /// [`NICHES`]'s row.
@@ -112,6 +128,10 @@ pub struct ForgePane {
     pub connected: Option<bool>,
     /// Whether the skill is installed: unknown until probed.
     pub installed: Option<bool>,
+    /// The project folder a voiceover run is editing, opened in the
+    /// window when the run ends well: the edit lands on the timeline
+    /// the user is looking at, which is the point of the run.
+    result_path: Option<String>,
     /// How the child is stopped. The pane never holds the child: the
     /// reader thread owns it, and a Cancel only raises the flag it is
     /// checked against, one line away.
@@ -133,10 +153,11 @@ impl ForgePane {
             }
             ForgeMsg::Start {
                 script,
+                source,
                 voice,
                 niche,
                 mood,
-            } => self.run(script, voice, niche, mood, studio),
+            } => self.run(script, source, voice, niche, mood, studio),
             ForgeMsg::Cancel => {
                 if self.running {
                     self.kill.store(true, Ordering::Relaxed);
@@ -154,6 +175,24 @@ impl ForgePane {
                     self.set_status(t("forge.stopped"));
                 } else if code == 0 {
                     self.set_status(t("forge.done"));
+                    // A voiceover run's whole point is the edit landing on
+                    // the timeline the user is looking at: the run edited
+                    // a sibling project (the window holds this one, and an
+                    // agent cannot open what the window holds), so the
+                    // finished edit opens here, in the window, now. The
+                    // voiceover project itself is untouched on disk.
+                    if let Some(path) = self.result_path.take() {
+                        match concat_host::projects::open(&path)
+                            .and_then(|info| studio.open_project(info))
+                        {
+                            Ok(()) => {
+                                studio.notify(&tf("forge.editReady", &[&path]), false);
+                            }
+                            Err(error) => {
+                                studio.notify(&tf("forge.openFailed", &[&error]), true);
+                            }
+                        }
+                    }
                 } else {
                     self.set_status(tf("forge.exited", &[&code.to_string()]));
                 }
@@ -225,9 +264,47 @@ impl ForgePane {
 
     /// Starts a run: the prompt is the script and the choices, the
     /// harness is `forge run`, and its words come back one line at a time.
-    fn run(&mut self, script: String, voice: i32, niche: i32, mood: i32, studio: &mut Studio) {
-        if self.running || script.trim().is_empty() {
+    ///
+    /// A run's narration comes from one of two places. From the script
+    /// box, read by the TTS voice the select names. Or from the voiceover
+    /// already on the open timeline: a sibling project is made beside it,
+    /// the voiceover's files are copied in, and the director builds the
+    /// whole edit around them there - the window holds the source
+    /// project, and an agent cannot open what the window holds - so the
+    /// finished edit can open back here, on the timeline, when the run
+    /// ends well.
+    fn run(
+        &mut self,
+        script: String,
+        source: i32,
+        voice: i32,
+        niche: i32,
+        mood: i32,
+        studio: &mut Studio,
+    ) {
+        // Both rows are named, and a value that is neither row - one the
+        // page never offers - reads as the script box: the choice that
+        // has to carry its own words.
+        let from_timeline = match source {
+            SOURCE_SCRIPT => false,
+            SOURCE_VOICEOVER => true,
+            _ => false,
+        };
+        if self.running {
             return;
+        }
+        if !from_timeline && script.trim().is_empty() {
+            return;
+        }
+        let mut voiceover = None;
+        if from_timeline {
+            match voiceover_project(studio) {
+                Ok(made) => voiceover = Some(made),
+                Err(error) => {
+                    studio.notify(&error, true);
+                    return;
+                }
+            }
         }
         let voice = VOICES
             .get(voice.max(0) as usize)
@@ -238,7 +315,8 @@ impl ForgePane {
             .copied()
             .unwrap_or(NICHES[0]);
         let mood = MOODS.get(mood.max(0) as usize).copied().unwrap_or(MOODS[0]);
-        let prompt = director_run_prompt(&script, voice, niche, mood, studio);
+        self.result_path = voiceover.as_ref().map(|made| made.project.clone());
+        let prompt = director_run_prompt(&script, voiceover.as_ref(), voice, niche, mood, studio);
         self.kill = Arc::new(AtomicBool::new(false));
         let kill = Arc::clone(&self.kill);
         let mut command = Command::new("forge");
@@ -348,6 +426,118 @@ fn read_the_run(mut child: Child, kill: Arc<AtomicBool>) {
     });
 }
 
+/// What a voiceover run builds in: the sibling project the director
+/// edits, and the voiceover files copied into it, in timeline order.
+struct VoiceoverSource {
+    /// The new project's folder, ready for `project_open`.
+    project: String,
+    /// The voiceover files, absolute paths, in the order they play.
+    files: Vec<String>,
+}
+
+/// Makes the sibling project a voiceover run edits: the open project's
+/// audio clips are found on the timeline, copied into a fresh `<name>
+/// edit` folder beside it (the window holds the source, and an agent
+/// cannot open what the window holds), and the new folder is what the
+/// director opens. The source project is never touched.
+fn voiceover_project(studio: &Studio) -> Result<VoiceoverSource, String> {
+    use concat_project::model::ClipKind;
+
+    let Some(session) = studio.session.as_ref() else {
+        return Err(t("forge.needProject"));
+    };
+    let project = studio.project();
+    let timeline = project.active();
+    // The voiceover is the timeline's audio clips, in time order: a take
+    // the voiceover panel recorded, or a file imported and placed. Distinct
+    // files once each - a take split into pieces is one voiceover.
+    let mut audio: Vec<&concat_project::model::Clip> = timeline
+        .clips
+        .iter()
+        .map(|clip| clip.as_ref())
+        .filter(|clip| clip.kind == ClipKind::Audio)
+        .collect();
+    audio.sort_by(|a, b| {
+        a.start
+            .partial_cmp(&b.start)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut files: Vec<String> = Vec::new();
+    for clip in audio {
+        // The bin lives on the project, not the timeline: a clip names its
+        // media by id, and the project holds what that id is.
+        let Some(item) = project.media_by_id(&clip.media_id) else {
+            continue;
+        };
+        if !item.path.is_empty() && !files.contains(&item.path) {
+            files.push(item.path.clone());
+        }
+    }
+    if files.is_empty() {
+        return Err(t("forge.noVoiceover"));
+    }
+    // The sibling folder: `<name> edit`, then `edit 2`, `edit 3`, ... so
+    // every run gets a fresh project and an earlier edit is never
+    // overwritten. The canvas matches the source project's.
+    let video = timeline.video;
+    let folder = std::path::Path::new(session.path())
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .ok_or_else(|| t("forge.needProject"))?;
+    let stem = std::path::Path::new(session.path())
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("funcut")
+        .to_owned();
+    let mut made = None;
+    for attempt in 0..50 {
+        let name = if attempt == 0 {
+            format!("{stem} edit")
+        } else {
+            format!("{stem} edit {}", attempt + 1)
+        };
+        match concat_host::projects::create(
+            &folder.to_string_lossy(),
+            &name,
+            video.width,
+            video.height,
+            video.rate_num,
+            video.rate_den,
+        ) {
+            Ok(info) => {
+                made = Some(info);
+                break;
+            }
+            // A folder that already holds a project is the next attempt's
+            // business, not a failure.
+            Err(error) if attempt < 49 && error.contains("already") => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    let Some(info) = made else {
+        return Err(t("forge.projectFailed"));
+    };
+    // The voiceover files are copied in, so the edit stands on its own
+    // and the source project can be moved or deleted without breaking it.
+    let into = std::path::Path::new(&info.path).join("voiceover");
+    std::fs::create_dir_all(&into).map_err(|error| error.to_string())?;
+    let mut copied = Vec::new();
+    for file in &files {
+        let name = std::path::Path::new(file)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("voiceover.wav")
+            .to_owned();
+        let target = into.join(&name);
+        std::fs::copy(file, &target).map_err(|error| error.to_string())?;
+        copied.push(target.to_string_lossy().into_owned());
+    }
+    Ok(VoiceoverSource {
+        project: info.path,
+        files: copied,
+    })
+}
+
 /// The one prompt the pane sends. It used to be a single sentence of
 /// instructions ("verify with preview_frame, then export") with no creative
 /// intent and no way for the agent to judge its own work. Now it carries the
@@ -358,6 +548,7 @@ fn read_the_run(mut child: Child, kill: Arc<AtomicBool>) {
 /// `FUNCUT_FORGE_MODEL` should name a vision-capable model.
 fn director_run_prompt(
     script: &str,
+    voiceover: Option<&VoiceoverSource>,
     voice: &str,
     niche: &str,
     mood: &str,
@@ -414,12 +605,61 @@ fn director_run_prompt(
          with a free-tier provider (groq, gemini, zai, openrouter) for a stronger critic.\n"
             .to_owned()
     };
+    // How the narration arrives and what the run builds around. A
+    // voiceover run has its material already: the files are named, the
+    // TTS is off, and the edit is the whole job. A niche chosen as the
+    // director's own is a brief to decide, not a playbook to apply.
+    let (material, tail) = if let Some(source) = voiceover {
+        let files = source
+            .files
+            .iter()
+            .map(|file| format!("  - {file}\n"))
+            .collect::<String>();
+        let material = format!(
+            "THE VOICEOVER (already recorded - do NOT run tts_generate, do NOT write a script):\n\
+             {files}\
+             Open the project folder '{project}' (project_open), media_import each voiceover \
+             file, place them on the timeline at 0 in the order listed, and direct the WHOLE \
+             edit around them: repair a rough take first (Phase 1), tighten only the dead air \
+             (Phase 2 - a dramatic hold is the performance, keep it), then the full pipeline: \
+             emotion and voice-signal reads, plan, B-roll, captions, motion comps, ONE grade, \
+             the watch/critique loop, export.\n\n",
+            project = source.project,
+        );
+        let tail = if script.trim().is_empty() {
+            String::new()
+        } else {
+            format!("EXTRA DIRECTIONS FROM THE USER:\n{script}")
+        };
+        (material, tail)
+    } else {
+        (
+            format!(
+                "The narration does not exist yet: write it from the script below and read it \
+                 with tts_generate ({voice}, a Kokoro voice).\n\n"
+            ),
+            format!("THE SCRIPT:\n{script}"),
+        )
+    };
+    let look = if niche == UNIVERSAL {
+        format!(
+            "PRODUCTION CHOICES: yours to make - derive the look from the brief and the \
+             material (prompts/niche_playbooks.md is a reference of looks, not a rail to \
+             stay on). Music for the mood '{mood}', measured word-synced captions, ONE \
+             consistent grade, and silence removed from the voiceover.\n\n"
+        )
+    } else {
+        format!(
+            "PRODUCTION CHOICES: the {niche} playbook as a starting point (the brief and the \
+             material win where they disagree), music for the mood '{mood}', measured \
+             word-synced captions, ONE consistent grade, and silence removed from the \
+             voiceover.\n\n"
+        )
+    };
     format!(
         "Use the funcut-director skill and follow its phases IN ORDER. You are directing a \
-         video, not assembling clips.\n\n{brief}\
-         PRODUCTION CHOICES: the {niche} playbook, {voice} narration (a Kokoro voice), \
-         music for the mood '{mood}', measured word-synced captions, ONE consistent grade, \
-         and silence removed from the voiceover.\n\n\
+         video, not assembling clips.\n\n{brief}{material}\
+         {look}\
          MANDATORY QUALITY LOOP (do not skip, do not just describe it):\n\
          1. plan_validate must return BOTH valid:true AND creativeReady:true. Fix every \
             creativeBlockers entry before cutting. A score below 7 means rewrite the plan.\n\
@@ -438,7 +678,7 @@ fn director_run_prompt(
             never claim success on an unmeasured render.\n\n\
          A file PATH to a PNG is not a picture you can see. Only the inline image content \
          blocks from these tools are. If a tool returns an image, look at it.\n\n\
-         THE SCRIPT:\n{script}"
+         {tail}"
     )
 }
 

@@ -634,14 +634,16 @@ struct ArchiveFile {
 /// Fetches the FreePD listing and turns it into the shelf's tracks.
 /// Fails - rather than half-loads - when the listing cannot be read.
 fn prepare_freepd(dirs: &AppDirs, shelf: &Shelf) -> Result<Vec<Track>, String> {
-    let agent = crate::net::agent(
+    // The listing rides the proxy when the machine names one, the way
+    // the track files themselves already do (models::download's path).
+    let network = crate::net::Shelf::new(
+        FREEPD_METADATA,
         std::time::Duration::from_secs(20),
         std::time::Duration::from_secs(60),
     );
-    let response = agent
-        .get(FREEPD_METADATA)
-        .call()
-        .map_err(|error| format!("the Archive did not answer: {error}"))?;
+    let response = network
+        .get(FREEPD_METADATA, &|request| request)
+        .map_err(|failure| format!("the Archive did not answer: {failure}"))?;
     let mut bytes = Vec::new();
     use std::io::Read;
     response
@@ -807,14 +809,17 @@ struct ZipEntry {
 /// measures every track's start and length from its own headers: the
 /// one-time census, the only part of a Lo-Fi prepare that takes seconds.
 fn prepare_lofi(dirs: &AppDirs, shelf: &Shelf, cancel: &AtomicBool) -> Result<Vec<Track>, String> {
-    let agent = crate::net::agent(
+    // The catalogue and the zip both ride the proxy when the machine
+    // names one: github.com is one of the hosts it exists to reach, and
+    // the models already ride it for the same host.
+    let network = crate::net::Shelf::new(
+        LOFI_CATALOG,
         std::time::Duration::from_secs(20),
         std::time::Duration::from_secs(60),
     );
-    let response = agent
-        .get(LOFI_CATALOG)
-        .call()
-        .map_err(|error| format!("the Lo-Fi list did not answer: {error}"))?;
+    let response = network
+        .get(LOFI_CATALOG, &|request| request)
+        .map_err(|failure| format!("the Lo-Fi list did not answer: {failure}"))?;
     let mut bytes = Vec::new();
     use std::io::Read;
     response
@@ -830,17 +835,17 @@ fn prepare_lofi(dirs: &AppDirs, shelf: &Shelf, cancel: &AtomicBool) -> Result<Ve
 
     // The zip's shape: a kept index, believed only while the live zip
     // still says the same total size; anything else is read again.
-    let total = live_total(&agent)?;
+    let total = live_total(&network)?;
     let mut index = read_zip_index(dirs);
     if index.version != 1 || index.entries.is_empty() || index.total != total {
-        index = read_zip(&agent, total)?;
+        index = read_zip(&network, total)?;
         write_zip_index(dirs, &index);
     }
 
     // The census: every member's data start, measured from its own local
     // header, and every track's playing time, measured from its own first
     // MPEG frames. One small ranged read a track, once, kept for good.
-    census(&agent, &mut index, &shelf.percent, cancel)?;
+    census(&network, &mut index, &shelf.percent, cancel)?;
     write_zip_index(dirs, &index);
 
     // The manifest and the zip must agree, member for member, or the
@@ -882,12 +887,10 @@ fn prepare_lofi(dirs: &AppDirs, shelf: &Shelf, cancel: &AtomicBool) -> Result<Ve
 
 /// Whether a kept zip index is the live zip's own shape: the one ranged
 /// read of nothing - `bytes=0-0` - whose `Content-Range` names the total.
-fn live_total(agent: &ureq::Agent) -> Result<u64, String> {
-    let response = agent
-        .get(LOFI_ZIP)
-        .set("Range", "bytes=0-0")
-        .call()
-        .map_err(|error| format!("the zip did not answer: {error}"))?;
+fn live_total(shelf: &crate::net::Shelf) -> Result<u64, String> {
+    let response = shelf
+        .get(LOFI_ZIP, &|request| request.set("Range", "bytes=0-0"))
+        .map_err(|failure| format!("the zip did not answer: {failure}"))?;
     if response.status() != 206 {
         return Err(format!(
             "the zip would not serve a byte range (status {})",
@@ -905,12 +908,12 @@ fn live_total(agent: &ureq::Agent) -> Result<u64, String> {
 /// its tail, and the central directory itself - every member's name,
 /// method, sizes, CRC and offset - out of one more ranged read. ~80 KB
 /// moves for a 554 MB zip, and nothing else.
-fn read_zip(agent: &ureq::Agent, total: u64) -> Result<ZipIndex, String> {
+fn read_zip(shelf: &crate::net::Shelf, total: u64) -> Result<ZipIndex, String> {
     // The end-of-central-directory record is in the last 64 KB; the zip
     // is half a gigabyte, so no zip64 endings are looked for and one
     // found is refused in words rather than misread.
     let tail = ranged(
-        agent,
+        shelf,
         total.saturating_sub(64 * 1024 + 21),
         total
             .checked_sub(1)
@@ -938,7 +941,7 @@ fn read_zip(agent: &ureq::Agent, total: u64) -> Result<ZipIndex, String> {
     // directory that claims no size is refused rather than read with
     // arithmetic that would wrap trying to reach its last byte.
     let directory = ranged(
-        agent,
+        shelf,
         at,
         at.checked_add(size)
             .and_then(|end| end.checked_sub(1))
@@ -999,7 +1002,7 @@ fn read_zip(agent: &ureq::Agent, total: u64) -> Result<ZipIndex, String> {
 /// track's own bytes - the reads five at a time, the progress a per-cent
 /// while it runs.
 fn census(
-    agent: &ureq::Agent,
+    shelf: &crate::net::Shelf,
     index: &mut ZipIndex,
     percent: &AtomicU32,
     cancel: &AtomicBool,
@@ -1037,7 +1040,7 @@ fn census(
                     }
                     let entry = &index.entries[todo[at]];
                     let span = CENSUS_READ.min(entry.csize + 96);
-                    if let Ok(bytes) = ranged(agent, entry.offset, entry.offset + span - 1)
+                    if let Ok(bytes) = ranged(shelf, entry.offset, entry.offset + span - 1)
                         && bytes.len() >= 30
                         && &bytes[..4] == b"PK\x03\x04"
                     {
@@ -1105,20 +1108,21 @@ fn fetch_lofi(
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(u64, u64),
 ) -> Result<(), String> {
-    let agent = crate::net::agent(
+    let network = crate::net::Shelf::new(
+        LOFI_ZIP,
         std::time::Duration::from_secs(20),
         std::time::Duration::from_secs(90),
     );
     // The index as this machine holds it, re-read when the zip has
     // changed; a kept index that names a member the manifest does not is
     // a stale one, and the honest answer is to read the zip again.
-    let total = live_total(&agent)?;
+    let total = live_total(&network)?;
     let mut index = read_zip_index(dirs);
     if index.version != 1 || index.entries.is_empty() || index.total != total {
-        index = read_zip(&agent, total)?;
+        index = read_zip(&network, total)?;
         write_zip_index(dirs, &index);
         let percent = AtomicU32::new(0);
-        census(&agent, &mut index, &percent, cancel)?;
+        census(&network, &mut index, &percent, cancel)?;
         write_zip_index(dirs, &index);
     }
     let Some(entry) = index.entries.iter().find(|entry| entry.name == track.file) else {
@@ -1132,7 +1136,7 @@ fn fetch_lofi(
     } else {
         // An index the census never finished: read the member's own local
         // header rather than refuse, the same read the census makes.
-        let head = ranged(&agent, entry.offset, entry.offset + 29)
+        let head = ranged(&network, entry.offset, entry.offset + 29)
             .map_err(|error| format!("the zip did not answer: {error}"))?;
         if head.len() < 30 || &head[..4] != b"PK\x03\x04" {
             return Err("the zip's member header was not where it says".to_owned());
@@ -1150,11 +1154,13 @@ fn fetch_lofi(
 
     // The track's own span, read as it arrives and drawn as it does.
     progress(0, entry.usize);
-    let response = agent
-        .get(LOFI_ZIP)
-        .set("Range", &format!("bytes={data}-{}", data + entry.csize - 1))
-        .call()
-        .map_err(|error| format!("the zip did not answer: {error}"))?;
+    let span_start = data;
+    let span_end = data + entry.csize - 1;
+    let response = network
+        .get(LOFI_ZIP, &|request| {
+            request.set("Range", &format!("bytes={span_start}-{span_end}"))
+        })
+        .map_err(|failure| format!("the zip did not answer: {failure}"))?;
     if response.status() != 206 {
         return Err(format!(
             "the zip would not serve a byte range (status {})",
@@ -1418,15 +1424,15 @@ fn search(pool: &[Track], query: &Query) -> Result<Found, String> {
 /// given: one ranged GET, the status checked to be 206 - a 200 would
 /// mean the range was ignored and the whole 554 MB zip was about to
 /// arrive, which is stopped here rather than read.
-fn ranged(agent: &ureq::Agent, start: u64, end: u64) -> Result<Vec<u8>, String> {
+fn ranged(shelf: &crate::net::Shelf, start: u64, end: u64) -> Result<Vec<u8>, String> {
     if end < start {
         return Err("the zip was asked for a span that ends before it starts".to_owned());
     }
-    let response = agent
-        .get(LOFI_ZIP)
-        .set("Range", &format!("bytes={start}-{end}"))
-        .call()
-        .map_err(|error| format!("the zip did not answer: {error}"))?;
+    let response = shelf
+        .get(LOFI_ZIP, &|request| {
+            request.set("Range", &format!("bytes={start}-{end}"))
+        })
+        .map_err(|failure| format!("the zip did not answer: {failure}"))?;
     if response.status() != 206 {
         return Err(format!(
             "the zip would not serve a byte range (status {})",

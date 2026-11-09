@@ -10,9 +10,11 @@ so work survives without `project_save`.
 
 ## Jobs (the long work)
 
-`export_start` · `analysis_wait` · `export_wait` · `export_status` · `export_cancel` ·
+`export_start` · `analysis_wait` · `export_wait` · `export_status` ·
 `analyze_scenes` · `analyze_beats` · `analyze_silence` · `transcribe` · `tts_generate` ·
 `models_list` · `models_download`
+(`export_cancel` and `project_close` need `CONCAT_MCP_ALLOW=all` - the
+default surface a director runs on refuses both, deliberately.)
 
 Start tools return `{"job":"jN"}` at once. Wait with `analysis_wait` /
 `export_wait` `{job, timeoutSeconds}` (default 60, max 600; call again while
@@ -33,7 +35,7 @@ rule: surface the pip hint.
 `motion_frame {project, preset|comp, at, ops?, width?}` ·
 `motion_bake {project, preset|comp, ops?, width?, height?, fps?, crf?, encode?, name?}` ·
 `captions_animate {project, words, preset?, wordsPerLine?, maxLineSeconds?, gapSeconds?, width?, height?, fps?, plate?, name?}` ·
-`motion_overlay {frames | hash + project, plate, at?, fps?, width?, height?, crf?, out?}` · `motion_reel {project, storyboard, name?, frame?, plan?, crf?}` (a whole storyboard as one reel — scenes carry multi-layer stacks: plates under the comp, `above` overlays over it, each with zoom/pan/offset/scale/fit/blend/opacity/fades and its own start/hold)
+`motion_overlay {frames | hash + project, plate, at?, fps?, width?, height?, crf?, out?}` · `motion_reel {project, storyboard, name?, frame?, plan?, crf?}` (a whole storyboard as one reel — scenes carry multi-layer stacks: plates under the comp, `above` overlays over it, each with zoom/pan/offset/scale/fit/blend/opacity/fades and its own start/hold) · `motion_import {action: lottie|gsap, project, file?|timeline?, preset?|comp?|ops?, name?}` (motion made elsewhere: a bodymovin JSON become a comp, or a GSAP-style timeline applied to one; the reply's `notes` name every skip, approximation and clamp — read them to the user)
 
 - The loop: `motion_presets` → `motion_inspect` (never guess node ids) → one
   `ops` batch → `motion_frame` at 2-3 moments → `motion_bake {encode: true}` →
@@ -57,7 +59,7 @@ rule: surface the pip hint.
 ## Projects and reading
 
 `concat_version` · `project_list` · `project_create {location,name,video?}` ·
-`project_open {path}` · `project_save` · `project_close {path,save}` ·
+`project_open {path}` · `project_save` ·
 `project_set_video` · `project_get {path}` · `timeline_read {path}` ·
 `collision_check {path}` · `plan_validate {plan}` · `media_probe {path}` ·
 `media_import {path,file}` · `effects_list {kind}` (the effect/filter/transition/audio
@@ -196,7 +198,7 @@ where its peak lands) · `magick_status/prepare/search/fetch/add` (shelves:
 `template_list` · `template_instantiate {template, location, name, fills:
 [{mediaId, file}]}` · `export_start {path, output, crf?, preset?, width?,
 height?, rateNum?, rateDen?, codec?, tenBit?, colorRange?, hdr?}` ·
-`export_status` · `export_wait` · `export_cancel`
+`export_status` · `export_wait`
 
 - Export: crf 20 default (63 max, lower = better), preset "medium",
   codec `h264|hevc|av1`. Stages you will see in status: `cutout`, `stabilize`,

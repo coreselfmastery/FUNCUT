@@ -349,6 +349,14 @@ impl VoiceoverPane {
         Some(!std::mem::replace(&mut self.told, true))
     }
 
+    /// Whether a take holds the playhead right now, asked without the
+    /// side effect `on_seek` carries (the one-shot toast): the socket's
+    /// seek control asks this, so it never eats the window's own "the
+    /// playhead is held" notice.
+    pub fn holds_playhead(&self) -> bool {
+        self.phase.on_seek() == Hold::Refuse
+    }
+
     /// Applies one message.
     pub fn update(&mut self, msg: VoiceoverMsg, studio: &mut Studio) {
         match msg {

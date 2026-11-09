@@ -773,6 +773,21 @@ pub enum Request {
         /// The model's id, from `models.list`.
         id: String,
     },
+
+    /// Moves the window's playhead - the editor's own scrub, driven by a
+    /// caller. Only a window that shares its playhead serves this: the
+    /// headless API answers with the honest refusal instead.
+    #[serde(rename = "window.seek")]
+    WindowSeek {
+        /// Where to move the playhead, in seconds on the timeline.
+        time: f64,
+        /// The project folder the caller means, when it knows it. The
+        /// window holds one project; a `path` that is not the one it
+        /// holds is refused with the held project named, so a caller
+        /// never scrubs a timeline it cannot see.
+        #[serde(default)]
+        path: Option<String>,
+    },
 }
 
 /// One template slot and the file that takes it.
@@ -889,6 +904,8 @@ pub enum Reply {
     /// [`Request::ModelsList`].
     #[cfg(feature = "speech")]
     Models(ModelsState),
+    /// [`Request::WindowSeek`].
+    WindowSeek(WindowSought),
     /// [`Request::PreviewFrame`] with an output: the file written.
     Written(Written),
     /// [`Request::PreviewFrame`] without one: the picture itself.
@@ -911,6 +928,17 @@ pub struct ModelsState {
     pub transcriber: Vec<concat_speech::transcribe::ModelStatus>,
 }
 
+/// What a successful `window.seek` answers: where the playhead now is,
+/// and the project whose timeline it moved on.
+#[derive(Clone, PartialEq, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowSought {
+    /// The project folder the window holds.
+    pub path: String,
+    /// Where the playhead is now, in seconds.
+    pub time: f64,
+}
+
 /// The OpenVid library's state, as `openvid.status` reports it and
 /// `openvid.prepare` starts it towards.
 #[derive(Clone, PartialEq, Debug, Serialize)]
@@ -926,9 +954,31 @@ pub struct OpenvidState {
     /// How many clips' frame sizes have been measured so far - the honest
     /// number behind the orientation filter.
     pub measured: u64,
+    /// The semantic half of `openvid.search`: the local MobileCLIP2-S0
+    /// model that re-orders a relevance page by what the clips show.
+    /// Its absence is not an error - BM25 alone answers - but a director
+    /// that knows it is missing can lean on `stock_contact_sheet` for
+    /// the looking instead of trusting an unranked page.
+    pub rerank: OpenvidRerank,
     /// Why the library is not usable, when it is not.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+/// The semantic rerank's state, as `openvid.status` reports it: whether
+/// the two MobileCLIP2-S0 ONNX files are on this machine, and where to
+/// put them when they are not. The same directories `analysis/rerank.py`
+/// looks in, so what this reports is what the search will do.
+#[derive(Clone, PartialEq, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenvidRerank {
+    /// Whether both ONNX files are in place, so the rerank runs.
+    pub available: bool,
+    /// Where the files were found, or where to put them, as a path a
+    /// person can act on.
+    pub dir: String,
+    /// The two files it looks for, named for the message that names them.
+    pub files: [&'static str; 2],
 }
 
 /// What `openvid.search` found.

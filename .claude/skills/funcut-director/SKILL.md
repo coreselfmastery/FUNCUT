@@ -88,8 +88,9 @@ the job's status `output` → `media_import` it.
 voiceover is graded before anything else reads it:
 `sense_voice_quality {action: "classify_recording_quality", audio}`. A
 verdict of `home` or `rough` (a high noise floor, SNR under ~12 dB, hum,
-clipping) is repaired FIRST — `remove_hiss_hum_rumble` when its `fixes`
-name a hum, then `sense_audio_repair {action: "enhance_speech"}` (its
+clipping) is repaired FIRST — `sense_audio_repair {action:
+"remove_hiss_hum_rumble", audio}` when its `fixes` name a hum, then
+`sense_audio_repair {action: "enhance_speech"}` (its
 `fixes` name the chain; `targetLufs` picks the platform landing) — and
 the enhanced file the reply's `file` names becomes THE voiceover:
 import that, transcribe that, and run every later analysis
@@ -184,15 +185,20 @@ and meter, music structure, caption alignment — live behind the five
 family tools (`sense_discourse`, `sense_voice_quality`,
 `sense_prosody_style`, `sense_audio_repair`, `sense_captions`), each
 `action` naming one reading. Three of them are wired into the pipeline,
-not left to judgment: `classify_recording_quality` + `enhance_speech` on
-a rough take BEFORE it is analyzed (Phase 1), `detect_music_segments`
-before any BGM is chosen (Phase 4), and `identify_music` as the
-copyright check on a take that already carries music (Phase 4). The
-rest are called where the edit needs them
-(`score_script_quality` before the read, `detect_restarts` +
-`classify_filler_type` for the punch-up, `analyze_music_structure` when
-cutting to music, `align_captions` + `clean_subtitles` before burning
-captions).
+not left to judgment: `sense_voice_quality {action:
+"classify_recording_quality"}` + `sense_audio_repair {action:
+"enhance_speech"}` on a rough take BEFORE it is analyzed (Phase 1),
+`sense_audio_repair {action: "detect_music_segments"}` before any BGM is
+chosen (Phase 4), and `sense_audio_repair {action: "identify_music"}` as
+the copyright check on a take that already carries music (Phase 4). The
+rest are called where the edit needs them, each as its door's `action`
+(`sense_discourse {action: "score_script_quality"}` before the read,
+`sense_discourse {action: "detect_restarts"}` + `sense_discourse
+{action: "classify_filler_type"}` for the punch-up, `sense_prosody_style
+{action: "analyze_music_structure"}` when cutting to music,
+`sense_captions {action: "align_captions"}` + `sense_captions {action:
+"clean_subtitles"}` before burning captions). A bare reading name is
+never a tool - always the door with its action.
 
 **Phase 2 — Tighten the voice.** Feed the silence spans to `clip_cut_spans`
 (remove dead air; `-35` dB threshold, ≥0.5 s spans) — but the Phase-1c
@@ -374,16 +380,29 @@ section change — new angle, colour or lower-third at the change, never a
 cut that straddles it. Use `captions_add` for
 segment-timed captions. Group each logical chunk into one `edit_apply` batch.
 
+**Let the user watch.** When the server is the window's own (`concat
+--mcp window` — the Forge page's voiceover run is not, and its refusal
+of `timeline_seek` is expected there), scrub as you place: after each
+`edit_apply` batch lands, `timeline_seek` to the moment just placed.
+The playhead moves on the timeline the user is looking at, so the edit
+arrives as a thing being made rather than a file that appears — and
+the refusal on a headless server costs one line, not the run.
+
 **Phase 5b — Motion comps (design). Every finished piece goes through here.**
-This is what separates an edit from a video. The motion layer is six MCP
+This is what separates an edit from a video. The motion layer is seven MCP
 tools: `motion_presets` (the library), `motion_inspect` (nodes, slots —
 never guess), `motion_frame` (look before you bake — it now returns an inline
 image, so check legibility, contrast and safe margins with your eyes), `motion_bake`
 (encode a piece in one call), `captions_animate` (word-timed kinetic
-captions from measured word times), and `motion_reel` (a whole storyboard
+captions from measured word times), `motion_reel` (a whole storyboard
 as one reel — scenes with MULTI-LAYER stacks: plates under the comp and
 grain, light leaks, vignettes and foreground cards over it, each on its own
-drift and clock; check one still with `frame: seconds` before rendering). The floor is one designed beat per
+drift and clock; check one still with `frame: seconds` before rendering),
+and `motion_import` (motion made elsewhere: a designer's Lottie/bodymovin
+JSON become a comp, or a GSAP-style timeline applied to one — read the
+reply's `notes` aloud to the user, because a `skipped:` note means the comp
+draws less than the source did, and the user decides whether that is
+acceptable). The floor is one designed beat per
 section and at least one per 15 s of runtime — and a floor is a floor, not
 a target: a reel where a quarter or more of the segments carry a comp, and
 a longform where an eighth or more do, reads as designed rather than

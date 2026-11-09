@@ -34,12 +34,15 @@ use crate::ui::OpenvidCardData;
 const PAGE: u32 = 40;
 
 /// What to do with a clip once its bytes have arrived.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Then {
     /// Play it through the source preview.
     Preview,
     /// Lay it at the playhead.
     Place,
+    /// Lay it where a drag dropped it: the lane the pointer named, when
+    /// it named one, and the moment it landed on.
+    PlaceAt(Option<String>, f64),
 }
 
 /// Everything that can happen to the page.
@@ -67,6 +70,13 @@ pub enum OpenvidMsg {
     Searched(Result<Found, String>, bool, u64),
     /// The next page of what the last search found.
     More,
+    /// A card dragged onto the lanes: fetch it if need be, then lay it
+    /// on the lane and at the moment the drop named.
+    Place {
+        id: String,
+        track_id: Option<String>,
+        start: f64,
+    },
     /// A card clicked: preview the clip, fetching it first if need be.
     Preview(String),
     /// A card's plus: lay the clip at the playhead, fetching it first.
@@ -257,6 +267,11 @@ impl OpenvidPane {
             }
             OpenvidMsg::Preview(id) => self.take(id, Then::Preview, studio),
             OpenvidMsg::Add(id) => self.take(id, Then::Place, studio),
+            OpenvidMsg::Place {
+                id,
+                track_id,
+                start,
+            } => self.take(id, Then::PlaceAt(track_id, start), studio),
             OpenvidMsg::Download => {
                 let Some(dirs) = self.dirs.clone() else {
                     return;
@@ -357,6 +372,9 @@ impl OpenvidPane {
                         match then {
                             Then::Preview => studio.preview_file(&id, &name, &path),
                             Then::Place => studio.place_openvid(&name, &id, &path),
+                            Then::PlaceAt(track_id, start) => {
+                                studio.place_openvid_at(&name, &id, &path, track_id, start)
+                            }
                         }
                     }
                     Err(error) if error == "cancelled" => {}
@@ -432,13 +450,16 @@ impl OpenvidPane {
             match then {
                 Then::Preview => studio.preview_file(&id, &name, &path),
                 Then::Place => studio.place_openvid(&name, &id, &path),
+                Then::PlaceAt(track_id, start) => {
+                    studio.place_openvid_at(&name, &id, &path, track_id, start)
+                }
             }
             return;
         }
         if self.fetching.contains_key(&id) {
             return;
         }
-        self.fetching.insert(id.clone(), then);
+        self.fetching.insert(id.clone(), then.clone());
         let cancel = AtomicBool::new(false);
         crate::host::spawn(
             move || library.fetch(number, &cancel),
@@ -446,6 +467,16 @@ impl OpenvidPane {
                 studio.handle(Msg::Openvid(OpenvidMsg::Fetched(id, result, then)));
             },
         );
+    }
+
+    /// One result's name and seconds, for the ghost a drag shows while
+    /// it crosses the lanes. `None` when the id is not on the page.
+    pub fn summary(&self, id: &str) -> Option<(String, f64)> {
+        let id = id.parse::<i64>().ok()?;
+        self.results
+            .iter()
+            .find(|clip| clip.id == id)
+            .map(|clip| (clip.name.clone(), clip.seconds))
     }
 
     /// The cards, as Slint shows them. Everything display-ready: the
@@ -506,6 +537,20 @@ impl Studio {
     /// lane with room at the playhead. Selects what it made, as laying a
     /// sound does.
     pub fn place_openvid(&mut self, name: &str, id: &str, path: &PathBuf) {
+        self.place_openvid_at(name, id, path, None, f64::from(self.playhead.max(0.0)));
+    }
+
+    /// [`Studio::place_openvid`], where a drag dropped the clip: the lane
+    /// the pointer named when it named one, the moment it landed on, and
+    /// the first lane with room below the picture otherwise.
+    pub fn place_openvid_at(
+        &mut self,
+        name: &str,
+        id: &str,
+        path: &PathBuf,
+        track_id: Option<String>,
+        start: f64,
+    ) {
         let media_id = match self.adopt_openvid(name, id, path) {
             Ok(id) => id,
             Err(error) => {
@@ -514,12 +559,21 @@ impl Studio {
             }
         };
         self.close_source();
-        let start = f64::from(self.playhead.max(0.0));
-        let created = self.apply(concat_project::Command::AddClipAtFirstFree {
-            media_id,
-            start,
-            above: false,
-        });
+        let created = match track_id {
+            // A clip dragged onto a lane ripples it, the way a clip from
+            // the bin dropped there does.
+            Some(track_id) => self.apply(concat_project::Command::AddClip {
+                media_id,
+                track_id,
+                start,
+                ripple: true,
+            }),
+            None => self.apply(concat_project::Command::AddClipAtFirstFree {
+                media_id,
+                start,
+                above: false,
+            }),
+        };
         if let Some(id) = created {
             self.selection = vec![id];
         }

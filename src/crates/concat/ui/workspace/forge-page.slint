@@ -47,7 +47,7 @@ export global Forge {
     in-out property <string> hf-key;
 
     /// The script and the three choices went to the harness.
-    callback forge-start(script: string, voice: int, niche: int, mood: int);
+    callback forge-start(script: string, source: int, voice: int, niche: int, mood: int);
     /// Cancel stops the run; the agent's next line is its last.
     callback forge-cancel();
     /// The Connect button: forge mcp add funcut concat -- --mcp window.
@@ -169,10 +169,26 @@ export component ForgePage inherits VerticalLayout {
         }
     }
 
-    // The choices: the voice that reads the script, the niche its playbook
-    // covers, and the music's mood for the bed under it.
+    // Where the run's narration comes from: the script box, read by the
+    // TTS voice, or the voiceover already on the open timeline, which the
+    // run builds a whole edit around - the button beside it does the rest.
     HorizontalLayout {
         spacing: 8px;
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 2px;
+            Text {
+                text: I18n.t("forge.source");
+                color: Theme.fg-muted;
+                font-size: Theme.fs-xs;
+            }
+            source-select := Select {
+                current: 0;
+                enabled: !Forge.running;
+                options: [I18n.t("forge.sourceScript"), I18n.t("forge.sourceVoiceover")];
+            }
+        }
 
         VerticalLayout {
             horizontal-stretch: 1;
@@ -184,7 +200,7 @@ export component ForgePage inherits VerticalLayout {
             }
             voice-select := Select {
                 current: 0;
-                enabled: !Forge.running;
+                enabled: !Forge.running && source-select.current == 0;
                 options: ["af_bella", "af_river", "am_adam", "am_fenrir", "am_onyx"];
             }
         }
@@ -199,8 +215,9 @@ export component ForgePage inherits VerticalLayout {
             niche-select := Select {
                 current: 0;
                 enabled: !Forge.running;
-                options: ["Science", "History", "Tech", "Luxury", "Motivation",
-                          "Finance", "Horror", "Fitness", "Gaming", "How-to"];
+                options: ["Director decides", "Science", "History", "Tech", "Luxury",
+                          "Motivation", "Finance", "Horror", "Fitness", "Gaming",
+                          "How-to"];
             }
         }
         VerticalLayout {
@@ -227,15 +244,15 @@ export component ForgePage inherits VerticalLayout {
 
         PageButton {
             label: Forge.running ? I18n.t("forge.cancel") : I18n.t("forge.start");
-            primary: !Forge.running && Forge.script != "";
+            primary: !Forge.running && (Forge.script != "" || source-select.current == 1);
             danger: Forge.running;
-            enabled: Forge.running || Forge.script != "";
+            enabled: Forge.running || Forge.script != "" || source-select.current == 1;
             clicked => {
                 if (Forge.running) {
                     Forge.forge-cancel();
                 } else {
-                    Forge.forge-start(Forge.script, voice-select.current,
-                        niche-select.current, mood-select.current);
+                    Forge.forge-start(Forge.script, source-select.current,
+                        voice-select.current, niche-select.current, mood-select.current);
                 }
             }
         }

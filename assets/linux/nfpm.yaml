@@ -53,8 +53,26 @@ contents:
       mode: 0755
   - src: pkg/concat.desktop
     dst: /usr/share/applications/concat.desktop
-  - src: concat.png
+  # Every size the desktop looks for: the stage builds this tree from
+  # assets/icons, the same files for the .deb, the .rpm, the Arch package
+  # and the AppImage. A single 256 px icon left trays and docks scaling
+  # a size they never asked for.
+  - src: icons/hicolor/16x16/apps/concat.png
+    dst: /usr/share/icons/hicolor/16x16/apps/concat.png
+  - src: icons/hicolor/32x32/apps/concat.png
+    dst: /usr/share/icons/hicolor/32x32/apps/concat.png
+  - src: icons/hicolor/64x64/apps/concat.png
+    dst: /usr/share/icons/hicolor/64x64/apps/concat.png
+  - src: icons/hicolor/128x128/apps/concat.png
+    dst: /usr/share/icons/hicolor/128x128/apps/concat.png
+  - src: icons/hicolor/256x256/apps/concat.png
     dst: /usr/share/icons/hicolor/256x256/apps/concat.png
+  - src: icons/hicolor/512x512/apps/concat.png
+    dst: /usr/share/icons/hicolor/512x512/apps/concat.png
+  # The AppStream metainfo, so GNOME Software and Discover list the app
+  # with its description and release notes.
+  - src: metainfo/concat.metainfo.xml
+    dst: /usr/share/metainfo/concat.metainfo.xml
   - src: LICENSE
     dst: /usr/share/doc/concat/LICENSE
   - src: THIRD_PARTY_NOTICES.md

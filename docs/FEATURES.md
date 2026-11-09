@@ -8,7 +8,7 @@ detail elsewhere, the link says so.
 
 The one-paragraph version: FUNCUT is the Concat editor (a native Rust, GPU
 composited, CapCut-class video editor for Linux) tuned for small machines,
-plus an agent stack bolted onto it — a built-in MCP server with **107 tools**,
+plus an agent stack bolted onto it — a built-in MCP server with **109 tools**,
 an analysis/sense layer, an emotion-driven edit pipeline with a brand kit, a
 motion-graphics engine with its own sidecar, and two Claude skills (a director
 that runs a 12-phase measured pipeline, and maestro, a vendored design and
@@ -19,7 +19,7 @@ with one click.
 
 | What | Count | Where it lives |
 | --- | --- | --- |
-| MCP tools | **107** | `src/crates/concat-mcp/src/tools.rs` (`catalogue()`) |
+| MCP tools | **109** | `src/crates/concat-mcp/src/tools.rs` (`catalogue()`) |
 | JSON-RPC API methods | 48 requests + 8 progress notifications | `src/crates/concat-api/src/message.rs` |
 | Core edit commands (`edit.apply` ops) | **52** | `src/crates/concat-project/src/commands/mod.rs` |
 | Effect/filter/transition/audio packages | **327** = 57 filters + 123 effects + 122 transitions + 25 audio | `src/crates/concat-effects/packages/` |
@@ -173,7 +173,7 @@ Nothing here is bundled whole; indexes download once, media arrives per pick.
 
 ## The agent layer
 
-- **The MCP server** (`concat --mcp`, [docs/MCP.md](MCP.md)): **107 tools**
+- **The MCP server** (`concat --mcp`, [docs/MCP.md](MCP.md)): **109 tools**
   over stdio, both protocol eras (initialize handshake and per-request
   `_meta`), schemas generated from the API's own types so an agent cannot
   invent an argument. It reaches the engine through the open window
@@ -347,7 +347,7 @@ instead of randomly calling tools. **Phases 0–8 plus sub-phases 1b and 5b**:
    platform target, and `emotion {action:"verify"}` proving the speech
    survived the render.
 
-Backed by **13 hard floors** (motion is the driver, transition mechanics,
+Backed by **14 hard floors** (motion is the driver, transition mechanics,
 pacing bands by words-per-minute, variety laws, motion on every element,
 grade not optional, frame fitting with the no-vertical-OpenVid fact, sound
 variety, one text system, the memory journal, honest captions, loudness
@@ -444,7 +444,7 @@ always win; maestro refines how a floor is met, never lowers it. See
   accents + custom, playhead colour, UI scale 100–200 %), Transcriber,
   Speech, **Automation** (the API server, token, MCP pointer), About (copy
   system info, show log), Version (update/rollback), Shortcuts.
-- **28 rebindable keyboard actions** with conflict eviction and reset;
+- **30 rebindable keyboard actions** with conflict eviction and reset;
   26 languages with user-drop-in locale overrides; Wayland drag-and-drop;
   undo/redo everywhere; toasts; tooltips; context menus.
 
@@ -490,7 +490,7 @@ model at all.
 | Speech (whisper.cpp, three TTS families) | `src/crates/concat-speech` |
 | Motion engine (Geneva, presets, authoring) | `src/crates/concat-motion` |
 | The API (JSON-RPC methods, jobs) | `src/crates/concat-api` |
-| The MCP server (107 tools, senses, emotion, voice signals) | `src/crates/concat-mcp` |
+| The MCP server (109 tools, senses, emotion, voice signals) | `src/crates/concat-mcp` |
 | The socket server + CLI | `src/crates/concat-server`, `concat-cli` |
 | The window (Slint UI, studio controller) | `src/crates/concat` |
 | Session, proxies, models, templates, sounds | `src/crates/concat-host` |

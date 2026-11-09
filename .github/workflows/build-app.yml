@@ -375,6 +375,19 @@ jobs:
             done
           fi
           cp assets/icons/concat_logo_256.png "stage/$name/concat.png"
+          # Every size the desktop looks for, not one: a tray, a dock and
+          # a start menu each ask for a different one, and a missing size
+          # is a blurry upscale of the nearest. The packages and the
+          # AppImage both install this tree as-is.
+          for size in 16 32 64 128 256 512; do
+            mkdir -p "stage/$name/icons/hicolor/${size}x${size}/apps"
+            cp "assets/icons/concat_logo_${size}.png" "stage/$name/icons/hicolor/${size}x${size}/apps/concat.png"
+          done
+          # The AppStream metainfo, so GNOME Software and Discover show
+          # the app with a description and a release note instead of a
+          # bare icon.
+          mkdir -p "stage/$name/metainfo"
+          cp assets/linux/concat.metainfo.xml "stage/$name/metainfo/concat.metainfo.xml"
           cat > "stage/$name/concat.desktop" <<DESKTOP
           [Desktop Entry]
           Type=Application
@@ -519,7 +532,7 @@ jobs:
           # the tool wants them; AppRun is the binary.
           appdir="$PWD/Concat.AppDir"
           rm -rf "$appdir"
-          mkdir -p "$appdir/usr/bin" "$appdir/usr/share/icons/hicolor/256x256/apps" "$appdir/usr/share/applications"
+          mkdir -p "$appdir/usr/bin" "$appdir/usr/share/applications" "$appdir/usr/share/metainfo"
           cp "$STAGE/concat" "$appdir/usr/bin/concat"
           cp "$STAGE/geneva" "$appdir/usr/bin/geneva"
           chmod +x "$appdir/usr/bin/geneva"
@@ -543,7 +556,10 @@ jobs:
           cp "$STAGE/concat.desktop" "$appdir/concat.desktop"
           cp "$STAGE/concat.desktop" "$appdir/usr/share/applications/concat.desktop"
           cp "$STAGE/concat.png" "$appdir/concat.png"
-          cp "$STAGE/concat.png" "$appdir/usr/share/icons/hicolor/256x256/apps/concat.png"
+          # The whole hicolor tree the stage built - every size, the same
+          # files the packages install - plus the metainfo beside it.
+          cp -a "$STAGE/icons" "$appdir/usr/share/icons"
+          cp "$STAGE/metainfo/concat.metainfo.xml" "$appdir/usr/share/metainfo/concat.metainfo.xml"
           # The fork's own menu identity beside Concat's: packaging/ holds
           # the FUNCUT desktop entry (Name=FUNCUT, Icon=funcut) and the
           # 256x256 icon it names, and both go where a menu looks - the

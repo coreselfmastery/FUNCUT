@@ -37,12 +37,15 @@ use crate::ui::MagickCardData;
 const PAGE: u32 = 48;
 
 /// What to do with a picture once its bytes have arrived.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Then {
     /// Show it through the source preview.
     Preview,
     /// Lay it over the video at the playhead.
     Place,
+    /// Lay it where a drag dropped it: the lane the pointer named, when
+    /// it named one, and the moment it landed on.
+    PlaceAt(Option<String>, f64),
 }
 
 /// Everything that can happen to the page.
@@ -70,6 +73,13 @@ pub enum MagickMsg {
     Preview(String),
     /// A tile's plus: lay the picture at the playhead, fetching it first.
     Add(String),
+    /// A tile dragged onto the lanes: fetch it if need be, then lay it
+    /// on the lane and at the moment the drop named.
+    Place {
+        id: String,
+        track_id: Option<String>,
+        start: f64,
+    },
     /// A tile's heart: press or lift it.
     Heart(String),
     /// "Load the sticker library": the one-time index downloads, begun.
@@ -145,6 +155,16 @@ impl MagickPane {
     /// The library this pane reads, when it has folders to read from.
     fn library(&self) -> Option<&'static library::Library> {
         self.dirs.as_ref().map(library::shared)
+    }
+
+    /// One result's subject, for the ghost a drag shows while it
+    /// crosses the lanes. `None` when the id is not on the page. A
+    /// sticker is a still: the ghost's length is the layer's own.
+    pub fn summary(&self, id: &str) -> Option<(String, f64)> {
+        self.results
+            .iter()
+            .find(|sticker| sticker.id == id)
+            .map(|sticker| (sticker.subject.clone(), 5.0))
     }
 
     /// How many pictures a shelf holds, once ready.
@@ -247,6 +267,11 @@ impl MagickPane {
             }
             MagickMsg::Preview(id) => self.take(id, Then::Preview, studio),
             MagickMsg::Add(id) => self.take(id, Then::Place, studio),
+            MagickMsg::Place {
+                id,
+                track_id,
+                start,
+            } => self.take(id, Then::PlaceAt(track_id, start), studio),
             MagickMsg::Heart(id) => {
                 let Some(library) = self.library() else {
                     return;
@@ -328,6 +353,9 @@ impl MagickPane {
                         match then {
                             Then::Preview => studio.preview_file(&id, &name, &path),
                             Then::Place => studio.place_magick(&name, &id, &path),
+                            Then::PlaceAt(track_id, start) => {
+                                studio.place_magick_at(&name, &id, &path, track_id, start)
+                            }
                         }
                     }
                     Err(error) if error == "cancelled" => {}
@@ -401,13 +429,16 @@ impl MagickPane {
             match then {
                 Then::Preview => studio.preview_file(&id, &name, &path),
                 Then::Place => studio.place_magick(&name, &id, &path),
+                Then::PlaceAt(track_id, start) => {
+                    studio.place_magick_at(&name, &id, &path, track_id, start)
+                }
             }
             return;
         }
         if self.fetching.contains_key(&id) {
             return;
         }
-        self.fetching.insert(id.clone(), then);
+        self.fetching.insert(id.clone(), then.clone());
         let cancel = AtomicBool::new(false);
         // The worker takes its own copy of the id: the completion's copy
         // is the one the message carries.
@@ -500,6 +531,20 @@ impl Studio {
     /// never hides beneath the video. Selects what it made, as laying a
     /// sound or a stock clip does.
     pub fn place_magick(&mut self, name: &str, id: &str, path: &PathBuf) {
+        self.place_magick_at(name, id, path, None, f64::from(self.playhead.max(0.0)));
+    }
+
+    /// [`Studio::place_magick`], where a drag dropped the sticker: over
+    /// the picture when no lane was named, on the lane the pointer named
+    /// when one was.
+    pub fn place_magick_at(
+        &mut self,
+        name: &str,
+        id: &str,
+        path: &PathBuf,
+        track_id: Option<String>,
+        start: f64,
+    ) {
         let media_id = match self.adopt_magick(name, id, path) {
             Ok(id) => id,
             Err(error) => {
@@ -508,12 +553,19 @@ impl Studio {
             }
         };
         self.close_source();
-        let start = f64::from(self.playhead.max(0.0));
-        let created = self.apply(concat_project::Command::AddClipAtFirstFree {
-            media_id,
-            start,
-            above: true,
-        });
+        let created = match track_id {
+            Some(track_id) => self.apply(concat_project::Command::AddClip {
+                media_id,
+                track_id,
+                start,
+                ripple: true,
+            }),
+            None => self.apply(concat_project::Command::AddClipAtFirstFree {
+                media_id,
+                start,
+                above: true,
+            }),
+        };
         if let Some(id) = created {
             self.selection = vec![id];
         }

@@ -314,9 +314,11 @@ def phase_plan(plan: dict[str, Any]) -> list[tuple[str, str]]:
         ("voice_signals", "voice_signals"),
         ("emotion", "emotion (extract)"),
         ("plan_validate", "plan_validate (before timeline edits)"),
+        ("project_get", "read the project bin and active timeline"),
+        ("track_add", "create a dedicated voiceover lane when needed"),
+        ("clip_add", "place the voiceover when it is not already on the timeline"),
+        ("clip_cut_spans", "cut measured dead air from the placed voiceover"),
     ]
-    if plan.get("audioClipId"):
-        phases.append(("clip_cut_spans", "clip_cut_spans (dead air only)"))
     phases.extend(
         ("openvid_rank_for_slot", f"rank B-roll segment {index + 1}")
         for index, _ in broll_segments(plan)
@@ -357,6 +359,7 @@ def run_pipeline(
     project: str,
     audio: str,
     plan: dict[str, Any],
+    audio_media_id: str | None = None,
 ) -> list[tuple[str, dict[str, Any]]]:
     """Validate, source, repair, place, export and inspect a real segment plan."""
     phases = phase_plan(plan)
@@ -417,14 +420,92 @@ def run_pipeline(
             + json.dumps(signal_log.get("blockers", []), ensure_ascii=False)
         )
 
-    if plan.get("audioClipId"):
-        spans, holds = dead_air_spans(voice)
-        log(f"dead air: {len(spans)} span(s) to cut, {holds} dramatic hold(s) protected")
-        if spans:
-            advance(
-                "clip_cut_spans",
-                {"path": project, "clipId": plan["audioClipId"], "spans": spans, "ripple": True},
+    # The voiceover is a real timeline asset, not just an analysis input.
+    # Reuse its imported media/clip when present; otherwise import it and
+    # place it on a dedicated bottom lane before cutting measured dead air.
+    view = advance("project_get", {"path": project})
+    if not isinstance(view, dict):
+        raise PipelineError("project_get returned no project view")
+    media = view.get("media", [])
+    media = media if isinstance(media, list) else []
+    if audio_media_id:
+        audio_item = next(
+            (item for item in media if isinstance(item, dict) and item.get("id") == audio_media_id),
+            None,
+        )
+        if audio_item is None:
+            raise PipelineError(f"the watched audio media id {audio_media_id} is no longer in the project bin")
+    else:
+        audio_item = next(
+            (
+                item for item in media
+                if isinstance(item, dict)
+                and item.get("kind") == "audio"
+                and os.path.realpath(str(item.get("path", ""))) == os.path.realpath(audio)
+            ),
+            None,
+        )
+        if audio_item is None:
+            imported_audio = advance("media_import", {"path": project, "file": audio})
+            new_media_id = imported_audio.get("createdId") if isinstance(imported_audio, dict) else None
+            if not isinstance(new_media_id, str) or not new_media_id:
+                raise PipelineError("media_import did not return the voiceover media id")
+            audio_media_id = new_media_id
+        else:
+            audio_media_id = str(audio_item.get("id", ""))
+
+    timeline = view.get("timeline", {})
+    timeline = timeline if isinstance(timeline, dict) else {}
+    clips = timeline.get("clips", [])
+    clips = clips if isinstance(clips, list) else []
+    requested_audio_clip = plan.get("audioClipId")
+    if requested_audio_clip:
+        audio_clip = next(
+            (clip for clip in clips if isinstance(clip, dict) and clip.get("id") == requested_audio_clip),
+            None,
+        )
+        if audio_clip is None or audio_clip.get("kind") != "audio":
+            raise PipelineError(
+                f"audioClipId {requested_audio_clip!r} is not an audio clip in the active timeline"
             )
+        audio_clip_id = str(requested_audio_clip)
+    else:
+        audio_clip = next(
+            (
+                clip for clip in clips
+                if isinstance(clip, dict)
+                and clip.get("kind") == "audio"
+                and clip.get("media") == audio_media_id
+            ),
+            None,
+        )
+        if audio_clip is not None:
+            audio_clip_id = str(audio_clip.get("id"))
+        else:
+            audio_track = advance("track_add", {"path": project, "bottom": True})
+            audio_track_id = audio_track.get("createdId") if isinstance(audio_track, dict) else None
+            if not isinstance(audio_track_id, str) or not audio_track_id:
+                raise PipelineError("track_add did not return a voiceover track id")
+            placed_audio = advance(
+                "clip_add",
+                {
+                    "path": project,
+                    "mediaId": audio_media_id,
+                    "trackId": audio_track_id,
+                    "start": 0.0,
+                },
+            )
+            audio_clip_id = placed_audio.get("createdId") if isinstance(placed_audio, dict) else None
+            if not isinstance(audio_clip_id, str) or not audio_clip_id:
+                raise PipelineError("clip_add did not return the placed voiceover clip id")
+
+    spans, holds = dead_air_spans(voice)
+    log(f"dead air: {len(spans)} span(s) to cut, {holds} dramatic hold(s) protected")
+    if spans:
+        advance(
+            "clip_cut_spans",
+            {"path": project, "clipId": audio_clip_id, "spans": spans, "ripple": True},
+        )
 
     # Rank one unique candidate per actual timed B-roll segment.
     excluded: list[int] = []
@@ -821,7 +902,7 @@ def watch(transport: Any, project: str, plan: dict[str, Any], poll: float) -> No
             audio = item.get("path", "")
             log(f"new audio: {audio}")
             try:
-                run_pipeline(transport, project, audio, plan)
+                run_pipeline(transport, project, audio, plan, str(item.get("id", "")) or None)
             except PipelineError as error:
                 log(f"STOP: {error}")
                 log("the run stopped at its failure; nothing later ran")

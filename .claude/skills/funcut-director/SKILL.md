@@ -69,7 +69,7 @@ with `action: "set"` and fill audience, platform, goal, thesis,
 curiosityGap, payoff, emotionalArc (at least three DIFFERENT beats), and
 referenceStyle. Read `directorPrompt` from the reply and keep it in your
 working context — it is the intent every later decision is judged against.
-If the user gave a topic but no angle, invent a sharp one and state it.
+If the user gave a topic but no angle, invent a sharp one and state it. Read prompts/creative_visual_direction.md before planning visuals. It is a creative decision framework, NOT a template: invent a film-specific visual language and choose footage, original motion, data graphics, typography, generated media, holds, or hybrids by each beat's communication job. Do not impose fixed media ratios or repeat a preset treatment across videos. Record a concise rationale for major choices and execute/verify every chosen visual; a rendered motion asset not imported and placed is not complete.
 Copy the brief into the plan's `creativeBrief` field. Optional: `local_vlm`
 with `action: "status"` (and `setup` once on a low-end machine) so the later
 critic can actually see.

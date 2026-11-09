@@ -3718,7 +3718,6 @@ fn creative_gate(object: &Value, segments: &[Value], runtime: f64, warnings: &[S
         let escalate = warning.contains("hard cuts in a row")
             || warning.contains("have no entrance")
             || warning.contains("static entrances")
-            || warning.contains("designed comp(s)")
             || warning.contains("same sound twice");
         if escalate {
             score -= 0.4;
@@ -5911,6 +5910,40 @@ mod tests {
                 .iter()
                 .any(|warning| warning.as_str().is_some_and(|text| text.contains("static")))
         );
+    }
+
+    /// A footage-led longform can be complete without motion comps.
+    /// The director chooses the medium from the story; the validator must
+    /// not turn motion design into a universal quota.
+    #[test]
+    fn footage_led_longform_does_not_require_motion_comps() {
+        let plan = json!({
+            "creativeBrief": {
+                "audience": "curious beginners",
+                "platform": "youtube",
+                "goal": "understand the story",
+                "thesis": "The evidence changes the common explanation",
+                "curiosityGap": "What actually happened?",
+                "payoff": "The evidence reveals the cause",
+                "emotionalArc": ["curiosity", "tension", "clarity"]
+            },
+            "sections": [
+                { "role": "hook", "start": 0.0, "end": 3.0 },
+                { "role": "body", "start": 3.0, "end": 25.0 },
+                { "role": "outro", "start": 25.0, "end": 30.0 }
+            ]
+        });
+        let segments = vec![
+            json!({ "start": 0.0, "end": 3.0, "visual": { "type": "broll", "query": "storm clouds over coast" } }),
+            json!({ "start": 3.0, "end": 8.0, "visual": { "type": "broll", "query": "researcher examining old map" } }),
+            json!({ "start": 8.0, "end": 14.0, "visual": { "type": "broll", "query": "archive footage of city street" } }),
+            json!({ "start": 14.0, "end": 20.0, "visual": { "type": "broll", "query": "close up hands reviewing documents" } }),
+            json!({ "start": 20.0, "end": 25.0, "visual": { "type": "broll", "query": "wide aerial view of coastline" } }),
+            json!({ "start": 25.0, "end": 30.0, "visual": { "type": "broll", "query": "sunrise over quiet harbor" } })
+        ];
+        let result = creative_gate(&plan, &segments, 30.0, &[]);
+        assert_eq!(result["ready"], json!(true), "{result}");
+        assert_eq!(result["blockers"], json!([]), "{result}");
     }
 
     /// The decision log: a plan with a voiceover and no signalLog is not

@@ -309,7 +309,8 @@ def dead_air_spans(voice_reply: Any) -> tuple[list[list[float]], int]:
 def phase_plan(plan: dict[str, Any]) -> list[tuple[str, str]]:
     """Describe the real segment-based execution order for the run log."""
     phases = [
-        ("transcribe", "transcribe"),
+        ("transcribe", "start source transcription"),
+        ("analysis_wait", "wait for source transcription"),
         ("voice_signals", "voice_signals"),
         ("emotion", "emotion (extract)"),
         ("plan_validate", "plan_validate (before timeline edits)"),
@@ -342,7 +343,8 @@ def phase_plan(plan: dict[str, Any]) -> list[tuple[str, str]]:
     phases.extend([
         ("export_start", "export"),
         ("export_wait", "wait for completed export"),
-        ("transcribe", "verify exported speech"),
+        ("transcribe", "start exported speech transcription"),
+        ("analysis_wait", "wait for exported speech transcription"),
         ("emotion", "compare source and rendered speech timing"),
         ("watch_render", "inspect rendered frames and audio"),
         ("craft_critique", "score the rendered cut"),
@@ -370,7 +372,25 @@ def run_pipeline(
         done.append((tool, arguments))
         return reply
 
-    transcript = advance("transcribe", {"path": audio})
+    source_job = advance("transcribe", {"path": audio})
+    source_job_id = source_job.get("job") if isinstance(source_job, dict) else None
+    if not source_job_id:
+        raise PipelineError(f"transcribe did not start a source job: {source_job}")
+    source_status: Any = None
+    for _ in range(4):
+        source_status = advance(
+            "analysis_wait", {"job": source_job_id, "timeoutSeconds": 590}
+        )
+        if not isinstance(source_status, dict) or source_status.get("state") != "running":
+            break
+    if not isinstance(source_status, dict) or source_status.get("state") != "done":
+        raise PipelineError(f"source transcription did not finish: {source_status}")
+    try:
+        transcript = json.loads(source_status.get("output", ""))
+    except (TypeError, json.JSONDecodeError) as error:
+        raise PipelineError(f"source transcription returned invalid JSON: {error}") from error
+    if not isinstance(transcript, dict) or not isinstance(transcript.get("segments"), list):
+        raise PipelineError("source transcription returned no timed segments")
     voice = advance("voice_signals", {"audio": audio, "transcript": transcript})
     emotion = advance(
         "emotion", {"action": "extract", "transcript": transcript, "project": project}
@@ -663,7 +683,37 @@ def run_pipeline(
         raise PipelineError(f"export finished unsuccessfully: {status}")
     rendered = status.get("output") or output
 
-    exported_transcript = advance("transcribe", {"path": rendered})
+    export_transcript_job = advance("transcribe", {"path": rendered})
+    export_transcript_job_id = (
+        export_transcript_job.get("job")
+        if isinstance(export_transcript_job, dict) else None
+    )
+    if not export_transcript_job_id:
+        raise PipelineError(
+            f"transcribe did not start the exported-file verification job: {export_transcript_job}"
+        )
+    export_transcript_status: Any = None
+    for _ in range(4):
+        export_transcript_status = advance(
+            "analysis_wait",
+            {"job": export_transcript_job_id, "timeoutSeconds": 590},
+        )
+        if (
+            not isinstance(export_transcript_status, dict)
+            or export_transcript_status.get("state") != "running"
+        ):
+            break
+    if (
+        not isinstance(export_transcript_status, dict)
+        or export_transcript_status.get("state") != "done"
+    ):
+        raise PipelineError(
+            f"exported-file transcription did not finish: {export_transcript_status}"
+        )
+    try:
+        exported_transcript = json.loads(export_transcript_status.get("output", ""))
+    except (TypeError, json.JSONDecodeError) as error:
+        raise PipelineError(f"exported transcription returned invalid JSON: {error}") from error
     verification = advance(
         "emotion",
         {
@@ -810,7 +860,11 @@ SELF_TEST_PLAN = {
 
 
 SELF_TEST_REPLIES = {
-    "transcribe": {"segments": [{"text": "one", "start": 0.0, "end": 1.0}]},
+    "transcribe": {"job": "speech-job"},
+    "analysis_wait": {
+        "state": "done",
+        "output": "{\\"segments\\":[{\\"text\\":\\"one\\",\\"start\\":0.0,\\"end\\":1.0}]}",
+    },
     "voice_signals": {
         "signals": {
             "pauses": [
@@ -870,10 +924,10 @@ def self_test() -> int:
     by_tool = [(tool, args) for tool, args in calls]
     order = [tool for tool, _ in by_tool]
     expected = [
-        "transcribe", "voice_signals", "emotion", "plan_validate",
+        "transcribe", "analysis_wait", "voice_signals", "emotion", "plan_validate",
         "openvid_rank_for_slot", "footage_continuity", "openvid_import",
         "clip_trim", "track_add", "motion_reel", "media_import", "clip_add",
-        "export_start", "export_wait", "transcribe", "emotion",
+        "export_start", "export_wait", "transcribe", "analysis_wait", "emotion",
         "watch_render", "craft_critique",
     ]
     if order != expected:

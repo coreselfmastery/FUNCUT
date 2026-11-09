@@ -2960,7 +2960,6 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
     let mut cut_types = Vec::<&str>::new();
     let mut static_entrances = 0_usize;
     let mut missing_entrances = 0_usize;
-    let mut comps = 0_usize;
     let mut sfx_uses = Vec::<(&str, f64)>::new();
     for (index, segment) in segments.iter().enumerate() {
         let segment = segment
@@ -3134,7 +3133,6 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
             .get("comp")
             .is_some_and(|comp| !comp.is_null() && comp.as_object().is_some_and(|c| !c.is_empty()))
         {
-            comps += 1;
         }
         previous_end = Some(end);
         runtime = end;
@@ -3333,12 +3331,6 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
     if static_entrances > 1 {
         warnings.push(format!(
             "{static_entrances} static entrances; static is deliberate, at most one per piece"
-        ));
-    }
-    let comp_floor = ((runtime / 15.0).ceil() as usize).max(1);
-    if comps < comp_floor {
-        warnings.push(format!(
-            "{comps} designed comp(s) for {runtime:.0}s; the floor is one per section and one per 15 s ({comp_floor} here)"
         ));
     }
     for (left, (left_query, left_at)) in sfx_uses.iter().enumerate() {
@@ -5861,10 +5853,10 @@ mod tests {
             "six hards is a slideshow: {warnings:?}"
         );
         assert!(
-            warnings
-                .iter()
-                .any(|warning| warning.as_str().is_some_and(|text| text.contains("comp"))),
-            "no designed comps anywhere: {warnings:?}"
+            warnings.iter().all(|warning| warning
+                .as_str()
+                .is_none_or(|text| !text.contains("one per 15 s"))),
+            "the validator must not impose a motion-comp quota: {warnings:?}"
         );
 
         // A reel that is not a reel is refused outright.

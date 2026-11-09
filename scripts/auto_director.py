@@ -966,6 +966,14 @@ SELF_TEST_PLAN = {
 
 SELF_TEST_REPLIES = {
     "transcribe": {"job": "speech-job"},
+    "project_get": {
+        "media": [{
+            "id": "m-voice",
+            "path": "/tmp/funcut-selftest/voiceover.wav",
+            "kind": "audio",
+        }],
+        "timeline": {"tracks": [], "clips": []},
+    },
     "analysis_wait": {
         "state": "done",
         'output': '{"segments":[{"text":"one","start":0.0,"end":1.0}]}',
@@ -997,6 +1005,7 @@ SELF_TEST_REPLIES = {
             "source": "pexels", "seconds": 8.0, "slotRank": 1,
         }]
     },
+    "clip_cut_spans": {"ok": True},
     "footage_continuity": {"count": 0, "flags": []},
     "openvid_import": {
         "mediaIds": ["m-stock-7"],
@@ -1010,10 +1019,10 @@ SELF_TEST_REPLIES = {
         },
     },
     "clip_trim": {"ok": True},
-    "track_add": {"createdId": "t-motion"},
+    "track_add": lambda args: {"createdId": "t-voice" if args.get("bottom") else "t-motion"},
     "motion_reel": {"file": "/tmp/funcut-selftest/motion.mp4", "duration": 4.0},
     "media_import": {"createdId": "m-motion"},
-    "clip_add": {"createdId": "c-motion"},
+    "clip_add": lambda args: {"createdId": "c-voice" if args.get("mediaId") == "m-voice" else "c-motion"},
     "export_start": {"job": "j1"},
     "export_wait": {"state": "done", "output": "/tmp/funcut-selftest/final.mp4"},
     "watch_render": {"pngPath": "/tmp/funcut-selftest/contact.png", "samples": 12},
@@ -1030,6 +1039,7 @@ def self_test() -> int:
     order = [tool for tool, _ in by_tool]
     expected = [
         "transcribe", "analysis_wait", "voice_signals", "emotion", "plan_validate",
+        "project_get", "track_add", "clip_add", "clip_cut_spans",
         "openvid_rank_for_slot", "footage_continuity", "openvid_import",
         "clip_trim", "track_add", "motion_reel", "media_import", "clip_add",
         "export_start", "export_wait", "transcribe", "analysis_wait", "emotion",
@@ -1060,7 +1070,10 @@ def self_test() -> int:
     if motion_call.get("storyboard", {}).get("scenes", [{}])[0].get("preset") != "funcut.chapter.chip":
         print(f"FAIL: motion storyboard was not passed to the renderer: {motion_call}")
         return 1
-    placement = next(args for tool, args in by_tool if tool == "clip_add")
+    placement = next(
+        args for tool, args in by_tool
+        if tool == "clip_add" and args.get("mediaId") == "m-motion"
+    )
     if placement.get("mediaId") != "m-motion" or placement.get("trackId") != "t-motion" or placement.get("start") != 4.0:
         print(f"FAIL: rendered motion was not placed on the dedicated lane: {placement}")
         return 1
@@ -1107,7 +1120,7 @@ def self_test() -> int:
     except PipelineError:
         mutated = [
             tool for tool, _ in unready.calls
-            if tool in {"clip_cut_spans", "openvid_import", "clip_add", "edit_apply", "export_start"}
+            if tool in {"project_get", "track_add", "clip_cut_spans", "media_import", "openvid_import", "clip_add", "edit_apply", "export_start"}
         ]
         if mutated:
             print(f"FAIL: timeline mutation preceded readiness: {mutated}")

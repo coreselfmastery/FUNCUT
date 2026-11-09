@@ -23,21 +23,21 @@ assets; it validates structure and timeline continuity, not creative quality.
 1. **Segments from the transcript.** Each `{start,end}` comes from the
    transcription's segments (already tightened by `clip_cut_spans`). Sort
    them; adjacent segments share boundaries; a gap or overlap is a plan error.
-2. **A visual for every segment** — `broll` with a query, or
-   `textCard`/`titleCard` when search fails or the beat is typographic.
-   Choose motion per `prompts/keyframes_motion.md`.
-2b. **Slots for the footage openings**, beside the segments. One slot per
-   opening the picture must spend: `slotId` (act plus number, `"hook.1"`),
-   `role` (the seven acts), `treatment` (`broll` shops; `hold`/`graphic`/
-   `black` are drawn and take no queries), `job`, `entry`/`exit` (against
-   the emphasis words and the beat grid), the rich `description` (twelve
-   to twenty-five words of nouns and adjectives, forty characters
-   minimum — the search's ranked contract), fallback `queries` (keywords
-   only; b-roll takes at least one), `hero`, `motionMin`, `durationS`.
-   There is no universal B-roll share target; decide the mix from this
-   film's story, evidence, emotion, and available material. Phase 4 shops each
-   b-roll slot with `openvid_rank_for_slot` and gates the filled
-   manifest with `footage_continuity` before anything is fetched.
+2. **A visual for every segment** — the canonical plan is segment-based;
+   do not create a separate `slots` array. For `broll`, provide a concrete
+   `query`, a 40+ character semantic `description`, optional fallback
+   `queries`, `hero`, `motionMin`, and intended `shotScale`. The Director
+   ranks unique candidates, checks continuity, imports them, places them at
+   the segment start, and trims them to the segment duration.
+3. **Designed motion is executable, not a label.** For a `textCard` or
+   `titleCard` that needs motion, include a complete `visual.storyboard`
+   accepted by the `motion_reel` tool. FUNCUT renders it, imports the movie,
+   creates a dedicated top video track, places it at the segment start, and
+   trims it to the beat. A typographic segment without a storyboard must not
+   be represented as already-rendered motion. Use `existing` only when its
+   `clipId` or `mediaId` is a real asset already in the project. There is
+   no universal B-roll/motion share target: choose the medium from the
+   communication job and evidence of this film.
 4. **SFX with `peakAt` on the segment's first frame** (the cut), not the word.
    See `prompts/sfx_design.md` for query writing.
 5. **`transitionIn` only where the SECTION changes** — most segments take a

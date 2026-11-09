@@ -5773,8 +5773,9 @@ mod tests {
         for (broll, total) in [(0, 10), (2, 10), (5, 10), (7, 10), (10, 10)] {
             let mut plan = base.clone();
             plan["slots"] = Value::Array(slots(broll, total));
-            let result = validate_edit_plan(&plan)
-                .unwrap_or_else(|error| panic!("{broll}/{total} B-roll slots should be allowed: {error}"));
+            let result = validate_edit_plan(&plan).unwrap_or_else(|error| {
+                panic!("{broll}/{total} B-roll slots should be allowed: {error}")
+            });
             let warnings = result["warnings"].as_array().expect("warnings");
             assert!(
                 warnings.iter().all(|warning| warning
@@ -5939,7 +5940,7 @@ mod tests {
             json!({ "start": 8.0, "end": 14.0, "visual": { "type": "broll", "query": "archive footage of city street" } }),
             json!({ "start": 14.0, "end": 20.0, "visual": { "type": "broll", "query": "close up hands reviewing documents" } }),
             json!({ "start": 20.0, "end": 25.0, "visual": { "type": "broll", "query": "wide aerial view of coastline" } }),
-            json!({ "start": 25.0, "end": 30.0, "visual": { "type": "broll", "query": "sunrise over quiet harbor" } })
+            json!({ "start": 25.0, "end": 30.0, "visual": { "type": "broll", "query": "sunrise over quiet harbor" } }),
         ];
         let result = creative_gate(&plan, &segments, 30.0, &[]);
         assert_eq!(result["ready"], json!(true), "{result}");

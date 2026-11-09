@@ -990,7 +990,7 @@
     "audioClipId": {
       "type": "string",
       "minLength": 1,
-      "description": "Optional real timeline clip id for the already-placed voiceover; when supplied the runner cuts measured dead-air spans from this clip. Never invent the id."
+      "description": "Optional real timeline clip id for the already-placed voiceover. The runner reuses this clip but does not cut it; plan segment times must already match the clip. Never invent the id."
     }
   }
 }

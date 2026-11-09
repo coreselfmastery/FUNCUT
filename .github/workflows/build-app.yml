@@ -76,9 +76,15 @@ jobs:
         include:
           # `ffmpeg` and `sherpa` name the target the way each project's
           # release archives do.
-          # 22.04, not latest: the binary links the build machine's glibc,
-          # so the oldest supported runner is what keeps it runnable on
-          # older distributions.
+          # The oldest image that still runs, per arch. x86_64 keeps its
+          # ubuntu-22.04 label - GitHub retired that image, and the label
+          # now serves the current one, so the binary links whatever glibc
+          # that image carries. aarch64 moved onto 24.04-arm outright: the
+          # 22.04-arm fleet is being drained, and one afternoon shut four
+          # builds of this job down by itself before any of them finished -
+          # "The runner has received a shutdown signal", exit 143, each
+          # at the same minute of the same step. The glibc floor moves with
+          # it, the way x86_64's already had.
           - platform: linux
             arch: x86_64
             os: ubuntu-22.04
@@ -91,7 +97,7 @@ jobs:
             ggml: variants
           - platform: linux
             arch: aarch64
-            os: ubuntu-22.04-arm
+            os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             ffmpeg: linuxarm64
             sherpa: linux-aarch64

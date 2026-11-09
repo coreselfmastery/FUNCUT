@@ -273,10 +273,11 @@ where the engine's `suggest_footage` read would find it: the spans no
 words cover, the stretches no beat lands in — the Phase-1 readings
 already measured both. `plan_validate` holds the slot laws beside the
 rest: a description under forty characters is refused, a drawn
-treatment that carries queries is refused, b-roll without a query is
-refused, and the share of b-roll slots keeps the 30–45% band — warned
-past 45, refused past 60. A plan without slots is a plan the segments
-alone describe; under a voiceover, write the slots.
+treatment that carries queries is refused, and b-roll without a query is
+refused. There is no universal footage/graphics/hold percentage: choose
+the mix from this film's story, evidence, emotion, and available material.
+A plan without slots is a plan the segments alone describe; under a
+voiceover, write slots when they help make the intended coverage explicit.
 
 **Phase 4 — Gather (parallel if your harness allows).**
 **The BGM gate runs before any music is searched.**
@@ -409,11 +410,10 @@ and `motion_import` (motion made elsewhere: a designer's Lottie/bodymovin
 JSON become a comp, or a GSAP-style timeline applied to one — read the
 reply's `notes` aloud to the user, because a `skipped:` note means the comp
 draws less than the source did, and the user decides whether that is
-acceptable). The floor is one designed beat per
-section and at least one per 15 s of runtime — and a floor is a floor, not
-a target: a reel where a quarter or more of the segments carry a comp, and
-a longform where an eighth or more do, reads as designed rather than
-assembled. In finance/science/tech every
+acceptable). Do not force a designed beat at a fixed interval or percentage.
+Use a bespoke comp when it materially improves comprehension, evidence,
+emphasis, identity, or emotional impact; otherwise let footage, typography,
+sound, or a deliberate hold do the work. In finance/science/tech every
 number, percentage, comparison or process is a `funcut.ticker.count`,
 `funcut.chart.bars`, `funcut.stats.triptych` or `funcut.compare.split` —
 never a plain text card, and never a stock search: there is no footage of
@@ -535,19 +535,20 @@ either confidence.
 `effect_layer_add` (a layer cannot carry a two-input transition; it renders
 nothing). The incoming clip must sit adjacent to the previous clip ON THE
 SAME LANE within half a frame — a transition on a moved or gapped cut is
-silently orphaned. Density: a named transition at every section change, and
-at least one per 15 s in energetic longform; a plain cut wins everywhere
-else. Pair every transition with its SFX.
+silently orphaned. Use a named transition when it clarifies a section
+change or creates a motivated passage; a plain cut is often the strongest
+choice. Pair designed transitions with sound only when the sound adds meaning.
 
-**P — Pacing.** cuts/minute: calm 6–10 (documentary, history) · standard
-10–16 (explainer, how-to) · energetic 16–24 (tech, finance, motivation) ·
-hype 24+ (gaming, extreme). No visual segment runs past **4.0 s** in
-energetic niches or **6.0 s** in calm ones — the segment count your plan
-implies is ⌈runtime / maxSeconds⌉ at minimum. Short-form retention: a
-pattern interrupt (cut, text pop, SFX, zoom) every 2–4 s; the hook lands
-inside 3 s. Not only hard cuts: the cut-type catalog (`prompts/
-cuts_and_pacing.md`) has twelve — match cuts, smash cuts, whips, montage,
-cut-on-action, cut-on-beat — and a piece that only hard-cuts is a slideshow.
+**P — Pacing.** Let the narration, emotional arc, information density, music,
+and visual complexity determine shot duration and cut frequency. The
+genre ranges below are starting references, not targets or validation
+rules: documentary passages may breathe; data-heavy explanations may move
+faster; a reveal may deliberately hold. Interrupt a pattern when attention
+needs renewal, not on a timer. The hook should create a compelling question
+quickly, but do not sacrifice clarity to meet an arbitrary second count.
+Not only hard cuts: the cut-type catalog (`prompts/cuts_and_pacing.md`)
+has twelve — match cuts, smash cuts, whips, montage, cut-on-action,
+cut-on-beat — and a piece that only hard-cuts is a slideshow.
 
 **V — Variety.** A clip id appears at most ONCE in a reel, and at most once
 per 60 s in longform, never twice in one section. Every segment's B-roll

@@ -2,7 +2,19 @@
 
 One reasoning pass, one JSON object, per `templates/edit_plan.schema.json`
 (a complete worked example sits beside it). The plan is your contract: you
-execute what you wrote, and the review checks it. After drafting, call
+execute what you wrote, and the review checks it.
+
+Before writing the plan, read `prompts/creative_visual_direction.md`.
+The plan must be an original response to this film's story, not a reusable
+layout. Choose the visual medium beat by beat from the communication job;
+do not enforce a universal B-roll/motion percentage. Major visual beats
+need a short rationale (job, medium, reason, film-specific style, transition,
+fallback). Use presets as starting points only; inspect, customize, preview,
+bake, import, place, and verify designed motion. Inspect stock candidates
+and act on continuity feedback. An asset not placed on the timeline is not
+an executed visual decision.
+
+After drafting, call
 `plan_validate` with the complete object and fix errors before gathering
 assets; it validates structure and timeline continuity, not creative quality.
 
@@ -22,7 +34,8 @@ assets; it validates structure and timeline continuity, not creative quality.
    to twenty-five words of nouns and adjectives, forty characters
    minimum — the search's ranked contract), fallback `queries` (keywords
    only; b-roll takes at least one), `hero`, `motionMin`, `durationS`.
-   The b-roll share of slots keeps the 30–45% band. Phase 4 shops each
+   There is no universal B-roll share target; decide the mix from this
+   film's story, evidence, emotion, and available material. Phase 4 shops each
    b-roll slot with `openvid_rank_for_slot` and gates the filled
    manifest with `footage_continuity` before anything is fetched.
 3. **SFX with `peakAt` on the segment's first frame** (the cut), not the word.
@@ -62,8 +75,9 @@ assets; it validates structure and timeline continuity, not creative quality.
   canyon river sunrise"), not a mood word alone.
 - [ ] Every slot description is twelve to twenty-five words of nouns and
   adjectives (forty characters minimum); drawn treatments carry no queries,
-  b-roll at least one; the b-roll share of slots sits inside the 30–45%
-  band, and shot scale climbs slot to slot within a section.
+  b-roll at least one; choose the footage/graphics/holds balance for this
+  story rather than meeting a universal percentage, and vary shot scale
+  intentionally within each section.
 - [ ] Captions use measured segment timing (the default transcription output
   is not word-aligned); keep text concise where cue duration permits, with
   style fields and safe area set (offsetY 0.30–0.40, fontSize 0.04–0.06).

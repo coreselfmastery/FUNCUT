@@ -365,8 +365,7 @@ def run_pipeline(
     def advance(tool: str, arguments: dict[str, Any]) -> Any:
         nonlocal step
         step += 1
-        label = phases[step - 1][1] if step <= len(phases) else tool
-        log(f"phase {step}/{total}: {label}")
+        log(f"step {step}: {tool}")
         reply = transport.call(tool, arguments)
         done.append((tool, arguments))
         return reply

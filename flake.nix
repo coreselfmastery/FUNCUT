@@ -172,10 +172,18 @@
           # the window crate - mostly the Slint compiler's output, one
           # enormous module - then wants more memory than a sandboxed
           # builder has, and rustc is killed part way through ("rustc was
-          # terminated by a deadly signal"). Sixteen units keep every piece
-          # a size a builder can hold; the thin LTO still joins them.
+          # terminated by a deadly signal"). Sixteen units kept every piece
+          # a size a builder could hold while the window crate was the size
+          # it was; the director's power pass grew it again (Forge's own
+          # page, the adapters' door, the stock and music panes rebuilt),
+          # and at sixteen the single rustc was killed on its own - no
+          # neighbour to blame, one crate, one process, dead at the same
+          # line three times on this pull request. Thirty-two: every piece
+          # half the size, the same cure this knob gave when it was a
+          # builder's whole problem (jub0t/Concat#225); the thin LTO still
+          # joins them, and the joiner is a linker, not a rustc.
           # https://github.com/jub0t/Concat/issues/225
-          env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "16";
+          env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "32";
           # And the crate beside its neighbours: at cargo's default width
           # the window crate's rustc ran beside slint's, motion's and the
           # mcp's at once, and after the interface grew three and a half

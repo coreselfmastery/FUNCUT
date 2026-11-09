@@ -3706,20 +3706,6 @@ fn creative_gate(object: &Value, segments: &[Value], runtime: f64, warnings: &[S
         blockers.push(format!("{longest} consecutive segments use the same visual reference; vary shot size, angle or source"));
         score -= 1.0;
     }
-    let designed = segments
-        .iter()
-        .filter(|s| {
-            s.get("comp")
-                .is_some_and(|c| c.as_object().is_some_and(|o| !o.is_empty()))
-                || s.get("text").is_some_and(|t| !t.is_null())
-        })
-        .count();
-    if runtime > 15.0 && designed == 0 {
-        blockers.push(
-            "no designed comp or text card anywhere: the cut has no visual authorship".to_owned(),
-        );
-        score -= 1.0;
-    }
     if object.get("captions").is_none() && object.get("text").is_none() {
         notes.push(
             "no caption plan: call transcribe and captions_animate with measured word times"

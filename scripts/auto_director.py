@@ -1014,6 +1014,22 @@ def self_test() -> int:
         return 1
     print(f"order ok: {' -> '.join(order)}")
 
+    voice_track = next(
+        args for tool, args in by_tool
+        if tool == "track_add" and args.get("bottom") is True
+    )
+    voice_placement = next(
+        args for tool, args in by_tool
+        if tool == "clip_add" and args.get("mediaId") == "m-voice"
+    )
+    if voice_track.get("path") != "/edits/SelfTest" or voice_placement.get("trackId") != "t-voice" or voice_placement.get("start") != 0.0:
+        print(f"FAIL: voiceover was not placed on its own bottom lane: {voice_track}, {voice_placement}")
+        return 1
+    if "clip_cut_spans" in order:
+        print("FAIL: the runner changed voiceover timing behind the plan's back")
+        return 1
+    print("voiceover ok: placed on its own lane without silently changing plan timing")
+
     rank = next(args for tool, args in by_tool if tool == "openvid_rank_for_slot")
     if rank["description"] != "A slow aerial drift across a dense city skyline at dusk":
         print(f"FAIL: rank did not use the segment's creative description: {rank}")

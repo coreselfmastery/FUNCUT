@@ -242,6 +242,15 @@ def motion_segments(plan: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
     ]
 
 
+def existing_segments(plan: dict[str, Any]) -> list[tuple[int, dict[str, Any]]]:
+    return [
+        (index, segment)
+        for index, segment in enumerate(plan_segments(plan))
+        if isinstance(segment.get("visual"), dict)
+        and segment["visual"].get("type") == "existing"
+    ]
+
+
 def _walk_dicts(value: Any):
     """Yield nested dictionaries without assuming one EditorView wrapper."""
     if isinstance(value, dict):
@@ -304,15 +313,26 @@ def phase_plan(plan: dict[str, Any]) -> list[tuple[str, str]]:
             ("clip_trim", f"trim B-roll segment {index + 1}")
             for index, _ in broll_segments(plan)
         )
-    if motion_segments(plan):
-        phases.append(("track_add", "create a dedicated motion overlay lane"))
-        for index, _ in motion_segments(plan):
-            phases.extend([
-                ("motion_reel", f"render motion segment {index + 1}"),
-                ("media_import", f"import motion segment {index + 1}"),
-                ("clip_add", f"place motion segment {index + 1}"),
-                ("clip_trim", f"trim motion segment {index + 1}"),
-            ])
+    placed_existing = [
+        (index, segment) for index, segment in existing_segments(plan)
+        if not segment["visual"].get("clipId")
+    ]
+    if motion_segments(plan) or placed_existing:
+        phases.append(("track_add", "create a dedicated top video lane"))
+    for index, _ in motion_segments(plan):
+        phases.extend([
+            ("motion_reel", f"render motion segment {index + 1}"),
+            ("media_import", f"import motion segment {index + 1}"),
+            ("clip_add", f"place motion segment {index + 1}"),
+            ("clip_trim", f"trim motion segment {index + 1}"),
+        ])
+    for index, segment in placed_existing:
+        if segment["visual"].get("file"):
+            phases.append(("media_import", f"import existing source segment {index + 1}"))
+        phases.extend([
+            ("clip_add", f"place existing source segment {index + 1}"),
+            ("clip_trim", f"trim existing source segment {index + 1}"),
+        ])
     phases.extend([
         ("export_start", "export"),
         ("export_wait", "wait for completed export"),
@@ -391,6 +411,35 @@ def run_pipeline(
             + json.dumps(signal_log.get("blockers", []), ensure_ascii=False)
         )
 
+    # Fail on incomplete visual contracts before the first timeline edit.
+    for index, segment in enumerate(plan_segments(plan)):
+        visual = segment.get("visual")
+        if not isinstance(visual, dict):
+            raise PipelineError(f"segment-{index + 1}: visual must be an object")
+        kind = visual.get("type")
+        if kind == "broll":
+            query = str(visual.get("query") or "").strip()
+            description = str(
+                visual.get("description") or segment.get("spoken") or ""
+            ).strip()
+            if not query or len(description) < 40:
+                raise PipelineError(
+                    f"segment-{index + 1}: B-roll needs a query and a 40+ character semantic description"
+                )
+        elif kind in {"textCard", "titleCard"}:
+            board = visual.get("storyboard")
+            if not isinstance(board, dict) or not isinstance(board.get("scenes"), list) or not board["scenes"]:
+                raise PipelineError(
+                    f"segment-{index + 1}: {kind} needs a complete visual.storyboard"
+                )
+        elif kind == "existing":
+            if not any(visual.get(key) for key in ("clipId", "mediaId", "file")):
+                raise PipelineError(
+                    f"segment-{index + 1}: existing visual needs a real clipId, mediaId or file"
+                )
+        else:
+            raise PipelineError(f"segment-{index + 1}: unsupported visual type {kind!r}")
+
     # The voiceover is a real timeline asset, not just an analysis input.
     # Reuse its imported media/clip when present; otherwise import it and
     # place it on a dedicated bottom lane before cutting measured dead air.
@@ -429,6 +478,48 @@ def run_pipeline(
     timeline = timeline if isinstance(timeline, dict) else {}
     clips = timeline.get("clips", [])
     clips = clips if isinstance(clips, list) else []
+    # Resolve existing visuals against the real project view before edits.
+    existing_clip_refs: dict[int, dict[str, Any]] = {}
+    existing_media_refs: dict[int, dict[str, Any]] = {}
+    for index, segment in existing_segments(plan):
+        visual = segment["visual"]
+        if visual.get("clipId"):
+            clip = next(
+                (item for item in clips if isinstance(item, dict) and item.get("id") == visual["clipId"]),
+                None,
+            )
+            if clip is None or clip.get("kind") != "video":
+                raise PipelineError(
+                    f"segment-{index + 1}: existing clipId is not a video clip on the active timeline"
+                )
+            start_at = float(segment["start"])
+            target_duration = float(segment["end"]) - start_at
+            if abs(float(clip.get("start", -999.0)) - start_at) > 0.05:
+                raise PipelineError(
+                    f"segment-{index + 1}: existing clip is not at its planned start; use mediaId to place it"
+                )
+            if float(clip.get("duration", 0.0)) + 0.05 < target_duration:
+                raise PipelineError(
+                    f"segment-{index + 1}: existing clip is shorter than its planned segment"
+                )
+            existing_clip_refs[index] = clip
+        elif visual.get("mediaId"):
+            media_item = next(
+                (item for item in media if isinstance(item, dict) and item.get("id") == visual["mediaId"]),
+                None,
+            )
+            if media_item is None or media_item.get("kind") != "video":
+                raise PipelineError(
+                    f"segment-{index + 1}: existing mediaId is not a video item in the project bin"
+                )
+            existing_media_refs[index] = media_item
+        else:
+            source_file = str(visual.get("file", ""))
+            if not source_file or not os.path.isfile(source_file):
+                raise PipelineError(
+                    f"segment-{index + 1}: existing visual file does not exist: {source_file}"
+                )
+
     requested_audio_clip = plan.get("audioClipId")
     if requested_audio_clip:
         audio_clip = next(
@@ -651,15 +742,34 @@ def run_pipeline(
             f"for {min(actual_duration, target_duration):.2f}s"
         )
 
-    # Render authored motion storyboards and place the resulting video
-    # overlays on a dedicated top lane. A text/title segment without an
-    # authored storyboard is not silently represented as completed motion.
+    # Motion reels and imported existing media share one dedicated top
+    # video lane; already-placed existing clips are verified in place.
     graphics = motion_segments(plan)
-    if graphics:
+    existing_to_place = [
+        (index, segment) for index, segment in existing_segments(plan)
+        if not segment["visual"].get("clipId")
+    ]
+    track_id = None
+    if graphics or existing_to_place:
         track_reply = advance("track_add", {"path": project, "bottom": False})
         track_id = track_reply.get("createdId") if isinstance(track_reply, dict) else None
         if not isinstance(track_id, str) or not track_id:
-            raise PipelineError("track_add did not return the dedicated motion track id")
+            raise PipelineError("track_add did not return the dedicated top video track id")
+    for index, clip in existing_clip_refs.items():
+        segment = next(s for i, s in existing_segments(plan) if i == index)
+        target_duration = float(segment["end"]) - float(segment["start"])
+        actual_duration = float(clip["duration"])
+        if actual_duration > target_duration + 0.05:
+            advance(
+                "clip_trim",
+                {
+                    "path": project,
+                    "clipId": clip["id"],
+                    "edge": "end",
+                    "delta": target_duration - actual_duration,
+                    "ripple": False,
+                },
+            )
         for index, segment in graphics:
             visual = segment["visual"]
             storyboard = visual.get("storyboard")
@@ -682,6 +792,12 @@ def run_pipeline(
             motion_file = reel.get("file") if isinstance(reel, dict) else None
             if not isinstance(motion_file, str) or not motion_file:
                 raise PipelineError(f"segment-{index + 1}: motion_reel returned no rendered file")
+            rendered_duration = float(reel.get("duration", target_duration))
+            if rendered_duration + 0.05 < target_duration:
+                raise PipelineError(
+                    f"segment-{index + 1}: rendered motion is {rendered_duration:.2f}s, "
+                    f"shorter than the {target_duration:.2f}s story beat"
+                )
             imported = advance("media_import", {"path": project, "file": motion_file})
             media_id = imported.get("createdId") if isinstance(imported, dict) else None
             if not isinstance(media_id, str) or not media_id:
@@ -698,12 +814,6 @@ def run_pipeline(
             clip_id = placed.get("createdId") if isinstance(placed, dict) else None
             if not isinstance(clip_id, str) or not clip_id:
                 raise PipelineError(f"segment-{index + 1}: clip_add returned no timeline clip id")
-            rendered_duration = float(reel.get("duration", target_duration))
-            if rendered_duration + 0.05 < target_duration:
-                raise PipelineError(
-                    f"segment-{index + 1}: rendered motion is {rendered_duration:.2f}s, "
-                    f"shorter than the {target_duration:.2f}s story beat"
-                )
             if rendered_duration > target_duration + 0.05:
                 advance(
                     "clip_trim",
@@ -716,6 +826,52 @@ def run_pipeline(
                     },
                 )
             log(f"segment-{index + 1}: rendered and placed motion at {start_at:.2f}s")
+
+    # Place imported existing media on the same overlay lane. A supplied
+    # clipId was already verified to exist at the correct time above.
+    for index, segment in existing_to_place:
+        visual = segment["visual"]
+        start_at = float(segment["start"])
+        target_duration = float(segment["end"]) - start_at
+        media_id = visual.get("mediaId")
+        if not media_id:
+            imported = advance("media_import", {"path": project, "file": visual["file"]})
+            media_id = imported.get("createdId") if isinstance(imported, dict) else None
+        if not isinstance(media_id, str) or not media_id:
+            raise PipelineError(f"segment-{index + 1}: existing source import returned no media id")
+        placed = advance(
+            "clip_add",
+            {
+                "path": project,
+                "mediaId": media_id,
+                "trackId": track_id,
+                "start": start_at,
+            },
+        )
+        clip_id = placed.get("createdId") if isinstance(placed, dict) else None
+        if not isinstance(clip_id, str) or not clip_id:
+            raise PipelineError(f"segment-{index + 1}: existing media placement returned no clip id")
+        media_item = next(
+            (item for item in media if isinstance(item, dict) and item.get("id") == media_id),
+            None,
+        )
+        actual_duration = float(media_item.get("duration", target_duration)) if media_item else target_duration
+        if actual_duration + 0.05 < target_duration:
+            raise PipelineError(
+                f"segment-{index + 1}: existing media is shorter than its planned segment"
+            )
+        if actual_duration > target_duration + 0.05:
+            advance(
+                "clip_trim",
+                {
+                    "path": project,
+                    "clipId": clip_id,
+                    "edge": "end",
+                    "delta": target_duration - actual_duration,
+                    "ripple": False,
+                },
+            )
+        log(f"segment-{index + 1}: existing media placed at {start_at:.2f}s")
 
     # A render is not complete until the export job reports a terminal state.
     export = plan.get("export") if isinstance(plan.get("export"), dict) else {}

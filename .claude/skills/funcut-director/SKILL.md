@@ -396,8 +396,10 @@ The playhead moves on the timeline the user is looking at, so the edit
 arrives as a thing being made rather than a file that appears — and
 the refusal on a headless server costs one line, not the run.
 
-**Phase 5b — Motion comps (design). Every finished piece goes through here.**
-This is what separates an edit from a video. The motion layer is seven MCP
+**Phase 5b — Motion design (use when the story calls for it).**
+A bespoke comp can make an edit clearer, more memorable, or more emotionally
+precise; it is not a mandatory quota. A film led entirely by strong footage,
+performance, typography, and sound can be complete without a motion comp. The motion layer is seven MCP
 tools: `motion_presets` (the library), `motion_inspect` (nodes, slots —
 never guess), `motion_frame` (look before you bake — it now returns an inline
 image, so check legibility, contrast and safe margins with your eyes), `motion_bake`
@@ -413,10 +415,10 @@ draws less than the source did, and the user decides whether that is
 acceptable). Do not force a designed beat at a fixed interval or percentage.
 Use a bespoke comp when it materially improves comprehension, evidence,
 emphasis, identity, or emotional impact; otherwise let footage, typography,
-sound, or a deliberate hold do the work. In finance/science/tech every
-number, percentage, comparison or process is a `funcut.ticker.count`,
-`funcut.chart.bars`, `funcut.stats.triptych` or `funcut.compare.split` —
-never a plain text card, and never a stock search: there is no footage of
+sound, or a deliberate hold do the work. In finance/science/tech, when a number, percentage, comparison or process
+needs visual explanation, prefer a purpose-built `funcut.ticker.count`,
+`funcut.chart.bars`, `funcut.stats.triptych` or `funcut.compare.split`
+over a plain text card or a literal stock search: there is no footage of
 "73%" or "twice as fast", and the generic-query results for one are the
 same clips every other channel in the niche already uses. Stock is for the
 filmable nouns; comps are for the claims. Edit every comp: real copy, retimed to its cut, one

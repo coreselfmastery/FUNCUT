@@ -282,7 +282,14 @@ impl ForgePane {
         mood: i32,
         studio: &mut Studio,
     ) {
-        let from_timeline = source == SOURCE_VOICEOVER;
+        // Both rows are named, and a value that is neither row - one the
+        // page never offers - reads as the script box: the choice that
+        // has to carry its own words.
+        let from_timeline = match source {
+            SOURCE_SCRIPT => false,
+            SOURCE_VOICEOVER => true,
+            _ => false,
+        };
         if self.running {
             return;
         }

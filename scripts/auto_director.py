@@ -733,7 +733,15 @@ def run_pipeline(
         f"maxDriftMs={verification.get('maxDriftMs')}"
     )
 
-    inspection = advance(\n        "watch_render",\n        {\n            "path": rendered,\n            "samples": 12,\n            "audio": True,\n            "out": os.path.join(project, "director-review.png"),\n        },\n    )
+    inspection = advance(
+        "watch_render",
+        {
+            "path": rendered,
+            "samples": 12,
+            "audio": True,
+            "out": os.path.join(project, "director-review.png"),
+        },
+    )
     if not isinstance(inspection, dict) or not inspection.get("pngPath"):
         raise PipelineError(f"render inspection did not produce a contact sheet: {inspection}")
     critique = advance(

@@ -3261,15 +3261,10 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
             ));
         }
     }
-    // The footage slots: each slot's own contract first, then how much of
-    // the plan goes shopping for stock at all. A plan without slots is a
-    // plan the segments alone describe - the slots are how a director
-    // shops, and the share is what keeps stock coverage rather than
-    // collage. The band: 30-45% is coverage; under that the picture leans
-    // on the A-roll alone; past 45% it leans on the library; past 60% it
-    // is stock with gaps, and the plan is refused.
+    // Footage slots are validated individually. There is deliberately no
+    // plan-wide B-roll percentage: the right balance depends on the story,
+    // source material, evidence density, and the visual language of this film.
     if let Some(slots) = object.get("slots").and_then(Value::as_array) {
-        let mut broll = 0_usize;
         for (index, slot) in slots.iter().enumerate() {
             let slot = slot
                 .as_object()
@@ -3295,7 +3290,6 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
                 .unwrap_or_default();
             match treatment {
                 "broll" => {
-                    broll += 1;
                     if queries.iter().all(|query| query.trim().is_empty()) {
                         return Err(format!(
                             "slots[{index}] is b-roll; it takes at least one non-empty query"
@@ -3312,27 +3306,6 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
                 other => {
                     return Err(format!("slots[{index}].treatment `{other}` is unsupported"));
                 }
-            }
-        }
-        if !slots.is_empty() {
-            let share = broll as f64 / slots.len() as f64;
-            if share > 0.60 {
-                return Err(format!(
-                    "b-roll covers {:.0}% of the slots; past 60% the edit is stock with gaps - hold some spans for the A-roll and the graphics",
-                    share * 100.0
-                ));
-            }
-            if share > 0.45 {
-                warnings.push(format!(
-                    "b-roll covers {:.0}% of the slots; the 30-45% band is where stock reads as coverage rather than collage",
-                    share * 100.0
-                ));
-            }
-            if share < 0.30 {
-                warnings.push(format!(
-                    "b-roll covers {:.0}% of the slots; under 30% the picture leans on the A-roll alone",
-                    share * 100.0
-                ));
             }
         }
     }
@@ -5780,11 +5753,11 @@ mod tests {
         assert!(validate_edit_plan(&base).is_ok(), "no slots, no slot gate");
     }
 
-    /// The b-roll share keeps the plan inside the 30-45% band: past 60%
-    /// the plan is refused outright, 45% and under-30% speak up as
-    /// warnings, and a plan shopping 35% passes without a word.
+    /// B-roll coverage is a story decision, not a universal percentage.
+    /// Plans with sparse, balanced, or footage-heavy slot mixes all pass
+    /// the plan-wide gate; each slot still has to satisfy its own contract.
     #[test]
-    fn plan_validator_keeps_the_broll_share_inside_the_band() {
+    fn plan_validator_does_not_enforce_a_broll_percentage() {
         let slot = |index: usize, treatment: &str| {
             json!({
                 "slotId": format!("slot.{index}"),
@@ -5820,49 +5793,28 @@ mod tests {
                 .collect()
         };
 
-        // Seventy percent stock is stock with gaps: refused.
-        let mut shopping = base.clone();
-        shopping["slots"] = Value::Array(slots(7, 10));
+        for (broll, total) in [(0, 10), (2, 10), (5, 10), (7, 10), (10, 10)] {
+            let mut plan = base.clone();
+            plan["slots"] = Value::Array(slots(broll, total));
+            let result = validate_edit_plan(&plan)
+                .unwrap_or_else(|error| panic!("{broll}/{total} B-roll slots should be allowed: {error}"));
+            let warnings = result["warnings"].as_array().expect("warnings");
+            assert!(
+                warnings.iter().all(|warning| warning
+                    .as_str()
+                    .is_none_or(|text| !text.contains("b-roll covers"))),
+                "B-roll percentage must not create a warning: {warnings:?}"
+            );
+        }
+
+        // Removing the percentage gate does not remove slot-level safety.
+        let mut invalid = base;
+        invalid["slots"] = Value::Array(vec![slot(0, "broll")]);
+        invalid["slots"][0]["queries"] = json!([]);
         assert!(
-            validate_edit_plan(&shopping)
+            validate_edit_plan(&invalid)
                 .unwrap_err()
-                .contains("past 60%")
-        );
-
-        // Fifty percent speaks up as a warning, not a refusal.
-        let mut leaning = base.clone();
-        leaning["slots"] = Value::Array(slots(5, 10));
-        let result = validate_edit_plan(&leaning).expect("a warning, not a refusal");
-        let warnings = result["warnings"].as_array().expect("warnings");
-        assert!(
-            warnings.iter().any(|warning| warning
-                .as_str()
-                .is_some_and(|text| text.contains("covers 50%"))),
-            "{warnings:?}"
-        );
-
-        // Thirty-five percent is inside the band: no share warning.
-        let mut coverage = base.clone();
-        coverage["slots"] = Value::Array(slots(7, 20));
-        let result = validate_edit_plan(&coverage).expect("a valid plan");
-        let warnings = result["warnings"].as_array().expect("warnings");
-        assert!(
-            warnings.iter().all(|warning| warning
-                .as_str()
-                .is_none_or(|text| !text.contains("b-roll covers"))),
-            "35% is coverage: {warnings:?}"
-        );
-
-        // Under thirty percent, the picture leans on the A-roll alone.
-        let mut a_roll = base.clone();
-        a_roll["slots"] = Value::Array(slots(2, 10));
-        let result = validate_edit_plan(&a_roll).expect("a warning, not a refusal");
-        let warnings = result["warnings"].as_array().expect("warnings");
-        assert!(
-            warnings.iter().any(|warning| warning
-                .as_str()
-                .is_some_and(|text| text.contains("covers 20%"))),
-            "{warnings:?}"
+                .contains("at least one non-empty query")
         );
     }
 

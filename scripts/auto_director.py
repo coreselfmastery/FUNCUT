@@ -256,7 +256,7 @@ def _walk_dicts(value: Any):
 def _clip_for_media(view: Any, media_id: str, start: float) -> dict[str, Any] | None:
     candidates = [
         item for item in _walk_dicts(view)
-        if item.get("mediaId", item.get("media")) == media_id and isinstance(item.get("id"), str)
+        if (item.get("mediaId") or item.get("media")) == media_id and isinstance(item.get("id"), str)
         and isinstance(item.get("duration"), (int, float))
         and isinstance(item.get("start"), (int, float))
     ]
@@ -671,8 +671,13 @@ def run_pipeline(
     )
     score = None
     if isinstance(critique, dict):
-        score = critique.get("score", critique.get("craftScore"))
-    if isinstance(score, (int, float)) and score < 7:
+        score = critique.get("overall", critique.get("score", critique.get("craftScore")))
+    if not isinstance(score, (int, float)):
+        raise PipelineError(
+            "craft_critique returned no numeric overall score; the render cannot be certified: "
+            + json.dumps(critique, ensure_ascii=False)
+        )
+    if score < 7:
         raise PipelineError(
             f"rendered cut scored {score}/10; revision is required before publishing: "
             + json.dumps(critique, ensure_ascii=False)
@@ -828,7 +833,7 @@ SELF_TEST_REPLIES = {
     "export_start": {"job": "j1"},
     "export_wait": {"state": "done", "output": "/tmp/funcut-selftest/final.mp4"},
     "watch_render": {"pngPath": "/tmp/funcut-selftest/contact.png", "samples": 12},
-    "craft_critique": {"score": 8.5, "notes": []},
+    "craft_critique": {"overall": 8.5, "scores": {}, "notes": []},
 }
 
 

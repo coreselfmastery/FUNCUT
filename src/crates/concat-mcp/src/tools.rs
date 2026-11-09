@@ -1811,7 +1811,7 @@ fn director_visual_schema() -> Value {
             "shotScale": { "type": "string", "enum": ["wide", "medium", "close_up"] },
             "category": { "type": "string", "description": "A concise semantic continuity category for this shot, such as people, landscape, machinery, or data." },
             "storyboard": motion_storyboard_schema(),
-            "clipId": { "type": ["string", "null"] },
+            "clipId": { "type": ["integer", "string", "null"] },
             "mediaId": { "type": "string" },
             "file": { "type": "string" }
         }

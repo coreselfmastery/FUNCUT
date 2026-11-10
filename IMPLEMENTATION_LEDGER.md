@@ -37,17 +37,19 @@ Working and CI-proven (7/7 checks green at baseline):
 
 ## Units
 
-| Unit | What | Status | Commit |
+| Unit | What | Status | Commit (post-rebase) |
 | --- | --- | --- | --- |
-| 1 | PR #76 fmt fix (merge the four-bug PR) | pushed `54e13922`, CI 4/5 green at last look, engine running | — |
-| 2 | PR #73 resolution: verified fully re-landed via PR #74; no merge | done (no code) | — |
-| 3 | State files (this set) | done | (this commit) |
-| A | Fix G1: E303 key dedup after ms rounding + regression test | planned | — |
-| C | Fix G2: particle presets (snow, rain, embers, sparks, dust, confetti, fireflies, energy, atmosphere) on `add-particles` | planned | — |
-| D | Fix G3: multi-waypoint camera moves | planned | — |
-| F | Fix G4: post-export output verification probe | planned | — |
-| G | Fix G5+G7: docs truth pass + dead-code cleanup where safe | planned | — |
-| I | Fix G6: native `CompEngine` impl (tiny_skia CPU raster: shapes, paths incl. dash draw-on, text via shaped runs, images, nested comps, masks, blends) | stretch — attempt after A/C/D/F/G | — |
+| 1 | PR #76 fmt fix, CI green, **merged** (`6dafbeee`) | done | `54e13922` |
+| 2 | PR #73: verified fully re-landed via PR #74; no merge needed | done (no code) | — |
+| 3 | State files (this set) | done, on main | `94ebfdde` |
+| A | Fix G1: E303 key dedup after ms rounding + regression test | done, on branch | `b4af211a` |
+| C | Fix G2: particle presets (snow, rain, embers, sparks, dust, atmosphere, confetti, fireflies, energy, streaks, data) on `add-particles`, patch semantics | done, on branch | `649df220` |
+| D | Fix G3: multi-waypoint camera paths, per-axis stops, per-segment curves | done, on branch | `82483657` |
+| F | Fix G4: post-export output verification probe (`verifying` stage) | done, on branch | `4c431485` |
+| G | Fix G5: docs truth pass (four corrected claims) | done, on branch | `829fcac3` |
+| — | Ledger section 47 + state file updates | done, on branch | (this commit) |
+| B | `motion_edit` MCP tool | dropped — `motion_bake` already persists ops-edited comps; 242k token cap has 119 tokens headroom; convenience not worth the guarded budget | — |
+| I | Fix G6: native `CompEngine` impl | stretch, not started — see SESSION_HANDOFF.md for the scoped plan | — |
 
 Dropped (with reasons):
 

@@ -1286,7 +1286,7 @@ fn keyframes(track: &Track, kind: Kind, span: f64, warnings: &mut Vec<String>) -
     let span = if span > 1e-6 { span } else { 1.0 };
     let mut keys: Vec<&crate::track::Key> = track.keys.iter().collect();
     keys.sort_by(|a, b| a.at.partial_cmp(&b.at).unwrap_or(std::cmp::Ordering::Equal));
-    let mut out = Vec::new();
+    let mut out: Vec<Json> = Vec::new();
     for key in keys {
         let value = match (kind, &key.value) {
             (Kind::Number, Value::Number { value }) => json!(value),
@@ -1299,6 +1299,22 @@ fn keyframes(track: &Track, kind: Kind, span: f64, warnings: &mut Vec<String>) -
             }
         };
         let at = seconds(key.at * span);
+        // Two keys less than half a millisecond apart round to one time,
+        // and the engine refuses a timeline whose key times do not
+        // strictly increase (E303) — the whole bake, not the one key. The
+        // collision keeps the later key, the value that holds at that
+        // instant: the same resolution `pulse`'s merge applies when it
+        // folds its beats into an authored track, and the one the camera's
+        // merge means to reach with its own dedup, which runs before this
+        // rounding and so cannot see it.
+        if let Some(last) = out.last()
+            && last
+                .get(0)
+                .and_then(Json::as_str)
+                .is_some_and(|written| written == at)
+        {
+            out.pop();
+        }
         match &key.curve {
             Some(curve) if !matches!(curve, Curve::Linear) => {
                 out.push(json!([at, value, ease(curve)]))
@@ -2079,6 +2095,48 @@ mod tests {
         );
         assert_eq!(document["output"]["background"], "#00000000");
         assert_eq!(document["layers"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn keys_that_round_to_one_millisecond_collapse_instead_of_refusing_the_bake() {
+        // Two keys less than half a millisecond apart (here: a span of
+        // 4 s and fractions 0.1249975 and 0.1250000 — 499.99 ms and
+        // 500.00 ms) both round to `0.5s`. The engine refuses a timeline
+        // whose key times do not strictly increase (E303), which used to
+        // take the whole bake down; now the collision keeps the later
+        // key, the one whose value holds at the instant.
+        let track = Track {
+            keys: vec![
+                Key::new(0.0, Value::number(0.0)),
+                Key::new(0.1249975, Value::number(0.4)),
+                Key::new(0.125, Value::number(1.0)),
+                Key::new(1.0, Value::number(1.0)),
+            ],
+        };
+        let out = keyframes(&track, Kind::Number, 4.0, &mut Vec::new())
+            .expect("a track with keys writes keyframes");
+        let times: Vec<&str> = out["keyframes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|key| key[0].as_str().unwrap())
+            .collect();
+        assert_eq!(times, ["0s", "0.5s", "4s"], "the collision collapsed");
+        let values: Vec<f64> = out["keyframes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|key| key[1].as_f64().unwrap())
+            .collect();
+        assert_eq!(values, [0.0, 1.0, 1.0], "the later key won the moment");
+        // The strict increase the engine demands, held numerically.
+        let parsed: Vec<f64> = times
+            .iter()
+            .map(|time| time.trim_end_matches('s').parse().expect("seconds parse"))
+            .collect();
+        for pair in parsed.windows(2) {
+            assert!(pair[0] < pair[1], "times must strictly increase: {times:?}");
+        }
     }
 
     #[test]

@@ -16,9 +16,22 @@ GitHub check-runs API for the exact SHA.
 
 - Local: `cargo fmt --check` clean; `python3 scripts/locales.py --check`
   clean (25 locales, 0 missing, 0 stale).
-- GitHub Actions: Format/locales/models **success**; analysis senses
-  **success**; multi-layer example **success**; dependency dance
-  **success**; Engine tests and lints **in progress** at last check.
+- GitHub Actions: all five checks **success** — Format/locales/models,
+  analysis senses, multi-layer example, dependency dance, Engine tests
+  and lints. **PR #76 merged at `6dafbeee`.**
+
+## `feat/completion-2026-11-10` units (A/C/D/F/G + ledger)
+
+- Local at each commit: `cargo test -p concat-motion` → 451 passed
+  0 failed 5 ignored (+6 doc-tests); `cargo test -p geneva-adapter` →
+  42 passed; `cargo test -p concat-export` → new read-back test green
+  (4 pre-existing no-GPU failures reproduced on the UNMODIFIED tree —
+  the sandbox has no lavapipe; CI passes them);
+  `cargo fmt --check` and `cargo clippy -p <crate> --all-targets --
+  -D warnings` clean for every touched crate.
+- `concat-mcp` context budget measured: 241,881 whole catalogue (cap
+  242,000), 228,233 director surface over 99 tools — both under.
+- Branch CI: pending PR creation (push filter is `[main]`; PRs carry it).
 
 ## Local build environment reproduction (for reproducibility)
 

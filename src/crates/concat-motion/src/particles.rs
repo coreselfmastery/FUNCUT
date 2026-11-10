@@ -224,6 +224,354 @@ impl Default for Turbulence {
     }
 }
 
+/// The named fields, tuned. One word names the weather a scene asks for,
+/// and each name is a whole [`ParticleSystem`] with its own seed - the
+/// same preset is the same field on every machine, the determinism
+/// contract applied to taste. `preset` on the `add-particles` operation
+/// starts from one, and any field of a `system` given beside it wins.
+///
+/// Every preset passes the same bounds check the operation holds every
+/// field to, as it stands; every number below was tuned against the
+/// fixed-timestep simulation the bake runs, on the frame sizes the
+/// presets are written for (1080p and its crops).
+pub fn preset(name: &str) -> Option<ParticleSystem> {
+    let field = |seed: u64,
+                 count: usize,
+                 emission: Emission,
+                 lifetime: (f64, f64),
+                 speed: (f64, f64),
+                 angle: (f64, f64),
+                 gravity: (f64, f64),
+                 drag: f64,
+                 turbulence: Option<Turbulence>,
+                 size: (f64, f64),
+                 opacity: (f64, f64),
+                 colors: &[&str],
+                 shape: Shape| ParticleSystem {
+        seed,
+        count,
+        emission,
+        lifetime,
+        speed,
+        angle,
+        gravity,
+        drag,
+        turbulence,
+        size,
+        opacity,
+        colors: colors.iter().map(|color| (*color).into()).collect(),
+        shape,
+    };
+    match name {
+        // The weather. Snow drifts, wanders and melts out; rain falls
+        // fast and straight, a streak read as a dot because the shape
+        // vocabulary is a dot.
+        "snow" => Some(field(
+            2026,
+            120,
+            Emission::Stream { over: 2.5 },
+            (3.0, 6.0),
+            (18.0, 52.0),
+            (78.0, 102.0),
+            (0.0, 26.0),
+            0.92,
+            Some(Turbulence {
+                strength: 16.0,
+                scale: 0.003,
+                rate: 0.5,
+            }),
+            (3.4, 2.6),
+            (0.9, 0.55),
+            &["#f4f8ff", "#dbe9fb", "#ffffff"],
+            Shape::Circle,
+        )),
+        "rain" => Some(field(
+            1417,
+            150,
+            Emission::Stream { over: 1.8 },
+            (0.8, 1.4),
+            (620.0, 900.0),
+            (84.0, 96.0),
+            (0.0, 460.0),
+            0.04,
+            None,
+            (1.5, 1.1),
+            (0.7, 0.35),
+            &["#a8c4e0", "#c9dcf2"],
+            Shape::Circle,
+        )),
+        // The fire family. Embers rise and gutter; sparks are a bang that
+        // arcs, bright and short.
+        "embers" => Some(field(
+            7,
+            64,
+            Emission::Stream { over: 2.2 },
+            (1.6, 3.2),
+            (36.0, 110.0),
+            (-102.0, -78.0),
+            (0.0, -58.0),
+            0.42,
+            Some(Turbulence {
+                strength: 26.0,
+                scale: 0.006,
+                rate: 0.8,
+            }),
+            (2.6, 0.6),
+            (0.95, 0.0),
+            &["#d9a441", "#e8c982", "#c2703a"],
+            Shape::Circle,
+        )),
+        "sparks" => Some(field(
+            909,
+            72,
+            Emission::Burst { spread: 0.06 },
+            (0.3, 0.9),
+            (320.0, 680.0),
+            (-115.0, -65.0),
+            (0.0, 240.0),
+            0.12,
+            Some(Turbulence {
+                strength: 34.0,
+                scale: 0.01,
+                rate: 3.0,
+            }),
+            (2.2, 0.4),
+            (1.0, 0.0),
+            &["#fffbe6", "#ffd24a", "#ff9d2e"],
+            Shape::Circle,
+        )),
+        // The air. Dust barely moves and lives long; atmosphere is the
+        // wider, softer motes a light beam needs.
+        "dust" => Some(field(
+            31,
+            80,
+            Emission::Stream { over: 3.0 },
+            (4.0, 8.0),
+            (4.0, 14.0),
+            (-180.0, 180.0),
+            (0.0, -4.0),
+            0.95,
+            Some(Turbulence {
+                strength: 12.0,
+                scale: 0.005,
+                rate: 0.4,
+            }),
+            (1.8, 1.5),
+            (0.32, 0.0),
+            &["#d9cfc0", "#cfc6b8"],
+            Shape::Circle,
+        )),
+        "atmosphere" => Some(field(
+            58,
+            44,
+            Emission::Stream { over: 4.0 },
+            (5.0, 8.0),
+            (2.0, 9.0),
+            (-180.0, 180.0),
+            (0.0, -2.0),
+            0.97,
+            Some(Turbulence {
+                strength: 8.0,
+                scale: 0.004,
+                rate: 0.3,
+            }),
+            (4.6, 3.4),
+            (0.16, 0.05),
+            &["#e8e4da", "#d6d2c8"],
+            Shape::Circle,
+        )),
+        // The celebration and the night. Confetti is a multicoloured
+        // burst that flutters down; fireflies wander a summer field.
+        "confetti" => Some(field(
+            1204,
+            140,
+            Emission::Burst { spread: 0.12 },
+            (2.6, 4.2),
+            (210.0, 430.0),
+            (-138.0, -42.0),
+            (0.0, 250.0),
+            0.3,
+            Some(Turbulence {
+                strength: 64.0,
+                scale: 0.009,
+                rate: 3.4,
+            }),
+            (5.0, 4.2),
+            (1.0, 0.0),
+            &["#ff5252", "#ffd740", "#69f0ae", "#40c4ff", "#e040fb"],
+            Shape::Square,
+        )),
+        "fireflies" => Some(field(
+            834,
+            34,
+            Emission::Stream { over: 3.5 },
+            (3.2, 6.5),
+            (6.0, 20.0),
+            (-180.0, 180.0),
+            (0.0, 0.0),
+            0.99,
+            Some(Turbulence {
+                strength: 28.0,
+                scale: 0.006,
+                rate: 1.2,
+            }),
+            (2.3, 1.7),
+            (0.9, 0.0),
+            &["#d4ff5e", "#aef23c", "#eaff9e"],
+            Shape::Circle,
+        )),
+        // The designed ones. Energy is a fast upward stream in the accent
+        // cyans; streaks cross the frame fast and thin, a comet read;
+        // data is a flow of small squares on the wire.
+        "energy" => Some(field(
+            412,
+            90,
+            Emission::Stream { over: 2.4 },
+            (1.0, 2.0),
+            (180.0, 320.0),
+            (-95.0, -85.0),
+            (0.0, -80.0),
+            0.18,
+            Some(Turbulence {
+                strength: 72.0,
+                scale: 0.012,
+                rate: 4.0,
+            }),
+            (3.0, 0.8),
+            (0.95, 0.0),
+            &["#22d3c5", "#7c6cff", "#a5f3ff"],
+            Shape::Circle,
+        )),
+        "streaks" => Some(field(
+            6116,
+            60,
+            Emission::Stream { over: 2.8 },
+            (0.5, 1.1),
+            (500.0, 820.0),
+            (-8.0, 8.0),
+            (0.0, 0.0),
+            0.0,
+            None,
+            (1.4, 1.0),
+            (0.9, 0.4),
+            &["#ffffff", "#ffe9b8", "#cfe8ff"],
+            Shape::Circle,
+        )),
+        "data" => Some(field(
+            31337,
+            96,
+            Emission::Stream { over: 3.2 },
+            (2.2, 3.6),
+            (150.0, 260.0),
+            (-6.0, 6.0),
+            (0.0, 0.0),
+            0.02,
+            Some(Turbulence {
+                strength: 10.0,
+                scale: 0.008,
+                rate: 1.6,
+            }),
+            (2.0, 1.3),
+            (0.85, 0.1),
+            &["#4ade80", "#22d3c5"],
+            Shape::Square,
+        )),
+        _ => None,
+    }
+}
+
+/// The names [`preset`] knows, in the order the docs list them.
+pub const PRESET_NAMES: &[&str] = &[
+    "snow",
+    "rain",
+    "embers",
+    "sparks",
+    "dust",
+    "atmosphere",
+    "confetti",
+    "fireflies",
+    "energy",
+    "streaks",
+    "data",
+];
+
+/// The fields of a [`ParticleSystem`] an author may patch onto a preset:
+/// every one optional, `None` meaning "keep what the base carries".
+///
+/// The `add-particles` operation reads this shape, so `preset: "snow"`
+/// with `system: {count: 50}` is snow at fifty flakes and nothing else
+/// changed - and a document with no preset and a full `system` parses
+/// exactly as it always did, because every field here is optional the
+/// way the system's own defaults made it optional.
+#[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct ParticlePatch {
+    /// The whole of the randomness.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<u64>,
+    /// How many particles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<usize>,
+    /// How they are born.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emission: Option<Emission>,
+    /// `(least, most)` seconds a particle lives.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifetime: Option<(f64, f64)>,
+    /// `(least, most)` pixels a second at birth.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub speed: Option<(f64, f64)>,
+    /// The cone they leave in, degrees.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub angle: Option<(f64, f64)>,
+    /// `(across, down)` pixels a second squared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gravity: Option<(f64, f64)>,
+    /// Velocity bled off per second.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drag: Option<f64>,
+    /// A seeded gust: `Some` replaces the base's gust, `None` keeps it.
+    /// A base gust nobody wants is turned down with
+    /// `{"strength": 0}`, which is still air.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turbulence: Option<Turbulence>,
+    /// `(at birth, at death)` radius in pixels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<(f64, f64)>,
+    /// `(at birth, at death)`, 0 to 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opacity: Option<(f64, f64)>,
+    /// The colours.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub colors: Option<Vec<String>>,
+    /// The shape.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shape: Option<Shape>,
+}
+
+impl ParticlePatch {
+    /// Patch a base system: every `Some` field of the patch replaces the
+    /// base's, every `None` keeps it. The base is either a named preset
+    /// or the plain default the operation always fell back to.
+    pub fn onto(self, base: &ParticleSystem) -> ParticleSystem {
+        ParticleSystem {
+            seed: self.seed.unwrap_or(base.seed),
+            count: self.count.unwrap_or(base.count),
+            emission: self.emission.unwrap_or(base.emission),
+            lifetime: self.lifetime.unwrap_or(base.lifetime),
+            speed: self.speed.unwrap_or(base.speed),
+            angle: self.angle.unwrap_or(base.angle),
+            gravity: self.gravity.unwrap_or(base.gravity),
+            drag: self.drag.unwrap_or(base.drag),
+            turbulence: self.turbulence.or(base.turbulence),
+            size: self.size.unwrap_or(base.size),
+            opacity: self.opacity.unwrap_or(base.opacity),
+            colors: self.colors.clone().unwrap_or_else(|| base.colors.clone()),
+            shape: self.shape.unwrap_or(base.shape),
+        }
+    }
+}
+
 /// SplitMix64: the same generator the noise field seeds itself with, run
 /// here for the particles' own draws. No allocator RNG, no clock, no
 /// platform between the seed and the field.
@@ -477,6 +825,7 @@ fn fail(message: String, help: impl Into<String>) -> MotionError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::authoring::Op;
     use crate::comp::{Comp, FORMAT, Rgba};
 
     fn comp() -> Comp {
@@ -630,5 +979,182 @@ mod tests {
         let a = particle_nodes("d", &still, 0.0, 0.0, 100.0, 100.0, 0.0, 6.0).expect("builds");
         let b = particle_nodes("d", &gusty, 0.0, 0.0, 100.0, 100.0, 0.0, 6.0).expect("builds");
         assert_ne!(a, b, "a gust that changes nothing is a still frame");
+    }
+
+    /// Every named preset is a whole field that passes the same bounds
+    /// the operation holds any field to, bakes real nodes, and is the
+    /// same field twice - the determinism contract, applied to taste.
+    #[test]
+    fn every_named_preset_bakes_within_its_bounds() {
+        for name in PRESET_NAMES {
+            let field = preset(name).unwrap_or_else(|| panic!("{name} is named but not tuned"));
+            let nodes = particle_nodes("f", &field, 0.0, 0.0, 1920.0, 1080.0, 0.0, 8.0)
+                .unwrap_or_else(|err| panic!("{name} refuses its own bounds: {err}"));
+            assert_eq!(
+                nodes.len(),
+                field.count,
+                "{name}: the field is the count it says"
+            );
+            let again = particle_nodes("f", &field, 0.0, 0.0, 1920.0, 1080.0, 0.0, 8.0)
+                .expect("the same field bakes again");
+            assert_eq!(nodes, again, "{name}: the same seed is the same field");
+        }
+        assert!(preset("not-a-weather").is_none(), "an unknown name says so");
+    }
+
+    /// The presets read differently from one another: snow drifts down
+    /// slowly while rain falls fast, embers rise while sparks arc, and
+    /// no two named fields are the same configuration.
+    #[test]
+    fn the_named_fields_are_not_one_field() {
+        let mut seen: Vec<(&str, ParticleSystem)> = Vec::new();
+        for name in PRESET_NAMES {
+            let field = preset(name).expect("named");
+            for (other, system) in &seen {
+                assert_ne!(
+                    &field, system,
+                    "{name} and {other} are the same field under two names"
+                );
+            }
+            seen.push((name, field));
+        }
+        // And the reads the names promise: snow down and slow, rain down
+        // and fast, embers up, sparks a burst.
+        let snow = preset("snow").expect("snow");
+        let rain = preset("rain").expect("rain");
+        let embers = preset("embers").expect("embers");
+        let sparks = preset("sparks").expect("sparks");
+        let down = |system: &ParticleSystem| {
+            let (least, most) = system.gravity;
+            let (_, top) = system.speed;
+            (least + most) / 2.0 > 0.0 && top > 0.0 && system.angle.0 > 0.0 && system.angle.1 > 0.0
+        };
+        let up = |system: &ParticleSystem| system.gravity.1 < 0.0 && system.angle.1 < 0.0;
+        assert!(down(&snow) && down(&rain), "the weather falls");
+        assert!(up(&embers), "embers rise");
+        assert!(
+            rain.speed.0 > snow.speed.1 * 4.0,
+            "rain outruns snow the way it does"
+        );
+        assert!(
+            matches!(sparks.emission, Emission::Burst { .. }),
+            "sparks are a bang"
+        );
+    }
+
+    /// The patch keeps what it does not name and replaces what it does,
+    /// in either direction: onto a preset, onto the plain default.
+    #[test]
+    fn a_patch_onto_a_preset_names_what_wins() {
+        let snow = preset("snow").expect("snow");
+        let fifty = ParticlePatch {
+            count: Some(50),
+            ..ParticlePatch::default()
+        }
+        .onto(&snow);
+        assert_eq!(fifty.count, 50, "the patch's count wins");
+        assert_eq!(fifty.seed, snow.seed, "the rest of the field is snow");
+        assert_eq!(fifty.lifetime, snow.lifetime);
+        assert_eq!(fifty.colors, snow.colors);
+
+        // A gust named by the patch replaces the preset's; a patch that
+        // names none keeps it.
+        let stiller = ParticlePatch {
+            turbulence: Some(Turbulence {
+                strength: 0.0,
+                ..Turbulence::default()
+            }),
+            ..ParticlePatch::default()
+        }
+        .onto(&snow);
+        assert_eq!(
+            stiller.turbulence.map(|gust| gust.strength),
+            Some(0.0),
+            "the patch's gust wins, and zero strength is still air"
+        );
+
+        // Onto the plain default the patch is the whole system it always
+        // was: a document that gave every field parses as it did.
+        let whole = ParticlePatch {
+            seed: Some(7),
+            count: Some(48),
+            lifetime: Some((1.4, 2.8)),
+            speed: Some((30.0, 120.0)),
+            angle: Some((-100.0, -80.0)),
+            gravity: Some((0.0, -60.0)),
+            drag: Some(0.4),
+            turbulence: Some(Turbulence {
+                strength: 24.0,
+                scale: 0.006,
+                rate: 0.8,
+            }),
+            size: Some((3.0, 1.1)),
+            colors: Some(vec!["#d9a441".into(), "#e8c982".into()]),
+            ..ParticlePatch::default()
+        }
+        .onto(&ParticleSystem::default());
+        assert_eq!(whole.seed, 7);
+        assert_eq!(whole.count, 48);
+        assert_eq!(whole.lifetime, (1.4, 2.8));
+        assert_eq!(whole.speed, (30.0, 120.0));
+        assert_eq!(whole.angle, (-100.0, -80.0));
+        assert_eq!(whole.gravity, (0.0, -60.0));
+        assert_eq!(whole.drag, 0.4);
+        assert_eq!(
+            whole.turbulence,
+            Some(Turbulence {
+                strength: 24.0,
+                scale: 0.006,
+                rate: 0.8
+            })
+        );
+        assert_eq!(whole.size, (3.0, 1.1));
+        assert_eq!(
+            whole.colors,
+            vec!["#d9a441".to_string(), "#e8c982".to_string()]
+        );
+    }
+
+    /// The JSON shape the docs show parses: a preset alone, a preset
+    /// patched, and the full system a document always carried - the
+    /// backward-compatible read.
+    #[test]
+    fn the_documented_particle_shapes_parse() {
+        let one_word: ParticlePatch =
+            serde_json::from_str("{}").expect("an empty patch is a valid patch");
+        assert_eq!(one_word, ParticlePatch::default());
+
+        let full: Op = serde_json::from_str(
+            r##"{"op": "add-particles", "id": "embers", "x": 360, "y": 940,
+                "width": 1200, "height": 80,
+                "system": {"seed": 7, "count": 48, "lifetime": [1.4, 2.8],
+                           "speed": [30, 120], "angle": [-100, -80],
+                           "gravity": [0, -60], "drag": 0.4,
+                           "turbulence": {"strength": 24, "scale": 0.006, "rate": 0.8},
+                           "size": [3, 1.1], "colors": ["#d9a441", "#e8c982"]}}"##,
+        )
+        .expect("the full system a document always carried still parses");
+        match full {
+            Op::AddParticles { preset, system, .. } => {
+                assert_eq!(preset, None, "the old shape names no preset");
+                let system = system.expect("the system is there");
+                assert_eq!(system.seed, Some(7));
+                assert_eq!(system.count, Some(48));
+            }
+            other => panic!("not an add-particles: {other:?}"),
+        }
+
+        let named: Op = serde_json::from_str(
+            r#"{"op": "add-particles", "id": "weather", "x": 0, "y": -40,
+                "width": 1920, "height": 80, "preset": "snow"}"#,
+        )
+        .expect("one word names the weather");
+        match named {
+            Op::AddParticles { preset, system, .. } => {
+                assert_eq!(preset.as_deref(), Some("snow"));
+                assert!(system.is_none(), "no system beside the name");
+            }
+            other => panic!("not an add-particles: {other:?}"),
+        }
     }
 }

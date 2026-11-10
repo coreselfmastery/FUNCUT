@@ -31,10 +31,11 @@
 //!
 //! What the adapters deliberately are not:
 //!
-//! - **Not a player.** A `.lottie` file plays as an asset through the
-//!   Lottie engine already; the adapter is for when the motion should
-//!   become *document* - editable, lintable, fillable by a slot, baked by
-//!   whichever engine the project prefers.
+//! - **Not a player.** The Lottie engine row in the engine table is
+//!   reserved: no player ships in this tree yet, and a `lottie` node in a
+//!   comp renders nothing today. The adapter is the path that exists -
+//!   when the motion should become *document*: editable, lintable,
+//!   fillable by a slot, baked by whichever engine the project prefers.
 //! - **Not lossless.** The report is the contract: if a note says
 //!   something was skipped, the comp is smaller than its source, and the
 //!   caller decides whether that is acceptable. A conversion with no notes

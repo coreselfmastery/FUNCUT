@@ -2,6 +2,9 @@
 
 Principal agent: the FUNCUT completion mission (2026-11-10 start).
 Baseline `main`: `ab7c0704917d6f3181b1fb847fead86dc6392fcf` (CI: 7/7 green).
+Current `main`: `6dafbeeeeae9a1f1db93845bfac8abcd003e1ace` (PR #76 merged).
+Work branch: `feat/completion-2026-11-10` (rebased on 6dafbeee, head
+`829fcac3` + ledger commit; see IMPLEMENTATION_LEDGER.md for unit SHAs).
 
 ## Mission
 
@@ -13,42 +16,53 @@ and an honest feature ledger. No fake green, no doc-only features.
 
 - Build box: 2 cores, 4 GB RAM, 9.9 GB disk. The GUI `concat` crate OOMs
   rustc locally even in `cargo check` mode; it is validated by CI only.
-- Local verification scope: every non-GUI crate (`concat-motion` 426 tests
-  green locally at baseline; `concat-export`, `concat-mcp`, `concat-project`
-  build locally). Full workspace validated by GitHub Actions.
+- Local verification scope: every non-GUI crate. At last run:
+  `concat-motion` 451/451, `geneva-adapter` 42/42, `concat-export` green
+  beside 4 pre-existing no-GPU environmental failures (confirmed present
+  on the unmodified tree; CI's lavapipe passes them), `concat-mcp` builds
+  and its context-budget test passes (241,881 / 242,000 tokens, 119
+  tokens of headroom).
 - Build env script: `/home/z/my-project/scripts/funcut-env.sh` (FFmpeg 8.1
-  dev from `scripts/ci/fetch.sh`, ONNX Runtime 1.28.0, sherpa-onnx 1.13.7,
-  libclang 19 via extracted debs, portable cmake 3.31.6, dev sysroot for
-  alsa/udev/ssl/sqlite/egl/etc, `CARGO_PROFILE_DEV_DEBUG=0`).
-- Git credentials: store helper at `/home/z/.git-credentials-funcut` (admin
-  token, never committed).
+  dev digest-pinned, ONNX Runtime 1.28.0, sherpa-onnx 1.13.7, libclang 19
+  from extracted debs + `/home/z/my-project/clang-lib`, portable cmake
+  3.31.6, dev sysroot incl. libasound2t64 runtime, `CARGO_PROFILE_DEV_DEBUG=0`,
+  `CARGO_INCREMENTAL=0`).
+- Disk management: `/home/z/my-project/scripts/prune-dupes.sh` reclaims
+  duplicate cargo artifacts (2.7 GB reclaimed once). Run it when full.
+- Git credentials: store helper at `/home/z/.git-credentials-funcut`
+  (admin token, never committed).
+- CI triggers: `ci.yml` push filter is `[main]` (verified at byte level —
+  an earlier "corrupted filter" reading was a display artifact, not a
+  bug). Feature branches get CI through pull requests. Geneva and
+  Build-app workflows also run on main pushes.
 
-## Session log
+## Session 1 log (2026-11-10) — what landed
 
-### Session 1 — 2026-11-10
-
-- Audited the live repository at baseline (three parallel audit agents +
-  principal verification; see IMPLEMENTATION_LEDGER.md).
-- PR #76 (four audit bugs): its CI failed only `cargo fmt --check`
-  (`panes/mod.rs:135`). Fixed with rustfmt, pushed `54e13922` to the PR
-  branch. All other checks green; engine tests were still running at time
-  of writing. ACTION: merge when green.
-- PR #73: verified with `git merge-tree --write-tree` that merging
-  `origin/feat/director-story-led-integration-verified` into `main`
-  produces a tree **identical to main** (empty diff) — 100% of the branch's
-  68 commits were re-landed on main via PR #74 (`df5150f5`). Nothing to
-  recover; branch is safe to delete. DO NOT squash-merge it (a naive
-  squash reads as a 77k-line deletion of main's newer work).
-- Verified on main: 10 chart kinds (Bar/Line/Area/Donut/Dot/Compare/
-  Progress/Candlestick/Timeline/Table) — the audit agent that reported
-  them missing had read the PR #76 branch checkout, not main.
-- Verified `export_cancel`/`project_close` are excluded from
-  `DIRECTOR_ALLOWLIST` **deliberately** (tested refusal; "a harness must
-  never call" per tools.rs:6293). Not a bug; do not "fix".
+1. **PR #76 resolved**: its CI failed only `cargo fmt --check`; fixed
+   with rustfmt (`54e13922`), all five checks went green, **merged**
+   (merge commit `6dafbeee`).
+2. **PR #73 resolved by proof**: `git merge-tree --write-tree` shows the
+   branch's tree is **identical to main** — 100% of its 68 commits were
+   re-landed via PR #74 (`df5150f5`). Nothing to recover; do not merge or
+   squash it (a misread squash would read as a 77k-line deletion).
+3. **Five implementation units on `feat/completion-2026-11-10`** (all
+   locally tested, fmt+clippy clean, pushed; ledger section 47):
+   - E303 keyframe-collision fix + regression test
+   - Eleven named particle presets + patch semantics
+   - Camera waypoint paths
+   - Export output read-back verification
+   - Docs truth pass (four corrected claims)
+4. **Considered and declined** (principal's call, see ledger): a
+   `motion_edit` MCP tool — `motion_bake` already persists ops-edited
+   comps content-addressed, and the 242k-token catalogue cap has 119
+   tokens of headroom; the edit-without-bake convenience is not worth
+   burning a deliberately guarded budget.
 
 ## Next actions
 
-1. Merge PR #76 once its engine job is green.
-2. Work branch `feat/completion-2026-11-10`: implement units A–G of the
-   implementation ledger, one commit each, local tests before push.
-3. See SESSION_HANDOFF.md for the precise resume point.
+1. Open the PR for `feat/completion-2026-11-10`; when its CI is green,
+   merge to main; verify the final main SHA's check-runs.
+2. Verify main's `94ebfdde` (state files push) CI completed green.
+3. Final report per the mission's section 14.
+4. Stretch (next session, if authorized): the native `CompEngine` impl
+   — see KNOWN_ISSUES.md and SESSION_HANDOFF.md for the scoped plan.

@@ -16,14 +16,18 @@
 //! | Engine | What it draws | Cost |
 //! | --- | --- | --- |
 //! | [`engine::EngineKind::Geneva`] | everything, markup included, browserless | one pinned binary |
-//! | [`engine::EngineKind::Native`] | shapes, paths, text, images, nested comps | already shipped |
-//! | [`engine::EngineKind::Lottie`] | Lottie and dotLottie files | a player, no browser |
+//! | [`engine::EngineKind::Native`] | shapes, paths, text, images, nested comps | the `CompEngine` impl is still to come |
+//! | [`engine::EngineKind::Lottie`] | Lottie and dotLottie files | reserved; a player, no browser |
 //!
 //! [`engine::EnginePreference::default`] is Geneva, because a comp written by a
 //! designer, a template or an agent is markup, and markup is what the engine
 //! exists to draw. A comp with no markup still bakes on Geneva - one engine,
-//! one look - and a machine without the sidecar falls back to the native engine
-//! for the comps it can draw, rather than failing to open the project.
+//! one look. The native engine's plumbing - the kind, the preference, the
+//! fallback choice - is real and tested, but no renderer stands behind it
+//! yet: until one does, a machine without the sidecar bakes nothing, and
+//! `NodeKind::Path` (which the sidecar drops with a warning) renders
+//! nowhere. This is the repo's own declared gap, not a hidden one; see
+//! MOTION.md's "still to come".
 //!
 //! # Where it plugs in
 //!
@@ -119,7 +123,7 @@ pub use looks::Look;
 // name belongs to the comp's template Slot, and two Slots on one root is
 // an ambiguity, not a convenience.
 pub use noise::Noise;
-pub use particles::{Emission, ParticleSystem, Shape, Turbulence};
+pub use particles::{Emission, ParticlePatch, ParticleSystem, Shape, Turbulence};
 pub use plan::{Entry, Exit, SlotJob, SlotRole, Treatment, broll_share};
 pub use pulse::{BeatGrid, Driven, Pulse, curve_for_act, sound_starts_at};
 pub use reel::{ReelReport, SceneOutcome, render_reel, scene_key};

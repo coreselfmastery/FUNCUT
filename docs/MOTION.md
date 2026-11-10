@@ -1139,6 +1139,41 @@ life, refused with the number that broke it.
                "size": [3, 1.1], "colors": ["#d9a441", "#e8c982"] } }
 ```
 
+**A name is a whole field.** Eleven presets carry the tuning a scene reaches for first, each a
+complete system with its own seed — the same preset is the same field on every machine, the
+determinism contract applied to taste — and each one word wide:
+
+| Name | The read |
+| --- | --- |
+| `snow` | falls slow, wanders on the gust, melts out — the wide white drift |
+| `rain` | fast and straight, pale and thin — the streak a dot can be |
+| `embers` | rise and gutter, amber to nothing — the fire after the flame |
+| `sparks` | a bang that arcs, bright and short — the grinder's fan |
+| `dust` | barely moves, lives long, half-there — the room the light beam names |
+| `atmosphere` | wider, softer motes — the haze a backlight needs |
+| `confetti` | a multicoloured burst that flutters down — the celebration |
+| `fireflies` | wander a summer field, green-gold, unhurried |
+| `energy` | a fast upward stream in the accent cyans — the designed current |
+| `streaks` | cross the frame fast and thin — the comet read |
+| `data` | small squares on the wire, green to cyan — the flow itself |
+
+```json
+{ "op": "add-particles", "id": "weather", "x": 0, "y": -40, "width": 1920, "height": 80,
+  "preset": "snow" }
+```
+
+A `system` beside the name patches it, field by field: every field it names wins, every one it
+leaves out is the preset's. Fifty flakes of the same snow:
+
+```json
+{ "op": "add-particles", "id": "weather", "x": 0, "y": -40, "width": 1920, "height": 80,
+  "preset": "snow", "system": { "count": 50 } }
+```
+
+The patch shape is the system's own with every field optional — a document that always gave the
+full `system` and no `preset` parses exactly as it did. One honest limit: a patch cannot *remove*
+a preset's gust, only replace it — still air is `"turbulence": {"strength": 0}`.
+
 ### The camera: a move baked into the layers
 
 A comp has no camera node; `set-camera` is what a director means by one anyway. A zoom, a pan and
@@ -1157,6 +1192,23 @@ families already are.
 { "op": "set-camera", "camera": { "zoom": [1.0, 1.08], "pan": [0, -30], "seconds": 3.5,
                                  "depths": [["plate", 0.4], ["title", 1.3]] } }
 ```
+
+**A path is the same move with stops.** The pairs are the two-waypoint case; `path` names three
+or more waypoints in time order, and a camera *moves between* them - push, hold, drift:
+
+```json
+{ "op": "set-camera", "camera": { "seconds": 4,
+    "path": [ { "at": 0, "zoom": 1.0, "pan": [0, 0] },
+              { "at": 2, "zoom": 1.15 },
+              { "at": 4, "zoom": 1.15, "pan": [180, -30] } ] } }
+```
+
+Each axis is keyed by the waypoints that name it and interpolated between them - the zoom above
+pushes over the first half and rests while the pan waits and then drifts. A waypoint's own
+`curve` eases the segment *leaving* it (`None` is linear, so a path of unnamed segments flows
+instead of stopping at every stop); the move's `curve` still shapes the pair form. Times run
+strictly uphill, the last waypoint is the move's own end, and a path beside any pair is refused
+outright - the pairs are the two-waypoint path, said once.
 
 The example comps under `examples/comps/` carry all of it - `data.chart.bars`, `data.chart.line`,
 `data.chart.donut`, `data.chart.dot`, `data.chart.compare`, `data.chart.progress`,
@@ -1211,9 +1263,12 @@ decode, so it logs a warning naming the clip and tells you to run `motion_bake {
 use comps still reach the timeline as media clips; this closes the gap for hand-authored documents
 and the motion agent's output.
 
-**Still to come** (nothing here is faked): a native PNG-sequence decoder inside the exporter (which
-would let a transparent bake export without an intermediate encode), the `motion.*` API methods, the
-Lottie engine, and the native engine's `CompEngine` impl.
+**Still to come** (nothing here is faked): the `motion.*` API methods, the
+Lottie engine, and the native engine's `CompEngine` impl. The PNG-sequence
+export path this list once named is no longer missing: the exporter resolves
+a transparent bake through an `.ffconcat` script over its RGBA frames
+(`concat-export/src/flatten.rs`), so a comp with alpha exports without an
+intermediate encode.
 
 ---
 

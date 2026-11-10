@@ -314,7 +314,7 @@ Nothing here is bundled whole; indexes download once, media arrives per pick.
 ## The director skill (the AI's brain)
 
 `.claude/skills/funcut-director/` — how an agent directs a whole video
-instead of randomly calling tools. **Phases 0–8 plus sub-phases 1b and 5b**:
+instead of randomly calling tools. **Phases 0–8 plus sub-phases 1b, 1c and 5b**:
 
 0. **Creative direction** — `creative_brief` before any cutting tool; the
    returned `directorPrompt` stays in context.

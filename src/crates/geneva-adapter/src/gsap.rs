@@ -520,6 +520,8 @@ mod tests {
             opacity: 1.0,
             blend: Default::default(),
             mask: None,
+            matte: None,
+            motion_blur: None,
             effects: Vec::new(),
             tracks: Default::default(),
             kind: NodeKind::Ellipse {

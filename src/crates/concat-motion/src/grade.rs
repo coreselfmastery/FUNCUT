@@ -423,6 +423,8 @@ pub fn apply(comp: &mut Comp, grade: &Grade) -> Result<(), String> {
         opacity: 1.0,
         blend: Blend::Normal,
         mask: None,
+        matte: None,
+        motion_blur: None,
         effects: Vec::new(),
         tracks: Default::default(),
         kind: NodeKind::Html {
@@ -650,6 +652,8 @@ mod tests {
             opacity: 1.0,
             blend: Blend::Normal,
             mask: None,
+            matte: None,
+            motion_blur: None,
             effects: Vec::new(),
             tracks: BTreeMap::new(),
             kind: NodeKind::Html {
@@ -695,6 +699,8 @@ mod tests {
             opacity: 1.0,
             blend: Blend::Normal,
             mask: None,
+            matte: None,
+            motion_blur: None,
             effects: Vec::new(),
             tracks: BTreeMap::new(),
             kind: NodeKind::Html {

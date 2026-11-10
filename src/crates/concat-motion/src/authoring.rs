@@ -701,6 +701,8 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
                 opacity: 1.0,
                 blend: Blend::Normal,
                 mask: None,
+                matte: None,
+                motion_blur: None,
                 effects: Vec::new(),
                 tracks: BTreeMap::new(),
                 kind: NodeKind::Group {
@@ -731,6 +733,8 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
                 opacity: 1.0,
                 blend: Blend::Normal,
                 mask: None,
+                matte: None,
+                motion_blur: None,
                 effects: Vec::new(),
                 tracks: BTreeMap::new(),
                 kind: NodeKind::Rect {
@@ -766,6 +770,8 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
                 opacity: 1.0,
                 blend: Blend::Normal,
                 mask: None,
+                matte: None,
+                motion_blur: None,
                 effects: Vec::new(),
                 tracks: BTreeMap::new(),
                 kind: NodeKind::Text(Box::new(TextNode {
@@ -1285,6 +1291,7 @@ impl CompSummary {
                         NodeKind::Rect { .. } => ("rect", None),
                         NodeKind::Ellipse { .. } => ("ellipse", None),
                         NodeKind::Path { .. } => ("path", None),
+                        NodeKind::Adjustment => ("adjustment", None),
                         NodeKind::Text(text) => ("text", Some(first_words(text))),
                         NodeKind::Html { markup, .. } => (
                             "html",
@@ -2074,6 +2081,8 @@ mod tests {
             opacity: 1.0,
             blend: Blend::Normal,
             mask: None,
+            matte: None,
+            motion_blur: None,
             effects: Vec::new(),
             tracks: BTreeMap::new(),
             kind: NodeKind::Group {
@@ -2089,6 +2098,8 @@ mod tests {
             opacity: 1.0,
             blend: Blend::Normal,
             mask: None,
+            matte: None,
+            motion_blur: None,
             effects: Vec::new(),
             tracks: BTreeMap::new(),
             kind: NodeKind::Rect {

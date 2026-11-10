@@ -20,6 +20,7 @@
 //! machine without that engine fails loudly at bake time with the frames still
 //! in the cache, rather than quietly drawing something else.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -259,6 +260,12 @@ pub struct Baked {
     pub engine_version: String,
     /// Whether the frames carry alpha.
     pub alpha: bool,
+    /// What the engine could not draw as written - the mapper's warnings,
+    /// kept with the bake so a caller can show what a render skipped
+    /// instead of logging it where nobody reads it. Empty when the comp was
+    /// drawn whole.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
     /// Set in memory when this bake answered from the cache instead of a
     /// fresh render; never persisted, so a manifest always reads as a
     /// description of the bake it was written for.
@@ -276,6 +283,106 @@ impl Baked {
     pub fn frame_path(&self, index: u32) -> PathBuf {
         self.dir.join(Baked::frame_name(index))
     }
+}
+
+/// The content key of every **file** a bake consumed: the comp's own hash
+/// covers the document, this covers the bytes it points at, and neither
+/// alone is enough - an unchanged document over changed bytes is exactly
+/// the stale bake the key exists to refuse. Sub-compositions point at files
+/// of their own, so one scoped walk covers every scope. `None` on a comp
+/// with no assets; a file that is not there hashes as `missing`, because a
+/// bake that could not read an asset is a bake a later re-render with the
+/// file present must not be served in place of.
+pub(crate) fn bake_assets_key(comp: &Comp, source_dir: &Path) -> Option<u64> {
+    let mut walk: BTreeMap<String, &str> = BTreeMap::new();
+    fn gather<'a>(comp: &'a Comp, scope: &str, walk: &mut BTreeMap<String, &'a str>) {
+        for (id, asset) in &comp.assets {
+            walk.insert(format!("{scope}{id}"), asset.src.as_str());
+        }
+        for (name, sub) in &comp.comps {
+            gather(sub, &format!("{scope}{name}::"), walk);
+        }
+    }
+    gather(comp, "", &mut walk);
+    if walk.is_empty() {
+        return None;
+    }
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut eat = |bytes: &[u8]| {
+        for byte in bytes {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    };
+    eat(b"concat-motion/bake-assets/1");
+    for (id, src) in &walk {
+        eat(id.as_bytes());
+        eat(b"\0");
+        match crate::cache::stream_hash("concat-motion/bake-assets/1", &source_dir.join(src)) {
+            Some(file) => eat(&file.to_le_bytes()),
+            None => eat(b"missing"),
+        }
+    }
+    Some(hash)
+}
+
+/// A bake that already sits in `dir`, when its manifest matches the comp,
+/// the **assets the comp points at**, the engine, the engine's version,
+/// the size, the rate and the alpha - and the frames it promises are
+/// actually still on disk. The comp's hash is the document's key and the
+/// assets key is the files' key; neither alone is enough, because an
+/// unchanged document over changed bytes is exactly the stale bake this
+/// check exists to refuse. Shared by every `CompEngine`: the manifest is
+/// the same shape whichever engine wrote it, so the cache is too.
+pub(crate) fn bake_cache_hit(
+    dir: &Path,
+    comp: &Comp,
+    request: &BakeRequest,
+    engine: EngineKind,
+    version: &str,
+) -> Option<Baked> {
+    if request.frames.is_some() {
+        // A ranged (parallel) bake is not a full cache entry; render it.
+        return None;
+    }
+    let source_dir = if request.source_dir.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        request.source_dir.clone()
+    };
+    let manifest: Baked =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("manifest.json")).ok()?).ok()?;
+    if manifest.hash != comp.hash()
+        || manifest.assets != bake_assets_key(comp, &source_dir)
+        || manifest.engine != engine
+        || manifest.engine_version != version
+        || manifest.width != request.width(comp)
+        || manifest.height != request.height(comp)
+        || manifest.fps != request.fps(comp)
+        || manifest.alpha != request.alpha
+        || manifest.frames == 0
+    {
+        return None;
+    }
+    // The manifest's own `dir` was written relative to wherever the bake
+    // ran; count the frames where this caller says the bake lives, so a
+    // moved project or a trimmed cache misses instead of lying.
+    let frames_dir = dir.join("frames");
+    let present = std::fs::read_dir(&frames_dir)
+        .ok()?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "png"))
+        .count();
+    if present < manifest.frames {
+        return None;
+    }
+    let mut hit = manifest;
+    hit.cached = true;
+    // A served bake counts as used: the comps sweep keys on the
+    // manifest's clock, and a hit that never touched it would be the
+    // first evicted by its own popularity's opposite.
+    crate::cache::touch_file(&dir.join("manifest.json"));
+    Some(hit)
 }
 
 /// Whether an engine can run here.
@@ -477,6 +584,8 @@ mod tests {
                 opacity: 1.0,
                 blend: Blend::Normal,
                 mask: None,
+                matte: None,
+                motion_blur: None,
                 effects: Vec::new(),
                 tracks: Default::default(),
                 kind,

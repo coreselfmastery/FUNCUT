@@ -430,6 +430,8 @@ mod tests {
             opacity: 1.0,
             blend: crate::comp::Blend::Normal,
             mask: None,
+            matte: None,
+            motion_blur: None,
             effects: Vec::new(),
             tracks: std::collections::BTreeMap::new(),
             kind: NodeKind::Rect {

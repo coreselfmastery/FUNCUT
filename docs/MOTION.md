@@ -1193,6 +1193,23 @@ families already are.
                                  "depths": [["plate", 0.4], ["title", 1.3]] } }
 ```
 
+**A path is the same move with stops.** The pairs are the two-waypoint case; `path` names three
+or more waypoints in time order, and a camera *moves between* them - push, hold, drift:
+
+```json
+{ "op": "set-camera", "camera": { "seconds": 4,
+    "path": [ { "at": 0, "zoom": 1.0, "pan": [0, 0] },
+              { "at": 2, "zoom": 1.15 },
+              { "at": 4, "zoom": 1.15, "pan": [180, -30] } ] } }
+```
+
+Each axis is keyed by the waypoints that name it and interpolated between them - the zoom above
+pushes over the first half and rests while the pan waits and then drifts. A waypoint's own
+`curve` eases the segment *leaving* it (`None` is linear, so a path of unnamed segments flows
+instead of stopping at every stop); the move's `curve` still shapes the pair form. Times run
+strictly uphill, the last waypoint is the move's own end, and a path beside any pair is refused
+outright - the pairs are the two-waypoint path, said once.
+
 The example comps under `examples/comps/` carry all of it - `data.chart.bars`, `data.chart.line`,
 `data.chart.donut`, `data.chart.dot`, `data.chart.compare`, `data.chart.progress`,
 `data.chart.candlestick`, `data.chart.timeline`, `data.chart.table`, `data.counter`,

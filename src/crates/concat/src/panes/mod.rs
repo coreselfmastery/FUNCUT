@@ -135,8 +135,7 @@ pub fn activity(msg: &Msg) -> Option<Activity> {
             ));
         }
         Msg::Captions(CaptionsMsg::Finished {
-            result: Err(error),
-            ..
+            result: Err(error), ..
         }) => {
             return Some(Activity::once(Info, format!("captions: failed, {error}")));
         }

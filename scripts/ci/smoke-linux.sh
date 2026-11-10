@@ -18,10 +18,14 @@
 #       as a Sandy Bridge.
 #
 #   smoke-linux.sh --container IMAGE DEB APPIMAGE
-#       The packages, in a clean IMAGE (ubuntu:22.04, debian:12) through
-#       docker: the .deb installed by apt, which pulls in exactly the
-#       dependencies it declares and nothing else, then `--version` and
-#       `--smoke` from the installed package and from the AppImage.
+#       The packages, in a clean IMAGE through docker: the .deb installed
+#       by apt, which pulls in exactly the dependencies it declares and
+#       nothing else, then `--version` and `--smoke` from the installed
+#       package and from the AppImage. The image should be the oldest
+#       distribution the binary can run on - the glibc of the machine
+#       that built it is its floor (build-app.yml picks per arch:
+#       ubuntu:22.04 and debian:12 for an x86_64 build, ubuntu:24.04 and
+#       debian:13 for an aarch64 build, whose lane builds on 24.04-arm).
 #
 # Runs in CI after staging (build-app.yml), and locally against a folder
 # or packages built the same way. Needs xvfb-run; strace if it is there.

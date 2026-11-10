@@ -622,6 +622,13 @@ jobs:
       # declares, and both start (`--version`, and `--smoke` under Xvfb).
       # A library the package forgot to depend on fails here rather than
       # on somebody's machine. See scripts/ci/smoke-linux.sh.
+      #
+      # The oldest clean distribution is the oldest the binary can run
+      # on: a binary links the glibc of the machine that built it, and
+      # the ARM lane builds on 24.04-arm - the 22.04-arm fleet is gone -
+      # so its floor is the glibc 2.39 of Ubuntu 24.04, and the Debian
+      # of that era is 13. x86_64 still builds on the 22.04 image, so
+      # its floor is unchanged: Ubuntu 22.04 and Debian 12.
       - name: Smoke test in clean distributions (Linux)
         timeout-minutes: 25
         env:
@@ -629,7 +636,11 @@ jobs:
           EXPECT_VERSION: ${{ steps.answers.outputs.version }}
         run: |
           set -euo pipefail
-          for image in ubuntu:22.04 debian:12; do
+          case "${{ matrix.arch }}" in
+            x86_64) images="ubuntu:22.04 debian:12" ;;
+            aarch64) images="ubuntu:24.04 debian:13" ;;
+          esac
+          for image in $images; do
             scripts/ci/smoke-linux.sh --container "$image" \
               "stage/Concat-${VERSION}-linux-${{ matrix.arch }}.deb" \
               "stage/Concat-${VERSION}-${{ matrix.arch }}.AppImage"

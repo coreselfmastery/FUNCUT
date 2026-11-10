@@ -1026,12 +1026,17 @@ camera reaches them like any other layer.
                        { "label": "Q3", "value": 14 }, { "label": "Q4", "value": 17 } ] } }
 ```
 
-Seven kinds, one operation: **bar** (columns from a baseline, negatives below the rule), **line** (the
+Ten kinds, one operation: **bar** (columns from a baseline, negatives below the rule), **line** (the
 trend drawn on segment by segment), **area** (the field of columns rising under the trend), **donut**
 (shares of one whole, swept around a ring), **dot** (one measured value a point on a shared axis - a
 distribution, a ranking, a lab's readings - each stem grown out to its dot), **compare** (two numbers
-a category as paired columns - before and after, this run and that one, home and away) and
-**progress** (a number against its target, a fill grown inside the track the target draws).
+a category as paired columns - before and after, this run and that one, home and away), **progress**
+(a number against its target, a fill grown inside the track the target draws), **candlestick** (a
+period a point as one candle - a wick over the period's range, a body from its open to its close,
+the direction's own colour, the plot lettering the readings' own range and not one anchored at
+zero), **timeline** (events along one axis, each a dot at its own number, the letters alternating
+sides so one event never sits on another's name) and **table** (a row a point, the label left and
+its number right, ruled like a ledger - `show-values` off letters a plain list).
 Formatting is domain-neutral by construction
 - decimals, a thousands separator, a prefix and suffix (`$`, `%`, ` km`, ` goals`), and the compact
 `1.2K`/`3.4M` dashboard form - and the geometry is the data's: the tallest column is the tallest
@@ -1045,6 +1050,15 @@ quietly. A compare takes `series` (exactly two names, `A` and `B` when unsaid) f
 refuses a per-point colour: there the colour is the series', or the two sides of one category stop
 being tellable apart. A progress needs a positive target and fills from zero - gains and losses side
 by side are a bar chart's job.
+
+A candlestick reads three more, `open`, `high` and `low`, with `value` the close - and every other
+kind refuses them by name, exactly as it refuses a `b`. The wick must enclose the body (a high the
+candle does not reach is refused with the point named), the colour is the direction's - the
+palette's first two when two are said, the candlestick's own green and red when they are not, and
+`series` letters the legend (`rose` and `fell` when unsaid). A timeline needs two distinct
+positions - every event on one date is a title card, not a timeline - and a table refuses a `b` and
+`series` both: a row is a label and one number, and a point that names a colour letters its number
+in it.
 
 ```json
 { "op": "add-chart", "id": "chart", "x": 240, "y": 180, "width": 1440, "height": 760,
@@ -1063,6 +1077,32 @@ the suffix `%`:
              "data": [ { "label": "winter beds", "value": 4200, "b": 5000 },
                        { "label": "reading room", "value": 2600, "b": 4000 },
                        { "label": "goalposts", "value": 6100, "b": 5000 } ] } }
+```
+
+A candlestick reads its period off the point itself - `open`, `high`, `low`, and `value` the close -
+and letters the readings' own range, not one anchored at zero, because a range far from zero is the
+candle's whole point:
+
+```json
+{ "op": "add-chart", "id": "roof", "x": 220, "y": 180, "width": 1480, "height": 760,
+  "chart": { "kind": "candlestick", "title": "A week on the roof",
+             "format": { "suffix": " °C", "decimals": 0 },
+             "data": [ { "label": "Mon", "open": 11, "high": 19, "low": 9, "value": 17 },
+                       { "label": "Tue", "open": 14, "high": 21, "low": 12, "value": 15 },
+                       { "label": "Wed", "open": 15, "high": 16, "low": 10, "value": 11 },
+                       { "label": "Thu", "open": 9, "high": 14, "low": 7, "value": 13 } ] } }
+```
+
+A table is a row a point - the label left, its number right, ruled like a ledger - and
+`show-values` off letters a plain list:
+
+```json
+{ "op": "add-chart", "id": "league", "x": 320, "y": 200, "width": 1280, "height": 720,
+  "chart": { "kind": "table", "title": "The pub quiz league",
+             "format": { "suffix": " pts", "decimals": 0 },
+             "data": [ { "label": "The Buzzer Beaters", "value": 87 },
+                       { "label": "Quizzy Riggers", "value": 81 },
+                       { "label": "The Decimal Points", "value": 78 } ] } }
 ```
 
 Two honest notes on the engine. A line is a chain of thin rotated rectangles and a donut a ring of
@@ -1119,7 +1159,9 @@ families already are.
 ```
 
 The example comps under `examples/comps/` carry all of it - `data.chart.bars`, `data.chart.line`,
-`data.chart.donut`, `data.counter`, `data.particles`, `data.camera` - written by
+`data.chart.donut`, `data.chart.dot`, `data.chart.compare`, `data.chart.progress`,
+`data.chart.candlestick`, `data.chart.timeline`, `data.chart.table`, `data.counter`,
+`data.particles`, `data.camera` - written by
 `cargo run -p concat-motion --example dump_graphics -- examples/comps`, validated and mapped onto
 a timeline by the suite, and rendered through the real sidecar by the workflow's own lane.
 

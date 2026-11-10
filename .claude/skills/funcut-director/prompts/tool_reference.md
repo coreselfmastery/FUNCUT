@@ -43,8 +43,8 @@ rule: surface the pip hint.
 - `ops` is the full authoring vocabulary: set-slot, set-text, set-words,
   set-markup, move, retime, set-track, set-track-points, set-noise-track
   (seeded drift), fade-in, slide-to, pop, add-group, add-rect, add-text,
-  add-chart (data-driven bar/line/area/donut/dot/compare/progress, any
-  domain), add-counter
+  add-chart (data-driven bar/line/area/donut/dot/compare/progress/
+  candlestick/timeline/table, any domain), add-counter
   (a baked count-up), add-particles (seeded, baked to keyframes),
   set-camera (zoom/pan/roll with per-layer depths), set-blend,
   set-opacity, set-duration, set-background, delete. One batch, applied

@@ -2159,6 +2159,9 @@ mod tests {
                             value: 3.0,
                             b: None,
                             color: None,
+                            open: None,
+                            high: None,
+                            low: None,
                         }],
                         ..Chart::default()
                     },
@@ -2224,8 +2227,9 @@ mod tests {
 
     /// The JSON the documentation shows is the JSON the operations parse:
     /// the worked examples in MOTION.md are a test, not a wish - the bar
-    /// and the counter and the particles and the camera, and the paired
-    /// kinds the data-graphics section shows: a compare and a progress.
+    /// and the counter and the particles and the camera, the paired kinds
+    /// a compare and a progress, and the candle and the ledger a
+    /// candlestick and a table draw.
     #[test]
     fn the_documented_data_graphics_json_parses_as_ops() {
         let comp = presets::build("funcut.lower-third.glass").expect("a preset");
@@ -2289,6 +2293,45 @@ mod tests {
                 && edited.node("drive.fill.0").is_some()
                 && edited.node("drive.share.2").is_some(),
             "the tracks, the fills and the shares are there"
+        );
+
+        // The candlestick MOTION.md shows: a period a point, the wick over
+        // its range, the body grown from its open.
+        let weather = serde_json::json!({"ops": [
+            {"op": "add-chart", "id": "roof", "x": 220, "y": 180, "width": 1480, "height": 760,
+             "chart": {"kind": "candlestick", "title": "A week on the roof",
+                        "format": {"suffix": " °C", "decimals": 0},
+                        "data": [{"label": "Mon", "open": 11, "high": 19, "low": 9, "value": 17},
+                                  {"label": "Tue", "open": 14, "high": 21, "low": 12, "value": 15},
+                                  {"label": "Wed", "open": 15, "high": 16, "low": 10, "value": 11},
+                                  {"label": "Thu", "open": 9, "high": 14, "low": 7, "value": 13}]}}
+        ]});
+        let edited = apply_json(&comp, &weather).expect("the documented candlestick parses");
+        assert!(edited.validate().is_empty(), "{:?}", edited.validate());
+        assert!(
+            edited.node("roof.wick.0").is_some()
+                && edited.node("roof.body.1").is_some()
+                && edited.node("roof.legend.name.0").is_some(),
+            "the wicks, the bodies and the legend are there"
+        );
+
+        // The table MOTION.md shows: a row a point, the label left, its
+        // number right, ruled like a ledger.
+        let standings = serde_json::json!({"ops": [
+            {"op": "add-chart", "id": "league", "x": 320, "y": 200, "width": 1280, "height": 720,
+             "chart": {"kind": "table", "title": "The pub quiz league",
+                        "format": {"suffix": " pts", "decimals": 0},
+                        "data": [{"label": "The Buzzer Beaters", "value": 87},
+                                  {"label": "Quizzy Riggers", "value": 81},
+                                  {"label": "The Decimal Points", "value": 78}]}}
+        ]});
+        let edited = apply_json(&comp, &standings).expect("the documented table parses");
+        assert!(edited.validate().is_empty(), "{:?}", edited.validate());
+        assert!(
+            edited.node("league.label.0").is_some()
+                && edited.node("league.value.2").is_some()
+                && edited.node("league.rule.1").is_some(),
+            "the rows, the numbers and the rules are there"
         );
     }
 

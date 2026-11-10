@@ -48,6 +48,13 @@ pub const MAX_SLICES: usize = 12;
 /// whatever the domain.
 const DEFAULT_PALETTE: [&str; 5] = [ACCENT, "#e8c982", "#b0764a", INK, MUTED];
 
+/// A candlestick's rise and fall: semantics, not a colour scheme. The one
+/// pair in the module a palette does not choose unless it names two - a
+/// green and a red are what a rise and a fall mean, whatever the domain
+/// whose ranges are being drawn.
+const RISE: &str = "#6f9e6a";
+const FALL: &str = "#c25b4d";
+
 /// How a number reads when it is drawn beside a bar or run up by a counter.
 ///
 /// Domain-neutral by construction: a prefix and suffix say the unit
@@ -156,6 +163,19 @@ pub struct Datum {
     /// sides of one category stop being tellable apart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
+    /// The period's open, when the point is a candle: read by a
+    /// candlestick only, where `value` is the close. A kind that reads
+    /// one number a point refuses it by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open: Option<f64>,
+    /// The period's high, the top of its range: read by a candlestick
+    /// only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub high: Option<f64>,
+    /// The period's low, the bottom of its range: read by a candlestick
+    /// only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low: Option<f64>,
 }
 
 /// The kinds of chart the operation draws.
@@ -182,6 +202,20 @@ pub enum ChartKind {
     /// `value` achieved of `b` set, goals met, quotas filled, distance
     /// covered. The share letters the truth even past a full track.
     Progress,
+    /// A period a point as one candle - open, high, low and close, the
+    /// `value` the close - a thin wick over the period's range and a
+    /// body from its open to its close, both in the direction's own
+    /// colour. The grammar prices made famous, drawn for whatever else
+    /// moves in ranges: a day's temperatures, a morning's readings.
+    Candlestick,
+    /// Events along one axis, each a dot at its own number - a date, a
+    /// mile, a year - a stem out to its lettering, the letters
+    /// alternating sides so one event never sits on another's name.
+    Timeline,
+    /// A row a point, the label lettered left and its number right,
+    /// ruled underneath like a ledger: standings, specs, budgets - the
+    /// numbers that matter as text, not as geometry.
+    Table,
 }
 
 /// The chart an `add-chart` operation draws, in any domain.
@@ -205,19 +239,23 @@ pub struct Chart {
     /// The colours: a donut cycles them slice by slice, a column chart,
     /// a trend or an area draws its one series in the first, and any point
     /// can name its own. A compare letters its two series in the first
-    /// two.
+    /// two, and a candlestick its rise and fall - or its own green and
+    /// red when fewer than two are said.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub palette: Vec<String>,
-    /// The two series' names, when the chart compares: the legend under
-    /// the letterhead letters them beside their dots. Exactly two entries
-    /// (`A` and `B` when unsaid), and a kind that does not compare
-    /// refuses them by name.
+    /// The two sides' names, when the chart letters two: a compare's
+    /// series, a candlestick's rise and fall. The legend under the
+    /// letterhead letters them beside their dots. Exactly two entries
+    /// (`A` and `B` - or `rose` and `fell` - when unsaid), and a kind
+    /// that does not letter two sides refuses them by name.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub series: Vec<String>,
     /// A plate behind the chart as `#rrggbb(aa)`; none for transparent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plate: Option<String>,
-    /// Draw each bar's value above it (or each slice's share beside it).
+    /// Draw each bar's value above it (or each slice's share beside it,
+    /// each candle's close above its high, each table row's number at
+    /// its right, each timeline event's number beside its name).
     #[serde(default = "yes")]
     pub show_values: bool,
     /// Hairlines behind the columns.
@@ -589,6 +627,28 @@ pub fn chart_nodes(
             id, chart, &data, &color_of, plot, at, span, stagger, hold, label_size, value_size,
             &mut nodes,
         ),
+        ChartKind::Candlestick => {
+            // Rise and fall are semantics, not a colour scheme: the
+            // palette's first two when two are said, the candlestick's
+            // own green and red when they are not.
+            let rise_fall: Vec<String> = if chart.palette.len() >= 2 {
+                chart.palette[..2].to_vec()
+            } else {
+                vec![RISE.into(), FALL.into()]
+            };
+            candlestick_chart(
+                id, chart, &data, &rise_fall, plot, at, span, stagger, hold, label_size,
+                value_size, &mut nodes,
+            );
+        }
+        ChartKind::Timeline => timeline_chart(
+            id, chart, &data, &color_of, plot, at, span, stagger, hold, label_size, value_size,
+            &mut nodes,
+        ),
+        ChartKind::Table => table_chart(
+            id, chart, &data, &color_of, plot, at, span, stagger, hold, label_size, value_size,
+            &mut nodes,
+        ),
     }
     Ok(nodes)
 }
@@ -661,6 +721,103 @@ fn check_data(chart: &Chart) -> Result<Vec<Datum>, MotionError> {
             _ => {}
         }
     }
+    // The candle's fields belong to the candlestick that reads them, and
+    // only it: a kind that reads one number a point refuses an open, a
+    // high and a low by name, exactly as it refuses a b.
+    let reads_candles = matches!(chart.kind, ChartKind::Candlestick);
+    for (i, point) in chart.data.iter().enumerate() {
+        for (name, field) in [
+            ("open", &point.open),
+            ("high", &point.high),
+            ("low", &point.low),
+        ] {
+            match field {
+                Some(_) if !reads_candles => {
+                    return Err(fail(
+                        format!(
+                            "point {i} ({:?}) carries a {name}, and a {:?} chart \
+                             reads one number a point",
+                            point.label, chart.kind
+                        ),
+                        "open, high and low are a candlestick's; its value is the close",
+                    ));
+                }
+                Some(number) if !number.is_finite() => {
+                    return Err(fail(
+                        format!(
+                            "point {i} ({:?}) has a {name} that is not finite",
+                            point.label
+                        ),
+                        "every reading is data; nan and infinity are not data",
+                    ));
+                }
+                None if reads_candles => {
+                    return Err(fail(
+                        format!("point {i} ({:?}) has no {name}", point.label),
+                        "a candlestick reads open, high, low and value - the \
+                         close - a point",
+                    ));
+                }
+                _ => {}
+            }
+        }
+    }
+    // The wick must enclose the body: a high the candle does not reach,
+    // or a low above its body, is not a period the eye can read.
+    if reads_candles {
+        for (i, point) in chart.data.iter().enumerate() {
+            let open = point.open.unwrap_or(point.value);
+            let high = point.high.unwrap_or(point.value);
+            let low = point.low.unwrap_or(point.value);
+            if high < open.max(point.value) {
+                return Err(fail(
+                    format!(
+                        "point {i} ({:?}) has a high its candle does not reach",
+                        point.label
+                    ),
+                    "the wick must enclose the open and the close; check the readings",
+                ));
+            }
+            if low > open.min(point.value) {
+                return Err(fail(
+                    format!("point {i} ({:?}) has a low above its body", point.label),
+                    "the wick must enclose the open and the close; check the readings",
+                ));
+            }
+        }
+        // A candle's colour is its direction's: a per-point colour would
+        // dress a rise and a fall the same, and the chart would stop
+        // telling them apart.
+        for (i, point) in chart.data.iter().enumerate() {
+            if point.color.is_some() {
+                return Err(fail(
+                    format!("point {i} ({:?}) names a colour", point.label),
+                    "a candlestick's colour is its direction's: the palette's \
+                     first two are its rise and fall",
+                ));
+            }
+        }
+    }
+    // A timeline spreads its events along its own axis: every event on
+    // one date is a title card, not a timeline.
+    if matches!(chart.kind, ChartKind::Timeline) {
+        let first = chart
+            .data
+            .iter()
+            .map(|point| point.value)
+            .fold(f64::INFINITY, f64::min);
+        let last = chart
+            .data
+            .iter()
+            .map(|point| point.value)
+            .fold(f64::NEG_INFINITY, f64::max);
+        if (last - first).abs() <= f64::EPSILON {
+            return Err(fail(
+                "every event sits on one date".into(),
+                "a timeline needs two distinct positions to spread along its axis",
+            ));
+        }
+    }
     // A compare's colour is its series': a per-point colour would dress
     // both sides of one category the same, and the chart would stop
     // telling them apart.
@@ -697,21 +854,22 @@ fn check_data(chart: &Chart) -> Result<Vec<Datum>, MotionError> {
             }
         }
     }
-    // Series names belong to the compare that letters them.
+    // Series names belong to the kinds that letter two sides.
     if !chart.series.is_empty() {
-        if !matches!(chart.kind, ChartKind::Compare) {
+        if !matches!(chart.kind, ChartKind::Compare | ChartKind::Candlestick) {
             return Err(fail(
-                format!("a {:?} chart does not compare two series", chart.kind),
-                "series names a compare's two sides; drop it here",
+                format!("a {:?} chart does not letter two sides", chart.kind),
+                "series names a compare's two sides or a candlestick's rise \
+                 and fall; drop it here",
             ));
         }
         if chart.series.len() != 2 {
             return Err(fail(
                 format!(
-                    "{} series names, and a compare has two sides",
+                    "{} series names, and the chart letters two sides",
                     chart.series.len()
                 ),
-                "name both - [`this`, `that`] - or neither for A and B",
+                "name both - [`this`, `that`] - or neither for the defaults",
             ));
         }
     }
@@ -1842,6 +2000,552 @@ fn progress_chart(
     }
 }
 
+/// The candlestick chart: a period a point as one candle - a thin wick
+/// drawn from the period's low to its high, a body grown from its open to
+/// its close, both in the direction's own colour. The grammar prices made
+/// famous, drawn from rectangles for whatever else moves in ranges: a
+/// day's temperatures, a morning's readings, a session of anything with
+/// an open and a close.
+///
+/// The plot letters the data's own range - the lowest low to the highest
+/// high - not one anchored at zero: a range that lives far from zero is
+/// the candle's whole point, and a baseline that far away would squeeze
+/// every body into a band at the top of the plot.
+#[allow(clippy::too_many_arguments)]
+fn candlestick_chart(
+    id: &str,
+    chart: &Chart,
+    data: &[Datum],
+    palette: &[String],
+    plot: Area,
+    at: f64,
+    span: f64,
+    stagger: f64,
+    hold: f64,
+    label_size: f64,
+    value_size: f64,
+    nodes: &mut Vec<Node>,
+) {
+    let rise = palette[0].clone();
+    let fall = palette[1].clone();
+    let names = [
+        chart
+            .series
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "rose".into()),
+        chart
+            .series
+            .get(1)
+            .cloned()
+            .unwrap_or_else(|| "fell".into()),
+    ];
+
+    // The legend takes a row under the letterhead; the candles take the
+    // rest, exactly as the compare lays its columns out below its own.
+    let legend_row = label_size * 2.0;
+    let plot = Area {
+        y: plot.y + legend_row,
+        height: (plot.height - legend_row).max(80.0),
+        ..plot
+    };
+    let label_row = label_size * 1.9;
+    let plot_height = (plot.height - label_row).max(40.0);
+    // The candles' own range: the lowest low to the highest high, the
+    // range the readings span and no other.
+    let mut low = f64::INFINITY;
+    let mut high = f64::NEG_INFINITY;
+    for point in data {
+        low = low.min(point.low.unwrap_or(point.value));
+        high = high.max(point.high.unwrap_or(point.value));
+    }
+    if high <= low {
+        high = low + 1.0;
+    }
+    let range = high - low;
+    let bottom = plot.y + plot_height;
+    let y = |value: f64| bottom - (value - low) / range * plot_height;
+    let slot = plot.width / data.len() as f64;
+    let body_width = (slot * 0.5).min(plot_width_cap(plot.width));
+
+    if chart.show_grid {
+        for g in 1..=3 {
+            let mut line = node(
+                &format!("{id}.grid.{g}"),
+                at,
+                NodeKind::Rect {
+                    width: Length::px(plot.width),
+                    height: Length::px(1.0),
+                    fill: Some(Paint::Solid {
+                        color: hairline(0.16),
+                    }),
+                    radius: 0.0,
+                },
+            );
+            line.transform.position = Some(Point::new(
+                plot.x + plot.width / 2.0,
+                y(low + range * f64::from(g) / 4.0),
+            ));
+            line.tracks.insert(
+                "opacity".into(),
+                entrance(0.0, fraction_of(span, 0.35), &Curve::EASE_OUT),
+            );
+            nodes.push(line);
+        }
+    }
+
+    let mut axis = node(
+        &format!("{id}.axis"),
+        at,
+        NodeKind::Rect {
+            width: Length::px(plot.width),
+            height: Length::px(2.0),
+            fill: Some(Paint::Solid {
+                color: hairline(0.5),
+            }),
+            radius: 0.0,
+        },
+    );
+    axis.transform.position = Some(Point::new(plot.x + plot.width / 2.0, bottom));
+    axis.tracks.insert(
+        "opacity".into(),
+        entrance(0.0, fraction_of(span, 0.35), &Curve::EASE_OUT),
+    );
+    nodes.push(axis);
+
+    // The legend, one side at each end of the plot, exactly as the
+    // compare letters its own: a dot in the direction's colour and its
+    // name beside it.
+    for (side, (name, color)) in names.iter().zip([&rise, &fall]).enumerate() {
+        let legend_y = plot.y - legend_row * 0.45;
+        let dot_size = (label_size * 0.55).clamp(9.0, 18.0);
+        let edge = if side == 0 {
+            plot.x + dot_size
+        } else {
+            plot.x + plot.width - dot_size
+        };
+        let start = stagger;
+        let mut swatch = node(
+            &format!("{id}.legend.{side}"),
+            at,
+            NodeKind::Ellipse {
+                width: Length::px(dot_size),
+                height: Length::px(dot_size),
+                fill: Some(Paint::Solid {
+                    color: Rgba::hex(color),
+                }),
+            },
+        );
+        swatch.transform.position = Some(Point::new(edge, legend_y));
+        swatch
+            .tracks
+            .insert("opacity".into(), entrance(start, hold, &Curve::EASE_OUT));
+        nodes.push(swatch);
+
+        let mut name_node = text(
+            &format!("{id}.legend.name.{side}"),
+            at,
+            name,
+            label_size,
+            600,
+            Rgba::hex(INK),
+        );
+        name_node.transform.position = Some(Point::new(
+            if side == 0 {
+                edge + dot_size * 1.4
+            } else {
+                edge - dot_size * 1.4
+            },
+            legend_y,
+        ));
+        if let NodeKind::Text(boxed) = &mut name_node.kind {
+            boxed.align = if side == 0 {
+                TextAlign::Left
+            } else {
+                TextAlign::Right
+            };
+            boxed.max_width = Some(plot.width * 0.3);
+        }
+        name_node
+            .tracks
+            .insert("opacity".into(), entrance(start, hold, &Curve::EASE_OUT));
+        nodes.push(name_node);
+    }
+
+    for (i, point) in data.iter().enumerate() {
+        let start = stagger * (i + 1) as f64;
+        let centre_x = plot.x + slot * (i as f64 + 0.5);
+        let open = point.open.unwrap_or(point.value);
+        let high = point.high.unwrap_or(point.value);
+        let low = point.low.unwrap_or(point.value);
+        let close = point.value;
+        let rising = close >= open;
+        let color = if rising { &rise } else { &fall };
+
+        // The wick: the period's full range, centred on its own middle.
+        let mut wick = node(
+            &format!("{id}.wick.{i}"),
+            at,
+            NodeKind::Rect {
+                width: Length::px(2.0),
+                height: Length::px((y(low) - y(high)).max(1.0)),
+                fill: Some(Paint::Solid {
+                    color: Rgba::hex(color),
+                }),
+                radius: 0.0,
+            },
+        );
+        wick.transform.position = Some(Point::new(centre_x, (y(high) + y(low)) / 2.0));
+        wick.transform.anchor = Some(Point::new(0.5, 0.5));
+        wick.tracks
+            .insert("scale".into(), entrance(start, hold, &chart.curve));
+        nodes.push(wick);
+
+        // The body, grown from the open - the period's start - so a rise
+        // climbs out of its open and a fall climbs down from it. An open
+        // that never moved still letters a line, centred where it stood.
+        let still = open == close;
+        let mut body = node(
+            &format!("{id}.body.{i}"),
+            at,
+            NodeKind::Rect {
+                width: Length::px(body_width),
+                height: Length::px((y(open) - y(close)).abs().max(2.0)),
+                fill: Some(Paint::Solid {
+                    color: Rgba::hex(color),
+                }),
+                radius: (body_width * 0.08).min(3.0),
+            },
+        );
+        body.transform.anchor = Some(Point::new(
+            0.5,
+            if still {
+                0.5
+            } else if rising {
+                1.0
+            } else {
+                0.0
+            },
+        ));
+        body.transform.position = Some(Point::new(centre_x, y(open)));
+        body.tracks
+            .insert("scale".into(), entrance(start, hold, &chart.curve));
+        nodes.push(body);
+
+        if chart.show_values {
+            let mut value = text(
+                &format!("{id}.value.{i}"),
+                at,
+                &chart.format.format(close),
+                value_size * 0.85,
+                700,
+                Rgba::hex(INK),
+            );
+            value.transform.position = Some(Point::new(centre_x, y(high) - value_size * 0.7));
+            if let NodeKind::Text(boxed) = &mut value.kind {
+                boxed.max_width = Some(slot);
+            }
+            value
+                .tracks
+                .insert("opacity".into(), entrance(start, hold, &chart.curve));
+            nodes.push(value);
+        }
+
+        let mut label = text(
+            &format!("{id}.label.{i}"),
+            at,
+            &point.label,
+            label_size,
+            500,
+            Rgba::hex(MUTED),
+        );
+        label.transform.position = Some(Point::new(centre_x, bottom + label_row * 0.5));
+        if let NodeKind::Text(boxed) = &mut label.kind {
+            boxed.max_width = Some(slot);
+        }
+        label
+            .tracks
+            .insert("opacity".into(), entrance(start, hold, &Curve::EASE_OUT));
+        nodes.push(label);
+    }
+}
+
+/// The timeline: events along one axis, each a dot at its own number - a
+/// date, a mile, a year - its stem reaching out to its lettering, the
+/// letters alternating sides so one event never sits on another's name.
+/// The axis is the data's own span, first event to last, and every event
+/// lands where its own number puts it.
+#[allow(clippy::too_many_arguments)]
+fn timeline_chart(
+    id: &str,
+    chart: &Chart,
+    data: &[Datum],
+    color_of: &dyn Fn(usize) -> String,
+    plot: Area,
+    at: f64,
+    span: f64,
+    stagger: f64,
+    hold: f64,
+    label_size: f64,
+    value_size: f64,
+    nodes: &mut Vec<Node>,
+) {
+    // The axis runs through the middle of the plot so both sides can
+    // letter; the events sit on it where their numbers place them.
+    let axis_y = plot.y + plot.height * 0.5;
+    let first = data
+        .iter()
+        .map(|point| point.value)
+        .fold(f64::INFINITY, f64::min);
+    let last = data
+        .iter()
+        .map(|point| point.value)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let spread = last - first;
+    let x = |value: f64| plot.x + (value - first) / spread * plot.width;
+
+    if chart.show_grid {
+        for g in 1..=3 {
+            let mut line = node(
+                &format!("{id}.grid.{g}"),
+                at,
+                NodeKind::Rect {
+                    width: Length::px(1.0),
+                    height: Length::px(plot.height),
+                    fill: Some(Paint::Solid {
+                        color: hairline(0.16),
+                    }),
+                    radius: 0.0,
+                },
+            );
+            line.transform.position =
+                Some(Point::new(x(first + spread * f64::from(g) / 4.0), axis_y));
+            line.tracks.insert(
+                "opacity".into(),
+                entrance(0.0, fraction_of(span, 0.35), &Curve::EASE_OUT),
+            );
+            nodes.push(line);
+        }
+    }
+
+    let mut axis = node(
+        &format!("{id}.axis"),
+        at,
+        NodeKind::Rect {
+            width: Length::px(plot.width),
+            height: Length::px(2.0),
+            fill: Some(Paint::Solid {
+                color: hairline(0.5),
+            }),
+            radius: 0.0,
+        },
+    );
+    axis.transform.position = Some(Point::new(plot.x + plot.width / 2.0, axis_y));
+    axis.tracks.insert(
+        "opacity".into(),
+        entrance(0.0, fraction_of(span, 0.35), &Curve::EASE_OUT),
+    );
+    nodes.push(axis);
+
+    // The stems reach far enough for a name and a number, and no further
+    // than the plot has room for.
+    let reach = (plot.height * 0.5 - label_size * 2.6).max(label_size * 1.4);
+    for (i, point) in data.iter().enumerate() {
+        let start = stagger * (i + 1) as f64;
+        let px = x(point.value);
+        let above = i % 2 == 0;
+        let letter_x = px.clamp(plot.x + label_size, plot.x + plot.width - label_size);
+
+        // Grown out of the axis, the dot plot's own trick: the anchor is
+        // the end that touches the line the event belongs to.
+        let mut stem = node(
+            &format!("{id}.stem.{i}"),
+            at,
+            NodeKind::Rect {
+                width: Length::px(1.5),
+                height: Length::px(reach),
+                fill: Some(Paint::Solid {
+                    color: hairline(0.4),
+                }),
+                radius: 0.0,
+            },
+        );
+        stem.transform.anchor = Some(Point::new(0.5, if above { 1.0 } else { 0.0 }));
+        stem.transform.position = Some(Point::new(px, axis_y));
+        stem.tracks
+            .insert("scale".into(), entrance(start, hold, &chart.curve));
+        nodes.push(stem);
+
+        let dot_size = (label_size * 0.55).clamp(9.0, 18.0);
+        let mut dot = node(
+            &format!("{id}.dot.{i}"),
+            at,
+            NodeKind::Ellipse {
+                width: Length::px(dot_size),
+                height: Length::px(dot_size),
+                fill: Some(Paint::Solid {
+                    color: Rgba::hex(&color_of(i)),
+                }),
+            },
+        );
+        dot.transform.position = Some(Point::new(px, axis_y));
+        dot.tracks
+            .insert("scale".into(), entrance(start, hold, &chart.curve));
+        nodes.push(dot);
+
+        // The name beside the stem's far end, the number - through the
+        // chart's own format - beyond it.
+        let stem_end = if above {
+            axis_y - reach
+        } else {
+            axis_y + reach
+        };
+        let name_y = if above {
+            stem_end - label_size * 0.6
+        } else {
+            stem_end + label_size * 0.6
+        };
+        let mut name = text(
+            &format!("{id}.label.{i}"),
+            at,
+            &point.label,
+            label_size,
+            600,
+            Rgba::hex(INK),
+        );
+        name.transform.position = Some(Point::new(letter_x, name_y));
+        if let NodeKind::Text(boxed) = &mut name.kind {
+            boxed.max_width =
+                Some((plot.width / data.len().max(2) as f64 * 2.0).min(plot.width * 0.3));
+        }
+        name.tracks
+            .insert("opacity".into(), entrance(start, hold, &Curve::EASE_OUT));
+        nodes.push(name);
+
+        if chart.show_values {
+            let date_y = if above {
+                name_y - label_size * 1.15
+            } else {
+                name_y + label_size * 1.15
+            };
+            let mut date = text(
+                &format!("{id}.value.{i}"),
+                at,
+                &chart.format.format(point.value),
+                value_size * 0.85,
+                500,
+                Rgba::hex(MUTED),
+            );
+            date.transform.position = Some(Point::new(letter_x, date_y));
+            if let NodeKind::Text(boxed) = &mut date.kind {
+                boxed.max_width =
+                    Some((plot.width / data.len().max(2) as f64 * 2.0).min(plot.width * 0.3));
+            }
+            date.tracks
+                .insert("opacity".into(), entrance(start, hold, &Curve::EASE_OUT));
+            nodes.push(date);
+        }
+    }
+}
+
+/// The table: a row a point, the label lettered left and its number
+/// right, ruled underneath like a ledger. The shape numbers take when
+/// they matter as text - standings, specs, budgets, menus - and the
+/// number reads through the chart's own format, so the units are the
+/// author's. With `show-values` off the numbers leave and the labels
+/// stay: a plain list, credits or a ranking's names alone.
+#[allow(clippy::too_many_arguments)]
+fn table_chart(
+    id: &str,
+    chart: &Chart,
+    data: &[Datum],
+    color_of: &dyn Fn(usize) -> String,
+    plot: Area,
+    at: f64,
+    span: f64,
+    stagger: f64,
+    hold: f64,
+    label_size: f64,
+    value_size: f64,
+    nodes: &mut Vec<Node>,
+) {
+    let row_height = plot.height / data.len() as f64;
+    // A crowded table letters smaller rather than overlapping: the rows
+    // are the data's count, and the type steps down to meet them.
+    let label_size = label_size.min(row_height * 0.55);
+    let value_size = value_size.min(row_height * 0.6);
+    let inset = label_size * 0.8;
+
+    for (i, point) in data.iter().enumerate() {
+        let start = stagger * (i + 1) as f64;
+        let row_y = plot.y + row_height * (i as f64 + 0.5);
+
+        // The rule under the row, every row but the last - a ledger
+        // closes without a trailing line.
+        if chart.show_grid && i + 1 < data.len() {
+            let mut rule = node(
+                &format!("{id}.rule.{i}"),
+                at,
+                NodeKind::Rect {
+                    width: Length::px(plot.width),
+                    height: Length::px(1.0),
+                    fill: Some(Paint::Solid {
+                        color: hairline(0.16),
+                    }),
+                    radius: 0.0,
+                },
+            );
+            rule.transform.position = Some(Point::new(
+                plot.x + plot.width / 2.0,
+                plot.y + row_height * (i + 1) as f64,
+            ));
+            rule.tracks.insert(
+                "opacity".into(),
+                entrance(0.0, fraction_of(span, 0.35), &Curve::EASE_OUT),
+            );
+            nodes.push(rule);
+        }
+
+        let mut label = text(
+            &format!("{id}.label.{i}"),
+            at,
+            &point.label,
+            label_size,
+            600,
+            Rgba::hex(INK),
+        );
+        label.transform.position = Some(Point::new(plot.x + inset, row_y));
+        if let NodeKind::Text(boxed) = &mut label.kind {
+            boxed.align = TextAlign::Left;
+            boxed.max_width = Some(plot.width * 0.62);
+        }
+        label
+            .tracks
+            .insert("opacity".into(), entrance(start, hold, &Curve::EASE_OUT));
+        nodes.push(label);
+
+        if chart.show_values {
+            let mut value = text(
+                &format!("{id}.value.{i}"),
+                at,
+                &chart.format.format(point.value),
+                value_size,
+                700,
+                Rgba::hex(&color_of(i)),
+            );
+            value.transform.position = Some(Point::new(plot.x + plot.width - inset, row_y));
+            if let NodeKind::Text(boxed) = &mut value.kind {
+                boxed.align = TextAlign::Right;
+                boxed.max_width = Some(plot.width * 0.34);
+            }
+            value
+                .tracks
+                .insert("opacity".into(), entrance(start, hold, &chart.curve));
+            nodes.push(value);
+        }
+    }
+}
+
 /// Build a counter's nodes: the numbers it steps through, one text node a
 /// step, each showing for its moment and handing the count on, and the
 /// final number holding to the end of the comp.
@@ -1966,24 +2670,36 @@ mod tests {
                 value: 96.0,
                 b: None,
                 color: None,
+                open: None,
+                high: None,
+                low: None,
             },
             Datum {
                 label: "Q2".into(),
                 value: 74.0,
                 b: None,
                 color: None,
+                open: None,
+                high: None,
+                low: None,
             },
             Datum {
                 label: "Q3".into(),
                 value: 118.0,
                 b: None,
                 color: None,
+                open: None,
+                high: None,
+                low: None,
             },
             Datum {
                 label: "Q4".into(),
                 value: 132.0,
                 b: None,
                 color: None,
+                open: None,
+                high: None,
+                low: None,
             },
         ]
     }
@@ -1997,23 +2713,70 @@ mod tests {
                 value: 96.0,
                 b: Some(88.0),
                 color: None,
+                open: None,
+                high: None,
+                low: None,
             },
             Datum {
                 label: "Q2".into(),
                 value: 74.0,
                 b: Some(102.0),
                 color: None,
+                open: None,
+                high: None,
+                low: None,
             },
             Datum {
                 label: "Q3".into(),
                 value: 118.0,
                 b: Some(104.0),
                 color: None,
+                open: None,
+                high: None,
+                low: None,
             },
             Datum {
                 label: "Q4".into(),
                 value: 132.0,
                 b: Some(110.0),
+                color: None,
+                open: None,
+                high: None,
+                low: None,
+            },
+        ]
+    }
+
+    /// The same readings as candles: open, high and low with the close in
+    /// `value` - the shape anything that moves in ranges takes, a week of
+    /// weather as much as a week of markets.
+    fn candles() -> Vec<Datum> {
+        vec![
+            Datum {
+                label: "Mon".into(),
+                value: 21.0,
+                open: Some(19.0),
+                high: Some(22.0),
+                low: Some(18.0),
+                b: None,
+                color: None,
+            },
+            Datum {
+                label: "Tue".into(),
+                value: 20.0,
+                open: Some(22.0),
+                high: Some(24.0),
+                low: Some(19.0),
+                b: None,
+                color: None,
+            },
+            Datum {
+                label: "Wed".into(),
+                value: 21.0,
+                open: Some(21.0),
+                high: Some(23.0),
+                low: Some(20.0),
+                b: None,
                 color: None,
             },
         ]
@@ -2074,13 +2837,22 @@ mod tests {
             ChartKind::Dot,
             ChartKind::Compare,
             ChartKind::Progress,
+            ChartKind::Candlestick,
+            ChartKind::Timeline,
+            ChartKind::Table,
         ] {
             let reads_b = matches!(kind, ChartKind::Compare | ChartKind::Progress);
             let chart = Chart {
                 kind,
                 title: Some("Quarterly review".into()),
                 subtitle: Some("units shipped, thousands".into()),
-                data: if reads_b { paired_data() } else { data() },
+                data: if reads_b {
+                    paired_data()
+                } else if matches!(kind, ChartKind::Candlestick) {
+                    candles()
+                } else {
+                    data()
+                },
                 series: if matches!(kind, ChartKind::Compare) {
                     vec!["this year".into(), "last year".into()]
                 } else {
@@ -2146,12 +2918,18 @@ mod tests {
                     value: 40.0,
                     b: None,
                     color: None,
+                    open: None,
+                    high: None,
+                    low: None,
                 },
                 Datum {
                     label: "loss".into(),
                     value: -20.0,
                     b: None,
                     color: None,
+                    open: None,
+                    high: None,
+                    low: None,
                 },
             ],
             ..Chart::default()
@@ -2181,6 +2959,9 @@ mod tests {
                 value: f64::NAN,
                 b: None,
                 color: None,
+                open: None,
+                high: None,
+                low: None,
             }],
             ..Chart::default()
         };
@@ -2194,12 +2975,18 @@ mod tests {
                     value: 10.0,
                     b: None,
                     color: None,
+                    open: None,
+                    high: None,
+                    low: None,
                 },
                 Datum {
                     label: "b".into(),
                     value: -4.0,
                     b: None,
                     color: None,
+                    open: None,
+                    high: None,
+                    low: None,
                 },
             ],
             ..Chart::default()
@@ -2238,6 +3025,9 @@ mod tests {
                     value: i as f64,
                     b: None,
                     color: None,
+                    open: None,
+                    high: None,
+                    low: None,
                 })
                 .collect(),
             ..Chart::default()
@@ -2260,15 +3050,25 @@ mod tests {
         // The paired kinds too: a compare's two sides and a progress's
         // shares come back the same twice - and the dot plot, one number
         // a point, is the same twice as well.
-        for kind in [ChartKind::Compare, ChartKind::Progress, ChartKind::Dot] {
+        for kind in [
+            ChartKind::Compare,
+            ChartKind::Progress,
+            ChartKind::Dot,
+            ChartKind::Candlestick,
+            ChartKind::Timeline,
+            ChartKind::Table,
+        ] {
             let chart = Chart {
                 kind,
-                // The dot plot reads one number a point and refuses the
-                // second; the paired kinds need it.
-                data: if matches!(kind, ChartKind::Dot) {
-                    data()
-                } else {
+                // The dot plot, the timeline and the table read one number
+                // a point and refuse the second; the paired kinds need
+                // it; the candlestick reads its own three.
+                data: if matches!(kind, ChartKind::Compare | ChartKind::Progress) {
                     paired_data()
+                } else if matches!(kind, ChartKind::Candlestick) {
+                    candles()
+                } else {
+                    data()
                 },
                 // Only the compare reads series names; the others refuse
                 // them, and refusing is part of being the same twice.
@@ -2392,18 +3192,27 @@ mod tests {
                     value: 5.0,
                     b: Some(10.0),
                     color: None,
+                    open: None,
+                    high: None,
+                    low: None,
                 },
                 Datum {
                     label: "over".into(),
                     value: 13.0,
                     b: Some(10.0),
                     color: None,
+                    open: None,
+                    high: None,
+                    low: None,
                 },
                 Datum {
                     label: "nothing".into(),
                     value: 0.0,
                     b: Some(10.0),
                     color: None,
+                    open: None,
+                    high: None,
+                    low: None,
                 },
             ],
             ..Chart::default()
@@ -2460,6 +3269,9 @@ mod tests {
                 value: 3.0,
                 b: Some(4.0),
                 color: None,
+                open: None,
+                high: None,
+                low: None,
             }],
             ..Chart::default()
         };
@@ -2474,6 +3286,9 @@ mod tests {
                 value: 3.0,
                 b: None,
                 color: None,
+                open: None,
+                high: None,
+                low: None,
             }],
             ..Chart::default()
         };
@@ -2488,12 +3303,18 @@ mod tests {
                     value: 3.0,
                     b: Some(4.0),
                     color: None,
+                    open: None,
+                    high: None,
+                    low: None,
                 },
                 Datum {
                     label: "half".into(),
                     value: 5.0,
                     b: None,
                     color: None,
+                    open: None,
+                    high: None,
+                    low: None,
                 },
             ],
             ..Chart::default()
@@ -2508,6 +3329,9 @@ mod tests {
                 value: 3.0,
                 b: Some(0.0),
                 color: None,
+                open: None,
+                high: None,
+                low: None,
             }],
             ..Chart::default()
         };
@@ -2521,6 +3345,9 @@ mod tests {
                 value: -3.0,
                 b: Some(10.0),
                 color: None,
+                open: None,
+                high: None,
+                low: None,
             }],
             ..Chart::default()
         };
@@ -2534,6 +3361,9 @@ mod tests {
                 value: 3.0,
                 b: Some(4.0),
                 color: Some("#ff0000".into()),
+                open: None,
+                high: None,
+                low: None,
             }],
             ..Chart::default()
         };
@@ -2548,10 +3378,441 @@ mod tests {
                 value: 3.0,
                 b: Some(4.0),
                 color: None,
+                open: None,
+                high: None,
+                low: None,
             }],
             ..Chart::default()
         };
         assert!(chart_nodes("g", &compare_half_named, area(), 0.0, 6.0).is_err());
+    }
+
+    /// The candle's grammar: the wick spans the period's own range, the
+    /// body its open-to-close, the colours are the direction's, and an
+    /// open that never moved still letters a line - the geometry is the
+    /// data's, candle by candle.
+    #[test]
+    fn a_candlesticks_wick_and_body_follow_the_data() {
+        let chart = Chart {
+            kind: ChartKind::Candlestick,
+            data: candles(),
+            format: NumberFormat {
+                suffix: " °C".into(),
+                decimals: 0,
+                ..Default::default()
+            },
+            ..Chart::default()
+        };
+        let nodes = chart_nodes("g", &chart, area(), 0.0, 6.0).expect("builds");
+        let candle = |id: &str| -> (f64, Point, Point, Rgba) {
+            nodes
+                .iter()
+                .find(|node| node.id == id)
+                .map(|node| match &node.kind {
+                    NodeKind::Rect {
+                        height: Length::Px(px),
+                        fill,
+                        ..
+                    } => (
+                        *px,
+                        node.transform.position.expect("placed"),
+                        node.transform.anchor.unwrap_or(Point::new(0.5, 0.5)),
+                        match fill {
+                            Some(Paint::Solid { color }) => *color,
+                            _ => Rgba::hex(INK),
+                        },
+                    ),
+                    _ => panic!("{id}: a rect"),
+                })
+                .unwrap_or_else(|| panic!("{id}: drawn"))
+        };
+        // The readings span 18 to 24, and the plot letters that range.
+        // Mon: a rise from 19 to 21 inside a wick from 18 to 22.
+        let (wick0_height, wick0_at, _, _) = candle("g.wick.0");
+        assert!(
+            (wick0_height - 344.0).abs() < 1.5,
+            "the wick spans the range"
+        );
+        assert!(
+            (wick0_at.y - 628.0).abs() < 1.5,
+            "centred on its own middle"
+        );
+        let (body0_height, body0_at, body0_anchor, body0_fill) = candle("g.body.0");
+        assert!(
+            (body0_height - 172.0).abs() < 1.5,
+            "the body spans the open to the close"
+        );
+        assert!(
+            (body0_at.y - 714.0).abs() < 1.5,
+            "a rise grows out of its open"
+        );
+        assert_eq!(body0_anchor, Point::new(0.5, 1.0));
+        assert_eq!(body0_fill, Rgba::hex(RISE));
+        // Tue: a fall from 22 to 20, grown down from the open.
+        let (_, body1_at, body1_anchor, body1_fill) = candle("g.body.1");
+        assert!(
+            (body1_at.y - 456.0).abs() < 1.5,
+            "a fall grows down from its open"
+        );
+        assert_eq!(body1_anchor, Point::new(0.5, 0.0));
+        assert_eq!(body1_fill, Rgba::hex(FALL));
+        // Wed: an open that never moved - a line, not nothing.
+        let (body2_height, _, body2_anchor, _) = candle("g.body.2");
+        assert!((body2_height - 2.0).abs() < 0.01, "a doji letters a line");
+        assert_eq!(body2_anchor, Point::new(0.5, 0.5), "centred where it stood");
+    }
+
+    /// A timeline's events land where their own numbers put them, on an
+    /// axis that spans first to last, and the letters alternate sides so
+    /// one event never sits on another's name.
+    #[test]
+    fn a_timeline_spreads_its_events_along_their_own_axis() {
+        let chart = Chart {
+            kind: ChartKind::Timeline,
+            format: NumberFormat {
+                decimals: 0,
+                ..Default::default()
+            },
+            data: vec![
+                Datum {
+                    label: "first light".into(),
+                    value: 2018.0,
+                    b: None,
+                    color: None,
+                    open: None,
+                    high: None,
+                    low: None,
+                },
+                Datum {
+                    label: "the new mirror".into(),
+                    value: 2020.0,
+                    b: None,
+                    color: None,
+                    open: None,
+                    high: None,
+                    low: None,
+                },
+                Datum {
+                    label: "the comet award".into(),
+                    value: 2022.0,
+                    b: None,
+                    color: None,
+                    open: None,
+                    high: None,
+                    low: None,
+                },
+                Datum {
+                    label: "the dome rebuilt".into(),
+                    value: 2025.0,
+                    b: None,
+                    color: None,
+                    open: None,
+                    high: None,
+                    low: None,
+                },
+            ],
+            ..Chart::default()
+        };
+        let nodes = chart_nodes("g", &chart, area(), 0.0, 6.0).expect("builds");
+        let position = |id: &str| -> Point {
+            nodes
+                .iter()
+                .find(|node| node.id == id)
+                .and_then(|node| node.transform.position)
+                .unwrap_or_else(|| panic!("{id}: drawn"))
+        };
+        // The axis spans 2018 to 2025 across the plot, and the events sit
+        // on it where their years put them.
+        let axis_y = 540.0;
+        let dot0 = position("g.dot.0");
+        assert!(
+            (dot0.x - 240.0).abs() < 1.5,
+            "the first event at the axis's start"
+        );
+        assert!((dot0.y - axis_y).abs() < 1.5, "the events sit on the axis");
+        assert!(
+            (position("g.dot.1").x - (240.0 + 2.0 / 7.0 * 1440.0)).abs() < 1.5,
+            "each event lands where its number puts it"
+        );
+        assert!(
+            (position("g.dot.3").x - 1680.0).abs() < 1.5,
+            "the last event at the axis's end"
+        );
+        // The letters alternate sides, the first above the line.
+        assert!(
+            position("g.label.0").y < axis_y,
+            "the first event letters above"
+        );
+        assert!(position("g.label.1").y > axis_y, "the second below");
+        // The stem grows out of the axis toward its lettering.
+        let stem0 = nodes
+            .iter()
+            .find(|node| node.id == "g.stem.0")
+            .expect("the stem is drawn");
+        assert_eq!(stem0.transform.anchor, Some(Point::new(0.5, 1.0)));
+    }
+
+    /// A table's rows sit at even heights, the label lettered left and its
+    /// number right through the chart's own format, a point that names a
+    /// colour letters its number in it, and a table asked not to show its
+    /// numbers letters a plain list.
+    #[test]
+    fn a_table_letters_its_rows_left_and_right() {
+        let chart = Chart {
+            kind: ChartKind::Table,
+            format: NumberFormat {
+                suffix: " pts".into(),
+                decimals: 0,
+                ..Default::default()
+            },
+            data: vec![
+                Datum {
+                    label: "The Buzzer Beaters".into(),
+                    value: 87.0,
+                    b: None,
+                    color: Some("#e8c982".into()),
+                    open: None,
+                    high: None,
+                    low: None,
+                },
+                Datum {
+                    label: "Quizzy Riggers".into(),
+                    value: 81.0,
+                    b: None,
+                    color: None,
+                    open: None,
+                    high: None,
+                    low: None,
+                },
+                Datum {
+                    label: "The Decimal Points".into(),
+                    value: 78.0,
+                    b: None,
+                    color: None,
+                    open: None,
+                    high: None,
+                    low: None,
+                },
+            ],
+            ..Chart::default()
+        };
+        let nodes = chart_nodes("g", &chart, area(), 0.0, 6.0).expect("builds");
+        let words = |id: &str| -> (Point, String, TextAlign, Rgba) {
+            nodes
+                .iter()
+                .find(|node| node.id == id)
+                .map(|node| match &node.kind {
+                    NodeKind::Text(boxed) => (
+                        node.transform.position.expect("placed"),
+                        boxed.text.clone(),
+                        boxed.align,
+                        boxed.color,
+                    ),
+                    _ => panic!("{id}: text"),
+                })
+                .unwrap_or_else(|| panic!("{id}: drawn"))
+        };
+        // Three rows in the plot's own height, the label left, the number
+        // right.
+        let (label0_at, _, label0_align, _) = words("g.label.0");
+        assert!(
+            (label0_at.y - 316.0).abs() < 1.5,
+            "the rows sit at even heights"
+        );
+        assert!(
+            (label0_at.x - 272.0).abs() < 1.5,
+            "the label letters at the left"
+        );
+        assert_eq!(label0_align, TextAlign::Left);
+        let (value0_at, value0_words, value0_align, value0_color) = words("g.value.0");
+        assert_eq!(value0_words, "87 pts");
+        assert_eq!(value0_align, TextAlign::Right);
+        assert!(
+            (value0_at.x - 1648.0).abs() < 1.5,
+            "the number letters at the row's right end"
+        );
+        assert_eq!(
+            value0_color,
+            Rgba::hex("#e8c982"),
+            "a point that names a colour letters its number in it"
+        );
+        let (_, value1_words, _, value1_color) = words("g.value.1");
+        assert_eq!(value1_words, "81 pts");
+        assert_eq!(value1_color, Rgba::hex(ACCENT));
+        // Ruled under every row but the last: a ledger closes without a
+        // trailing line.
+        assert!(nodes.iter().any(|node| node.id == "g.rule.0"));
+        assert!(nodes.iter().any(|node| node.id == "g.rule.1"));
+        assert!(!nodes.iter().any(|node| node.id == "g.rule.2"));
+        // Asked not to show its numbers, the table letters a plain list.
+        let plain = Chart {
+            show_values: false,
+            ..chart.clone()
+        };
+        let plain_nodes = chart_nodes("g", &plain, area(), 0.0, 6.0).expect("builds");
+        assert!(
+            !plain_nodes
+                .iter()
+                .any(|node| node.id.starts_with("g.value."))
+        );
+    }
+
+    /// The candle's fields, a single date and a table's extras are refused
+    /// where they make no sense, the point named - not dropped quietly
+    /// somewhere below.
+    #[test]
+    fn the_candle_fields_and_single_dates_are_refused_where_they_make_no_sense() {
+        // A bar that carries a high: the candle's fields are the
+        // candlestick's.
+        let bar_with_high = Chart {
+            data: vec![Datum {
+                label: "x".into(),
+                value: 3.0,
+                b: None,
+                color: None,
+                open: None,
+                high: Some(4.0),
+                low: None,
+            }],
+            ..Chart::default()
+        };
+        assert!(chart_nodes("g", &bar_with_high, area(), 0.0, 6.0).is_err());
+
+        // A candlestick missing its low on one point: the point is named.
+        let candle_no_low = Chart {
+            kind: ChartKind::Candlestick,
+            data: vec![
+                Datum {
+                    label: "whole".into(),
+                    value: 3.0,
+                    b: None,
+                    color: None,
+                    open: Some(2.0),
+                    high: Some(4.0),
+                    low: Some(1.0),
+                },
+                Datum {
+                    label: "half".into(),
+                    value: 3.0,
+                    b: None,
+                    color: None,
+                    open: Some(2.0),
+                    high: Some(4.0),
+                    low: None,
+                },
+            ],
+            ..Chart::default()
+        };
+        assert!(chart_nodes("g", &candle_no_low, area(), 0.0, 6.0).is_err());
+
+        // A wick that does not enclose its body.
+        let candle_bad_wick = Chart {
+            kind: ChartKind::Candlestick,
+            data: vec![Datum {
+                label: "x".into(),
+                value: 9.0,
+                b: None,
+                color: None,
+                open: Some(2.0),
+                high: Some(4.0),
+                low: Some(1.0),
+            }],
+            ..Chart::default()
+        };
+        assert!(chart_nodes("g", &candle_bad_wick, area(), 0.0, 6.0).is_err());
+
+        // A candlestick that carries a b: the candle reads four fields,
+        // and b is not one of them.
+        let candle_with_b = Chart {
+            kind: ChartKind::Candlestick,
+            data: vec![Datum {
+                label: "x".into(),
+                value: 3.0,
+                b: Some(2.0),
+                color: None,
+                open: Some(2.5),
+                high: Some(4.0),
+                low: Some(1.0),
+            }],
+            ..Chart::default()
+        };
+        assert!(chart_nodes("g", &candle_with_b, area(), 0.0, 6.0).is_err());
+
+        // A candlestick that colours one point: the colour is the
+        // direction's.
+        let candle_colored = Chart {
+            kind: ChartKind::Candlestick,
+            data: vec![Datum {
+                label: "x".into(),
+                value: 3.0,
+                b: None,
+                color: Some("#ff0000".into()),
+                open: Some(2.5),
+                high: Some(4.0),
+                low: Some(1.0),
+            }],
+            ..Chart::default()
+        };
+        assert!(chart_nodes("g", &candle_colored, area(), 0.0, 6.0).is_err());
+
+        // A timeline with every event on one date: a title card, not a
+        // timeline.
+        let one_date = Chart {
+            kind: ChartKind::Timeline,
+            data: vec![
+                Datum {
+                    label: "this year".into(),
+                    value: 2026.0,
+                    b: None,
+                    color: None,
+                    open: None,
+                    high: None,
+                    low: None,
+                },
+                Datum {
+                    label: "that year".into(),
+                    value: 2026.0,
+                    b: None,
+                    color: None,
+                    open: None,
+                    high: None,
+                    low: None,
+                },
+            ],
+            ..Chart::default()
+        };
+        assert!(chart_nodes("g", &one_date, area(), 0.0, 6.0).is_err());
+
+        // A table that carries a b, and one that names series.
+        let table_with_b = Chart {
+            kind: ChartKind::Table,
+            data: vec![Datum {
+                label: "x".into(),
+                value: 3.0,
+                b: Some(4.0),
+                color: None,
+                open: None,
+                high: None,
+                low: None,
+            }],
+            ..Chart::default()
+        };
+        assert!(chart_nodes("g", &table_with_b, area(), 0.0, 6.0).is_err());
+        let table_with_series = Chart {
+            kind: ChartKind::Table,
+            series: vec!["a".into(), "b".into()],
+            data: vec![Datum {
+                label: "x".into(),
+                value: 3.0,
+                b: None,
+                color: None,
+                open: None,
+                high: None,
+                low: None,
+            }],
+            ..Chart::default()
+        };
+        assert!(chart_nodes("g", &table_with_series, area(), 0.0, 6.0).is_err());
     }
 
     /// A counter steps through its numbers, and the last one holds to the
@@ -2615,6 +3876,9 @@ mod tests {
             "data.chart.dot.json",
             "data.chart.compare.json",
             "data.chart.progress.json",
+            "data.chart.candlestick.json",
+            "data.chart.timeline.json",
+            "data.chart.table.json",
             "data.counter.json",
             "data.particles.json",
             "data.camera.json",

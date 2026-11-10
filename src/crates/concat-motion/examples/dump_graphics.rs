@@ -158,6 +158,65 @@ fn main() {
             ]}),
         ),
         (
+            "data.chart.candlestick",
+            "A week on the roof",
+            5.0,
+            json!({"ops": [
+                {"op": "add-rect", "id": "plate", "width": 1920, "height": 1080,
+                 "fill": "#0e0f12ff", "radius": 0, "x": 960, "y": 540},
+                {"op": "add-chart", "id": "chart", "x": 220, "y": 180, "width": 1480, "height": 760,
+                 "chart": {"kind": "candlestick", "title": "A week on the roof",
+                           "subtitle": "morning to noon, the day's range lettered",
+                           "format": {"suffix": " °C", "decimals": 0},
+                           "data": [
+                               {"label": "Mon", "open": 11, "high": 19, "low": 9, "value": 17},
+                               {"label": "Tue", "open": 14, "high": 21, "low": 12, "value": 15},
+                               {"label": "Wed", "open": 15, "high": 16, "low": 10, "value": 11},
+                               {"label": "Thu", "open": 9, "high": 14, "low": 7, "value": 13},
+                               {"label": "Fri", "open": 12, "high": 23, "low": 11, "value": 22},
+                               {"label": "Sat", "open": 18, "high": 26, "low": 15, "value": 24},
+                               {"label": "Sun", "open": 20, "high": 22, "low": 14, "value": 15}]}}
+            ]}),
+        ),
+        (
+            "data.chart.timeline",
+            "The observatory's decade",
+            5.0,
+            json!({"ops": [
+                {"op": "add-rect", "id": "plate", "width": 1920, "height": 1080,
+                 "fill": "#0e0f12ff", "radius": 0, "x": 960, "y": 540},
+                {"op": "add-chart", "id": "chart", "x": 220, "y": 180, "width": 1480, "height": 760,
+                 "chart": {"kind": "timeline", "title": "The observatory's decade",
+                           "subtitle": "one axis, first light to the visitor wing",
+                           "format": {"decimals": 0},
+                           "data": [
+                               {"label": "first light", "value": 2018},
+                               {"label": "the new mirror", "value": 2020},
+                               {"label": "the comet award", "value": 2022},
+                               {"label": "the dome rebuilt", "value": 2025},
+                               {"label": "the visitor wing", "value": 2026}]}}
+            ]}),
+        ),
+        (
+            "data.chart.table",
+            "The pub quiz league",
+            5.0,
+            json!({"ops": [
+                {"op": "add-rect", "id": "plate", "width": 1920, "height": 1080,
+                 "fill": "#0e0f12ff", "radius": 0, "x": 960, "y": 540},
+                {"op": "add-chart", "id": "chart", "x": 320, "y": 200, "width": 1280, "height": 720,
+                 "chart": {"kind": "table", "title": "The pub quiz league",
+                           "subtitle": "autumn standings, week nine",
+                           "format": {"suffix": " pts", "decimals": 0},
+                           "data": [
+                               {"label": "The Buzzer Beaters", "value": 87, "color": "#d9a441"},
+                               {"label": "Quizzy Riggers", "value": 81},
+                               {"label": "The Decimal Points", "value": 78},
+                               {"label": "Nacho Average Team", "value": 74},
+                               {"label": "The Procrastinators", "value": 69}]}}
+            ]}),
+        ),
+        (
             "data.counter",
             "One marathon",
             4.0,

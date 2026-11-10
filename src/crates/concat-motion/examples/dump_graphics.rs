@@ -102,6 +102,62 @@ fn main() {
             ]}),
         ),
         (
+            "data.chart.dot",
+            "The roast lab, cupped",
+            5.0,
+            json!({"ops": [
+                {"op": "add-rect", "id": "plate", "width": 1920, "height": 1080,
+                 "fill": "#0e0f12ff", "radius": 0, "x": 960, "y": 540},
+                {"op": "add-chart", "id": "chart", "x": 240, "y": 180, "width": 1440, "height": 760,
+                 "chart": {"kind": "dot", "title": "The roast lab, cupped",
+                           "subtitle": "extraction yield, percent of the coffee's own weight",
+                           "format": {"suffix": "%", "decimals": 1},
+                           "data": [
+                               {"label": "light, day one", "value": 18.2},
+                               {"label": "light, day six", "value": 19.4},
+                               {"label": "medium, day one", "value": 20.1},
+                               {"label": "medium, day six", "value": 21.6},
+                               {"label": "dark, day one", "value": 22.4},
+                               {"label": "dark, day six", "value": 21.9}]}}
+            ]}),
+        ),
+        (
+            "data.chart.compare",
+            "Paper against screen",
+            5.0,
+            json!({"ops": [
+                {"op": "add-rect", "id": "plate", "width": 1920, "height": 1080,
+                 "fill": "#0e0f12ff", "radius": 0, "x": 960, "y": 540},
+                {"op": "add-chart", "id": "chart", "x": 240, "y": 180, "width": 1440, "height": 760,
+                 "chart": {"kind": "compare", "title": "Paper against screen",
+                           "subtitle": "books finished, by quarter",
+                           "series": ["paper", "screen"],
+                           "format": {"suffix": " books"},
+                           "data": [
+                               {"label": "Q1", "value": 7, "b": 5},
+                               {"label": "Q2", "value": 2, "b": 7},
+                               {"label": "Q3", "value": 6, "b": 8},
+                               {"label": "Q4", "value": 8, "b": 9}]}}
+            ]}),
+        ),
+        (
+            "data.chart.progress",
+            "The pledge drive",
+            5.0,
+            json!({"ops": [
+                {"op": "add-rect", "id": "plate", "width": 1920, "height": 1080,
+                 "fill": "#0e0f12ff", "radius": 0, "x": 960, "y": 540},
+                {"op": "add-chart", "id": "chart", "x": 320, "y": 200, "width": 1280, "height": 720,
+                 "chart": {"kind": "progress", "title": "The pledge drive",
+                           "subtitle": "raised of each cause's own goal",
+                           "format": {"suffix": "%", "decimals": 0},
+                           "data": [
+                               {"label": "the shelter's winter beds", "value": 4200, "b": 5000},
+                               {"label": "the library's reading room", "value": 2600, "b": 4000},
+                               {"label": "the pitch's new goalposts", "value": 6100, "b": 5000}]}}
+            ]}),
+        ),
+        (
             "data.counter",
             "One marathon",
             4.0,

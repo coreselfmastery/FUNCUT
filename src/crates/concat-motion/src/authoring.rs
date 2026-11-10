@@ -228,10 +228,13 @@ pub enum Op {
         y: f64,
     },
     /// Add a data-driven chart: any domain's numbers as columns, a trend,
-    /// an area under it, or shares of a whole around a ring - every height,
-    /// slope and share computed from the data, drawn as rectangles,
-    /// ellipses and text the default engine renders as they stand. The
-    /// nodes are the root-level `{id}.…` family, so a camera, a delete or
+    /// an area under it, shares of a whole around a ring, one measured
+    /// value a point on a shared axis, two numbers a category as paired
+    /// columns, or a number against its target as a fill grown inside the
+    /// track the target draws - every height, slope, share and position
+    /// computed from the data, drawn as rectangles, ellipses and text the
+    /// default engine renders as they stand. The nodes are the root-level
+    /// `{id}.…` family, so a camera, a delete or
     /// a retime reaches them without a group's transform in the way.
     AddChart {
         /// The family's id.
@@ -2154,6 +2157,7 @@ mod tests {
                         data: vec![crate::graphics::Datum {
                             label: "Q1".into(),
                             value: 3.0,
+                            b: None,
                             color: None,
                         }],
                         ..Chart::default()
@@ -2219,7 +2223,9 @@ mod tests {
     }
 
     /// The JSON the documentation shows is the JSON the operations parse:
-    /// the worked examples in MOTION.md are a test, not a wish.
+    /// the worked examples in MOTION.md are a test, not a wish - the bar
+    /// and the counter and the particles and the camera, and the paired
+    /// kinds the data-graphics section shows: a compare and a progress.
     #[test]
     fn the_documented_data_graphics_json_parses_as_ops() {
         let comp = presets::build("funcut.lower-third.glass").expect("a preset");
@@ -2247,6 +2253,42 @@ mod tests {
                 && edited.node("metres.value.32").is_some()
                 && edited.node("embers.p47").is_some(),
             "the generated families are all there"
+        );
+
+        // The compare MOTION.md shows: two numbers a category, paired and
+        // lettered, its legend named from the series.
+        let paired = serde_json::json!({"ops": [
+            {"op": "add-chart", "id": "paper", "x": 240, "y": 180, "width": 1440, "height": 760,
+             "chart": {"kind": "compare", "title": "Paper against screen",
+                        "series": ["paper", "screen"],
+                        "data": [{"label": "Q1", "value": 7, "b": 5}, {"label": "Q2", "value": 2, "b": 7},
+                                  {"label": "Q3", "value": 6, "b": 8}, {"label": "Q4", "value": 8, "b": 9}]}}
+        ]});
+        let edited = apply_json(&comp, &paired).expect("the documented compare parses");
+        assert!(edited.validate().is_empty(), "{:?}", edited.validate());
+        assert!(
+            edited.node("paper.a.0").is_some()
+                && edited.node("paper.b.3").is_some()
+                && edited.node("paper.legend.name.1").is_some(),
+            "both sides and the legend are there"
+        );
+
+        // The progress MOTION.md shows: a fill toward each row's target,
+        // its share lettered through the format.
+        let goals = serde_json::json!({"ops": [
+            {"op": "add-chart", "id": "drive", "x": 320, "y": 200, "width": 1280, "height": 720,
+             "chart": {"kind": "progress", "title": "The pledge drive", "format": {"suffix": "%"},
+                        "data": [{"label": "winter beds", "value": 4200, "b": 5000},
+                                  {"label": "reading room", "value": 2600, "b": 4000},
+                                  {"label": "goalposts", "value": 6100, "b": 5000}]}}
+        ]});
+        let edited = apply_json(&comp, &goals).expect("the documented progress parses");
+        assert!(edited.validate().is_empty(), "{:?}", edited.validate());
+        assert!(
+            edited.node("drive.track.0").is_some()
+                && edited.node("drive.fill.0").is_some()
+                && edited.node("drive.share.2").is_some(),
+            "the tracks, the fills and the shares are there"
         );
     }
 

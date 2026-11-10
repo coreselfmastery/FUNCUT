@@ -17,7 +17,9 @@ critic with a stronger measured baseline, the analysis and speech layer
 on the API, the perception tools, the maestro judgment skill and the clip-skills editing-craft skill for
 the AI director, the emotion-driven edit - the voiceover read that now
 drives every layer - the funcut-director skill, the motion layer and its
-skill, the data-graphics layer - charts, counters, seeded
+skill, the data-graphics layer - charts (seven kinds: bar, line, area,
+donut, dot, compare and progress, the paired kinds reading a second number
+a point), counters, seeded
 particles and a baked camera as authoring operations, any
 domain's numbers drawn as native nodes - and the Forge
 integration. The complete verified inventory of what this

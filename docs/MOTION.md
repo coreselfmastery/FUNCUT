@@ -1026,12 +1026,44 @@ camera reaches them like any other layer.
                        { "label": "Q3", "value": 14 }, { "label": "Q4", "value": 17 } ] } }
 ```
 
-Four kinds, one operation: **bar** (columns from a baseline, negatives below the rule), **line** (the
-trend drawn on segment by segment), **area** (the field of columns rising under the trend) and
-**donut** (shares of one whole, swept around a ring). Formatting is domain-neutral by construction
+Seven kinds, one operation: **bar** (columns from a baseline, negatives below the rule), **line** (the
+trend drawn on segment by segment), **area** (the field of columns rising under the trend), **donut**
+(shares of one whole, swept around a ring), **dot** (one measured value a point on a shared axis - a
+distribution, a ranking, a lab's readings - each stem grown out to its dot), **compare** (two numbers
+a category as paired columns - before and after, this run and that one, home and away) and
+**progress** (a number against its target, a fill grown inside the track the target draws).
+Formatting is domain-neutral by construction
 - decimals, a thousands separator, a prefix and suffix (`$`, `%`, ` km`, ` goals`), and the compact
 `1.2K`/`3.4M` dashboard form - and the geometry is the data's: the tallest column is the tallest
-number, a loss draws below the rule, and a donut's slices share the ring by their weight.
+number, a loss draws below the rule, a donut's slices share the ring by their weight, a dot plot's
+axis is one scale, and a progress row's fill is its share of its target - capped at the track, with
+the share lettering the truth past it (`130%` reads as the overshoot it is).
+
+The paired kinds read a second number a point, `b` - the B side of a compare, the target of a
+progress row - and a kind that reads one number a point refuses it by name rather than dropping it
+quietly. A compare takes `series` (exactly two names, `A` and `B` when unsaid) for its legend, and
+refuses a per-point colour: there the colour is the series', or the two sides of one category stop
+being tellable apart. A progress needs a positive target and fills from zero - gains and losses side
+by side are a bar chart's job.
+
+```json
+{ "op": "add-chart", "id": "chart", "x": 240, "y": 180, "width": 1440, "height": 760,
+  "chart": { "kind": "compare", "title": "Paper against screen",
+             "series": ["paper", "screen"],
+             "data": [ { "label": "Q1", "value": 7, "b": 5 }, { "label": "Q2", "value": 2, "b": 7 },
+                       { "label": "Q3", "value": 6, "b": 8 }, { "label": "Q4", "value": 8, "b": 9 } ] } }
+```
+
+A progress row takes its target as `b`, and letters its share through the chart's own format - set
+the suffix `%`:
+
+```json
+{ "op": "add-chart", "id": "drive", "x": 320, "y": 200, "width": 1280, "height": 720,
+  "chart": { "kind": "progress", "title": "The pledge drive", "format": { "suffix": "%" },
+             "data": [ { "label": "winter beds", "value": 4200, "b": 5000 },
+                       { "label": "reading room", "value": 2600, "b": 4000 },
+                       { "label": "goalposts", "value": 6100, "b": 5000 } ] } }
+```
 
 Two honest notes on the engine. A line is a chain of thin rotated rectangles and a donut a ring of
 them, because the sidecar draws no vector paths (`NodeKind::Path` is the native engine's alone, and

@@ -299,7 +299,8 @@ Nothing here is bundled whole; indexes download once, media arrives per pick.
   card, end card, terminal, code diff, bar chart, progress bar, split
   compare, counting number, mesh backdrop) with slots an agent fills;
   24 editing ops, four of them data-driven and domain-neutral — `add-chart`
-  (bar/line/area/donut from any domain's numbers, drawn as rects, ellipses
+  (bar/line/area/donut/dot/compare/progress from any domain's numbers, drawn
+  as rects, ellipses
   and text so the default engine renders them as they stand), `add-counter`
   (a baked count-up), `add-particles` (a seeded, deterministic particle
   field baked to keyframes) and `set-camera` (a zoom/pan/roll with per-layer

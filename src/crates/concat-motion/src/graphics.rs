@@ -134,9 +134,10 @@ impl NumberFormat {
     }
 }
 
-/// One measured point: a label and the number it carries. What the label
-/// names is the domain's business - a quarter, a country, a build, a
-/// striker - the drawing is the same.
+/// One measured point: a label, the number it carries, and - when two
+/// numbers belong together - the second one. What the label names is the
+/// domain's business - a quarter, a country, a build, a striker - the
+/// drawing is the same.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Datum {
@@ -144,7 +145,15 @@ pub struct Datum {
     pub label: String,
     /// The number.
     pub value: f64,
-    /// Its colour as `#rrggbb`, overriding the palette for this one.
+    /// The second number, when two belong together: the B side of a
+    /// compare (`value` is A), the target a progress row fills toward
+    /// (`value` is the fill). Read by those two kinds only - a kind that
+    /// reads one number a point refuses it by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub b: Option<f64>,
+    /// Its colour as `#rrggbb`, overriding the palette for this one. A
+    /// compare refuses it: there the colour is the series', or the two
+    /// sides of one category stop being tellable apart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<String>,
 }
@@ -162,6 +171,17 @@ pub enum ChartKind {
     Area,
     /// Shares of one whole, swept around a ring.
     Donut,
+    /// One measured value a point, laid on a shared axis: a distribution,
+    /// a ranking, a lab's readings side by side, each dot with its stem
+    /// grown out to it.
+    Dot,
+    /// Two numbers a category, side by side: before and after, this run
+    /// and that one, home and away. `value` is the A series, `b` the B.
+    Compare,
+    /// A number against its target, drawn as a bar filling a track:
+    /// `value` achieved of `b` set, goals met, quotas filled, distance
+    /// covered. The share letters the truth even past a full track.
+    Progress,
 }
 
 /// The chart an `add-chart` operation draws, in any domain.
@@ -184,9 +204,16 @@ pub struct Chart {
     pub format: NumberFormat,
     /// The colours: a donut cycles them slice by slice, a column chart,
     /// a trend or an area draws its one series in the first, and any point
-    /// can name its own.
+    /// can name its own. A compare letters its two series in the first
+    /// two.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub palette: Vec<String>,
+    /// The two series' names, when the chart compares: the legend under
+    /// the letterhead letters them beside their dots. Exactly two entries
+    /// (`A` and `B` when unsaid), and a kind that does not compare
+    /// refuses them by name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub series: Vec<String>,
     /// A plate behind the chart as `#rrggbb(aa)`; none for transparent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plate: Option<String>,
@@ -238,6 +265,7 @@ impl Default for Chart {
             data: Vec::new(),
             format: NumberFormat::default(),
             palette: Vec::new(),
+            series: Vec::new(),
             plate: None,
             show_values: yes(),
             show_grid: yes(),
@@ -549,6 +577,18 @@ pub fn chart_nodes(
         ChartKind::Donut => donut_chart(
             id, chart, &data, &color_of, plot, at, span, stagger, hold, label_size, &mut nodes,
         ),
+        ChartKind::Dot => dot_chart(
+            id, chart, &data, &color_of, plot, at, span, stagger, hold, label_size, value_size,
+            &mut nodes,
+        ),
+        ChartKind::Compare => compare_chart(
+            id, chart, &data, &palette, plot, at, span, stagger, hold, label_size, value_size,
+            &mut nodes,
+        ),
+        ChartKind::Progress => progress_chart(
+            id, chart, &data, &color_of, plot, at, span, stagger, hold, label_size, value_size,
+            &mut nodes,
+        ),
     }
     Ok(nodes)
 }
@@ -581,6 +621,97 @@ fn check_data(chart: &Chart) -> Result<Vec<Datum>, MotionError> {
             return Err(fail(
                 format!("point {i} ({:?}) is not a finite number", point.label),
                 "a chart communicates data; nan and infinity are not data",
+            ));
+        }
+    }
+    // The second number belongs to the kinds that read it, and only those:
+    // a field a kind ignores is refused here rather than dropped quietly
+    // somewhere below.
+    let reads_b = matches!(chart.kind, ChartKind::Compare | ChartKind::Progress);
+    for (i, point) in chart.data.iter().enumerate() {
+        match point.b {
+            Some(b) if !reads_b => {
+                return Err(fail(
+                    format!(
+                        "point {i} ({:?}) carries a b, and a {:?} chart reads \
+                         one number a point",
+                        point.label, chart.kind
+                    ),
+                    "b is the other side of a compare or the target of a \
+                     progress row",
+                ));
+            }
+            Some(b) if !b.is_finite() => {
+                return Err(fail(
+                    format!("point {i} ({:?}) has a b that is not finite", point.label),
+                    "the second number is data too; nan and infinity are not data",
+                ));
+            }
+            None if reads_b => {
+                return Err(fail(
+                    format!(
+                        "point {i} ({:?}) has no b, and a {:?} chart needs \
+                         one a point",
+                        point.label, chart.kind
+                    ),
+                    "b is the other side of a compare or the target of a \
+                     progress row",
+                ));
+            }
+            _ => {}
+        }
+    }
+    // A compare's colour is its series': a per-point colour would dress
+    // both sides of one category the same, and the chart would stop
+    // telling them apart.
+    if matches!(chart.kind, ChartKind::Compare) {
+        for (i, point) in chart.data.iter().enumerate() {
+            if point.color.is_some() {
+                return Err(fail(
+                    format!("point {i} ({:?}) names a colour", point.label),
+                    "a compare's colour is its series': the palette's first \
+                     two colours letter its legend",
+                ));
+            }
+        }
+    }
+    // A progress fills from zero toward a target: a target that is nothing
+    // is no target, and a fill below zero is a bar chart's job.
+    if matches!(chart.kind, ChartKind::Progress) {
+        for (i, point) in chart.data.iter().enumerate() {
+            if point.b.is_some_and(|b| b <= 0.0) {
+                return Err(fail(
+                    format!(
+                        "point {i} ({:?}) has a target that is not positive",
+                        point.label
+                    ),
+                    "a progress row fills toward its target; zero and below \
+                     leave nothing to fill",
+                ));
+            }
+            if point.value < 0.0 {
+                return Err(fail(
+                    format!("point {i} ({:?}) fills below zero", point.label),
+                    "use a bar chart for gains and losses side by side",
+                ));
+            }
+        }
+    }
+    // Series names belong to the compare that letters them.
+    if !chart.series.is_empty() {
+        if !matches!(chart.kind, ChartKind::Compare) {
+            return Err(fail(
+                format!("a {:?} chart does not compare two series", chart.kind),
+                "series names a compare's two sides; drop it here",
+            ));
+        }
+        if chart.series.len() != 2 {
+            return Err(fail(
+                format!(
+                    "{} series names, and a compare has two sides",
+                    chart.series.len()
+                ),
+                "name both - [`this`, `that`] - or neither for A and B",
             ));
         }
     }
@@ -1162,6 +1293,555 @@ fn donut_chart(
     }
 }
 
+/// The dot plot: one row a point, each row a stem grown from the plot's
+/// left edge out to its own dot, the dot popped on the end of the stem.
+/// Every dot sits on the one shared value axis, so a distribution, a
+/// ranking or a lab's readings read by position the way a bar chart reads
+/// by height - and unlike a bar chart, a dot plot's rows do not have to
+/// start anywhere in particular, which is what makes it the shape for
+/// values that share no zero.
+#[allow(clippy::too_many_arguments)]
+fn dot_chart(
+    id: &str,
+    chart: &Chart,
+    data: &[Datum],
+    color_of: &dyn Fn(usize) -> String,
+    plot: Area,
+    at: f64,
+    span: f64,
+    stagger: f64,
+    hold: f64,
+    label_size: f64,
+    value_size: f64,
+    nodes: &mut Vec<Node>,
+) {
+    // The labels take a gutter at the left; the axis takes what is left.
+    let gutter = (label_size * 9.0).clamp(72.0, plot.width * 0.3);
+    let axis = Area {
+        x: plot.x + gutter,
+        y: plot.y,
+        width: (plot.width - gutter).max(80.0),
+        height: plot.height,
+    };
+    let mut low = data
+        .iter()
+        .map(|point| point.value)
+        .fold(f64::MAX, f64::min);
+    let mut high = data
+        .iter()
+        .map(|point| point.value)
+        .fold(f64::MIN, f64::max);
+    if high <= low {
+        high = low + 1.0;
+    }
+    // The axis letters the data's own span; zero is ruled in only when the
+    // data crosses it, so a lab's readings at 90..98 do not cram against
+    // the right edge of an axis that started at nothing.
+    let head = (high - low) * 0.06;
+    low -= head;
+    high += head;
+    let x_of = |value: f64| axis.x + (value - low) / (high - low) * axis.width;
+    let row = axis.height / data.len() as f64;
+    let stem = (row * 0.08).clamp(2.0, 5.0);
+    let dot = (row * 0.42).clamp(7.0, 18.0);
+
+    if chart.show_grid {
+        for g in 1..=3 {
+            let x = axis.x + axis.width * f64::from(g) / 4.0;
+            let mut line = node(
+                &format!("{id}.grid.{g}"),
+                at,
+                NodeKind::Rect {
+                    width: Length::px(1.0),
+                    height: Length::px(axis.height),
+                    fill: Some(Paint::Solid {
+                        color: hairline(0.16),
+                    }),
+                    radius: 0.0,
+                },
+            );
+            line.transform.position = Some(Point::new(x, axis.y + axis.height / 2.0));
+            line.tracks.insert(
+                "opacity".into(),
+                entrance(0.0, fraction_of(span, 0.35), &Curve::EASE_OUT),
+            );
+            nodes.push(line);
+        }
+    }
+
+    // The zero rule: a vertical line wherever zero falls, so a crossing of
+    // it reads as a crossing and not as a gap between quarters.
+    if (0.0..=high).contains(&low) {
+        let mut rule = node(
+            &format!("{id}.axis"),
+            at,
+            NodeKind::Rect {
+                width: Length::px(2.0),
+                height: Length::px(axis.height),
+                fill: Some(Paint::Solid {
+                    color: hairline(0.5),
+                }),
+                radius: 0.0,
+            },
+        );
+        rule.transform.position = Some(Point::new(x_of(0.0), axis.y + axis.height / 2.0));
+        rule.tracks.insert(
+            "opacity".into(),
+            entrance(0.0, fraction_of(span, 0.35), &Curve::EASE_OUT),
+        );
+        nodes.push(rule);
+    }
+
+    for (i, point) in data.iter().enumerate() {
+        let y = axis.y + row * (i as f64 + 0.5);
+        let x = x_of(point.value);
+        let start = stagger * (i + 1) as f64;
+
+        // The stem: a guide from the axis's left edge to the datum, grown
+        // out to it - a hairline, so the dot stays the thing the eye reads.
+        let mut stick = node(
+            &format!("{id}.stem.{i}"),
+            at,
+            NodeKind::Rect {
+                width: Length::px((x - axis.x).max(1.0)),
+                height: Length::px(stem),
+                fill: Some(Paint::Solid {
+                    color: hairline(0.35),
+                }),
+                radius: stem / 2.0,
+            },
+        );
+        stick.transform.anchor = Some(Point::new(0.0, 0.5));
+        stick.transform.position = Some(Point::new(axis.x, y));
+        stick
+            .tracks
+            .insert("scale".into(), entrance(start, hold, &chart.curve));
+        nodes.push(stick);
+
+        let mut mark = node(
+            &format!("{id}.dot.{i}"),
+            at,
+            NodeKind::Ellipse {
+                width: Length::px(dot),
+                height: Length::px(dot),
+                fill: Some(Paint::Solid {
+                    color: Rgba::hex(&color_of(i)),
+                }),
+            },
+        );
+        mark.transform.position = Some(Point::new(x, y));
+        // Popped after its own stem has grown: the eye follows the stem
+        // out and the datum lands on the end of it.
+        mark.tracks.insert(
+            "scale".into(),
+            entrance(start + hold, hold * 0.6, &Curve::SPRING_POP),
+        );
+        nodes.push(mark);
+
+        let mut label = text(
+            &format!("{id}.label.{i}"),
+            at,
+            &point.label,
+            label_size,
+            500,
+            Rgba::hex(MUTED),
+        );
+        label.transform.position = Some(Point::new(axis.x - label_size * 0.6, y));
+        if let NodeKind::Text(boxed) = &mut label.kind {
+            boxed.align = TextAlign::Left;
+            boxed.max_width = Some(gutter);
+        }
+        label
+            .tracks
+            .insert("opacity".into(), entrance(start, hold, &Curve::EASE_OUT));
+        nodes.push(label);
+
+        if chart.show_values {
+            // Lettered after the dot, unless the dot is near the axis's
+            // right edge and its number would letter past it - then
+            // before the dot, so the number never leaves the plot.
+            let room = axis.x + axis.width - (x + dot * 0.7) >= value_size * 1.6;
+            let (x_value, align) = if room {
+                (x + dot * 0.7 + value_size * 0.4, TextAlign::Left)
+            } else {
+                (x - dot * 0.7 - value_size * 0.4, TextAlign::Right)
+            };
+            let mut value = text(
+                &format!("{id}.value.{i}"),
+                at,
+                &chart.format.format(point.value),
+                value_size,
+                700,
+                Rgba::hex(INK),
+            );
+            value.transform.position = Some(Point::new(x_value, y));
+            if let NodeKind::Text(boxed) = &mut value.kind {
+                boxed.align = align;
+                boxed.max_width = Some((gutter * 1.6).max(90.0));
+            }
+            value.tracks.insert(
+                "opacity".into(),
+                entrance(start + hold, hold * 0.6, &chart.curve),
+            );
+            nodes.push(value);
+        }
+    }
+}
+
+/// The comparison: two columns a category, side by side on the one
+/// baseline - `value` in the palette's first colour, `b` in its second -
+/// so before and after, this run and that one, home and away read as
+/// pairs. A legend between the letterhead and the plot names the two
+/// sides, one at each end of the plot's own width, because a builder that
+/// cannot measure letters cannot flow them either.
+#[allow(clippy::too_many_arguments)]
+fn compare_chart(
+    id: &str,
+    chart: &Chart,
+    data: &[Datum],
+    palette: &[String],
+    plot: Area,
+    at: f64,
+    span: f64,
+    stagger: f64,
+    hold: f64,
+    label_size: f64,
+    value_size: f64,
+    nodes: &mut Vec<Node>,
+) {
+    let a_color = palette[0].clone();
+    let b_color = palette.get(1).cloned().unwrap_or_else(|| MUTED.into());
+    let names = [
+        chart.series.first().cloned().unwrap_or_else(|| "A".into()),
+        chart.series.get(1).cloned().unwrap_or_else(|| "B".into()),
+    ];
+
+    // The legend takes a row under the letterhead; the columns take the
+    // rest, exactly as the bar chart lays its own out below it.
+    let legend_row = label_size * 2.0;
+    let plot = Area {
+        y: plot.y + legend_row,
+        height: (plot.height - legend_row).max(80.0),
+        ..plot
+    };
+    let label_row = label_size * 1.9;
+    let plot_height = (plot.height - label_row).max(40.0);
+    // One range for both sides, so a pair reads as a pair: the taller of
+    // the two is the taller on screen by the data's own proportion.
+    let mut low = 0.0_f64;
+    let mut high = 0.0_f64;
+    for point in data {
+        low = low.min(point.value).min(point.b.unwrap_or(0.0));
+        high = high.max(point.value).max(point.b.unwrap_or(0.0));
+    }
+    if high <= low {
+        high = low + 1.0;
+    }
+    let range = high - low;
+    let bottom = plot.y + plot_height;
+    let baseline = bottom - (0.0 - low) / range * plot_height;
+    let slot = plot.width / data.len() as f64;
+    let bar_width = (slot * 0.3).min(plot_width_cap(plot.width));
+    let pair_step = bar_width + bar_width * 0.16;
+
+    if chart.show_grid && high > 0.0 {
+        for g in 1..=3 {
+            let y = baseline - (high * f64::from(g) / 4.0) / range * plot_height;
+            if y < plot.y {
+                continue;
+            }
+            let mut line = node(
+                &format!("{id}.grid.{g}"),
+                at,
+                NodeKind::Rect {
+                    width: Length::px(plot.width),
+                    height: Length::px(1.0),
+                    fill: Some(Paint::Solid {
+                        color: hairline(0.16),
+                    }),
+                    radius: 0.0,
+                },
+            );
+            line.transform.position = Some(Point::new(plot.x + plot.width / 2.0, y));
+            line.tracks.insert(
+                "opacity".into(),
+                entrance(0.0, fraction_of(span, 0.35), &Curve::EASE_OUT),
+            );
+            nodes.push(line);
+        }
+    }
+
+    let mut axis = node(
+        &format!("{id}.axis"),
+        at,
+        NodeKind::Rect {
+            width: Length::px(plot.width),
+            height: Length::px(2.0),
+            fill: Some(Paint::Solid {
+                color: hairline(0.5),
+            }),
+            radius: 0.0,
+        },
+    );
+    axis.transform.position = Some(Point::new(plot.x + plot.width / 2.0, baseline));
+    axis.tracks.insert(
+        "opacity".into(),
+        entrance(0.0, fraction_of(span, 0.35), &Curve::EASE_OUT),
+    );
+    nodes.push(axis);
+
+    // The legend, one side at each end of the plot: a dot in its series'
+    // colour and its name beside it.
+    for (side, (name, color)) in names.iter().zip([&a_color, &b_color]).enumerate() {
+        let legend_y = plot.y - legend_row * 0.45;
+        let dot_size = (label_size * 0.55).clamp(9.0, 18.0);
+        let edge = if side == 0 {
+            plot.x + dot_size
+        } else {
+            plot.x + plot.width - dot_size
+        };
+        let start = stagger;
+        let mut swatch = node(
+            &format!("{id}.legend.{side}"),
+            at,
+            NodeKind::Ellipse {
+                width: Length::px(dot_size),
+                height: Length::px(dot_size),
+                fill: Some(Paint::Solid {
+                    color: Rgba::hex(color),
+                }),
+            },
+        );
+        swatch.transform.position = Some(Point::new(edge, legend_y));
+        swatch
+            .tracks
+            .insert("opacity".into(), entrance(start, hold, &Curve::EASE_OUT));
+        nodes.push(swatch);
+
+        let mut name_node = text(
+            &format!("{id}.legend.name.{side}"),
+            at,
+            name,
+            label_size,
+            600,
+            Rgba::hex(INK),
+        );
+        name_node.transform.position = Some(Point::new(
+            if side == 0 {
+                edge + dot_size * 1.4
+            } else {
+                edge - dot_size * 1.4
+            },
+            legend_y,
+        ));
+        if let NodeKind::Text(boxed) = &mut name_node.kind {
+            boxed.align = if side == 0 {
+                TextAlign::Left
+            } else {
+                TextAlign::Right
+            };
+            boxed.max_width = Some(plot.width * 0.3);
+        }
+        name_node
+            .tracks
+            .insert("opacity".into(), entrance(start, hold, &Curve::EASE_OUT));
+        nodes.push(name_node);
+    }
+
+    for (i, point) in data.iter().enumerate() {
+        let start = stagger * (i + 1) as f64;
+        let centre_x = plot.x + slot * (i as f64 + 0.5);
+        for (side, (value, color)) in [(point.value, &a_color), (point.b.unwrap_or(0.0), &b_color)]
+            .into_iter()
+            .enumerate()
+        {
+            let height = (value / range) * plot_height;
+            let positive = value >= 0.0;
+            let x = if side == 0 {
+                centre_x - pair_step * 0.5
+            } else {
+                centre_x + pair_step * 0.5
+            };
+            let mut bar = node(
+                &format!("{id}.{}.{}", ["a", "b"][side], i),
+                at,
+                NodeKind::Rect {
+                    width: Length::px(bar_width),
+                    height: Length::px(height.abs().max(1.0)),
+                    fill: Some(Paint::Solid {
+                        color: Rgba::hex(color),
+                    }),
+                    radius: (bar_width * 0.1).min(6.0),
+                },
+            );
+            bar.transform.anchor = Some(Point::new(0.5, if positive { 1.0 } else { 0.0 }));
+            bar.transform.position = Some(Point::new(x, baseline));
+            bar.tracks
+                .insert("scale".into(), entrance(start, hold, &chart.curve));
+            nodes.push(bar);
+
+            if chart.show_values {
+                let above = if positive {
+                    baseline - height - value_size * 0.7
+                } else {
+                    baseline + height.abs() + value_size * 0.7
+                };
+                let mut value_node = text(
+                    &format!("{id}.{}.value.{i}", ["a", "b"][side]),
+                    at,
+                    &chart.format.format(value),
+                    value_size * 0.85,
+                    700,
+                    Rgba::hex(INK),
+                );
+                value_node.transform.position = Some(Point::new(x, above));
+                if let NodeKind::Text(boxed) = &mut value_node.kind {
+                    boxed.max_width = Some(bar_width * 1.8);
+                }
+                value_node
+                    .tracks
+                    .insert("opacity".into(), entrance(start, hold, &chart.curve));
+                nodes.push(value_node);
+            }
+        }
+
+        let mut label = text(
+            &format!("{id}.label.{i}"),
+            at,
+            &point.label,
+            label_size,
+            500,
+            Rgba::hex(MUTED),
+        );
+        label.transform.position = Some(Point::new(centre_x, bottom + label_row * 0.5));
+        if let NodeKind::Text(boxed) = &mut label.kind {
+            boxed.max_width = Some(slot);
+        }
+        label
+            .tracks
+            .insert("opacity".into(), entrance(start, hold, &Curve::EASE_OUT));
+        nodes.push(label);
+    }
+}
+
+/// The progress rows: a track a category - the target, drawn the plot's
+/// full width - and inside it a fill grown from the track's left edge, as
+/// far toward the target as the value has come. The share letters at the
+/// track's right end, through the chart's own format, so the number tells
+/// the truth even when the fill has reached the end of its track: a fill
+/// past its target letters the overshoot, and a fill of nothing draws
+/// nothing rather than a sliver that reads as something.
+#[allow(clippy::too_many_arguments)]
+fn progress_chart(
+    id: &str,
+    chart: &Chart,
+    data: &[Datum],
+    color_of: &dyn Fn(usize) -> String,
+    plot: Area,
+    at: f64,
+    span: f64,
+    stagger: f64,
+    hold: f64,
+    label_size: f64,
+    value_size: f64,
+    nodes: &mut Vec<Node>,
+) {
+    let row = plot.height / data.len() as f64;
+    let bar_h = (row * 0.34).clamp(8.0, 54.0);
+    let label_room = (label_size * 1.6).min(row * 0.6);
+
+    for (i, point) in data.iter().enumerate() {
+        let start = stagger * (i + 1) as f64;
+        let top = plot.y + row * i as f64;
+        let track_y = top + label_room + (row - label_room).max(bar_h) * 0.5;
+        let target = point.b.unwrap_or(1.0);
+        let share = point.value / target;
+
+        let mut label = text(
+            &format!("{id}.label.{i}"),
+            at,
+            &point.label,
+            label_size,
+            500,
+            Rgba::hex(MUTED),
+        );
+        label.transform.position = Some(Point::new(plot.x, top + label_size * 0.55));
+        if let NodeKind::Text(boxed) = &mut label.kind {
+            boxed.align = TextAlign::Left;
+            boxed.max_width = Some(plot.width * 0.72);
+        }
+        label
+            .tracks
+            .insert("opacity".into(), entrance(start, hold, &Curve::EASE_OUT));
+        nodes.push(label);
+
+        // The track: the target itself, full width, quiet behind the fill.
+        let mut track = node(
+            &format!("{id}.track.{i}"),
+            at,
+            NodeKind::Rect {
+                width: Length::px(plot.width),
+                height: Length::px(bar_h),
+                fill: Some(Paint::Solid {
+                    color: hairline(0.14),
+                }),
+                radius: (bar_h * 0.24).min(6.0),
+            },
+        );
+        track.transform.position = Some(Point::new(plot.x + plot.width / 2.0, track_y));
+        track.tracks.insert(
+            "opacity".into(),
+            entrance(start, fraction_of(span, 0.35), &Curve::EASE_OUT),
+        );
+        nodes.push(track);
+
+        // The fill: grown from the track's left edge, capped at the track
+        // - the geometry stops where the track stops, and the share
+        // letters carry the number past it.
+        if share > 0.0 {
+            let width = (share.min(1.0) * plot.width).max(1.0);
+            let mut fill = node(
+                &format!("{id}.fill.{i}"),
+                at,
+                NodeKind::Rect {
+                    width: Length::px(width),
+                    height: Length::px(bar_h),
+                    fill: Some(Paint::Solid {
+                        color: Rgba::hex(&color_of(i)),
+                    }),
+                    radius: (bar_h * 0.24).min(6.0),
+                },
+            );
+            fill.transform.anchor = Some(Point::new(0.0, 0.5));
+            fill.transform.position = Some(Point::new(plot.x, track_y));
+            fill.tracks
+                .insert("scale".into(), entrance(start, hold, &chart.curve));
+            nodes.push(fill);
+        }
+
+        if chart.show_values {
+            let mut share_node = text(
+                &format!("{id}.share.{i}"),
+                at,
+                &chart.format.format(share * 100.0),
+                value_size,
+                700,
+                Rgba::hex(INK),
+            );
+            share_node.transform.position = Some(Point::new(plot.x + plot.width, track_y));
+            if let NodeKind::Text(boxed) = &mut share_node.kind {
+                boxed.align = TextAlign::Right;
+                boxed.max_width = Some(plot.width * 0.28);
+            }
+            share_node.tracks.insert(
+                "opacity".into(),
+                entrance(start + hold, fraction_of(span, 0.4), &Curve::EASE_OUT),
+            );
+            nodes.push(share_node);
+        }
+    }
+}
+
 /// Build a counter's nodes: the numbers it steps through, one text node a
 /// step, each showing for its moment and handing the count on, and the
 /// final number holding to the end of the comp.
@@ -1284,21 +1964,56 @@ mod tests {
             Datum {
                 label: "Q1".into(),
                 value: 96.0,
+                b: None,
                 color: None,
             },
             Datum {
                 label: "Q2".into(),
                 value: 74.0,
+                b: None,
                 color: None,
             },
             Datum {
                 label: "Q3".into(),
                 value: 118.0,
+                b: None,
                 color: None,
             },
             Datum {
                 label: "Q4".into(),
                 value: 132.0,
+                b: None,
+                color: None,
+            },
+        ]
+    }
+
+    /// The same readings with their second numbers: what a compare pairs
+    /// and a progress fills toward.
+    fn paired_data() -> Vec<Datum> {
+        vec![
+            Datum {
+                label: "Q1".into(),
+                value: 96.0,
+                b: Some(88.0),
+                color: None,
+            },
+            Datum {
+                label: "Q2".into(),
+                value: 74.0,
+                b: Some(102.0),
+                color: None,
+            },
+            Datum {
+                label: "Q3".into(),
+                value: 118.0,
+                b: Some(104.0),
+                color: None,
+            },
+            Datum {
+                label: "Q4".into(),
+                value: 132.0,
+                b: Some(110.0),
                 color: None,
             },
         ]
@@ -1356,12 +2071,21 @@ mod tests {
             ChartKind::Line,
             ChartKind::Area,
             ChartKind::Donut,
+            ChartKind::Dot,
+            ChartKind::Compare,
+            ChartKind::Progress,
         ] {
+            let reads_b = matches!(kind, ChartKind::Compare | ChartKind::Progress);
             let chart = Chart {
                 kind,
                 title: Some("Quarterly review".into()),
                 subtitle: Some("units shipped, thousands".into()),
-                data: data(),
+                data: if reads_b { paired_data() } else { data() },
+                series: if matches!(kind, ChartKind::Compare) {
+                    vec!["this year".into(), "last year".into()]
+                } else {
+                    Vec::new()
+                },
                 center: Some("2026".into()),
                 ..Chart::default()
             };
@@ -1420,11 +2144,13 @@ mod tests {
                 Datum {
                     label: "gain".into(),
                     value: 40.0,
+                    b: None,
                     color: None,
                 },
                 Datum {
                     label: "loss".into(),
                     value: -20.0,
+                    b: None,
                     color: None,
                 },
             ],
@@ -1453,6 +2179,7 @@ mod tests {
             data: vec![Datum {
                 label: "x".into(),
                 value: f64::NAN,
+                b: None,
                 color: None,
             }],
             ..Chart::default()
@@ -1465,11 +2192,13 @@ mod tests {
                 Datum {
                     label: "a".into(),
                     value: 10.0,
+                    b: None,
                     color: None,
                 },
                 Datum {
                     label: "b".into(),
                     value: -4.0,
+                    b: None,
                     color: None,
                 },
             ],
@@ -1507,6 +2236,7 @@ mod tests {
                 .map(|i| Datum {
                     label: format!("p{i}"),
                     value: i as f64,
+                    b: None,
                     color: None,
                 })
                 .collect(),
@@ -1526,6 +2256,302 @@ mod tests {
         let a = chart_nodes("g", &chart, area(), 0.0, 6.0).expect("builds");
         let b = chart_nodes("g", &chart, area(), 0.0, 6.0).expect("builds");
         assert_eq!(a, b);
+
+        // The paired kinds too: a compare's two sides and a progress's
+        // shares come back the same twice - and the dot plot, one number
+        // a point, is the same twice as well.
+        for kind in [ChartKind::Compare, ChartKind::Progress, ChartKind::Dot] {
+            let chart = Chart {
+                kind,
+                // The dot plot reads one number a point and refuses the
+                // second; the paired kinds need it.
+                data: if matches!(kind, ChartKind::Dot) {
+                    data()
+                } else {
+                    paired_data()
+                },
+                // Only the compare reads series names; the others refuse
+                // them, and refusing is part of being the same twice.
+                series: if matches!(kind, ChartKind::Compare) {
+                    vec!["this".into(), "that".into()]
+                } else {
+                    Vec::new()
+                },
+                ..Chart::default()
+            };
+            let a = chart_nodes("g", &chart, area(), 0.0, 6.0).expect("builds");
+            let b = chart_nodes("g", &chart, area(), 0.0, 6.0).expect("builds");
+            assert_eq!(a, b, "{kind:?}");
+        }
+    }
+
+    /// A dot plot's dots sit where the data puts them: the bigger number
+    /// is the dot further along the axis, in the data's own proportion.
+    #[test]
+    fn dot_positions_follow_the_data_not_the_design() {
+        let chart = Chart {
+            kind: ChartKind::Dot,
+            data: data(),
+            ..Chart::default()
+        };
+        let nodes = chart_nodes("g", &chart, area(), 0.0, 6.0).expect("builds");
+        let xs: Vec<f64> = nodes
+            .iter()
+            .filter(|node| node.id.starts_with("g.dot."))
+            .filter_map(|node| node.transform.position)
+            .map(|point| point.x)
+            .collect();
+        assert_eq!(xs.len(), 4, "one dot a point");
+        assert!(xs[3] > xs[2], "132 sits beyond 118");
+        assert!(xs[1] < xs[0], "74 sits before 96");
+        // And in the data's own proportion: the gap between two dots on
+        // the screen is the gap between their numbers times the one scale
+        // the whole axis shares.
+        let scale = (xs[3] - xs[0]) / (132.0 - 96.0);
+        assert!(
+            ((xs[2] - xs[1]) - (118.0 - 74.0) * scale).abs() < 1e-9,
+            "the axis is one scale: {xs:?}"
+        );
+        assert!(
+            (xs[0] - xs[1] - (96.0 - 74.0) * scale).abs() < 1e-9,
+            "{xs:?}"
+        );
+    }
+
+    /// A compare draws two columns a category on the one range: both of
+    /// Q1's sides, value's and b's, in the data's own proportions, in the
+    /// palette's first two colours, with a legend that names them.
+    #[test]
+    fn a_compare_pairs_two_columns_a_category_on_one_range() {
+        let chart = Chart {
+            kind: ChartKind::Compare,
+            data: paired_data(),
+            series: vec!["this year".into(), "last year".into()],
+            ..Chart::default()
+        };
+        let nodes = chart_nodes("g", &chart, area(), 0.0, 6.0).expect("builds");
+        let height = |id: &str| -> f64 {
+            nodes
+                .iter()
+                .find(|node| node.id == id)
+                .and_then(|node| match &node.kind {
+                    NodeKind::Rect {
+                        height: Length::Px(px),
+                        ..
+                    } => Some(*px),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{id}: a column"))
+        };
+        // Two sides a category, both lettered and both drawn.
+        assert_eq!(height("g.a.0"), 96.0 / 132.0 * height("g.a.3"));
+        assert_eq!(height("g.b.0"), 88.0 / 110.0 * height("g.b.3"));
+        // The colours are the series': the palette's first two, so the
+        // sides of one category never dress the same.
+        let fill = |id: &str| -> String {
+            nodes
+                .iter()
+                .find(|node| node.id == id)
+                .and_then(|node| match &node.kind {
+                    NodeKind::Rect {
+                        fill: Some(Paint::Solid { color }),
+                        ..
+                    } => Some(format!("#{color:?}")),
+                    _ => None,
+                })
+                .unwrap_or_default()
+        };
+        assert_ne!(fill("g.a.0"), fill("g.b.0"));
+        // The legend names both sides, from the series the author gave.
+        let legend: Vec<String> = nodes
+            .iter()
+            .filter(|node| node.id.starts_with("g.legend.name."))
+            .filter_map(|node| match &node.kind {
+                NodeKind::Text(words) => Some(words.text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(legend, vec!["this year", "last year"]);
+    }
+
+    /// A progress row fills its track by its share of the target, and the
+    /// share letters the truth even past a full track: the geometry caps
+    /// at the track, the number does not.
+    #[test]
+    fn a_progress_fill_is_its_share_and_letters_the_truth_past_it() {
+        let chart = Chart {
+            kind: ChartKind::Progress,
+            format: NumberFormat {
+                suffix: "%".into(),
+                decimals: 0,
+                ..Default::default()
+            },
+            data: vec![
+                Datum {
+                    label: "halfway".into(),
+                    value: 5.0,
+                    b: Some(10.0),
+                    color: None,
+                },
+                Datum {
+                    label: "over".into(),
+                    value: 13.0,
+                    b: Some(10.0),
+                    color: None,
+                },
+                Datum {
+                    label: "nothing".into(),
+                    value: 0.0,
+                    b: Some(10.0),
+                    color: None,
+                },
+            ],
+            ..Chart::default()
+        };
+        let nodes = chart_nodes("g", &chart, area(), 0.0, 6.0).expect("builds");
+        let width = |id: &str| -> f64 {
+            nodes
+                .iter()
+                .find(|node| node.id == id)
+                .and_then(|node| match &node.kind {
+                    NodeKind::Rect {
+                        width: Length::Px(px),
+                        ..
+                    } => Some(*px),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{id}: a rect"))
+        };
+        let track = width("g.track.0");
+        assert!(
+            (width("g.fill.0") - track / 2.0).abs() < 1.5,
+            "halfway is half the track"
+        );
+        assert!(
+            (width("g.fill.1") - track).abs() < 1.5,
+            "past the target the fill caps"
+        );
+        assert!(
+            !nodes.iter().any(|node| node.id == "g.fill.2"),
+            "a fill of nothing draws nothing, not a sliver that reads as something"
+        );
+        // The shares letter through the format: 50%, 130%, 0%.
+        let shares: Vec<String> = nodes
+            .iter()
+            .filter(|node| node.id.starts_with("g.share."))
+            .filter_map(|node| match &node.kind {
+                NodeKind::Text(words) => Some(words.text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(shares, vec!["50%", "130%", "0%"]);
+    }
+
+    /// The second number and the series names belong to the kinds that
+    /// read them, and every misuse is refused by name - not dropped
+    /// quietly somewhere below.
+    #[test]
+    fn the_second_number_and_series_are_refused_where_they_are_not_read() {
+        // A bar that carries a b: one number a point is the bar's whole
+        // vocabulary.
+        let bar_with_b = Chart {
+            data: vec![Datum {
+                label: "x".into(),
+                value: 3.0,
+                b: Some(4.0),
+                color: None,
+            }],
+            ..Chart::default()
+        };
+        assert!(chart_nodes("g", &bar_with_b, area(), 0.0, 6.0).is_err());
+
+        // A donut that names series: it has no two sides to name.
+        let donut_with_series = Chart {
+            kind: ChartKind::Donut,
+            series: vec!["a".into(), "b".into()],
+            data: vec![Datum {
+                label: "x".into(),
+                value: 3.0,
+                b: None,
+                color: None,
+            }],
+            ..Chart::default()
+        };
+        assert!(chart_nodes("g", &donut_with_series, area(), 0.0, 6.0).is_err());
+
+        // A compare missing its b on one point: the point is named.
+        let compare_missing_b = Chart {
+            kind: ChartKind::Compare,
+            data: vec![
+                Datum {
+                    label: "whole".into(),
+                    value: 3.0,
+                    b: Some(4.0),
+                    color: None,
+                },
+                Datum {
+                    label: "half".into(),
+                    value: 5.0,
+                    b: None,
+                    color: None,
+                },
+            ],
+            ..Chart::default()
+        };
+        assert!(chart_nodes("g", &compare_missing_b, area(), 0.0, 6.0).is_err());
+
+        // A progress toward nothing.
+        let progress_to_zero = Chart {
+            kind: ChartKind::Progress,
+            data: vec![Datum {
+                label: "x".into(),
+                value: 3.0,
+                b: Some(0.0),
+                color: None,
+            }],
+            ..Chart::default()
+        };
+        assert!(chart_nodes("g", &progress_to_zero, area(), 0.0, 6.0).is_err());
+
+        // A progress that fills below zero.
+        let progress_negative = Chart {
+            kind: ChartKind::Progress,
+            data: vec![Datum {
+                label: "x".into(),
+                value: -3.0,
+                b: Some(10.0),
+                color: None,
+            }],
+            ..Chart::default()
+        };
+        assert!(chart_nodes("g", &progress_negative, area(), 0.0, 6.0).is_err());
+
+        // A compare that colours one category: the colour is the series'.
+        let compare_colored = Chart {
+            kind: ChartKind::Compare,
+            data: vec![Datum {
+                label: "x".into(),
+                value: 3.0,
+                b: Some(4.0),
+                color: Some("#ff0000".into()),
+            }],
+            ..Chart::default()
+        };
+        assert!(chart_nodes("g", &compare_colored, area(), 0.0, 6.0).is_err());
+
+        // One series name is half a legend.
+        let compare_half_named = Chart {
+            kind: ChartKind::Compare,
+            series: vec!["only".into()],
+            data: vec![Datum {
+                label: "x".into(),
+                value: 3.0,
+                b: Some(4.0),
+                color: None,
+            }],
+            ..Chart::default()
+        };
+        assert!(chart_nodes("g", &compare_half_named, area(), 0.0, 6.0).is_err());
     }
 
     /// A counter steps through its numbers, and the last one holds to the
@@ -1586,6 +2612,9 @@ mod tests {
             "data.chart.bars.json",
             "data.chart.line.json",
             "data.chart.donut.json",
+            "data.chart.dot.json",
+            "data.chart.compare.json",
+            "data.chart.progress.json",
             "data.counter.json",
             "data.particles.json",
             "data.camera.json",

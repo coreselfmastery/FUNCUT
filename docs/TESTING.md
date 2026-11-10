@@ -26,10 +26,13 @@ auto-trigger run at `9743a2f7`, whose tree is main's plus one script):
 the same **1725 tests run: 1725 passed, 14 skipped**, the same 8 and
 the same 30 - a fresh green run printing the number this table holds.
 (That table names the 2026-11-06 footage layer's commit, and the 2026-11-10
-data-graphics layer adds 26 tests to `concat-motion` on top of it - 426
-run, 5 skipped there, 6 doc beside them, read from the crate's own green
-run in this tree - so the workspace table re-reads 1751 at the next
-engine lane, which is the only honest way to hold a workspace number.)
+data-graphics layer adds 26 tests to `concat-motion` on top of it, the same
+day's native-engine wave 7 more and the chart-vocabulary wave in this tree
+4 more - dot positions, compare pairs, progress shares and the paired
+kinds' refusals - 442 run, 5 skipped there, 6 doc beside them, read from
+the crate's own green run in this tree - so the workspace table re-reads
+1762 at the next engine lane, which is the only honest way to hold a
+workspace number.)
 
 **The Rust total: 1763** (1725 + 8 + 30). Every workspace member is
 counted - the workspace's test binaries cover all seventeen crates, their

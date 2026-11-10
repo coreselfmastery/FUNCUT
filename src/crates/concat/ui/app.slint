@@ -1075,5 +1075,12 @@ export component App inherits Window {
         width: root.width;
         height: root.height;
         data: root.toast;
+        // Inside the system's own bars like every other overlay: the last
+        // one to carry these was the last to sit over a phone's home
+        // indicator, edge to edge, and under the notch's side in landscape.
+        inset-top: root.safe-area-insets.top;
+        inset-bottom: root.safe-area-insets.bottom;
+        inset-left: root.safe-area-insets.left;
+        inset-right: root.safe-area-insets.right;
     }
 }

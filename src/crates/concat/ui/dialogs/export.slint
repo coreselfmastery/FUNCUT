@@ -321,6 +321,14 @@ component OutputSection inherits DialogSection {
     // platform's business, and the Format line says when the hardware
     // one will. H.264 is left out of an HDR file, which it does not
     // carry.
+    //
+    // A codec this device cannot encode is still named here, greyed and
+    // unpickable rather than absent: the row's detail already says "not on
+    // this device", and a list that changes length is a list whose rows
+    // move under a finger. Picking one anyway used to be silently refused
+    // on the Rust side - the picker closed, the choice snapped back, and
+    // nothing said why. The row now takes the press itself and does
+    // nothing with it.
     if !root.data.hdr: DialogRow {
         label: I18n.t("export.codec");
         Select {
@@ -330,6 +338,11 @@ component OutputSection inherits DialogSection {
                 root.data.h264-encodable ? I18n.t("export.playsEverywhere") : I18n.t("export.notOnThisDevice"),
                 root.data.hevc-encodable ? I18n.t("export.halfTheSize") : I18n.t("export.notOnThisDevice"),
                 root.data.av1-encodable ? I18n.t("export.smallest") : I18n.t("export.notOnThisDevice"),
+            ];
+            disabled: [
+                !root.data.h264-encodable,
+                !root.data.hevc-encodable,
+                !root.data.av1-encodable,
             ];
             changed(index) => { root.codec-changed(index); }
         }
@@ -343,6 +356,10 @@ component OutputSection inherits DialogSection {
             details: [
                 root.data.hevc-encodable ? I18n.t("export.halfTheSize") : I18n.t("export.notOnThisDevice"),
                 root.data.av1-encodable ? I18n.t("export.smallest") : I18n.t("export.notOnThisDevice"),
+            ];
+            disabled: [
+                !root.data.hevc-encodable,
+                !root.data.av1-encodable,
             ];
             changed(index) => { root.codec-changed(index + 1); }
         }

@@ -9,6 +9,18 @@
 //! [`SpeechMsg::Progress`], ending as [`SpeechMsg::Finished`] with the
 //! written file, which lands in the bin and on the timeline.
 //!
+//! A read outlives the sheet that began it, and a cancelled one takes a
+//! moment to wind down: the gate frees its slot when the worker ends, not
+//! when it is told to. Every report and result carries the number of the
+//! read that made it, and one from a read the sheet has since cancelled or
+//! replaced is dropped at the door - a late result otherwise landed with
+//! whichever read's `reading` and `landing` were to hand, putting a
+//! cancelled read's clip on the timeline over the run that replaced it,
+//! and a late refusal from a second read killed the live one's progress
+//! and took its `reading`, so the real file arrived to none and was
+//! dropped. The run number is bumped by a `Cancel` too, which is what
+//! retires a cancelled read's late answers.
+//!
 //! The model comes first and decides the rest: which voices are offered,
 //! and which dials. Kokoro reads with built-in speakers at a speed and
 //! with a pause of your choosing; Pocket reads in a recording, at a speed,
@@ -175,11 +187,28 @@ pub enum SpeechMsg {
     /// Read the script.
     Begin,
     Cancel,
-    /// The synthesiser's worker reporting where it is, `0..=1`.
-    Progress(JobStage),
+    /// The synthesiser's worker reporting where it is, `0..=1`, for the
+    /// read `run` that reported it. A report from a read the sheet has
+    /// since cancelled or replaced is dropped in [`SpeechPane::update`]:
+    /// a stale one would move the bar of the read that is actually going.
+    Progress {
+        /// Which read is speaking; see [`SpeechPane::run`].
+        run: u64,
+        /// Where that read is.
+        stage: JobStage,
+    },
     /// The synthesiser's worker is done: the file it wrote, probed, or
-    /// why not.
-    Finished(Box<Result<MediaSummary, String>>),
+    /// why not, for the read `run` that made it. A result from a read the
+    /// sheet has since cancelled or replaced is dropped in
+    /// [`SpeechPane::update`]: a cancelled read's late result would
+    /// otherwise put its clip on the timeline over whatever has happened
+    /// since.
+    Finished {
+        /// Which read is answering; see [`SpeechPane::run`].
+        run: u64,
+        /// The file it wrote, probed, or why not.
+        result: Box<Result<MediaSummary, String>>,
+    },
 }
 
 /// The Voices shelf's New voice sheet: a recording from the system's
@@ -243,6 +272,14 @@ pub struct SpeechPane {
     /// The model and the length of the running read: what its timing is
     /// kept by.
     reading: Option<(String, f32)>,
+    /// The number of the read under way, and the only one whose reports
+    /// and result are heeded. Bumped when a read begins and when one is
+    /// cancelled, so a late answer from a read the sheet has retired is
+    /// told apart from the current one's and dropped; see the module's
+    /// head. `0` is never a live read's number: the first `Begin` moves
+    /// to 1, and a message carrying 0 - the pane before any read - is
+    /// stale.
+    run: u64,
     /// How long each model took this session, for the next read's bar.
     timings: Timings,
     pub message: String,
@@ -279,6 +316,13 @@ impl SpeechPane {
             // A reading in progress is shown as it is when the panel is
             // asked for again: closing it never stopped the reading.
             SpeechMsg::Open if self.running => self.open = true,
+            // A read is already going: it is the one to wait for, and a
+            // second `Begin` would only be refused by the synthesiser's
+            // one-at-a-time gate - a refusal whose late arrival would
+            // otherwise be mistaken for the live read's own ending. The
+            // sheet never offers the button while it runs; this is the
+            // message layer's guard for the same truth.
+            SpeechMsg::Begin if self.running => {}
             SpeechMsg::Open => {
                 let title = studio
                     .sole_selection()
@@ -486,14 +530,33 @@ impl SpeechPane {
                 self.sample = index.max(0) as usize;
                 self.reference_start = 0.0;
             }
-            SpeechMsg::Begin => self.run(studio),
+            SpeechMsg::Begin => self.read(studio),
             SpeechMsg::Cancel => {
                 studio.host.speech.cancel();
+                // The read is retired now, not when its worker notices: its
+                // late reports and result arrive carrying a number the pane
+                // has moved past, and are dropped at the door. Without the
+                // bump, a result the cancel asked for a moment too late -
+                // past the engine's last abort check - still put its clip
+                // on the timeline over the edit the person went on making.
+                self.run += 1;
                 self.running = false;
                 self.open = false;
             }
-            SpeechMsg::Progress(stage) => self.pace.report(stage),
-            SpeechMsg::Finished(result) => {
+            SpeechMsg::Progress { run, stage } => {
+                if run == self.run {
+                    self.pace.report(stage);
+                }
+            }
+            SpeechMsg::Finished { run, result } => {
+                if run != self.run {
+                    // A read the sheet has retired is answering. Nothing it
+                    // says is about the pane now - not its file, which
+                    // belongs to a read the person cancelled or replaced,
+                    // and not its error, which the read that replaced it
+                    // may have already answered for.
+                    return;
+                }
                 self.running = false;
                 if let (Ok(_), Some((model, chars))) = (result.as_ref(), self.reading.take()) {
                     self.timings.keep(&model, self.pace.learned(chars));
@@ -559,7 +622,11 @@ impl SpeechPane {
 
     /// Reads the script on a worker: the WAV lands in the bin and on the
     /// timeline, at the title's start or at the playhead.
-    fn run(&mut self, studio: &mut Studio) {
+    ///
+    /// Named `read` and not `run`: the pane carries a field `run` for the
+    /// read under way, and `self.run(...)` would reach for the field before
+    /// the method.
+    fn read(&mut self, studio: &mut Studio) {
         let text = self.text.trim().to_owned();
         if text.is_empty() {
             self.message = t("speech.nothingToReadYet");
@@ -680,19 +747,28 @@ impl SpeechPane {
         let speech = Arc::clone(&studio.host.speech);
         self.running = true;
         self.message.clear();
+        // This read's number, and the one every report and the result will
+        // carry back: see the field. `self.run` has moved by the time they
+        // arrive if the read was cancelled or replaced, and the pane drops
+        // them then.
+        self.run += 1;
+        let run = self.run;
         let epoch = crate::host::project_epoch();
         spawn_in_project(
             move || {
                 let spoken = speech.speak(&dirs, &request, move |stage| {
                     on_ui_in_project(epoch, move |studio, _, _| {
-                        studio.handle(Msg::Speech(SpeechMsg::Progress(stage)));
+                        studio.handle(Msg::Speech(SpeechMsg::Progress { run, stage }));
                     });
                 })?;
                 let summary = media::probe(&spoken.path)?;
                 Ok::<_, String>(summary)
             },
-            |studio, _, _, result| {
-                studio.handle(Msg::Speech(SpeechMsg::Finished(Box::new(result))))
+            move |studio, _, _, result| {
+                studio.handle(Msg::Speech(SpeechMsg::Finished {
+                    run,
+                    result: Box::new(result),
+                }))
             },
         );
     }

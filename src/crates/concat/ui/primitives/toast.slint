@@ -27,6 +27,16 @@ export struct ToastData {
 export component ToastLayer inherits Rectangle {
     in property <ToastData> data;
 
+    // Inside the system's own bars, on a phone or a tablet whose window is
+    // drawn edge to edge: the notice keeps clear of the notch's side and
+    // off the home indicator, the way the sheets and the dialogs do (each
+    // of them carries the same four insets; see app.slint, which hands them
+    // down). Zero on a desktop, where the margins are the whole of it.
+    in property <length> inset-top;
+    in property <length> inset-bottom;
+    in property <length> inset-left;
+    in property <length> inset-right;
+
     /// Two holds, which are the reason this is a property at all: an error you
     /// missed is an error you go looking for.
     property <duration> hold: root.data.failed ? 6500ms : 3500ms;
@@ -82,14 +92,18 @@ export component ToastLayer inherits Rectangle {
     }
 
     Rectangle {
-        // 16px off both edges. The 12px it is pushed down by when it is away
-        // is the rise.
-        x: root.width - self.width - 16px;
-        y: root.height - self.height - 16px + (root.shown ? 0px : 12px);
-        // Capped, then the label elides: a notice is a sentence, and one long
-        // enough to reach across the window has stopped being one. A failure
-        // keeps room for its copy chip.
-        width: Math.min(root.width - 32px,
+        // 16px off both edges, past whatever the system's bars reach in:
+        // a phone draws the window under the home indicator and past the
+        // notch's side, and the toast rides above them. The 12px it is pushed
+        // down by when it is away is the rise.
+        x: root.width - self.width - 16px - root.inset-right;
+        y: root.height - self.height - 16px - root.inset-bottom
+            + (root.shown ? 0px : 12px);
+        // Capped to what is left between the insets, then the label elides: a
+        // notice is a sentence, and one long enough to reach across the
+        // window has stopped being one. A failure keeps room for its copy
+        // chip.
+        width: Math.min(root.width - 32px - root.inset-left - root.inset-right,
             12px + icon.width + 8px + measure.preferred-width + 12px
                 + (root.data.failed ? 60px : 0px));
         // 12px by 8px of padding around a 16px line.

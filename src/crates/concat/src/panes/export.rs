@@ -135,6 +135,21 @@ impl ExportPane {
                 // and its own rate, first on the rate list.
                 self.resolution = Self::own_rung(studio);
                 self.rate = 0;
+                // The codec the sheet opens on is one this device can
+                // encode: the picker greys a row that is not, and a choice
+                // that is greyed cannot be picked - so a choice already on
+                // one, from a build whose encoders have changed since the
+                // sheet was last used, would sit greyed with no way off it
+                // except a cancel. The first this device encodes takes the
+                // choice instead - H.264 wherever it is linked, which is
+                // everywhere the app ships.
+                let index = self.codec.min(concat_media::VideoCodec::ALL.len() - 1);
+                if !concat_media::VideoCodec::ALL[index].encodable() {
+                    self.codec = concat_media::VideoCodec::ALL
+                        .iter()
+                        .position(|codec| codec.encodable())
+                        .unwrap_or(index);
+                }
             }
             ExportMsg::Close => self.open = false,
             ExportMsg::NameEdited(name) => self.name = name,

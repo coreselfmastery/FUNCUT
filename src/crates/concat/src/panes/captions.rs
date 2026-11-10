@@ -13,6 +13,18 @@
 //! The transcriber runs on a worker and reports as
 //! [`CaptionsMsg::Progress`], ending as [`CaptionsMsg::Finished`].
 //!
+//! A run outlives the sheet that began it - closing the sheet never
+//! stopped one - and a cancelled one can take a moment to wind down:
+//! the gate frees its slot when the worker ends, not when it is told to.
+//! Every report and result carries the number of the run that made it,
+//! and a message from a run the sheet has since cancelled or replaced is
+//! dropped at the door: a late result otherwise landed with whichever
+//! run's `subject` was to hand, applying a cancelled run's words over a
+//! newer run's timing - and a late error from a refused second run killed
+//! the live run's progress and took its `subject`, so the real segments
+//! arrived to none and were dropped. The run number is bumped by a
+//! `Cancel` too, which is what retires a cancelled run's late answers.
+//!
 //! The sheet also reads a SubRip file in as captions, with the same look,
 //! and writes the timeline's captions out as one.
 
@@ -62,10 +74,27 @@ pub enum CaptionsMsg {
     /// Run the pass the sheet describes.
     Begin,
     Cancel,
-    /// The transcriber's worker reporting the stage it is in.
-    Progress(JobStage),
-    /// The transcriber's worker is done: what was said, or why not.
-    Finished(Result<Vec<Segment>, String>),
+    /// The transcriber's worker reporting the stage it is in, for the run
+    /// `run` that reported it. A report from a run the sheet has since
+    /// cancelled or replaced is dropped in [`CaptionsPane::update`]: a
+    /// stale one would move the bar of the run that is actually going.
+    Progress {
+        /// Which run is speaking; see [`CaptionsPane::run`].
+        run: u64,
+        /// Where that run is.
+        stage: JobStage,
+    },
+    /// The transcriber's worker is done: what was said, or why not, for
+    /// the run `run` that made it. A result from a run the sheet has since
+    /// cancelled or replaced is dropped in [`CaptionsPane::update`]: a
+    /// cancelled run's late result would otherwise apply its captions
+    /// over whatever run - or edit - has happened since.
+    Finished {
+        /// Which run is answering; see [`CaptionsPane::run`].
+        run: u64,
+        /// What was said, or why not.
+        result: Result<Vec<Segment>, String>,
+    },
     /// Asks for a SubRip file to read in.
     ImportSrt,
     /// The SubRip file chosen: its cues as captions.
@@ -128,6 +157,13 @@ pub struct CaptionsPane {
     subject: Option<Subject>,
     /// How long each model took this session, for the next run's bar.
     timings: Timings,
+    /// The number of the run under way, and the only one whose reports
+    /// and result are heeded. Bumped when a run begins and when one is
+    /// cancelled, so a late answer from a run the sheet has retired is
+    /// told apart from the current one's and dropped; see the module's
+    /// head. `0` is never a live run's number: the first `Begin` moves to
+    /// 1, and a message carrying 0 - the pane before any run - is stale.
+    run: u64,
 }
 
 impl CaptionsPane {
@@ -138,6 +174,13 @@ impl CaptionsPane {
             // A run in progress is shown as it is, however the panel is
             // asked for again: closing it never stopped the run.
             CaptionsMsg::Open | CaptionsMsg::OpenOnClip(_) if self.running => self.open = true,
+            // A run is already going: it is the one to wait for, and a
+            // second `Begin` would only be refused by the transcriber's
+            // one-at-a-time gate - a refusal whose late arrival would
+            // otherwise be mistaken for the live run's own ending. The
+            // sheet never offers the button while it runs; this is the
+            // message layer's guard for the same truth.
+            CaptionsMsg::Begin if self.running => {}
             CaptionsMsg::Open => {
                 let selected = studio.sole_selection();
                 self.open_on(studio, selected, false);
@@ -183,11 +226,30 @@ impl CaptionsPane {
             }
             CaptionsMsg::Cancel => {
                 studio.host.transcriber.cancel();
+                // The run is retired now, not when its worker notices: its
+                // late reports and result arrive carrying a number the
+                // pane has moved past, and are dropped at the door. Without
+                // the bump, a result the cancel asked for a moment too
+                // late - past whisper's last abort check - still applied
+                // its captions over the edit the person went on making.
+                self.run += 1;
                 self.running = false;
                 self.open = false;
             }
-            CaptionsMsg::Progress(stage) => self.pace.report(stage),
-            CaptionsMsg::Finished(result) => {
+            CaptionsMsg::Progress { run, stage } => {
+                if run == self.run {
+                    self.pace.report(stage);
+                }
+            }
+            CaptionsMsg::Finished { run, result } => {
+                if run != self.run {
+                    // A run the sheet has retired is answering. Nothing it
+                    // says is about the pane now - not its segments, which
+                    // belong to a run the person cancelled or replaced, and
+                    // not its error, which the run that replaced it may
+                    // have already answered for.
+                    return;
+                }
                 self.running = false;
                 let subject = self.subject.take();
                 if let (Ok(_), Some(subject)) = (&result, &subject) {
@@ -522,16 +584,24 @@ impl CaptionsPane {
         });
         self.running = true;
         self.message.clear();
+        // This run's number, and the one every report and the result will
+        // carry back: see the field. `self.run` has moved by the time they
+        // arrive if the run was cancelled or replaced, and the pane drops
+        // them then.
+        self.run += 1;
+        let run = self.run;
         let epoch = crate::host::project_epoch();
         spawn_in_project(
             move || {
                 transcriber.transcribe(&dirs, &request, move |stage| {
                     on_ui_in_project(epoch, move |studio, _, _| {
-                        studio.handle(Msg::Captions(CaptionsMsg::Progress(stage)));
+                        studio.handle(Msg::Captions(CaptionsMsg::Progress { run, stage }));
                     });
                 })
             },
-            |studio, _, _, result| studio.handle(Msg::Captions(CaptionsMsg::Finished(result))),
+            move |studio, _, _, result| {
+                studio.handle(Msg::Captions(CaptionsMsg::Finished { run, result }))
+            },
         );
     }
 

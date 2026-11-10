@@ -11,6 +11,15 @@
     scripts/locales.py --check --strict
                                   # ... and exit 1 on any of them
 
+`--same` and `--strict` go with `--check`, and are refused without it
+(exit 2): without `--check` this script is the updater, which rewrites
+en.json and drops stale lines from every locale - and doing that because
+a line said `--strict`, a word that reads as a look-don't-touch, is the
+one way to run it nobody meant. The updater itself never fails on a
+locale that lacks lines: a locale lacking lines is the translator's
+backlog, which the run can only report, not fix - `--check` is the gate
+that fails on it, and CI runs that.
+
 A locale is a JSON file of keys to words: `"export.tenBitColour": "10-bit
 colour"`. A key is dotted lowerCamelCase - the area of the interface the
 string belongs to (`common` for one used all over), then a name for it.
@@ -207,6 +216,18 @@ def check(wanted: dict[str, str], list_same: bool = False, strict: bool = False)
 
 
 def main() -> int:
+    # `--same` and `--strict` are checks' flags. Without `--check` they were
+    # silently ignored - worse, ignored by the updater, which rewrote
+    # en.json and every locale file under them: a run asked to look closer
+    # that quietly touched what it was asked only to look at, and reported
+    # each locale's missing lines on the way out with an exit of 0. They
+    # are refused now, before anything is read: 2, an usage error, which a
+    # caller can tell from the check's 1.
+    if "--check" not in sys.argv and ("--same" in sys.argv or "--strict" in sys.argv):
+        print("--same and --strict go with --check: without it this script is the "
+              "updater, which rewrites en.json and drops stale lines from "
+              "every locale")
+        return 2
     wanted, problems = inventory()
     for problem in problems:
         print(problem)

@@ -196,10 +196,9 @@ impl Slot {
 
 /// The share of the slots that go shopping for stock, 0.0 to 1.0.
 ///
-/// The band the plan validator keeps: thirty to forty-five percent is
-/// where stock reads as coverage rather than collage. Under thirty the
-/// picture leans on the A-roll alone; over forty-five it leans on the
-/// library; past sixty it is stock with gaps, and the plan is refused.
+/// This is an informational measurement only. There is intentionally no
+/// universal target: the right balance depends on the film's story, source
+/// material, evidence density, and chosen visual language.
 pub fn broll_share(slots: &[Slot]) -> f32 {
     if slots.is_empty() {
         return 0.0;

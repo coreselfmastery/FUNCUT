@@ -61,7 +61,12 @@ assets' own names - welcome. And the randomness the contract *does*
 allow is exactly the seeded kind: the noise fields (`noise.rs`,
 `Wobble`, `set-noise-track`) take a **seed** the document carries, so a
 wobble is as deterministic as a keyframe - the seed is the whole of it.
-An absent seed is a refused parameter, never a silently-picked one.
+An absent seed is a refused parameter, never a silently-picked one. The
+particle fields (`add-particles`) are the same promise one level up: the
+seed drives the simulation, the simulation is baked into keyframes at
+authoring time, and a frame asked for out of order is answered from the
+document's own numbers. The camera (`set-camera`) adds no randomness at
+all - it is arithmetic folded into the tracks the layers already carry.
 
 On the engine side, the sidecar makes the same promise structurally:
 no JavaScript, no network, asset paths confined to the render directory,

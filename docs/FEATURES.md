@@ -25,6 +25,7 @@ with one click.
 | Effect/filter/transition/audio packages | **327** = 57 filters + 123 effects + 122 transitions + 25 audio | `src/crates/concat-effects/packages/` |
 | Text presets | 31 named + default | `src/crates/concat/text-presets/` |
 | Motion presets | 18 | `src/crates/concat-motion/src/presets.rs` |
+| Motion authoring ops | **24** | `src/crates/concat-motion/src/authoring.rs` |
 | Bundled CC0 sounds | 530 (16 MB, 12 categories; 110 of them designed in-repo — the 100-sound Hollywood pack and ten risers and sweeps) | `audio/` |
 | BGM library | 1,025 CC0 tracks (FreePD) + 166 MobyGratis (**non-commercial only**) | fetched on demand |
 | Stock clips (OpenVid) | 937,957 — the OpenVid-1M **research dataset**, not rights-cleared stock | ~435 MB local index, fetched per clip |
@@ -297,7 +298,13 @@ Nothing here is bundled whole; indexes download once, media arrives per pick.
   sting, pull quote, chapter chip, numbered chapter, agenda list, subscribe
   card, end card, terminal, code diff, bar chart, progress bar, split
   compare, counting number, mesh backdrop) with slots an agent fills;
-  19 editing ops; `motion_overlay` composites a transparent bake over real footage
+  24 editing ops, four of them data-driven and domain-neutral — `add-chart`
+  (bar/line/area/donut from any domain's numbers, drawn as rects, ellipses
+  and text so the default engine renders them as they stand), `add-counter`
+  (a baked count-up), `add-particles` (a seeded, deterministic particle
+  field baked to keyframes) and `set-camera` (a zoom/pan/roll with per-layer
+  depth for parallax, folded into each root layer's own tracks);
+  `motion_overlay` composites a transparent bake over real footage
   (the honest alpha path); `captions_animate` turns a word-timed transcript
   into a kinetic caption video in one call; `concat-motion-agent` puts the
   same vocabulary on a CLI (`list/inspect/edit/frame/bake/reel/captions`).

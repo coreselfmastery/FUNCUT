@@ -33,12 +33,15 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::camera::{CameraMove, apply_camera};
 use crate::comp::{
     Blend, Comp, Length, Node, NodeKind, Paint, Point, Rgba, Slot, SlotField, Stroke, TextAlign,
     TextNode, TextStyle, Transform, Word,
 };
 use crate::curve::Curve;
 use crate::engine::MotionError;
+use crate::graphics::{Chart, Counter};
+use crate::particles::ParticleSystem;
 use crate::track::{Key, Track, Value};
 
 /// One authoring operation, as JSON: `{"op": "move", "node": "card", "start": 3.5}`.
@@ -224,6 +227,69 @@ pub enum Op {
         /// Where its centre sits.
         y: f64,
     },
+    /// Add a data-driven chart: any domain's numbers as columns, a trend,
+    /// an area under it, or shares of a whole around a ring - every height,
+    /// slope and share computed from the data, drawn as rectangles,
+    /// ellipses and text the default engine renders as they stand. The
+    /// nodes are the root-level `{id}.…` family, so a camera, a delete or
+    /// a retime reaches them without a group's transform in the way.
+    AddChart {
+        /// The family's id.
+        id: String,
+        /// The box's left edge, in frame pixels.
+        x: f64,
+        /// Its top edge.
+        y: f64,
+        /// How wide the chart's box is.
+        width: f64,
+        /// How tall it is.
+        height: f64,
+        /// When the chart enters, in seconds.
+        #[serde(default)]
+        at: f64,
+        /// The chart: kind, data, formatting and pacing.
+        chart: Chart,
+    },
+    /// Add a counter: a number that climbs from `from` to `to`, step by
+    /// eased step - every step a text node that shows for its moment, the
+    /// last one holding to the end of the comp. No renderer animates a
+    /// number; the count is baked, and reads as one number climbing.
+    AddCounter {
+        /// The family's id.
+        id: String,
+        /// Where the number's centre sits.
+        x: f64,
+        /// Where it sits.
+        y: f64,
+        /// When the count starts, in seconds.
+        #[serde(default)]
+        at: f64,
+        /// The counter: bounds, formatting, pacing and size.
+        counter: Counter,
+    },
+    /// Add a seeded particle field, baked. The simulation - emitters,
+    /// lifetimes, gravity, drag, turbulence - runs here, at authoring
+    /// time, on a fixed timestep from the seed; every particle lands as a
+    /// node with its own position, scale and opacity tracks, so any
+    /// render, in any frame order, draws the same field twice.
+    AddParticles {
+        /// The family's id.
+        id: String,
+        /// The field's left edge, in frame pixels: particles are born
+        /// inside this box.
+        x: f64,
+        /// Its top edge.
+        y: f64,
+        /// How wide the birth box is.
+        width: f64,
+        /// How tall it is.
+        height: f64,
+        /// When the field lights up, in seconds.
+        #[serde(default)]
+        at: f64,
+        /// The system: seed, forces, curves over life.
+        system: ParticleSystem,
+    },
     /// Delete a node and every node whose parent it was.
     Delete {
         /// The node.
@@ -252,6 +318,15 @@ pub enum Op {
     SetBackground {
         /// Colour as hex.
         color: String,
+    },
+    /// Move the camera: a zoom, a pan or a roll, baked into every root
+    /// layer's own tracks over `seconds`, with a depth per layer for
+    /// parallax - the 2.5D of a comp the reel layer's own `parallax`
+    /// rate gives a storyboard. Composes with the motion each layer
+    /// already carries, key by key; applying it twice moves twice.
+    SetCamera {
+        /// The move: zoom, pan, roll, seconds, curve, depths.
+        camera: CameraMove,
     },
 }
 
@@ -716,6 +791,64 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
             });
             Ok(comp)
         }
+        Op::AddChart {
+            id,
+            x,
+            y,
+            width,
+            height,
+            at,
+            chart,
+        } => {
+            reserve(&comp, id)?;
+            check_at(&comp, *at)?;
+            let area = crate::graphics::Area {
+                x: *x,
+                y: *y,
+                width: *width,
+                height: *height,
+            };
+            let nodes = crate::graphics::chart_nodes(id, chart, area, *at, comp.duration)?;
+            comp.nodes.extend(nodes);
+            Ok(comp)
+        }
+        Op::AddCounter {
+            id,
+            x,
+            y,
+            at,
+            counter,
+        } => {
+            reserve(&comp, id)?;
+            check_at(&comp, *at)?;
+            let nodes = crate::graphics::counter_nodes(id, counter, *x, *y, *at, comp.duration)?;
+            comp.nodes.extend(nodes);
+            Ok(comp)
+        }
+        Op::AddParticles {
+            id,
+            x,
+            y,
+            width,
+            height,
+            at,
+            system,
+        } => {
+            reserve(&comp, id)?;
+            check_at(&comp, *at)?;
+            let nodes = crate::particles::particle_nodes(
+                id,
+                system,
+                *x,
+                *y,
+                *width,
+                *height,
+                *at,
+                comp.duration,
+            )?;
+            comp.nodes.extend(nodes);
+            Ok(comp)
+        }
         Op::Delete { node } => {
             let mut doomed = vec![node.clone()];
             let mut index = 0;
@@ -756,6 +889,10 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
         }
         Op::SetBackground { color } => {
             comp.background = Rgba::hex(color);
+            Ok(comp)
+        }
+        Op::SetCamera { camera } => {
+            apply_camera(&mut comp, camera)?;
             Ok(comp)
         }
     }
@@ -1032,6 +1169,37 @@ fn push(comp: &mut Comp, id: &str) -> Result<(), MotionError> {
         return Err(fail(
             format!("a node called {id:?} already exists"),
             "ids are what tracks and slots point at, so a new node needs a new id",
+        ));
+    }
+    Ok(())
+}
+
+/// The id a generated family of nodes hangs off, reserved whole: a chart,
+/// a counter or a particle field names its nodes `{id}.…`, so the prefix
+/// is the fence - an id that would land inside a family already drawn is
+/// refused before the first node is built.
+fn reserve(comp: &Comp, id: &str) -> Result<(), MotionError> {
+    let prefix = format!("{id}.");
+    if comp
+        .nodes
+        .iter()
+        .any(|node| node.id == id || node.id.starts_with(&prefix))
+    {
+        return Err(fail(
+            format!("a node family called {id:?} already exists"),
+            "a generated family names its nodes `{id}.title`, `{id}.bar.0` and on; the whole prefix is its id",
+        ));
+    }
+    Ok(())
+}
+
+/// A start time inside the comp, checked before anything is built: a
+/// family that starts past the end would validate and draw nothing.
+fn check_at(comp: &Comp, at: f64) -> Result<(), MotionError> {
+    if !at.is_finite() || at < 0.0 || at >= comp.duration {
+        return Err(fail(
+            format!("{at}s is outside this {}s comp", comp.duration),
+            "start it inside the comp's own span",
         ));
     }
     Ok(())
@@ -1952,5 +2120,154 @@ mod tests {
             replace_text_run("<div>Ada</div>", "Ada", "<b>x</b> & co"),
             "<div>&lt;b&gt;x&lt;/b&gt; &amp; co</div>"
         );
+    }
+
+    /// The data graphics arrive as ops like everything else: one batch,
+    /// applied all-or-nothing, validated at the end - and the camera folds
+    /// around the tracks the chart's own entrances already carry.
+    #[test]
+    fn a_chart_counter_particles_and_a_camera_arrive_as_one_batch() {
+        let comp = presets::build("funcut.lower-third.glass").expect("a preset");
+        let edited = apply(
+            &comp,
+            &[
+                Op::AddChart {
+                    id: "quarter".into(),
+                    x: 200.0,
+                    y: 200.0,
+                    width: 800.0,
+                    height: 500.0,
+                    at: 0.0,
+                    chart: Chart {
+                        kind: crate::graphics::ChartKind::Bar,
+                        data: vec![crate::graphics::Datum {
+                            label: "Q1".into(),
+                            value: 3.0,
+                            color: None,
+                        }],
+                        ..Chart::default()
+                    },
+                },
+                Op::AddCounter {
+                    id: "count".into(),
+                    x: 1400.0,
+                    y: 300.0,
+                    at: 0.5,
+                    counter: Counter {
+                        from: 0.0,
+                        to: 42.0,
+                        ..Counter::default()
+                    },
+                },
+                Op::AddParticles {
+                    id: "dust".into(),
+                    x: 0.0,
+                    y: 0.0,
+                    width: 1920.0,
+                    height: 1080.0,
+                    at: 0.0,
+                    system: ParticleSystem {
+                        seed: 7,
+                        count: 8,
+                        ..ParticleSystem::default()
+                    },
+                },
+                Op::SetCamera {
+                    camera: CameraMove {
+                        zoom: Some((1.0, 1.05)),
+                        depths: vec![("card".into(), 1.3)],
+                        ..CameraMove::default()
+                    },
+                },
+            ],
+        )
+        .expect("the batch applies");
+        let problems = edited.validate();
+        assert!(problems.is_empty(), "{problems:?}");
+        // The generated families are root-level nodes the camera reached:
+        // the bar's own entrance track is still there, folded around.
+        let bar = edited.node("quarter.bar.0").expect("the bar");
+        assert!(
+            bar.tracks.contains_key("scale"),
+            "the entrance track survives the camera: {:?}",
+            bar.tracks.keys().collect::<Vec<_>>()
+        );
+        let scale = bar.tracks.get("scale").expect("folded");
+        let first = scale.sample(0.0).expect("keyed");
+        let last = scale.sample(1.0).expect("keyed");
+        match (first, last) {
+            (Value::Number { value: a }, Value::Number { value: b }) => {
+                assert!((a - 0.0).abs() < 1e-9, "still enters from nothing: {a}");
+                assert!(
+                    (b - 1.05).abs() < 1e-9,
+                    "and lands on the camera's zoom: {b}"
+                );
+            }
+            _ => panic!("a scale track holds numbers"),
+        }
+    }
+
+    /// The JSON the documentation shows is the JSON the operations parse:
+    /// the worked examples in MOTION.md are a test, not a wish.
+    #[test]
+    fn the_documented_data_graphics_json_parses_as_ops() {
+        let comp = presets::build("funcut.lower-third.glass").expect("a preset");
+        let batch = serde_json::json!({"ops": [
+            {"op": "add-chart", "id": "chart", "x": 220, "y": 180, "width": 1480, "height": 760,
+             "chart": {"kind": "bar", "title": "Books finished, by quarter",
+                        "format": {"suffix": " books"},
+                        "data": [{"label": "Q1", "value": 12}, {"label": "Q2", "value": 9}]}},
+            {"op": "add-counter", "id": "metres", "x": 960, "y": 460,
+             "counter": {"from": 0, "to": 42195, "seconds": 1.6, "steps": 32,
+                          "format": {"suffix": " m"}, "label": "one marathon"}},
+            {"op": "add-particles", "id": "embers", "x": 360, "y": 940, "width": 1200, "height": 80,
+             "system": {"seed": 7, "count": 48, "lifetime": [1.4, 2.8], "speed": [30, 120],
+                         "angle": [-100, -80], "gravity": [0, -60], "drag": 0.4,
+                         "turbulence": {"strength": 24, "scale": 0.006, "rate": 0.8},
+                         "size": [3, 1.1], "colors": ["#d9a441", "#e8c982"]}},
+            {"op": "set-camera", "camera": {"zoom": [1.0, 1.08], "pan": [0, -30], "seconds": 3.5,
+                                             "depths": [["card", 1.3]]}}
+        ]});
+        let edited = apply_json(&comp, &batch).expect("the documented ops parse and apply");
+        let problems = edited.validate();
+        assert!(problems.is_empty(), "{problems:?}");
+        assert!(
+            edited.node("chart.bar.1").is_some()
+                && edited.node("metres.value.32").is_some()
+                && edited.node("embers.p47").is_some(),
+            "the generated families are all there"
+        );
+    }
+
+    /// A generated family refuses an id already drawn, and a start outside
+    /// the comp is refused before the first node is built: the refusals
+    /// name the ask, not a symptom.
+    #[test]
+    fn generated_families_refuse_taken_ids_and_impossible_starts() {
+        let comp = presets::build("funcut.lower-third.glass").expect("a preset");
+        let taken = apply(
+            &comp,
+            &[Op::AddChart {
+                id: "card".into(),
+                x: 0.0,
+                y: 0.0,
+                width: 400.0,
+                height: 300.0,
+                at: 0.0,
+                chart: Chart::default(),
+            }],
+        );
+        assert!(taken.is_err(), "an id the comp already carries");
+        let outside = apply(
+            &comp,
+            &[Op::AddCounter {
+                id: "late".into(),
+                x: 100.0,
+                y: 100.0,
+                at: 9.0,
+                counter: Counter::default(),
+            }],
+        );
+        assert!(outside.is_err(), "a start past the comp's own end");
     }
 }

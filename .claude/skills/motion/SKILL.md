@@ -114,12 +114,18 @@ Kebab-case `op` tag, one JSON object each.
 | `retime` | `node`, `duration` (`0` = to the end) | how long it lasts |
 | `set-track` | `node`, `property`, `keys: [[at, value, curve?], …]` | anything precise; `at` is a **fraction of the node's span**. For `position` the one value lands on both axes — the diagonal — so a real move uses `set-track-points` |
 | `set-track-points` | `node`, `keys: [[at, x, y, curve?], …]` | a `position` track with the two axes apart, in frame pixels |
+| `set-noise-track` | `node`, `property`, `seed`, `amount`, `rate?` | seeded organic drift around the resting value — the seed is the whole of the randomness |
+| `set-markup` | `node`, `markup` | wholesale HTML rewrite — the data door for a markup comp |
 | `fade-in` | `node`, `seconds`, `curve` | the safe entrance (curve is required) |
 | `slide-to` | `node`, `x`, `y`, `seconds` | arrival from an edge, settled on a spring |
 | `pop` | `node`, `from`, `seconds` | chips, badges, numbers arriving |
 | `add-group` | `id`, `x`, `y` | a parent to hang children on |
 | `add-rect` | `id`, `width`, `height`, `fill`, `radius`, `x`, `y` | a plate, a bar, a divider |
 | `add-text` | `id`, `text`, `size`, `weight`, `color`, `x`, `y` | a kicker, a label |
+| `add-chart` | `id`, `x`, `y`, `width`, `height`, `at?`, `chart` | **data-driven chart, any domain** — bar/line/area/donut from `{label, value}` data, drawn as rects/ellipses/text so the default engine renders it as it stands; nodes are the root-level `{id}.…` family |
+| `add-counter` | `id`, `x`, `y`, `at?`, `counter` | a baked count-up — `steps` text nodes eased from `from` to `to`, the last holding to the end |
+| `add-particles` | `id`, `x`, `y`, `width`, `height`, `at?`, `system` | a seeded particle field baked to keyframes — emitters, gravity, drag, turbulence; the seed is the whole of the randomness |
+| `set-camera` | `camera` (zoom/pan/roll, `seconds`, `curve?`, `keys?`, `depths?`) | a move baked into every **root** layer's own tracks, with per-layer depths (`0.1..=3.0`) for parallax; composes with existing tracks |
 | `delete` | `node` (and its children) | removing what the edit does not need |
 | `set-blend` | `node`, `blend` | `screen` for glow, `multiply` for shadow |
 | `set-opacity` | `node`, `opacity` | base opacity, under any track |
@@ -129,7 +135,9 @@ Kebab-case `op` tag, one JSON object each.
 Animatable through `set-track`: `position`, `scale`, `rotation`, `opacity`, `blur`, `dash`,
 `param:<key>`. Values are **numbers**; a `position` track takes `[x, y]`-shaped points and a `dash`
 track a number. The ops are the *convenience* layer: anything they cannot express, the comp document
-can (§4b).
+can (§4b). The four data ops (`add-chart`, `add-counter`, `add-particles`, `set-camera`) are the
+generated layer: they build whole node families from data, and their caps and refusals name the
+number that broke them.
 
 ### Filling a slot
 

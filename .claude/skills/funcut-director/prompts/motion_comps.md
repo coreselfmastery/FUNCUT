@@ -16,10 +16,13 @@ say, and how to check.
 ## 1. Reach for comps in this order — and know you may go further
 
 **The density floor: one designed beat per section and at least one per 15 s of runtime.**
-In finance, science and tech, every number, percentage, comparison or process in the narration
-becomes a comp (`funcut.ticker.count`, `funcut.chart.bars`, `funcut.stats.triptych`,
-`funcut.compare.split`) — never a plain text card. A piece whose only design is its captions has
-not been through this layer.
+Every number, percentage, comparison or process in the narration becomes a comp — in finance,
+science, sport, education, health, coding, culture, any domain at all. One number is
+`add-counter`; a comparison or a ranking is `add-chart {kind: "bar"}`; a trend is `add-chart
+{kind: "line"|"area"}`; shares of a whole are `add-chart {kind: "donut"}`; a big claim beside a
+contrast is `funcut.compare.split`; a stack of three is `funcut.stats.triptych`. The chart ops
+take the data itself — `{label, value}` pairs, any domain — and draw it as native nodes, so the
+geometry is the data's, never a text card's. Never a plain text card for a number.
 
 1. **A library preset that is already close.** Eighteen exist; filling a slot is three fields and the
    result will look designed. **Edit it anyway** — its copy, its timing, one element removed.
@@ -28,10 +31,15 @@ not been through this layer.
 3. **A comp you author as a document** — every node kind, mask with feather and invert, blur and
    shadow effects, nine blend modes, gradients, dash draw-on, five curve families. The presets were
    written this way; two worked examples ship in `src/crates/concat-motion/examples/comps/`
-   (`cypher.opener`, `cypher.spectrum`). This is the option that gives a film a look nothing else in
+   (`cypher.opener`, `cypher.spectrum`), and the data graphics ship six more (`data.chart.bars`,
+   `data.chart.line`, `data.chart.donut`, `data.counter`, `data.particles`, `data.camera` — see
+   `docs/MOTION.md`'s "Data graphics"). This is the option that gives a film a look nothing else in
    the product can copy.
 4. **Primitives** (`add-group`, `add-rect`, `add-text`, `set-track`) for a kicker, a rule, a label —
-   small things, not a whole design.
+   small things, not a whole design. And the **generated layer** for what data drives:
+   `add-chart`, `add-counter`, `add-particles` (a seeded ember field, confetti, dust — any
+   atmosphere a beat asks for) and `set-camera` (a push-in over the layers a beat lands on) build
+   whole node families from one object.
 
 Never rebuild in primitives what a preset already does. Never place a full-frame opaque backdrop over
 footage unless you mean to replace the picture. **Never ship the first idea** — see §2's five

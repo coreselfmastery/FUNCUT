@@ -995,8 +995,8 @@ because an override nobody can see the why of is a guess with confidence. The fu
 tested; see `concat-motion/src/route.rs`.
 
 Operations: `set-slot`, `set-text`, `set-words`, `set-markup`, `move`, `retime`, `set-track`, `set-track-points`,
-`set-noise-track`, `fade-in`, `slide-to`, `pop`, `add-group`, `add-rect`, `add-text`, `delete`, `set-blend`,
-`set-opacity`, `set-duration`, `set-background`.
+`set-noise-track`, `fade-in`, `slide-to`, `pop`, `add-group`, `add-rect`, `add-text`, `add-chart`, `add-counter`,
+`add-particles`, `set-camera`, `delete`, `set-blend`, `set-opacity`, `set-duration`, `set-background`.
 
 `set-markup` hands a markup node whole new HTML - the op a data-driven comp needs, where the words
 alone cannot say it. The chart preset, for instance, ships its bar labels as slots for a ranking, and
@@ -1006,6 +1006,90 @@ real bar heights arrive as one rewrite that keeps the preset's stylesheet and ri
 { "op": "set-markup", "node": "sheet",
   "markup": "<div class=\"sheet\"><div class=\"head\">…</div><div class=\"plot\"><div class=\"col\"><div class=\"bar\" style=\"height: 26%\"></div><div class=\"lab\">YOU $180K</div></div>…</div></div>" }
 ```
+
+### Data graphics: the numbers as nodes
+
+`set-markup` is the data door for a markup comp. `add-chart` is the other way: hand over the data
+itself - **any domain's** data, quarters or kilometres, hours or goals - and the operation hands
+back nodes. Every height, slope and share is computed from the numbers, every entrance staggered
+off them, and nothing is markup: rectangles, ellipses and text, which is everything the default
+engine draws natively, so the chart renders through Geneva exactly as it stands and re-renders
+when the numbers change without a stylesheet rewrite. The generated nodes are root-level and
+named `{id}.…` (`chart.bar.3`, `chart.ring.17`, `metres.value.12`), so a `move`, a `delete` or a
+camera reaches them like any other layer.
+
+```json
+{ "op": "add-chart", "id": "chart", "x": 220, "y": 180, "width": 1480, "height": 760,
+  "chart": { "kind": "bar", "title": "Books finished, by quarter",
+             "format": { "suffix": " books" },
+             "data": [ { "label": "Q1", "value": 12 }, { "label": "Q2", "value": 9 },
+                       { "label": "Q3", "value": 14 }, { "label": "Q4", "value": 17 } ] } }
+```
+
+Four kinds, one operation: **bar** (columns from a baseline, negatives below the rule), **line** (the
+trend drawn on segment by segment), **area** (the field of columns rising under the trend) and
+**donut** (shares of one whole, swept around a ring). Formatting is domain-neutral by construction
+- decimals, a thousands separator, a prefix and suffix (`$`, `%`, ` km`, ` goals`), and the compact
+`1.2K`/`3.4M` dashboard form - and the geometry is the data's: the tallest column is the tallest
+number, a loss draws below the rule, and a donut's slices share the ring by their weight.
+
+Two honest notes on the engine. A line is a chain of thin rotated rectangles and a donut a ring of
+them, because the sidecar draws no vector paths (`NodeKind::Path` is the native engine's alone, and
+the native `CompEngine` impl is still to come) - approximated at a resolution the frame cannot
+tell from the curve, and said plainly here. And the caps are the document's health, not physics':
+at most 48 points, 12 slices, and a box at least 80×80, each refused with the fix in the message.
+
+`add-counter` is the one-number case: no renderer animates a number, so the count is **baked** -
+`steps` text nodes (8..=96) tiling the count's seconds, each showing for its moment, eased by the
+curve, the last holding to the end of the comp. It reads as one number climbing.
+
+```json
+{ "op": "add-counter", "id": "metres", "x": 960, "y": 460,
+  "counter": { "from": 0, "to": 42195, "seconds": 1.6, "steps": 32,
+               "format": { "suffix": " m" }, "label": "one marathon, start line to finish" } }
+```
+
+### Particles: a seeded field, baked
+
+`add-particles` configures a real particle system - emitters (`burst` or `stream`), lifetimes,
+speeds and angles, gravity, drag, turbulence on the seed's own simplex field, size and opacity over
+life - and the simulation runs at authoring time, on a fixed timestep from the `seed`. Every
+particle lands in the comp as an ellipse or a square with its own position, scale and opacity
+tracks, so any render, in any frame order, draws the same field twice: the seed is the whole of
+the randomness and the bake is the whole of the simulation. Capped at 320 particles and 8 s of
+life, refused with the number that broke it.
+
+```json
+{ "op": "add-particles", "id": "embers", "x": 360, "y": 940, "width": 1200, "height": 80,
+  "system": { "seed": 7, "count": 48, "lifetime": [1.4, 2.8], "speed": [30, 120],
+               "angle": [-100, -80], "gravity": [0, -60], "drag": 0.4,
+               "turbulence": { "strength": 24, "scale": 0.006, "rate": 0.8 },
+               "size": [3, 1.1], "colors": ["#d9a441", "#e8c982"] } }
+```
+
+### The camera: a move baked into the layers
+
+A comp has no camera node; `set-camera` is what a director means by one anyway. A zoom, a pan and
+a roll travel together over `seconds`, baked into **every root layer's own tracks**, merged key by
+key with the motion each layer already carries - the camera folds around a layer's own animation,
+not over it. `depths` names layers nearer or further than the plane the camera flies (`0.1..=3.0`,
+default `1.0`): a background at `0.4` drifts less and zooms softer, a title at `1.3` is pushed
+harder - parallax without a third axis. Applying it twice moves twice, like every op.
+
+One reach it will not pretend to: the camera moves **root** layers. A group's children ride the
+group's base position - the timeline folds a parent's resting place into its children, not its
+animated track - so camera-moved layers belong at the root, and the generated chart and counter
+families already are.
+
+```json
+{ "op": "set-camera", "camera": { "zoom": [1.0, 1.08], "pan": [0, -30], "seconds": 3.5,
+                                 "depths": [["plate", 0.4], ["title", 1.3]] } }
+```
+
+The example comps under `examples/comps/` carry all of it - `data.chart.bars`, `data.chart.line`,
+`data.chart.donut`, `data.counter`, `data.particles`, `data.camera` - written by
+`cargo run -p concat-motion --example dump_graphics -- examples/comps`, validated and mapped onto
+a timeline by the suite, and rendered through the real sidecar by the workflow's own lane.
 
 ---
 

@@ -11,7 +11,7 @@ FUNCUT is a fork of [Concat](https://github.com/jub0t/Concat) — a
 Rust + Slint video editor (`src/crates/*`, 20+ crates, ~220k lines) —
 tuned for small low-memory Linux laptops and extended with:
 
-- a built-in **MCP server** (`concat --mcp`, 108 tools, 98 served to a
+- a built-in **MCP server** (`concat --mcp`, 109 tools, 99 served to a
   director by default) that can edit whole projects end to end;
 - the **funcut-director** skill (`.claude/skills/funcut-director/`): a
   12-phase measured pipeline that turns a script or a voiceover into a

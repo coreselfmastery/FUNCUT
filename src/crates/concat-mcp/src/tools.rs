@@ -1945,9 +1945,9 @@ fn motion_schema(name: &str) -> Option<Value> {
             "type": "array",
             "description": "Authoring operations applied before anything else: set-slot, \
              set-text, set-words, set-markup, move, retime, set-track, set-track-points, \
-             set-noise-track (seeded organic drift: seed, amount, rate), fade-in, \
-             slide-to, pop, add-group, add-rect, add-text, set-blend, set-opacity, \
-             set-duration, set-background, delete.",
+             set-noise-track (seeded), fade-in, slide-to, pop, add-group, add-rect, \
+             add-text, add-chart, add-counter, add-particles, set-camera, set-blend, \
+             set-opacity, set-duration, set-background, delete.",
             "items": { "type": "object" }
         }),
     );

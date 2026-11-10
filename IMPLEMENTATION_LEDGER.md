@@ -37,19 +37,25 @@ Working and CI-proven (7/7 checks green at baseline):
 
 ## Units
 
-| Unit | What | Status | Commit (post-rebase) |
+| Unit | What | Status | Commit (as merged) |
 | --- | --- | --- | --- |
-| 1 | PR #76 fmt fix, CI green, **merged** (`6dafbeee`) | done | `54e13922` |
+| 1 | PR #76 fmt fix, CI green, **merged** (`6dafbeee`, 7/7 checks) | done | `54e13922` |
 | 2 | PR #73: verified fully re-landed via PR #74; no merge needed | done (no code) | — |
-| 3 | State files (this set) | done, on main | `94ebfdde` |
-| A | Fix G1: E303 key dedup after ms rounding + regression test | done, on branch | `b4af211a` |
-| C | Fix G2: particle presets (snow, rain, embers, sparks, dust, atmosphere, confetti, fireflies, energy, streaks, data) on `add-particles`, patch semantics | done, on branch | `649df220` |
-| D | Fix G3: multi-waypoint camera paths, per-axis stops, per-segment curves | done, on branch | `82483657` |
-| F | Fix G4: post-export output verification probe (`verifying` stage) | done, on branch | `4c431485` |
-| G | Fix G5: docs truth pass (four corrected claims) | done, on branch | `829fcac3` |
-| — | Ledger section 47 + state file updates | done, on branch | (this commit) |
+| 3 | State files (this set) | done, on main | `94ebfdde` (7/7) |
+| A | Fix G1: E303 key dedup after ms rounding + regression test | **merged via PR #78** | `b4af211a` |
+| C | Fix G2: particle presets (snow, rain, embers, sparks, dust, atmosphere, confetti, fireflies, energy, streaks, data) on `add-particles`, patch semantics | **merged via PR #78** | `649df220` |
+| D | Fix G3: multi-waypoint camera paths, per-axis stops, per-segment curves | **merged via PR #78** | `82483657` |
+| F | Fix G4: post-export output verification probe (`verifying` stage) | **merged via PR #78** | `4c431485` |
+| G | Fix G5: docs truth pass (four corrected claims) | **merged via PR #78** | `829fcac3` |
+| — | Ledger section 47 + state files + handoff | **merged via PR #78** | `1ce22147`, `68dbf225`, `4b9f8f81` |
 | B | `motion_edit` MCP tool | dropped — `motion_bake` already persists ops-edited comps; 242k token cap has 119 tokens headroom; convenience not worth the guarded budget | — |
 | I | Fix G6: native `CompEngine` impl | stretch, not started — see SESSION_HANDOFF.md for the scoped plan | — |
+
+**PR #78 merged at `3adb448c`** after all five checks passed on its
+head `4b9f8f81`: Format, locales and models; The analysis senses against
+real fixtures; The dependency dance, pinned and green; Engine tests and
+lints; The multi-layer example, rendered and inspected (the Geneva
+sidecar lane — the motion units rendered through the real engine).
 
 Dropped (with reasons):
 

@@ -31,7 +31,12 @@ GitHub check-runs API for the exact SHA.
   -D warnings` clean for every touched crate.
 - `concat-mcp` context budget measured: 241,881 whole catalogue (cap
   242,000), 228,233 director surface over 99 tools — both under.
-- Branch CI: pending PR creation (push filter is `[main]`; PRs carry it).
+- Branch CI: **all five checks success on PR #78's head `4b9f8f81`** —
+  Format/locales/models; analysis senses; the dependency dance; Engine
+  tests and lints; the multi-layer example rendered and inspected (the
+  Geneva sidecar lane). **PR #78 merged at `3adb448c`.** The merge
+  commit's own main-push run and this final state push's run are the
+  last two records; both are docs-equivalent content over a green tree.
 
 ## Local build environment reproduction (for reproducibility)
 

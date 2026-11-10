@@ -2,9 +2,10 @@
 
 Principal agent: the FUNCUT completion mission (2026-11-10 start).
 Baseline `main`: `ab7c0704917d6f3181b1fb847fead86dc6392fcf` (CI: 7/7 green).
-Current `main`: `6dafbeeeeae9a1f1db93845bfac8abcd003e1ace` (PR #76 merged).
-Work branch: `feat/completion-2026-11-10` (rebased on 6dafbeee, head
-`829fcac3` + ledger commit; see IMPLEMENTATION_LEDGER.md for unit SHAs).
+Final delivered `main`: `3adb448cb44ab6f27d83773194c1dbf14158f62d` —
+PR #76 merged at `6dafbeee` (7/7 checks green), PR #78 (the completion
+pass: five units) merged at `3adb448c` after **all five** of its checks
+went green on head `4b9f8f81`.
 
 ## Mission
 
@@ -60,9 +61,12 @@ and an honest feature ledger. No fake green, no doc-only features.
 
 ## Next actions
 
-1. Open the PR for `feat/completion-2026-11-10`; when its CI is green,
-   merge to main; verify the final main SHA's check-runs.
-2. Verify main's `94ebfdde` (state files push) CI completed green.
-3. Final report per the mission's section 14.
+1. ~~Open the PR; merge when green~~ — **done**: PR #78's head `4b9f8f81`
+   passed all five checks (Format/locales/models, analysis senses,
+   dependency dance, Engine tests and lints, the multi-layer Geneva
+   render) and merged as `3adb448c`.
+2. ~~Verify main's `94ebfdde` CI~~ — **done**: 7/7 green.
+3. This state push, then the final report. Verify its check-runs as the
+   last gate.
 4. Stretch (next session, if authorized): the native `CompEngine` impl
    — see KNOWN_ISSUES.md and SESSION_HANDOFF.md for the scoped plan.

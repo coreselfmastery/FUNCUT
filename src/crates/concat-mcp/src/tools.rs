@@ -313,7 +313,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "timeline_seek",
             "Scrub the window's playhead",
-            "Move the open window's playhead to `time` seconds - scrub the timeline for the user while you edit. Needs --mcp window; headless refuses.",
+            "Scrub the window playhead to `time` seconds. Requires `--mcp window`; headless refuses.",
             "window.seek",
             Raw,
         )
@@ -321,7 +321,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "plan_validate",
             title: "Validate an edit plan",
-            description: "Validate a director plan's schema, cross-field constraints AND creative readiness before editing; returns blockers, craft score, and checks the signalLog.",
+            description: "Validate schema, creative readiness and signalLog before edits; return blockers and craft score.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -1022,7 +1022,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "motion_import",
             title: "Motion made elsewhere, read here",
-            description: "Turn a Lottie (bodymovin) JSON into a comp, or apply a GSAP-style timeline to one; the notes say what was skipped or approximated.",
+            description: "Import Lottie JSON or apply a GSAP timeline; report skipped or approximated content.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -1109,7 +1109,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "creative_brief",
             title: "Set the creative intent",
-            description: "Read or write the project's persisted creative brief - the WHY a plan is validated against.",
+            description: "Read or write the creative brief used to validate a plan.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -1782,7 +1782,7 @@ fn motion_storyboard_schema() -> Value {
     json!({
         "type": "object",
         "required": ["scenes"],
-        "description": "A complete motion_reel storyboard for textCard/titleCard segments.",
+        "description": "Complete motion_reel storyboard for text/title segments.",
         "properties": {
             "width": { "type": "integer", "minimum": 1 },
             "height": { "type": "integer", "minimum": 1 },
@@ -1809,7 +1809,7 @@ fn director_visual_schema() -> Value {
             "hero": { "type": "boolean" },
             "motionMin": { "type": "number", "minimum": 0 },
             "shotScale": { "type": "string", "enum": ["wide", "medium", "close_up"] },
-            "category": { "type": "string", "description": "A concise semantic continuity category for this shot, such as people, landscape, machinery, or data." },
+            "category": { "type": "string", "description": "Semantic category (e.g. people, landscape, machinery, data)." },
             "storyboard": motion_storyboard_schema(),
             "clipId": { "type": ["integer", "string", "null"] },
             "mediaId": { "type": "string" },
@@ -1826,7 +1826,7 @@ fn plan_validate_schema() -> Option<Value> {
         "properties": {
             "plan": {
                 "type": "object",
-                "description": "A director plan following the canonical edit_plan.schema.json, validated fully at runtime.",
+                "description": "Canonical edit plan; validated at runtime.",
                 "required": ["aspect", "mode", "sections", "segments", "audio", "grade"],
                 "properties": {
                     "aspect": { "type": "string", "enum": ["16:9", "9:16", "1:1", "4:5"] },
@@ -1863,11 +1863,11 @@ fn plan_validate_schema() -> Option<Value> {
                     "audio": { "type": "object" },
                     "audioClipId": {
                         "type": "string",
-                        "description": "Optional existing audio clip id to reuse; its timeline must already match the plan's segment times."
+                        "description": "Existing audio clip id to reuse; its timing must match the plan."
                     },
                     "creativeBrief": {
                         "type": "object",
-                        "description": "The WHY of the piece. Without it plan_validate returns creativeReady=false with blockers. audience, platform, goal, thesis, curiosityGap, payoff, emotionalArc (3+ beats), referenceStyle, tone, brandKit, constraints, avoid.",
+                        "description": "Brief: audience, platform, goal, thesis, curiosity gap, payoff, emotional arc, style, tone, brand kit, constraints, avoidances. Missing brief returns blockers.",
                         "properties": {
                             "audience": { "type": "string" },
                             "platform": { "type": "string" },
@@ -1982,7 +1982,7 @@ fn motion_schema(name: &str) -> Option<Value> {
                 json!({
                     "type": "string",
                     "enum": ["lottie", "gsap"],
-                    "description": "lottie: a bodymovin JSON becomes a comp. gsap: a GSAP-style timeline is applied to a comp."
+                    "description": "lottie: import bodymovin JSON. gsap: apply a GSAP-style timeline."
                 }),
             );
             properties.insert(
@@ -1993,14 +1993,14 @@ fn motion_schema(name: &str) -> Option<Value> {
                 "file".to_owned(),
                 json!({
                     "type": "string",
-                    "description": "The Lottie JSON to read (action lottie), any readable path."
+                    "description": "Readable Lottie JSON path (action lottie)."
                 }),
             );
             properties.insert(
                 "timeline".to_owned(),
                 json!({
                     "type": ["object", "array"],
-                    "description": "The GSAP-style timeline (action gsap): tweens on x, y, scale, rotation, opacity, blur, with ease, delay, stagger, repeat, yoyo."
+                    "description": "GSAP timeline (action gsap): x/y/scale/rotation/opacity/blur tweens, easing, delay, stagger, repeat, yoyo."
                 }),
             );
             for key in ["preset", "comp"] {
@@ -2013,14 +2013,14 @@ fn motion_schema(name: &str) -> Option<Value> {
                 json!({
                     "type": "array",
                     "items": { "type": "object" },
-                    "description": "Authoring operations applied to the base comp first; the same ops motion_inspect documents."
+                    "description": "Apply authoring ops to the base comp; see motion_inspect."
                 }),
             );
             properties.insert(
                 "name".to_owned(),
                 json!({
                     "type": "string",
-                    "description": "The comp's file name under the project's comps/; defaults to the source's stem or '<comp>-animated'."
+                    "description": "Output name under comps/; defaults to source stem or '<comp>-animated'."
                 }),
             );
             object(properties, &["action", "project"])

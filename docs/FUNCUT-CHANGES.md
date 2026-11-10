@@ -2093,3 +2093,56 @@ release was cut from: **1725** run and passed with the same fourteen
 skips, **8** documentation tests, **30** gRPC - a Rust total of
 **1763**, sixty-two over the 2026-11-04 follow-up's 1701, all of them
 the footage layer's.
+
+## 47. The completion pass: the E303 that waited, named weather, camera stops, the read-back, and four true sentences
+
+Four units from the completion mission of 2026-11-10, each landed with
+its tests and its CI:
+
+- **The collision that refused the whole bake** (geneva.rs). Two track
+  keys less than half a millisecond apart round to one three-decimal
+  time in the timeline mapping, and the engine refuses a timeline whose
+  key times do not strictly increase (E303) - the whole bake, not the
+  one key. The collision now collapses onto the later key, the value
+  that holds at that instant, the same resolution the pulse merge
+  applies when it folds beats into an authored track; a regression
+  test holds the collapse, the winner and the strict increase.
+- **Eleven named particle fields** (particles.rs, authoring.rs). The
+  simulator was finished; the vocabulary was not named. `snow`, `rain`,
+  `embers`, `sparks`, `dust`, `atmosphere`, `confetti`, `fireflies`,
+  `energy`, `streaks` and `data` - each a whole `ParticleSystem` with
+  its own seed, so the same preset is the same field on every machine.
+  The `add-particles` operation takes `preset` beside a now-optional
+  `system` whose shape is a patch: every field it names wins, every one
+  it leaves out is the preset's, and a document that always gave the
+  full system parses exactly as it did.
+- **Camera paths** (camera.rs). A zoom pair is a two-waypoint path;
+  `path` names three or more waypoints - push, hold, drift - each axis
+  keyed by the stops that name it and interpolated between them, so the
+  zoom can push while the pan waits. A waypoint's own curve eases the
+  segment leaving it (`None` is linear, so a path of unnamed segments
+  flows instead of stopping at every stop). Times run strictly uphill,
+  the last waypoint is the move's own end, and a path beside any pair
+  is refused outright.
+- **The export reads its output back** (concat-export/lib.rs). The
+  export was atomic, cancellable and left no temps behind - and the
+  moment the rename landed, the run was declared a success without ever
+  opening the file it had written. The last stage is now `verifying`:
+  the output is probed, must carry a video stream, and must be the
+  timeline's own length within half a second. A file that cannot be
+  opened, one without a picture, or one whose duration is wrong is the
+  failure it is, with both numbers, and the file is left in place for
+  inspection.
+- **Four true sentences** where four false ones were: MOTION.md's
+  still-to-come no longer names the PNG-sequence export the exporter
+  already has; the engine table says the native `CompEngine` impl is
+  still to come (it is - the plumbing is real, no renderer stands
+  behind it); the adapter's crate doc no longer claims a Lottie player
+  exists; and the director phase list carries its 1c.
+
+Test counts on the branch: `concat-motion` 451 run and passed (426 at
+baseline plus this pass's 25), `geneva-adapter` 42, `concat-export`'s
+new read-back test green beside the suite. The completion mission's
+own working record lives in the repository root's `AGENT_STATE.md`,
+`IMPLEMENTATION_LEDGER.md`, `TEST_EVIDENCE.md`, `KNOWN_ISSUES.md` and
+`SESSION_HANDOFF.md`.

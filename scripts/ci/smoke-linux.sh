@@ -177,8 +177,12 @@ inside() {
   export DEBIAN_FRONTEND=noninteractive
   say "installing the .deb and what it depends on"
   apt-get update -qq
+  # apt's own words kept, and shown when it fails: a clean machine's
+  # answer to a missing library is the one line that names it, and the
+  # -qq and the redirect here once swallowed it.
   apt-get install -y -qq --no-install-recommends \
-    "$deb" xvfb xauth libgl1-mesa-dri mesa-vulkan-drivers fonts-dejavu-core > /dev/null
+    "$deb" xvfb xauth libgl1-mesa-dri mesa-vulkan-drivers fonts-dejavu-core \
+    > /tmp/apt-install.log 2>&1 || { cat /tmp/apt-install.log; exit 1; }
 
   say "concat --version (the package)"
   HOME=$(fresh_home) expect_version "concat --version from the .deb" 60 concat

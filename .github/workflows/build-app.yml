@@ -386,6 +386,23 @@ jobs:
           cp "src/target/${{ matrix.target }}/app/concat-motion-agent" "stage/$name/concat-motion-agent"
           cp -a ffmpeg-dev/lib/*.so* "stage/$name/lib/"
           cp -a "$ORT_DIR"/lib/libonnxruntime.so* "stage/$name/lib/"
+          # Sound, from the machine that built the binary, on the ARM
+          # lane only. The window asks the dynamic linker for ALSA's
+          # htstamp symbol (alsa-sys declares it unconditionally), and
+          # the ARM runner's own smoke answers it; a clean noble
+          # container of the same release has not answered it, while the
+          # x86_64 lane, on the 22.04 image, never had the question.
+          # Every libasound2t64 in the noble archive carries the symbol
+          # - checked, readelf on each - so what the clean machine
+          # actually loaded is a question the swallowed apt log cannot
+          # answer. The cure is the one the bundle already takes for
+          # FFmpeg and ONNX Runtime: the library beside the binary, the
+          # one it was linked against, found by the rpath before any
+          # machine's own. The x86_64 lane keeps the system's: its
+          # floor has held since the first release.
+          if [ "${{ matrix.arch }}" = aarch64 ]; then
+            cp -a /usr/lib/aarch64-linux-gnu/libasound.so.2* "stage/$name/lib/"
+          fi
           # whisper's shared libraries and its CPU modules, one per x86_64
           # generation (the job's `env` says why), from where whisper-rs-sys
           # installed them: libraries in lib/, modules in bin/. Its build

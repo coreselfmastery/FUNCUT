@@ -1046,6 +1046,16 @@ impl Comp {
             if node.matte.is_some() {
                 note("a track matte");
             }
+            // A parent's scale and rotation are inherited by its children in
+            // the document's semantics ("relative to its parent"), but a
+            // flattened timeline can only carry positions down the chain -
+            // so a scaled or rotated parent is a divergence, not a detail.
+            if let Some(parent) = &node.parent
+                && let Some(parent_node) = self.node(parent)
+                && (parent_node.transform.scale != 1.0 || parent_node.transform.rotation != 0.0)
+            {
+                note("a scaled or rotated parent");
+            }
             for effect in &node.effects {
                 match effect {
                     Effect::Shadow { .. } => note("a drop shadow effect"),

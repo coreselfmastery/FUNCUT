@@ -1533,7 +1533,16 @@ pub fn render_on(
             &temps.files[2]
         };
         std::fs::rename(finished, &output)
-            .map_err(|error| format!("could not write {}: {error}", output.display()))
+            .map_err(|error| format!("could not write {}: {error}", output.display()))?;
+        // The file is whole and in place; the last act is reading it
+        // back. A success nobody can play is worse than a failure that
+        // says why - a file a reader cannot open, one without a
+        // picture, or one whose duration is not the timeline's is
+        // reported as the failure it is, with the numbers, and the
+        // file itself is left in place for inspection.
+        reporter.cancelled()?;
+        reporter.emit(total_frames, total_frames, "verifying");
+        verify_output(&output, timeline_end.as_f64())
     })();
 
     // Every way out but success leaves nothing behind, and a panic
@@ -1542,6 +1551,44 @@ pub fn render_on(
     drop(temps);
 
     result.map(|()| output.to_string_lossy().into_owned())
+}
+
+/// The export's own proof: the file that was written is the file a
+/// reader can open.
+///
+/// Probes the output and holds it to the timeline it came from: it must
+/// open, it must carry a video stream, and - where the container states a
+/// duration, which a finished mux always does - it must be the timeline's
+/// own length within half a second, the slack a container's rounding and
+/// an encoder's last frame of padding are owed. Anything else is an
+/// error with both numbers in it, and the file is left where it is: a
+/// verification failure is a thing to look at, not a thing to delete.
+fn verify_output(output: &Path, expected: f64) -> Result<(), String> {
+    let info = concat_media::probe(output).map_err(|error| {
+        format!(
+            "the export wrote {} but it cannot be read back: {error}; \
+             the file was left in place for inspection",
+            output.display()
+        )
+    })?;
+    if info.video.is_none() {
+        return Err(format!(
+            "the export wrote {} without a video stream; \
+             the file was left in place for inspection",
+            output.display()
+        ));
+    }
+    if let Some(duration) = info.duration {
+        let got = duration.as_f64();
+        if (got - expected).abs() > 0.5 {
+            return Err(format!(
+                "the export wrote {}s where the timeline is {expected:.3}s; \
+                 the file was left in place for inspection",
+                got
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The timeline's end and how many frames it runs for, on the frame grid the
@@ -3752,6 +3799,111 @@ mod tests {
         if result.is_ok() {
             assert!(nested.join("out.mp4").is_file());
         }
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_file(&source);
+    }
+
+    /// The export's last act is reading the file back: a real render
+    /// verifies itself end to end (the render only returns Ok through
+    /// [`verify_output`]), and the helper holds the timeline's own
+    /// length against the container's. A file that cannot be opened, one
+    /// without a picture, and a duration that is not the timeline's are
+    /// each the error they are, with the numbers in the message.
+    #[test]
+    fn the_output_is_read_back_before_the_export_is_called_done() {
+        use concat_core::frame::Frame;
+        use concat_media::{EncodeOptions, Encoder, FrameSink};
+
+        let root = std::env::temp_dir().join(format!(
+            "concat-export-verify-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |since| since.as_nanos())
+        ));
+        let source = std::env::temp_dir().join("concat-export-verify-source.mp4");
+        let Ok(mut encoder) = Encoder::create(
+            &source,
+            64,
+            64,
+            FrameRate::THIRTY,
+            &EncodeOptions::default(),
+        ) else {
+            return; // no ffmpeg here
+        };
+        for _ in 0..6 {
+            encoder.write_frame(&Frame::black(64, 64)).expect("writes");
+        }
+        encoder.finish().expect("finishes");
+
+        let mut footage = clip("video", 0, 0.0, 0.2, 0.0);
+        footage.path = source.to_string_lossy().into_owned();
+        footage.media_width = Some(64);
+        footage.media_height = Some(64);
+        let out = root.join("out.mp4");
+        let request = ExportRequest {
+            output: out.to_string_lossy().into_owned(),
+            width: 64,
+            height: 64,
+            rate_num: 30,
+            rate_den: 1,
+            crf: 30,
+            preset: "ultrafast".into(),
+            codec: VideoCodec::H264,
+            ten_bit: false,
+            rate_mode: RateMode::Vbr,
+            bitrate_kbps: 0,
+            color_range: concat_media::ColorRange::Limited,
+            color_space: ColorSpace::Sdr,
+            hdr: false,
+            effect_time_offset: 0.0,
+            clips: vec![footage],
+        };
+        let cancel = AtomicBool::new(false);
+        let mut stages = Vec::new();
+        let mut progress = |_: i64, _: i64, stage: &'static str| {
+            stages.push(stage);
+        };
+        let reporter = Reporter {
+            progress: &mut progress,
+            cancel: &cancel,
+        };
+        // A machine without a drawing surface still made the folder and
+        // swept its temps; only a render that finished says "verifying".
+        let result = render_on(&request, None, reporter);
+        if result.is_ok() {
+            assert!(out.is_file(), "the verified file is there");
+            assert!(
+                stages.contains(&"verifying"),
+                "the last stage is the read-back: {stages:?}"
+            );
+            // The helper agrees with itself on the file it just wrote.
+            verify_output(&out, 0.2).expect("the export's own output verifies");
+            // And refuses a duration the file does not carry: the numbers
+            // are the error's own words.
+            let wrong = verify_output(&out, 999.0).expect_err("a wrong timeline is refused");
+            assert!(
+                wrong.contains("999"),
+                "the expected number is said: {wrong}"
+            );
+            assert!(wrong.contains("left in place"), "the file stays: {wrong}");
+        }
+
+        // A file that is not a video, read as one, is refused as one -
+        // the read-back failure is the export's, not the reader's.
+        let text = root.join("not-a-video.mp4");
+        std::fs::create_dir_all(&root).expect("the folder");
+        std::fs::write(&text, b"this is not a video, and says so").expect("writes");
+        let wrong = verify_output(&text, 1.0).expect_err("a text file is not a video");
+        assert!(
+            wrong.contains("cannot be read back"),
+            "the read-back failure is said: {wrong}"
+        );
+
+        // A file that is not there at all is the same refusal.
+        let missing = verify_output(&root.join("gone.mp4"), 1.0);
+        assert!(missing.is_err(), "a missing file cannot be verified");
+
         let _ = std::fs::remove_dir_all(&root);
         let _ = std::fs::remove_file(&source);
     }

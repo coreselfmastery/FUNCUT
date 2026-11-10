@@ -313,7 +313,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "timeline_seek",
             "Scrub the window's playhead",
-            "Move the open window's playhead to `time` seconds - scrub the timeline for the user while you edit. Needs --mcp window; headless refuses.",
+            "Scrub the window playhead to `time` seconds. Requires `--mcp window`; headless refuses.",
             "window.seek",
             Raw,
         )
@@ -321,7 +321,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "plan_validate",
             title: "Validate an edit plan",
-            description: "Validate a director plan's schema, cross-field constraints AND creative readiness before editing; returns blockers, craft score, and checks the signalLog.",
+            description: "Validate schema, creative readiness and signalLog before edits; return blockers and craft score.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -1022,7 +1022,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "motion_import",
             title: "Motion made elsewhere, read here",
-            description: "Turn a Lottie (bodymovin) JSON into a comp, or apply a GSAP-style timeline to one; the notes say what was skipped or approximated.",
+            description: "Import Lottie JSON or apply a GSAP timeline; report skipped or approximated content.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -1109,7 +1109,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "creative_brief",
             title: "Set the creative intent",
-            description: "Read or write the project's persisted creative brief - the WHY a plan is validated against.",
+            description: "Read or write the creative brief used to validate a plan.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -1776,6 +1776,48 @@ fn canonical_plan_schema() -> Option<Value> {
     .ok()
 }
 
+/// The motion storyboard schema is kept outside the parent json! macro
+/// so the tool schema stays below serde_json's macro recursion limit.
+fn motion_storyboard_schema() -> Value {
+    json!({
+        "type": "object",
+        "required": ["scenes"],
+        "description": "Complete motion_reel storyboard for text/title segments.",
+        "properties": {
+            "width": { "type": "integer", "minimum": 1 },
+            "height": { "type": "integer", "minimum": 1 },
+            "fps": { "type": "number", "minimum": 1 },
+            "scenes": { "type": "array", "minItems": 1, "items": { "type": "object" } },
+            "assets": { "type": "object" },
+            "audio": { "type": "array" },
+            "curtain": { "type": "object" }
+        }
+    })
+}
+
+/// The canonical visual segment contract, shared by plan validation and the
+/// segment executor.
+fn director_visual_schema() -> Value {
+    json!({
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+            "type": { "type": "string", "enum": ["broll", "textCard", "titleCard", "existing"] },
+            "query": { "type": "string" },
+            "description": { "type": "string", "minLength": 40 },
+            "queries": { "type": "array", "items": { "type": "string" } },
+            "hero": { "type": "boolean" },
+            "motionMin": { "type": "number", "minimum": 0 },
+            "shotScale": { "type": "string", "enum": ["wide", "medium", "close_up"] },
+            "category": { "type": "string", "description": "Semantic category (e.g. people, landscape, machinery, data)." },
+            "storyboard": motion_storyboard_schema(),
+            "clipId": { "type": ["integer", "string", "null"] },
+            "mediaId": { "type": "string" },
+            "file": { "type": "string" }
+        }
+    })
+}
+
 /// The compact MCP input schema. The full canonical schema is also checked
 /// at runtime; this keeps a 7 KB plan template out of every client's tool list.
 fn plan_validate_schema() -> Option<Value> {
@@ -1784,7 +1826,7 @@ fn plan_validate_schema() -> Option<Value> {
         "properties": {
             "plan": {
                 "type": "object",
-                "description": "A director plan following the canonical edit_plan.schema.json, validated fully at runtime.",
+                "description": "Canonical edit plan; validated at runtime.",
                 "required": ["aspect", "mode", "sections", "segments", "audio", "grade"],
                 "properties": {
                     "aspect": { "type": "string", "enum": ["16:9", "9:16", "1:1", "4:5"] },
@@ -1814,20 +1856,18 @@ fn plan_validate_schema() -> Option<Value> {
                             "properties": {
                                 "start": { "type": "number", "minimum": 0 },
                                 "end": { "type": "number", "minimum": 0 },
-                                "visual": {
-                                    "type": "object",
-                                    "required": ["type"],
-                                    "properties": {
-                                        "type": { "type": "string", "enum": ["broll", "textCard", "titleCard", "existing"] }
-                                    }
-                                }
+                                "visual": director_visual_schema()
                             }
                         }
                     },
                     "audio": { "type": "object" },
+                    "audioClipId": {
+                        "type": "string",
+                        "description": "Existing audio clip id to reuse; its timing must match the plan."
+                    },
                     "creativeBrief": {
                         "type": "object",
-                        "description": "The WHY of the piece. Without it plan_validate returns creativeReady=false with blockers. audience, platform, goal, thesis, curiosityGap, payoff, emotionalArc (3+ beats), referenceStyle, tone, brandKit, constraints, avoid.",
+                        "description": "Brief: audience, platform, goal, thesis, curiosity gap, payoff, emotional arc, style, tone, brand kit, constraints, avoidances. Missing brief returns blockers.",
                         "properties": {
                             "audience": { "type": "string" },
                             "platform": { "type": "string" },
@@ -1942,7 +1982,7 @@ fn motion_schema(name: &str) -> Option<Value> {
                 json!({
                     "type": "string",
                     "enum": ["lottie", "gsap"],
-                    "description": "lottie: a bodymovin JSON becomes a comp. gsap: a GSAP-style timeline is applied to a comp."
+                    "description": "lottie: import bodymovin JSON. gsap: apply a GSAP-style timeline."
                 }),
             );
             properties.insert(
@@ -1953,14 +1993,14 @@ fn motion_schema(name: &str) -> Option<Value> {
                 "file".to_owned(),
                 json!({
                     "type": "string",
-                    "description": "The Lottie JSON to read (action lottie), any readable path."
+                    "description": "Readable Lottie JSON path (action lottie)."
                 }),
             );
             properties.insert(
                 "timeline".to_owned(),
                 json!({
                     "type": ["object", "array"],
-                    "description": "The GSAP-style timeline (action gsap): tweens on x, y, scale, rotation, opacity, blur, with ease, delay, stagger, repeat, yoyo."
+                    "description": "GSAP timeline (action gsap): x/y/scale/rotation/opacity/blur tweens, easing, delay, stagger, repeat, yoyo."
                 }),
             );
             for key in ["preset", "comp"] {
@@ -1973,14 +2013,14 @@ fn motion_schema(name: &str) -> Option<Value> {
                 json!({
                     "type": "array",
                     "items": { "type": "object" },
-                    "description": "Authoring operations applied to the base comp first; the same ops motion_inspect documents."
+                    "description": "Apply authoring ops to the base comp; see motion_inspect."
                 }),
             );
             properties.insert(
                 "name".to_owned(),
                 json!({
                     "type": "string",
-                    "description": "The comp's file name under the project's comps/; defaults to the source's stem or '<comp>-animated'."
+                    "description": "Output name under comps/; defaults to source stem or '<comp>-animated'."
                 }),
             );
             object(properties, &["action", "project"])
@@ -2960,7 +3000,6 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
     let mut cut_types = Vec::<&str>::new();
     let mut static_entrances = 0_usize;
     let mut missing_entrances = 0_usize;
-    let mut comps = 0_usize;
     let mut sfx_uses = Vec::<(&str, f64)>::new();
     for (index, segment) in segments.iter().enumerate() {
         let segment = segment
@@ -3130,12 +3169,6 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
             }
             None => missing_entrances += 1,
         }
-        if segment
-            .get("comp")
-            .is_some_and(|comp| !comp.is_null() && comp.as_object().is_some_and(|c| !c.is_empty()))
-        {
-            comps += 1;
-        }
         previous_end = Some(end);
         runtime = end;
     }
@@ -3261,15 +3294,10 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
             ));
         }
     }
-    // The footage slots: each slot's own contract first, then how much of
-    // the plan goes shopping for stock at all. A plan without slots is a
-    // plan the segments alone describe - the slots are how a director
-    // shops, and the share is what keeps stock coverage rather than
-    // collage. The band: 30-45% is coverage; under that the picture leans
-    // on the A-roll alone; past 45% it leans on the library; past 60% it
-    // is stock with gaps, and the plan is refused.
+    // Footage slots are validated individually. There is deliberately no
+    // plan-wide B-roll percentage: the right balance depends on the story,
+    // source material, evidence density, and the visual language of this film.
     if let Some(slots) = object.get("slots").and_then(Value::as_array) {
-        let mut broll = 0_usize;
         for (index, slot) in slots.iter().enumerate() {
             let slot = slot
                 .as_object()
@@ -3295,7 +3323,6 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
                 .unwrap_or_default();
             match treatment {
                 "broll" => {
-                    broll += 1;
                     if queries.iter().all(|query| query.trim().is_empty()) {
                         return Err(format!(
                             "slots[{index}] is b-roll; it takes at least one non-empty query"
@@ -3312,27 +3339,6 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
                 other => {
                     return Err(format!("slots[{index}].treatment `{other}` is unsupported"));
                 }
-            }
-        }
-        if !slots.is_empty() {
-            let share = broll as f64 / slots.len() as f64;
-            if share > 0.60 {
-                return Err(format!(
-                    "b-roll covers {:.0}% of the slots; past 60% the edit is stock with gaps - hold some spans for the A-roll and the graphics",
-                    share * 100.0
-                ));
-            }
-            if share > 0.45 {
-                warnings.push(format!(
-                    "b-roll covers {:.0}% of the slots; the 30-45% band is where stock reads as coverage rather than collage",
-                    share * 100.0
-                ));
-            }
-            if share < 0.30 {
-                warnings.push(format!(
-                    "b-roll covers {:.0}% of the slots; under 30% the picture leans on the A-roll alone",
-                    share * 100.0
-                ));
             }
         }
     }
@@ -3360,12 +3366,6 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
     if static_entrances > 1 {
         warnings.push(format!(
             "{static_entrances} static entrances; static is deliberate, at most one per piece"
-        ));
-    }
-    let comp_floor = ((runtime / 15.0).ceil() as usize).max(1);
-    if comps < comp_floor {
-        warnings.push(format!(
-            "{comps} designed comp(s) for {runtime:.0}s; the floor is one per section and one per 15 s ({comp_floor} here)"
         ));
     }
     for (left, (left_query, left_at)) in sfx_uses.iter().enumerate() {
@@ -3741,20 +3741,6 @@ fn creative_gate(object: &Value, segments: &[Value], runtime: f64, warnings: &[S
         blockers.push(format!("{longest} consecutive segments use the same visual reference; vary shot size, angle or source"));
         score -= 1.0;
     }
-    let designed = segments
-        .iter()
-        .filter(|s| {
-            s.get("comp")
-                .is_some_and(|c| c.as_object().is_some_and(|o| !o.is_empty()))
-                || s.get("text").is_some_and(|t| !t.is_null())
-        })
-        .count();
-    if runtime > 15.0 && designed == 0 {
-        blockers.push(
-            "no designed comp or text card anywhere: the cut has no visual authorship".to_owned(),
-        );
-        score -= 1.0;
-    }
     if object.get("captions").is_none() && object.get("text").is_none() {
         notes.push(
             "no caption plan: call transcribe and captions_animate with measured word times"
@@ -3767,7 +3753,6 @@ fn creative_gate(object: &Value, segments: &[Value], runtime: f64, warnings: &[S
         let escalate = warning.contains("hard cuts in a row")
             || warning.contains("have no entrance")
             || warning.contains("static entrances")
-            || warning.contains("designed comp(s)")
             || warning.contains("same sound twice");
         if escalate {
             score -= 0.4;
@@ -5780,11 +5765,11 @@ mod tests {
         assert!(validate_edit_plan(&base).is_ok(), "no slots, no slot gate");
     }
 
-    /// The b-roll share keeps the plan inside the 30-45% band: past 60%
-    /// the plan is refused outright, 45% and under-30% speak up as
-    /// warnings, and a plan shopping 35% passes without a word.
+    /// B-roll coverage is a story decision, not a universal percentage.
+    /// Plans with sparse, balanced, or footage-heavy slot mixes all pass
+    /// the plan-wide gate; each slot still has to satisfy its own contract.
     #[test]
-    fn plan_validator_keeps_the_broll_share_inside_the_band() {
+    fn plan_validator_does_not_enforce_a_broll_percentage() {
         let slot = |index: usize, treatment: &str| {
             json!({
                 "slotId": format!("slot.{index}"),
@@ -5820,49 +5805,29 @@ mod tests {
                 .collect()
         };
 
-        // Seventy percent stock is stock with gaps: refused.
-        let mut shopping = base.clone();
-        shopping["slots"] = Value::Array(slots(7, 10));
+        for (broll, total) in [(0, 10), (2, 10), (5, 10), (7, 10), (10, 10)] {
+            let mut plan = base.clone();
+            plan["slots"] = Value::Array(slots(broll, total));
+            let result = validate_edit_plan(&plan).unwrap_or_else(|error| {
+                panic!("{broll}/{total} B-roll slots should be allowed: {error}")
+            });
+            let warnings = result["warnings"].as_array().expect("warnings");
+            assert!(
+                warnings.iter().all(|warning| warning
+                    .as_str()
+                    .is_none_or(|text| !text.contains("b-roll covers"))),
+                "B-roll percentage must not create a warning: {warnings:?}"
+            );
+        }
+
+        // Removing the percentage gate does not remove slot-level safety.
+        let mut invalid = base;
+        invalid["slots"] = Value::Array(vec![slot(0, "broll")]);
+        invalid["slots"][0]["queries"] = json!([]);
         assert!(
-            validate_edit_plan(&shopping)
+            validate_edit_plan(&invalid)
                 .unwrap_err()
-                .contains("past 60%")
-        );
-
-        // Fifty percent speaks up as a warning, not a refusal.
-        let mut leaning = base.clone();
-        leaning["slots"] = Value::Array(slots(5, 10));
-        let result = validate_edit_plan(&leaning).expect("a warning, not a refusal");
-        let warnings = result["warnings"].as_array().expect("warnings");
-        assert!(
-            warnings.iter().any(|warning| warning
-                .as_str()
-                .is_some_and(|text| text.contains("covers 50%"))),
-            "{warnings:?}"
-        );
-
-        // Thirty-five percent is inside the band: no share warning.
-        let mut coverage = base.clone();
-        coverage["slots"] = Value::Array(slots(7, 20));
-        let result = validate_edit_plan(&coverage).expect("a valid plan");
-        let warnings = result["warnings"].as_array().expect("warnings");
-        assert!(
-            warnings.iter().all(|warning| warning
-                .as_str()
-                .is_none_or(|text| !text.contains("b-roll covers"))),
-            "35% is coverage: {warnings:?}"
-        );
-
-        // Under thirty percent, the picture leans on the A-roll alone.
-        let mut a_roll = base.clone();
-        a_roll["slots"] = Value::Array(slots(2, 10));
-        let result = validate_edit_plan(&a_roll).expect("a warning, not a refusal");
-        let warnings = result["warnings"].as_array().expect("warnings");
-        assert!(
-            warnings.iter().any(|warning| warning
-                .as_str()
-                .is_some_and(|text| text.contains("covers 20%"))),
-            "{warnings:?}"
+                .contains("at least one non-empty query")
         );
     }
 
@@ -5909,10 +5874,10 @@ mod tests {
             "six hards is a slideshow: {warnings:?}"
         );
         assert!(
-            warnings
-                .iter()
-                .any(|warning| warning.as_str().is_some_and(|text| text.contains("comp"))),
-            "no designed comps anywhere: {warnings:?}"
+            warnings.iter().all(|warning| warning
+                .as_str()
+                .is_none_or(|text| !text.contains("one per 15 s"))),
+            "the validator must not impose a motion-comp quota: {warnings:?}"
         );
 
         // A reel that is not a reel is refused outright.
@@ -5981,6 +5946,40 @@ mod tests {
                 .iter()
                 .any(|warning| warning.as_str().is_some_and(|text| text.contains("static")))
         );
+    }
+
+    /// A footage-led longform can be complete without motion comps.
+    /// The director chooses the medium from the story; the validator must
+    /// not turn motion design into a universal quota.
+    #[test]
+    fn footage_led_longform_does_not_require_motion_comps() {
+        let plan = json!({
+            "creativeBrief": {
+                "audience": "curious beginners",
+                "platform": "youtube",
+                "goal": "understand the story",
+                "thesis": "The evidence changes the common explanation",
+                "curiosityGap": "What actually happened?",
+                "payoff": "The evidence reveals the cause",
+                "emotionalArc": ["curiosity", "tension", "clarity"]
+            },
+            "sections": [
+                { "role": "hook", "start": 0.0, "end": 3.0 },
+                { "role": "body", "start": 3.0, "end": 25.0 },
+                { "role": "outro", "start": 25.0, "end": 30.0 }
+            ]
+        });
+        let segments = vec![
+            json!({ "start": 0.0, "end": 3.0, "visual": { "type": "broll", "query": "storm clouds over coast" } }),
+            json!({ "start": 3.0, "end": 8.0, "visual": { "type": "broll", "query": "researcher examining old map" } }),
+            json!({ "start": 8.0, "end": 14.0, "visual": { "type": "broll", "query": "archive footage of city street" } }),
+            json!({ "start": 14.0, "end": 20.0, "visual": { "type": "broll", "query": "close up hands reviewing documents" } }),
+            json!({ "start": 20.0, "end": 25.0, "visual": { "type": "broll", "query": "wide aerial view of coastline" } }),
+            json!({ "start": 25.0, "end": 30.0, "visual": { "type": "broll", "query": "sunrise over quiet harbor" } }),
+        ];
+        let result = creative_gate(&plan, &segments, 30.0, &[]);
+        assert_eq!(result["ready"], json!(true), "{result}");
+        assert_eq!(result["blockers"], json!([]), "{result}");
     }
 
     /// The decision log: a plan with a voiceover and no signalLog is not

@@ -69,7 +69,14 @@ with `action: "set"` and fill audience, platform, goal, thesis,
 curiosityGap, payoff, emotionalArc (at least three DIFFERENT beats), and
 referenceStyle. Read `directorPrompt` from the reply and keep it in your
 working context — it is the intent every later decision is judged against.
-If the user gave a topic but no angle, invent a sharp one and state it. Read prompts/creative_visual_direction.md before planning visuals. It is a creative decision framework, NOT a template: invent a film-specific visual language and choose footage, original motion, data graphics, typography, generated media, holds, or hybrids by each beat's communication job. Do not impose fixed media ratios or repeat a preset treatment across videos. Record a concise rationale for major choices and execute/verify every chosen visual; a rendered motion asset not imported and placed is not complete.
+If the user gave a topic but no angle, invent a sharp one and state it.
+Read `prompts/creative_visual_direction.md` before planning visuals. It is
+a decision framework, not a template: invent a film-specific visual language
+and choose footage, original motion, data graphics, typography, generated
+media, holds, or hybrids by each beat's communication job. Do not impose
+fixed media ratios or repeat a preset treatment across videos. Record a
+concise rationale for major choices and execute/verify every chosen visual;
+a rendered motion asset not imported and placed is not complete.
 Copy the brief into the plan's `creativeBrief` field. Optional: `local_vlm`
 with `action: "status"` (and `setup` once on a low-end machine) so the later
 critic can actually see.
@@ -246,30 +253,20 @@ not creativeReady is a rejection, not a warning to wave through. Craft score
 below 7 means rewrite the plan, not proceed. Then compare the plan's `aspect` with `timeline_read`; if they
 differ, set the canvas with `project_set_video` BEFORE gathering assets.
 
-**The plan carries its footage as slots beside its segments.** A segment
-says what the timeline plays; a slot says what one opening is *for*:
-`slotId` (`"hook.1"`, `"reveal.hero"` — the id the critic's notes
-name), `role` (the same seven acts), `treatment` (`broll` shops for
-stock; `hold`, `graphic` and `black` are drawn by the edit and take no
-queries), `job` (illustrate / contrast / punctuate / transition /
-breathe), `entry` and `exit` against the words and the beat grid
-(`on_emphasis`, `before_line`, `on_beat`, `after_line` in;
-`before_next_emphasis`, `on_beat`, `source_cut`, `early` out), the rich
-`description` — twelve to twenty-five words of nouns and adjectives,
-forty characters at least: what is in frame, what it is doing, what it
-feels like — the fallback `queries` (keywords only: the description is
-the ranked contract, the queries are what BM25 gets), `hero` (the shot
-the thumbnail and the first glance live on), `motionMin` (the least
-motion the slot may carry — a `breathe` slot wants stillness, a
-`punctuate` slot the opposite) and `durationS`. Derive the slot list
-where the engine's `suggest_footage` read would find it: the spans no
-words cover, the stretches no beat lands in — the Phase-1 readings
-already measured both. `plan_validate` holds the slot laws beside the
-rest: a description under forty characters is refused, a drawn
-treatment that carries queries is refused, b-roll without a query is
-refused, and the share of b-roll slots keeps the 30–45% band — warned
-past 45, refused past 60. A plan without slots is a plan the segments
-alone describe; under a voiceover, write the slots.
+**The canonical plan is segment-based.** `segments[]` is the timeline
+contract the validator and `scripts/auto_director.py` execute; do not add a
+separate `slots[]` array to the canonical JSON. For every timed segment,
+the `visual` object says what actually plays. A `broll` visual carries
+`query`, a 40+ character semantic `description`, optional fallback
+`queries`, `hero`, `motionMin`, intended `shotScale`, and semantic
+`category`. A `textCard`/`titleCard` that needs designed motion carries a
+complete `visual.storyboard` accepted by `motion_reel`; an asset that is
+not rendered and placed is not an executed visual decision. An `existing`
+visual must name a real clip/media id already in the project. Slot-like
+shot notes may help your internal reasoning, but they are not a second
+serialized source of truth. There is no universal footage/graphics/hold
+percentage: choose the mix from this film's story, evidence, emotion, and
+available material.
 
 **Phase 4 — Gather (parallel if your harness allows).**
 **The BGM gate runs before any music is searched.**
@@ -287,26 +284,21 @@ report: this voiceover embeds a music track whose licence is unknown;
 confirm the rights or replace the take before publishing. Only a take
 that answers `musicPresent: false` gets the BGM searches below.
 
-**When the plan carries slots, shop the slot, not the keyword.** Consult
+**Shop each timed B-roll segment, not a generic keyword.** Consult
 clip-skills' B-roll matching module. The B-roll reinforces the line's job
-(contrast / punctuate / breathe), not its literal content. For
-each `broll` slot, in plan order: `openvid_rank_for_slot {description:
-<the slot's description, verbatim>, queries, hero, motion_min,
-exclude_ids: <every clip id this edit has already chosen>}`. The
-description is the contract — BM25 builds the page, the CLIP second
-pass re-orders it by what the clips SHOW, and the queries blend in as
-Jaccard similarity at `tag_weight` (0.3 by default: the description
-leads, the queries keep it honest). The hard filters are promises, not
-hopes: `motion_min` and `exclude_ids` ride the search request and are
-enforced again on what lands — a used clip or one under the floor is
-not ranked lower, it is not there. A `hero` slot asks for thirty
-candidates, any other for twelve, and every clip comes back carrying
-its `slotScore` and `slotRank`. Keep each chosen id on the next slot's
-`exclude_ids` as you go — the variety law held by the tool instead of
-by your memory. An empty description is an error that says why; never
-send one. The contact sheet and the placement gate below apply to slot
-pages exactly as to keyword pages — a slot's ranking is lexical and
-CLIP-side, and the eye and the gate still get the last word.
+(contrast / punctuate / breathe), not its literal content. For each
+`segments[i]` whose `visual.type` is `broll`, call
+`openvid_rank_for_slot {description: visual.description, queries:
+visual.queries || [visual.query], hero: visual.hero, motion_min:
+visual.motionMin, exclude_ids: <every clip id already chosen>}`. The
+description is the semantic contract — BM25 builds the page, the CLIP
+second pass re-orders it by what the clips SHOW, and the queries blend in
+as Jaccard similarity at `tag_weight` (0.3 by default). Reject candidates
+shorter than the segment; keep every chosen id in the next request's
+`exclude_ids`. Inspect the contact sheet and run the placement gate before
+importing. The automatic runner performs the ranking, duration rejection,
+continuity check, targeted replacement, import, placement and end trim;
+if you invoke it, verify those placed clips rather than adding duplicates.
 All `openvid_search`
 calls, all `sounds_search` calls, the `bgm_search` — these are independent;
 fan them out when you can, and where you cannot, one `openvid_search_batch`
@@ -388,8 +380,10 @@ The playhead moves on the timeline the user is looking at, so the edit
 arrives as a thing being made rather than a file that appears — and
 the refusal on a headless server costs one line, not the run.
 
-**Phase 5b — Motion comps (design). Every finished piece goes through here.**
-This is what separates an edit from a video. The motion layer is seven MCP
+**Phase 5b — Motion design (use when the story calls for it).**
+A bespoke comp can make an edit clearer, more memorable, or more emotionally
+precise; it is not a mandatory quota. A film led entirely by strong footage,
+performance, typography, and sound can be complete without a motion comp. The motion layer is seven MCP
 tools: `motion_presets` (the library), `motion_inspect` (nodes, slots —
 never guess), `motion_frame` (look before you bake — it now returns an inline
 image, so check legibility, contrast and safe margins with your eyes), `motion_bake`
@@ -402,14 +396,13 @@ and `motion_import` (motion made elsewhere: a designer's Lottie/bodymovin
 JSON become a comp, or a GSAP-style timeline applied to one — read the
 reply's `notes` aloud to the user, because a `skipped:` note means the comp
 draws less than the source did, and the user decides whether that is
-acceptable). The floor is one designed beat per
-section and at least one per 15 s of runtime — and a floor is a floor, not
-a target: a reel where a quarter or more of the segments carry a comp, and
-a longform where an eighth or more do, reads as designed rather than
-assembled. In finance/science/tech every
-number, percentage, comparison or process is a `funcut.ticker.count`,
-`funcut.chart.bars`, `funcut.stats.triptych` or `funcut.compare.split` —
-never a plain text card, and never a stock search: there is no footage of
+acceptable). Do not force a designed beat at a fixed interval or percentage.
+Use a bespoke comp when it materially improves comprehension, evidence,
+emphasis, identity, or emotional impact; otherwise let footage, typography,
+sound, or a deliberate hold do the work. In finance/science/tech, when a number, percentage, comparison or process
+needs visual explanation, prefer a purpose-built `funcut.ticker.count`,
+`funcut.chart.bars`, `funcut.stats.triptych` or `funcut.compare.split`
+over a plain text card or a literal stock search: there is no footage of
 "73%" or "twice as fast", and the generic-query results for one are the
 same clips every other channel in the niche already uses. Stock is for the
 filmable nouns; comps are for the claims. Edit every comp: real copy, retimed to its cut, one
@@ -528,19 +521,20 @@ either confidence.
 `effect_layer_add` (a layer cannot carry a two-input transition; it renders
 nothing). The incoming clip must sit adjacent to the previous clip ON THE
 SAME LANE within half a frame — a transition on a moved or gapped cut is
-silently orphaned. Density: a named transition at every section change, and
-at least one per 15 s in energetic longform; a plain cut wins everywhere
-else. Pair every transition with its SFX.
+silently orphaned. Use a named transition when it clarifies a section
+change or creates a motivated passage; a plain cut is often the strongest
+choice. Pair designed transitions with sound only when the sound adds meaning.
 
-**P — Pacing.** cuts/minute: calm 6–10 (documentary, history) · standard
-10–16 (explainer, how-to) · energetic 16–24 (tech, finance, motivation) ·
-hype 24+ (gaming, extreme). No visual segment runs past **4.0 s** in
-energetic niches or **6.0 s** in calm ones — the segment count your plan
-implies is ⌈runtime / maxSeconds⌉ at minimum. Short-form retention: a
-pattern interrupt (cut, text pop, SFX, zoom) every 2–4 s; the hook lands
-inside 3 s. Not only hard cuts: the cut-type catalog (`prompts/
-cuts_and_pacing.md`) has twelve — match cuts, smash cuts, whips, montage,
-cut-on-action, cut-on-beat — and a piece that only hard-cuts is a slideshow.
+**P — Pacing.** Let the narration, emotional arc, information density, music,
+and visual complexity determine shot duration and cut frequency. The
+genre ranges below are starting references, not targets or validation
+rules: documentary passages may breathe; data-heavy explanations may move
+faster; a reveal may deliberately hold. Interrupt a pattern when attention
+needs renewal, not on a timer. The hook should create a compelling question
+quickly, but do not sacrifice clarity to meet an arbitrary second count.
+Not only hard cuts: the cut-type catalog (`prompts/cuts_and_pacing.md`)
+has twelve — match cuts, smash cuts, whips, montage, cut-on-action,
+cut-on-beat — and a piece that only hard-cuts is a slideshow.
 
 **V — Variety.** A clip id appears at most ONCE in a reel, and at most once
 per 60 s in longform, never twice in one section. Every segment's B-roll
@@ -618,6 +612,27 @@ own bed rides, ducked deeper where it fights the words.
 
 **N — Stickers are MIT (Fluent Emoji): safe in monetized/commercial videos.**
 No licence warning is needed; every `magick_search` result carries `license: "MIT"`.
+
+## Automation boundary — what the Python runner actually does
+
+`scripts/auto_director.py` is an execution helper for a plan the Director has
+already authored; it does not invent a topic, script or edit plan. It waits
+for source transcription, reads voice signals/emotion, validates the plan,
+reuses or places the voiceover without silently retiming it, ranks and
+duration-checks B-roll, checks continuity and attempts targeted replacements,
+imports/places/trims stock, renders supplied motion storyboards and places
+them on a top lane, exports and waits, transcribes the exported file, verifies
+speech timing, samples the actual render and scores it. A score below 7,
+missing asset/storyboard, unresolved continuity flag, or failed verification
+stops the run.
+
+The runner does **not** yet author and apply a new creative revision after a
+low score, or execute every optional finishing operation (SFX/BGM design,
+captions, transitions and the final grade) by itself. The Director agent must
+perform those remaining phases through this skill and then re-run the review.
+The OpenVid index also does not supply measured colour temperature; do not
+pretend the automated continuity pass measured a colour jump it cannot see.
+Use the stock contact sheet for that visual judgment.
 
 ## 4. Hard rules
 

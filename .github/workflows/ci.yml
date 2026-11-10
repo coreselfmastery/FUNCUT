@@ -63,6 +63,10 @@ jobs:
       # the two saying the same thing. See models/manifest.toml.
       - run: python3 scripts/models.py --check
         if: ${{ !cancelled() }}
+      # The auto-director's deterministic safety test: validation must
+      # precede timeline edits, and a creatively unready plan must stop.
+      - run: python3 scripts/auto_director.py --self-test
+        if: ${{ !cancelled() }}
       # The sense sidecar's selftest: pure stdlib, no ffmpeg and no model,
       # it proves the PNG pipeline and the model-reply parsers the Rust
       # tests cannot reach - the parsers were exactly where the e2e gaps

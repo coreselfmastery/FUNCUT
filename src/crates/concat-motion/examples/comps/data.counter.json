@@ -1,0 +1,1403 @@
+{
+  "format": 1,
+  "id": "data.counter",
+  "name": "One marathon",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30.0,
+  "duration": 4.0,
+  "background": {
+    "r": 0.0,
+    "g": 0.0,
+    "b": 0.0,
+    "a": 0.0
+  },
+  "assets": {},
+  "curves": {},
+  "nodes": [
+    {
+      "id": "plate",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 540.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "rect",
+      "width": {
+        "px": 1920.0
+      },
+      "height": {
+        "px": 1080.0
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.054901960784313725,
+          "g": 0.058823529411764705,
+          "b": 0.07058823529411765,
+          "a": 1.0
+        }
+      },
+      "radius": 0.0
+    },
+    {
+      "id": "metres.value.0",
+      "start": 0.0,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "0 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.1",
+      "start": 0.05,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "7,738 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.2",
+      "start": 0.1,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "14,378 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.3",
+      "start": 0.15000000000000002,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "19,888 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.4",
+      "start": 0.2,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "24,354 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.5",
+      "start": 0.25,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "27,926 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.6",
+      "start": 0.30000000000000004,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "30,769 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.7",
+      "start": 0.35000000000000003,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "33,031 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.8",
+      "start": 0.4,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "34,837 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.9",
+      "start": 0.45,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "36,284 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.10",
+      "start": 0.5,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "37,448 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.11",
+      "start": 0.55,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "38,388 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.12",
+      "start": 0.6000000000000001,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "39,149 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.13",
+      "start": 0.65,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "39,766 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.14",
+      "start": 0.7000000000000001,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "40,268 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.15",
+      "start": 0.75,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "40,674 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.16",
+      "start": 0.8,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "41,004 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.17",
+      "start": 0.8500000000000001,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "41,271 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.18",
+      "start": 0.9,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "41,485 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.19",
+      "start": 0.9500000000000001,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "41,657 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.20",
+      "start": 1.0,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "41,794 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.21",
+      "start": 1.05,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "41,901 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.22",
+      "start": 1.1,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "41,985 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.23",
+      "start": 1.1500000000000001,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "42,049 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.24",
+      "start": 1.2000000000000002,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "42,097 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.25",
+      "start": 1.25,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "42,132 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.26",
+      "start": 1.3,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "42,157 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.27",
+      "start": 1.35,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "42,174 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.28",
+      "start": 1.4000000000000001,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "42,185 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.29",
+      "start": 1.4500000000000002,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "42,191 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.30",
+      "start": 1.5,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "42,194 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.31",
+      "start": 1.55,
+      "duration": 0.05,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "42,195 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.value.32",
+      "start": 1.6,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 460.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "text",
+      "text": "42,195 m",
+      "font": "Inter, DejaVu Sans",
+      "size": 140.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "metres.label",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 579.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.1,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.0,
+              "y1": 0.0,
+              "x2": 0.58,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "text",
+      "text": "one marathon, start line to finish",
+      "font": "Inter, DejaVu Sans",
+      "size": 28.0,
+      "weight": 500,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1600.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.6039215686274509,
+        "g": 0.592156862745098,
+        "b": 0.5568627450980392,
+        "a": 1.0
+      }
+    }
+  ],
+  "slots": []
+}

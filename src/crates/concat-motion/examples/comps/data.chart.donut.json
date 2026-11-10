@@ -1,0 +1,4882 @@
+{
+  "format": 1,
+  "id": "data.chart.donut",
+  "name": "Where the week goes",
+  "width": 1920,
+  "height": 1080,
+  "fps": 30.0,
+  "duration": 5.0,
+  "background": {
+    "r": 0.0,
+    "g": 0.0,
+    "b": 0.0,
+    "a": 0.0
+  },
+  "assets": {},
+  "curves": {},
+  "nodes": [
+    {
+      "id": "plate",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 540.0
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "kind": "rect",
+      "width": {
+        "px": 1920.0
+      },
+      "height": {
+        "px": 1080.0
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.054901960784313725,
+          "g": 0.058823529411764705,
+          "b": 0.07058823529411765,
+          "a": 1.0
+        }
+      },
+      "radius": 0.0
+    },
+    {
+      "id": "chart.title",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 254.2
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.08,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.0,
+              "y1": 0.0,
+              "x2": 0.58,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "text",
+      "text": "Where the week goes",
+      "font": "Inter, DejaVu Sans",
+      "size": 84.0,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1260.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "chart.subtitle",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 960.0,
+          "y": 337.36
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.08,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.0,
+              "y1": 0.0,
+              "x2": 0.58,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "text",
+      "text": "hours of one hundred and sixty-eight",
+      "font": "Inter, DejaVu Sans",
+      "size": 35.28,
+      "weight": 500,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "max_width": 1260.0,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.6039215686274509,
+        "g": 0.592156862745098,
+        "b": 0.5568627450980392,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "chart.ring.0",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 589.0472557338076,
+          "y": 484.2912212604857
+        },
+        "scale": 1.0,
+        "rotation": 2.8125
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.016,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.036000000000000004,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.8509803921568627,
+          "g": 0.6431372549019608,
+          "b": 0.2549019607843137,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.1",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 604.7458086170935,
+          "y": 485.8373937646372
+        },
+        "scale": 1.0,
+        "rotation": 8.4375
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0175625,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.037562500000000006,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.8509803921568627,
+          "g": 0.6431372549019608,
+          "b": 0.2549019607843137,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.2",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 620.2172172700824,
+          "y": 488.91484828650135
+        },
+        "scale": 1.0,
+        "rotation": 14.0625
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.019125,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.03912500000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.8509803921568627,
+          "g": 0.6431372549019608,
+          "b": 0.2549019607843137,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.3",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 635.3124835699135,
+          "y": 493.4939472567248
+        },
+        "scale": 1.0,
+        "rotation": 19.6875
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0206875,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0406875,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.8509803921568627,
+          "g": 0.6431372549019608,
+          "b": 0.2549019607843137,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.4",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 649.8862318502078,
+          "y": 499.53059144903426
+        },
+        "scale": 1.0,
+        "rotation": 25.3125
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.02225,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.04225,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.8509803921568627,
+          "g": 0.6431372549019608,
+          "b": 0.2549019607843137,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.5",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 663.7981089482045,
+          "y": 506.9666446798923
+        },
+        "scale": 1.0,
+        "rotation": 30.9375
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0238125,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.043812500000000004,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.8509803921568627,
+          "g": 0.6431372549019608,
+          "b": 0.2549019607843137,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.6",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 676.9141358824445,
+          "y": 515.7304936917255
+        },
+        "scale": 1.0,
+        "rotation": 36.5625
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.025375,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.045375000000000006,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.8509803921568627,
+          "g": 0.6431372549019608,
+          "b": 0.2549019607843137,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.7",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 689.1079981436013,
+          "y": 525.7377378277431
+        },
+        "scale": 1.0,
+        "rotation": 42.1875
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.026937500000000003,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.04693750000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.8509803921568627,
+          "g": 0.6431372549019608,
+          "b": 0.2549019607843137,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.8",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 700.2622621722569,
+          "y": 536.8920018563987
+        },
+        "scale": 1.0,
+        "rotation": 47.8125
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0285,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0485,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.8509803921568627,
+          "g": 0.6431372549019608,
+          "b": 0.2549019607843137,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.9",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 710.2695063082745,
+          "y": 549.0858641175555
+        },
+        "scale": 1.0,
+        "rotation": 53.4375
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0300625,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0500625,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.8509803921568627,
+          "g": 0.6431372549019608,
+          "b": 0.2549019607843137,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.10",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 719.0333553201077,
+          "y": 562.2018910517955
+        },
+        "scale": 1.0,
+        "rotation": 59.0625
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.031625,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.051625000000000004,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.8509803921568627,
+          "g": 0.6431372549019608,
+          "b": 0.2549019607843137,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.11",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 726.4694085509657,
+          "y": 576.1137681497922
+        },
+        "scale": 1.0,
+        "rotation": 64.6875
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0331875,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.053187500000000006,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.8509803921568627,
+          "g": 0.6431372549019608,
+          "b": 0.2549019607843137,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.12",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 732.5060527432752,
+          "y": 590.6875164300865
+        },
+        "scale": 1.0,
+        "rotation": 70.3125
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.03475,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.05475000000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.8509803921568627,
+          "g": 0.6431372549019608,
+          "b": 0.2549019607843137,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.13",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 737.0851517134986,
+          "y": 605.7827827299176
+        },
+        "scale": 1.0,
+        "rotation": 75.9375
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0363125,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0563125,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.8509803921568627,
+          "g": 0.6431372549019608,
+          "b": 0.2549019607843137,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.14",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 740.1626062353628,
+          "y": 621.2541913829065
+        },
+        "scale": 1.0,
+        "rotation": 81.5625
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.037875000000000006,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.05787500000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.8509803921568627,
+          "g": 0.6431372549019608,
+          "b": 0.2549019607843137,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.15",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 741.7087787395143,
+          "y": 636.9527442661924
+        },
+        "scale": 1.0,
+        "rotation": 87.1875
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0394375,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.059437500000000004,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.8509803921568627,
+          "g": 0.6431372549019608,
+          "b": 0.2549019607843137,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.16",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 741.7087787395143,
+          "y": 652.7272557338076
+        },
+        "scale": 1.0,
+        "rotation": 92.8125
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.041,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.061000000000000006,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.8509803921568627,
+          "g": 0.6431372549019608,
+          "b": 0.2549019607843137,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.17",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 740.1626062353628,
+          "y": 668.4258086170936
+        },
+        "scale": 1.0,
+        "rotation": 98.4375
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0425625,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.06256250000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.8509803921568627,
+          "g": 0.6431372549019608,
+          "b": 0.2549019607843137,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.18",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 737.0851517134986,
+          "y": 683.8972172700825
+        },
+        "scale": 1.0,
+        "rotation": 104.0625
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.044125,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.064125,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.8509803921568627,
+          "g": 0.6431372549019608,
+          "b": 0.2549019607843137,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.19",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 732.5060527432752,
+          "y": 698.9924835699136
+        },
+        "scale": 1.0,
+        "rotation": 109.6875
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.045687500000000006,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.06568750000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.8509803921568627,
+          "g": 0.6431372549019608,
+          "b": 0.2549019607843137,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.20",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 726.4694085509657,
+          "y": 713.5662318502078
+        },
+        "scale": 1.0,
+        "rotation": 115.3125
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.04725,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.06725,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.8509803921568627,
+          "g": 0.6431372549019608,
+          "b": 0.2549019607843137,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.21",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 719.0333553201077,
+          "y": 727.4781089482045
+        },
+        "scale": 1.0,
+        "rotation": 120.9375
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0488125,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0688125,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9098039215686274,
+          "g": 0.788235294117647,
+          "b": 0.5098039215686274,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.22",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 710.2695063082745,
+          "y": 740.5941358824446
+        },
+        "scale": 1.0,
+        "rotation": 126.5625
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.050375,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.07037500000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9098039215686274,
+          "g": 0.788235294117647,
+          "b": 0.5098039215686274,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.23",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 700.2622621722569,
+          "y": 752.7879981436014
+        },
+        "scale": 1.0,
+        "rotation": 132.1875
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.051937500000000004,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.07193750000000002,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9098039215686274,
+          "g": 0.788235294117647,
+          "b": 0.5098039215686274,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.24",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 689.1079981436013,
+          "y": 763.942262172257
+        },
+        "scale": 1.0,
+        "rotation": 137.8125
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.053500000000000006,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.07350000000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9098039215686274,
+          "g": 0.788235294117647,
+          "b": 0.5098039215686274,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.25",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 676.9141358824445,
+          "y": 773.9495063082745
+        },
+        "scale": 1.0,
+        "rotation": 143.4375
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0550625,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0750625,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9098039215686274,
+          "g": 0.788235294117647,
+          "b": 0.5098039215686274,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.26",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 663.7981089482045,
+          "y": 782.7133553201078
+        },
+        "scale": 1.0,
+        "rotation": 149.0625
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.056625,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.076625,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9098039215686274,
+          "g": 0.788235294117647,
+          "b": 0.5098039215686274,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.27",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 649.8862318502078,
+          "y": 790.1494085509657
+        },
+        "scale": 1.0,
+        "rotation": 154.6875
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0581875,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.07818750000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9098039215686274,
+          "g": 0.788235294117647,
+          "b": 0.5098039215686274,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.28",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 635.3124835699135,
+          "y": 796.1860527432752
+        },
+        "scale": 1.0,
+        "rotation": 160.3125
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.059750000000000004,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.07975000000000002,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9098039215686274,
+          "g": 0.788235294117647,
+          "b": 0.5098039215686274,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.29",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 620.2172172700824,
+          "y": 800.7651517134987
+        },
+        "scale": 1.0,
+        "rotation": 165.9375
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.061312500000000006,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.08131250000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9098039215686274,
+          "g": 0.788235294117647,
+          "b": 0.5098039215686274,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.30",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 604.7458086170935,
+          "y": 803.8426062353628
+        },
+        "scale": 1.0,
+        "rotation": 171.5625
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.062875,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.082875,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9098039215686274,
+          "g": 0.788235294117647,
+          "b": 0.5098039215686274,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.31",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 589.0472557338076,
+          "y": 805.3887787395144
+        },
+        "scale": 1.0,
+        "rotation": 177.1875
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.06443750000000001,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.08443750000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9098039215686274,
+          "g": 0.788235294117647,
+          "b": 0.5098039215686274,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.32",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 573.2727442661924,
+          "y": 805.3887787395144
+        },
+        "scale": 1.0,
+        "rotation": 182.8125
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.066,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.08600000000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9098039215686274,
+          "g": 0.788235294117647,
+          "b": 0.5098039215686274,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.33",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 557.5741913829064,
+          "y": 803.8426062353628
+        },
+        "scale": 1.0,
+        "rotation": 188.4375
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0675625,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0875625,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9098039215686274,
+          "g": 0.788235294117647,
+          "b": 0.5098039215686274,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.34",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 542.1027827299175,
+          "y": 800.7651517134987
+        },
+        "scale": 1.0,
+        "rotation": 194.0625
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.069125,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.08912500000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9098039215686274,
+          "g": 0.788235294117647,
+          "b": 0.5098039215686274,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.35",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 527.0075164300864,
+          "y": 796.1860527432752
+        },
+        "scale": 1.0,
+        "rotation": 199.6875
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0706875,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0906875,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9098039215686274,
+          "g": 0.788235294117647,
+          "b": 0.5098039215686274,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.36",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 512.4337681497923,
+          "y": 790.1494085509659
+        },
+        "scale": 1.0,
+        "rotation": 205.3125
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.07225000000000001,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.09225000000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.6901960784313725,
+          "g": 0.4627450980392157,
+          "b": 0.2901960784313726,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.37",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 498.5218910517955,
+          "y": 782.7133553201078
+        },
+        "scale": 1.0,
+        "rotation": 210.9375
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0738125,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.09381250000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.6901960784313725,
+          "g": 0.4627450980392157,
+          "b": 0.2901960784313726,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.38",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 485.40586411755544,
+          "y": 773.9495063082745
+        },
+        "scale": 1.0,
+        "rotation": 216.5625
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.075375,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.095375,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.39",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 473.2120018563986,
+          "y": 763.942262172257
+        },
+        "scale": 1.0,
+        "rotation": 222.1875
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0769375,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.09693750000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.40",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 462.05773782774304,
+          "y": 752.7879981436014
+        },
+        "scale": 1.0,
+        "rotation": 227.8125
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0785,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0985,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.41",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 452.0504936917256,
+          "y": 740.5941358824446
+        },
+        "scale": 1.0,
+        "rotation": 233.4375
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.08006250000000001,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.10006250000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.42",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 443.2866446798922,
+          "y": 727.4781089482045
+        },
+        "scale": 1.0,
+        "rotation": 239.0625
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.081625,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.10162500000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.43",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 435.8505914490342,
+          "y": 713.5662318502078
+        },
+        "scale": 1.0,
+        "rotation": 244.6875
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0831875,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.1031875,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.44",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 429.81394725672476,
+          "y": 698.9924835699136
+        },
+        "scale": 1.0,
+        "rotation": 250.31250000000003
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.08475,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.10475000000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.45",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 425.2348482865013,
+          "y": 683.8972172700825
+        },
+        "scale": 1.0,
+        "rotation": 255.9375
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0863125,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.1063125,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.46",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 422.15739376463716,
+          "y": 668.4258086170936
+        },
+        "scale": 1.0,
+        "rotation": 261.5625
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.08787500000000001,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.10787500000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.47",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 420.61122126048565,
+          "y": 652.7272557338076
+        },
+        "scale": 1.0,
+        "rotation": 267.1875
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0894375,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.10943750000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.48",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 420.61122126048565,
+          "y": 636.9527442661924
+        },
+        "scale": 1.0,
+        "rotation": 272.8125
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.09100000000000001,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.11100000000000002,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.49",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 422.15739376463716,
+          "y": 621.2541913829065
+        },
+        "scale": 1.0,
+        "rotation": 278.4375
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.0925625,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.11256250000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.50",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 425.2348482865013,
+          "y": 605.7827827299176
+        },
+        "scale": 1.0,
+        "rotation": 284.0625
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.094125,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.114125,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.51",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 429.81394725672476,
+          "y": 590.6875164300865
+        },
+        "scale": 1.0,
+        "rotation": 289.6875
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.09568750000000001,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.11568750000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.52",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 435.8505914490342,
+          "y": 576.1137681497922
+        },
+        "scale": 1.0,
+        "rotation": 295.3125
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.09725,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.11725000000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.53",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 443.2866446798922,
+          "y": 562.2018910517955
+        },
+        "scale": 1.0,
+        "rotation": 300.9375
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.09881250000000001,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.11881250000000002,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.54",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 452.05049369172553,
+          "y": 549.0858641175555
+        },
+        "scale": 1.0,
+        "rotation": 306.5625
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.100375,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.12037500000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.55",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 462.057737827743,
+          "y": 536.8920018563987
+        },
+        "scale": 1.0,
+        "rotation": 312.1875
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.1019375,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.1219375,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.56",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 473.2120018563986,
+          "y": 525.737737827743
+        },
+        "scale": 1.0,
+        "rotation": 317.8125
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.10350000000000001,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.12350000000000001,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.57",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 485.4058641175555,
+          "y": 515.7304936917255
+        },
+        "scale": 1.0,
+        "rotation": 323.4375
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.1050625,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.12506250000000002,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.58",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 498.5218910517954,
+          "y": 506.9666446798923
+        },
+        "scale": 1.0,
+        "rotation": 329.0625
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.10662500000000001,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.12662500000000002,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.59",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 512.4337681497922,
+          "y": 499.5305914490343
+        },
+        "scale": 1.0,
+        "rotation": 334.6875
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.1081875,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.1281875,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.60",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 527.0075164300864,
+          "y": 493.4939472567248
+        },
+        "scale": 1.0,
+        "rotation": 340.3125
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.10975,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.12975,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.61",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 542.1027827299175,
+          "y": 488.91484828650135
+        },
+        "scale": 1.0,
+        "rotation": 345.9375
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.11131250000000001,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.1313125,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.62",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 557.5741913829065,
+          "y": 485.8373937646372
+        },
+        "scale": 1.0,
+        "rotation": 351.5625
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.112875,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.13287500000000002,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.ring.63",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 573.2727442661924,
+          "y": 484.2912212604857
+        },
+        "scale": 1.0,
+        "rotation": 357.1875
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "scale": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.11443750000000001,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.13443750000000002,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "rect",
+      "width": {
+        "px": 17.774511467615113
+      },
+      "height": {
+        "px": 54.652416
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      },
+      "radius": 4.0
+    },
+    {
+      "id": "chart.center",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 581.16,
+          "y": 644.84
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.116,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.176,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.0,
+              "y1": 0.0,
+              "x2": 0.58,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "text",
+      "text": "168 h",
+      "font": "Inter, DejaVu Sans",
+      "size": 61.082112,
+      "weight": 800,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "center",
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "chart.legend.dot.0",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 898.3199999999999,
+          "y": 512.84
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.116,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.21600000000000003,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "ellipse",
+      "width": {
+        "px": 18.0
+      },
+      "height": {
+        "px": 18.0
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.8509803921568627,
+          "g": 0.6431372549019608,
+          "b": 0.2549019607843137,
+          "a": 1.0
+        }
+      }
+    },
+    {
+      "id": "chart.legend.label.0",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 923.52,
+          "y": 512.84
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.116,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.21600000000000003,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "text",
+      "text": "sleep  33",
+      "font": "Inter, DejaVu Sans",
+      "size": 40.0,
+      "weight": 600,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "left",
+      "max_width": 666.48,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "chart.legend.dot.1",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 898.3199999999999,
+          "y": 600.84
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.132,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.232,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "ellipse",
+      "width": {
+        "px": 18.0
+      },
+      "height": {
+        "px": 18.0
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9098039215686274,
+          "g": 0.788235294117647,
+          "b": 0.5098039215686274,
+          "a": 1.0
+        }
+      }
+    },
+    {
+      "id": "chart.legend.label.1",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 923.52,
+          "y": 600.84
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.132,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.232,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "text",
+      "text": "work  24",
+      "font": "Inter, DejaVu Sans",
+      "size": 40.0,
+      "weight": 600,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "left",
+      "max_width": 666.48,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "chart.legend.dot.2",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 898.3199999999999,
+          "y": 688.84
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.14800000000000002,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.24800000000000003,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "ellipse",
+      "width": {
+        "px": 18.0
+      },
+      "height": {
+        "px": 18.0
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.6901960784313725,
+          "g": 0.4627450980392157,
+          "b": 0.2901960784313726,
+          "a": 1.0
+        }
+      }
+    },
+    {
+      "id": "chart.legend.label.2",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 923.52,
+          "y": 688.84
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.14800000000000002,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.24800000000000003,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "text",
+      "text": "learning  4",
+      "font": "Inter, DejaVu Sans",
+      "size": 40.0,
+      "weight": 600,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "left",
+      "max_width": 666.48,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    },
+    {
+      "id": "chart.legend.dot.3",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 898.3199999999999,
+          "y": 776.84
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.164,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.264,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "ellipse",
+      "width": {
+        "px": 18.0
+      },
+      "height": {
+        "px": 18.0
+      },
+      "fill": {
+        "kind": "solid",
+        "color": {
+          "r": 0.9568627450980393,
+          "g": 0.9450980392156862,
+          "b": 0.9176470588235294,
+          "a": 1.0
+        }
+      }
+    },
+    {
+      "id": "chart.legend.label.3",
+      "start": 0.0,
+      "duration": 0.0,
+      "transform": {
+        "position": {
+          "x": 923.52,
+          "y": 776.84
+        },
+        "scale": 1.0,
+        "rotation": 0.0
+      },
+      "opacity": 1.0,
+      "blend": "normal",
+      "tracks": {
+        "opacity": [
+          {
+            "at": 0.0,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.164,
+            "value": {
+              "kind": "number",
+              "value": 0.0
+            }
+          },
+          {
+            "at": 0.264,
+            "value": {
+              "kind": "number",
+              "value": 1.0
+            },
+            "curve": {
+              "kind": "bezier",
+              "x1": 0.16,
+              "y1": 1.0,
+              "x2": 0.3,
+              "y2": 1.0
+            }
+          }
+        ]
+      },
+      "kind": "text",
+      "text": "everything else  39",
+      "font": "Inter, DejaVu Sans",
+      "size": 40.0,
+      "weight": 600,
+      "italic": false,
+      "letter_spacing": 0.0,
+      "line_height": 1.2,
+      "align": "left",
+      "max_width": 666.48,
+      "padding": 0.0,
+      "background": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0,
+        "a": 0.0
+      },
+      "radius": 0.0,
+      "color": {
+        "r": 0.9568627450980393,
+        "g": 0.9450980392156862,
+        "b": 0.9176470588235294,
+        "a": 1.0
+      }
+    }
+  ],
+  "slots": []
+}

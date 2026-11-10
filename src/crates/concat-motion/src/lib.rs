@@ -65,6 +65,7 @@
 pub mod authoring;
 pub mod bench;
 pub mod cache;
+pub mod camera;
 pub mod captions;
 pub mod comp;
 pub mod continuity;
@@ -77,9 +78,11 @@ pub mod farm;
 pub mod footage;
 pub mod geneva;
 pub mod grade;
+pub mod graphics;
 pub mod lint;
 pub mod looks;
 pub mod noise;
+pub mod particles;
 pub mod plan;
 pub mod presets;
 pub mod progress;
@@ -95,6 +98,7 @@ pub mod transition;
 pub mod typography;
 
 pub use authoring::{CompSummary, Op, apply};
+pub use camera::{CameraMove, apply_camera};
 pub use comp::{Comp, FORMAT, Node, NodeKind, Slot};
 pub use continuity::{
     AssetManifest, ContinuityRule, Discontinuity, ManifestClip, Remedy, ShotScale, TravelDirection,
@@ -108,11 +112,14 @@ pub use engine::{
 };
 pub use footage::{FootagePlan, suggest_footage};
 pub use geneva::{Breaker, CallLimits, Diagnostic, Geneva, fix_for};
+pub use graphics::{Area, Chart, ChartKind, Counter, Datum, NumberFormat};
 pub use lint::{Finding, RULES, Rule, rule_count};
 pub use looks::Look;
 // The plan's footage Slot lives at `concat_motion::plan::Slot`: the root
 // name belongs to the comp's template Slot, and two Slots on one root is
 // an ambiguity, not a convenience.
+pub use noise::Noise;
+pub use particles::{Emission, ParticleSystem, Shape, Turbulence};
 pub use plan::{Entry, Exit, SlotJob, SlotRole, Treatment, broll_share};
 pub use pulse::{BeatGrid, Driven, Pulse, curve_for_act, sound_starts_at};
 pub use reel::{ReelReport, SceneOutcome, render_reel, scene_key};

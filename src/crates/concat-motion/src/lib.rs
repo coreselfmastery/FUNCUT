@@ -119,7 +119,7 @@ pub use looks::Look;
 // name belongs to the comp's template Slot, and two Slots on one root is
 // an ambiguity, not a convenience.
 pub use noise::Noise;
-pub use particles::{Emission, ParticleSystem, Shape, Turbulence};
+pub use particles::{Emission, ParticlePatch, ParticleSystem, Shape, Turbulence};
 pub use plan::{Entry, Exit, SlotJob, SlotRole, Treatment, broll_share};
 pub use pulse::{BeatGrid, Driven, Pulse, curve_for_act, sound_starts_at};
 pub use reel::{ReelReport, SceneOutcome, render_reel, scene_key};

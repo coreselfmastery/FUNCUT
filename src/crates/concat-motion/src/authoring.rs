@@ -290,8 +290,19 @@ pub enum Op {
         /// When the field lights up, in seconds.
         #[serde(default)]
         at: f64,
-        /// The system: seed, forces, curves over life.
-        system: ParticleSystem,
+        /// A named field to start from: one of `snow`, `rain`, `embers`,
+        /// `sparks`, `dust`, `atmosphere`, `confetti`, `fireflies`,
+        /// `energy`, `streaks`, `data`. With no `system` beside it this
+        /// is the whole configuration; with one, every field the `system`
+        /// names wins.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        preset: Option<String>,
+        /// The system: seed, forces, curves over life - every field
+        /// optional here, patching the preset when there is one and the
+        /// plain default when there is not. A document that always gave
+        /// the full system parses exactly as it did.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        system: Option<crate::particles::ParticlePatch>,
     },
     /// Delete a node and every node whose parent it was.
     Delete {
@@ -841,13 +852,27 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
             width,
             height,
             at,
+            preset,
             system,
         } => {
             reserve(&comp, id)?;
             check_at(&comp, *at)?;
+            let base = match preset {
+                Some(name) => crate::particles::preset(name).ok_or_else(|| {
+                    fail(
+                        format!("the particle preset '{name}' is not one the library names"),
+                        format!(
+                            "the names are {}",
+                            crate::particles::PRESET_NAMES.join(", ")
+                        ),
+                    )
+                })?,
+                None => ParticleSystem::default(),
+            };
+            let system = system.clone().unwrap_or_default().onto(&base);
             let nodes = crate::particles::particle_nodes(
                 id,
-                system,
+                &system,
                 *x,
                 *y,
                 *width,
@@ -2184,11 +2209,12 @@ mod tests {
                     width: 1920.0,
                     height: 1080.0,
                     at: 0.0,
-                    system: ParticleSystem {
-                        seed: 7,
-                        count: 8,
-                        ..ParticleSystem::default()
-                    },
+                    preset: None,
+                    system: Some(crate::particles::ParticlePatch {
+                        seed: Some(7),
+                        count: Some(8),
+                        ..crate::particles::ParticlePatch::default()
+                    }),
                 },
                 Op::SetCamera {
                     camera: CameraMove {

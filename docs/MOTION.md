@@ -1139,6 +1139,41 @@ life, refused with the number that broke it.
                "size": [3, 1.1], "colors": ["#d9a441", "#e8c982"] } }
 ```
 
+**A name is a whole field.** Eleven presets carry the tuning a scene reaches for first, each a
+complete system with its own seed — the same preset is the same field on every machine, the
+determinism contract applied to taste — and each one word wide:
+
+| Name | The read |
+| --- | --- |
+| `snow` | falls slow, wanders on the gust, melts out — the wide white drift |
+| `rain` | fast and straight, pale and thin — the streak a dot can be |
+| `embers` | rise and gutter, amber to nothing — the fire after the flame |
+| `sparks` | a bang that arcs, bright and short — the grinder's fan |
+| `dust` | barely moves, lives long, half-there — the room the light beam names |
+| `atmosphere` | wider, softer motes — the haze a backlight needs |
+| `confetti` | a multicoloured burst that flutters down — the celebration |
+| `fireflies` | wander a summer field, green-gold, unhurried |
+| `energy` | a fast upward stream in the accent cyans — the designed current |
+| `streaks` | cross the frame fast and thin — the comet read |
+| `data` | small squares on the wire, green to cyan — the flow itself |
+
+```json
+{ "op": "add-particles", "id": "weather", "x": 0, "y": -40, "width": 1920, "height": 80,
+  "preset": "snow" }
+```
+
+A `system` beside the name patches it, field by field: every field it names wins, every one it
+leaves out is the preset's. Fifty flakes of the same snow:
+
+```json
+{ "op": "add-particles", "id": "weather", "x": 0, "y": -40, "width": 1920, "height": 80,
+  "preset": "snow", "system": { "count": 50 } }
+```
+
+The patch shape is the system's own with every field optional — a document that always gave the
+full `system` and no `preset` parses exactly as it did. One honest limit: a patch cannot *remove*
+a preset's gust, only replace it — still air is `"turbulence": {"strength": 0}`.
+
 ### The camera: a move baked into the layers
 
 A comp has no camera node; `set-camera` is what a director means by one anyway. A zoom, a pan and

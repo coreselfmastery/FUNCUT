@@ -267,6 +267,30 @@ jobs:
           test -d "sherpa/$stem/lib"
           echo "SHERPA_ONNX_LIB_DIR=$PWD/sherpa/$stem/lib" >> "$GITHUB_ENV"
 
+      # Thin LTO and sixteen codegen units for the ARM lane, in place of
+      # the app profile's fat LTO and one unit. Every run since the
+      # director power-pass merge - four in one afternoon, the lane's own
+      # two cure attempts among them - was stopped by the runner itself,
+      # "The runner has received a shutdown signal", exit 143, always in
+      # the same stretch of the compile of the `concat` window, while the
+      # x86_64 lane, on the same 16 GB, linked the same tree green in
+      # nineteen minutes. Fat LTO re-optimises the whole program - slint,
+      # skia, winit, every crate - as one unit in one rustc, and that one
+      # process alone does not fit the machine; one crate at a time
+      # (tried, reverted) cannot cure a single link that is itself too
+      # big. Thin LTO splits that work into per-crate modules, for a
+      # binary a few per cent slower on the lane with the fewest users.
+      # The x86_64 lane keeps the profile as Cargo.toml writes it. Set
+      # before the cache step, so these are part of its key (CARGO is in
+      # env-vars).
+      - name: Thin LTO (Linux aarch64)
+        if: matrix.platform == 'linux' && matrix.arch == 'aarch64'
+        run: |
+          {
+            echo "CARGO_PROFILE_APP_LTO=thin"
+            echo "CARGO_PROFILE_APP_CODEGEN_UNITS=16"
+          } >> "$GITHUB_ENV"
+
       # ── Build ──────────────────────────────────────────────────────────
       # The cache comes after the environment is set, not before: its key
       # is made from the compiler and linker variables in force (RUSTFLAGS,

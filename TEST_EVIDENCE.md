@@ -1,0 +1,36 @@
+# TEST_EVIDENCE.md — what was actually run, and what it said
+
+Every entry names the commit and the command. CI results are read from the
+GitHub check-runs API for the exact SHA.
+
+## Baseline `ab7c0704917d6f3181b1fb847fead86dc6392fcf`
+
+- GitHub Actions (7 checks): all **success** — Engine tests and lints; The
+  analysis senses against real fixtures; Format, locales and models; The
+  dependency dance, pinned and green; linux-aarch64; The multi-layer
+  example, rendered and inspected; linux-x86_64.
+- Local: `cargo test -p concat-motion` → **426 passed, 0 failed, 5 ignored**
+  (+6 doc-tests passed). Machine: 2 cores / 4 GB.
+
+## `54e13922` (PR #76 branch + rustfmt fix)
+
+- Local: `cargo fmt --check` clean; `python3 scripts/locales.py --check`
+  clean (25 locales, 0 missing, 0 stale).
+- GitHub Actions: Format/locales/models **success**; analysis senses
+  **success**; multi-layer example **success**; dependency dance
+  **success**; Engine tests and lints **in progress** at last check.
+
+## Local build environment reproduction (for reproducibility)
+
+`bash /home/z/my-project/scripts/setup-build-env.sh` fetches the exact
+digest-pinned FFmpeg 8.1.3/ONNX 1.28.0/sherpa 1.13.7 from
+`scripts/ci/deps.lock` (all sha256-verified), then
+`source /home/z/my-project/scripts/funcut-env.sh` provides the env the CI
+engine job uses. No system packages are installed (no root): clang 19 and
+the dev sysroot come from extracted Debian debs under
+`/home/z/my-project/clang-deb` and `/home/z/my-project/sysroot`, cmake from
+the portable 3.31.6 tarball.
+
+The `concat` GUI crate cannot compile on this box (rustc OOM at 4 GB even
+in check mode, `-j1`, no incremental, debuginfo 0). Its validation is CI's;
+this is recorded rather than hidden.

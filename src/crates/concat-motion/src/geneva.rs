@@ -32,8 +32,8 @@ use std::time::{Duration, Instant};
 use serde_json::{Value as Json, json};
 
 use crate::comp::{
-    Asset, AssetKind, Blend, Comp, Effect, Fit, Length, Mask, MaskShape, Node, NodeKind, Paint,
-    PathCommand, Rgba, Shadow, Stroke, TextAlign, TextNode,
+    Asset, AssetKind, Blend, Comp, Effect, Fit, GradientKind, Length, Mask, MaskShape, Node,
+    NodeKind, Paint, PathCommand, Rgba, Shadow, Stroke, TextAlign, TextNode,
 };
 use crate::curve::{Curve, StepPosition};
 use crate::engine::{BakeRequest, Baked, CompEngine, EngineKind, MotionError, Probe};
@@ -528,7 +528,7 @@ impl Geneva {
         source_dir: &Path,
         request: &BakeRequest,
         dir: &Path,
-    ) -> Result<Json, MotionError> {
+    ) -> Result<(Json, Vec<String>), MotionError> {
         std::fs::create_dir_all(dir.join("assets")).map_err(|source| MotionError::Io {
             doing: "creating".into(),
             path: dir.join("assets"),
@@ -552,7 +552,7 @@ impl Geneva {
             path,
             source,
         })?;
-        Ok(document)
+        Ok((document, warnings))
     }
 
     /// Run one Geneva command in `dir` and hand back the report it printed.
@@ -1022,103 +1022,6 @@ fn stage_assets(
     Ok(())
 }
 
-/// The content key of every file a comp points at: the comp's own hash
-/// covers the document, this covers its bytes. Each asset's content is
-/// hashed by [`crate::cache::stream_hash`], a megabyte at a time - a
-/// 2 GB plate hashes without ever being loaded, which on the 4 GB
-/// machine a long reel renders on is the difference between a hash and
-/// an OOM. A file that is not there hashes as `missing`, because a bake
-/// that could not read an asset is a bake a later re-render with the
-/// file present must not be served in place of.
-fn bake_assets_key(comp: &Comp, source_dir: &Path) -> Option<u64> {
-    // Sub-compositions point at files of their own, and a bake whose key
-    // ignored them would serve a stale placement after "changed the
-    // logo inside the sting" - the same bug the top-level key exists to
-    // refuse. One walk, one order, every scope in the key.
-    let mut walk: BTreeMap<String, &str> = BTreeMap::new();
-    fn gather<'a>(comp: &'a Comp, scope: &str, walk: &mut BTreeMap<String, &'a str>) {
-        for (id, asset) in &comp.assets {
-            walk.insert(format!("{scope}{id}"), asset.src.as_str());
-        }
-        for (name, sub) in &comp.comps {
-            gather(sub, &format!("{scope}{name}::"), walk);
-        }
-    }
-    gather(comp, "", &mut walk);
-    if walk.is_empty() {
-        return None;
-    }
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    let mut eat = |bytes: &[u8]| {
-        for byte in bytes {
-            hash ^= u64::from(*byte);
-            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-        }
-    };
-    eat(b"concat-motion/bake-assets/1");
-    for (id, src) in &walk {
-        eat(id.as_bytes());
-        eat(b"\0");
-        match crate::cache::stream_hash("concat-motion/bake-assets/1", &source_dir.join(src)) {
-            Some(file) => eat(&file.to_le_bytes()),
-            None => eat(b"missing"),
-        }
-    }
-    Some(hash)
-}
-
-/// A bake that already sits in `dir`, when its manifest matches the comp,
-/// the **assets the comp points at**, the engine, the engine's version,
-/// the size, the rate and the alpha - and the frames it promises are
-/// actually still on disk. The comp's hash is the document's key and the
-/// assets key is the files' key; neither alone is enough, because an
-/// unchanged document over changed bytes is exactly the stale bake this
-/// check exists to refuse.
-fn bake_cache_hit(dir: &Path, comp: &Comp, request: &BakeRequest, version: &str) -> Option<Baked> {
-    if request.frames.is_some() {
-        // A ranged (parallel) bake is not a full cache entry; render it.
-        return None;
-    }
-    let source_dir = if request.source_dir.as_os_str().is_empty() {
-        PathBuf::from(".")
-    } else {
-        request.source_dir.clone()
-    };
-    let manifest: Baked =
-        serde_json::from_str(&std::fs::read_to_string(dir.join("manifest.json")).ok()?).ok()?;
-    if manifest.hash != comp.hash()
-        || manifest.assets != bake_assets_key(comp, &source_dir)
-        || manifest.engine != EngineKind::Geneva
-        || manifest.engine_version != version
-        || manifest.width != request.width(comp)
-        || manifest.height != request.height(comp)
-        || manifest.fps != request.fps(comp)
-        || manifest.alpha != request.alpha
-        || manifest.frames == 0
-    {
-        return None;
-    }
-    // The manifest's own `dir` was written relative to wherever the bake
-    // ran; count the frames where this caller says the bake lives, so a
-    // moved project or a trimmed cache misses instead of lying.
-    let frames_dir = dir.join("frames");
-    let present = std::fs::read_dir(&frames_dir)
-        .ok()?
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "png"))
-        .count();
-    if present < manifest.frames {
-        return None;
-    }
-    let mut hit = manifest;
-    hit.cached = true;
-    // A served bake counts as used: the comps sweep keys on the
-    // manifest's clock, and a hit that never touched it would be the
-    // first evicted by its own popularity's opposite.
-    crate::cache::touch_file(&dir.join("manifest.json"));
-    Some(hit)
-}
-
 impl CompEngine for Geneva {
     fn kind(&self) -> EngineKind {
         EngineKind::Geneva
@@ -1159,10 +1062,12 @@ impl CompEngine for Geneva {
         // cache spares the render, not the sidecar (see engine.rs: the
         // engine is a preference, not a dependency, and a machine without
         // it fails loudly rather than serving a bake it cannot name).
-        if let Some(hit) = bake_cache_hit(dir, comp, request, &version) {
+        if let Some(hit) =
+            crate::engine::bake_cache_hit(dir, comp, request, EngineKind::Geneva, &version)
+        {
             return Ok(hit);
         }
-        self.stage(comp, &source_dir, request, dir)?;
+        let (_document, warnings) = self.stage(comp, &source_dir, request, dir)?;
 
         let frames = dir.join("frames");
         // A bake counts what the render wrote, so a stale `frames/` left by
@@ -1214,10 +1119,11 @@ impl CompEngine for Geneva {
             height: request.height(comp),
             fps: request.fps(comp),
             hash: comp.hash(),
-            assets: bake_assets_key(comp, &source_dir),
+            assets: crate::engine::bake_assets_key(comp, &source_dir),
             engine: EngineKind::Geneva,
             engine_version: version,
             alpha: request.alpha,
+            warnings,
             cached: false,
         };
         let manifest = serde_json::to_string_pretty(&baked).unwrap_or_default();
@@ -1626,9 +1532,16 @@ fn layer_of(comp: &Comp, node: &Node, scope: &str, warnings: &mut Vec<String>) -
         clip.insert("blend".into(), Json::String(name.into()));
     }
     if let Some(mask) = &node.mask
-        && let Some(mask) = mask_json(mask)
+        && let Some(mask) = mask_json(mask, warnings, &node.id)
     {
         clip.insert("mask".into(), mask);
+    }
+    if let Some(matte) = &node.matte {
+        warnings.push(format!(
+            "node {:?}: its track matte (source {:?}) is drawn by the native engine only; \
+             geneva draws the node unmatted and the source as an ordinary layer",
+            node.id, matte.source
+        ));
     }
     let mut effects = Vec::new();
     for effect in &node.effects {
@@ -1645,6 +1558,14 @@ fn layer_of(comp: &Comp, node: &Node, scope: &str, warnings: &mut Vec<String>) -
             }
             Effect::Shadow { .. } => warnings.push(format!(
                 "node {:?}: a drop shadow is drawn by the native engine only; geneva has shadows inside markup",
+                node.id
+            )),
+            Effect::Glow { .. } => warnings.push(format!(
+                "node {:?}: a glow effect is drawn by the native engine only",
+                node.id
+            )),
+            Effect::Aberration { .. } => warnings.push(format!(
+                "node {:?}: chromatic aberration is drawn by the native engine only",
                 node.id
             )),
             Effect::Shader { id, .. } => warnings.push(format!(
@@ -1779,20 +1700,43 @@ fn source_of(comp: &Comp, node: &Node, scope: &str, warnings: &mut Vec<String>) 
             "height": length(*height),
             "fill": shape_fill(node, fill.as_ref(), warnings),
         })),
-        NodeKind::Path { commands, dash, .. } => {
+        NodeKind::Path {
+            commands,
+            dash,
+            trim,
+            morph,
+            ..
+        } => {
             // Geneva draws rectangles and ellipses, not paths. Being explicit
             // here is the whole point: a logo mark must not silently vanish.
+            let extras = [
+                ("a dash offset", dash.is_some()),
+                ("a trim", trim.is_some()),
+                ("a morph target", morph.is_some()),
+            ]
+            .iter()
+            .filter(|(_, on)| *on)
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>()
+            .join(", ");
             warnings.push(format!(
                 "node {:?}: a path ({} commands{}) is drawn by the native engine only",
                 node.id,
                 commands.len(),
-                if dash.is_some() {
-                    ", with a dash offset"
+                if extras.is_empty() {
+                    String::new()
                 } else {
-                    ""
+                    format!(" with {extras}")
                 }
             ));
-            let _ = (commands, dash);
+            None
+        }
+        NodeKind::Adjustment => {
+            warnings.push(format!(
+                "node {:?} is an adjustment layer, applied by the native engine only; \
+                 geneva draws the comp ungraded by it",
+                node.id
+            ));
             None
         }
         NodeKind::Text(text) => {
@@ -1940,6 +1884,7 @@ fn paint(paint: &Paint) -> String {
         Paint::Solid { color } => color.to_hex(),
         Paint::Gradient {
             stops,
+            ramp: kind,
             angle,
             from,
             to,
@@ -1954,7 +1899,14 @@ fn paint(paint: &Paint) -> String {
                     )
                 })
                 .collect();
-            format!("linear-gradient({angle}deg, {})", parts.join(", "))
+            match kind {
+                GradientKind::Linear => {
+                    format!("linear-gradient({angle}deg, {})", parts.join(", "))
+                }
+                // CSS's radial-gradient defaults to the farthest corner,
+                // which is the disc the native engine draws too.
+                GradientKind::Radial => format!("radial-gradient({})", parts.join(", ")),
+            }
         }
     }
 }
@@ -1969,10 +1921,23 @@ fn length(length: Length) -> Json {
 }
 
 /// A mask as a Geneva mask.
-fn mask_json(mask: &Mask) -> Option<Json> {
-    let shape = match mask.shape {
+fn mask_json(mask: &Mask, warnings: &mut Vec<String>, node: &str) -> Option<Json> {
+    if mask.expansion != 0.0 {
+        warnings.push(format!(
+            "node {node:?}: mask expansion is drawn by the native engine only; \
+             geneva masks the unexpanded shape"
+        ));
+    }
+    let shape = match &mask.shape {
         MaskShape::Rect => "rect",
         MaskShape::Ellipse => "ellipse",
+        MaskShape::Path { .. } => {
+            warnings.push(format!(
+                "node {node:?}: a path mask is drawn by the native engine only; \
+                 geneva masks nothing, so the node shows whole"
+            ));
+            return None;
+        }
     };
     Some(json!({
         "shape": shape,
@@ -2026,6 +1991,7 @@ pub fn asset_map(comp: &Comp) -> BTreeMap<String, Asset> {
 mod tests {
     use super::*;
     use crate::comp::{Comp, Node, Transform, Word};
+    use crate::engine::{bake_assets_key, bake_cache_hit};
     use crate::track::Key;
 
     fn text_comp() -> Comp {
@@ -2053,6 +2019,8 @@ mod tests {
                 opacity: 1.0,
                 blend: Blend::Normal,
                 mask: None,
+                matte: None,
+                motion_blur: None,
                 effects: Vec::new(),
                 tracks: Default::default(),
                 kind: NodeKind::Text(Box::new(TextNode {
@@ -2221,6 +2189,8 @@ mod tests {
     fn a_path_is_reported_rather_than_dropped_silently() {
         let mut comp = text_comp();
         comp.nodes[0].kind = NodeKind::Path {
+            trim: None,
+            morph: None,
             commands: vec![PathCommand::MoveTo {
                 point: crate::comp::Point::new(0.0, 0.0),
             }],
@@ -2248,6 +2218,7 @@ mod tests {
                     (0.0, Rgba::new(1.0, 0.6, 0.13, 1.0)),
                     (1.0, Rgba::new(1.0, 0.2, 0.3, 1.0)),
                 ],
+                ramp: Default::default(),
                 angle: 118.0,
                 from: 0.0,
                 to: 1.0,
@@ -2452,6 +2423,7 @@ mod tests {
             engine: EngineKind::Geneva,
             engine_version: "1.6.0".to_owned(),
             alpha: true,
+            warnings: Vec::new(),
             cached: false,
         };
         std::fs::write(
@@ -2465,7 +2437,8 @@ mod tests {
             source_dir: ".".into(),
             ..BakeRequest::default()
         };
-        let hit = bake_cache_hit(&dir, &comp, &request, "1.6.0").expect("a cache hit");
+        let hit = bake_cache_hit(&dir, &comp, &request, EngineKind::Geneva, "1.6.0")
+            .expect("a cache hit");
         assert!(hit.cached);
         assert_eq!(hit.frames, 1);
         // `cached` is never persisted: the manifest on disk still reads
@@ -2476,7 +2449,7 @@ mod tests {
         assert!(!on_disk.cached);
 
         assert!(
-            bake_cache_hit(&dir, &comp, &request, "1.7.0").is_none(),
+            bake_cache_hit(&dir, &comp, &request, EngineKind::Geneva, "1.7.0").is_none(),
             "an engine change must miss"
         );
         let narrow = BakeRequest {
@@ -2487,7 +2460,7 @@ mod tests {
             ..BakeRequest::default()
         };
         assert!(
-            bake_cache_hit(&dir, &comp, &narrow, "1.6.0").is_none(),
+            bake_cache_hit(&dir, &comp, &narrow, EngineKind::Geneva, "1.6.0").is_none(),
             "a size change must miss"
         );
         let ranged = BakeRequest {
@@ -2497,12 +2470,12 @@ mod tests {
             ..BakeRequest::default()
         };
         assert!(
-            bake_cache_hit(&dir, &comp, &ranged, "1.6.0").is_none(),
+            bake_cache_hit(&dir, &comp, &ranged, EngineKind::Geneva, "1.6.0").is_none(),
             "a ranged bake is never a cache hit"
         );
         std::fs::remove_file(frames.join("0001.png")).expect("the frame is removed");
         assert!(
-            bake_cache_hit(&dir, &comp, &request, "1.6.0").is_none(),
+            bake_cache_hit(&dir, &comp, &request, EngineKind::Geneva, "1.6.0").is_none(),
             "a cache that lost its frames must miss"
         );
         let _ = std::fs::remove_dir_all(&dir);
@@ -2540,6 +2513,7 @@ mod tests {
                 engine: EngineKind::Geneva,
                 engine_version: "1.6.0".to_owned(),
                 alpha: true,
+                warnings: Vec::new(),
                 cached: false,
             };
             std::fs::write(
@@ -2558,7 +2532,7 @@ mod tests {
         // it did not know what the files were.
         write_manifest(&dir, &comp, &frames, None);
         assert!(
-            bake_cache_hit(&dir, &comp, &request, "1.6.0").is_none(),
+            bake_cache_hit(&dir, &comp, &request, EngineKind::Geneva, "1.6.0").is_none(),
             "a manifest that never hashed the files cannot promise them"
         );
 
@@ -2566,7 +2540,7 @@ mod tests {
         let key = bake_assets_key(&comp, scratch.path()).expect("the comp has assets");
         write_manifest(&dir, &comp, &frames, Some(key));
         assert!(
-            bake_cache_hit(&dir, &comp, &request, "1.6.0").is_some(),
+            bake_cache_hit(&dir, &comp, &request, EngineKind::Geneva, "1.6.0").is_some(),
             "the same files, the same key: a hit"
         );
 
@@ -2574,7 +2548,7 @@ mod tests {
         // see, and the whole reason this one exists.
         std::fs::write(scratch.path().join("logo.png"), b"logo-bytes-v2").expect("the new logo");
         assert!(
-            bake_cache_hit(&dir, &comp, &request, "1.6.0").is_none(),
+            bake_cache_hit(&dir, &comp, &request, EngineKind::Geneva, "1.6.0").is_none(),
             "a re-saved logo must miss, not render the old one"
         );
 
@@ -2586,7 +2560,7 @@ mod tests {
         comp.assets.clear();
         write_manifest(&dir, &comp, &frames, None);
         assert!(
-            bake_cache_hit(&dir, &comp, &request, "1.6.0").is_some(),
+            bake_cache_hit(&dir, &comp, &request, EngineKind::Geneva, "1.6.0").is_some(),
             "an asset-free comp keeps its old cache"
         );
     }
@@ -2998,6 +2972,8 @@ mod tests {
                 opacity: 1.0,
                 blend: Blend::Normal,
                 mask: None,
+                matte: None,
+                motion_blur: None,
                 effects: Vec::new(),
                 tracks: Default::default(),
                 kind: crate::comp::NodeKind::Image {
@@ -3094,6 +3070,8 @@ mod tests {
             opacity: 1.0,
             blend: Blend::Normal,
             mask: None,
+            matte: None,
+            motion_blur: None,
             effects: Vec::new(),
             tracks: Default::default(),
             kind: crate::comp::NodeKind::Composition { comp: comp.into() },
@@ -3123,6 +3101,8 @@ mod tests {
                 opacity: 1.0,
                 blend: Blend::Normal,
                 mask: None,
+                matte: None,
+                motion_blur: None,
                 effects: Vec::new(),
                 tracks: Default::default(),
                 kind: crate::comp::NodeKind::Rect {

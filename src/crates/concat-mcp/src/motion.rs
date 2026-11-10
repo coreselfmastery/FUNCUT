@@ -319,6 +319,7 @@ fn analyse(comp: &Comp, source: Option<&Path>) -> Value {
             NodeKind::Rect { .. } => "rect",
             NodeKind::Ellipse { .. } => "ellipse",
             NodeKind::Path { .. } => "path",
+            NodeKind::Adjustment => "adjustment",
             NodeKind::Text { .. } => "text",
             NodeKind::Html { .. } => "html",
             NodeKind::Image { .. } => "image",

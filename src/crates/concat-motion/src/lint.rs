@@ -1029,6 +1029,8 @@ mod tests {
             opacity: 1.0,
             blend: Blend::default(),
             mask: None,
+            matte: None,
+            motion_blur: None,
             effects: Vec::new(),
             tracks: crate::track::Tracks::default(),
             kind: NodeKind::Group {
@@ -1140,6 +1142,8 @@ mod tests {
             opacity: 1.0,
             blend: Blend::default(),
             mask: None,
+            matte: None,
+            motion_blur: None,
             effects: Vec::new(),
             tracks: crate::track::Tracks::default(),
             kind: NodeKind::Composition {
@@ -1502,6 +1506,8 @@ mod tests {
                 opacity: 1.0,
                 blend: Blend::default(),
                 mask: None,
+                matte: None,
+                motion_blur: None,
                 effects: Vec::new(),
                 tracks: crate::track::Tracks::default(),
                 kind: NodeKind::Group {

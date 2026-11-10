@@ -378,6 +378,8 @@ pub fn particle_nodes(
             opacity: 1.0,
             blend: Blend::Normal,
             mask: None,
+            matte: None,
+            motion_blur: None,
             effects: Vec::new(),
             tracks: [
                 ("position".to_string(), position),

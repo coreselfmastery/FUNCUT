@@ -441,6 +441,8 @@ pub fn apply(comp: &mut Comp, look: &Look) -> Result<(), String> {
         opacity: 1.0,
         blend: Blend::Normal,
         mask: None,
+        matte: None,
+        motion_blur: None,
         effects: Vec::new(),
         tracks,
         kind: NodeKind::Html {

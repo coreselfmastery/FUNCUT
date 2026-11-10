@@ -684,6 +684,8 @@ impl<'a> Walk<'a> {
                             fill: None,
                             stroke: None,
                             dash: None,
+                            trim: None,
+                            morph: None,
                         },
                     );
                     node.parent = Some(owner.into());
@@ -1011,7 +1013,7 @@ impl<'a> Walk<'a> {
         }
         if layer.get("tt").is_some() || layer.get("td").is_some() {
             import.note(format!(
-                "skipped: layer {name:?} is a matte participant; the comp vocabulary has no matte"
+                "skipped: layer {name:?} is a matte participant; this importer does not pair mattes yet"
             ));
         }
         if layer
@@ -1338,6 +1340,8 @@ fn shell(id: &str, start: f64, end: f64, kind: NodeKind) -> Node {
         opacity: 1.0,
         blend: concat_motion::comp::Blend::Normal,
         mask: None,
+        matte: None,
+        motion_blur: None,
         effects: Vec::new(),
         tracks: BTreeMap::new(),
         kind,

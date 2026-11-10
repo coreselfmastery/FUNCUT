@@ -41,6 +41,8 @@ fn place(id: &str, comp: &str, start: f64, x: f64, y: f64, scale: f64, rotation:
         opacity: 1.0,
         blend: Default::default(),
         mask: None,
+        matte: None,
+        motion_blur: None,
         effects: Vec::new(),
         tracks: Default::default(),
         kind: NodeKind::Composition { comp: comp.into() },
@@ -75,6 +77,8 @@ fn sting() -> Comp {
                 opacity: 1.0,
                 blend: Default::default(),
                 mask: None,
+                matte: None,
+                motion_blur: None,
                 effects: Vec::new(),
                 tracks: Default::default(),
                 kind: NodeKind::Rect {
@@ -98,6 +102,8 @@ fn sting() -> Comp {
                 opacity: 1.0,
                 blend: Default::default(),
                 mask: None,
+                matte: None,
+                motion_blur: None,
                 effects: Vec::new(),
                 tracks: Default::default(),
                 kind: NodeKind::Text(Box::new(TextNode {

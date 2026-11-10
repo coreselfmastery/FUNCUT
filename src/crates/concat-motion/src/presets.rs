@@ -256,6 +256,8 @@ fn html_node(id: &str, markup: &str, css: &str, width: Length, height: Length) -
         opacity: 1.0,
         blend: crate::comp::Blend::Normal,
         mask: None,
+        matte: None,
+        motion_blur: None,
         effects: Vec::new(),
         tracks: BTreeMap::new(),
         kind: NodeKind::Html {
@@ -465,6 +467,8 @@ pub fn kinetic_caption() -> Comp {
         opacity: 1.0,
         blend: crate::comp::Blend::Normal,
         mask: None,
+        matte: None,
+        motion_blur: None,
         effects: Vec::new(),
         tracks: BTreeMap::new(),
         kind: NodeKind::Text(Box::new(text)),

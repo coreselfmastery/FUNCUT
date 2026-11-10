@@ -318,7 +318,7 @@ pub enum Blend {
 /// A mask on a node, in the node's own box.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Mask {
-    /// A rounded rectangle or an ellipse.
+    /// A rounded rectangle, an ellipse, or a vector path.
     #[serde(default)]
     pub shape: MaskShape,
     /// Corner radius, for the rectangle.
@@ -330,10 +330,14 @@ pub struct Mask {
     /// Show what the shape covers rather than what it cuts away.
     #[serde(default)]
     pub invert: bool,
+    /// Grow (`> 0`) or shrink (`< 0`) the shape by this many pixels before
+    /// the feather softens it. `0` leaves the shape as authored.
+    #[serde(default)]
+    pub expansion: f64,
 }
 
 /// The shape of a mask.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum MaskShape {
     /// A rectangle, rounded by `radius`.
@@ -341,6 +345,11 @@ pub enum MaskShape {
     Rect,
     /// An ellipse inscribed in the box.
     Ellipse,
+    /// A vector path in the node's own pixels, filled as a stencil.
+    Path {
+        /// The outline.
+        commands: Vec<PathCommand>,
+    },
 }
 
 /// An effect on a placed node, sized in output pixels.
@@ -362,6 +371,24 @@ pub enum Effect {
         blur: f64,
         /// The shadow's colour.
         color: Rgba,
+    },
+    /// A glow halo around the node's own alpha, screened over what is
+    /// beneath it.
+    Glow {
+        /// The halo's blur radius in pixels.
+        radius: f64,
+        /// How strong the halo is, `0` to `1` and beyond, over the node's
+        /// own colour.
+        intensity: f64,
+        /// The halo's colour.
+        color: Rgba,
+    },
+    /// Chromatic aberration: the red and blue channels pulled apart from
+    /// the green, radially out from the node's centre.
+    Aberration {
+        /// How far the outermost channels drift, in pixels at the frame's
+        /// widest corner.
+        amount: f64,
     },
     /// A named shader from the project's effect catalogue, keyed by
     /// `param:<key>` tracks.
@@ -421,7 +448,21 @@ pub enum NodeKind {
         /// the `dash` track moves the offset. `None` draws it whole.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         dash: Option<(f64, f64)>,
+        /// Draw only `start..end` of the path, as fractions of its own
+        /// length, for line reveals and draw-on animation; the `trim` track
+        /// (a point: start, end) moves them. `None` draws it whole.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trim: Option<(f64, f64)>,
+        /// A second outline this one becomes: the `morph` track (a number
+        /// `0..=1`) blends the two, command for command where they agree and
+        /// point for point where they do not. `None` never morphs.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        morph: Option<Vec<PathCommand>>,
     },
+    /// An adjustment: a span of time whose `effects` are applied to
+    /// everything painted beneath it in this comp, the way a colourist
+    /// grades a stack. Draws nothing of its own.
+    Adjustment,
     /// Text, drawn by the comp's renderer. `words` makes it word-timed.
     ///
     /// Boxed because a text node is an order of magnitude bigger than a
@@ -498,7 +539,11 @@ pub enum Paint {
     Gradient {
         /// The stops, 0 to 1 along the ramp.
         stops: Vec<(f64, Rgba)>,
-        /// Degrees; `90` runs left to right.
+        /// Which ramp: a straight line or a disc.
+        #[serde(default)]
+        ramp: GradientKind,
+        /// Degrees; `90` runs left to right. The angle the line runs at, or
+        /// the disc's brightest axis for a radial ramp.
         #[serde(default = "ninety")]
         angle: f64,
         /// The start and end of the ramp's tile, as fractions of the box: a
@@ -509,6 +554,65 @@ pub enum Paint {
         #[serde(default = "one")]
         to: f64,
     },
+}
+
+/// Which ramp a gradient is.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum GradientKind {
+    /// A straight ramp across the box, at `angle` degrees.
+    #[default]
+    Linear,
+    /// A disc: bright at the box's centre, out to its corner.
+    Radial,
+}
+
+/// Another node's alpha (or luminance) used as this one's stencil.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct Matte {
+    /// The node whose pixels stencil this one. It must exist, and it draws
+    /// nothing of its own while it is a matte.
+    pub source: String,
+    /// Which channel of the source stencils, and whether it is kept or
+    /// cut away.
+    #[serde(default)]
+    pub mode: MatteMode,
+}
+
+/// How a matte source is read.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MatteMode {
+    /// Keep this node where the source is opaque.
+    #[default]
+    Alpha,
+    /// Keep it where the source is transparent.
+    AlphaInverted,
+    /// Keep it where the source is bright.
+    Luma,
+    /// Keep it where the source is dark.
+    LumaInverted,
+}
+
+/// Multi-sample motion blur.
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+pub struct MotionBlur {
+    /// How many positions across the shutter are rendered and averaged.
+    /// `2` is the cheapest smear that is not a fade; `32` is cinema.
+    #[serde(default = "eight")]
+    pub samples: u8,
+    /// How wide the shutter is, as a fraction of one frame's interval:
+    /// `0.5` is the 180-degree film shutter, `1.0` a whole frame.
+    #[serde(default = "half")]
+    pub shutter: f64,
+}
+
+fn eight() -> u8 {
+    8
+}
+
+fn half() -> f64 {
+    0.5
 }
 
 fn ninety() -> f64 {
@@ -738,9 +842,19 @@ pub struct Node {
     /// A mask in its own box.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mask: Option<Mask>,
+    /// Another node used as a stencil for this one's alpha, after its own
+    /// mask: the text-through-a-shape and holdout-matte moves of the
+    /// compositor's kit. The source draws nothing of its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub matte: Option<Matte>,
     /// Effects, in order, applied after the transform.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<Effect>,
+    /// Multi-sample motion blur for this node and everything under it:
+    /// `samples` positions across the shutter are rendered and averaged, so
+    /// a fast move smears instead of strobing. `None` is a pin-sharp render.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub motion_blur: Option<MotionBlur>,
     /// The animatable properties, by name.
     #[serde(default, skip_serializing_if = "Tracks::is_empty")]
     pub tracks: Tracks,
@@ -877,6 +991,92 @@ impl Comp {
         self.nodes
             .iter()
             .any(|node| matches!(node.kind, NodeKind::Html { .. }))
+    }
+
+    /// The capabilities this comp uses that a Geneva timeline cannot draw,
+    /// named for the note that says why a bake chose the native engine.
+    ///
+    /// Empty for a comp Geneva can draw as written - which is every comp of
+    /// rectangles, ellipses, text, markup, images and sub-comps, animated
+    /// through the tracks Geneva speaks. A comp that carries any of the
+    /// features below is drawn by the native engine instead, *with Geneva
+    /// installed or without it*: routing it to Geneva would mean the
+    /// warn-and-drop path, where a logo mark quietly vanishes because the
+    /// engine has no path source - the silent degradation the architecture
+    /// refuses. Sub-compositions are walked too, because a placement is
+    /// rendered by the same engine its parent is.
+    ///
+    /// Not listed: things neither engine draws (shader effects, Lottie
+    /// nodes), which stay on the engine that would otherwise have drawn the
+    /// comp and carry their warning there - routing them would trade a
+    /// warning for a different warning.
+    pub fn geneva_inexpressible(&self) -> Vec<&'static str> {
+        let mut found: Vec<&'static str> = Vec::new();
+        self.inexpressible_in(&mut found);
+        found
+    }
+
+    /// The walk behind [`Comp::geneva_inexpressible`], shared by every
+    /// scope the document carries.
+    fn inexpressible_in(&self, found: &mut Vec<&'static str>) {
+        let mut note = |name: &'static str| {
+            if !found.contains(&name) {
+                found.push(name);
+            }
+        };
+        for node in &self.nodes {
+            match &node.kind {
+                NodeKind::Path { .. } => note("a vector path"),
+                NodeKind::Adjustment => note("an adjustment layer"),
+                NodeKind::Rect { fill, .. } | NodeKind::Ellipse { fill, .. } => {
+                    if matches!(fill, Some(Paint::Gradient { .. })) {
+                        note("a shape gradient");
+                    }
+                }
+                _ => {}
+            }
+            if let Some(mask) = &node.mask {
+                if matches!(mask.shape, MaskShape::Path { .. }) {
+                    note("a path mask");
+                }
+                if mask.expansion != 0.0 {
+                    note("mask expansion");
+                }
+            }
+            if node.matte.is_some() {
+                note("a track matte");
+            }
+            // A parent's scale and rotation are inherited by its children in
+            // the document's semantics ("relative to its parent"), but a
+            // flattened timeline can only carry positions down the chain -
+            // so a scaled or rotated parent is a divergence, not a detail.
+            if let Some(parent) = &node.parent
+                && let Some(parent_node) = self.node(parent)
+                && (parent_node.transform.scale != 1.0 || parent_node.transform.rotation != 0.0)
+            {
+                note("a scaled or rotated parent");
+            }
+            for effect in &node.effects {
+                match effect {
+                    Effect::Shadow { .. } => note("a drop shadow effect"),
+                    Effect::Glow { .. } => note("a glow effect"),
+                    Effect::Aberration { .. } => note("a chromatic aberration effect"),
+                    _ => {}
+                }
+            }
+            for name in node.tracks.keys() {
+                if matches!(name.as_str(), "dash" | "trim" | "morph") {
+                    note(match name.as_str() {
+                        "dash" => "a dash track",
+                        "trim" => "a trim track",
+                        _ => "a morph track",
+                    });
+                }
+            }
+        }
+        for sub in self.comps.values() {
+            sub.inexpressible_in(found);
+        }
     }
 
     /// The tracks a node should carry for a property to be animatable, or an
@@ -1036,6 +1236,81 @@ impl Comp {
                     format!("/nodes/{i}/asset"),
                     format!("no asset called {asset:?}"),
                 ));
+            }
+            if let NodeKind::Path {
+                commands,
+                morph,
+                trim,
+                ..
+            } = &node.kind
+            {
+                if commands.is_empty() {
+                    found.push(Diagnostic::new(
+                        format!("/nodes/{i}/commands"),
+                        "a path with no commands draws nothing",
+                    ));
+                }
+                if let Some(target) = morph
+                    && target.is_empty()
+                {
+                    found.push(Diagnostic::new(
+                        format!("/nodes/{i}/morph"),
+                        "a morph target with no commands morphs into nothing",
+                    ));
+                }
+                if let Some((start, end)) = trim {
+                    let (start, end) = (*start, *end);
+                    let misplacement =
+                        if !(0.0..=1.0).contains(&start) || !(0.0..=1.0).contains(&end) {
+                            Some("a trim is placed as a fraction of the path's length, 0 to 1")
+                        } else if start > end {
+                            Some("a trim runs backwards: trim is (start, end)")
+                        } else {
+                            None
+                        };
+                    if let Some(problem) = misplacement {
+                        found.push(
+                            Diagnostic::new(format!("/nodes/{i}/trim"), problem).with_help(
+                                "trim is (start, end) as fractions of the path's length",
+                            ),
+                        );
+                    }
+                }
+            }
+            // A matte names another node, and the pair is a stencil: the
+            // source is read, not drawn, while it is a matte. The two
+            // checks the pairing needs are the ones a parent needs - it
+            // exists, and it is not the node itself.
+            if let Some(matte) = &node.matte {
+                match self.node(&matte.source) {
+                    None => found.push(Diagnostic::new(
+                        format!("/nodes/{i}/matte"),
+                        format!("no node called {:?}", matte.source),
+                    )),
+                    Some(source) if source.id == node.id => found.push(Diagnostic::new(
+                        format!("/nodes/{i}/matte"),
+                        "a node cannot matte itself",
+                    )),
+                    Some(_) => {}
+                }
+            }
+            // Motion blur is bounded the way the renderer samples it: a
+            // shutter wider than one frame would smear into the next one,
+            // and fewer than two samples is a pin-sharp render that pays
+            // for the field anyway.
+            if let Some(blur) = &node.motion_blur
+                && (!(2..=32).contains(&blur.samples) || !(0.0..=1.0).contains(&blur.shutter))
+            {
+                found.push(
+                    Diagnostic::new(
+                        format!("/nodes/{i}/motion-blur"),
+                        format!(
+                            "motion blur samples {} and shutter {} are outside 2..=32 and 0..=1",
+                            blur.samples, blur.shutter
+                        ),
+                    )
+                    .with_help("samples 8 and shutter 0.5 is the 180-degree film look"),
+                );
             }
             // A placement names a comp this document carries: the scoping
             // rule. A name that is not in `comps` is a broken template -
@@ -1276,6 +1551,8 @@ mod tests {
                 opacity: 1.0,
                 blend: Blend::Normal,
                 mask: None,
+                matte: None,
+                motion_blur: None,
                 effects: Vec::new(),
                 tracks: Tracks::new(),
                 kind: NodeKind::Rect {
@@ -1612,6 +1889,8 @@ mod tests {
             opacity: 1.0,
             blend: crate::comp::Blend::Normal,
             mask: None,
+            matte: None,
+            motion_blur: None,
             effects: Vec::new(),
             tracks: Default::default(),
             kind: NodeKind::Composition {
@@ -1664,6 +1943,8 @@ mod tests {
                 opacity: 1.0,
                 blend: crate::comp::Blend::Normal,
                 mask: None,
+                matte: None,
+                motion_blur: None,
                 effects: Vec::new(),
                 tracks: Default::default(),
                 kind: NodeKind::Rect {
@@ -1792,6 +2073,8 @@ mod tests {
                 opacity: 1.0,
                 blend: crate::comp::Blend::Normal,
                 mask: None,
+                matte: None,
+                motion_blur: None,
                 effects: Vec::new(),
                 tracks: Default::default(),
                 kind: NodeKind::Rect {
@@ -1805,5 +2088,295 @@ mod tests {
             }],
             slots: Vec::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod phase1_tests {
+    use super::*;
+
+    fn shell(id: &str, kind: NodeKind) -> Node {
+        Node {
+            id: id.into(),
+            parent: None,
+            start: 0.0,
+            duration: 0.0,
+            transform: Transform::default(),
+            opacity: 1.0,
+            blend: Blend::Normal,
+            mask: None,
+            matte: None,
+            motion_blur: None,
+            effects: Vec::new(),
+            tracks: Default::default(),
+            kind,
+        }
+    }
+
+    fn comp_with(nodes: Vec<Node>) -> Comp {
+        Comp {
+            format: FORMAT,
+            id: "p1".into(),
+            name: "Phase one".into(),
+            width: 1920,
+            height: 1080,
+            fps: 30.0,
+            duration: 2.0,
+            background: Rgba::new(0.0, 0.0, 0.0, 0.0),
+            assets: Default::default(),
+            curves: Default::default(),
+            comps: Default::default(),
+            nodes,
+            slots: Vec::new(),
+        }
+    }
+
+    fn path_node(id: &str) -> Node {
+        shell(
+            id,
+            NodeKind::Path {
+                commands: vec![
+                    PathCommand::MoveTo {
+                        point: Point::new(0.0, 0.0),
+                    },
+                    PathCommand::LineTo {
+                        point: Point::new(100.0, 0.0),
+                    },
+                    PathCommand::Close,
+                ],
+                fill: None,
+                stroke: None,
+                dash: None,
+                trim: None,
+                morph: None,
+            },
+        )
+    }
+
+    #[test]
+    fn a_document_from_before_the_fields_loads_unchanged() {
+        // The JSON of a comp written before trim, morph, matte, motion blur,
+        // adjustment and radial gradients existed must parse into the new
+        // schema with the defaults that mean "not used".
+        let old = serde_json::json!({
+            "format": 1,
+            "id": "legacy",
+            "width": 640,
+            "height": 360,
+            "duration": 1.0,
+            "nodes": [
+                { "id": "line", "kind": "path",
+                  "commands": [ { "op": "move-to", "point": { "x": 0, "y": 0 } } ] },
+                { "id": "card", "kind": "rect",
+                  "width": { "px": 100 }, "height": { "px": 50 },
+                  "fill": { "kind": "gradient", "stops": [[0, { "r": 1, "g": 1, "b": 1, "a": 1 }]] } }
+            ]
+        });
+        let comp: Comp = serde_json::from_value(old).expect("a legacy comp parses");
+        assert!(comp.validate().is_empty(), "{:?}", comp.validate());
+        assert!(comp.nodes[0].matte.is_none());
+        assert!(comp.nodes[0].motion_blur.is_none());
+        match &comp.nodes[1].kind {
+            NodeKind::Rect { fill, .. } => assert!(matches!(
+                fill,
+                Some(Paint::Gradient {
+                    ramp: GradientKind::Linear,
+                    ..
+                })
+            )),
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_trim_out_of_bounds_is_refused() {
+        let mut node = path_node("line");
+        if let NodeKind::Path { trim, .. } = &mut node.kind {
+            *trim = Some((-0.2, 0.8));
+        }
+        let problems = comp_with(vec![node]).validate();
+        assert!(
+            problems.iter().any(|d| d.path.contains("/trim")),
+            "{problems:?}"
+        );
+
+        let mut node = path_node("line");
+        if let NodeKind::Path { trim, .. } = &mut node.kind {
+            *trim = Some((0.8, 0.2));
+        }
+        let problems = comp_with(vec![node]).validate();
+        assert!(
+            problems.iter().any(|d| d.path.contains("/trim")),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn a_matte_pointing_nowhere_is_refused() {
+        let mut node = path_node("stencilled");
+        node.matte = Some(Matte {
+            source: "ghost".into(),
+            mode: MatteMode::Alpha,
+        });
+        let problems = comp_with(vec![node]).validate();
+        assert!(
+            problems.iter().any(|d| d.path.contains("/matte")),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn a_node_cannot_matte_itself() {
+        let mut node = path_node("mirror");
+        node.matte = Some(Matte {
+            source: "mirror".into(),
+            mode: MatteMode::Luma,
+        });
+        let problems = comp_with(vec![node]).validate();
+        assert!(
+            problems.iter().any(|d| d.path.contains("/matte")),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn motion_blur_bounds_are_enforced() {
+        let mut node = path_node("fast");
+        node.motion_blur = Some(MotionBlur {
+            samples: 1,
+            shutter: 0.5,
+        });
+        let problems = comp_with(vec![node]).validate();
+        assert!(
+            problems.iter().any(|d| d.path.contains("/motion-blur")),
+            "{problems:?}"
+        );
+        let mut wide = path_node("fast");
+        wide.motion_blur = Some(MotionBlur {
+            samples: 8,
+            shutter: 1.5,
+        });
+        let problems = comp_with(vec![wide]).validate();
+        assert!(
+            problems.iter().any(|d| d.path.contains("/motion-blur")),
+            "{problems:?}"
+        );
+        // The film look itself passes.
+        let mut film = path_node("fast");
+        film.motion_blur = Some(MotionBlur {
+            samples: 8,
+            shutter: 0.5,
+        });
+        assert!(comp_with(vec![film]).validate().is_empty());
+    }
+
+    #[test]
+    fn an_empty_path_or_morph_target_is_refused() {
+        let mut node = path_node("dot");
+        if let NodeKind::Path { commands, .. } = &mut node.kind {
+            commands.clear();
+        }
+        let problems = comp_with(vec![node]).validate();
+        assert!(
+            problems.iter().any(|d| d.path.contains("/commands")),
+            "{problems:?}"
+        );
+
+        let mut node = path_node("shifter");
+        if let NodeKind::Path { morph, .. } = &mut node.kind {
+            *morph = Some(Vec::new());
+        }
+        let problems = comp_with(vec![node]).validate();
+        assert!(
+            problems.iter().any(|d| d.path.contains("/morph")),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn geneva_inexpressible_names_what_the_native_engine_is_for() {
+        // A plain comp of shapes and text: nothing to route.
+        let plain = comp_with(vec![
+            shell(
+                "card",
+                NodeKind::Rect {
+                    width: Length::Px(100.0),
+                    height: Length::Px(50.0),
+                    fill: Some(Paint::Solid {
+                        color: Rgba::new(1.0, 1.0, 1.0, 1.0),
+                    }),
+                    radius: 4.0,
+                },
+            ),
+            shell("words", NodeKind::Text(Box::<TextNode>::default())),
+        ]);
+        assert!(plain.geneva_inexpressible().is_empty());
+
+        // A path routes; so do mattes, adjustments, path masks, expansion,
+        // the dropped effects, the dropped tracks and shape gradients.
+        let mut stencilled = path_node("mark");
+        stencilled.matte = Some(Matte {
+            source: "words".into(),
+            mode: MatteMode::Alpha,
+        });
+        let mut graded = shell("grade", NodeKind::Adjustment);
+        graded.effects = vec![Effect::Glow {
+            radius: 12.0,
+            intensity: 0.6,
+            color: Rgba::new(1.0, 1.0, 1.0, 1.0),
+        }];
+        let mut masked = shell(
+            "plate",
+            NodeKind::Ellipse {
+                width: Length::Px(100.0),
+                height: Length::Px(100.0),
+                fill: Some(Paint::Gradient {
+                    stops: vec![(0.0, Rgba::new(1.0, 1.0, 1.0, 1.0))],
+                    ramp: GradientKind::Radial,
+                    angle: 90.0,
+                    from: 0.0,
+                    to: 1.0,
+                }),
+            },
+        );
+        masked.mask = Some(Mask {
+            shape: MaskShape::Path {
+                commands: vec![
+                    PathCommand::MoveTo {
+                        point: Point::new(0.0, 0.0),
+                    },
+                    PathCommand::LineTo {
+                        point: Point::new(10.0, 0.0),
+                    },
+                    PathCommand::Close,
+                ],
+            },
+            radius: 0.0,
+            feather: 0.0,
+            invert: false,
+            expansion: 4.0,
+        });
+        let comp = comp_with(vec![stencilled, graded, masked]);
+        let found = comp.geneva_inexpressible();
+        for expected in [
+            "a vector path",
+            "a track matte",
+            "an adjustment layer",
+            "a glow effect",
+            "a path mask",
+            "mask expansion",
+            "a shape gradient",
+        ] {
+            assert!(
+                found.contains(&expected),
+                "{expected} missing from {found:?}"
+            );
+        }
+
+        // Sub-compositions are walked: a path inside a placed comp routes
+        // the parent too.
+        let mut parent = comp_with(Vec::new());
+        parent.comps.insert("inner".into(), comp);
+        assert!(parent.geneva_inexpressible().contains(&"a vector path"));
     }
 }

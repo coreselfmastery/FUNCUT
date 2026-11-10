@@ -357,6 +357,8 @@ fn node(id: &str, at: f64, kind: NodeKind) -> Node {
         opacity: 1.0,
         blend: Blend::Normal,
         mask: None,
+        matte: None,
+        motion_blur: None,
         effects: Vec::new(),
         tracks: Default::default(),
         kind,

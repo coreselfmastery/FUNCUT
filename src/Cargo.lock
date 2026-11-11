@@ -1321,6 +1321,8 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.20",
  "tiny-skia 0.12.0",
+ "tlottie",
+ "zip 2.4.2",
 ]
 
 [[package]]
@@ -7688,6 +7690,11 @@ dependencies = [
  "unicode-segmentation",
  "unicode_categories",
 ]
+
+[[package]]
+name = "tlottie"
+version = "1.0.6"
+source = "git+https://github.com/dkaraush/tlottie?rev=92df98dc209bc39b1e567ec74a8c86a0af5239de#92df98dc209bc39b1e567ec74a8c86a0af5239de"
 
 [[package]]
 name = "tokio"

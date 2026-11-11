@@ -989,7 +989,9 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
             return;
         };
         let previous_id = state.timeline().id.clone();
-        state.apply(concat_project::Command::RemoveTimeline { timeline_id: id.clone() });
+        state.apply(concat_project::Command::RemoveTimeline {
+            timeline_id: id.clone(),
+        });
         let next_id = state.timeline().id.clone();
         state.switch_timeline_view(&previous_id, &next_id);
         state.timeline_views.remove(&id);

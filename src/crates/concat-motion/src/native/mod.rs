@@ -13,8 +13,8 @@
 //! light, the way `concat-render` composites on the GPU.
 //!
 //! What it does not draw it says in [`Baked::warnings`], never silently:
-//! markup (Geneva's alone), Lottie image/text layers (not yet supported by
-//! the in-process player), shader packages (the GPU catalogue's). What Geneva cannot draw - paths,
+//! markup (Geneva's alone), Lottie features outside the rasterlottie support
+//! profile, shader packages (the GPU catalogue's). What Geneva cannot draw - paths,
 //! shape gradients, adjustments, mattes, a scaled or rotated parent -
 //! this engine draws whole, which is the fallback story the preference
 //! keeps: a machine without the sidecar still bakes every comp that

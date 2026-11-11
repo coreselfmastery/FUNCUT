@@ -5,10 +5,493 @@
 //! the three extensions the asset table calls an image, cached by the
 //! path they were read from so three hundred frames pay for one decode.
 
+use std::cell::Cell;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::fs::File;
+use std::io::{Cursor, Read};
+use std::path::{Component, Path, PathBuf};
 
+use base64::{Engine, engine::general_purpose::STANDARD};
+use rasterlottie::{
+    Animation as LottieAnimation, Asset as LottieAsset, PreparedAnimation, RasterlottieError,
+    RenderConfig, Renderer,
+};
+use serde_json::Value;
 use tiny_skia::Pixmap;
+use zip::{ZipArchive, result::ZipError};
+
+const MAX_LOTTIE_JSON_BYTES: usize = 16 * 1024 * 1024;
+const MAX_LOTTIE_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_LOTTIE_IMAGE_ASSETS: usize = 128;
+const MAX_LOTTIE_TOTAL_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_DOTLOTTIE_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_DOTLOTTIE_MANIFEST_BYTES: usize = 1024 * 1024;
+const MAX_DOTLOTTIE_ENTRIES: usize = 512;
+const MAX_DOTLOTTIE_UNCOMPRESSED_BYTES: u64 = 128 * 1024 * 1024;
+
+/// A preprocessed Lottie animation whose parsed scene is reused for every frame.
+struct Lottie {
+    prepared: PreparedAnimation,
+    frame_rate: f32,
+    in_point: f32,
+    out_point: f32,
+}
+
+impl Lottie {
+    fn load(path: &Path) -> Result<Self, String> {
+        let extension = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(str::to_ascii_lowercase);
+        let animation = match extension.as_deref() {
+            Some("json") => {
+                let bytes = read_bounded_file(path, MAX_LOTTIE_JSON_BYTES as u64)?;
+                let json = std::str::from_utf8(&bytes)
+                    .map_err(|error| format!("Lottie JSON is not UTF-8: {error}"))?;
+                LottieAnimation::from_json_str(json)
+                    .map_err(|error| format!("Lottie JSON parse failed: {error}"))?
+            }
+            Some("lottie") => {
+                let bytes = read_bounded_file(path, MAX_DOTLOTTIE_ARCHIVE_BYTES)?;
+                read_dotlottie_animation(&bytes)?
+            }
+            _ => return Err("expected a .json Lottie or .lottie dotLottie asset".into()),
+        };
+
+        let (width, height, frame_rate, in_point, out_point) = (
+            animation.width,
+            animation.height,
+            animation.frame_rate,
+            animation.in_point,
+            animation.out_point,
+        );
+        if width == 0
+            || height == 0
+            || width > 4096
+            || height > 4096
+            || width as u64 * height as u64 > 16 * 1024 * 1024
+            || !frame_rate.is_finite()
+            || frame_rate <= 0.0
+            || !in_point.is_finite()
+            || !out_point.is_finite()
+            || out_point <= in_point
+        {
+            return Err("Lottie canvas or frame range is outside the supported limits".into());
+        }
+
+        if animation
+            .assets
+            .iter()
+            .filter(|asset| asset.is_image_asset())
+            .count()
+            > MAX_LOTTIE_IMAGE_ASSETS
+        {
+            return Err("Lottie animation contains too many image assets".into());
+        }
+
+        let renderer = Renderer::target_corpus();
+        let prepared = if extension.as_deref() == Some("json") {
+            let base_dir = path
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .to_path_buf();
+            let total_image_bytes = Cell::new(0_u64);
+            let resolver = |asset: &LottieAsset| {
+                let image = resolve_external_image(&base_dir, asset)?;
+                if let Some(bytes) = image.as_ref() {
+                    account_image_bytes(&total_image_bytes, &asset.id, bytes)?;
+                }
+                Ok(image)
+            };
+            renderer
+                .prepare_with_resolver(&animation, &resolver)
+                .map_err(|error| format!("Lottie support or image validation failed: {error}"))?
+        } else {
+            renderer
+                .prepare(&animation)
+                .map_err(|error| format!("dotLottie support validation failed: {error}"))?
+        };
+
+        Ok(Self {
+            prepared,
+            frame_rate,
+            in_point,
+            out_point,
+        })
+    }
+
+    fn frame(&self, at: f64, looped: bool) -> Result<Pixmap, String> {
+        if !at.is_finite() {
+            return Err("Lottie frame time must be finite".into());
+        }
+        let duration = f64::from(self.out_point - self.in_point) / f64::from(self.frame_rate);
+        if !duration.is_finite() || duration <= 0.0 {
+            return Err("Lottie animation has no playable duration".into());
+        }
+        let last_frame_time = ((f64::from(self.out_point - self.in_point) - 1.0).max(0.0)
+            / f64::from(self.frame_rate))
+        .max(0.0);
+        let local_time = if looped {
+            at.max(0.0).rem_euclid(duration)
+        } else {
+            at.clamp(0.0, last_frame_time)
+        };
+        let frame_number = self.in_point + (local_time * f64::from(self.frame_rate)) as f32;
+        let frame_number = frame_number.min(self.out_point - 1.0).max(self.in_point);
+        let frame = self
+            .prepared
+            .render_frame(frame_number, RenderConfig::default())
+            .map_err(|error| format!("Lottie frame render failed: {error}"))?;
+        let size = tiny_skia::IntSize::from_wh(frame.width, frame.height)
+            .ok_or_else(|| "Lottie produced an invalid canvas size".to_owned())?;
+        Pixmap::from_vec(frame.pixels, size)
+            .ok_or_else(|| "Lottie produced an invalid RGBA frame".to_owned())
+    }
+}
+
+/// Cache parsed animations, including failures, so a bad asset is not reparsed
+/// on every frame of a preview or export.
+#[derive(Default)]
+struct Lotties {
+    cache: HashMap<PathBuf, Result<Lottie, String>>,
+}
+
+impl Lotties {
+    fn frame(&mut self, path: &Path, at: f64, looped: bool) -> Result<Pixmap, String> {
+        let loaded = self
+            .cache
+            .entry(path.to_path_buf())
+            .or_insert_with(|| Lottie::load(path));
+        match loaded {
+            Ok(animation) => animation.frame(at, looped),
+            Err(error) => Err(error.clone()),
+        }
+    }
+}
+
+fn read_bounded_file(path: &Path, maximum: u64) -> Result<Vec<u8>, String> {
+    let file = File::open(path)
+        .map_err(|error| format!("cannot open asset {}: {error}", path.display()))?;
+    let size = file
+        .metadata()
+        .map_err(|error| format!("cannot inspect asset {}: {error}", path.display()))?
+        .len();
+    if size > maximum {
+        return Err(format!("asset exceeds the {maximum}-byte input limit"));
+    }
+    let mut bytes = Vec::new();
+    file.take(maximum + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("cannot read asset {}: {error}", path.display()))?;
+    if bytes.len() as u64 > maximum {
+        return Err(format!("asset exceeds the {maximum}-byte input limit"));
+    }
+    Ok(bytes)
+}
+
+fn resolve_external_image(
+    base_dir: &Path,
+    asset: &LottieAsset,
+) -> Result<Option<Vec<u8>>, RasterlottieError> {
+    let Some(path) = asset.path.as_deref() else {
+        return Ok(None);
+    };
+    let Some(relative_path) = safe_relative_path(path) else {
+        return Err(RasterlottieError::InvalidImageAsset {
+            id: asset.id.clone(),
+            detail: "image path must stay inside the animation asset directory".into(),
+        });
+    };
+    let mut relative = PathBuf::new();
+    if let Some(base) = asset.base_path.as_deref() {
+        let Some(base) = safe_relative_path(base) else {
+            return Err(RasterlottieError::InvalidImageAsset {
+                id: asset.id.clone(),
+                detail: "image base path must stay inside the animation asset directory".into(),
+            });
+        };
+        relative.push(base);
+    }
+    relative.push(relative_path);
+    read_bounded_child_file(base_dir, &relative, MAX_LOTTIE_IMAGE_BYTES)
+        .map(Some)
+        .map_err(|detail| RasterlottieError::InvalidImageAsset {
+            id: asset.id.clone(),
+            detail,
+        })
+}
+
+/// Reads an image only when its fully resolved filesystem path remains below
+/// the animation directory. Lexical path checks alone do not stop a symlink
+/// inside that directory from pointing at an arbitrary file elsewhere.
+fn read_bounded_child_file(
+    base_dir: &Path,
+    relative: &Path,
+    maximum: u64,
+) -> Result<Vec<u8>, String> {
+    let canonical_base = base_dir.canonicalize().map_err(|error| {
+        format!(
+            "cannot resolve animation asset directory {}: {error}",
+            base_dir.display()
+        )
+    })?;
+    let candidate = canonical_base.join(relative);
+    let canonical_file = candidate.canonicalize().map_err(|error| {
+        format!(
+            "cannot resolve image asset {}: {error}",
+            candidate.display()
+        )
+    })?;
+    if !canonical_file.starts_with(&canonical_base) {
+        return Err("image path resolves outside the animation asset directory".into());
+    }
+    read_bounded_file(&canonical_file, maximum)
+}
+
+fn account_image_bytes(total: &Cell<u64>, id: &str, bytes: &[u8]) -> Result<(), RasterlottieError> {
+    let next = total
+        .get()
+        .checked_add(bytes.len() as u64)
+        .filter(|size| *size <= MAX_LOTTIE_TOTAL_IMAGE_BYTES)
+        .ok_or_else(|| RasterlottieError::InvalidImageAsset {
+            id: id.to_owned(),
+            detail: "Lottie animation exceeds the 64 MiB total image limit".into(),
+        })?;
+    total.set(next);
+    Ok(())
+}
+
+fn safe_relative_path(path: &str) -> Option<PathBuf> {
+    let normalized = path.replace('\\', "/");
+    let candidate = Path::new(&normalized);
+    if candidate.is_absolute() {
+        return None;
+    }
+    let mut safe = PathBuf::new();
+    for component in candidate.components() {
+        match component {
+            Component::Normal(part) => safe.push(part),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    Some(safe)
+}
+
+fn read_dotlottie_animation(bytes: &[u8]) -> Result<LottieAnimation, String> {
+    let mut archive = ZipArchive::new(Cursor::new(bytes))
+        .map_err(|error| format!("invalid dotLottie ZIP archive: {error}"))?;
+    validate_dotlottie_archive(&mut archive)?;
+
+    let manifest_bytes =
+        read_zip_entry(&mut archive, "manifest.json", MAX_DOTLOTTIE_MANIFEST_BYTES)?;
+    let manifest: Value = serde_json::from_slice(&manifest_bytes)
+        .map_err(|error| format!("invalid dotLottie manifest: {error}"))?;
+    let selected_id = manifest
+        .get("initial")
+        .and_then(|initial| initial.get("animation"))
+        .and_then(Value::as_str)
+        .or_else(|| manifest.get("activeAnimationId").and_then(Value::as_str))
+        .or_else(|| {
+            manifest
+                .get("animations")
+                .and_then(Value::as_array)
+                .and_then(|animations| animations.first())
+                .and_then(|animation| animation.get("id"))
+                .and_then(Value::as_str)
+        })
+        .ok_or_else(|| "dotLottie manifest does not select or list an animation".to_owned())?;
+    if selected_id.is_empty()
+        || matches!(selected_id, "." | "..")
+        || !selected_id.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-' | ' ')
+        })
+    {
+        return Err("dotLottie animation id contains unsafe path characters".into());
+    }
+
+    let id = selected_id.trim_end_matches(".json");
+    let candidates = [
+        selected_id.to_owned(),
+        format!("{id}.json"),
+        format!("a/{id}.json"),
+        format!("animations/{id}.json"),
+    ];
+    let mut animation_json = None;
+    for candidate in candidates {
+        match read_zip_entry(&mut archive, &candidate, MAX_LOTTIE_JSON_BYTES) {
+            Ok(bytes) => {
+                animation_json = Some(bytes);
+                break;
+            }
+            Err(error) if error.starts_with("missing archive entry") => {}
+            Err(error) => return Err(error),
+        }
+    }
+    let animation_json = animation_json.ok_or_else(|| {
+        "dotLottie archive does not contain the selected animation JSON".to_owned()
+    })?;
+    let json = std::str::from_utf8(&animation_json)
+        .map_err(|error| format!("dotLottie animation JSON is not UTF-8: {error}"))?;
+    let mut animation = LottieAnimation::from_json_str(json)
+        .map_err(|error| format!("dotLottie animation JSON parse failed: {error}"))?;
+    embed_dotlottie_images(&mut archive, &mut animation)?;
+    Ok(animation)
+}
+
+fn validate_dotlottie_archive(archive: &mut ZipArchive<Cursor<&[u8]>>) -> Result<(), String> {
+    if archive.len() > MAX_DOTLOTTIE_ENTRIES {
+        return Err("dotLottie archive contains too many entries".into());
+    }
+    let mut total_size = 0_u64;
+    for index in 0..archive.len() {
+        let file = archive
+            .by_index(index)
+            .map_err(|error| format!("cannot inspect dotLottie entry: {error}"))?;
+        if safe_relative_path(file.name()).is_none() {
+            return Err("dotLottie archive contains an unsafe entry path".into());
+        }
+        let size = file.size();
+        if size > MAX_LOTTIE_IMAGE_BYTES {
+            return Err("dotLottie archive entry exceeds the 32 MiB limit".into());
+        }
+        total_size = total_size
+            .checked_add(size)
+            .filter(|size| *size <= MAX_DOTLOTTIE_UNCOMPRESSED_BYTES)
+            .ok_or_else(|| {
+                "dotLottie archive exceeds the total uncompressed-size limit".to_owned()
+            })?;
+    }
+    Ok(())
+}
+
+fn read_zip_entry(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+    path: &str,
+    maximum: usize,
+) -> Result<Vec<u8>, String> {
+    let mut file = archive.by_name(path).map_err(|error| match error {
+        ZipError::FileNotFound => format!("missing archive entry {path:?}"),
+        other => format!("cannot open dotLottie entry {path:?}: {other}"),
+    })?;
+    if file.size() > maximum as u64 {
+        return Err(format!(
+            "dotLottie entry {path:?} exceeds the {maximum}-byte limit"
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.by_ref()
+        .take(maximum as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("cannot read dotLottie entry {path:?}: {error}"))?;
+    if bytes.len() > maximum {
+        return Err(format!(
+            "dotLottie entry {path:?} exceeds the {maximum}-byte limit"
+        ));
+    }
+    Ok(bytes)
+}
+
+fn embed_dotlottie_images(
+    archive: &mut ZipArchive<Cursor<&[u8]>>,
+    animation: &mut LottieAnimation,
+) -> Result<(), String> {
+    if animation
+        .assets
+        .iter()
+        .filter(|asset| asset.is_image_asset())
+        .count()
+        > MAX_LOTTIE_IMAGE_ASSETS
+    {
+        return Err("dotLottie animation contains too many image assets".into());
+    }
+    let mut total_image_bytes = 0_u64;
+    for asset in &mut animation.assets {
+        if !asset.is_image_asset() || asset.is_embedded_image_asset() {
+            continue;
+        }
+        let candidates = archive_image_candidates(asset)?;
+        let mut image_bytes = None;
+        for candidate in candidates {
+            match read_zip_entry(archive, &candidate, MAX_LOTTIE_IMAGE_BYTES as usize) {
+                Ok(bytes) => {
+                    image_bytes = Some((candidate, bytes));
+                    break;
+                }
+                Err(error) if error.starts_with("missing archive entry") => {}
+                Err(error) => return Err(error),
+            }
+        }
+        let (path, bytes) = image_bytes.ok_or_else(|| {
+            format!(
+                "dotLottie image asset {:?} is missing from the archive",
+                asset.id
+            )
+        })?;
+        total_image_bytes = total_image_bytes
+            .checked_add(bytes.len() as u64)
+            .filter(|size| *size <= MAX_LOTTIE_TOTAL_IMAGE_BYTES)
+            .ok_or_else(|| "dotLottie exceeds the 64 MiB total image limit".to_owned())?;
+        let media_type = media_type_for_path(&path);
+        asset.base_path = None;
+        asset.embedded = Some(1);
+        asset.path = Some(format!(
+            "data:{media_type};base64,{}",
+            STANDARD.encode(bytes)
+        ));
+    }
+    Ok(())
+}
+
+fn archive_image_candidates(asset: &LottieAsset) -> Result<Vec<String>, String> {
+    let Some(path) = asset.path.as_deref() else {
+        return Ok(Vec::new());
+    };
+    let relative = safe_relative_path(path)
+        .ok_or_else(|| format!("dotLottie image path for {:?} is unsafe", asset.id))?;
+    let relative = relative.to_string_lossy().replace('\\', "/");
+    if relative.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut candidates = Vec::new();
+    if let Some(base) = asset.base_path.as_deref() {
+        let base = safe_relative_path(base)
+            .ok_or_else(|| format!("dotLottie image base path for {:?} is unsafe", asset.id))?;
+        let base = base.to_string_lossy().replace('\\', "/");
+        if !base.is_empty() {
+            candidates.push(format!("{base}/{relative}"));
+        }
+    }
+    candidates.push(relative.clone());
+    candidates.push(format!("i/{relative}"));
+    candidates.push(format!("images/{relative}"));
+    if let Some(file_name) = relative.rsplit('/').next()
+        && file_name != relative
+    {
+        candidates.push(format!("i/{file_name}"));
+        candidates.push(format!("images/{file_name}"));
+    }
+    let mut seen = std::collections::HashSet::new();
+    candidates.retain(|candidate| seen.insert(candidate.clone()));
+    Ok(candidates)
+}
+
+fn media_type_for_path(path: &str) -> &'static str {
+    let extension = path.rsplit('.').next().unwrap_or_default();
+    if extension.eq_ignore_ascii_case("png") {
+        "image/png"
+    } else if extension.eq_ignore_ascii_case("jpg") || extension.eq_ignore_ascii_case("jpeg") {
+        "image/jpeg"
+    } else if extension.eq_ignore_ascii_case("webp") {
+        "image/webp"
+    } else if extension.eq_ignore_ascii_case("gif") {
+        "image/gif"
+    } else if extension.eq_ignore_ascii_case("bmp") {
+        "image/bmp"
+    } else {
+        "application/octet-stream"
+    }
+}
 
 /// The decoded pictures one bake is working with, keyed by the file
 /// each was read from. A bake walks the same comp's nodes frame after
@@ -17,9 +500,21 @@ use tiny_skia::Pixmap;
 #[derive(Default)]
 pub(crate) struct Pictures {
     cache: HashMap<PathBuf, Option<Pixmap>>,
+    lotties: Lotties,
 }
 
 impl Pictures {
+    /// The requested frame of a Lottie or dotLottie asset, parsed once per bake.
+    /// Errors are cached too, so a broken asset is not re-read on every frame.
+    pub(crate) fn lottie_frame(
+        &mut self,
+        path: &Path,
+        at: f64,
+        looped: bool,
+    ) -> Result<Pixmap, String> {
+        self.lotties.frame(path, at, looped)
+    }
+
     /// The picture at `path`, decoded: `None` when the file is not
     /// there, is not a still this engine reads, or will not decode -
     /// every one a warning the caller names, never a silent hole.
@@ -127,6 +622,160 @@ mod tests {
         let path = dir.path().join(name);
         std::mem::forget(dir);
         path
+    }
+
+    const SOLID_LOTTIE: &str = r##"{
+        "v":"5.7.6","fr":30,"ip":0,"op":30,"w":32,"h":32,
+        "layers":[{"nm":"Red star","ind":1,"ty":4,"shapes":[{"ty":"gr","it":[
+          {"ty":"sr","sy":1,"d":1,"pt":{"a":0,"k":5},"p":{"a":0,"k":[16,16]},
+           "r":{"a":0,"k":0},"or":{"a":0,"k":14},"os":{"a":0,"k":0},
+           "ir":{"a":0,"k":7},"is":{"a":0,"k":0}},
+          {"ty":"fl","c":{"a":0,"k":[1,0,0,1]},"o":{"a":0,"k":100}},
+          {"ty":"tr","a":{"a":0,"k":[0,0]},"p":{"a":0,"k":[0,0]},
+           "s":{"a":0,"k":[100,100]},"r":{"a":0,"k":0},"o":{"a":0,"k":100}}
+        ]}]}]
+    }"##;
+
+    #[test]
+    fn a_lottie_json_renders_and_its_parser_is_cached() {
+        let path = temp("animation.json");
+        std::fs::write(&path, SOLID_LOTTIE).unwrap();
+        let mut pictures = Pictures::default();
+        let first = pictures
+            .lottie_frame(&path, 0.0, false)
+            .expect("Lottie frame");
+        assert_eq!((first.width(), first.height()), (32, 32));
+        let center = (16 * 32 + 16) * 4;
+        let pixel = first.data().get(center..center + 4).unwrap();
+        assert!(pixel[3] > 0, "the Lottie solid should be visible");
+        assert!(pixel[0] > pixel[1], "the Lottie solid should be red");
+        std::fs::remove_file(&path).unwrap();
+        let second = pictures
+            .lottie_frame(&path, 0.5, false)
+            .expect("cached Lottie parser");
+        assert_eq!(first.data(), second.data());
+    }
+
+    #[test]
+    fn lottie_image_budget_is_aggregate_not_per_file_only() {
+        let total = Cell::new(MAX_LOTTIE_TOTAL_IMAGE_BYTES - 1);
+        assert!(account_image_bytes(&total, "image", &[0, 0]).is_err());
+        assert_eq!(total.get(), MAX_LOTTIE_TOTAL_IMAGE_BYTES - 1);
+    }
+
+    #[test]
+    fn invalid_lottie_json_is_rejected_with_a_diagnostic() {
+        let path = temp("invalid.json");
+        std::fs::write(
+            &path,
+            r#"{"v":"5.7.4","fr":30,"ip":0,"op":30,"w":32,"h":32,"layers":[{"ty":99}]}"#,
+        )
+        .unwrap();
+        assert!(Lottie::load(&path).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_lottie_image_rejects_a_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("temporary root");
+        let assets = root.path().join("assets");
+        std::fs::create_dir(&assets).expect("asset directory");
+        let outside = root.path().join("secret.png");
+        std::fs::write(&outside, b"not an image").expect("outside file");
+        symlink(&outside, assets.join("linked.png")).expect("symlink");
+
+        let asset = LottieAsset {
+            id: "external".into(),
+            name: None,
+            width: Some(1),
+            height: Some(1),
+            base_path: None,
+            path: Some("linked.png".into()),
+            embedded: None,
+            layers: Vec::new(),
+        };
+        let error = resolve_external_image(&assets, &asset)
+            .expect_err("symlink must not escape the animation directory");
+        assert!(
+            error
+                .to_string()
+                .contains("outside the animation asset directory"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn dotlottie_image_resolution_prefers_the_declared_base_path() {
+        let asset = LottieAsset {
+            id: "image".into(),
+            name: None,
+            width: Some(32),
+            height: Some(32),
+            base_path: Some("images".into()),
+            path: Some("logo.png".into()),
+            embedded: None,
+            layers: Vec::new(),
+        };
+        let candidates = archive_image_candidates(&asset).unwrap();
+        assert_eq!(
+            candidates.first().map(String::as_str),
+            Some("images/logo.png")
+        );
+        assert!(candidates.contains(&"logo.png".to_owned()));
+    }
+
+    #[test]
+    fn dotlottie_v2_uses_the_manifest_initial_animation() {
+        use std::io::Write;
+        let path = temp("selected.lottie");
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        writer.start_file("manifest.json", options).unwrap();
+        writer
+            .write_all(
+                br#"{"version":"2","initial":{"animation":"selected"},"animations":[{"id":"first"},{"id":"selected"}]}"#,
+            )
+            .unwrap();
+        writer.start_file("a/selected.json", options).unwrap();
+        writer.write_all(SOLID_LOTTIE.as_bytes()).unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        std::fs::write(&path, bytes).unwrap();
+        let animation = read_dotlottie_animation(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!((animation.width, animation.height), (32, 32));
+    }
+
+    #[test]
+    fn dotlottie_v1_uses_the_active_animation_and_rejects_path_traversal() {
+        use std::io::Write;
+        let path = temp("legacy.lottie");
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default();
+        writer.start_file("manifest.json", options).unwrap();
+        writer
+            .write_all(
+                br#"{"version":"1","activeAnimationId":"selected","animations":[{"id":"first"},{"id":"selected"}]}"#,
+            )
+            .unwrap();
+        writer
+            .start_file("animations/selected.json", options)
+            .unwrap();
+        writer.write_all(SOLID_LOTTIE.as_bytes()).unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        std::fs::write(&path, bytes).unwrap();
+        let animation = read_dotlottie_animation(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!((animation.width, animation.height), (32, 32));
+
+        let unsafe_manifest = br#"{"version":"2","initial":{"animation":"../escape"},"animations":[{"id":"../escape"}]}"#;
+        let manifest_path = temp("unsafe.lottie");
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        writer.start_file("manifest.json", options).unwrap();
+        writer.write_all(unsafe_manifest).unwrap();
+        let bytes = writer.finish().unwrap().into_inner();
+        std::fs::write(&manifest_path, bytes).unwrap();
+        assert!(read_dotlottie_animation(&std::fs::read(&manifest_path).unwrap()).is_err());
     }
 
     #[test]

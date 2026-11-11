@@ -19,6 +19,9 @@ raster = [
     "dep:png",
     "dep:jpeg-decoder",
     "dep:image-webp",
+    "dep:base64",
+    "dep:rasterlottie",
+    "dep:zip",
 ]
 
 [dependencies]
@@ -48,6 +51,11 @@ concat-text = { workspace = true, optional = true }
 png = { workspace = true, optional = true }
 jpeg-decoder = { version = "0.3", optional = true }
 image-webp = { version = "0.2", optional = true }
+# Pure-Rust Lottie rasterizer with an explicit support analyzer and image/text support.
+rasterlottie = { version = "0.2.4", default-features = false, features = ["images", "text"], optional = true }
+base64 = { version = "0.23", optional = true }
+# dotLottie archive inspection is bounded before parsing; no archive paths are extracted.
+zip = { version = "2.4.2", default-features = false, features = ["deflate"], optional = true }
 
 [lints]
 workspace = true

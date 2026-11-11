@@ -1310,17 +1310,20 @@ dependencies = [
 name = "concat-motion"
 version = "0.2.8"
 dependencies = [
+ "base64 0.23.1",
  "concat-text",
  "image-webp",
  "jpeg-decoder",
  "oximedia-auto",
  "oximedia-core 0.1.9",
  "png 0.17.16",
+ "rasterlottie",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
  "tiny-skia 0.12.0",
+ "zip 2.4.2",
 ]
 
 [[package]]
@@ -6194,6 +6197,22 @@ name = "rawpointer"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60a357793950651c4ed0f3f52338f53b2f809f32d83a07f72909fa13e4c6c1e3"
+
+[[package]]
+name = "rasterlottie"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d927b491163e8ef9fc7859e900beba5a4e3331021e73a068982ffbe40c38b359"
+dependencies = [
+ "base64 0.23.1",
+ "image",
+ "rustc-hash 2.1.3",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tiny-skia 0.12.0",
+ "unicode-segmentation",
+]
 
 [[package]]
 name = "rayon"

@@ -718,13 +718,44 @@ impl Scene<'_> {
                 }
                 None => Content::Nothing,
             },
-            NodeKind::Lottie { asset, .. } => {
-                self.warnings.push(format!(
-                    "node {:?}: Lottie asset {asset:?} is baked by the Lottie engine, not this \
-                     one; the node draws nothing here",
-                    node.id
-                ));
-                Content::Nothing
+            NodeKind::Lottie { asset, r#loop } => {
+                let source = self.comp.assets.get(asset).map(|found| found.src.clone());
+                match source {
+                    Some(source) => {
+                        let path = self.source_dir.join(&source);
+                        match self
+                            .pictures
+                            .lottie_frame(&path, (at - node.start).max(0.0), *r#loop)
+                        {
+                            Ok(pixmap) => {
+                                let (pw, ph) =
+                                    (f64::from(pixmap.width()), f64::from(pixmap.height()));
+                                let (fw, fh) = self.frame;
+                                let scale = (fw / pw).min(fh / ph);
+                                let fit = Transform::from_translate(
+                                    ((fw - pw * scale) / 2.0) as f32,
+                                    ((fh - ph * scale) / 2.0) as f32,
+                                )
+                                .pre_concat(Transform::from_scale(scale as f32, scale as f32));
+                                Content::Image { pixmap, fit }
+                            }
+                            Err(error) => {
+                                self.warnings.push(format!(
+                                    "node {:?}: Lottie asset {:?} could not be rendered: {error}",
+                                    node.id, source
+                                ));
+                                Content::Nothing
+                            }
+                        }
+                    }
+                    None => {
+                        self.warnings.push(format!(
+                            "node {:?}: Lottie asset {asset:?} is missing from the comp asset table",
+                            node.id
+                        ));
+                        Content::Nothing
+                    }
+                }
             }
             NodeKind::Html { .. } => {
                 self.warnings.push(format!(

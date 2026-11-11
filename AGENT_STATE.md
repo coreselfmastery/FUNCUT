@@ -2,7 +2,7 @@
 
 Principal agent: the FUNCUT completion mission (2026-11-10 start).
 Baseline `main` for the 2026-11-10 completion pass: `ab7c0704917d6f3181b1fb847fead86dc6392fcf` (CI: 7/7 green).
-Subsequent verified `main` (11 November 2026): PR #78 and #79 are merged; PR #80 merged persistent native image caching; PR #81 merged the known-issues reconciliation; PR #83 merged the canonical Geneva master list; PR #84 merged Geneva fidelity-preserving engine selection and safe refusal; PR #85 merged the mixed-markup refusal explanation; PR #86 merged checksum-fail-closed Geneva installation and the reproducible 1080p30 benchmark. Latest observed `main` commit: `124f93bdd97e7b5d6ace254c0b427a2bcc6a2e35` (`docs(geneva): refresh final PR merge and CI status`).
+Subsequent verified `main` (11 November 2026): PR #78 and #79 are merged; PR #80 merged persistent native image caching; PR #81 merged the known-issues reconciliation; PR #83 merged the canonical Geneva master list; PR #84 merged Geneva fidelity-preserving engine selection and safe refusal; PR #85 merged the mixed-markup refusal explanation; PR #86 merged checksum-fail-closed Geneva installation and the reproducible 1080p30 benchmark. Latest observed `main` commit: `56bde7c85e9fedc817092e2fdad59a3c19aeb09f` (PR #88: per-timeline view-state isolation).
 
 ## Mission
 
@@ -60,7 +60,7 @@ and an honest feature ledger. No fake green, no doc-only features.
 
 1. Implement and regression-test native Lottie/dotLottie playback (the existing adapter is import/conversion only).
 2. Add the normal editor command/UI path for creating, editing, moving, saving, previewing and exporting Motion clips on timelines.
-3. Isolate zoom, scroll, playhead and selection state per timeline tab, with GUI switching tests.
+3. PR #88 merged per-timeline zoom, horizontal/vertical scroll, playhead and selection state with switching/removal regression tests. Verify the exact merge-commit CI before closing the release gate.
 4. Add a timeline picker and multi-job export queue with progress, cancellation, failure handling and per-job timeline identity tests.
 5. Integrate explicit Linux VAAPI encoding capability detection, selection and safe fallback; validate on supported Intel/AMD hardware.
 6. Run the documented 1080p30 benchmark and proxy scrub/playback measurements on the actual antiX laptop; do not infer results from hosted CI.

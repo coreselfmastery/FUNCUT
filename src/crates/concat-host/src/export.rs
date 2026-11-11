@@ -215,16 +215,14 @@ mod tests {
 
         // This second timeline is intentionally empty and is not active.
         // It must still be a valid export target with its own format.
-        let request = request_for_timeline(
-            &session,
-            &ExportSpec::default(),
-            Vec::new(),
-            &created,
-        )
-        .expect("non-active timeline exists");
+        let request = request_for_timeline(&session, &ExportSpec::default(), Vec::new(), &created)
+            .expect("non-active timeline exists");
         assert_eq!((request.width, request.height), (1080, 1920));
         assert_eq!((request.rate_num, request.rate_den), (30000, 1001));
-        assert!(request.clips.is_empty(), "empty timeline must not borrow active clips");
+        assert!(
+            request.clips.is_empty(),
+            "empty timeline must not borrow active clips"
+        );
         assert_eq!(
             session.project().active_timeline_id,
             original_id,

@@ -47,7 +47,7 @@ use images::Pictures;
 /// entry an older revision wrote stops matching and re-bakes. The
 /// package version alone is not enough - a fix to a blend's math is a
 /// new render of every comp, without a new package.
-const RENDERER_REVISION: u8 = 1;
+const RENDERER_REVISION: u8 = 2;
 
 /// The native engine. Owns the faces a bake shapes text with, loaded
 /// once and kept - building one per bake would re-read the machine's
@@ -345,7 +345,7 @@ impl CompEngine for Native {
 mod tests {
     use super::*;
     use crate::comp::{
-        Blend, Effect, Fit, Length, Mask, MaskShape, Node, NodeKind, Paint, Point, Rgba, Stroke,
+        Asset, AssetKind, Blend, Effect, Fit, Length, Mask, MaskShape, Node, NodeKind, Paint, Point, Rgba, Stroke,
         TextNode, Transform,
     };
     use crate::track::{Key, Track, Value};
@@ -414,6 +414,46 @@ mod tests {
         let png = std::fs::read(baked.frame_path(1)).expect("frame 1 on disk");
         let pixmap = tiny_skia::Pixmap::decode_png(&png).expect("a decodable frame");
         (baked, pixmap)
+    }
+
+    #[test]
+    fn native_engine_renders_vector_lottie_assets() {
+        const SOLID_LOTTIE: &str = r##"{
+            "v":"5.7.4","fr":30,"ip":0,"op":30,"w":32,"h":32,"nm":"solid","ddd":0,
+            "assets":[],
+            "layers":[{"ddd":0,"ind":1,"ty":1,"nm":"Red","sr":1,
+              "ks":{"o":{"a":0,"k":100},"r":{"a":0,"k":0},"p":{"a":0,"k":[16,16,0]},
+                    "a":{"a":0,"k":[8,8,0]},"s":{"a":0,"k":[100,100,100]}},
+              "ao":0,"sw":16,"sh":16,"sc":"#ff0000","ip":0,"op":30,"st":0,"bm":0}]
+        }"##;
+        let dir = tempfile::tempdir().expect("asset directory");
+        std::fs::write(dir.path().join("animation.json"), SOLID_LOTTIE).unwrap();
+        let mut comp = comp_of(
+            "lottie",
+            vec![node(
+                "animation",
+                NodeKind::Lottie {
+                    asset: "animation".into(),
+                    r#loop: false,
+                },
+            )],
+        );
+        comp.assets.insert(
+            "animation".into(),
+            Asset {
+                src: "animation.json".into(),
+                kind: Some(AssetKind::Lottie),
+            },
+        );
+        let output = native()
+            .frame(&comp, 0.0, None, dir.path())
+            .expect("native Lottie frame");
+        let png = std::fs::read(output).expect("rendered PNG");
+        let frame = tiny_skia::Pixmap::decode_png(&png).expect("valid PNG frame");
+        let centre = frame.pixel(32, 24).expect("canvas centre");
+        assert!(centre.red() > 240, "{centre:?}");
+        assert!(centre.green() < 10, "{centre:?}");
+        assert_eq!(centre.alpha(), 255);
     }
 
     #[test]

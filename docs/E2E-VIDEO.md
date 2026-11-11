@@ -1,19 +1,22 @@
-# E2E-VIDEO — the one-take tour of everything FUNCUT is
+# E2E-VIDEO — release acceptance script and recording plan
 
-This is the shootable script for the end-to-end demo video: one project,
-taken from an empty window to a finished, exported film, touching every
-layer of the app in the order a real edit would. Every step names what is
-on screen, what to do, and what to say; nothing here is staged — every
-feature named is in the tree, and where a thing needs a model or a
-download first, the preparation section says so.
+This is a proposed end-to-end acceptance script, not yet a verified,
+shootable demo. The Motion page (#97), export queue (#96), and VAAPI
+encoder selection (#95) are still open pull requests, not features on
+main. Chapters that depend on them are conditional and must not be
+recorded as working until those changes are merged and manually accepted.
+The AI Director flow and target-laptop performance also require real
+project and hardware evidence; a script is not evidence that either works.
 
 **Target length:** 12–15 minutes at a relaxed pace. **Chapter markers**
 below are the cut points; each chapter is one shot list entry.
 
 ## Preparation (before recording)
 
-- A Linux laptop (the target class: 4–6 GB RAM is the honest demo — the
-  app is tuned for it, and the video should show it flying there).
+- Use the intended Linux target laptop. Record its model, CPU, RAM,
+  storage, display mode and OS. Do not claim 4–6 GB readiness or smooth
+  performance until target-machine benchmarks and a real editing session
+  are recorded.
 - `./install-linux.sh` run once; the app opened once; in **Settings →
   General**: proxies on (H.264 default), GPU on. In **Settings →
   Transcriber** and **Speech**: a whisper model and two voices downloaded
@@ -24,8 +27,9 @@ below are the cut points; each chapter is one shot list entry.
 - The OpenVid index present (`Settings → General` shows the library), and
   the network up for the two moments the stock/music shelves fetch.
 - A second, empty timeline in the demo project (added live in Chapter 9).
-- Screen recording at the display's native rate; 60 fps if the machine
-  holds it, 30 otherwise — the compositor is GPU-driven either way.
+- Screen recording at the display's native rate. Record the actual
+  sustained capture rate and dropped frames; do not imply GPU acceleration
+  or a frame-rate target without measuring it.
 - The Geneva sidecar installed (the installer brings it) so the motion
   passes run.
 
@@ -37,8 +41,9 @@ drop-to-start.
 **Do:** drag the scratch folder's landscape clip onto the window. The
 project opens on it without a wizard.
 
-**Say:** *"Everything runs locally — no account, no upload, no
-watermark. Drop footage on the door and you are editing."*
+**Say:** *"The project opens directly into the editor. We will identify
+any networked services, provider calls and downloaded assets used in this
+demo rather than making blanket privacy or offline claims."*
 
 ## Chapter 2 — the cut (0:45)
 
@@ -106,9 +111,8 @@ standing shot with one brush; reverse half a second; ramp speed on one
 clip. Then open the keyframes pane: dopesheet, curves, bezier handles on
 one key, an ease preset.
 
-**Say:** *"The same engine a desktop suite has — masks, keys, tracking-
-class stabilize, AI restore — on a laptop, because the compositor is the
-GPU's."*
+**Say:** *"These are the craft tools available in this build. We will
+show their actual output and responsiveness on the recorded machine."*
 
 ## Chapter 7 — stock, stickers, text, motion (9:00)
 
@@ -179,10 +183,13 @@ point."*
 - The stock shelf's licence (research dataset) and the MobyGratis
   non-commercial rule are **said on camera**, not footnoted — the app
   says both at the shelf itself, and the video should too.
-- If the machine is the 4–6 GB class, say so when the export runs: the
-  proxy system is what keeps the scrub smooth, and the queue renders on
-  the same budget.
+- Report the target laptop's actual RAM and measured results. Describe
+  proxy use, scrubbing and return-to-original-frame behavior only after
+  verifying them with representative 1080p long-GOP footage. Do not claim
+  speedup or smoothness from the presence of proxy code alone.
 - The director's run needs the provider key it asks for; the video shows
   the key field, not the key.
-- Nothing in this script requires a network after the two downloads —
-  say it when the captions render offline.
+- Do not claim the whole demo is offline: the Director may require a
+  provider key and network access, and stock/music shelves may fetch
+  remote assets. State which steps used the network and which completed
+  offline.

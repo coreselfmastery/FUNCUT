@@ -256,6 +256,7 @@ export component App inherits Window {
     callback export-closed();
     callback export-name-edited(name: string);
     callback export-browse();
+    callback export-timeline-changed(index: int);
     callback export-rate-changed(index: int);
     callback export-codec-changed(index: int);
     callback export-ten-bit-changed(on: bool);
@@ -266,6 +267,9 @@ export component App inherits Window {
     callback export-reveal();
     callback export-download();
     callback export-again();
+    callback export-job-cancel(id: int);
+    callback export-job-reveal(id: int);
+    callback export-clear-ended();
 
     callback settings-closed();
     callback settings-page-changed(index: int);
@@ -546,7 +550,10 @@ export component App inherits Window {
                 if (root.project-sheet.open) { root.project-closed(); return accept; }
                 if (root.settings.open) { root.settings-closed(); return accept; }
                 if (root.export.open) {
-                    if (root.export.phase != ExportPhase.running) { root.export-closed(); }
+                    // A queue runs in the background: the sheet closes,
+                    // the jobs carry on, and reopening shows where they
+                    // are.
+                    root.export-closed();
                     return accept;
                 }
                 if (root.start.composing) {
@@ -859,6 +866,7 @@ export component App inherits Window {
         closed => { root.export-closed(); }
         name-edited(name) => { root.export-name-edited(name); }
         browse => { root.export-browse(); }
+        timeline-changed(index) => { root.export-timeline-changed(index); }
         rate-changed(index) => { root.export-rate-changed(index); }
         codec-changed(index) => { root.export-codec-changed(index); }
         ten-bit-changed(on) => { root.export-ten-bit-changed(on); }
@@ -869,6 +877,9 @@ export component App inherits Window {
         reveal => { root.export-reveal(); }
         download => { root.export-download(); }
         again => { root.export-again(); }
+        job-cancel(id) => { root.export-job-cancel(id); }
+        job-reveal(id) => { root.export-job-reveal(id); }
+        clear-ended => { root.export-clear-ended(); }
     }
 
     SettingsDialog {

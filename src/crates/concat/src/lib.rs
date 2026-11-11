@@ -2137,6 +2137,18 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     app.on_export_browse(on_window!(|state| {
         state.handle(Msg::Export(ExportMsg::Browse));
     }));
+    app.on_export_timeline_changed(on_window!(|state, index: i32| {
+        state.handle(Msg::Export(ExportMsg::TimelineChanged(index)));
+    }));
+    app.on_export_job_cancel(on_window!(|state, id: i32| {
+        state.handle(Msg::Export(ExportMsg::CancelJob(id as u64)));
+    }));
+    app.on_export_job_reveal(on_window!(|state, id: i32| {
+        state.handle(Msg::Export(ExportMsg::RevealJob(id as u64)));
+    }));
+    app.on_export_clear_ended(on_window!(|state| {
+        state.handle(Msg::Export(ExportMsg::ClearEnded));
+    }));
     app.on_export_reveal(on_window!(|state| {
         state.handle(Msg::Export(ExportMsg::Reveal));
     }));

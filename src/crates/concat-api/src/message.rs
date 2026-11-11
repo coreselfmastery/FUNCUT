@@ -293,7 +293,7 @@ pub enum Request {
         track: Option<String>,
     },
 
-    /// Searches the built-in sound library - 430 CC0 sounds: whooshes,
+    /// Searches the built-in sound library - 530 CC0 sounds: whooshes,
     /// impacts, risers, ambiences, music beds, UI clicks, motion pops,
     /// notifications, keyboards, glitches, foley and writing - and returns
     /// the matches best first, with everything an agent needs to pick one

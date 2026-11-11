@@ -10106,6 +10106,7 @@ impl Studio {
         editor.set_playhead(self.playhead);
         sync(&models.key_marks, self.key_marks());
         editor.set_scroll_left(self.lanes.scroll_left);
+        editor.set_track_scroll(self.lanes.track_scroll);
         editor.set_seconds_per_pixel(self.lanes.seconds_per_pixel);
         editor.set_duration_seconds(self.duration());
         editor.set_frame_rate(self.frame_rate());

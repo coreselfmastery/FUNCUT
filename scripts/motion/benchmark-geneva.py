@@ -35,6 +35,7 @@ def geneva_binary() -> Path:
         os.environ.get("CONCAT_GENEVA_BIN"),
         shutil.which("geneva"),
         str(Path.home() / ".local" / "bin" / "geneva"),
+        str(EXAMPLE.parent / "geneva"),
         "/opt/concat/geneva",
     ]
     for candidate in candidates:
@@ -107,7 +108,7 @@ def main() -> int:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("geneva-benchmark"),
+        default=Path.home() / "funcut-geneva-benchmark",
         help="where generated assets, logs, report and MP4 are written",
     )
     parser.add_argument(

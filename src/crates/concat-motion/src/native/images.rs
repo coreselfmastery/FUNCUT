@@ -29,8 +29,6 @@ const MAX_DOTLOTTIE_UNCOMPRESSED_BYTES: u64 = 128 * 1024 * 1024;
 /// A preprocessed Lottie animation whose parsed scene is reused for every frame.
 struct Lottie {
     prepared: PreparedAnimation,
-    width: u32,
-    height: u32,
     frame_rate: f32,
     in_point: f32,
     out_point: f32,
@@ -96,8 +94,6 @@ impl Lottie {
 
         Ok(Self {
             prepared,
-            width,
-            height,
             frame_rate,
             in_point,
             out_point,

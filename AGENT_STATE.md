@@ -4,7 +4,7 @@ Principal agent: the FUNCUT completion mission (2026-11-10 start).
 Baseline `main` for the 2026-11-10 completion pass: `ab7c0704917d6f3181b1fb847fead86dc6392fcf` (CI: 7/7 green).
 Subsequent verified `main` (11 November 2026): PR #78 and #79 are merged; PR #80 merged persistent native image caching; PR #81 merged the known-issues reconciliation; PR #83 merged the canonical Geneva master list; PR #84 merged Geneva fidelity-preserving engine selection and safe refusal; PR #85 merged the mixed-markup refusal explanation; PR #86 merged checksum-fail-closed Geneva installation and the reproducible 1080p30 benchmark. Latest observed `main` commit: `56bde7c85e9fedc817092e2fdad59a3c19aeb09f` (PR #88: per-timeline view-state isolation).
 
-- PR #88 PR-head Format/locales/models, real-fixture analysis, Clippy and both Geneva jobs passed; the Rust test build was still running at the last poll. Fresh validation on the exact merge commit remains required.
+- PR #88 PR-head Format/locales/models, real-fixture analysis, Clippy, build and workspace tests passed; both Geneva jobs passed. Documentation examples and gRPC Clippy/tests were still running at the last poll. Fresh validation on the exact merge commit remains required.
 - Open engineering PR #89 adds a minimal native Motion-clip project command; PR #91 adds rasterlottie-backed native Lottie/dotLottie playback. Both are review branches only and require full CI/Geneva/Nix validation before merge.
 
 ## Mission

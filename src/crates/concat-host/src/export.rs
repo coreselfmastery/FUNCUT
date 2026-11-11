@@ -58,17 +58,39 @@ pub struct Progress {
     pub stage: &'static str,
 }
 
-/// The session flattened into a request the engine can render.
+/// The active session timeline flattened into a request the engine can render.
 pub fn request(session: &Session, spec: &ExportSpec, titles: Vec<ExportClip>) -> ExportRequest {
-    let settings = session.settings();
-    let mut clips = session.flattened_clips();
+    request_for_timeline(
+        session,
+        spec,
+        titles,
+        &session.project().active_timeline_id,
+    )
+    .expect("the active timeline always belongs to its project")
+}
+
+/// Builds an export request for a specific timeline without changing the
+/// editor's active tab. A stale or unknown timeline id is an error: silently
+/// falling back to another timeline could export the wrong cut.
+pub fn request_for_timeline(
+    session: &Session,
+    spec: &ExportSpec,
+    titles: Vec<ExportClip>,
+    timeline_id: &str,
+) -> Result<ExportRequest, String> {
+    let video = session
+        .video_for_timeline(timeline_id)
+        .ok_or_else(|| format!("timeline {timeline_id:?} does not exist in this project"))?;
+    let mut clips = session
+        .flattened_clips_for_timeline(timeline_id)
+        .ok_or_else(|| format!("timeline {timeline_id:?} does not exist in this project"))?;
     clips.extend(titles);
-    ExportRequest {
+    Ok(ExportRequest {
         output: spec.output.clone(),
-        width: settings.width,
-        height: settings.height,
-        rate_num: settings.rate_num,
-        rate_den: settings.rate_den,
+        width: video.width,
+        height: video.height,
+        rate_num: video.rate_num,
+        rate_den: video.rate_den,
         crf: spec.crf,
         preset: spec.preset.clone(),
         codec: spec.codec,
@@ -76,11 +98,11 @@ pub fn request(session: &Session, spec: &ExportSpec, titles: Vec<ExportClip>) ->
         rate_mode: spec.rate_mode,
         bitrate_kbps: spec.bitrate_kbps,
         color_range: spec.color_range,
-        color_space: session.video().color_space,
+        color_space: video.color_space,
         hdr: spec.hdr,
         effect_time_offset: 0.0,
         clips,
-    }
+    })
 }
 
 /// Renders `request` and returns the path written, reporting through

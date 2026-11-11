@@ -639,6 +639,41 @@ mod tests {
     }
 
     #[test]
+    fn a_shape_gradient_uses_native_instead_of_genevas_solid_colour_approximation() {
+        let comp = comp_with(NodeKind::Ellipse {
+            width: Length::px(100.0),
+            height: Length::px(100.0),
+            fill: Some(Paint::Gradient {
+                stops: vec![
+                    (0.0, Rgba::hex("#ff0000")),
+                    (1.0, Rgba::hex("#0000ff")),
+                ],
+                ramp: Default::default(),
+                angle: 90.0,
+                from: 0.0,
+                to: 1.0,
+            }),
+        });
+        let preference = EnginePreference::default();
+        // A sidecar is installed, but its shape mapper would average this
+        // gradient to one colour. The native compositor draws the real ramp.
+        assert_eq!(preference.engine_for(&comp, true), EngineKind::Native);
+        // Missing-sidecar behaviour remains the same.
+        assert_eq!(preference.engine_for(&comp, false), EngineKind::Native);
+    }
+
+    #[test]
+    fn a_plain_shape_still_uses_geneva_when_it_preserves_fidelity() {
+        let comp = comp_with(NodeKind::Rect {
+            width: Length::px(10.0),
+            height: Length::px(10.0),
+            fill: Some(Paint::Solid { color: Rgba::hex("#fff") }),
+            radius: 0.0,
+        });
+        assert_eq!(EnginePreference::default().engine_for(&comp, true), EngineKind::Geneva);
+    }
+
+    #[test]
     fn a_request_falls_back_to_the_comps_own_geometry() {
         let comp = comp_with(NodeKind::Group {
             children: Vec::new(),

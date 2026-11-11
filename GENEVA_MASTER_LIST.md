@@ -108,7 +108,7 @@ The canonical workflow is `.github/workflows/geneva.yml`. It has two jobs:
 
 No item from the original ten-finding register is currently listed as open. The following are the remaining validation/roadmap boundaries, not claims that the closed findings are still broken:
 
-- [ ] Confirm the current merged `main` commit `56bde7c85e9fedc817092e2fdad59a3c19aeb09f` passes fresh Geneva and the full CI/build matrix.
+- [x] Current merged `main` commit `56bde7c85e9fedc817092e2fdad59a3c19aeb09f`: fresh CI passed all 3 jobs, Geneva passed both dependency-dance and rendered-example jobs, and Build app passed Linux x86_64 and aarch64 (`43020200650`, `43020200640`, `43020200660`).
 - [ ] Keep scene-quality and golden-frame gates green on every relevant change; review any intentional golden/quality-floor update.
 - [ ] Run and record representative timing/memory measurements on the target low-memory Linux machine for realistic 1080p motion workloads. PR #86 is merged: the reproducible cold 1080p30 Geneva benchmark records machine, sidecar version, wall time, output size and sampled process-tree RSS. Hosted CI proves correctness, not target-device speed; a real antiX run remains required.
 - [x] Mixed markup comps that also use native-only shape gradients, mattes, effects, paths or masks are refused by Geneva bake/frame instead of being silently degraded; PR #84 shipped the safe refusal and native fallback for non-markup comps. PR #85 added the selection-time explanation and regression test; it merged as `cf82462c`.
@@ -136,11 +136,11 @@ These must remain on the broader FUNCUT release tracker, not be misreported as G
 Geneva is ready for a release candidate when all of the following are true on the same commit:
 
 - [x] The current `main` SHA is recorded: `56bde7c85e9fedc817092e2fdad59a3c19aeb09f` (PR #88 merge).
-- [ ] Geneva example and dependency-dance jobs pass on that SHA.
-- [ ] Required workspace tests, clippy and formatting checks pass on that SHA.
-- [ ] Scene-quality and golden-frame checks pass without unreviewed baseline changes.
+- [x] Geneva example and dependency-dance jobs pass on that SHA (`43020200640`).
+- [x] Required workspace tests, clippy and formatting checks pass on that SHA (`43020200650`).
+- [x] Scene-quality and golden-frame checks pass in the Geneva rendered-example job (`43020200640`), without a baseline update.
 - [x] Mixed markup comps that contain native-only features are explicitly refused with a useful diagnostic; PR #85's selection-time explanation and regression test merged as `cf82462c`.
-- [ ] The pinned sidecar installs and is discovered on each supported package/platform target.
+- [x] The pinned sidecar installs and is discovered in the Linux x86_64 and aarch64 package builds (`43020200660`); other release targets must be checked when their packages are built.
 - [ ] Target-machine timing/memory evidence is attached, or the release notes clearly state that only hosted correctness—not target performance—has been validated.
 
 **Status rule:** never mark the whole FUNCUT product “ready” from this Geneva checklist alone. This page certifies only the Geneva motion-rendering subsystem and its stated boundaries.

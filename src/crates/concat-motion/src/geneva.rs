@@ -2326,6 +2326,47 @@ mod tests {
     }
 
     #[test]
+    fn nested_static_parent_translations_are_accumulated() {
+        let mut comp = text_comp();
+        let mut parent = comp.nodes[0].clone();
+        let mut grandparent = comp.nodes[0].clone();
+        let mut child = comp.nodes[0].clone();
+
+        grandparent.id = "grandparent".into();
+        grandparent.transform.position = Some(crate::comp::Point::new(100.0, 10.0));
+        grandparent.kind = NodeKind::Rect {
+            width: Length::px(100.0),
+            height: Length::px(100.0),
+            fill: Some(Paint::Solid { color: Rgba::hex("#ffffff") }),
+            radius: 0.0,
+        };
+
+        parent.id = "parent".into();
+        parent.parent = Some("grandparent".into());
+        parent.transform.position = Some(crate::comp::Point::new(20.0, 30.0));
+        parent.kind = NodeKind::Rect {
+            width: Length::px(100.0),
+            height: Length::px(100.0),
+            fill: Some(Paint::Solid { color: Rgba::hex("#ffffff") }),
+            radius: 0.0,
+        };
+
+        child.id = "child".into();
+        child.parent = Some("parent".into());
+        child.transform.position = Some(crate::comp::Point::new(10.0, 20.0));
+
+        comp.nodes = vec![grandparent, parent, child];
+
+        assert!(comp.geneva_inexpressible().is_empty());
+        let (document, warnings) = Geneva::at("geneva").timeline(&comp, &BakeRequest::default());
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            document["layers"][2]["clips"][0]["transform"]["position"],
+            json!([130.0, 60.0])
+        );
+    }
+
+    #[test]
     fn a_position_becomes_a_point_on_the_frame() {
         let geneva = Geneva::at("/nonexistent/geneva");
         let (document, _) = geneva.timeline(&text_comp(), &BakeRequest::default());

@@ -1,0 +1,175 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
+
+import { I18n } from "../i18n.slint";
+import { Theme } from "../primitives/primitives.slint";
+
+// The library's Motion page (#13): the project's motion comps, listed
+// and placed.
+//
+// A comp is a document in the project's `comps/`; its bake is a PNG
+// sequence under `cache/comps/`, keyed by the document's hash. The page
+// lists what is there - the name, the frame, the length, and whether a
+// bake is on disk to place - and Add puts a motion clip at the playhead
+// through the same undoable command path every other clip takes: it can
+// be undone, it saves with the project, it reopens with it, and the
+// monitor and the export render it from the bake.
+//
+// One global for the page's state and verbs, so the pane that owns the
+// work is the same on the desk's library pane and the phone's sheet.
+
+/// One comp in the listing.
+export struct MotionCompData {
+    /// the comp's id, as its document names itself
+    id: string,
+    /// what the row says: the document's name, or its id when it has none
+    name: string,
+    /// the bake key: the file's stem, the cache directory's prefix
+    hash: string,
+    /// "1920 × 1080 · 3.0 s"
+    shape: string,
+    /// whether a bake is on disk under the project's cache
+    baked: bool,
+}
+
+/// The Motion page's state and verbs.
+export global Motion {
+    /// The project's comps, oldest first.
+    in property <[MotionCompData]> comps;
+    /// Whether the project is open to read them from.
+    in property <bool> has-project;
+    /// The page's verbs.
+    callback refresh();
+    callback add(hash: string, comp: string);
+    /// A library pane turned to the page or away from it.
+    callback shown(on: bool);
+}
+
+// The page's Add button, in the Forge page's own button shape: accent
+// when the row is placeable, quiet when it is not.
+component AddButton inherits Rectangle {
+    in property <bool> placeable: true;
+    callback clicked();
+
+    height: 30px;
+    border-radius: Theme.r;
+    background: !root.placeable ? Theme.field
+        : touch.has-hover ? Theme.accent-hover : Theme.accent;
+    opacity: root.placeable ? 1.0 : 0.5;
+
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { if (root.placeable) { root.clicked(); } }
+    }
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 12px;
+        alignment: center;
+
+        Text {
+            text: I18n.t("motion.add");
+            color: root.placeable ? Theme.on-accent : Theme.fg-muted;
+            font-size: Theme.fs-sm;
+            font-weight: Theme.weight-title;
+        }
+    }
+}
+
+// The Motion page itself: the listing, a row a comp, and the refresh
+// under them. The pane it sits in scrolls the whole column.
+export component MotionPage inherits VerticalLayout {
+    padding: 8px;
+    spacing: 8px;
+
+    if !Motion.has-project: Text {
+        text: I18n.t("motion.noProject");
+        color: Theme.fg-dim;
+        font-size: Theme.fs;
+        wrap: word-wrap;
+        horizontal-stretch: 1;
+    }
+
+    if Motion.has-project && Motion.comps.length == 0: Text {
+        text: I18n.t("motion.empty");
+        color: Theme.fg-dim;
+        font-size: Theme.fs;
+        wrap: word-wrap;
+        horizontal-stretch: 1;
+    }
+
+    for comp in Motion.comps: Rectangle {
+        height: 64px;
+        border-radius: Theme.r;
+        background: Theme.raised;
+
+        HorizontalLayout {
+            padding: 10px;
+            spacing: 10px;
+
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 1;
+
+                Text {
+                    text: comp.name;
+                    color: Theme.fg;
+                    font-size: Theme.fs;
+                    font-weight: Theme.weight-title;
+                    overflow: elide;
+                }
+
+                Text {
+                    text: comp.shape;
+                    color: Theme.fg-muted;
+                    font-family: Theme.font-technical;
+                    font-size: Theme.fs-sm;
+                    overflow: elide;
+                }
+
+                if !comp.baked: Text {
+                    text: I18n.t("motion.notBaked");
+                    color: Theme.fg-dim;
+                    font-size: Theme.fs-sm;
+                    overflow: elide;
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+
+                AddButton {
+                    placeable: comp.baked;
+                    clicked => { Motion.add(comp.hash, comp.id); }
+                }
+            }
+        }
+    }
+
+    HorizontalLayout {
+        alignment: end;
+
+        Rectangle {
+            height: 30px;
+            border-radius: Theme.r;
+            background: touch.has-hover ? Theme.field-hover : Theme.field;
+
+            touch := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { Motion.refresh(); }
+            }
+
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                alignment: center;
+
+                Text {
+                    text: I18n.t("motion.refresh");
+                    color: Theme.fg;
+                    font-size: Theme.fs-sm;
+                }
+            }
+        }
+    }
+}

@@ -2058,9 +2058,8 @@ pub struct Clip {
 pub struct MotionClip {
     /// The comp's id, as the document in `comps/` names itself.
     pub comp: String,
-    /// The document's content hash, which is also its cache key. A comp whose
-    /// text was edited gets a new file and a new hash, so a bake is never
-    /// stale and never has to be invalidated by hand.
+    /// The comp's 16-digit hexadecimal cache key, matching the bake
+    /// manifest and the leading part of its cache directory name.
     pub hash: String,
     /// The engine that bakes it: `geneva` (the default), `native`, or
     /// `lottie`. Recorded per clip rather than per project so one comp can be

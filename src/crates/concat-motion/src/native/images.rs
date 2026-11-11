@@ -138,9 +138,15 @@ mod tests {
         let mut pictures = Pictures::default();
         let first = pictures.picture(&path).expect("the png decodes").clone();
         assert_eq!(first.width(), 6);
-        let second = pictures.picture(&path).expect("the cache answers").clone();
+        // Once decoded, the cached pixmap answers even if the source is
+        // no longer readable. This proves the second access does not decode
+        // the file again.
+        std::fs::remove_file(&path).expect("remove the source after decoding");
+        let second = pictures
+            .picture(&path)
+            .expect("the cached pixmap survives the source")
+            .clone();
         assert_eq!(first.data(), second.data());
-        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

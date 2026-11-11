@@ -2,7 +2,7 @@
 
 Principal agent: the FUNCUT completion mission (2026-11-10 start).
 Baseline `main` for the 2026-11-10 completion pass: `ab7c0704917d6f3181b1fb847fead86dc6392fcf` (CI: 7/7 green).
-Subsequent verified `main`: PR #78 merged at `3adb448c`; PR #79 then merged the native compositor at `de804c75`. PR #80 and PR #81 are follow-up work in progress and are not part of main until their checks pass and they merge.
+Subsequent verified `main`: PR #78 merged at `3adb448c`; PR #79 merged the native compositor at `de804c75`; PR #85 merged the mixed-markup safe-refusal explanation at `cf82462c`; PR #80 merged persistent native image caching at `dce1a750`; PR #86 merged checksum-fail-closed Geneva installation and the reproducible 1080p30 benchmark at `cc48ce81`. PR #81 and PR #83 remain open documentation follow-ups; neither is represented as merged.
 
 ## Mission
 
@@ -58,14 +58,7 @@ and an honest feature ledger. No fake green, no doc-only features.
 
 ## Next actions
 
-1. PR #80: keep the native still-image decode cache alive across all frames
-   in one bake; merge only after every required CI lane passes.
-2. PR #81: reconcile the known-issues list, implementation ledger, and
-   agent state with the code already merged in PRs #78 and #79.
-3. Remaining engineering work: native Lottie playback, VAAPI integration
-   with hardware validation, per-timeline view-state isolation, export
-   queue and timeline picker.
-4. Acceptance work that cannot be certified by hosted CI alone: measure
-   1080p proxy scrubbing on the actual antiX laptop and run a real
-   script-to-export Director project end to end. Do not claim hardware
-   speedups or complete workflow readiness without those tests.
+1. PR #81: finish and merge the known-issues/implementation-ledger reconciliation after all required CI checks pass.
+2. PR #83: finish and merge the canonical Geneva master list after all required CI checks pass.
+3. Remaining engineering work: native Lottie/dotLottie playback, timeline Motion-clip creation, per-timeline view-state isolation, export queue and timeline picker, and VAAPI encoding with real hardware validation.
+4. Acceptance work that hosted CI cannot certify: measure 1080p proxy scrubbing on the actual antiX laptop and run a real Director brief-to-export project end to end. Do not claim hardware speedups or complete workflow readiness without those tests.

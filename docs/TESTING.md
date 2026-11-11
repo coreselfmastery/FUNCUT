@@ -147,3 +147,29 @@ cargo nextest run --workspace        # the 1725 lane
 cargo test --workspace --doc         # the 8
 cargo nextest run -p concat-server --features grpc   # the 30
 ```
+
+
+## Measuring Geneva on the target Linux machine
+
+Hosted CI proves that the pinned sidecar and the rendered examples work;
+it does not measure the speed or memory use of a user's laptop. Run the
+reproducible 1080p30 workload on the machine whose performance matters:
+
+```sh
+python3 scripts/motion/benchmark-geneva.py
+```
+
+The script builds the release `concat-motion` layers example, generates
+its deterministic assets, removes the previous cache, and renders a cold
+10-second, 1920x1080, 30 fps reel through the installed Geneva sidecar.
+It writes `geneva-benchmark/benchmark.json`, the MP4, and the renderer's
+stdout/stderr logs. The report records the OS, architecture, CPU, sidecar
+version, wall time, output size and sampled process-tree RSS when Linux
+`/proc` is available. RSS is the sum of sampled process RSS values, so
+shared pages may be counted more than once; it is an operational estimate,
+not a kernel peak-memory guarantee.
+
+Run it on AC power and close other heavy applications for a comparable
+measurement. Keep the generated JSON with the machine label; do not copy
+hosted-runner numbers into the target-machine row. Re-run after a sidecar,
+renderer or major scene-quality change.

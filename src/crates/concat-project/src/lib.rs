@@ -4610,6 +4610,53 @@ mod tests {
     }
 
     #[test]
+    fn a_title_placement_is_held_to_the_title_safe_band() {
+        // Past half a frame of offset the title's block has no ink left
+        // inside the frame and shows nothing, silently, in preview and
+        // export alike - so a placement is held to the band the director
+        // prompts document, while keyframes and SetClipTransform stay
+        // free to fly a title in from off-frame.
+        use crate::commands::MAX_TITLE_PLACEMENT;
+        let mut editor = Editor::new();
+        let mut placed = |offset_y: f64| {
+            let clip_id = editor
+                .apply(Command::AddTextClip {
+                    track_id: None,
+                    above: true,
+                    start: 0.0,
+                    style: Some(TextStyle {
+                        content: "Hi".to_owned(),
+                        ..TextStyle::default()
+                    }),
+                    duration: Some(1.0),
+                    offset_y: Some(offset_y),
+                })
+                .expect("adds")
+                .created_id
+                .expect("id");
+            editor
+                .project()
+                .active()
+                .clip(&clip_id)
+                .expect("exists")
+                .offset_y
+        };
+        assert_eq!(
+            placed(0.72),
+            MAX_TITLE_PLACEMENT,
+            "the advertised lower-third range lands back inside the band"
+        );
+        assert_eq!(placed(5.0), MAX_TITLE_PLACEMENT, "as does anything past it");
+        assert_eq!(placed(-9.9), -MAX_TITLE_PLACEMENT, "either way up");
+        assert_eq!(
+            placed(0.35),
+            0.35,
+            "the documented lower third is untouched"
+        );
+        assert_eq!(placed(0.38), 0.38, "and so is a placement inside the band");
+    }
+
+    #[test]
     fn a_style_saying_text_reads_as_the_words() {
         // Everything else in the interface calls the words `text` -
         // `timeline_read` shows `text`, a caption entry carries a `text` -

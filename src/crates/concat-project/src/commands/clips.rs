@@ -173,7 +173,12 @@ pub(super) fn apply(
                 start,
                 duration,
             );
-            clip.offset_y = offset_y.unwrap_or(0.0).clamp(-MAX_OFFSET, MAX_OFFSET);
+            // A placement, not an animation: held to the title-safe band so
+            // the block keeps ink inside the frame (see MAX_TITLE_PLACEMENT),
+            // while keyframes and SetClipTransform stay free to fly one in.
+            clip.offset_y = offset_y
+                .unwrap_or(0.0)
+                .clamp(-MAX_TITLE_PLACEMENT, MAX_TITLE_PLACEMENT);
             clip.text = Some(style);
             timeline.clips.push(Arc::new(clip));
             Ok(Outcome {

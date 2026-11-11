@@ -37,6 +37,17 @@ const DEFAULT_TEXT_DURATION: f64 = 4.0;
 const DEFAULT_LAYER_DURATION: f64 = 5.0;
 /// Default hold for a freeze frame when the caller omits duration.
 const DEFAULT_FREEZE_DURATION: f64 = 1.0;
+/// How far a title's placement may sit from the centre of the frame, as a
+/// frame-height fraction. The renderer moves a title's whole block by this
+/// fraction of the frame height from the middle, so past half a frame the
+/// block has no ink left inside the frame and shows nothing - silently, in
+/// preview and export alike. 0.4 is the ceiling of the placement band the
+/// director prompts document (0.30-0.40): a one-line title at the
+/// recommended sizes (font 0.04-0.06) stays wholly inside the frame there,
+/// and even the largest recommended two-line block keeps its anchor on
+/// screen. Keyframes and [`Command::SetClipTransform`] are not held to it:
+/// a title that flies in from off-frame is an animation, not a placement.
+pub const MAX_TITLE_PLACEMENT: f64 = 0.4;
 pub(crate) use crate::model::ranges::{
     MAX_OFFSET, MAX_SCALE, MAX_SPEED, MAX_STRETCH, MAX_TIME, MIN_CLIP_DURATION, MIN_SCALE,
     MIN_SPEED, MIN_STRETCH, wrap_rotation,
@@ -384,8 +395,9 @@ pub enum Command {
         /// per clip - a batch cannot trim a clip whose id it cannot know yet.
         #[serde(default)]
         duration: Option<f64>,
-        /// Vertical placement as a frame-height fraction, clamped like
-        /// SetClipTransform. Lower thirds are made of this.
+        /// Vertical placement as a frame-height fraction from the centre,
+        /// positive down, held to the title-safe band; 0.35 is the
+        /// lower third.
         #[serde(default)]
         offset_y: Option<f64>,
     },

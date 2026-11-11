@@ -8,7 +8,7 @@ This file records limitations that remain on `main`. It is not a list of histori
 
 2. **Geneva sidecar is a pinned binary (v1.6.0, closed source).** Its limitations are documented in `docs/MOTION.md`: no path drawing, no variable-font axes, no in-keyframe weights, keyframes in px/% only, and markup animations static per bake. Keep the documented guards and warnings aligned with the actual sidecar behavior.
 
-3. **VAAPI hardware encode/decode is not wired into the application.** On this Linux-only fork, `HwDevice::platform_default()` returns `None` and `VideoCodec::encoders()` does not expose VAAPI. The Python motion-overlay sidecar has a VAAPI encode path, but that does not mean the native application uses it. Hardware-specific support must be implemented and tested on supported devices before being called complete.
+3. **Linux hardware acceleration is incomplete, not wholly absent.** VAAPI decode is implemented in `concat-media::hardware` and can be selected explicitly, but Linux has no automatic platform default (`HwDevice::platform_default()` returns `None`). The normal export encoder list does not include VAAPI encoders, so native VAAPI hardware encoding is still missing. Device availability, driver compatibility, fallback behavior and performance need testing on real Intel/AMD Linux hardware before enabling it by default.
 
 4. **Timeline view state is not isolated per timeline.** Zoom, scroll, playhead, and selection state can reset or carry incorrectly when switching timeline tabs. This requires a GUI-level fix and regression coverage.
 

@@ -4,9 +4,9 @@ This file records limitations that remain on `main`. It is not a list of histori
 
 ## Remaining limitations
 
-1. **No Lottie/dotLottie playback engine or timeline Motion-clip creation command.** `EngineKind::Lottie` is reserved, not implemented. The Bodymovin adapter imports a supported subset into comp nodes, but conversion is not playback; native `NodeKind::Lottie` explicitly draws nothing and warns.
+1. **No Lottie/dotLottie playback engine.** `EngineKind::Lottie` is reserved, not implemented. The Bodymovin adapter imports a supported subset into comp nodes, but conversion is not playback; native `NodeKind::Lottie` explicitly draws nothing and warns.
 
-2. **Geneva sidecar is a pinned binary (v1.6.0, closed source).** Its limitations are documented in `MOTION.md`: no path drawing, no variable-font axes, no in-keyframe weights, keyframes in px/% only, and markup animations static per bake. Keep the documented guards and warnings aligned with the actual sidecar behavior.
+2. **Geneva sidecar is a pinned binary (v1.6.0, closed source).** Its limitations are documented in `docs/MOTION.md`: no path drawing, no variable-font axes, no in-keyframe weights, keyframes in px/% only, and markup animations static per bake. Keep the documented guards and warnings aligned with the actual sidecar behavior.
 
 3. **VAAPI hardware encode/decode is not wired into the application.** On this Linux-only fork, `HwDevice::platform_default()` returns `None` and `VideoCodec::encoders()` does not expose VAAPI. The Python motion-overlay sidecar has a VAAPI encode path, but that does not mean the native application uses it. Hardware-specific support must be implemented and tested on supported devices before being called complete.
 

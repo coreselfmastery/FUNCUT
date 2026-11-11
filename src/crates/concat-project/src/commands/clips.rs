@@ -221,15 +221,11 @@ pub(super) fn apply(
         }
 
         Command::AddMotionClip {
-            track_id,
             start,
             duration,
             comp,
             hash,
             engine,
-            width,
-            height,
-            name,
         } => {
             let comp = comp.trim().to_owned();
             let hash = hash.trim().to_ascii_lowercase();
@@ -241,24 +237,15 @@ pub(super) fn apply(
                 .max(MIN_CLIP_DURATION);
             let start = within_timeline(start);
             let timeline = project.active_mut();
-            let track_id = match track_id {
-                Some(id) if timeline.track(&id).is_some() => id,
-                Some(_) => return Err(CommandError::TrackGone),
-                None => first_free_track_above(timeline, start, duration)
-                    .unwrap_or_else(|| fresh_track(timeline, mint)),
-            };
+            let track_id = first_free_track_above(timeline, start, duration)
+                .unwrap_or_else(|| fresh_track(timeline, mint));
             let start = timeline.nearest_free_start(&track_id, start, duration, &[]);
             let id = mint.next("c");
-            let label = if name.trim().is_empty() {
-                comp.clone()
-            } else {
-                name
-            };
             let mut clip = Clip::blank(
                 id.clone(),
                 track_id,
                 ClipKind::Motion,
-                label,
+                comp.clone(),
                 start,
                 duration,
             );
@@ -266,8 +253,8 @@ pub(super) fn apply(
                 comp,
                 hash,
                 engine,
-                width,
-                height,
+                width: 0,
+                height: 0,
             });
             timeline.clips.push(Arc::new(clip));
             Ok(Outcome {
@@ -1521,15 +1508,11 @@ mod motion_clip_tests {
             &mut project,
             &mut mint,
             Command::AddMotionClip {
-                track_id: Some("T2".into()),
                 start: 2.0,
                 duration: Some(4.0),
                 comp: "lower-third".into(),
                 hash: hash.clone(),
                 engine: "native".into(),
-                width: 1920,
-                height: 1080,
-                name: "Lower third".into(),
             },
         )
         .expect("valid motion clip");
@@ -1537,7 +1520,7 @@ mod motion_clip_tests {
         let id = outcome.created_id.expect("new clip id");
         let clip = project.active().clip(&id).expect("placed clip");
         assert_eq!(clip.kind, ClipKind::Motion);
-        assert_eq!(clip.track_id, "T2");
+        assert!(!clip.track_id.is_empty());
         assert_eq!(clip.start, 2.0);
         assert_eq!(clip.duration, 4.0);
         let motion = clip.motion.as_ref().expect("motion payload");
@@ -1561,16 +1544,12 @@ mod motion_clip_tests {
                 &mut project,
                 &mut mint,
                 Command::AddMotionClip {
-                    track_id: None,
                     above: true,
                     start: 0.0,
                     duration: None,
                     comp,
                     hash,
                     engine: engine.into(),
-                    width: 0,
-                    height: 0,
-                    name: String::new(),
                 },
             );
             assert_eq!(result, Err(CommandError::InvalidMotion));

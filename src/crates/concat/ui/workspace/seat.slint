@@ -406,6 +406,7 @@ export component Seat inherits Rectangle {
             scroll-left: Editor.scroll-left;
             seconds-per-pixel: Editor.seconds-per-pixel;
             duration-seconds: Editor.duration-seconds;
+            track-scroll: Editor.track-scroll;
 
             tab-selected(index) => { Editor.tab-selected(index); }
             tab-renamed(index, name) => { Editor.tab-renamed(index, name); }
@@ -436,6 +437,7 @@ export component Seat inherits Rectangle {
             zoom-to-fit(width) => { Editor.zoom-to-fit(width); }
             zoom(factor, anchor) => { Editor.zoom(factor, anchor); }
             lanes-resized(width) => { Editor.lanes-resized(width); }
+            track-scroll-changed(value) => { Editor.track-scroll-changed(value); }
             floor-pressed => { Editor.blur(); }
             key-mark-moved(from, to) => { Editor.key-mark-moved(from, to); }
             key-mark-opened => { Editor.key-mark-opened(); }

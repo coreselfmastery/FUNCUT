@@ -175,3 +175,48 @@ impl Exporter {
         self.slot.is_busy()
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use concat_project::DocumentSettings;
+
+    #[test]
+    fn timeline_request_uses_that_timelines_format_and_rejects_unknown_ids() {
+        let scratch =
+            std::env::temp_dir().join(format!("concat-export-request-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(&scratch).expect("scratch dir");
+        let settings = DocumentSettings {
+            name: "Export request".into(),
+            width: 1920,
+            height: 1080,
+            rate_num: 30,
+            rate_den: 1,
+        };
+        let session = Session::open(&scratch.to_string_lossy(), settings).expect("opens");
+        let timeline_id = session.project().active_timeline_id.clone();
+        let request = request_for_timeline(
+            &session,
+            &ExportSpec::default(),
+            Vec::new(),
+            &timeline_id,
+        )
+        .expect("known timeline");
+        assert_eq!((request.width, request.height), (1920, 1080));
+        assert_eq!((request.rate_num, request.rate_den), (30, 1));
+        assert!(
+            request_for_timeline(
+                &session,
+                &ExportSpec::default(),
+                Vec::new(),
+                "missing-timeline",
+            )
+            .is_err(),
+            "an unknown id must not silently export a different timeline"
+        );
+
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+}

@@ -14,7 +14,6 @@ use tiny_skia::Pixmap;
 use tlottie::{CPURenderer, Composition, Limits, RenderOptions};
 use zip::ZipArchive;
 
-
 const MAX_LOTTIE_JSON_BYTES: usize = 16 * 1024 * 1024;
 const MAX_DOTLOTTIE_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_DOTLOTTIE_MANIFEST_BYTES: u64 = 1024 * 1024;
@@ -51,8 +50,8 @@ impl Lottie {
         limits.max_dimension = MAX_LOTTIE_DIMENSION;
         limits.max_render_pixels = MAX_LOTTIE_PIXELS;
         limits.max_render_bytes = 128 * 1024 * 1024;
-        let composition =
-            Composition::parse(&json, &limits).map_err(|error| format!("Lottie parse failed: {error}"))?;
+        let composition = Composition::parse(&json, &limits)
+            .map_err(|error| format!("Lottie parse failed: {error}"))?;
         let (width, height) = (composition.width, composition.height);
         let frame_rate = composition.frame_rate;
         let (in_point, out_point) = (composition.in_point, composition.out_point);
@@ -161,7 +160,10 @@ fn read_bounded_file(path: &Path, maximum: u64) -> Result<Vec<u8>, String> {
     let metadata = std::fs::metadata(path)
         .map_err(|error| format!("cannot inspect Lottie asset {}: {error}", path.display()))?;
     if metadata.len() > maximum {
-        return Err(format!("Lottie asset exceeds the {}-byte input limit", maximum));
+        return Err(format!(
+            "Lottie asset exceeds the {}-byte input limit",
+            maximum
+        ));
     }
     let bytes = std::fs::read(path)
         .map_err(|error| format!("cannot read Lottie asset {}: {error}", path.display()))?;
@@ -215,7 +217,9 @@ fn read_dotlottie_json(path: &Path) -> Result<Vec<u8>, String> {
             manifest.get("activeAnimationId").and_then(Value::as_str),
         )
     } else {
-        return Err(format!("unsupported dotLottie manifest version {version:?}"));
+        return Err(format!(
+            "unsupported dotLottie manifest version {version:?}"
+        ));
     };
     let animations = manifest
         .get("animations")
@@ -230,9 +234,9 @@ fn read_dotlottie_json(path: &Path) -> Result<Vec<u8>, String> {
         .ok_or_else(|| "dotLottie manifest contains no animation id".to_owned())?;
     if id.is_empty()
         || matches!(id, "." | "..")
-        || !id
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-' | ' '))
+        || !id.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '_' | '-' | ' ')
+        })
     {
         return Err("dotLottie animation id contains unsafe path characters".into());
     }
@@ -267,16 +271,26 @@ fn ensure_supported_lottie(json: &[u8]) -> Result<(), String> {
                 .ok_or_else(|| "Lottie layer has no numeric type".to_owned())?;
             match kind {
                 0 | 1 | 3 | 4 => {}
-                2 => return Err("Lottie image layers are not yet supported by the CPU player".into()),
-                5 => return Err("Lottie text layers are not yet supported by the CPU player".into()),
-                _ => return Err(format!("Lottie layer type {kind} is not supported by the CPU player")),
+                2 => {
+                    return Err(
+                        "Lottie image layers are not yet supported by the CPU player".into(),
+                    );
+                }
+                5 => {
+                    return Err("Lottie text layers are not yet supported by the CPU player".into());
+                }
+                _ => {
+                    return Err(format!(
+                        "Lottie layer type {kind} is not supported by the CPU player"
+                    ));
+                }
             }
         }
         Ok(())
     }
 
-    let value: Value = serde_json::from_slice(json)
-        .map_err(|error| format!("invalid Lottie JSON: {error}"))?;
+    let value: Value =
+        serde_json::from_slice(json).map_err(|error| format!("invalid Lottie JSON: {error}"))?;
     if let Some(layers) = value.get("layers").and_then(Value::as_array) {
         inspect_layers(layers)?;
     }
@@ -306,7 +320,12 @@ pub(crate) struct Pictures {
 impl Pictures {
     /// The requested frame of a Lottie or dotLottie asset, parsed once per bake.
     /// Errors are cached too, so a broken asset is not re-read on every frame.
-    pub(crate) fn lottie_frame(&mut self, path: &Path, at: f64, looped: bool) -> Result<Pixmap, String> {
+    pub(crate) fn lottie_frame(
+        &mut self,
+        path: &Path,
+        at: f64,
+        looped: bool,
+    ) -> Result<Pixmap, String> {
         self.lotties.frame(path, at, looped)
     }
 
@@ -433,14 +452,18 @@ mod tests {
         let path = temp("animation.json");
         std::fs::write(&path, SOLID_LOTTIE).unwrap();
         let mut pictures = Pictures::default();
-        let first = pictures.lottie_frame(&path, 0.0, false).expect("Lottie frame");
+        let first = pictures
+            .lottie_frame(&path, 0.0, false)
+            .expect("Lottie frame");
         assert_eq!((first.width(), first.height()), (32, 32));
         let center = (16 * 32 + 16) * 4;
         let pixel = first.data().get(center..center + 4).unwrap();
         assert!(pixel[3] > 0, "the Lottie solid should be visible");
         assert!(pixel[0] > pixel[1], "the Lottie solid should be red");
         std::fs::remove_file(&path).unwrap();
-        let second = pictures.lottie_frame(&path, 0.5, false).expect("cached Lottie parser");
+        let second = pictures
+            .lottie_frame(&path, 0.5, false)
+            .expect("cached Lottie parser");
         assert_eq!(first.data(), second.data());
     }
 
@@ -465,7 +488,9 @@ mod tests {
                 br#"{"version":"2","initial":{"animation":"selected"},"animations":[{"id":"first"},{"id":"selected"}]}"#,
             )
             .unwrap();
-        writer.start_file("a/selected.json", options.clone()).unwrap();
+        writer
+            .start_file("a/selected.json", options.clone())
+            .unwrap();
         writer.write_all(SOLID_LOTTIE.as_bytes()).unwrap();
         let bytes = writer.finish().unwrap().into_inner();
         std::fs::write(&path, bytes).unwrap();
@@ -484,7 +509,9 @@ mod tests {
                 br#"{"version":"1","activeAnimationId":"selected","animations":[{"id":"first"},{"id":"selected"}]}"#,
             )
             .unwrap();
-        writer.start_file("animations/selected.json", options.clone()).unwrap();
+        writer
+            .start_file("animations/selected.json", options.clone())
+            .unwrap();
         writer.write_all(SOLID_LOTTIE.as_bytes()).unwrap();
         let bytes = writer.finish().unwrap().into_inner();
         std::fs::write(&path, bytes).unwrap();

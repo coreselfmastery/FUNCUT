@@ -223,7 +223,7 @@ pub(super) fn apply(
         Command::AddMotionClip { start, comp, hash } => {
             let comp = comp.trim().to_owned();
             let hash = hash.trim().to_ascii_lowercase();
-            let engine = "native";
+            let engine = "geneva";
             if !valid_motion_reference(&comp, &hash, engine) {
                 return Err(CommandError::InvalidMotion);
             }
@@ -1505,7 +1505,7 @@ mod motion_clip_tests {
             0.0,
             12.0,
         )));
-        let hash = "a".repeat(64);
+        let hash = "a".repeat(16);
         let outcome = apply(
             &mut project,
             &mut mint,
@@ -1541,7 +1541,7 @@ mod motion_clip_tests {
         let motion = clip.motion.as_ref().expect("motion payload");
         assert_eq!(motion.comp, "lower-third");
         assert_eq!(motion.hash, hash);
-        assert_eq!(motion.engine, "native");
+        assert_eq!(motion.engine, "geneva");
         assert_eq!((motion.width, motion.height), (0, 0));
     }
 
@@ -1551,7 +1551,8 @@ mod motion_clip_tests {
         let mut mint = IdMint::default();
         let cases = [
             ("comp".to_owned(), "short".to_owned()),
-            ("../escape".to_owned(), "c".repeat(64)),
+            ("comp".to_owned(), "c".repeat(64)),
+            ("../escape".to_owned(), "c".repeat(16)),
         ];
         for (comp, hash) in cases {
             let result = apply(

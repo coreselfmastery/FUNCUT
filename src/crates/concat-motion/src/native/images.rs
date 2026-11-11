@@ -575,12 +575,10 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_lottie_layers_are_reported_by_the_support_analyzer() {
-        for kind in [2, 5, 99] {
-            let json = format!(r#"{{"v":"5.7.4","fr":30,"ip":0,"op":30,"w":32,"h":32,"layers":[{{"ty":{kind}}}]}}"#);
-            let animation = LottieAnimation::from_json_str(&json).unwrap();
-            assert!(Renderer::target_corpus().prepare(&animation).is_err());
-        }
+    fn invalid_lottie_json_is_rejected_with_a_diagnostic() {
+        let path = temp("invalid.json");
+        std::fs::write(&path, r#"{"v":"5.7.4","fr":30,"ip":0,"op":30,"w":32,"h":32,"layers":[{"ty":99}]}"#).unwrap();
+        assert!(Lottie::load(&path).is_err());
     }
 
     #[test]

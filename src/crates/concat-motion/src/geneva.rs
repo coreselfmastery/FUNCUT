@@ -47,6 +47,25 @@ pub const TIMELINE_VERSION: &str = "1.1";
 /// but a different major version is refused with the reason.
 pub const TESTED_VERSION: &str = "1.6.0";
 
+/// Refuse a Geneva bake when the canonical capability walk says the
+/// flattened timeline would lose native-only content. Engine selection routes
+/// non-markup comps to native; a mixed markup comp has no lossless fallback,
+/// so failing loudly is safer than exporting a silently degraded frame.
+fn ensure_geneva_expressible(comp: &Comp) -> Result<(), MotionError> {
+    let missing = comp.geneva_inexpressible();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(MotionError::Unsupported {
+        node: comp.id.clone(),
+        what: format!(
+            "content Geneva cannot represent losslessly: {}",
+            missing.join(", ")
+        ),
+        engine: EngineKind::Geneva,
+    })
+}
+
 /// Why a version cannot be trusted, when its major is not the one this crate
 /// was written for. Optional fields may arrive within a major; a different
 /// major is a different format, and is never silently baked with.
@@ -1038,6 +1057,7 @@ impl CompEngine for Geneva {
                 diagnostics: problems,
             });
         }
+        ensure_geneva_expressible(comp)?;
         let version = self.version()?;
         if let Some(reason) = major_mismatch(&version) {
             return Err(MotionError::Engine {
@@ -1161,6 +1181,7 @@ impl CompEngine for Geneva {
                 diagnostics: problems,
             });
         }
+        ensure_geneva_expressible(comp)?;
         // One scratch directory a call, so two frames asked for one comp do
         // not write the same file over each other.
         static CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -2076,6 +2097,91 @@ mod tests {
             }],
             slots: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_markup_comp_with_native_only_content_is_refused_instead_of_degraded() {
+        let mut comp = text_comp();
+        comp.nodes[0].kind = NodeKind::Html {
+            markup: "<div>title</div>".into(),
+            css: String::new(),
+            width: Length::Auto,
+            height: Length::Auto,
+        };
+        let mut shape = comp.nodes[0].clone();
+        shape.id = "gradient".into();
+        shape.kind = NodeKind::Ellipse {
+            width: Length::px(100.0),
+            height: Length::px(100.0),
+            fill: Some(Paint::Gradient {
+                stops: vec![(0.0, Rgba::hex("#ff0000")), (1.0, Rgba::hex("#0000ff"))],
+                ramp: Default::default(),
+                angle: 90.0,
+                from: 0.0,
+                to: 1.0,
+            }),
+        };
+        comp.nodes.push(shape);
+        assert!(matches!(
+            ensure_geneva_expressible(&comp),
+            Err(MotionError::Unsupported {
+                engine: EngineKind::Geneva,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn bake_and_frame_refuse_mixed_markup_before_contacting_the_sidecar() {
+        let mut comp = text_comp();
+        comp.nodes[0].kind = NodeKind::Html {
+            markup: "<div>title</div>".into(),
+            css: String::new(),
+            width: Length::Auto,
+            height: Length::Auto,
+        };
+        let mut shape = comp.nodes[0].clone();
+        shape.id = "gradient".into();
+        shape.kind = NodeKind::Ellipse {
+            width: Length::px(100.0),
+            height: Length::px(100.0),
+            fill: Some(Paint::Gradient {
+                stops: vec![(0.0, Rgba::hex("#ff0000")), (1.0, Rgba::hex("#0000ff"))],
+                ramp: Default::default(),
+                angle: 90.0,
+                from: 0.0,
+                to: 1.0,
+            }),
+        };
+        comp.nodes.push(shape);
+        let engine = Geneva::at("/no/such/geneva");
+        let dir = tempfile::tempdir().expect("temporary bake directory");
+        assert!(matches!(
+            engine.bake(&comp, &BakeRequest::default(), dir.path()),
+            Err(MotionError::Unsupported {
+                engine: EngineKind::Geneva,
+                ..
+            })
+        ));
+        assert!(matches!(
+            engine.frame(&comp, 0.5, None, dir.path()),
+            Err(MotionError::Unsupported {
+                engine: EngineKind::Geneva,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_markup_comp_without_native_only_content_remains_geneva_expressible() {
+        let mut comp = text_comp();
+        comp.nodes[0].kind = NodeKind::Html {
+            markup: "<div>title</div>".into(),
+            css: String::new(),
+            width: Length::Auto,
+            height: Length::Auto,
+        };
+        assert!(ensure_geneva_expressible(&comp).is_ok());
     }
 
     #[test]

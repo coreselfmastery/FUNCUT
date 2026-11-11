@@ -98,8 +98,13 @@ impl EnginePreference {
     /// that is not installed is not an error here: it becomes one at bake
     /// time, with the comp's id in the message.
     pub fn engine_for(&self, comp: &Comp, geneva_available: bool) -> EngineKind {
-        if self.default == EngineKind::Geneva && !geneva_available && !comp.needs_markup() {
-            return EngineKind::Native;
+        if self.default == EngineKind::Geneva && !comp.needs_markup() {
+            // Prefer the native compositor when Geneva's own mapper says a
+            // feature would be dropped or approximated. This keeps the
+            // default engine from silently trading fidelity for availability.
+            if !geneva_available || !comp.geneva_inexpressible().is_empty() {
+                return EngineKind::Native;
+            }
         }
         self.default
     }
@@ -118,10 +123,19 @@ impl EnginePreference {
     /// the sidecar is not answering.
     pub fn choose(&self, comp: &Comp, sidecar: Sidecar) -> Choice {
         match sidecar {
-            Sidecar::Ready => Choice {
-                engine: self.engine_for(comp, true),
-                note: None,
-            },
+            Sidecar::Ready => {
+                let engine = self.engine_for(comp, true);
+                Choice {
+                    engine,
+                    note: (engine == EngineKind::Native
+                        && self.default == EngineKind::Geneva
+                        && !comp.needs_markup())
+                    .then(|| {
+                        "geneva would drop or approximate a feature in this comp; drawing it                          on the native engine to preserve fidelity"
+                            .to_owned()
+                    }),
+                }
+            }
             Sidecar::Missing => Choice {
                 engine: self.engine_for(comp, false),
                 note: (!comp.needs_markup() && self.default == EngineKind::Geneva).then(|| {
@@ -631,6 +645,146 @@ mod tests {
         // A comp the native engine can draw falls back to it when the
         // sidecar is missing, as the crate docs promise.
         assert_eq!(preference.engine_for(&comp, false), EngineKind::Native);
+    }
+
+    #[test]
+    fn nested_markup_stays_on_geneva_when_the_sidecar_is_missing() {
+        let mut outer = comp_with(NodeKind::Composition {
+            comp: "inner".into(),
+        });
+        let inner = comp_with(NodeKind::Html {
+            markup: "<div>nested</div>".into(),
+            css: String::new(),
+            width: Length::Auto,
+            height: Length::Auto,
+        });
+        outer.comps.insert("inner".into(), inner);
+        assert!(outer.needs_markup());
+        assert_eq!(
+            EnginePreference::default().engine_for(&outer, false),
+            EngineKind::Geneva
+        );
+    }
+
+    #[test]
+    fn nested_native_only_features_select_the_native_compositor() {
+        let mut outer = comp_with(NodeKind::Composition {
+            comp: "inner".into(),
+        });
+        let inner = comp_with(NodeKind::Ellipse {
+            width: Length::px(100.0),
+            height: Length::px(100.0),
+            fill: Some(Paint::Gradient {
+                stops: vec![(0.0, Rgba::hex("#ff0000")), (1.0, Rgba::hex("#0000ff"))],
+                ramp: Default::default(),
+                angle: 90.0,
+                from: 0.0,
+                to: 1.0,
+            }),
+        });
+        outer.comps.insert("inner".into(), inner);
+        assert_eq!(
+            EnginePreference::default().engine_for(&outer, true),
+            EngineKind::Native
+        );
+    }
+
+    #[test]
+    fn a_shape_gradient_uses_native_instead_of_genevas_solid_colour_approximation() {
+        let comp = comp_with(NodeKind::Ellipse {
+            width: Length::px(100.0),
+            height: Length::px(100.0),
+            fill: Some(Paint::Gradient {
+                stops: vec![(0.0, Rgba::hex("#ff0000")), (1.0, Rgba::hex("#0000ff"))],
+                ramp: Default::default(),
+                angle: 90.0,
+                from: 0.0,
+                to: 1.0,
+            }),
+        });
+        let preference = EnginePreference::default();
+        // A sidecar is installed, but its shape mapper would average this
+        // gradient to one colour. The native compositor draws the real ramp.
+        assert_eq!(preference.engine_for(&comp, true), EngineKind::Native);
+        let choice = preference.choose(&comp, Sidecar::Ready);
+        assert_eq!(choice.engine, EngineKind::Native);
+        assert!(
+            choice
+                .note
+                .as_deref()
+                .unwrap_or_default()
+                .contains("preserve fidelity")
+        );
+        // Missing-sidecar behaviour remains the same.
+        assert_eq!(preference.engine_for(&comp, false), EngineKind::Native);
+    }
+
+    #[test]
+    fn a_scaled_or_rotated_group_uses_native_for_its_children() {
+        let mut comp = comp_with(NodeKind::Group {
+            children: vec!["child".into()],
+        });
+        comp.nodes[0].transform.scale = 1.5;
+        let mut child = comp_with(NodeKind::Rect {
+            width: Length::px(10.0),
+            height: Length::px(10.0),
+            fill: Some(Paint::Solid {
+                color: Rgba::hex("#fff"),
+            }),
+            radius: 0.0,
+        })
+        .nodes
+        .remove(0);
+        child.id = "child".into();
+        child.parent = Some("n".into());
+        comp.nodes.push(child);
+        assert_eq!(
+            EnginePreference::default().engine_for(&comp, true),
+            EngineKind::Native
+        );
+    }
+
+    #[test]
+    fn a_positioned_parent_with_an_unpositioned_child_uses_native() {
+        let mut comp = comp_with(NodeKind::Group {
+            children: vec!["child".into()],
+        });
+        comp.nodes[0].transform.position = Some(crate::comp::Point::new(80.0, 40.0));
+        let mut child = comp_with(NodeKind::Rect {
+            width: Length::px(10.0),
+            height: Length::px(10.0),
+            fill: Some(Paint::Solid {
+                color: Rgba::hex("#fff"),
+            }),
+            radius: 0.0,
+        })
+        .nodes
+        .remove(0);
+        child.id = "child".into();
+        child.parent = Some("n".into());
+        // With no explicit child position, Geneva's flattened layer cannot
+        // reliably inherit the group's origin; native composes the hierarchy.
+        comp.nodes.push(child);
+        assert_eq!(
+            EnginePreference::default().engine_for(&comp, true),
+            EngineKind::Native
+        );
+    }
+
+    #[test]
+    fn a_plain_shape_still_uses_geneva_when_it_preserves_fidelity() {
+        let comp = comp_with(NodeKind::Rect {
+            width: Length::px(10.0),
+            height: Length::px(10.0),
+            fill: Some(Paint::Solid {
+                color: Rgba::hex("#fff"),
+            }),
+            radius: 0.0,
+        });
+        assert_eq!(
+            EnginePreference::default().engine_for(&comp, true),
+            EngineKind::Geneva
+        );
     }
 
     #[test]

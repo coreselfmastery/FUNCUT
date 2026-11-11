@@ -985,12 +985,13 @@ impl Comp {
 
     /// Whether anything in this comp only a markup engine can draw.
     ///
-    /// True when a node is markup. Everything else - shapes, paths, text,
-    /// images, nested comps - the project's own renderer draws.
+    /// True when this comp or any nested sub-comp contains markup. Shapes,
+    /// paths, text and images are drawn by the project's own renderer.
     pub fn needs_markup(&self) -> bool {
         self.nodes
             .iter()
             .any(|node| matches!(node.kind, NodeKind::Html { .. }))
+            || self.comps.values().any(Comp::needs_markup)
     }
 
     /// The capabilities this comp uses that a Geneva timeline cannot draw,
@@ -1046,15 +1047,32 @@ impl Comp {
             if node.matte.is_some() {
                 note("a track matte");
             }
-            // A parent's scale and rotation are inherited by its children in
-            // the document's semantics ("relative to its parent"), but a
-            // flattened timeline can only carry positions down the chain -
-            // so a scaled or rotated parent is a divergence, not a detail.
-            if let Some(parent) = &node.parent
-                && let Some(parent_node) = self.node(parent)
-                && (parent_node.transform.scale != 1.0 || parent_node.transform.rotation != 0.0)
-            {
-                note("a scaled or rotated parent");
+            // A parent's world transform is inherited by its children,
+            // but Geneva's flattened timeline cannot compose the full
+            // hierarchy. Route any such comp to native instead of silently
+            // dropping a parent placement or transform.
+            let mut parent = node.parent.as_deref();
+            let mut depth = 0;
+            while let Some(id) = parent {
+                if depth >= 32 {
+                    note("a parent chain deeper than Geneva can flatten");
+                    break;
+                }
+                let Some(parent_node) = self.node(id) else {
+                    break;
+                };
+                if parent_node.transform.position.is_some()
+                    || parent_node.transform.scale != 1.0
+                    || parent_node.transform.rotation != 0.0
+                    || parent_node.tracks.contains_key("position")
+                    || parent_node.tracks.contains_key("scale")
+                    || parent_node.tracks.contains_key("rotation")
+                {
+                    note("an inherited parent transform");
+                    break;
+                }
+                parent = parent_node.parent.as_deref();
+                depth += 1;
             }
             for effect in &node.effects {
                 match effect {

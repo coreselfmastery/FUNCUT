@@ -63,7 +63,8 @@ def process_tree_rss_kib(root_pid: int) -> int | None:
         if not entry.name.isdigit():
             continue
         try:
-            fields = (entry / "stat").read_text().split(")", 1)[1].split()
+            stat = (entry / "stat").read_text()
+            fields = stat[stat.rfind(")") + 2 :].split()
             pid = int(entry.name)
             parents[pid] = int(fields[1])
             rss[pid] = max(0, int(fields[21])) * page_kib
@@ -153,6 +154,10 @@ def main() -> int:
     cache = output_dir / "cache"
     stdout_path = output_dir / "render.stdout.json"
     stderr_path = output_dir / "render.stderr.log"
+    # Always measure a cold render: stale output or a previous cache hit
+    # would make a repeat run look faster than the work it is meant to test.
+    video.unlink(missing_ok=True)
+    shutil.rmtree(cache, ignore_errors=True)
     command = [
         str(EXAMPLE),
         "-o",
@@ -215,6 +220,7 @@ def main() -> int:
         "geneva": {"binary": str(geneva), "version": version},
         "measurement": {
             "render_wall_seconds": round(elapsed, 3),
+            "cache_policy": "cold; previous cache removed before render",
             "peak_process_tree_rss_mib": (
                 round(memory_kib / 1024, 1) if memory_kib is not None else None
             ),

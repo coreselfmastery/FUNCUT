@@ -106,7 +106,7 @@ No item from the original ten-finding register is currently listed as open. The 
 
 - [ ] Recheck the full Geneva workflow on the final merged `main` commit after pending PRs merge.
 - [ ] Keep scene-quality and golden-frame gates green on every relevant change; review any intentional golden/quality-floor update.
-- [ ] Run and record representative timing/memory measurements on the target low-memory Linux machine for realistic 1080p motion workloads. Hosted CI proves correctness, not target-device speed.
+- [ ] Run and record representative timing/memory measurements on the target low-memory Linux machine for realistic 1080p motion workloads. PR #87 adds a reproducible cold 1080p30 Geneva benchmark that records machine, sidecar version, wall time, output size and sampled process-tree RSS; it still needs CI/merge and a real antiX run. Hosted CI proves correctness, not target-device speed.
 - [ ] Add true Geneva support for mixed markup comps that also use native-only shape gradients, mattes, effects, paths or masks. PR #84 has shipped an explicit safe refusal and native fallback for non-markup comps; true rendering parity remains open.
 - [ ] Decide whether mixed markup needs full inherited transform parity; the native fallback cannot be used for HTML/CSS comps.
 - [x] PR #84 makes `needs_markup()` recursive so nested HTML sub-comps do not incorrectly fall back to native when the sidecar is missing; regression coverage is included.

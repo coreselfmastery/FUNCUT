@@ -234,15 +234,7 @@ pub(super) fn apply(
         } => {
             let comp = comp.trim().to_owned();
             let hash = hash.trim().to_ascii_lowercase();
-            if comp.is_empty()
-                || matches!(comp.as_str(), "." | "..")
-                || !comp.chars().all(|character| {
-                    character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
-                })
-                || hash.len() != 64
-                || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
-                || !matches!(engine.as_str(), "geneva" | "native" | "lottie")
-            {
+            if !valid_motion_reference(&comp, &hash, &engine) {
                 return Err(CommandError::InvalidMotion);
             }
             let duration = duration
@@ -1557,6 +1549,74 @@ mod motion_clip_tests {
         assert_eq!(motion.hash, hash);
         assert_eq!(motion.engine, "native");
         assert_eq!((motion.width, motion.height), (1920, 1080));
+    }
+
+    #[test]
+    fn update_motion_clip_replaces_only_a_valid_motion_reference() {
+        let mut project = Project::new();
+        let mut mint = IdMint::default();
+        let created = apply(
+            &mut project,
+            &mut mint,
+            Command::AddMotionClip {
+                track_id: Some("T2".into()),
+                above: true,
+                start: 0.0,
+                duration: Some(3.0),
+                comp: "first".into(),
+                hash: "a".repeat(64),
+                engine: "native".into(),
+                width: 0,
+                height: 0,
+                name: "Motion".into(),
+            },
+        )
+        .unwrap();
+        let id = created.created_id.unwrap();
+        let updated = crate::model::MotionClip {
+            comp: "second".into(),
+            hash: "b".repeat(64),
+            engine: "geneva".into(),
+            width: 1280,
+            height: 720,
+        };
+        let outcome = apply(
+            &mut project,
+            &mut mint,
+            Command::UpdateClip {
+                clip_id: id.clone(),
+                patch: ClipPatch {
+                    motion: Some(updated.clone()),
+                    ..ClipPatch::default()
+                },
+            },
+        )
+        .unwrap();
+        assert!(outcome.applied);
+        assert_eq!(project.active().clip(&id).unwrap().motion.as_ref(), Some(&updated));
+
+        let result = apply(
+            &mut project,
+            &mut mint,
+            Command::UpdateClip {
+                clip_id: id.clone(),
+                patch: ClipPatch {
+                    name: Some("must not partially apply".into()),
+                    motion: Some(crate::model::MotionClip {
+                        comp: "../escape".into(),
+                        hash: "c".repeat(64),
+                        engine: "native".into(),
+                        width: 0,
+                        height: 0,
+                    }),
+                    ..ClipPatch::default()
+                },
+            },
+        );
+        assert_eq!(result, Err(CommandError::InvalidMotion));
+        let clip = project.active().clip(&id).unwrap();
+        assert_eq!(clip.name, "Motion");
+        assert_eq!(clip.motion.as_ref(), Some(&updated));
     }
 
     #[test]

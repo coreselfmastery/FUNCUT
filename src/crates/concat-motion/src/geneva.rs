@@ -47,7 +47,6 @@ pub const TIMELINE_VERSION: &str = "1.1";
 /// but a different major version is refused with the reason.
 pub const TESTED_VERSION: &str = "1.6.0";
 
-
 /// Whether flattening this comp onto Geneva would lose a capability the
 /// native compositor already implements. The timeline mapper is the single
 /// source of truth for this decision: do not maintain a second list of

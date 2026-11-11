@@ -52,6 +52,8 @@ jobs:
           components: rustfmt
       - run: cargo fmt --check
         working-directory: src
+      - run: python3 -m py_compile scripts/motion/benchmark-geneva.py
+      - run: python3 scripts/motion/benchmark-geneva.py --help >/dev/null
       # Every string the interface shows is a key in a locale file; this
       # keeps en.json the inventory of them and every shipped language
       # keyed off it. See TRANSLATING.md.

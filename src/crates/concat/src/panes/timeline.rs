@@ -352,11 +352,14 @@ mod tests {
     fn switching_timelines_restores_independent_view_state() {
         let mut views = TimelineViews::default();
         let mut current = pane(900.0, 12.0, 0.08);
-        current.tool = TimelineTool::Hand;
+        current.tool = TimelineTool::Split;
         current.snap = false;
         current.lane_view.insert(
             "track-a".to_owned(),
-            LaneView { locked: true, size: TrackSize::Small },
+            LaneView {
+                locked: true,
+                size: TrackSize::Small,
+            },
         );
 
         views.switch("timeline-a", "timeline-b", &mut current, 4.0);
@@ -372,7 +375,7 @@ mod tests {
         views.switch("timeline-b", "timeline-a", &mut current, 8.0);
         assert_eq!(current.scroll_left, 12.0);
         assert_eq!(current.seconds_per_pixel, 0.08);
-        assert!(matches!(current.tool, TimelineTool::Hand));
+        assert!(matches!(current.tool, TimelineTool::Split));
         assert!(!current.snap);
         let lane = current.lane_view.get("track-a").expect("saved lane view");
         assert!(lane.locked);

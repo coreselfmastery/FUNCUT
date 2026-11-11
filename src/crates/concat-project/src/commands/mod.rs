@@ -425,10 +425,8 @@ pub enum Command {
         /// language, which the document cannot know.
         name: String,
     },
-    /// Add a motion clip to the timeline.
+    /// Add a motion clip to a free lane above the picture.
     AddMotionClip {
-        /// Lane id; absent selects a free lane above the picture.
-        track_id: Option<String>,
         /// Timeline start in seconds.
         start: f64,
         /// Duration in seconds; absent defaults to five.
@@ -440,15 +438,6 @@ pub enum Command {
         hash: String,
         /// Renderer: geneva, native or lottie.
         engine: String,
-        /// Bake width; zero uses the comp width.
-        #[serde(default)]
-        width: u32,
-        /// Bake height; zero uses the comp height.
-        #[serde(default)]
-        height: u32,
-        /// Timeline label.
-        #[serde(default)]
-        name: String,
     },
     /// Places a layer: a look or an effect over a span of the timeline that
     /// treats everything beneath it. No media; the chain starts as the one

@@ -280,7 +280,10 @@ jobs:
           exit "$status"
       # nextest does not run the examples in the documentation; cargo does.
       - name: Run the documentation's examples
-        timeout-minutes: 10
+        # This workspace's doc-test build is a separate cold compile after
+        # nextest. The 10-minute limit killed it after compilation had
+        # finished and all doctests were passing; allow the cold path to end.
+        timeout-minutes: 15
         working-directory: src
         run: cargo test --workspace --doc -j 1
       # The gRPC transport is a feature nothing else in the workspace turns

@@ -51,8 +51,8 @@ Geneva is a substantial, integrated motion-rendering path, not a placeholder. Th
 - [x] CI asserts rendered example reports, frame dimensions/content and output existence instead of treating process exit alone as proof.
 
 **Known boundaries, not silently “fixed”:**
-- Shape gradients are reduced to a representative colour by the current Geneva bridge; this is not full per-pixel gradient parity for every native shape case.
-- `absolute_position` folds ancestor positions only; it does not apply ancestor scale or rotation, and traversal is depth-limited.
+- Shape gradients are reduced to a representative colour by the Geneva bridge. PR #84 adds a fidelity-based native fallback for non-markup comps when the mapper reports this loss; mixed markup comps still require Geneva and retain this limitation.
+- `absolute_position` folds static ancestor positions only. PR #84 adds native fallback for non-markup comps with inherited parent position tracks, scale or rotation; mixed markup comps still retain the flattened-transform limitation.
 - Geneva's PNG-sequence output carries alpha. The `alpha` request field is retained in cache/manifest identity, but does not change Geneva's RGBA pixels.
 - A missing sidecar can fall back to the native compositor only for content that native supports. Native fallback is not equivalent to Geneva markup/CSS rendering.
 - A golden update is a reviewed change: do not refresh reference images merely to silence a failing visual regression.

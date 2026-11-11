@@ -58,7 +58,10 @@ fn ensure_geneva_expressible(comp: &Comp) -> Result<(), MotionError> {
     }
     Err(MotionError::Unsupported {
         node: comp.id.clone(),
-        what: format!("content Geneva cannot represent losslessly: {}", missing.join(", ")),
+        what: format!(
+            "content Geneva cannot represent losslessly: {}",
+            missing.join(", ")
+        ),
         engine: EngineKind::Geneva,
     })
 }

@@ -124,7 +124,7 @@ These must remain on the broader FUNCUT release tracker, not be misreported as G
 
 - Native Lottie/dotLottie playback; the `lottie` engine is reserved and import/conversion is not playback.
 - Timeline Motion-clip creation/edit command and full editor UI lifecycle.
-- Per-timeline view-state isolation.
+- Per-timeline view-state isolation (implemented by PR #88; merge-commit CI evidence still required).
 - Export queue and explicit timeline picker.
 - Linux VAAPI encode integration and hardware validation.
 - 1080p proxy performance measurements on the actual antiX laptop, including H.264 versus MJPEG tradeoffs.
@@ -134,7 +134,7 @@ These must remain on the broader FUNCUT release tracker, not be misreported as G
 
 Geneva is ready for a release candidate when all of the following are true on the same commit:
 
-- [x] The current `main` SHA is recorded: `e3114ca8168b6008dc0366cb99c81b1c8e22c5e7`.
+- [x] The current `main` SHA is recorded: `56bde7c85e9fedc817092e2fdad59a3c19aeb09f` (PR #88 merge).
 - [ ] Geneva example and dependency-dance jobs pass on that SHA.
 - [ ] Required workspace tests, clippy and formatting checks pass on that SHA.
 - [ ] Scene-quality and golden-frame checks pass without unreviewed baseline changes.

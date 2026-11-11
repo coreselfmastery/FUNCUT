@@ -1188,12 +1188,10 @@ impl Command {
                         ])
                     })
             }
-            Command::AddLayerClip {
-                start, duration, ..
+            Command::AddLayerClip { start, duration, .. } => {
+                bad([*start]) || bad(*duration)
             }
-            | Command::AddMotionClip {
-                start, duration, ..
-            } => bad([*start]) || bad(*duration),
+            Command::AddMotionClip { start, .. } => bad([*start]),
             Command::SetClipSpeedCurve { curve, .. } => {
                 bad(curve
                     .iter()

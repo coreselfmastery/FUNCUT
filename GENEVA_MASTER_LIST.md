@@ -37,7 +37,7 @@ Geneva is a substantial, integrated motion-rendering path, not a placeholder. Th
 
 **Important operational truth:** a Geneva cache hit still requires the live sidecar to answer its version query. The cache avoids rendering; it is not a sidecar-free offline renderer. This is intentional and documented in the source.
 
-**Evidence:** `geneva.rs`, `cache.rs`, `hash.rs`, `reel.rs`, `sequence.rs`, and `PERFORMANCE.md` in the motion crate.
+**Evidence:** `geneva.rs`, `cache.rs`, `hash.rs`, `reel.rs`, `sequence.rs`, and `docs/PERFORMANCE.md`.
 
 ## 3. Reliability pillar — implemented, with known boundaries
 

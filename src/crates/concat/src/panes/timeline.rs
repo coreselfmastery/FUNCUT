@@ -439,6 +439,8 @@ mod tests {
         );
         assert_eq!(current.scroll_left, 0.0);
         assert_eq!(current.seconds_per_pixel, 0.05);
+        assert_eq!(playhead, 0.0);
+        assert!(selection.is_empty());
     }
 
     #[test]

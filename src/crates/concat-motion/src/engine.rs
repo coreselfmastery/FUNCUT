@@ -667,6 +667,11 @@ mod tests {
         // A sidecar is installed, but its shape mapper would average this
         // gradient to one colour. The native compositor draws the real ramp.
         assert_eq!(preference.engine_for(&comp, true), EngineKind::Native);
+        let choice = preference.choose(&comp, Sidecar::Ready);
+        assert_eq!(choice.engine, EngineKind::Native);
+        assert!(
+            choice.note.as_deref().unwrap_or_default().contains("preserve fidelity")
+        );
         // Missing-sidecar behaviour remains the same.
         assert_eq!(preference.engine_for(&comp, false), EngineKind::Native);
     }

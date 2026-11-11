@@ -2288,7 +2288,9 @@ mod tests {
         comp.nodes[0].kind = NodeKind::Rect {
             width: Length::px(100.0),
             height: Length::px(100.0),
-            fill: Some(Paint::Solid { color: Rgba::hex("#ffffff") }),
+            fill: Some(Paint::Solid {
+                color: Rgba::hex("#ffffff"),
+            }),
             radius: 0.0,
         };
         comp.nodes[0].transform.position = Some(crate::comp::Point::new(120.0, 60.0));
@@ -2337,7 +2339,9 @@ mod tests {
         grandparent.kind = NodeKind::Rect {
             width: Length::px(100.0),
             height: Length::px(100.0),
-            fill: Some(Paint::Solid { color: Rgba::hex("#ffffff") }),
+            fill: Some(Paint::Solid {
+                color: Rgba::hex("#ffffff"),
+            }),
             radius: 0.0,
         };
 
@@ -2347,7 +2351,9 @@ mod tests {
         parent.kind = NodeKind::Rect {
             width: Length::px(100.0),
             height: Length::px(100.0),
-            fill: Some(Paint::Solid { color: Rgba::hex("#ffffff") }),
+            fill: Some(Paint::Solid {
+                color: Rgba::hex("#ffffff"),
+            }),
             radius: 0.0,
         };
 

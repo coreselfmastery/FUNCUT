@@ -6599,8 +6599,6 @@ impl Studio {
         let Some(id) = self.stage_hit(x, y) else {
             if !additive {
                 self.selection.clear();
-                self.timeline_views.clear();
-                self.lanes = crate::panes::timeline::TimelinePane::default();
                 self.transition_selected = None;
             }
             self.gesture = Gesture::None;
@@ -9072,6 +9070,8 @@ impl Studio {
                 self.project_name = info.name.clone();
                 self.export.name = projects::folder_name(&info.name);
                 self.selection.clear();
+                self.timeline_views.clear();
+                self.lanes = crate::panes::timeline::TimelinePane::default();
                 self.transition_selected = None;
                 self.media.selected.clear();
                 self.playhead = 0.0;

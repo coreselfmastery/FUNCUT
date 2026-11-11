@@ -2208,20 +2208,15 @@ mod phase1_tests {
         child.tracks.insert(
             "position".into(),
             crate::track::Track::new(vec![
-                crate::track::Key::new(
-                    0.0,
-                    Value::Point { x: 0.0, y: 0.0 },
-                ),
-                crate::track::Key::new(
-                    1.0,
-                    Value::Point { x: 100.0, y: 50.0 },
-                ),
+                crate::track::Key::new(0.0, Value::Point { x: 0.0, y: 0.0 }),
+                crate::track::Key::new(1.0, Value::Point { x: 100.0, y: 50.0 }),
             ]),
         );
 
         let comp = comp_with(vec![grandparent, parent, child]);
         assert!(
-            comp.geneva_inexpressible().contains(&"an inherited parent transform"),
+            comp.geneva_inexpressible()
+                .contains(&"an inherited parent transform"),
             "a positioned grandparent must be considered even when the immediate parent is unpositioned"
         );
     }

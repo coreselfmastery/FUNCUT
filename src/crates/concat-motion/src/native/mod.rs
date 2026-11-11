@@ -131,6 +131,7 @@ impl Native {
         height: u32,
         source_dir: &Path,
         warnings: &mut Vec<String>,
+        pictures: &mut Pictures,
     ) -> Result<tiny_skia::Pixmap, MotionError> {
         let scale = if comp.width > 0 {
             f64::from(width) / f64::from(comp.width)
@@ -141,7 +142,6 @@ impl Native {
             .fonts
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        let mut pictures = Pictures::default();
         let mut scene = scene::Scene {
             comp,
             source_dir: source_dir.to_path_buf(),
@@ -212,10 +212,16 @@ impl CompEngine for Native {
             source,
         })?;
         let mut warnings: Vec<String> = Vec::new();
+        // Still assets are immutable for the duration of a bake. Keep
+        // decoded pixels across frames instead of rebuilding the cache
+        // for every call to draw().
+        let mut pictures = Pictures::default();
         let mut written = 0_usize;
         for index in first..=last.max(first) {
             let at = f64::from(index - 1) / fps;
-            let frame = self.draw(comp, at, width, height, &source_dir, &mut warnings)?;
+            let frame = self.draw(
+                comp, at, width, height, &source_dir, &mut warnings, &mut pictures,
+            )?;
             let path = frames.join(Baked::frame_name(index));
             frame.save_png(&path).map_err(|source| MotionError::Io {
                 doing: "writing".into(),
@@ -309,7 +315,10 @@ impl CompEngine for Native {
             source,
         })?;
         let mut warnings = Vec::new();
-        let drawn = self.draw(comp, at, width, height, source_dir, &mut warnings)?;
+        let mut pictures = Pictures::default();
+        let drawn = self.draw(
+            comp, at, width, height, source_dir, &mut warnings, &mut pictures,
+        )?;
         let out = scratch.join("frame.png");
         drawn.save_png(&out).map_err(|source| MotionError::Io {
             doing: "writing".into(),

@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::model::{
     AppliedFilter, AudioTrack, Background, Clip, ClipKind, ClipMask, ColorRange, ColorSpace, Crop,
     CustomFont, Cutout, CutoutMode, Enhanced, Framing, KeyEase, KeyProperty, MediaItem, MediaKind,
-    MediaOrigin, Project, RunStyle, ShapeStyle, SpeedPoint, Stabilize, Stroke, TextStyle, Timeline,
+    MediaOrigin, MotionClip, Project, RunStyle, ShapeStyle, SpeedPoint, Stabilize, Stroke, TextStyle, Timeline,
     Track, Transition, VideoSettings,
 };
 
@@ -188,6 +188,26 @@ pub struct ClipPatch {
     )]
     #[cfg_attr(feature = "schema", schemars(with = "Option<Background>"))]
     pub background: Option<Option<Background>>,
+    /// Replacement motion-comp reference for an existing motion clip.
+    /// Missing leaves it unchanged; other clip kinds cannot be converted
+    /// through a generic property patch.
+    #[serde(default)]
+    pub motion: Option<MotionClip>,
+}
+
+/// Whether a motion clip points at a safe comp id, a SHA-256 digest and a
+/// known renderer. Comp ids are path components, never arbitrary paths.
+fn valid_motion_reference(comp: &str, hash: &str, engine: &str) -> bool {
+    let comp = comp.trim();
+    let hash = hash.trim();
+    !comp.is_empty()
+        && !matches!(comp, "." | "..")
+        && comp.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
+        && hash.len() == 64
+        && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && matches!(engine, "geneva" | "native" | "lottie")
 }
 
 /// `Option<Option<T>>` over JSON: absent → None, null → Some(None).

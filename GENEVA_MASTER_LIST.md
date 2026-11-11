@@ -106,8 +106,9 @@ No item from the original ten-finding register is currently listed as open. The 
 - [ ] Recheck the full Geneva workflow on the final merged `main` commit after pending PRs merge.
 - [ ] Keep scene-quality and golden-frame gates green on every relevant change; review any intentional golden/quality-floor update.
 - [ ] Run and record representative timing/memory measurements on the target low-memory Linux machine for realistic 1080p motion workloads. Hosted CI proves correctness, not target-device speed.
-- [ ] Complete support or an explicit safe refusal for Geneva-only mixed markup comps that also use native-only shape gradients, mattes, effects, paths or masks. PR #84 covers non-markup comps only and must pass/merge first.
+- [ ] Complete support or an explicit safe refusal for Geneva-only mixed markup comps that also use native-only shape gradients, mattes, effects, paths or masks. PR #84 wires the existing canonical `Comp::geneva_inexpressible()` list into engine selection for non-markup comps; it does not solve mixed markup parity and must pass/merge first.
 - [ ] Decide whether mixed markup needs full inherited transform parity; the native fallback cannot be used for HTML/CSS comps.
+- [ ] PR #84 also makes `needs_markup()` recursive so nested HTML sub-comps do not incorrectly fall back to native when the sidecar is missing; keep its regression test.
 - [ ] If offline cache use without the sidecar is desired, change the version/key contract deliberately and test compatibility; current behaviour intentionally requires the sidecar.
 - [ ] Keep Geneva 1.6.0 pin, checksum, installer, package contents and supported platform binaries aligned whenever the sidecar is upgraded.
 

@@ -123,9 +123,18 @@ impl EnginePreference {
     /// the sidecar is not answering.
     pub fn choose(&self, comp: &Comp, sidecar: Sidecar) -> Choice {
         match sidecar {
-            Sidecar::Ready => Choice {
-                engine: self.engine_for(comp, true),
-                note: None,
+            Sidecar::Ready => {
+                let engine = self.engine_for(comp, true);
+                Choice {
+                    engine,
+                    note: (engine == EngineKind::Native
+                        && self.default == EngineKind::Geneva
+                        && !comp.needs_markup())
+                    .then(|| {
+                        "geneva would drop or approximate a feature in this comp; drawing it                          on the native engine to preserve fidelity"
+                            .to_owned()
+                    }),
+                }
             },
             Sidecar::Missing => Choice {
                 engine: self.engine_for(comp, false),

@@ -678,6 +678,40 @@ mod tests {
     }
 
     #[test]
+    fn mixed_markup_selection_explains_the_safe_refusal() {
+        let mut comp = comp_with(NodeKind::Html {
+            markup: "<div>title</div>".into(),
+            css: String::new(),
+            width: Length::Auto,
+            height: Length::Auto,
+        });
+        let mut gradient = comp_with(NodeKind::Ellipse {
+            width: Length::px(100.0),
+            height: Length::px(100.0),
+            fill: Some(Paint::Gradient {
+                stops: vec![(0.0, Rgba::hex("#ff0000")), (1.0, Rgba::hex("#0000ff"))],
+                ramp: Default::default(),
+                angle: 90.0,
+                from: 0.0,
+                to: 1.0,
+            }),
+        })
+        .nodes
+        .remove(0);
+        gradient.id = "gradient".into();
+        comp.nodes.push(gradient);
+        let choice = EnginePreference::default().choose(&comp, Sidecar::Ready);
+        assert_eq!(choice.engine, EngineKind::Geneva);
+        assert!(
+            choice
+                .note
+                .as_deref()
+                .unwrap_or_default()
+                .contains("refuse the bake")
+        );
+    }
+
+    #[test]
     fn nested_native_only_features_select_the_native_compositor() {
         let mut outer = comp_with(NodeKind::Composition {
             comp: "inner".into(),

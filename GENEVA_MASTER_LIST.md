@@ -51,8 +51,8 @@ Geneva is a substantial, integrated motion-rendering path, not a placeholder. Th
 - [x] CI asserts rendered example reports, frame dimensions/content and output existence instead of treating process exit alone as proof.
 
 **Known boundaries, not silently “fixed”:**
-- Shape gradients are reduced to a representative colour by the Geneva bridge. PR #84 adds a fidelity-based native fallback for non-markup comps when the mapper reports this loss; mixed markup comps still require Geneva and retain this limitation.
-- `absolute_position` folds static ancestor positions only. PR #84 adds native fallback for non-markup comps with inherited parent position tracks, scale or rotation; mixed markup comps still retain the flattened-transform limitation.
+- Shape gradients are reduced to a representative colour by the Geneva bridge. PR #84 proposes a fidelity-based native fallback for non-markup comps when the mapper reports this loss; mixed markup comps still require Geneva and retain this limitation. The PR must pass and merge before this routing fix is shipped.
+- `absolute_position` folds static ancestor positions only. PR #84 proposes native fallback for non-markup comps with inherited parent placement, position tracks, scale or rotation; mixed markup comps still retain the flattened-transform limitation. The PR must pass and merge before this routing fix is shipped.
 - Geneva's PNG-sequence output carries alpha. The `alpha` request field is retained in cache/manifest identity, but does not change Geneva's RGBA pixels.
 - A missing sidecar can fall back to the native compositor only for content that native supports. Native fallback is not equivalent to Geneva markup/CSS rendering.
 - A golden update is a reviewed change: do not refresh reference images merely to silence a failing visual regression.
@@ -106,7 +106,8 @@ No item from the original ten-finding register is currently listed as open. The 
 - [ ] Recheck the full Geneva workflow on the final merged `main` commit after pending PRs merge.
 - [ ] Keep scene-quality and golden-frame gates green on every relevant change; review any intentional golden/quality-floor update.
 - [ ] Run and record representative timing/memory measurements on the target low-memory Linux machine for realistic 1080p motion workloads. Hosted CI proves correctness, not target-device speed.
-- [ ] If full shape-gradient parity or ancestor scale/rotation is required, design and test that separately; current behaviour is an explicit approximation.
+- [ ] Complete support or an explicit safe refusal for Geneva-only mixed markup comps that also use native-only shape gradients, mattes, effects, paths or masks. PR #84 covers non-markup comps only and must pass/merge first.
+- [ ] Decide whether mixed markup needs full inherited transform parity; the native fallback cannot be used for HTML/CSS comps.
 - [ ] If offline cache use without the sidecar is desired, change the version/key contract deliberately and test compatibility; current behaviour intentionally requires the sidecar.
 - [ ] Keep Geneva 1.6.0 pin, checksum, installer, package contents and supported platform binaries aligned whenever the sidecar is upgraded.
 

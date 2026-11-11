@@ -51,12 +51,15 @@ def main() -> int:
             raise SystemExit(f"{arch} Geneva URL has no pinned release version")
         print(f"{arch}: Geneva {version.group(1)} URL and SHA-256 match deps.lock")
 
-    if 'GENEVA_CHECKED="no-tool"' not in installer:
+    sidecar_section = installer.split("# ── the motion sidecar", 1)[1].split(
+        "# ── the motion fonts", 1
+    )[0]
+    if 'GENEVA_CHECKED="no-tool"' not in sidecar_section:
         raise SystemExit("installer must refuse an unchecked Geneva install")
-    if "refusing to install an unverified sidecar" not in installer:
+    if "refusing to install an unverified sidecar" not in sidecar_section:
         raise SystemExit("installer must explain why an unverified sidecar was skipped")
-    if "unchecked" in installer:
-        raise SystemExit("installer must not retain an unchecked-install path")
+    if "unchecked" in sidecar_section:
+        raise SystemExit("installer must not retain an unchecked Geneva install path")
     print("Geneva installer integrity policy: fail closed")
     return 0
 

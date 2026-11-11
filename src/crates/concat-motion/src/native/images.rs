@@ -193,13 +193,36 @@ fn resolve_external_image(
         relative.push(base);
     }
     relative.push(relative_path);
-    let full_path = base_dir.join(relative);
-    read_bounded_file(&full_path, MAX_LOTTIE_IMAGE_BYTES)
+    read_bounded_child_file(base_dir, &relative, MAX_LOTTIE_IMAGE_BYTES)
         .map(Some)
         .map_err(|detail| RasterlottieError::InvalidImageAsset {
             id: asset.id.clone(),
             detail,
         })
+}
+
+/// Reads an image only when its fully resolved filesystem path remains below
+/// the animation directory. Lexical path checks alone do not stop a symlink
+/// inside that directory from pointing at an arbitrary file elsewhere.
+fn read_bounded_child_file(
+    base_dir: &Path,
+    relative: &Path,
+    maximum: u64,
+) -> Result<Vec<u8>, String> {
+    let canonical_base = base_dir.canonicalize().map_err(|error| {
+        format!(
+            "cannot resolve animation asset directory {}: {error}",
+            base_dir.display()
+        )
+    })?;
+    let candidate = canonical_base.join(relative);
+    let canonical_file = candidate.canonicalize().map_err(|error| {
+        format!("cannot resolve image asset {}: {error}", candidate.display())
+    })?;
+    if !canonical_file.starts_with(&canonical_base) {
+        return Err("image path resolves outside the animation asset directory".into());
+    }
+    read_bounded_file(&canonical_file, maximum)
 }
 
 fn safe_relative_path(path: &str) -> Option<PathBuf> {
@@ -592,6 +615,36 @@ mod tests {
         )
         .unwrap();
         assert!(Lottie::load(&path).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn external_lottie_image_rejects_a_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir().expect("temporary root");
+        let assets = root.path().join("assets");
+        std::fs::create_dir(&assets).expect("asset directory");
+        let outside = root.path().join("secret.png");
+        std::fs::write(&outside, b"not an image").expect("outside file");
+        symlink(&outside, assets.join("linked.png")).expect("symlink");
+
+        let asset = LottieAsset {
+            id: "external".into(),
+            name: None,
+            width: Some(1),
+            height: Some(1),
+            base_path: None,
+            path: Some("linked.png".into()),
+            embedded: None,
+            layers: Vec::new(),
+        };
+        let error = resolve_external_image(&assets, &asset)
+            .expect_err("symlink must not escape the animation directory");
+        assert!(
+            error.to_string().contains("outside the animation asset directory"),
+            "{error}"
+        );
     }
 
     #[test]

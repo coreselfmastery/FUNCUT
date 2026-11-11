@@ -9825,8 +9825,13 @@ impl Studio {
     /// Switches the live timeline pane to another timeline, preserving the
     /// outgoing timeline's zoom, scroll, tools, snap and lane sizing.
     pub fn switch_timeline_view(&mut self, from_id: &str, to_id: &str) {
-        self.timeline_views
-            .switch(from_id, to_id, &mut self.lanes, self.playhead);
+        self.timeline_views.switch(
+            from_id,
+            to_id,
+            &mut self.lanes,
+            &mut self.playhead,
+            &mut self.selection,
+        );
     }
 
     /// Shows the compact dock, or the wide one, keeping whichever is put

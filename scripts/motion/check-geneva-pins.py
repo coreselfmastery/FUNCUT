@@ -29,6 +29,7 @@ def main() -> int:
         "x86_64": "geneva-linux64",
         "aarch64": "geneva-linuxarm64",
     }
+    versions = set()
     for arch, lock_key in architectures.items():
         match = re.search(
             rf"{arch}\)\s*GENEVA_URL=\"([^\"]+)\"\s*"
@@ -49,7 +50,19 @@ def main() -> int:
         version = re.search(r"/download/v([0-9]+\.[0-9]+\.[0-9]+)/", url)
         if not version:
             raise SystemExit(f"{arch} Geneva URL has no pinned release version")
+        versions.add(version.group(1))
         print(f"{arch}: Geneva {version.group(1)} URL and SHA-256 match deps.lock")
+
+    if len(versions) != 1:
+        raise SystemExit(f"installer architectures disagree on Geneva version: {sorted(versions)}")
+    tested = re.search(
+        r'pub const TESTED_VERSION: &str = "([^"]+)"',
+        (ROOT / "src" / "crates" / "concat-motion" / "src" / "geneva.rs").read_text(
+            encoding="utf-8"
+        ),
+    )
+    if not tested or tested.group(1) not in versions:
+        raise SystemExit("installer and deps.lock versions differ from the Rust-tested Geneva version")
 
     sidecar_section = installer.split("# ── the motion sidecar", 1)[1].split(
         "# ── the motion fonts", 1

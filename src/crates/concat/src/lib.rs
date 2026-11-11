@@ -950,7 +950,6 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         };
         let previous_id = state.timeline().id.clone();
         state.switch_timeline_view(&previous_id, &id);
-        state.selection.clear();
         state.apply(concat_project::Command::SelectTimeline { timeline_id: id });
     }));
     editor.on_tab_renamed(on_window!(|state, index: i32, name: SharedString| {
@@ -977,7 +976,6 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         let previous_id = state.timeline().id.clone();
         if let Some(id) = state.apply(concat_project::Command::AddTimeline) {
             state.switch_timeline_view(&previous_id, &id);
-            state.selection.clear();
             state.apply(concat_project::Command::SelectTimeline { timeline_id: id });
         }
     }));
@@ -991,7 +989,6 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
             return;
         };
         let previous_id = state.timeline().id.clone();
-        state.selection.clear();
         state.apply(concat_project::Command::RemoveTimeline { timeline_id: id.clone() });
         let next_id = state.timeline().id.clone();
         state.switch_timeline_view(&previous_id, &next_id);

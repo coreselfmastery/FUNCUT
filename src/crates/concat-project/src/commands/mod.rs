@@ -1188,9 +1188,9 @@ impl Command {
                         ])
                     })
             }
-            Command::AddLayerClip { start, duration, .. } => {
-                bad([*start]) || bad(*duration)
-            }
+            Command::AddLayerClip {
+                start, duration, ..
+            } => bad([*start]) || bad(*duration),
             Command::AddMotionClip { start, .. } => bad([*start]),
             Command::SetClipSpeedCurve { curve, .. } => {
                 bad(curve

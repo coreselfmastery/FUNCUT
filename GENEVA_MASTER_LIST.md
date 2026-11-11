@@ -107,7 +107,8 @@ No item from the original ten-finding register is currently listed as open. The 
 - [ ] Recheck the full Geneva workflow on the final merged `main` commit after pending PRs merge.
 - [ ] Keep scene-quality and golden-frame gates green on every relevant change; review any intentional golden/quality-floor update.
 - [ ] Run and record representative timing/memory measurements on the target low-memory Linux machine for realistic 1080p motion workloads. PR #86 combines the checksum fail-closed installer fix with a reproducible cold 1080p30 Geneva benchmark that records machine, sidecar version, wall time, output size and sampled process-tree RSS; it still needs CI/merge and a real antiX run. Hosted CI proves correctness, not target-device speed.
-- [ ] Add true Geneva support for mixed markup comps that also use native-only shape gradients, mattes, effects, paths or masks. PR #84 has shipped an explicit safe refusal and native fallback for non-markup comps; true rendering parity remains open. PR #85 adds a clearer selection-time explanation for the refusal and its regression test, pending CI/merge.
+- [x] Mixed markup comps that also use native-only shape gradients, mattes, effects, paths or masks are refused by Geneva bake/frame instead of being silently degraded; PR #84 shipped the safe refusal and native fallback for non-markup comps. PR #85 adds the selection-time explanation and regression test; it remains pending CI/merge.
+- [ ] Optional future feature: implement true Geneva rendering support for those mixed markup/native-only cases. This is a feature-parity enhancement, not a silent-degradation blocker while the refusal remains in place.
 - [ ] Decide whether mixed markup needs full inherited transform parity; the native fallback cannot be used for HTML/CSS comps.
 - [x] PR #84 makes `needs_markup()` recursive so nested HTML sub-comps do not incorrectly fall back to native when the sidecar is missing; regression coverage is included.
 - [ ] If offline cache use without the sidecar is desired, change the version/key contract deliberately and test compatibility; current behaviour intentionally requires the sidecar.
@@ -134,6 +135,7 @@ Geneva is ready for a release candidate when all of the following are true on th
 - [ ] Geneva example and dependency-dance jobs pass on that SHA.
 - [ ] Required workspace tests, clippy and formatting checks pass on that SHA.
 - [ ] Scene-quality and golden-frame checks pass without unreviewed baseline changes.
+- [ ] Mixed markup comps that contain native-only features are explicitly refused with a useful diagnostic; no lossy render is allowed.
 - [ ] The pinned sidecar installs and is discovered on each supported package/platform target.
 - [ ] Target-machine timing/memory evidence is attached, or the release notes clearly state that only hosted correctness—not target performance—has been validated.
 

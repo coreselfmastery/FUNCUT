@@ -117,15 +117,15 @@ show their actual output and responsiveness on the recorded machine."*
 ## Chapter 7 — stock, stickers, text, motion (9:00)
 
 **Show:** the OpenVid page (search, filters, a clip fetched per use), the
-Stickers page (1,285), the Text page (31 presets), and the **Motion page**
-(the project's comps: name, frame, length, whether a bake is on disk).
+Stickers page, the Text page, and—only after PR #97 is merged and accepted—
+the **Motion page** (the project's comps: name, frame, length, and bake
+availability).
 
 **Do:** search OpenVid for a wide establishing shot and drop it at the
 head; put one sticker on the footage lane; add a title from a preset and
-retype it; open the Motion page, pick a baked comp, press **Add** — a
-motion clip lands at the playhead on its own lane; undo it; redo it;
-move it; save the project, close it, reopen it — the clip is still there,
-bake and all.
+retype it. After PR #97 is merged and accepted, add a baked comp, verify
+its placement, undo/redo it, move it, save, close and reopen the project,
+then verify the clip and its rendered frames.
 
 **Say:** *"The stock shelf is the OpenVid research dataset — a research
 licence, and the app says so before first use. Motion comps come from the
@@ -137,11 +137,11 @@ treats them like any clip: move, trim, undo, save."*
 **Show:** the **Forge page**: the script box, the voice and look choices,
 Start.
 
-**Do:** paste a three-sentence script; pick the voiceover-in language;
-Start. The log streams the director's twelve measured phases — research,
-plan, footage slots, motion, the edit — and the timeline fills with the
-director's clips as they land, every one of them an ordinary undoable
-command.
+**Do:** after the Director's real-project acceptance run is complete,
+paste a three-sentence script, select the voiceover language and Start.
+Capture the actual provider calls, phases, asset resolution, timeline
+commands and failures. Verify audio, video, timing, captions and final
+export; do not treat a phase log or a populated timeline as acceptance.
 
 **Say:** *"The director is an agent on the app's own MCP server — a
 hundred and nine tools, senses for cuts, beats, dead air, and an emotion
@@ -150,23 +150,21 @@ editor."*
 
 ## Chapter 9 — two cuts, one queue (12:00)
 
-**Show:** the export sheet: the **timeline picker** (every timeline in the
-project, its frame and clip count under it), the ladder, the codec rows
-with their encodability notes, the **Encoder** row — Automatic, GPU
-(VAAPI), CPU — the size estimate on the button.
+**Show:** the export sheet and the choices actually present in the tested
+build. Show the **timeline picker** and multi-job queue only after PR #96
+is merged and accepted. Show the **Encoder** row (Automatic, GPU/VAAPI,
+CPU) only after PR #95 is merged and VAAPI is tested on supported hardware.
 
-**Do:** add a second timeline (a 9:16 cut of the phone clip, three
-clips); queue the landscape edit as `demo-wide.mp4`; switch the picker to
-the portrait timeline and queue `demo-tall.mp4` — the sheet stays up, the
-first job's row runs with its own progress and cancel, the second waits
-its turn; close the sheet on the running queue and reopen it — the queue
-is where it was, and the app kept rendering. Cancel nothing; let them
-finish; **Show in folder** on the finished row.
+**Do:** add a second timeline and export both cuts. If PR #96 is merged,
+queue each named timeline and verify that each job renders the correct
+clips, frame and rate, with independent progress, cancellation and
+reopen behavior. If PR #95 is merged, test VAAPI on supported hardware
+and verify the selected encoder and software fallback. Otherwise, show
+only the export behavior that this build has actually passed.
 
-**Say:** *"One render at a time — the queue is the waiting room, and
-every job is its own: its own timeline, its own progress, its own cancel.
-The encoder can be the machine's own video hardware by name, with the
-software encoder behind it as the fallback."*
+**Say:** *"Describe queue isolation and hardware encoding only if those
+specific paths have passed their merged CI and manual acceptance. Do not
+present software fallback as proof that VAAPI itself was exercised."*
 
 ## Chapter 10 — the close (14:00)
 

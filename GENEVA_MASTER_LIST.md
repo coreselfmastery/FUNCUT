@@ -96,7 +96,7 @@ The canonical workflow is `.github/workflows/geneva.yml`. It has two jobs:
 **Observed evidence at this reconciliation:**
 - Geneva workflow run `42975353241` (PR #81): both rendered-example and dependency-dance jobs completed successfully.
 - PR #81's separate general Rust engine/lint job was still in progress at the last poll; do not call the entire PR green until that job completes.
-- PR #84 merged as `c45ac873`; the merge-commit CI checks were still running at the last poll. Verify those checks before calling the merged implementation fully validated.
+- PR #84 merged as `c45ac873`. Its main-commit Geneva rendered-example and dependency-dance jobs both passed in run `42979489279`. The general Rust engine/clippy job and Linux x86_64/aarch64 build jobs were still running at the last poll; verify those before calling the whole merged commit fully green.
 - PR #80's general Rust engine/lint job was also still in progress at the last poll.
 - The main-branch CI state must be checked again after the open PRs land. A green Geneva-only run does not replace all workspace checks.
 

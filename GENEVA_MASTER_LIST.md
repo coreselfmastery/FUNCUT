@@ -112,6 +112,7 @@ No item from the original ten-finding register is currently listed as open. The 
 - [x] PR #84 makes `needs_markup()` recursive so nested HTML sub-comps do not incorrectly fall back to native when the sidecar is missing; regression coverage is included.
 - [ ] If offline cache use without the sidecar is desired, change the version/key contract deliberately and test compatibility; current behaviour intentionally requires the sidecar.
 - [ ] Keep Geneva 1.6.0 pin, checksum, installer, package contents and supported platform binaries aligned whenever the sidecar is upgraded.
+- [ ] Merge PR #86: the installer currently has an unchecked-install fallback when neither `sha256sum` nor `shasum` is available. PR #86 makes the optional sidecar install fail closed and adds a CI shell-syntax check.
 
 ## 8. Separate FUNCUT work — not Geneva blockers
 

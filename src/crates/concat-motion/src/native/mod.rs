@@ -345,8 +345,8 @@ impl CompEngine for Native {
 mod tests {
     use super::*;
     use crate::comp::{
-        Asset, AssetKind, Blend, Effect, Fit, Length, Mask, MaskShape, Node, NodeKind, Paint, Point, Rgba, Stroke,
-        TextNode, Transform,
+        Asset, AssetKind, Blend, Effect, Fit, Length, Mask, MaskShape, Node, NodeKind, Paint,
+        Point, Rgba, Stroke, TextNode, Transform,
     };
     use crate::track::{Key, Track, Value};
 

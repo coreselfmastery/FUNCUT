@@ -168,7 +168,10 @@ fn read_bounded_file(path: &Path, maximum: u64) -> Result<Vec<u8>, String> {
     let bytes = std::fs::read(path)
         .map_err(|error| format!("cannot read Lottie asset {}: {error}", path.display()))?;
     if bytes.len() as u64 > maximum {
-        return Err(format!("Lottie asset exceeds the {}-byte input limit", maximum));
+        return Err(format!(
+            "Lottie asset exceeds the {}-byte input limit",
+            maximum
+        ));
     }
     Ok(bytes)
 }

@@ -1053,6 +1053,7 @@ impl Comp {
             // dropping a parent placement or transform.
             let mut parent = node.parent.as_deref();
             let mut depth = 0;
+            let mut has_static_parent_position = false;
             while let Some(id) = parent {
                 if depth >= 32 {
                     note("a parent chain deeper than Geneva can flatten");
@@ -1061,12 +1062,19 @@ impl Comp {
                 let Some(parent_node) = self.node(id) else {
                     break;
                 };
-                if parent_node.transform.position.is_some()
-                    || parent_node.transform.scale != 1.0
+                // Static parent translations are composable in Geneva's
+                // flattened timeline (the mapper folds them into each child's
+                // position). Scale, rotation, and animated parent transforms
+                // still require hierarchy-aware composition and must fall back.
+                has_static_parent_position |= parent_node.transform.position.is_some();
+                if parent_node.transform.scale != 1.0
                     || parent_node.transform.rotation != 0.0
                     || parent_node.tracks.contains_key("position")
                     || parent_node.tracks.contains_key("scale")
                     || parent_node.tracks.contains_key("rotation")
+                    // A child's animated position needs every static ancestor
+                    // offset applied to every keyframe, not just its parent's.
+                    || (has_static_parent_position && node.tracks.contains_key("position"))
                 {
                     note("an inherited parent transform");
                     break;
@@ -2169,6 +2177,48 @@ mod phase1_tests {
                 morph: None,
             },
         )
+    }
+
+    #[test]
+    fn animated_child_under_nested_static_ancestor_routes_away_from_geneva() {
+        let mut grandparent = shell(
+            "grandparent",
+            NodeKind::Rect {
+                width: Length::Px(100.0),
+                height: Length::Px(100.0),
+                fill: None,
+                radius: 0.0,
+            },
+        );
+        grandparent.transform.position = Some(Point::new(40.0, 20.0));
+
+        let mut parent = shell(
+            "parent",
+            NodeKind::Rect {
+                width: Length::Px(80.0),
+                height: Length::Px(80.0),
+                fill: None,
+                radius: 0.0,
+            },
+        );
+        parent.parent = Some("grandparent".into());
+
+        let mut child = shell("child", NodeKind::Text(Box::default()));
+        child.parent = Some("parent".into());
+        child.tracks.insert(
+            "position".into(),
+            crate::track::Track::new(vec![
+                crate::track::Key::new(0.0, Value::Point { x: 0.0, y: 0.0 }),
+                crate::track::Key::new(1.0, Value::Point { x: 100.0, y: 50.0 }),
+            ]),
+        );
+
+        let comp = comp_with(vec![grandparent, parent, child]);
+        assert!(
+            comp.geneva_inexpressible()
+                .contains(&"an inherited parent transform"),
+            "a positioned grandparent must be considered even when the immediate parent is unpositioned"
+        );
     }
 
     #[test]

@@ -796,7 +796,7 @@ mod tests {
     }
 
     #[test]
-    fn a_positioned_parent_with_an_unpositioned_child_uses_native() {
+    fn a_positioned_parent_with_an_unpositioned_child_uses_geneva_after_translation_flattening() {
         let mut comp = comp_with(NodeKind::Group {
             children: vec!["child".into()],
         });
@@ -813,12 +813,12 @@ mod tests {
         .remove(0);
         child.id = "child".into();
         child.parent = Some("n".into());
-        // With no explicit child position, Geneva's flattened layer cannot
-        // reliably inherit the group's origin; native composes the hierarchy.
+        // Geneva now folds the static ancestor translation into the child's
+        // flattened position, including the child's implicit (0, 0) origin.
         comp.nodes.push(child);
         assert_eq!(
             EnginePreference::default().engine_for(&comp, true),
-            EngineKind::Native
+            EngineKind::Geneva
         );
     }
 

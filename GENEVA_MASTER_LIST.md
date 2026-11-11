@@ -52,7 +52,7 @@ Geneva is a substantial, integrated motion-rendering path, not a placeholder. Th
 
 **Known boundaries, not silently “fixed”:**
 - Shape gradients are reduced to a representative colour by the Geneva bridge. PR #84 is merged to `main` (merge commit `c45ac873`). Non-markup comps now route to native; mixed markup comps with native-only features are refused rather than silently degraded. True Geneva support for those mixed cases remains a separate feature.
-- `absolute_position` folds static ancestor positions only. PR #84 is merged to `main` (merge commit `c45ac873`): non-markup comps with inherited parent placement, position tracks, scale or rotation route to native; mixed markup comps with native-only features are refused until Geneva can represent them.
+- `absolute_position` folds static ancestor translations into child positions, including children with no own position. A child's animated position under a translated parent, animated parent transforms, and inherited scale/rotation still route to native because the flattened Geneva timeline cannot yet compose those cases losslessly. Regression tests cover translated children with and without a base position.
 - Geneva's PNG-sequence output carries alpha. The `alpha` request field is retained in cache/manifest identity, but does not change Geneva's RGBA pixels.
 - A missing sidecar can fall back to the native compositor only for content that native supports. Native fallback is not equivalent to Geneva markup/CSS rendering.
 - A golden update is a reviewed change: do not refresh reference images merely to silence a failing visual regression.

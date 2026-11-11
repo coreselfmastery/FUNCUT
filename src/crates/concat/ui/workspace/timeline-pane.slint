@@ -102,6 +102,7 @@ export component TimelinePane inherits Rectangle {
     /// Where the cut ends, in seconds; see the bar under the lanes.
     in property <float> duration-seconds;
     in-out property <length> track-scroll;
+    callback track-scroll-changed(value: length);
 
     callback scrubbed(seconds: float);
     callback key-mark-moved(from: float, to: float);
@@ -405,6 +406,7 @@ export component TimelinePane inherits Rectangle {
 
                 scrolled(to) => {
                     root.track-scroll = Math.max(0px, Math.min(root.overflow, root.overflow - to));
+                    root.track-scroll-changed(root.track-scroll);
                 }
                 flag-changed(index, visible, muted, locked) => {
                     root.track-flag-changed(index, visible, muted, locked);
@@ -481,6 +483,7 @@ export component TimelinePane inherits Rectangle {
                 track-scrolled(pixels) => {
                     root.track-scroll = Math.max(0px,
                         Math.min(root.overflow, root.overflow - root.at - pixels));
+                    root.track-scroll-changed(root.track-scroll);
                 }
                 zoomed(factor, anchor) => { root.zoom(factor, anchor); }
                 // How wide the lanes are decides which clips Rust sends;

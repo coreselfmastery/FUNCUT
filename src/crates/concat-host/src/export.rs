@@ -174,7 +174,7 @@ impl Exporter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use concat_project::DocumentSettings;
+    use concat_project::{Command, DocumentSettings, MediaKind, NewMedia};
 
     #[test]
     fn non_active_timeline_request_uses_its_own_format_without_switching_tabs() {
@@ -229,6 +229,131 @@ mod tests {
             session.project().active_timeline_id,
             original_id,
             "building an export request must not switch the editor's active tab"
+        );
+
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn non_active_timeline_request_uses_its_own_clips_not_active_timeline_clips() {
+        let scratch = std::env::temp_dir().join(format!(
+            "concat-export-distinct-timelines-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(&scratch).expect("scratch dir");
+        let settings = DocumentSettings {
+            name: "Distinct timelines".into(),
+            width: 1920,
+            height: 1080,
+            rate_num: 30,
+            rate_den: 1,
+        };
+        let mut session = Session::open(&scratch.to_string_lossy(), settings).expect("opens");
+        let active_id = session.project().active_timeline_id.clone();
+
+        let target_id = session
+            .apply(Command::AddTimeline)
+            .expect("adds target timeline")
+            .created_id
+            .expect("target timeline id");
+        session
+            .set_video(concat_project::model::VideoSettings {
+                width: 1080,
+                height: 1920,
+                rate_num: 30000,
+                rate_den: 1001,
+                color_space: Default::default(),
+            })
+            .expect("sets target format");
+
+        let target_path = scratch.join("target-only.mp4").to_string_lossy().into_owned();
+        let target_media = session
+            .apply(Command::AddMedia {
+                item: NewMedia {
+                    path: target_path.clone(),
+                    name: "target-only.mp4".into(),
+                    duration: Some(7.0),
+                    kind: MediaKind::Video,
+                    width: Some(1920),
+                    height: Some(1080),
+                    frame_rate: Some(30.0),
+                    frame_rate_fraction: Some("30/1".into()),
+                    video_codec: Some("h264".into()),
+                    audio_codec: None,
+                    has_audio: false,
+                    audio_tracks: Vec::new(),
+                    origin: None,
+                    color_space: Default::default(),
+                },
+            })
+            .expect("adds target media")
+            .created_id
+            .expect("target media id");
+        let target_track = session.project().active().tracks[0].id.clone();
+        session
+            .apply(Command::AddClip {
+                media_id: target_media,
+                track_id: target_track,
+                start: 1.0,
+                ripple: false,
+            })
+            .expect("places target clip");
+
+        session
+            .apply(Command::SelectTimeline {
+                timeline_id: active_id.clone(),
+            })
+            .expect("returns to active timeline");
+        let active_path = scratch.join("active-only.mp4").to_string_lossy().into_owned();
+        let active_media = session
+            .apply(Command::AddMedia {
+                item: NewMedia {
+                    path: active_path.clone(),
+                    name: "active-only.mp4".into(),
+                    duration: Some(3.0),
+                    kind: MediaKind::Video,
+                    width: Some(1920),
+                    height: Some(1080),
+                    frame_rate: Some(30.0),
+                    frame_rate_fraction: Some("30/1".into()),
+                    video_codec: Some("h264".into()),
+                    audio_codec: None,
+                    has_audio: false,
+                    audio_tracks: Vec::new(),
+                    origin: None,
+                    color_space: Default::default(),
+                },
+            })
+            .expect("adds active media")
+            .created_id
+            .expect("active media id");
+        let active_track = session.project().active().tracks[0].id.clone();
+        session
+            .apply(Command::AddClip {
+                media_id: active_media,
+                track_id: active_track,
+                start: 0.0,
+                ripple: false,
+            })
+            .expect("places active clip");
+
+        let request = request_for_timeline(
+            &session,
+            &ExportSpec::default(),
+            Vec::new(),
+            &target_id,
+        )
+        .expect("builds request for non-active timeline");
+        assert_eq!((request.width, request.height), (1080, 1920));
+        assert_eq!((request.rate_num, request.rate_den), (30000, 1001));
+        assert_eq!(request.clips.len(), 1, "only the target timeline clip exports");
+        assert_eq!(request.clips[0].path, target_path);
+        assert_ne!(request.clips[0].path, active_path);
+        assert_eq!(
+            session.project().active_timeline_id,
+            active_id,
+            "building a request must not switch the editor's active tab"
         );
 
         let _ = std::fs::remove_dir_all(&scratch);

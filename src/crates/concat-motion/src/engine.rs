@@ -653,10 +653,7 @@ mod tests {
             width: Length::px(100.0),
             height: Length::px(100.0),
             fill: Some(Paint::Gradient {
-                stops: vec![
-                    (0.0, Rgba::hex("#ff0000")),
-                    (1.0, Rgba::hex("#0000ff")),
-                ],
+                stops: vec![(0.0, Rgba::hex("#ff0000")), (1.0, Rgba::hex("#0000ff"))],
                 ramp: Default::default(),
                 angle: 90.0,
                 from: 0.0,
@@ -678,18 +675,27 @@ mod tests {
 
     #[test]
     fn a_scaled_or_rotated_group_uses_native_for_its_children() {
-        let mut comp = comp_with(NodeKind::Group { children: vec!["child".into()] });
+        let mut comp = comp_with(NodeKind::Group {
+            children: vec!["child".into()],
+        });
         comp.nodes[0].transform.scale = 1.5;
         let mut child = comp_with(NodeKind::Rect {
             width: Length::px(10.0),
             height: Length::px(10.0),
-            fill: Some(Paint::Solid { color: Rgba::hex("#fff") }),
+            fill: Some(Paint::Solid {
+                color: Rgba::hex("#fff"),
+            }),
             radius: 0.0,
-        }).nodes.remove(0);
+        })
+        .nodes
+        .remove(0);
         child.id = "child".into();
         child.parent = Some("n".into());
         comp.nodes.push(child);
-        assert_eq!(EnginePreference::default().engine_for(&comp, true), EngineKind::Native);
+        assert_eq!(
+            EnginePreference::default().engine_for(&comp, true),
+            EngineKind::Native
+        );
     }
 
     #[test]
@@ -697,10 +703,15 @@ mod tests {
         let comp = comp_with(NodeKind::Rect {
             width: Length::px(10.0),
             height: Length::px(10.0),
-            fill: Some(Paint::Solid { color: Rgba::hex("#fff") }),
+            fill: Some(Paint::Solid {
+                color: Rgba::hex("#fff"),
+            }),
             radius: 0.0,
         });
-        assert_eq!(EnginePreference::default().engine_for(&comp, true), EngineKind::Geneva);
+        assert_eq!(
+            EnginePreference::default().engine_for(&comp, true),
+            EngineKind::Geneva
+        );
     }
 
     #[test]

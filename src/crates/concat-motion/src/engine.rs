@@ -130,8 +130,11 @@ impl EnginePreference {
                     && !comp.needs_markup()
                 {
                     Some(
-                        "geneva would drop or approximate a feature in this comp; drawing it on                          the native engine to preserve fidelity"
-                            .to_owned(),
+                        concat!(
+                            "geneva would drop or approximate a feature in this comp; ",
+                            "drawing it on the native engine to preserve fidelity"
+                        )
+                        .to_owned(),
                     )
                 } else if engine == EngineKind::Geneva
                     && self.default == EngineKind::Geneva
@@ -139,8 +142,11 @@ impl EnginePreference {
                     && !comp.geneva_inexpressible().is_empty()
                 {
                     Some(
-                        "this markup comp also uses native-only features; Geneva will refuse                          the bake rather than silently degrade the output"
-                            .to_owned(),
+                        concat!(
+                            "this markup comp also uses native-only features; ",
+                            "Geneva will refuse the bake rather than silently degrade the output"
+                        )
+                        .to_owned(),
                     )
                 } else {
                     None

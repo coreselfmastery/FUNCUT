@@ -125,16 +125,27 @@ impl EnginePreference {
         match sidecar {
             Sidecar::Ready => {
                 let engine = self.engine_for(comp, true);
-                Choice {
-                    engine,
-                    note: (engine == EngineKind::Native
-                        && self.default == EngineKind::Geneva
-                        && !comp.needs_markup())
-                    .then(|| {
-                        "geneva would drop or approximate a feature in this comp; drawing it                          on the native engine to preserve fidelity"
-                            .to_owned()
-                    }),
-                }
+                let note = if engine == EngineKind::Native
+                    && self.default == EngineKind::Geneva
+                    && !comp.needs_markup()
+                {
+                    Some(
+                        "geneva would drop or approximate a feature in this comp; drawing it on                          the native engine to preserve fidelity"
+                            .to_owned(),
+                    )
+                } else if engine == EngineKind::Geneva
+                    && self.default == EngineKind::Geneva
+                    && comp.needs_markup()
+                    && !comp.geneva_inexpressible().is_empty()
+                {
+                    Some(
+                        "this markup comp also uses native-only features; Geneva will refuse                          the bake rather than silently degrade the output"
+                            .to_owned(),
+                    )
+                } else {
+                    None
+                };
+                Choice { engine, note }
             }
             Sidecar::Missing => Choice {
                 engine: self.engine_for(comp, false),

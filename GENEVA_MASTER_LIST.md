@@ -125,7 +125,7 @@ These must remain on the broader FUNCUT release tracker, not be misreported as G
 
 - Native Lottie/dotLottie playback: PR #91 adds rasterlottie-backed JSON playback, external image resolution, bounded v1/v2 dotLottie loading and support diagnostics; CI/Geneva/Nix validation is pending and the PR is not merged.
 - Timeline Motion clips: PR #89 adds a compact five-second native clip-creation command with comp/hash validation and automatic lane placement; CI/Geneva validation is pending and the PR is not merged. A visual comp picker, metadata editing, save/reopen, preview and final-export acceptance remain outstanding.
-- Per-timeline view-state isolation is implemented by PR #88; PR-head Clippy and both Geneva jobs passed, while the Rust test build and fresh merge-commit CI evidence remain outstanding.
+- Per-timeline view-state isolation — closed on `main` by PR #88 (`56bde7c85e9fedc817092e2fdad59a3c19aeb09f`); exact-commit CI, Geneva and Build-app checks are all green.
 - Export queue and explicit timeline picker.
 - Linux VAAPI encode integration and hardware validation.
 - 1080p proxy performance measurements on the actual antiX laptop, including H.264 versus MJPEG tradeoffs.

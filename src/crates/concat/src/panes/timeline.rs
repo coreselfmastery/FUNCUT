@@ -155,9 +155,13 @@ impl TimelineViews {
             return;
         }
 
+        let width = current.width;
         let outgoing = std::mem::take(current);
         self.saved.insert(from_id.to_owned(), outgoing);
         *current = self.saved.remove(to_id).unwrap_or_default();
+        // The pane geometry belongs to the window, not the timeline. Slint
+        // need not emit another resize event just because a tab changed.
+        current.width = width;
         current.recentre(playhead);
     }
 
@@ -358,6 +362,7 @@ mod tests {
         views.switch("timeline-a", "timeline-b", &mut current, 4.0);
         assert_eq!(current.scroll_left, 0.0);
         assert_eq!(current.seconds_per_pixel, 0.05);
+        assert_eq!(current.width, 900.0);
         assert!(matches!(current.tool, TimelineTool::Select));
         assert!(current.snap);
         assert!(current.lane_view.is_empty());

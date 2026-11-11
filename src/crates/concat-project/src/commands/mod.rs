@@ -425,13 +425,9 @@ pub enum Command {
         /// language, which the document cannot know.
         name: String,
     },
-    /// Add a five-second native motion clip above the picture.
     AddMotionClip {
-        /// Timeline start in seconds.
         start: f64,
-        /// Saved comp id.
         comp: String,
-        /// 64-character SHA-256 digest.
         hash: String,
     },
     /// Places a layer: a look or an effect over a span of the timeline that

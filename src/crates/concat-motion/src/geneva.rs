@@ -52,45 +52,11 @@ pub const TESTED_VERSION: &str = "1.6.0";
 /// source of truth for this decision: do not maintain a second list of
 /// unsupported node kinds in engine selection.
 pub(crate) fn requires_native_fidelity(comp: &Comp) -> bool {
-    // Geneva's flattened timeline cannot preserve the full inherited world
-    // transform in every case (notably a parent's default-origin placement,
-    // animated position, scale or rotation).
-    // The native scene graph can, so keep those comps on the native path.
-    for node in &comp.nodes {
-        let mut cursor = node.parent.as_deref();
-        let mut depth = 0;
-        while let Some(parent) = cursor {
-            if depth >= 32 {
-                return true;
-            }
-            let Some(parent_node) = comp.node(parent) else {
-                break;
-            };
-            if parent_node.transform.position.is_some()
-                || parent_node.transform.scale != 1.0
-                || parent_node.transform.rotation != 0.0
-                || parent_node.tracks.contains_key("scale")
-                || parent_node.tracks.contains_key("rotation")
-                || parent_node.tracks.contains_key("position")
-            {
-                return true;
-            }
-            cursor = parent_node.parent.as_deref();
-            depth += 1;
-        }
-    }
-
-    let (_, warnings) = Geneva::at(Path::new("geneva")).timeline(comp, &BakeRequest::default());
-    let mapper_requires_native = warnings.iter().any(|warning| {
-        warning.contains("native engine only")
-            || warning.contains("approximated by")
-            || warning.contains("geneva does not read")
-            || warning.contains("geneva draws the node unmatted")
-            || warning.contains("geneva masks nothing")
-    });
-    mapper_requires_native || comp.comps.values().any(requires_native_fidelity)
+    // Comp owns the canonical capability walk, including nested scopes.
+    // Reuse it here so engine selection cannot drift from the mapper's
+    // documented list of features Geneva cannot express losslessly.
+    !comp.geneva_inexpressible().is_empty()
 }
-
 /// Why a version cannot be trusted, when its major is not the one this crate
 /// was written for. Optional fields may arrive within a major; a different
 /// major is a different format, and is never silently baked with.

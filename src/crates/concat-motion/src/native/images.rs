@@ -552,15 +552,18 @@ mod tests {
     }
 
     const SOLID_LOTTIE: &str = r##"{
-        "v":"5.7.4","fr":30,"ip":0,"op":30,"w":32,"h":32,"nm":"solid","ddd":0,
-        "assets":[],
-        "layers":[{"ddd":0,"ind":1,"ty":1,"nm":"Red","sr":1,
-          "ks":{"o":{"a":0,"k":100},"r":{"a":0,"k":0},"p":{"a":0,"k":[16,16,0]},
-                "a":{"a":0,"k":[8,8,0]},"s":{"a":0,"k":[100,100,100]}},
-          "ao":0,"sw":16,"sh":16,"sc":"#ff0000","ip":0,"op":30,"st":0,"bm":0}]
-    }"##;
-
-    #[test]
+            "v":"5.7.6","fr":30,"ip":0,"op":30,"w":32,"h":32,
+            "layers":[{"nm":"Red star","ind":1,"ty":4,"shapes":[{"ty":"gr","it":[
+              {"ty":"sr","sy":1,"d":1,"pt":{"a":0,"k":5},"p":{"a":0,"k":[16,16]},
+               "r":{"a":0,"k":0},"or":{"a":0,"k":14},"os":{"a":0,"k":0},
+               "ir":{"a":0,"k":7},"is":{"a":0,"k":0}},
+              {"ty":"fl","c":{"a":0,"k":[1,0,0,1]},"o":{"a":0,"k":100}},
+              {"ty":"tr","a":{"a":0,"k":[0,0]},"p":{"a":0,"k":[0,0]},
+               "s":{"a":0,"k":[100,100]},"r":{"a":0,"k":0},"o":{"a":0,"k":100}}
+            ]}]}]
+        }"##;
+    
+        #[test]
     fn a_lottie_json_renders_and_its_parser_is_cached() {
         let path = temp("animation.json");
         std::fs::write(&path, SOLID_LOTTIE).unwrap();

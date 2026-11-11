@@ -102,7 +102,7 @@ impl EnginePreference {
             // Prefer the native compositor when Geneva's own mapper says a
             // feature would be dropped or approximated. This keeps the
             // default engine from silently trading fidelity for availability.
-            if !geneva_available || crate::geneva::requires_native_fidelity(comp) {
+            if !geneva_available || !comp.geneva_inexpressible().is_empty() {
                 return EngineKind::Native;
             }
         }

@@ -79,13 +79,14 @@ pub(crate) fn requires_native_fidelity(comp: &Comp) -> bool {
     }
 
     let (_, warnings) = Geneva::at(Path::new("geneva")).timeline(comp, &BakeRequest::default());
-    warnings.iter().any(|warning| {
+    let mapper_requires_native = warnings.iter().any(|warning| {
         warning.contains("native engine only")
             || warning.contains("approximated by")
             || warning.contains("geneva does not read")
             || warning.contains("geneva draws the node unmatted")
             || warning.contains("geneva masks nothing")
-    })
+    });
+    mapper_requires_native || comp.comps.values().any(requires_native_fidelity)
 }
 
 /// Why a version cannot be trusted, when its major is not the one this crate

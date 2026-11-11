@@ -19,7 +19,6 @@ use serde_json::Value;
 use tiny_skia::Pixmap;
 use zip::{ZipArchive, result::ZipError};
 
-
 const MAX_LOTTIE_JSON_BYTES: usize = 16 * 1024 * 1024;
 const MAX_LOTTIE_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_DOTLOTTIE_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
@@ -81,7 +80,10 @@ impl Lottie {
 
         let renderer = Renderer::target_corpus();
         let prepared = if extension.as_deref() == Some("json") {
-            let base_dir = path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
+            let base_dir = path
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .to_path_buf();
             let resolver = |asset: &LottieAsset| resolve_external_image(&base_dir, asset);
             renderer
                 .prepare_with_resolver(&animation, &resolver)
@@ -226,11 +228,8 @@ fn read_dotlottie_animation(bytes: &[u8]) -> Result<LottieAnimation, String> {
         .map_err(|error| format!("invalid dotLottie ZIP archive: {error}"))?;
     validate_dotlottie_archive(&mut archive)?;
 
-    let manifest_bytes = read_zip_entry(
-        &mut archive,
-        "manifest.json",
-        MAX_DOTLOTTIE_MANIFEST_BYTES,
-    )?;
+    let manifest_bytes =
+        read_zip_entry(&mut archive, "manifest.json", MAX_DOTLOTTIE_MANIFEST_BYTES)?;
     let manifest: Value = serde_json::from_slice(&manifest_bytes)
         .map_err(|error| format!("invalid dotLottie manifest: {error}"))?;
     let selected_id = manifest
@@ -274,8 +273,9 @@ fn read_dotlottie_animation(bytes: &[u8]) -> Result<LottieAnimation, String> {
             Err(error) => return Err(error),
         }
     }
-    let animation_json = animation_json
-        .ok_or_else(|| "dotLottie archive does not contain the selected animation JSON".to_owned())?;
+    let animation_json = animation_json.ok_or_else(|| {
+        "dotLottie archive does not contain the selected animation JSON".to_owned()
+    })?;
     let json = std::str::from_utf8(&animation_json)
         .map_err(|error| format!("dotLottie animation JSON is not UTF-8: {error}"))?;
     let mut animation = LottieAnimation::from_json_str(json)
@@ -284,9 +284,7 @@ fn read_dotlottie_animation(bytes: &[u8]) -> Result<LottieAnimation, String> {
     Ok(animation)
 }
 
-fn validate_dotlottie_archive(
-    archive: &mut ZipArchive<Cursor<&[u8]>>,
-) -> Result<(), String> {
+fn validate_dotlottie_archive(archive: &mut ZipArchive<Cursor<&[u8]>>) -> Result<(), String> {
     if archive.len() > MAX_DOTLOTTIE_ENTRIES {
         return Err("dotLottie archive contains too many entries".into());
     }
@@ -305,7 +303,9 @@ fn validate_dotlottie_archive(
         total_size = total_size
             .checked_add(size)
             .filter(|size| *size <= MAX_DOTLOTTIE_UNCOMPRESSED_BYTES)
-            .ok_or_else(|| "dotLottie archive exceeds the total uncompressed-size limit".to_owned())?;
+            .ok_or_else(|| {
+                "dotLottie archive exceeds the total uncompressed-size limit".to_owned()
+            })?;
     }
     Ok(())
 }
@@ -320,7 +320,9 @@ fn read_zip_entry(
         other => format!("cannot open dotLottie entry {path:?}: {other}"),
     })?;
     if file.size() > maximum as u64 {
-        return Err(format!("dotLottie entry {path:?} exceeds the {maximum}-byte limit"));
+        return Err(format!(
+            "dotLottie entry {path:?} exceeds the {maximum}-byte limit"
+        ));
     }
     let mut bytes = Vec::new();
     file.by_ref()
@@ -328,7 +330,9 @@ fn read_zip_entry(
         .read_to_end(&mut bytes)
         .map_err(|error| format!("cannot read dotLottie entry {path:?}: {error}"))?;
     if bytes.len() > maximum {
-        return Err(format!("dotLottie entry {path:?} exceeds the {maximum}-byte limit"));
+        return Err(format!(
+            "dotLottie entry {path:?} exceeds the {maximum}-byte limit"
+        ));
     }
     Ok(bytes)
 }
@@ -354,12 +358,18 @@ fn embed_dotlottie_images(
             }
         }
         let (path, bytes) = image_bytes.ok_or_else(|| {
-            format!("dotLottie image asset {:?} is missing from the archive", asset.id)
+            format!(
+                "dotLottie image asset {:?} is missing from the archive",
+                asset.id
+            )
         })?;
         let media_type = media_type_for_path(&path);
         asset.base_path = None;
         asset.embedded = Some(1);
-        asset.path = Some(format!("data:{media_type};base64,{}", STANDARD.encode(bytes)));
+        asset.path = Some(format!(
+            "data:{media_type};base64,{}",
+            STANDARD.encode(bytes)
+        ));
     }
     Ok(())
 }
@@ -577,7 +587,11 @@ mod tests {
     #[test]
     fn invalid_lottie_json_is_rejected_with_a_diagnostic() {
         let path = temp("invalid.json");
-        std::fs::write(&path, r#"{"v":"5.7.4","fr":30,"ip":0,"op":30,"w":32,"h":32,"layers":[{"ty":99}]}"#).unwrap();
+        std::fs::write(
+            &path,
+            r#"{"v":"5.7.4","fr":30,"ip":0,"op":30,"w":32,"h":32,"layers":[{"ty":99}]}"#,
+        )
+        .unwrap();
         assert!(Lottie::load(&path).is_err());
     }
 

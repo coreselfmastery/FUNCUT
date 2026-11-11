@@ -74,6 +74,7 @@ fn shoot(path: &Path) {
         ten_bit: false,
         color_range: concat_media::ColorRange::Limited,
         hardware: false,
+        vaapi_first: false,
         threads: 0,
     };
     let mut encoder = Encoder::create(path, WIDTH, HEIGHT, FrameRate::THIRTY, &options)
@@ -156,6 +157,8 @@ fn export_to(session: &Session, output: &Path) -> String {
         bitrate_kbps: 0,
         color_range: concat_media::ColorRange::Limited,
         hdr: false,
+        hardware: true,
+        vaapi: false,
     };
     let request = export::request(session, &spec, Vec::new());
     export::run(&request, &AtomicBool::new(false), |_| {}).expect("exports")

@@ -2090,6 +2090,11 @@ impl Api {
             bitrate_kbps: 0,
             color_range,
             hdr,
+            // The hardware encoders lead, as every export always has; the
+            // sheet's GPU-by-name choice is the window's own, and an API
+            // export has not said it.
+            hardware: true,
+            vaapi: false,
         };
 
         let project_path = session.path().to_owned();

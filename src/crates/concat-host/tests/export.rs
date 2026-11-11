@@ -93,6 +93,7 @@ fn picture(path: &Path, rate: FrameRate, seconds: u32, codec: VideoCodec) {
         ten_bit: false,
         color_range: concat_media::ColorRange::Limited,
         hardware: false,
+        vaapi_first: false,
         threads: 0,
     };
     let mut encoder =
@@ -125,6 +126,7 @@ fn quadrants(path: &Path) {
         ten_bit: false,
         color_range: concat_media::ColorRange::Limited,
         hardware: false,
+        vaapi_first: false,
         threads: 0,
     };
     let mut encoder = Encoder::create(path, WIDTH, HEIGHT, FrameRate::THIRTY, &options)
@@ -584,6 +586,8 @@ impl Studio {
             bitrate_kbps: 0,
             color_range: self.range,
             hdr: false,
+            hardware: true,
+            vaapi: false,
         };
         let titles = self
             .titles
@@ -784,6 +788,8 @@ fn an_export_draws_on_a_lent_compositor() {
         bitrate_kbps: 0,
         color_range: concat_media::ColorRange::Limited,
         hdr: false,
+        hardware: true,
+        vaapi: false,
     };
     let request = export::request(&studio.session, &spec, Vec::new());
     let written = export::run_on(
@@ -1074,6 +1080,7 @@ fn solid(path: &Path, colour: [u8; 3]) {
         ten_bit: false,
         color_range: concat_media::ColorRange::Limited,
         hardware: false,
+        vaapi_first: false,
         threads: 0,
     };
     let mut encoder = Encoder::create(path, WIDTH, HEIGHT, FrameRate::THIRTY, &options)
@@ -1206,6 +1213,7 @@ fn an_hlg_clip_exports_through_the_gpu_conversion() {
             ten_bit: true,
             color_range: concat_media::ColorRange::Limited,
             hardware: false,
+            vaapi_first: false,
             threads: 0,
         };
         let mut encoder = Encoder::create_mislabelled_hdr(
@@ -1266,6 +1274,7 @@ fn an_hlg_timeline_exports_as_hdr_or_sdr() {
         ten_bit: true,
         color_range: concat_media::ColorRange::Limited,
         hardware: false,
+        vaapi_first: false,
         threads: 0,
     };
     {
@@ -1323,6 +1332,8 @@ fn an_hlg_timeline_exports_as_hdr_or_sdr() {
             bitrate_kbps: 0,
             color_range: concat_media::ColorRange::Limited,
             hdr,
+            hardware: true,
+            vaapi: false,
         };
         let request = export::request(&studio.session, &spec, Vec::new());
         export::run(&request, &AtomicBool::new(false), |_| {})

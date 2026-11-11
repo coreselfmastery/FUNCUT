@@ -2141,6 +2141,9 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     app.on_export_codec_changed(on_window!(|state, index: i32| {
         state.handle(Msg::Export(ExportMsg::CodecChanged(index)));
     }));
+    app.on_export_encoder_changed(on_window!(|state, index: i32| {
+        state.handle(Msg::Export(ExportMsg::EncoderChanged(index)));
+    }));
     app.on_export_hdr_changed(on_window!(|state, on: bool| {
         state.handle(Msg::Export(ExportMsg::HdrChanged(on)));
     }));

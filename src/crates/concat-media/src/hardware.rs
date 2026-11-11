@@ -533,6 +533,14 @@ impl Device {
         }
         Some(format)
     }
+
+    /// The device context's own buffer, for a caller lending the device
+    /// to an encoder: the encoder side of what [`Device::attach`] does
+    /// for a decoder, which also needs the pool built on it. The
+    /// reference is the caller's to unref.
+    pub(crate) fn buffer(&self) -> *mut sys::AVBufferRef {
+        self.context
+    }
 }
 
 impl Clone for Device {

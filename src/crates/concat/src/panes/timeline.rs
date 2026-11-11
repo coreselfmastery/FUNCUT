@@ -358,7 +358,7 @@ mod tests {
         views.switch("timeline-a", "timeline-b", &mut current, 4.0);
         assert_eq!(current.scroll_left, 0.0);
         assert_eq!(current.seconds_per_pixel, 0.05);
-        assert_eq!(current.tool, TimelineTool::Select);
+        assert!(matches!(current.tool, TimelineTool::Select));
         assert!(current.snap);
         assert!(current.lane_view.is_empty());
 
@@ -367,7 +367,7 @@ mod tests {
         views.switch("timeline-b", "timeline-a", &mut current, 8.0);
         assert_eq!(current.scroll_left, 12.0);
         assert_eq!(current.seconds_per_pixel, 0.08);
-        assert_eq!(current.tool, TimelineTool::Hand);
+        assert!(matches!(current.tool, TimelineTool::Hand));
         assert!(!current.snap);
         let lane = current.lane_view.get("track-a").expect("saved lane view");
         assert!(lane.locked);

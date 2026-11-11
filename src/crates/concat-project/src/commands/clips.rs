@@ -1532,7 +1532,10 @@ mod motion_clip_tests {
             .iter()
             .position(|track| track.id == clip.track_id)
             .expect("motion lane");
-        assert!(motion_row > footage_row, "motion clip must be above footage");
+        assert!(
+            motion_row > footage_row,
+            "motion clip must be above footage"
+        );
         assert_eq!(clip.start, 2.0);
         assert_eq!(clip.duration, DEFAULT_LAYER_DURATION);
         let motion = clip.motion.as_ref().expect("motion payload");

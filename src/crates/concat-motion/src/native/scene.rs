@@ -723,11 +723,10 @@ impl Scene<'_> {
                 match source {
                     Some(source) => {
                         let path = self.source_dir.join(&source);
-                        match self.pictures.lottie_frame(
-                            &path,
-                            (at - node.start).max(0.0),
-                            *r#loop,
-                        ) {
+                        match self
+                            .pictures
+                            .lottie_frame(&path, (at - node.start).max(0.0), *r#loop)
+                        {
                             Ok(pixmap) => {
                                 let (pw, ph) =
                                     (f64::from(pixmap.width()), f64::from(pixmap.height()));

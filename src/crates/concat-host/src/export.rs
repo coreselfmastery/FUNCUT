@@ -382,7 +382,9 @@ impl ExportQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use concat_project::{Command, DocumentSettings, MediaKind, NewMedia};
+    use concat_project::commands::NewMedia;
+    use concat_project::model::MediaKind;
+    use concat_project::{Command, DocumentSettings};
 
     #[test]
     fn non_active_timeline_request_uses_its_own_format_without_switching_tabs() {
@@ -724,7 +726,7 @@ mod tests {
         match &running.state {
             QueueState::Running { progress, stage } => {
                 assert_eq!(*progress, 0.5);
-                assert_eq!(stage, "Rendering video");
+                assert_eq!(stage.as_str(), "Rendering video");
             }
             other => panic!("the job is running, not {other:?}"),
         }

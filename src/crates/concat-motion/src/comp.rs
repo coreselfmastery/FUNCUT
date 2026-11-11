@@ -985,8 +985,8 @@ impl Comp {
 
     /// Whether anything in this comp only a markup engine can draw.
     ///
-    /// True when a node is markup. Everything else - shapes, paths, text,
-    /// images, nested comps - the project's own renderer draws.
+    /// True when this comp or any nested sub-comp contains markup. Shapes,
+    /// paths, text and images are drawn by the project's own renderer.
     pub fn needs_markup(&self) -> bool {
         self.nodes
             .iter()

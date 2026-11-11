@@ -60,13 +60,8 @@ pub struct Progress {
 
 /// The active session timeline flattened into a request the engine can render.
 pub fn request(session: &Session, spec: &ExportSpec, titles: Vec<ExportClip>) -> ExportRequest {
-    request_for_timeline(
-        session,
-        spec,
-        titles,
-        &session.project().active_timeline_id,
-    )
-    .expect("the active timeline always belongs to its project")
+    request_for_timeline(session, spec, titles, &session.project().active_timeline_id)
+        .expect("the active timeline always belongs to its project")
 }
 
 /// Builds an export request for a specific timeline without changing the
@@ -176,7 +171,6 @@ impl Exporter {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,13 +191,9 @@ mod tests {
         };
         let session = Session::open(&scratch.to_string_lossy(), settings).expect("opens");
         let timeline_id = session.project().active_timeline_id.clone();
-        let request = request_for_timeline(
-            &session,
-            &ExportSpec::default(),
-            Vec::new(),
-            &timeline_id,
-        )
-        .expect("known timeline");
+        let request =
+            request_for_timeline(&session, &ExportSpec::default(), Vec::new(), &timeline_id)
+                .expect("known timeline");
         assert_eq!((request.width, request.height), (1920, 1080));
         assert_eq!((request.rate_num, request.rate_den), (30, 1));
         assert!(

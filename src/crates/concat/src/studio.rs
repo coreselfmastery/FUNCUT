@@ -12146,9 +12146,9 @@ impl Studio {
             page.set_hf_key(keys.hf.clone().into());
         }
         // The Motion page.
-        sync(&models.motion_comps, {
-            let rows: Vec<crate::ui::MotionCompData> = self
-                .motion
+        sync(
+            &models.motion_comps,
+            self.motion
                 .comps
                 .iter()
                 .map(|comp| crate::ui::MotionCompData {
@@ -12159,9 +12159,8 @@ impl Studio {
                         .into(),
                     baked: comp.baked,
                 })
-                .collect();
-            rows
-        });
+                .collect(),
+        );
         {
             let page = app.global::<crate::ui::Motion>();
             page.set_has_project(self.session.is_some());

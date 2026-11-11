@@ -146,7 +146,7 @@ impl Native {
             comp,
             source_dir: source_dir.to_path_buf(),
             fonts: &fonts,
-            pictures: &mut pictures,
+            pictures,
             warnings,
             frame: (f64::from(width), f64::from(height)),
             scale,

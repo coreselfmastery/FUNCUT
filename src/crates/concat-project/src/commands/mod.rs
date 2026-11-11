@@ -410,6 +410,38 @@ pub enum Command {
         /// language, which the document cannot know.
         name: String,
     },
+    /// Places a motion composition on a timeline lane. The referenced comp
+    /// must already be saved in the project's `comps/` directory and its
+    /// content hash must be a 64-character hexadecimal digest. A missing
+    /// track is chosen above the picture by default; occupied space is
+    /// avoided rather than covered.
+    AddMotionClip {
+        /// Explicit lane, or None to choose one using `above`.
+        track_id: Option<String>,
+        /// Whether an automatically chosen lane should sit above the picture.
+        #[serde(default = "yes")]
+        above: bool,
+        /// Timeline position in seconds, floored at zero.
+        start: f64,
+        /// Timeline duration; defaults to five seconds.
+        #[serde(default)]
+        duration: Option<f64>,
+        /// Stable comp document id.
+        comp: String,
+        /// SHA-256 content hash of the saved comp document.
+        hash: String,
+        /// `geneva`, `native`, or `lottie`.
+        engine: String,
+        /// Optional bake width; zero uses the comp's authoring width.
+        #[serde(default)]
+        width: u32,
+        /// Optional bake height; zero uses the comp's authoring height.
+        #[serde(default)]
+        height: u32,
+        /// Display name in the timeline.
+        #[serde(default)]
+        name: String,
+    },
     /// Places a layer: a look or an effect over a span of the timeline that
     /// treats everything beneath it. No media; the chain starts as the one
     /// package named, at its defaults, and the clip's opacity is how hard it
@@ -995,6 +1027,9 @@ pub enum CommandError {
     /// one stored would poison every duration and key that touched it.
     #[error("A number in that edit is not finite.")]
     NotANumber,
+    /// A motion clip command named an invalid comp id, digest or engine.
+    #[error("That motion composition reference is invalid.")]
+    InvalidMotion,
     /// [`Command::AddTextClip`], or an `updateClip` patching its `text`,
     /// carried a style whose words are empty or whitespace. A title with
     /// no words renders nothing yet reports itself placed; refused is
@@ -1162,6 +1197,9 @@ impl Command {
                     })
             }
             Command::AddLayerClip {
+                start, duration, ..
+            }
+            | Command::AddMotionClip {
                 start, duration, ..
             } => bad([*start]) || bad(*duration),
             Command::SetClipSpeedCurve { curve, .. } => {
@@ -1348,6 +1386,7 @@ pub fn apply(
         | Command::AddTextClip { .. }
         | Command::AddShapeClip { .. }
         | Command::AddLayerClip { .. }
+        | Command::AddMotionClip { .. }
         | Command::MoveClips { .. }
         | Command::TrimClip { .. }
         | Command::SplitClips { .. }

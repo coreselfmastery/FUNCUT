@@ -513,7 +513,11 @@ mod tests {
         // The whole-catalogue cap rose once since, 240,000 -> 242,000 at
         // 109 tools: the catalogue gained four real tools (the footage
         // layer's two, timeline_seek, motion_import) after the cap was
-        // measured at 105, and the growth is function, not prose. The
+        // measured at 105, and the growth is function, not prose. It
+        // rose again for the timeline motion-clip command, whose
+        // AddMotionClip variant and its refusal sit in the edit.apply
+        // schema the same way every command does: 242,232 measured,
+        // 243,000 the cap, function again. The
         // director's default surface - what `concat --mcp` serves an
         // agent that names no list, and the budget that matters by
         // default - keeps its own, tighter cap below.
@@ -528,7 +532,7 @@ mod tests {
             "CONTEXT whole catalogue: {total} over {} tools",
             sizes.len()
         );
-        assert!(total < 242_000, "{total}: {sizes:?}");
+        assert!(total < 243_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }

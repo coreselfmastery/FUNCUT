@@ -20,18 +20,18 @@ SPEC.loader.exec_module(benchmark)
 class ParseJsonDocumentsTests(unittest.TestCase):
     def test_reads_concatenated_json_objects_with_whitespace(self) -> None:
         documents = benchmark.parse_json_documents(
-            '{ "ok": true }\\n  {"scenes": 4}\\n'
+            '{ "ok": true }\n  {"scenes": 4}\n'
         )
         self.assertEqual(documents, [{"ok": True}, {"scenes": 4}])
 
     def test_ignores_non_object_json_values(self) -> None:
         documents = benchmark.parse_json_documents(
-            '[1, 2]\\n{"ok": true}\\nnull\\n"note"'
+            '[1, 2]\n{"ok": true}\nnull\n"note"'
         )
         self.assertEqual(documents, [{"ok": True}])
 
     def test_rejects_truncated_or_non_json_output(self) -> None:
-        for output in ('{"ok": true}\\n{', 'renderer failed'):
+        for output in ('{"ok": true}\n{', 'renderer failed'):
             with self.subTest(output=output):
                 with self.assertRaises(ValueError):
                     benchmark.parse_json_documents(output)

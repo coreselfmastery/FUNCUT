@@ -106,21 +106,22 @@ impl VideoCodec {
     /// The FFmpeg encoders that make this codec, best first; an export
     /// takes the first that is linked and opens.
     ///
-    /// The software encoders lead, and the machine's own
-    /// comes after them for an FFmpeg built without them. With `hardware`,
-    /// the GPU's leads for HEVC and AV1: VAAPI first - this is a Linux
-    /// editor and VAAPI is the video hardware every Intel and AMD chip on
-    /// it carries, opened through the Mesa driver, which fails cleanly
-    /// rather than taking the process down (see [`Family::vendor_driver`])
-    /// - then NVIDIA's NVENC, Intel's Quick Sync and AMD's AMF, in that
-    /// order - many times faster than x265 and, at these rates, as good
-    /// to look at. Whichever of those the machine has no chip for does
-    /// not open, and the export takes the next. H.264 stays with x264
-    /// wherever it is linked: the hardware H.264 encoders spend noticeably
-    /// more bits for the same picture, and H.264 is the choice made for
-    /// compatibility, not speed - unless the person names the machine's
-    /// own ahead of it ([`EncodeOptions::vaapi_first`], the export
-    /// sheet's "GPU" choice).
+    /// The software encoders lead, and the machine's own comes after
+    /// them for an FFmpeg built without them. With `hardware`, the
+    /// GPU's leads for HEVC and AV1: VAAPI first, because this is a
+    /// Linux editor and VAAPI is the video hardware every Intel and AMD
+    /// chip carries, opened through the Mesa driver, which fails
+    /// cleanly rather than taking the process down (see
+    /// [`Family::vendor_driver`]); then NVIDIA's NVENC, Intel's Quick
+    /// Sync and AMD's AMF, in that order, many times faster than x265
+    /// and, at these rates, as good to look at. Whichever of those the
+    /// machine has no chip for does not open, and the export takes the
+    /// next. H.264 stays with x264 wherever it is linked: the hardware
+    /// H.264 encoders spend noticeably more bits for the same picture,
+    /// and H.264 is the choice made for compatibility, not speed,
+    /// unless the person names the machine's own ahead of it
+    /// ([`EncodeOptions::vaapi_first`], the export sheet's "GPU"
+    /// choice).
     pub fn encoders(self, hardware: bool) -> &'static [&'static str] {
         match self {
             VideoCodec::H264 => &[

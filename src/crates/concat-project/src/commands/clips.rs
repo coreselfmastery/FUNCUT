@@ -238,7 +238,9 @@ pub(super) fn apply(
                 || matches!(comp.as_str(), "." | "..")
                 || !comp
                     .chars()
-                    .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.'))
+                    .all(|character| {
+                        character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+                    })
                 || hash.len() != 64
                 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
                 || !matches!(engine.as_str(), "geneva" | "native" | "lottie")
@@ -1560,10 +1562,15 @@ mod motion_clip_tests {
     }
 
     #[test]
-    fn add_motion_clip_rejects_invalid_hash_or_engine() {
+    fn add_motion_clip_rejects_invalid_comp_id_hash_or_engine() {
         let mut project = Project::new();
         let mut mint = IdMint::default();
-        for (hash, engine) in [("short", "native"), (&"b".repeat(64), "unknown")] {
+        let cases = [
+            ("comp".to_owned(), "short".to_owned(), "native"),
+            ("comp".to_owned(), "b".repeat(64), "unknown"),
+            ("../escape".to_owned(), "c".repeat(64), "native"),
+        ];
+        for (comp, hash, engine) in cases {
             let result = apply(
                 &mut project,
                 &mut mint,
@@ -1572,8 +1579,8 @@ mod motion_clip_tests {
                     above: true,
                     start: 0.0,
                     duration: None,
-                    comp: "comp".into(),
-                    hash: hash.into(),
+                    comp,
+                    hash,
                     engine: engine.into(),
                     width: 0,
                     height: 0,

@@ -1593,7 +1593,10 @@ mod motion_clip_tests {
         )
         .unwrap();
         assert!(outcome.applied);
-        assert_eq!(project.active().clip(&id).unwrap().motion.as_ref(), Some(&updated));
+        assert_eq!(
+            project.active().clip(&id).unwrap().motion.as_ref(),
+            Some(&updated)
+        );
 
         let result = apply(
             &mut project,

@@ -236,11 +236,9 @@ pub(super) fn apply(
             let hash = hash.trim().to_ascii_lowercase();
             if comp.is_empty()
                 || matches!(comp.as_str(), "." | "..")
-                || !comp
-                    .chars()
-                    .all(|character| {
-                        character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
-                    })
+                || !comp.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+                })
                 || hash.len() != 64
                 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
                 || !matches!(engine.as_str(), "geneva" | "native" | "lottie")

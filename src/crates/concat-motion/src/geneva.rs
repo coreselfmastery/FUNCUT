@@ -2129,6 +2129,47 @@ mod tests {
     }
 
     #[test]
+    fn bake_and_frame_refuse_mixed_markup_before_contacting_the_sidecar() {
+        let mut comp = text_comp();
+        comp.nodes[0].kind = NodeKind::Html {
+            markup: "<div>title</div>".into(),
+            css: String::new(),
+            width: Length::Auto,
+            height: Length::Auto,
+        };
+        let mut shape = comp.nodes[0].clone();
+        shape.id = "gradient".into();
+        shape.kind = NodeKind::Ellipse {
+            width: Length::px(100.0),
+            height: Length::px(100.0),
+            fill: Some(Paint::Gradient {
+                stops: vec![(0.0, Rgba::hex("#ff0000")), (1.0, Rgba::hex("#0000ff"))],
+                ramp: Default::default(),
+                angle: 90.0,
+                from: 0.0,
+                to: 1.0,
+            }),
+        };
+        comp.nodes.push(shape);
+        let engine = Geneva::at("/no/such/geneva");
+        let dir = tempfile::tempdir().expect("temporary bake directory");
+        assert!(matches!(
+            engine.bake(&comp, &BakeRequest::default(), dir.path()),
+            Err(MotionError::Unsupported {
+                engine: EngineKind::Geneva,
+                ..
+            })
+        ));
+        assert!(matches!(
+            engine.frame(&comp, 0.5, None, dir.path()),
+            Err(MotionError::Unsupported {
+                engine: EngineKind::Geneva,
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn a_markup_comp_without_native_only_content_remains_geneva_expressible() {
         let mut comp = text_comp();
         comp.nodes[0].kind = NodeKind::Html {

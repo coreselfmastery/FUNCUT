@@ -458,9 +458,9 @@ mod tests {
         let path = temp("selected.lottie");
         let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
         let options = zip::write::SimpleFileOptions::default();
-        writer.start_file("manifest.json", options).unwrap();
+        writer.start_file("manifest.json", options.clone()).unwrap();
         writer.write_all(br#"{"version":"2","initial":{"animation":"selected"},"animations":[{"id":"first"},{"id":"selected"}]}"#).unwrap();
-        writer.start_file("a/selected.json", options).unwrap();
+        writer.start_file("a/selected.json", options.clone()).unwrap();
         writer.write_all(SOLID_LOTTIE.as_bytes()).unwrap();
         let bytes = writer.finish().unwrap().into_inner();
         std::fs::write(&path, bytes).unwrap();
@@ -475,7 +475,7 @@ mod tests {
         let options = zip::write::SimpleFileOptions::default();
         writer.start_file("manifest.json", options).unwrap();
         writer.write_all(br#"{"version":"1","activeAnimationId":"selected","animations":[{"id":"first"},{"id":"selected"}]}"#).unwrap();
-        writer.start_file("animations/selected.json", options).unwrap();
+        writer.start_file("animations/selected.json", options.clone()).unwrap();
         writer.write_all(SOLID_LOTTIE.as_bytes()).unwrap();
         let bytes = writer.finish().unwrap().into_inner();
         std::fs::write(&path, bytes).unwrap();

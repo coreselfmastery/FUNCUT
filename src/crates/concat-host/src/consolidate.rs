@@ -129,6 +129,8 @@ impl Consolidation {
             bitrate_kbps: 0,
             color_range: Default::default(),
             color_space: self.video.color_space,
+            hardware: true,
+            vaapi_first: false,
             hdr,
             effect_time_offset: start,
             clips,

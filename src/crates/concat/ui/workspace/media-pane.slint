@@ -18,6 +18,7 @@ import { OpenVid, OpenVidList, OpenVidStatus } from "openvid-page.slint";
 import { Music, MusicList, MusicStatus } from "bgm-page.slint";
 import { Magick, MagickGrid, MagickStatus } from "magick-page.slint";
 import { Forge, ForgePage } from "forge-page.slint";
+import { Motion, MotionPage } from "motion-page.slint";
 
 export { SourcePreview }
 
@@ -1906,6 +1907,7 @@ export component MediaPane inherits Rectangle {
         Music.shown(root.tab == 10);
         Magick.shown(root.tab == 11);
         Forge.shown(root.tab == 12);
+        Motion.shown(root.tab == 13);
     }
     property <bool> openvid-shelves-open: true;
     property <bool> openvid-shapes-open: true;
@@ -2121,6 +2123,14 @@ export component MediaPane inherits Rectangle {
                             label: I18n.t("forge.forge");
                             current: root.tab == 12;
                             clicked => { root.tab = 12; }
+                        }
+                        // Beside the AI director: the project's motion
+                        // comps, listed and placed on the timeline.
+                        LibraryTab {
+                            glyph: Glyph.shapes;
+                            label: I18n.t("motion.motion");
+                            current: root.tab == 13;
+                            clicked => { root.tab = 13; }
                         }
                         LibraryTab {
                             glyph: Glyph.text-mark;
@@ -3104,6 +3114,7 @@ export component MediaPane inherits Rectangle {
                 // Forge: the AI director. The script is the asking; the
                 // agent, run by the forge harness, is the answer.
                 if root.tab == 12: ForgePage { }
+                if root.tab == 13: MotionPage { }
 
                 // Music: the background-music library. Everything above
                 // the list is the asking; the list is the answer.

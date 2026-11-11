@@ -173,7 +173,12 @@ pub(super) fn apply(
                 start,
                 duration,
             );
-            clip.offset_y = offset_y.unwrap_or(0.0).clamp(-MAX_OFFSET, MAX_OFFSET);
+            // A placement, not an animation: held to the title-safe band so
+            // the block keeps ink inside the frame (see MAX_TITLE_PLACEMENT),
+            // while keyframes and SetClipTransform stay free to fly one in.
+            clip.offset_y = offset_y
+                .unwrap_or(0.0)
+                .clamp(-MAX_TITLE_PLACEMENT, MAX_TITLE_PLACEMENT);
             clip.text = Some(style);
             timeline.clips.push(Arc::new(clip));
             Ok(Outcome {
@@ -213,6 +218,42 @@ pub(super) fn apply(
             let mut clip =
                 Clip::blank(id.clone(), track_id, ClipKind::Shape, name, start, duration);
             clip.shape = Some(style);
+            timeline.clips.push(Arc::new(clip));
+            Ok(Outcome {
+                created_id: Some(id),
+                applied: true,
+            })
+        }
+
+        Command::AddMotionClip { start, comp, hash } => {
+            let comp = comp.trim().to_owned();
+            let hash = hash.trim().to_ascii_lowercase();
+            let engine = "geneva";
+            if !valid_motion_reference(&comp, &hash, engine) {
+                return Err(CommandError::InvalidMotion);
+            }
+            let duration = DEFAULT_LAYER_DURATION.max(MIN_CLIP_DURATION);
+            let start = within_timeline(start);
+            let timeline = project.active_mut();
+            let track_id = first_free_track_above(timeline, start, duration)
+                .unwrap_or_else(|| fresh_track(timeline, mint));
+            let start = timeline.nearest_free_start(&track_id, start, duration, &[]);
+            let id = mint.next("c");
+            let mut clip = Clip::blank(
+                id.clone(),
+                track_id,
+                ClipKind::Motion,
+                comp.clone(),
+                start,
+                duration,
+            );
+            clip.motion = Some(crate::model::MotionClip {
+                comp,
+                hash,
+                engine: engine.into(),
+                width: 0,
+                height: 0,
+            });
             timeline.clips.push(Arc::new(clip));
             Ok(Outcome {
                 created_id: Some(id),
@@ -1450,4 +1491,86 @@ pub fn consolidation_clips(
         return Err(refuse("Include both sides of a transition in the merge."));
     }
     Ok(clips)
+}
+
+#[cfg(test)]
+mod motion_clip_tests {
+    use super::*;
+
+    #[test]
+    fn add_motion_clip_creates_a_valid_timeline_reference() {
+        let mut project = Project::new();
+        let mut mint = IdMint::default();
+        let footage_track = project.active().tracks[0].id.clone();
+        project.active_mut().clips.push(Arc::new(Clip::blank(
+            "footage",
+            footage_track.clone(),
+            ClipKind::Video,
+            "media",
+            0.0,
+            12.0,
+        )));
+        let hash = "a".repeat(16);
+        let outcome = apply(
+            &mut project,
+            &mut mint,
+            Command::AddMotionClip {
+                start: 2.0,
+                comp: "lower-third".into(),
+                hash: hash.clone(),
+            },
+        )
+        .expect("valid motion clip");
+
+        let id = outcome.created_id.expect("new clip id");
+        let clip = project.active().clip(&id).expect("placed clip");
+        assert_eq!(clip.kind, ClipKind::Motion);
+        assert!(!clip.track_id.is_empty());
+        let timeline = project.active();
+        let footage_row = timeline
+            .tracks
+            .iter()
+            .position(|track| track.id == footage_track)
+            .expect("footage lane");
+        let motion_row = timeline
+            .tracks
+            .iter()
+            .position(|track| track.id == clip.track_id)
+            .expect("motion lane");
+        assert!(
+            motion_row > footage_row,
+            "motion clip must be above footage"
+        );
+        assert_eq!(clip.start, 2.0);
+        assert_eq!(clip.duration, DEFAULT_LAYER_DURATION);
+        let motion = clip.motion.as_ref().expect("motion payload");
+        assert_eq!(motion.comp, "lower-third");
+        assert_eq!(motion.hash, hash);
+        assert_eq!(motion.engine, "geneva");
+        assert_eq!((motion.width, motion.height), (0, 0));
+    }
+
+    #[test]
+    fn add_motion_clip_rejects_invalid_comp_ids_and_hashes() {
+        let mut project = Project::new();
+        let mut mint = IdMint::default();
+        let cases = [
+            ("comp".to_owned(), "short".to_owned()),
+            ("comp".to_owned(), "c".repeat(64)),
+            ("../escape".to_owned(), "c".repeat(16)),
+        ];
+        for (comp, hash) in cases {
+            let result = apply(
+                &mut project,
+                &mut mint,
+                Command::AddMotionClip {
+                    start: 0.0,
+                    comp,
+                    hash,
+                },
+            );
+            assert_eq!(result, Err(CommandError::InvalidMotion));
+        }
+        assert!(project.active().clips.is_empty());
+    }
 }

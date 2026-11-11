@@ -106,25 +106,61 @@ impl VideoCodec {
     /// The FFmpeg encoders that make this codec, best first; an export
     /// takes the first that is linked and opens.
     ///
-    /// The software encoders lead, and the machine's own
-    /// comes after them for an FFmpeg built without them. With `hardware`,
-    /// the GPU's leads for HEVC and AV1: NVIDIA's NVENC, Intel's Quick
-    /// Sync and AMD's AMF, in that order - many times faster than x265
+    /// The software encoders lead, and the machine's own comes after
+    /// them for an FFmpeg built without them. With `hardware`, the
+    /// GPU's leads for HEVC and AV1: VAAPI first, because this is a
+    /// Linux editor and VAAPI is the video hardware every Intel and AMD
+    /// chip carries, opened through the Mesa driver, which fails
+    /// cleanly rather than taking the process down (see
+    /// [`Family::vendor_driver`]); then NVIDIA's NVENC, Intel's Quick
+    /// Sync and AMD's AMF, in that order, many times faster than x265
     /// and, at these rates, as good to look at. Whichever of those the
     /// machine has no chip for does not open, and the export takes the
-    /// next. H.264 stays with x264
-    /// wherever it is linked: the hardware H.264 encoders spend noticeably
-    /// more bits for the same picture, and H.264 is the choice made for
-    /// compatibility, not speed.
+    /// next. H.264 stays with x264 wherever it is linked: the hardware
+    /// H.264 encoders spend noticeably more bits for the same picture,
+    /// and H.264 is the choice made for compatibility, not speed,
+    /// unless the person names the machine's own ahead of it
+    /// ([`EncodeOptions::vaapi_first`], the export sheet's "GPU"
+    /// choice).
     pub fn encoders(self, hardware: bool) -> &'static [&'static str] {
         match self {
-            VideoCodec::H264 => &["libx264", "h264_nvenc", "h264_qsv", "h264_amf"],
-            VideoCodec::Hevc if hardware => &["hevc_nvenc", "hevc_qsv", "hevc_amf", "libx265"],
-            VideoCodec::Hevc => &["libx265", "hevc_nvenc", "hevc_qsv", "hevc_amf"],
-            VideoCodec::Av1 if hardware => {
-                &["av1_nvenc", "av1_qsv", "av1_amf", "libsvtav1", "libaom-av1"]
-            }
-            VideoCodec::Av1 => &["libsvtav1", "libaom-av1", "av1_nvenc", "av1_qsv", "av1_amf"],
+            VideoCodec::H264 => &[
+                "libx264",
+                "h264_vaapi",
+                "h264_nvenc",
+                "h264_qsv",
+                "h264_amf",
+            ],
+            VideoCodec::Hevc if hardware => &[
+                "hevc_vaapi",
+                "hevc_nvenc",
+                "hevc_qsv",
+                "hevc_amf",
+                "libx265",
+            ],
+            VideoCodec::Hevc => &[
+                "libx265",
+                "hevc_vaapi",
+                "hevc_nvenc",
+                "hevc_qsv",
+                "hevc_amf",
+            ],
+            VideoCodec::Av1 if hardware => &[
+                "av1_vaapi",
+                "av1_nvenc",
+                "av1_qsv",
+                "av1_amf",
+                "libsvtav1",
+                "libaom-av1",
+            ],
+            VideoCodec::Av1 => &[
+                "libsvtav1",
+                "libaom-av1",
+                "av1_vaapi",
+                "av1_nvenc",
+                "av1_qsv",
+                "av1_amf",
+            ],
             // The one encoder there is, in software, always: there is no
             // GPU's MJPEG to fall through to, and none is wanted - a
             // proxy is written while the editor is in use, and the CPU's
@@ -134,7 +170,11 @@ impl VideoCodec {
     }
 
     /// The encoders for it the linked FFmpeg carries, best first, less any
-    /// the environment has switched off (see [`switched_on`]).
+    /// the environment has switched off (see [`switched_on`]). A VAAPI
+    /// encoder is carried only where the machine has the DRI render node
+    /// the driver needs (see [`vaapi_possible`]) - never on the strength of
+    /// the FFmpeg build alone, whose VAAPI can be stub libraries that
+    /// abort the process when the driver is not installed.
     fn linked(self, hardware: bool, ten_bit: bool) -> impl Iterator<Item = &'static str> {
         ffi::init();
         self.encoders(hardware)
@@ -142,6 +182,7 @@ impl VideoCodec {
             .copied()
             .filter(move |name| !ten_bit || takes_ten_bits(name))
             .filter(|name| switched_on(name, |key| std::env::var_os(key)))
+            .filter(|name| Family::of(name) != Family::Vaapi || vaapi_possible())
             .filter(|name| encoder::find_by_name(name).is_some())
     }
 
@@ -280,6 +321,12 @@ pub struct EncodeOptions {
     /// Let the platform's hardware encoder lead where there is one; see
     /// [`VideoCodec::encoders`].
     pub hardware: bool,
+    /// The person named the machine's own video hardware: the VAAPI
+    /// encoders lead every codec's list, H.264's included, and the
+    /// software encoder that follows is the fallback for a chip that
+    /// refuses this export's size or depth. Default false: the lists'
+    /// own order, which keeps H.264 on x264.
+    pub vaapi_first: bool,
     /// Threads the encoder may use, or zero to let it count the cores.
     /// Zero for an export; a few for a proxy written while the editor is
     /// in use.
@@ -297,6 +344,7 @@ impl Default for EncodeOptions {
             ten_bit: false,
             color_range: ColorRange::Limited,
             hardware: true,
+            vaapi_first: false,
             threads: 0,
         }
     }
@@ -338,6 +386,12 @@ enum Family {
     Qsv,
     /// AMD's AMF: semi-planar 4:2:0 at eight bits, steered by a QP.
     Amf,
+    /// The Linux video hardware through VAAPI: semi-planar 4:2:0 in the
+    /// machine's own memory, steered by a bitrate. Frames are uploaded
+    /// into a pool on the device (see [`HwFrames`]); the encoders open
+    /// through the Mesa driver, which hands back an error rather than
+    /// crashing, so - unlike the vendors' - they are safe to probe.
+    Vaapi,
 }
 
 impl Family {
@@ -348,6 +402,8 @@ impl Family {
             Family::Qsv
         } else if encoder_name.ends_with("_amf") {
             Family::Amf
+        } else if encoder_name.ends_with("_vaapi") {
+            Family::Vaapi
         } else {
             Family::Software
         }
@@ -488,6 +544,45 @@ fn opens(codec: VideoCodec, encoder_name: &'static str) -> bool {
     result.is_ok()
 }
 
+/// Whether this machine has the VAAPI door at all: a DRI render node,
+/// which is what every Intel and AMD chip exposes and a machine without
+/// the video hardware does not. The question is asked of the filesystem
+/// and never of the libraries, because an FFmpeg whose VAAPI is carried
+/// as stub libraries aborts the process at the dlopen, rather than
+/// handing back an error, when the driver is not installed - a prebuilt
+/// FFmpeg on a machine without the driver does exactly that, and the
+/// encoder lists must never reach it. Answered once per process.
+fn vaapi_possible() -> bool {
+    static KNOWN: OnceLock<bool> = OnceLock::new();
+    *KNOWN.get_or_init(|| {
+        std::fs::read_dir("/dev/dri").is_ok_and(|entries| {
+            entries
+                .flatten()
+                .any(|entry| entry.file_name().to_string_lossy().starts_with("renderD"))
+        })
+    })
+}
+
+/// Whether the machine's own video hardware encodes through VAAPI: the
+/// linked FFmpeg carries its encoders, the device opens and one of them
+/// opens at 720p. The export sheet asks this once per process to say
+/// whether its "GPU" choice is the machine's to make; probing is safe
+/// here as it is nowhere else in the hardware encoders, because VAAPI
+/// opens through the Mesa driver, which hands back an error rather than
+/// taking the process down (see [`Family::vendor_driver`]). A codec the
+/// chip does not take is not this question: the export falls to the next
+/// encoder in its list when the one for that codec refuses.
+pub fn vaapi_encode_available() -> bool {
+    static KNOWN: OnceLock<bool> = OnceLock::new();
+    *KNOWN.get_or_init(|| {
+        ffi::init();
+        vaapi_possible()
+            && encoder::find_by_name("h264_vaapi").is_some()
+            && crate::hardware::device(crate::HwDevice::Vaapi).is_some()
+            && opens(VideoCodec::H264, "h264_vaapi")
+    })
+}
+
 /// Whether each hardware encoder opens here, as a probe found or an export
 /// that opened it showed: the answer is the machine's, and each question
 /// opens an encoder.
@@ -539,13 +634,17 @@ fn takes_ten_bits(encoder_name: &str) -> bool {
         Family::Nvenc | Family::Qsv => {
             encoder_name.starts_with("hevc_") || encoder_name.starts_with("av1_")
         }
+        // Ten-bit H.264 is nothing VAAPI's drivers take; ten-bit HEVC
+        // (P010) and, on the newer chips, ten-bit AV1 are.
+        Family::Vaapi => encoder_name.starts_with("hevc_") || encoder_name.starts_with("av1_"),
     }
 }
 
 /// The bitrate in kbps a CRF comes to: 16 Mb/s
 /// for H.264 at 1080p30 and CRF 16, halving about every five steps -
-/// scaled by the pixels, the rate and the codec's size factor.
-#[cfg(test)]
+/// scaled by the pixels, the rate and the codec's size factor. The
+/// quality answer for an encoder that has no CRF of its own, as VAAPI's
+/// rate control does not.
 fn implied_kbps(
     codec: VideoCodec,
     crf: u8,
@@ -580,7 +679,7 @@ fn open_video(
     ),
     hdr: Option<Signal>,
     global_header: bool,
-) -> Result<(encoder::video::Encoder, Pixel)> {
+) -> Result<(encoder::video::Encoder, Pixel, Option<HwFrames>)> {
     let pq = hdr == Some(Signal::Pq);
     let family = Family::of(encoder_name);
     // JPEG's own pixel format: full range 4:2:0, which is what the file
@@ -797,6 +896,30 @@ fn open_video(
             "qp_p" => &options.crf.min(51).to_string(),
             "qp_b" => &options.crf.min(51).to_string(),
         },
+        // The machine's own. VAAPI's encoders carry no CRF and no preset:
+        // the bitrate is the quality, as the constant target itself or as
+        // an average under a ceiling, and the numbers ride in the options
+        // every encoder reads - "b", "maxrate" and "bufsize" are
+        // libavcodec's own, which the driver's rate control then holds
+        // to. With no bitrate asked for, the CRF's worth is worked out
+        // for it (see [`implied_kbps`]).
+        _ if family == Family::Vaapi && cbr => ffmpeg::dict! {
+            "b" => bitrate.as_str(),
+            "maxrate" => bitrate.as_str(),
+            "bufsize" => bufsize.as_str(),
+        },
+        _ if family == Family::Vaapi && average => ffmpeg::dict! {
+            "b" => bitrate.as_str(),
+            "maxrate" => peak.as_str(),
+            "bufsize" => window.as_str(),
+        },
+        _ if family == Family::Vaapi => {
+            let implied = format!(
+                "{}k",
+                implied_kbps(options.codec, options.crf, width, height, rate)
+            );
+            ffmpeg::dict! { "b" => implied.as_str() }
+        }
         _ => ffmpeg::dict! {},
     };
     // HDR's own words to the software encoders, besides the tags they
@@ -838,10 +961,153 @@ fn open_video(
             _ => {}
         }
     }
+    // VAAPI's encoders take their pictures in the device's own memory:
+    // the machine's device and a pool of frames in it are attached before
+    // the encoder opens, and every scaled frame is uploaded through that
+    // pool (see [`HwFrames`]). A machine with no VAAPI device, or one
+    // that refuses this size or depth, fails here - which is the
+    // fallback to the next encoder in the list.
+    let frames = if family == Family::Vaapi {
+        let device = crate::hardware::device(crate::HwDevice::Vaapi).ok_or_else(|| Error::Ffi {
+            operation: "open encoder",
+            path: path.to_path_buf(),
+            detail: "this machine has no VAAPI video device".to_owned(),
+        })?;
+        let pool = HwFrames::new(device.buffer(), pixel_format, width, height, path)?;
+        // SAFETY: `video` owns a live AVCodecContext, not yet opened.
+        // The encoder takes its own references to the pool and, through
+        // it, the device, and releases both when it closes.
+        unsafe {
+            let context = video.as_mut_ptr();
+            (*context).hw_device_ctx = ffmpeg::sys::av_buffer_ref(device.buffer());
+            (*context).hw_frames_ctx = ffmpeg::sys::av_buffer_ref(pool.buffer());
+            if (*context).hw_device_ctx.is_null() || (*context).hw_frames_ctx.is_null() {
+                return Err(Error::Ffi {
+                    operation: "open encoder",
+                    path: path.to_path_buf(),
+                    detail: "out of memory reaching the video hardware".to_owned(),
+                });
+            }
+        }
+        Some(pool)
+    } else {
+        None
+    };
     let encoder = video
         .open_with(settings)
         .map_err(|error| ffi::fail("open encoder", path, error))?;
-    Ok((encoder, pixel_format))
+    Ok((encoder, pixel_format, frames))
+}
+
+/// A VAAPI encoder's pool of frames in the machine's own video memory:
+/// the `*_vaapi` encoders read device memory only, so each scaled
+/// software frame is uploaded into a frame from this pool before the
+/// encoder takes it. The pool is configured with the encoder's own
+/// picture layout, so what the upload writes is what the encoder reads.
+struct HwFrames {
+    pool: *mut ffmpeg::sys::AVBufferRef,
+}
+
+impl HwFrames {
+    /// A pool of `width` by `height` frames holding `software` pictures,
+    /// on the machine's VAAPI device. The pool owns its reference to the
+    /// device; both are released when it drops.
+    fn new(
+        device: *mut ffmpeg::sys::AVBufferRef,
+        software: Pixel,
+        width: u32,
+        height: u32,
+        path: &Path,
+    ) -> Result<Self> {
+        let fail = |detail: String| Error::Ffi {
+            operation: "VAAPI frames",
+            path: path.to_path_buf(),
+            detail,
+        };
+        // SAFETY: `av_hwframe_ctx_alloc` takes its own reference to the
+        // device; the returned pool is configured and initialised here,
+        // and unref'd on drop however this ends.
+        unsafe {
+            let mut pool = ffmpeg::sys::av_hwframe_ctx_alloc(device);
+            if pool.is_null() {
+                return Err(fail("could not allocate the frames pool".to_owned()));
+            }
+            let frames = (*pool).data as *mut ffmpeg::sys::AVHWFramesContext;
+            (*frames).format = ffmpeg::sys::AVPixelFormat::VAAPI;
+            (*frames).sw_format = match software {
+                Pixel::NV12 => ffmpeg::sys::AVPixelFormat::NV12,
+                Pixel::P010LE => ffmpeg::sys::AVPixelFormat::P010LE,
+                _ => {
+                    ffmpeg::sys::av_buffer_unref(&mut pool);
+                    return Err(fail(
+                        "the video hardware does not take that picture layout".to_owned(),
+                    ));
+                }
+            };
+            (*frames).width = width as i32;
+            (*frames).height = height as i32;
+            // A small fixed pool: the encoder holds a few input frames
+            // while it works, and the surfaces are the device's own
+            // memory, cheap beside the frames themselves.
+            (*frames).initial_pool_size = 8;
+            let ret = ffmpeg::sys::av_hwframe_ctx_init(pool);
+            if ret < 0 {
+                let detail = ffmpeg::Error::from(ret).to_string();
+                ffmpeg::sys::av_buffer_unref(&mut pool);
+                return Err(fail(detail));
+            }
+            Ok(Self { pool })
+        }
+    }
+
+    /// The pool's buffer, to lend the encoder before it opens.
+    fn buffer(&self) -> *mut ffmpeg::sys::AVBufferRef {
+        self.pool
+    }
+
+    /// Uploads one scaled software frame into a frame from the pool,
+    /// with its timestamps and colour tags carried over.
+    fn upload(&self, frame: &Video, path: &Path) -> Result<Video> {
+        let mut hardware = Video::empty();
+        // SAFETY: the destination is an empty frame the pool fills in;
+        // the transfer reads `frame` and writes only the new frame, and
+        // the props copy reads one and writes the other.
+        unsafe {
+            let ret = ffmpeg::sys::av_hwframe_get_buffer(self.pool, hardware.as_mut_ptr(), 0);
+            if ret < 0 {
+                return Err(ffi::fail(
+                    "upload to the video hardware",
+                    path,
+                    ffmpeg::Error::from(ret),
+                ));
+            }
+            let ret =
+                ffmpeg::sys::av_hwframe_transfer_data(hardware.as_mut_ptr(), frame.as_ptr(), 0);
+            if ret < 0 {
+                return Err(ffi::fail(
+                    "upload to the video hardware",
+                    path,
+                    ffmpeg::Error::from(ret),
+                ));
+            }
+            let ret = ffmpeg::sys::av_frame_copy_props(hardware.as_mut_ptr(), frame.as_ptr());
+            if ret < 0 {
+                return Err(ffi::fail(
+                    "upload to the video hardware",
+                    path,
+                    ffmpeg::Error::from(ret),
+                ));
+            }
+        }
+        Ok(hardware)
+    }
+}
+
+impl Drop for HwFrames {
+    fn drop(&mut self) {
+        // SAFETY: our own reference to the pool, released once.
+        unsafe { ffmpeg::sys::av_buffer_unref(&mut self.pool) };
+    }
 }
 
 /// A four-character code as the muxer stores it.
@@ -855,6 +1121,11 @@ pub struct Encoder {
     output: format::context::Output,
     encoder: encoder::video::Encoder,
     scaler: scaling::Context,
+    /// The VAAPI frames pool the encoder's pictures are uploaded
+    /// through, when it is one of the machine's own. `None` for every
+    /// software or vendor-hardware encode, whose encoders take system
+    /// memory directly.
+    frames: Option<HwFrames>,
     /// The encoder's time base, and the stream's after the header was
     /// written - the muxer is free to pick its own.
     encoder_time_base: ffmpeg::Rational,
@@ -1143,11 +1414,18 @@ impl Encoder {
 
         // Every encoder the linked FFmpeg has for the codec, best first,
         // and among them the first that opens.
-        let candidates: Vec<(&'static str, ffmpeg::Codec)> = options
+        let mut candidates: Vec<(&'static str, ffmpeg::Codec)> = options
             .codec
             .linked(options.hardware, options.ten_bit)
             .filter_map(|name| encoder::find_by_name(name).map(|codec| (name, codec)))
             .collect();
+        if options.vaapi_first {
+            // The person named the machine's own video hardware: its
+            // encoders lead every list, H.264's included, and the
+            // software encoder that follows is the fallback for a chip
+            // that refuses this export's size or depth.
+            candidates.sort_by_key(|(name, _)| !name.ends_with("_vaapi"));
+        }
         if candidates.is_empty() {
             return Err(Error::Missing {
                 what: "encoder",
@@ -1172,14 +1450,14 @@ impl Encoder {
                 hdr,
                 global_header,
             ) {
-                Ok((encoder, pixel_format)) => {
+                Ok((encoder, pixel_format, frames)) => {
                     // Opening proves the chip, for the export sheet's
                     // label. A refusal is not remembered: it may be
                     // this export's size or depth, not the machine.
                     if Family::of(name).hardware() {
                         remember(name, true);
                     }
-                    opened = Some((name, codec, encoder, pixel_format));
+                    opened = Some((name, codec, encoder, pixel_format, frames));
                     break 'encoders;
                 }
                 Err(error) => {
@@ -1188,7 +1466,7 @@ impl Encoder {
                 }
             }
         }
-        let Some((encoder_name, codec, encoder, pixel_format)) = opened else {
+        let Some((encoder_name, codec, encoder, pixel_format, frames)) = opened else {
             return Err(failure.expect("at least one encoder was tried"));
         };
 
@@ -1279,6 +1557,7 @@ impl Encoder {
             output,
             encoder,
             scaler,
+            frames,
             encoder_time_base: time_base,
             stream_time_base,
             width,
@@ -1523,7 +1802,18 @@ impl FrameSink for Encoder {
             (*converted.as_mut_ptr()).color_range = self.color_range.into();
         }
 
-        self.send(Some(&converted))?;
+        // A VAAPI encoder takes its pictures in the machine's own
+        // memory: the scaled frame is uploaded into the pool the encoder
+        // was opened with, and the hardware frame is what it takes.
+        let picture = if let Some(pool) = &self.frames {
+            let mut uploaded = pool.upload(&converted, &self.path)?;
+            uploaded.set_pts(converted.pts());
+            uploaded
+        } else {
+            converted
+        };
+
+        self.send(Some(&picture))?;
         self.written += 1;
         self.drain()
     }
@@ -1892,6 +2182,7 @@ mod tests {
             ten_bit: false,
             color_range: ColorRange::Limited,
             hardware: false,
+            vaapi_first: false,
             threads: 0,
         };
         let rate = FrameRate::new(concat_core::time::Rational::new(25, 1));
@@ -2014,6 +2305,15 @@ mod tests {
         assert_eq!(Family::of("libx264").pixel_format(false), Pixel::YUV420P);
         assert_eq!(Family::of("libx265").pixel_format(true), Pixel::YUV420P10LE);
         assert_eq!(Family::of("hevc_nvenc").pixel_format(false), Pixel::NV12);
+        // The machine's own: semi-planar like the vendors', but safe to
+        // probe, and ten bits only where the drivers take them.
+        assert_eq!(Family::of("h264_vaapi"), Family::Vaapi);
+        assert_eq!(Family::of("hevc_vaapi").pixel_format(false), Pixel::NV12);
+        assert_eq!(Family::of("hevc_vaapi").pixel_format(true), Pixel::P010LE);
+        assert!(Family::of("av1_vaapi").hardware());
+        assert!(!Family::of("h264_vaapi").vendor_driver());
+        assert!(!takes_ten_bits("h264_vaapi"));
+        assert!(takes_ten_bits("hevc_vaapi"));
         assert!(takes_ten_bits("libx265") && takes_ten_bits("hevc_nvenc"));
         for eight in ["h264_nvenc", "h264_amf", "av1_amf"] {
             assert!(!takes_ten_bits(eight), "{eight}");
@@ -2034,9 +2334,60 @@ mod tests {
             for hardware in [false, true] {
                 let names = codec.encoders(hardware);
                 assert!(!names.is_empty(), "{codec:?}");
+                assert!(
+                    names.iter().any(|name| !Family::of(name).hardware()),
+                    "{codec:?} at hardware={hardware} has no software fallback"
+                );
             }
             assert_eq!(codec.encodable(), codec.available(), "{codec:?}");
         }
+    }
+
+    /// The machine's own video hardware is in every codec's list, and
+    /// leads HEVC and AV1 when the hardware is asked for - this is a
+    /// Linux editor and VAAPI is what its Intel and AMD chips carry -
+    /// while H.264 keeps x264 ahead of it until the person names the GPU.
+    #[test]
+    fn vaapi_sits_in_every_list_and_leads_hevc_and_av1() {
+        assert_eq!(VideoCodec::H264.encoders(true).first(), Some(&"libx264"));
+        assert!(VideoCodec::H264.encoders(true).contains(&"h264_vaapi"));
+        assert_eq!(VideoCodec::Hevc.encoders(true).first(), Some(&"hevc_vaapi"));
+        assert_eq!(VideoCodec::Av1.encoders(true).first(), Some(&"av1_vaapi"));
+        // Software-first when the hardware is not asked for.
+        assert_eq!(VideoCodec::Hevc.encoders(false).first(), Some(&"libx265"));
+    }
+
+    /// An export that names the machine's own video hardware gets it
+    /// where the machine has it, and falls back to the software encoder
+    /// where it does not - a machine with no VAAPI device, or a runner
+    /// with none, still exports, on x264.
+    #[test]
+    fn an_export_preferring_vaapi_takes_it_or_falls_back() {
+        let path = std::env::temp_dir().join("concat-encode-vaapi-preferred.mp4");
+        let options = EncodeOptions {
+            preset: "ultrafast".to_owned(),
+            rate_mode: RateMode::Average,
+            bitrate_kbps: 2_000,
+            vaapi_first: true,
+            ..EncodeOptions::default()
+        };
+        let mut encoder =
+            Encoder::create(&path, 320, 180, FrameRate::THIRTY, &options).expect("encodes");
+        let expected = if vaapi_encode_available() {
+            "h264_vaapi"
+        } else {
+            "libx264"
+        };
+        assert_eq!(encoder.encoder_name(), expected);
+        let frame = Frame::black(320, 180);
+        for _ in 0..4 {
+            encoder.write_frame(&frame).expect("writes");
+        }
+        encoder.finish().expect("finishes");
+        drop(encoder);
+        let written = std::fs::metadata(&path).expect("a file was written");
+        assert!(written.len() > 0);
+        let _ = std::fs::remove_file(&path);
     }
 
     /// The export sheet's first question opens nothing while a software
@@ -2186,6 +2537,7 @@ mod tests {
                     ten_bit,
                     color_range: ColorRange::Limited,
                     hardware: true,
+                    vaapi_first: false,
                     threads: 0,
                 };
                 let mut encoder = Encoder::create(&path, 64, 64, FrameRate::THIRTY, &options)
@@ -2230,6 +2582,7 @@ mod tests {
             ten_bit: false,
             color_range: ColorRange::Limited,
             hardware: true,
+            vaapi_first: false,
             threads: 0,
         };
         let refused = std::env::temp_dir().join("concat-encode-hdr-h264.mp4");

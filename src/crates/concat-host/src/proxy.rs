@@ -461,6 +461,7 @@ pub fn write(
         // HEVC in ten bits costs the CPU far more than H.264 does; the
         // media engine does it for nothing where there is one.
         hardware: hdr,
+        vaapi_first: false,
         threads: 2,
     };
     let mut encoder = if hdr {

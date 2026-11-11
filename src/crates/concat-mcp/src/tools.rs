@@ -1596,9 +1596,9 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
                     "offsetY": {
                         "type": "number",
                         "default": 0.35,
-                        "minimum": -3,
-                        "maximum": 3,
-                        "description": "Vertical placement as a fraction of frame height from the centre, positive down.",
+                        "minimum": -0.4,
+                        "maximum": 0.4,
+                        "description": "Vertical placement as a frame-height fraction from the centre, positive down; 0.35 is the lower third.",
                     },
                 },
                 "required": ["path", "captions"],

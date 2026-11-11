@@ -406,6 +406,7 @@ mod tests {
             ten_bit: false,
             color_range: crate::ColorRange::Limited,
             hardware: false,
+            vaapi_first: false,
             threads: 0,
         };
         let rate = FrameRate::from_int(25);

@@ -220,21 +220,14 @@ pub(super) fn apply(
             })
         }
 
-        Command::AddMotionClip {
-            start,
-            duration,
-            comp,
-            hash,
-            engine,
-        } => {
+        Command::AddMotionClip { start, comp, hash } => {
             let comp = comp.trim().to_owned();
             let hash = hash.trim().to_ascii_lowercase();
-            if !valid_motion_reference(&comp, &hash, &engine) {
+            let engine = "native";
+            if !valid_motion_reference(&comp, &hash, engine) {
                 return Err(CommandError::InvalidMotion);
             }
-            let duration = duration
-                .unwrap_or(DEFAULT_LAYER_DURATION)
-                .max(MIN_CLIP_DURATION);
+            let duration = DEFAULT_LAYER_DURATION.max(MIN_CLIP_DURATION);
             let start = within_timeline(start);
             let timeline = project.active_mut();
             let track_id = first_free_track_above(timeline, start, duration)
@@ -252,7 +245,7 @@ pub(super) fn apply(
             clip.motion = Some(crate::model::MotionClip {
                 comp,
                 hash,
-                engine: "native".into(),
+                engine: engine.into(),
                 width: 0,
                 height: 0,
             });
@@ -1509,10 +1502,8 @@ mod motion_clip_tests {
             &mut mint,
             Command::AddMotionClip {
                 start: 2.0,
-                duration: Some(4.0),
                 comp: "lower-third".into(),
                 hash: hash.clone(),
-                engine: "native".into(),
             },
         )
         .expect("valid motion clip");
@@ -1522,7 +1513,7 @@ mod motion_clip_tests {
         assert_eq!(clip.kind, ClipKind::Motion);
         assert!(!clip.track_id.is_empty());
         assert_eq!(clip.start, 2.0);
-        assert_eq!(clip.duration, 4.0);
+        assert_eq!(clip.duration, DEFAULT_LAYER_DURATION);
         let motion = clip.motion.as_ref().expect("motion payload");
         assert_eq!(motion.comp, "lower-third");
         assert_eq!(motion.hash, hash);
@@ -1531,28 +1522,26 @@ mod motion_clip_tests {
     }
 
     #[test]
-    fn add_motion_clip_rejects_invalid_comp_id_hash_or_engine() {
+    fn add_motion_clip_rejects_invalid_comp_ids_and_hashes() {
         let mut project = Project::new();
         let mut mint = IdMint::default();
         let cases = [
-            ("comp".to_owned(), "short".to_owned(), "native"),
-            ("comp".to_owned(), "b".repeat(64), "unknown"),
-            ("../escape".to_owned(), "c".repeat(64), "native"),
+            ("comp".to_owned(), "short".to_owned()),
+            ("../escape".to_owned(), "c".repeat(64)),
         ];
-        for (comp, hash, engine) in cases {
+        for (comp, hash) in cases {
             let result = apply(
                 &mut project,
                 &mut mint,
                 Command::AddMotionClip {
                     start: 0.0,
-                    duration: None,
                     comp,
                     hash,
-                    engine: engine.into(),
                 },
             );
             assert_eq!(result, Err(CommandError::InvalidMotion));
         }
         assert!(project.active().clips.is_empty());
     }
+
 }

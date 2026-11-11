@@ -653,7 +653,7 @@ fn open_video(
     ),
     hdr: Option<Signal>,
     global_header: bool,
-) -> Result<(encoder::video::Encoder, Pixel)> {
+) -> Result<(encoder::video::Encoder, Pixel, Option<HwFrames>)> {
     let pq = hdr == Some(Signal::Pq);
     let family = Family::of(encoder_name);
     // JPEG's own pixel format: full range 4:2:0, which is what the file
@@ -1002,7 +1002,7 @@ impl HwFrames {
         // device; the returned pool is configured and initialised here,
         // and unref'd on drop however this ends.
         unsafe {
-            let pool = ffmpeg::sys::av_hwframe_ctx_alloc(device);
+            let mut pool = ffmpeg::sys::av_hwframe_ctx_alloc(device);
             if pool.is_null() {
                 return Err(fail("could not allocate the frames pool".to_owned()));
             }
@@ -1082,6 +1082,11 @@ impl Drop for HwFrames {
         // SAFETY: our own reference to the pool, released once.
         unsafe { ffmpeg::sys::av_buffer_unref(&mut self.pool) };
     }
+}
+
+/// A four-character code as the muxer stores it.
+const fn fourcc(tag: [u8; 4]) -> u32 {
+    u32::from_le_bytes(tag)
 }
 
 /// Encodes through libavcodec into a container libavformat writes.

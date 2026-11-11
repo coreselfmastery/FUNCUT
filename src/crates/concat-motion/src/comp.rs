@@ -1070,6 +1070,11 @@ impl Comp {
                     || parent_node.tracks.contains_key("position")
                     || parent_node.tracks.contains_key("scale")
                     || parent_node.tracks.contains_key("rotation")
+                    // A child's animated position needs the parent's offset
+                    // applied to every keyframe; keep that combination native
+                    // until the mapper can preserve the full animated track.
+                    || (parent_node.transform.position.is_some()
+                        && node.tracks.contains_key("position"))
                 {
                     note("an inherited parent transform");
                     break;

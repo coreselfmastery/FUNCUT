@@ -16,18 +16,17 @@
 //! | Engine | What it draws | Cost |
 //! | --- | --- | --- |
 //! | [`engine::EngineKind::Geneva`] | everything, markup included, browserless | one pinned binary |
-//! | [`engine::EngineKind::Native`] | shapes, paths, text, images, nested comps | the `CompEngine` impl is still to come |
-//! | [`engine::EngineKind::Lottie`] | Lottie and dotLottie files | reserved; a player, no browser |
+//! | [`engine::EngineKind::Native`] | shapes, paths, text, images, nested comps, masks, mattes and supported effects | in-process tiny-skia compositor |
+//! | [`engine::EngineKind::Lottie`] | Lottie and dotLottie files | reserved; a player is not implemented |
 //!
 //! [`engine::EnginePreference::default`] is Geneva, because a comp written by a
-//! designer, a template or an agent is markup, and markup is what the engine
-//! exists to draw. A comp with no markup still bakes on Geneva - one engine,
-//! one look. The native engine's plumbing - the kind, the preference, the
-//! fallback choice - is real and tested, but no renderer stands behind it
-//! yet: until one does, a machine without the sidecar bakes nothing, and
-//! `NodeKind::Path` (which the sidecar drops with a warning) renders
-//! nowhere. This is the repo's own declared gap, not a hidden one; see
-//! MOTION.md's "still to come".
+//! designer, a template or an agent may contain markup. The native engine is
+//! implemented in-process and is the fallback for supported non-markup comps
+//! when Geneva is unavailable. It does not render every node kind: Lottie,
+//! HTML/markup and shader packages are not native-rendered. The Lottie adapter
+//! imports a supported subset of Bodymovin JSON into comp nodes; that adapter
+//! is not itself a Lottie/dotLottie playback engine. Unsupported features are
+//! reported rather than silently presented as rendered.
 //!
 //! # Where it plugs in
 //!

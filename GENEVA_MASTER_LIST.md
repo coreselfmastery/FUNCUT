@@ -51,8 +51,8 @@ Geneva is a substantial, integrated motion-rendering path, not a placeholder. Th
 - [x] CI asserts rendered example reports, frame dimensions/content and output existence instead of treating process exit alone as proof.
 
 **Known boundaries, not silently “fixed”:**
-- Shape gradients are reduced to a representative colour by the Geneva bridge. PR #84 wires the canonical capability list into engine selection so non-markup comps route to native; it also refuses mixed markup comps with native-only features rather than silently degrading them. True Geneva support for those mixed cases remains a separate feature. These changes are pending CI and merge.
-- `absolute_position` folds static ancestor positions only. PR #84 routes non-markup comps with inherited parent placement, position tracks, scale or rotation to native; mixed markup comps with native-only features are refused until Geneva can represent them. These changes are pending CI and merge.
+- Shape gradients are reduced to a representative colour by the Geneva bridge. PR #84 is merged to `main` (merge commit `c45ac873`). Non-markup comps now route to native; mixed markup comps with native-only features are refused rather than silently degraded. True Geneva support for those mixed cases remains a separate feature.
+- `absolute_position` folds static ancestor positions only. PR #84 is merged to `main` (merge commit `c45ac873`): non-markup comps with inherited parent placement, position tracks, scale or rotation route to native; mixed markup comps with native-only features are refused until Geneva can represent them.
 - Geneva's PNG-sequence output carries alpha. The `alpha` request field is retained in cache/manifest identity, but does not change Geneva's RGBA pixels.
 - A missing sidecar can fall back to the native compositor only for content that native supports. Native fallback is not equivalent to Geneva markup/CSS rendering.
 - A golden update is a reviewed change: do not refresh reference images merely to silence a failing visual regression.
@@ -96,6 +96,7 @@ The canonical workflow is `.github/workflows/geneva.yml`. It has two jobs:
 **Observed evidence at this reconciliation:**
 - Geneva workflow run `42975353241` (PR #81): both rendered-example and dependency-dance jobs completed successfully.
 - PR #81's separate general Rust engine/lint job was still in progress at the last poll; do not call the entire PR green until that job completes.
+- PR #84 merged as `c45ac873`; the merge-commit CI checks were still running at the last poll. Verify those checks before calling the merged implementation fully validated.
 - PR #80's general Rust engine/lint job was also still in progress at the last poll.
 - The main-branch CI state must be checked again after the open PRs land. A green Geneva-only run does not replace all workspace checks.
 
@@ -106,9 +107,9 @@ No item from the original ten-finding register is currently listed as open. The 
 - [ ] Recheck the full Geneva workflow on the final merged `main` commit after pending PRs merge.
 - [ ] Keep scene-quality and golden-frame gates green on every relevant change; review any intentional golden/quality-floor update.
 - [ ] Run and record representative timing/memory measurements on the target low-memory Linux machine for realistic 1080p motion workloads. Hosted CI proves correctness, not target-device speed.
-- [ ] Add true Geneva support for mixed markup comps that also use native-only shape gradients, mattes, effects, paths or masks. PR #84 implements an explicit safe refusal for these cases and native fallback for non-markup comps; it must pass/merge first.
+- [ ] Add true Geneva support for mixed markup comps that also use native-only shape gradients, mattes, effects, paths or masks. PR #84 has shipped an explicit safe refusal and native fallback for non-markup comps; true rendering parity remains open.
 - [ ] Decide whether mixed markup needs full inherited transform parity; the native fallback cannot be used for HTML/CSS comps.
-- [ ] PR #84 also makes `needs_markup()` recursive so nested HTML sub-comps do not incorrectly fall back to native when the sidecar is missing; keep its regression test.
+- [x] PR #84 makes `needs_markup()` recursive so nested HTML sub-comps do not incorrectly fall back to native when the sidecar is missing; regression coverage is included.
 - [ ] If offline cache use without the sidecar is desired, change the version/key contract deliberately and test compatibility; current behaviour intentionally requires the sidecar.
 - [ ] Keep Geneva 1.6.0 pin, checksum, installer, package contents and supported platform binaries aligned whenever the sidecar is upgraded.
 

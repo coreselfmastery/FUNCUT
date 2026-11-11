@@ -32,7 +32,7 @@ Working and CI-proven (7/7 checks green at baseline):
 | G3 | Camera is from/to only; no multi-waypoint paths | camera.rs `CameraMove` |
 | G4 | Export never verifies its own output file after the atomic rename | concat-export/src/lib.rs:1535 |
 | G5 | Docs drift: MOTION.md "still to come" lists the PNG-sequence export that flatten.rs already has (d07597c8); lib.rs:19 says the native engine is "already shipped" (no impl exists); geneva-adapter lib.rs:34-37 claims Lottie "plays as an asset" (no player exists); FEATURES.md:315 omits director Phase 1c | files cited |
-| G6 | No native `CompEngine` impl — `NodeKind::Path`, `Effect::Shadow`, `Effect::Shader` are modeled but unrenderable anywhere; `EngineKind::Native` fallback plumbing exists with nothing behind it | engine.rs:99-142, MOTION.md:1142 |
+| G6 | Native `CompEngine` is implemented on main (PR #79); remaining unsupported render kinds include Lottie and shader packages, which must continue to warn rather than silently disappear | `concat-motion/src/native/{mod.rs,scene.rs}`; PR #79 |
 | G7 | Dead code: `BeatGrid` never constructed, `Value::Size` produced/consumed nowhere, `BakeRequest.crf` unread by the only impl | pulse.rs, track.rs, engine.rs |
 
 ## Units
@@ -49,9 +49,11 @@ Working and CI-proven (7/7 checks green at baseline):
 | G | Fix G5: docs truth pass (four corrected claims) | **merged via PR #78** | `829fcac3` |
 | — | Ledger section 47 + state files + handoff | **merged via PR #78** | `1ce22147`, `68dbf225`, `4b9f8f81` |
 | B | `motion_edit` MCP tool | dropped — `motion_bake` already persists ops-edited comps; 242k token cap has 119 tokens headroom; convenience not worth the guarded budget | — |
-| I | Fix G6: native `CompEngine` impl | stretch, not started — see SESSION_HANDOFF.md for the scoped plan | — |
+| I | Fix G6: native `CompEngine` impl | **merged via PR #79** | `de804c75` |
 
-**PR #78 merged at `3adb448c`** after all five checks passed on its
+**PR #79 merged at `de804c75`** after all five checks passed on its
+head: native `CompEngine` (shapes, paths, text, stills, nested comps, masks,
+mattes and supported effects). **PR #78 merged at `3adb448c`** after all five checks passed on its
 head `4b9f8f81`: Format, locales and models; The analysis senses against
 real fixtures; The dependency dance, pinned and green; Engine tests and
 lints; The multi-layer example, rendered and inspected (the Geneva

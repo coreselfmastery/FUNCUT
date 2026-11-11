@@ -105,6 +105,8 @@ pub struct TimelinePane {
     /// The lanes' width on screen, in logical pixels; zero until Slint has
     /// said, and then every clip is published.
     pub width: f32,
+    /// Vertical offset of the lane stack, in logical pixels.
+    pub track_scroll: f32,
     /// The playhead is held at the middle of the lanes and the cut moves
     /// under it: the phone's timeline, where a finger drags the lanes to
     /// scrub. `scroll_left` is then a fact about the playhead - half a
@@ -125,6 +127,7 @@ impl Default for TimelinePane {
             pan_mode: false,
             lane_view: HashMap::new(),
             width: 0.0,
+            track_scroll: 0.0,
             centred: false,
         }
     }
@@ -370,6 +373,7 @@ mod tests {
         let mut selection = vec!["clip-a".to_owned()];
         current.tool = TimelineTool::Split;
         current.snap = false;
+        current.track_scroll = 124.0;
         current.lane_view.insert(
             "track-a".to_owned(),
             LaneView {
@@ -390,6 +394,7 @@ mod tests {
         assert_eq!(current.width, 900.0);
         assert!(matches!(current.tool, TimelineTool::Select));
         assert!(current.snap);
+        assert_eq!(current.track_scroll, 0.0);
         assert!(current.lane_view.is_empty());
         assert_eq!(playhead, 0.0);
         assert!(selection.is_empty());
@@ -409,6 +414,7 @@ mod tests {
         assert_eq!(current.seconds_per_pixel, 0.08);
         assert!(matches!(current.tool, TimelineTool::Split));
         assert!(!current.snap);
+        assert_eq!(current.track_scroll, 124.0);
         assert_eq!(playhead, 12.5);
         assert_eq!(selection, vec!["clip-a".to_owned()]);
         let lane = current.lane_view.get("track-a").expect("saved lane view");

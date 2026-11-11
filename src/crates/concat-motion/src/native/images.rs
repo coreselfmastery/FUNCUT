@@ -5,6 +5,7 @@
 //! the three extensions the asset table calls an image, cached by the
 //! path they were read from so three hundred frames pay for one decode.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Cursor, Read};
@@ -21,6 +22,8 @@ use zip::{ZipArchive, result::ZipError};
 
 const MAX_LOTTIE_JSON_BYTES: usize = 16 * 1024 * 1024;
 const MAX_LOTTIE_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_LOTTIE_IMAGE_ASSETS: usize = 128;
+const MAX_LOTTIE_TOTAL_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_DOTLOTTIE_ARCHIVE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_DOTLOTTIE_MANIFEST_BYTES: usize = 1024 * 1024;
 const MAX_DOTLOTTIE_ENTRIES: usize = 512;
@@ -76,13 +79,30 @@ impl Lottie {
             return Err("Lottie canvas or frame range is outside the supported limits".into());
         }
 
+        if animation
+            .assets
+            .iter()
+            .filter(|asset| asset.is_image_asset())
+            .count()
+            > MAX_LOTTIE_IMAGE_ASSETS
+        {
+            return Err("Lottie animation contains too many image assets".into());
+        }
+
         let renderer = Renderer::target_corpus();
         let prepared = if extension.as_deref() == Some("json") {
             let base_dir = path
                 .parent()
                 .unwrap_or_else(|| Path::new("."))
                 .to_path_buf();
-            let resolver = |asset: &LottieAsset| resolve_external_image(&base_dir, asset);
+            let total_image_bytes = Cell::new(0_u64);
+            let resolver = |asset: &LottieAsset| {
+                let image = resolve_external_image(&base_dir, asset)?;
+                if let Some(bytes) = image.as_ref() {
+                    account_image_bytes(&total_image_bytes, &asset.id, bytes)?;
+                }
+                Ok(image)
+            };
             renderer
                 .prepare_with_resolver(&animation, &resolver)
                 .map_err(|error| format!("Lottie support or image validation failed: {error}"))?
@@ -228,6 +248,23 @@ fn read_bounded_child_file(
     read_bounded_file(&canonical_file, maximum)
 }
 
+fn account_image_bytes(
+    total: &Cell<u64>,
+    id: &str,
+    bytes: &[u8],
+) -> Result<(), RasterlottieError> {
+    let next = total
+        .get()
+        .checked_add(bytes.len() as u64)
+        .filter(|size| *size <= MAX_LOTTIE_TOTAL_IMAGE_BYTES)
+        .ok_or_else(|| RasterlottieError::InvalidImageAsset {
+            id: id.to_owned(),
+            detail: "Lottie animation exceeds the 64 MiB total image limit".into(),
+        })?;
+    total.set(next);
+    Ok(())
+}
+
 fn safe_relative_path(path: &str) -> Option<PathBuf> {
     let normalized = path.replace('\\', "/");
     let candidate = Path::new(&normalized);
@@ -363,6 +400,7 @@ fn embed_dotlottie_images(
     archive: &mut ZipArchive<Cursor<&[u8]>>,
     animation: &mut LottieAnimation,
 ) -> Result<(), String> {
+    let mut total_image_bytes = 0_u64;
     for asset in &mut animation.assets {
         if !asset.is_image_asset() || asset.is_embedded_image_asset() {
             continue;
@@ -385,6 +423,10 @@ fn embed_dotlottie_images(
                 asset.id
             )
         })?;
+        total_image_bytes = total_image_bytes
+            .checked_add(bytes.len() as u64)
+            .filter(|size| *size <= MAX_LOTTIE_TOTAL_IMAGE_BYTES)
+            .ok_or_else(|| "dotLottie exceeds the 64 MiB total image limit".to_owned())?;
         let media_type = media_type_for_path(&path);
         asset.base_path = None;
         asset.embedded = Some(1);

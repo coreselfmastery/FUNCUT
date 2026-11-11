@@ -97,7 +97,7 @@ The canonical workflow is `.github/workflows/geneva.yml`. It has two jobs:
 - Geneva workflow run `42975353241` (PR #81): both rendered-example and dependency-dance jobs completed successfully.
 - PR #81's separate general Rust engine/lint job was still in progress at the last poll; do not call the entire PR green until that job completes.
 - PR #84 merged as `c45ac873`. Its main-commit Geneva rendered-example and dependency-dance jobs both passed in run `42979489279`. Both Linux x86_64 and aarch64 build jobs passed. The general Rust engine/clippy job remained in progress at the last poll; verify it before calling the whole merged commit fully green.
-- PR #85's Geneva rendered-example and dependency-dance jobs both passed in run `42980390753`; its general Rust engine/clippy job remained in progress.
+- PR #85 passed all five CI checks on head `d8877703` and merged as `cf82462c`; its selection-time refusal explanation and regression test are now on `main`.
 - PR #86's fast CI gate passed the installer shell check, x86_64/aarch64/Rust version pin parity, benchmark syntax, CLI and unit tests in run `42981939795`; its full Geneva render/benchmark smoke and workspace clippy are still in progress.
 - PR #80's general Rust engine/lint job was also still in progress at the last poll.
 - The main-branch CI state must be checked again after the open PRs land. A green Geneva-only run does not replace all workspace checks.
@@ -109,7 +109,7 @@ No item from the original ten-finding register is currently listed as open. The 
 - [ ] Recheck the full Geneva workflow on the final merged `main` commit after pending PRs merge.
 - [ ] Keep scene-quality and golden-frame gates green on every relevant change; review any intentional golden/quality-floor update.
 - [ ] Run and record representative timing/memory measurements on the target low-memory Linux machine for realistic 1080p motion workloads. PR #86 combines the checksum fail-closed installer fix with a reproducible cold 1080p30 Geneva benchmark that records machine, sidecar version, wall time, output size and sampled process-tree RSS; it still needs CI/merge and a real antiX run. Hosted CI proves correctness, not target-device speed.
-- [x] Mixed markup comps that also use native-only shape gradients, mattes, effects, paths or masks are refused by Geneva bake/frame instead of being silently degraded; PR #84 shipped the safe refusal and native fallback for non-markup comps. PR #85 adds the selection-time explanation and regression test; it remains pending CI/merge.
+- [x] Mixed markup comps that also use native-only shape gradients, mattes, effects, paths or masks are refused by Geneva bake/frame instead of being silently degraded; PR #84 shipped the safe refusal and native fallback for non-markup comps. PR #85 added the selection-time explanation and regression test; it merged as `cf82462c`.
 - [ ] Optional future feature: implement true Geneva rendering support for those mixed markup/native-only cases. This is a feature-parity enhancement, not a silent-degradation blocker while the refusal remains in place.
 - [ ] Decide whether mixed markup needs full inherited transform parity; the native fallback cannot be used for HTML/CSS comps.
 - [x] PR #84 makes `needs_markup()` recursive so nested HTML sub-comps do not incorrectly fall back to native when the sidecar is missing; regression coverage is included.
@@ -137,7 +137,7 @@ Geneva is ready for a release candidate when all of the following are true on th
 - [ ] Geneva example and dependency-dance jobs pass on that SHA.
 - [ ] Required workspace tests, clippy and formatting checks pass on that SHA.
 - [ ] Scene-quality and golden-frame checks pass without unreviewed baseline changes.
-- [ ] Mixed markup comps that contain native-only features are explicitly refused with a useful diagnostic; no lossy render is allowed.
+- [x] Mixed markup comps that contain native-only features are explicitly refused with a useful diagnostic; PR #85's selection-time explanation and regression test merged as `cf82462c`.
 - [ ] The pinned sidecar installs and is discovered on each supported package/platform target.
 - [ ] Target-machine timing/memory evidence is attached, or the release notes clearly state that only hosted correctness—not target performance—has been validated.
 

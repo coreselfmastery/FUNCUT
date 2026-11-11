@@ -98,8 +98,10 @@ The canonical workflow is `.github/workflows/geneva.yml`. It has two jobs:
 - PR #81's separate general Rust engine/lint job was still in progress at the last poll; do not call the entire PR green until that job completes.
 - PR #84 merged as `c45ac873`. Its main-commit Geneva rendered-example and dependency-dance jobs both passed in run `42979489279`. Both Linux x86_64 and aarch64 build jobs passed. The general Rust engine/clippy job remained in progress at the last poll; verify it before calling the whole merged commit fully green.
 - PR #85 passed all five CI checks on head `d8877703` and merged as `cf82462c`; its selection-time refusal explanation and regression test are now on `main`.
-- PR #86's fast CI gate passed the installer shell check, x86_64/aarch64/Rust version pin parity, benchmark syntax, CLI and unit tests in run `42981939795`; its full Geneva render/benchmark smoke and workspace clippy are still in progress.
-- PR #80's general Rust engine/lint job was also still in progress at the last poll.
+- PR #80 passed all five PR CI checks and merged as `dce1a750`; its native still-image bake-cache fix is on `main`.
+- PR #86 passed all five PR CI checks and merged as `cc48ce81`; installer integrity checks and the hosted benchmark smoke are on `main`.
+- PR #86 passed all five PR CI checks, including the hosted 1080p30 benchmark smoke and workspace clippy, then merged as `cc48ce81`. The installer now refuses an unverified sidecar when no SHA-256 tool is available; the benchmark records hosted correctness only, not antiX laptop performance.
+- PR #80 passed all five PR CI checks and merged as `dce1a750`; native still-image pixels are now cached across every frame of one bake, with a regression test proving the cache avoids rereading the source.
 - The main-branch CI state must be checked again after the open PRs land. A green Geneva-only run does not replace all workspace checks.
 
 ## 7. Remaining work — Geneva scope
@@ -108,14 +110,14 @@ No item from the original ten-finding register is currently listed as open. The 
 
 - [ ] Recheck the full Geneva workflow on the final merged `main` commit after pending PRs merge.
 - [ ] Keep scene-quality and golden-frame gates green on every relevant change; review any intentional golden/quality-floor update.
-- [ ] Run and record representative timing/memory measurements on the target low-memory Linux machine for realistic 1080p motion workloads. PR #86 combines the checksum fail-closed installer fix with a reproducible cold 1080p30 Geneva benchmark that records machine, sidecar version, wall time, output size and sampled process-tree RSS; it still needs CI/merge and a real antiX run. Hosted CI proves correctness, not target-device speed.
+- [ ] Run and record representative timing/memory measurements on the target low-memory Linux machine for realistic 1080p motion workloads. PR #86 is merged: the reproducible cold 1080p30 Geneva benchmark records machine, sidecar version, wall time, output size and sampled process-tree RSS. Hosted CI proves correctness, not target-device speed; a real antiX run remains required.
 - [x] Mixed markup comps that also use native-only shape gradients, mattes, effects, paths or masks are refused by Geneva bake/frame instead of being silently degraded; PR #84 shipped the safe refusal and native fallback for non-markup comps. PR #85 added the selection-time explanation and regression test; it merged as `cf82462c`.
 - [ ] Optional future feature: implement true Geneva rendering support for those mixed markup/native-only cases. This is a feature-parity enhancement, not a silent-degradation blocker while the refusal remains in place.
 - [ ] Decide whether mixed markup needs full inherited transform parity; the native fallback cannot be used for HTML/CSS comps.
 - [x] PR #84 makes `needs_markup()` recursive so nested HTML sub-comps do not incorrectly fall back to native when the sidecar is missing; regression coverage is included.
 - [ ] If offline cache use without the sidecar is desired, change the version/key contract deliberately and test compatibility; current behaviour intentionally requires the sidecar.
 - [ ] Keep Geneva 1.6.0 pin, checksum, installer, package contents and supported platform binaries aligned whenever the sidecar is upgraded.
-- [ ] Merge PR #86: the installer currently has an unchecked-install fallback when neither `sha256sum` nor `shasum` is available. PR #86 makes the optional sidecar install fail closed and adds a CI shell-syntax check.
+- [x] PR #86 merged as `cc48ce81`: the optional sidecar install fails closed when neither `sha256sum` nor `shasum` is available, and CI checks installer syntax and pin parity.
 
 ## 8. Separate FUNCUT work — not Geneva blockers
 

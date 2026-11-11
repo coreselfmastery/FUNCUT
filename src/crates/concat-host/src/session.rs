@@ -190,6 +190,18 @@ impl Session {
         self.editor.project().active().video
     }
 
+    /// The frame and rate of a named timeline, or `None` when the id
+    /// does not belong to this project. Export callers use this rather than
+    /// switching the editor's active timeline as a side effect.
+    pub fn video_for_timeline(&self, timeline_id: &str) -> Option<VideoSettings> {
+        self.editor
+            .project()
+            .timelines
+            .iter()
+            .find(|timeline| timeline.id == timeline_id)
+            .map(|timeline| timeline.video)
+    }
+
     /// Sets the active timeline's frame and rate, as an edit - undoable,
     /// and this timeline's alone. Anything a frame could not be is ignored
     /// by the command, for the reason a zero dimension is in
@@ -303,6 +315,20 @@ impl Session {
     pub fn save(&mut self, name: Option<&str>) -> Result<(), String> {
         let (path, document) = self.prepare_save(name)?;
         projects::save(&path, &document)
+    }
+
+    /// The named timeline flattened for rendering. An unknown id is
+    /// refused rather than silently exporting the first or active timeline.
+    pub fn flattened_clips_for_timeline(
+        &self,
+        timeline_id: &str,
+    ) -> Option<Vec<concat_export::ExportClip>> {
+        self.video_for_timeline(timeline_id)?;
+        Some(concat_export::flatten::flatten_timeline_in(
+            self.editor.project(),
+            Some(timeline_id),
+            Some(std::path::Path::new(&self.path)),
+        ))
     }
 
     /// The document as it would be saved, or the reason it cannot be.
@@ -451,6 +477,38 @@ mod tests {
                 .iter()
                 .all(|clip| clip.kind != concat_project::model::ClipKind::Motion),
             "the motion clip is gone with the undo"
+        );
+
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn timeline_specific_export_inputs_require_a_real_timeline_id() {
+        let scratch = std::env::temp_dir().join(format!(
+            "concat-timeline-export-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(&scratch).expect("scratch dir");
+        let info = projects::create(
+            &scratch.to_string_lossy(),
+            "Timeline export",
+            1920,
+            1080,
+            30,
+            1,
+        )
+        .expect("creates");
+        let session = Session::open_info(&info).expect("opens");
+        let timeline_id = session.project().active_timeline_id.clone();
+
+        assert!(session.video_for_timeline(&timeline_id).is_some());
+        assert!(session.flattened_clips_for_timeline(&timeline_id).is_some());
+        assert!(session.video_for_timeline("missing-timeline").is_none());
+        assert!(
+            session
+                .flattened_clips_for_timeline("missing-timeline")
+                .is_none()
         );
 
         let _ = std::fs::remove_dir_all(&scratch);

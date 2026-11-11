@@ -123,10 +123,14 @@ pub fn activity(msg: &Msg) -> Option<Activity> {
         Msg::Motion(motion::MotionMsg::Add { comp, .. }) => {
             return Some(Activity::once(Info, format!("motion: clip added, {comp}")));
         }
-        Msg::Export(ExportMsg::Finished(Ok(path))) => {
+        Msg::Export(ExportMsg::Finished {
+            result: Ok(path), ..
+        }) => {
             return Some(Activity::once(Info, format!("export: finished, {path}")));
         }
-        Msg::Export(ExportMsg::Finished(Err(error))) => {
+        Msg::Export(ExportMsg::Finished {
+            result: Err(error), ..
+        }) => {
             return Some(Activity::once(Info, format!("export: failed, {error}")));
         }
         Msg::Captions(CaptionsMsg::Begin) => {

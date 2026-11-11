@@ -25,6 +25,22 @@ import { Fmt } from "../util.slint";
 
 export enum ExportPhase { idle, running, done, failed }
 
+/// One job in the export queue, as a row of the queue list.
+export struct ExportJobData {
+    /// the queue's own id, for the row's callbacks
+    id: int,
+    /// the timeline's name
+    name: string,
+    /// the file name alone, without the folder
+    file: string,
+    /// 0 queued, 1 running, 2 done, 3 failed, 4 cancelled
+    state: int,
+    /// 0..1 while running; 1 when done
+    progress: float,
+    /// "Queued", "Rendering video", "Export finished", or the reason
+    detail: string,
+}
+
 export struct ExportData {
     open: bool,
     /// the file name, without folder or extension
@@ -36,6 +52,12 @@ export struct ExportData {
     duration: string,
     /// "8 clips · 3 titles"
     contents: string,
+    /// Every timeline in the project, in tab order, for the picker.
+    timelines: [string],
+    /// "1920 × 1080 · 8 clips" under each picker row.
+    timeline-details: [string],
+    /// Which timeline the next job exports: an index into `timelines`.
+    timeline: int,
     resolution: int,
     /// the resolution ladder as this project would come out at each
     /// rung - "1080 × 1920" on a 9:16 edit - with its names, and which
@@ -92,6 +114,11 @@ export struct ExportData {
     done-size: string,
     /// nothing on the timeline to export
     empty: bool,
+    /// Every job asked for, oldest first: waiting, running, done,
+    /// failed, cancelled.
+    jobs: [ExportJobData],
+    /// "1 running · 2 queued" while there is a queue to speak of
+    queue-summary: string,
 }
 
 // One tile of the summary block.
@@ -251,8 +278,22 @@ component DestinationSection inherits DialogSection {
 
     callback name-edited(name: string);
     callback browse();
+    callback timeline-changed(index: int);
 
     title: I18n.t("export.destination");
+
+    // Which timeline the job exports: the sheet opens on the one being
+    // edited, and any other is a row away - a project's cuts go out one
+    // after another without switching tabs.
+    DialogRow {
+        label: I18n.t("export.timelineLabel");
+        Select {
+            current: root.data.timeline;
+            options: root.data.timelines;
+            details: root.data.timeline-details;
+            changed(index) => { root.timeline-changed(index); }
+        }
+    }
 
     DialogRow {
         Field {
@@ -427,6 +468,120 @@ component OutputSection inherits DialogSection {
                     checked: root.data.ten-bit;
                     toggled(on) => { root.ten-bit-changed(on); }
                 }
+            }
+        }
+    }
+}
+
+// The queue: every job asked for, one row each, in the order asked.
+// A row says what it is exporting and where it lands, where it is -
+// waiting, at what step, done, or why it stopped - and carries its own
+// cancel: a waiting job is dropped, the running one is stopped at the
+// next frame. One renders at a time; the rest wait their turn.
+component JobsSection inherits DialogSection {
+    in property <ExportData> data;
+
+    callback job-cancel(id: int);
+    callback job-reveal(id: int);
+    callback clear-ended();
+
+    title: I18n.t("export.exports");
+    summary: root.data.queue-summary;
+
+    VerticalLayout {
+        spacing: 4px;
+
+        for job in root.data.jobs: Rectangle {
+            height: 64px;
+            background: Theme.raised;
+            border-radius: Theme.r;
+
+            HorizontalLayout {
+                padding: 10px;
+                spacing: 10px;
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+
+                    Text {
+                        text: job.name;
+                        color: Theme.fg;
+                        font-size: Theme.fs;
+                        font-weight: Theme.weight-title;
+                        overflow: elide;
+                    }
+
+                    Text {
+                        text: job.file;
+                        color: Theme.fg-muted;
+                        font-family: Theme.font-technical;
+                        font-size: Theme.fs-sm;
+                        overflow: elide;
+                    }
+
+                    if job.state == 3: Text {
+                        text: job.detail;
+                        color: Theme.danger;
+                        font-size: Theme.fs-sm;
+                        overflow: elide;
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    width: 160px;
+                    spacing: 4px;
+
+                    if job.state == 0: Text {
+                        text: job.detail;
+                        color: Theme.fg-dim;
+                        font-size: Theme.fs-sm;
+                    }
+                    if job.state == 1: Progress {
+                        value: job.progress;
+                        live: true;
+                    }
+                    if job.state == 1: Text {
+                        text: job.detail;
+                        color: Theme.fg-muted;
+                        font-size: Theme.fs-sm;
+                        overflow: elide;
+                    }
+                    if job.state == 2: Text {
+                        text: job.detail;
+                        color: Theme.accent;
+                        font-size: Theme.fs-sm;
+                    }
+                    if job.state == 4: Text {
+                        text: job.detail;
+                        color: Theme.fg-dim;
+                        font-size: Theme.fs-sm;
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    if job.state == 0 || job.state == 1: Button {
+                        label: I18n.t("export.cancelJob");
+                        glyph: Glyph.close;
+                        clicked => { root.job-cancel(job.id); }
+                    }
+                    if job.state == 2: Button {
+                        label: I18n.t("export.showInFolder");
+                        glyph: Glyph.eye;
+                        clicked => { root.job-reveal(job.id); }
+                    }
+                }
+            }
+        }
+
+        if root.data.jobs.length > 0: HorizontalLayout {
+            alignment: end;
+            Button {
+                label: I18n.t("export.clearEnded");
+                clicked => { root.clear-ended(); }
             }
         }
     }
@@ -614,6 +769,7 @@ export component ExportDialog inherits Rectangle {
     callback closed();
     callback name-edited(name: string);
     callback browse();
+    callback timeline-changed(index: int);
     callback rate-changed(index: int);
     callback codec-changed(index: int);
     callback encoder-changed(index: int);
@@ -625,6 +781,9 @@ export component ExportDialog inherits Rectangle {
     callback reveal();
     callback download();
     callback again();
+    callback job-cancel(id: int);
+    callback job-reveal(id: int);
+    callback clear-ended();
 
     property <bool> running: root.data.phase == ExportPhase.running;
     /// How many columns the width holds. Three groups a column wide need
@@ -742,15 +901,16 @@ export component ExportDialog inherits Rectangle {
                     padding-top: 8px;
                     padding-bottom: 16px;
 
-                    if root.running || root.columns == 1: VerticalLayout {
+                    if root.columns == 1: VerticalLayout {
                         SummarySection { first: true; data: root.data; }
-                        if !root.running: DestinationSection {
+                        DestinationSection {
                             data: root.data;
                             phone: root.phone;
                             name-edited(name) => { root.name-edited(name); }
                             browse => { root.browse(); }
+                            timeline-changed(index) => { root.timeline-changed(index); }
                         }
-                        if !root.running: OutputSection {
+                        OutputSection {
                             data: root.data;
                             bitrate-changed(mbps) => { root.bitrate-changed(mbps); }
                             rate-changed(index) => { root.rate-changed(index); }
@@ -759,11 +919,17 @@ export component ExportDialog inherits Rectangle {
                             ten-bit-changed(on) => { root.ten-bit-changed(on); }
                             hdr-changed(on) => { root.hdr-changed(on); }
                         }
+                        if root.data.jobs.length > 0: JobsSection {
+                            data: root.data;
+                            job-cancel(id) => { root.job-cancel(id); }
+                            job-reveal(id) => { root.job-reveal(id); }
+                            clear-ended => { root.clear-ended(); }
+                        }
                     }
 
                     // Two columns: the picture, what it is and where it
                     // goes on the left; how it is written on the right.
-                    if !root.running && root.columns == 2: HorizontalLayout {
+                    if root.columns == 2: HorizontalLayout {
                         spacing: 12px;
 
                         VerticalLayout {
@@ -783,6 +949,7 @@ export component ExportDialog inherits Rectangle {
                                 phone: root.phone;
                                 name-edited(name) => { root.name-edited(name); }
                                 browse => { root.browse(); }
+                                timeline-changed(index) => { root.timeline-changed(index); }
                             }
                         }
 
@@ -803,7 +970,7 @@ export component ExportDialog inherits Rectangle {
 
                     // Three columns: the picture and what it is; how it is
                     // written; where it goes.
-                    if !root.running && root.columns == 3: HorizontalLayout {
+                    if root.columns == 3: HorizontalLayout {
                         spacing: 12px;
 
                         VerticalLayout {
@@ -843,8 +1010,17 @@ export component ExportDialog inherits Rectangle {
                                 phone: root.phone;
                                 name-edited(name) => { root.name-edited(name); }
                                 browse => { root.browse(); }
+                                timeline-changed(index) => { root.timeline-changed(index); }
                             }
                         }
+                    }
+
+                    // The queue, under the columns it is wider than.
+                    if root.columns > 1 && root.data.jobs.length > 0: JobsSection {
+                        data: root.data;
+                        job-cancel(id) => { root.job-cancel(id); }
+                        job-reveal(id) => { root.job-reveal(id); }
+                        clear-ended => { root.clear-ended(); }
                     }
                 }
             }

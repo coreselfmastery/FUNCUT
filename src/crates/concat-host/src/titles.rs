@@ -28,6 +28,7 @@ use concat_export::flatten::export_base;
 use concat_export::{ClipKind, ExportClip};
 use concat_project::model::{
     ClipKind as ModelClipKind, KeyProperty, Project, ShapeKind, ShapeStyle, TextAlign, TextStyle,
+    Timeline,
 };
 use concat_text::{Align, Figure, Fonts, TitleRun, TitleStyle, WordRect};
 
@@ -229,7 +230,28 @@ impl Titles {
     /// each, for a `width` × `height` frame. One that fails to paint is left
     /// out and said once on stderr; the rest of the edit still renders.
     pub fn clips(&self, project: &Project, width: u32, height: u32) -> Vec<TitleClip> {
-        self.clips_with(project, width, height, false)
+        self.clips_in(project, project.active(), width, height, false)
+    }
+
+    /// [`Titles::clips`] for one named timeline rather than the active
+    /// one: an export queue renders timelines the editor is not showing,
+    /// and their titles are theirs. An unknown id is the active
+    /// timeline's, which is what every timeline-specific seam degrades
+    /// to.
+    pub fn clips_for_timeline(
+        &self,
+        project: &Project,
+        timeline_id: &str,
+        width: u32,
+        height: u32,
+    ) -> Vec<TitleClip> {
+        let timeline = project
+            .timelines
+            .iter()
+            .find(|timeline| timeline.id == timeline_id)
+            .map(|timeline| timeline.as_ref())
+            .unwrap_or_else(|| project.active());
+        self.clips_in(project, timeline, width, height, false)
     }
 
     /// [`Titles::clips`] for a monitor showing a change as it is made:
@@ -239,14 +261,20 @@ impl Titles {
     /// touches the disk, which is what makes a drag smooth: a PNG per
     /// pointer step, encoded, written and decoded again, was the lag.
     pub fn clips_live(&self, project: &Project, width: u32, height: u32) -> Vec<TitleClip> {
-        self.clips_with(project, width, height, true)
+        self.clips_in(project, project.active(), width, height, true)
     }
 
-    fn clips_with(&self, project: &Project, width: u32, height: u32, live: bool) -> Vec<TitleClip> {
+    fn clips_in(
+        &self,
+        project: &Project,
+        timeline: &Timeline,
+        width: u32,
+        height: u32,
+        live: bool,
+    ) -> Vec<TitleClip> {
         if live {
             self.live.lock().unwrap_or_else(|e| e.into_inner()).begin();
         }
-        let timeline = project.active();
         let mut out = Vec::new();
         for clip in &timeline.clips {
             let (text, shape);

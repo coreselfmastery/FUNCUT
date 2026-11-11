@@ -2,7 +2,7 @@
 
 Principal agent: the FUNCUT completion mission (2026-11-10 start).
 Baseline `main` for the 2026-11-10 completion pass: `ab7c0704917d6f3181b1fb847fead86dc6392fcf` (CI: 7/7 green).
-Subsequent verified `main`: PR #78 merged at `3adb448c`; PR #79 merged the native compositor at `de804c75`; PR #85 merged the mixed-markup safe-refusal explanation at `cf82462c`; PR #80 merged persistent native image caching at `dce1a750`; PR #86 merged checksum-fail-closed Geneva installation and the reproducible 1080p30 benchmark at `cc48ce81`. PR #81 and PR #83 remain open documentation follow-ups; neither is represented as merged.
+Subsequent verified `main` (11 November 2026): PR #78 and #79 are merged; PR #80 merged persistent native image caching; PR #81 merged the known-issues reconciliation; PR #83 merged the canonical Geneva master list; PR #84 merged Geneva fidelity-preserving engine selection and safe refusal; PR #85 merged the mixed-markup refusal explanation; PR #86 merged checksum-fail-closed Geneva installation and the reproducible 1080p30 benchmark. Latest observed `main` commit: `124f93bdd97e7b5d6ace254c0b427a2bcc6a2e35` (`docs(geneva): refresh final PR merge and CI status`).
 
 ## Mission
 
@@ -58,7 +58,11 @@ and an honest feature ledger. No fake green, no doc-only features.
 
 ## Next actions
 
-1. PR #81: finish and merge the known-issues/implementation-ledger reconciliation after all required CI checks pass.
-2. PR #83: finish and merge the canonical Geneva master list after all required CI checks pass.
-3. Remaining engineering work: native Lottie/dotLottie playback, timeline Motion-clip creation, per-timeline view-state isolation, export queue and timeline picker, and VAAPI encoding with real hardware validation.
-4. Acceptance work that hosted CI cannot certify: measure 1080p proxy scrubbing on the actual antiX laptop and run a real Director brief-to-export project end to end. Do not claim hardware speedups or complete workflow readiness without those tests.
+1. Implement and regression-test native Lottie/dotLottie playback (the existing adapter is import/conversion only).
+2. Add the normal editor command/UI path for creating, editing, moving, saving, previewing and exporting Motion clips on timelines.
+3. Isolate zoom, scroll, playhead and selection state per timeline tab, with GUI switching tests.
+4. Add a timeline picker and multi-job export queue with progress, cancellation, failure handling and per-job timeline identity tests.
+5. Integrate explicit Linux VAAPI encoding capability detection, selection and safe fallback; validate on supported Intel/AMD hardware.
+6. Run the documented 1080p30 benchmark and proxy scrub/playback measurements on the actual antiX laptop; do not infer results from hosted CI.
+7. Run a real AI Director brief-to-final-export acceptance project and attach artifacts/logs.
+8. Keep `KNOWN_ISSUES.md` and this state file synchronized with implementation and evidence; close blockers only after code, regression tests and required validation are present on `main`.

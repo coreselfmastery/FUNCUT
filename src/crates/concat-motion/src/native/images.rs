@@ -607,7 +607,10 @@ mod tests {
             layers: Vec::new(),
         };
         let candidates = archive_image_candidates(&asset).unwrap();
-        assert_eq!(candidates.first().map(String::as_str), Some("images/logo.png"));
+        assert_eq!(
+            candidates.first().map(String::as_str),
+            Some("images/logo.png")
+        );
         assert!(candidates.contains(&"logo.png".to_owned()));
     }
 

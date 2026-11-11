@@ -305,6 +305,14 @@ impl ExportPane {
                             self.message = error.clone();
                             studio.notify(&tf("export.exportFailed", &[error]), true);
                         }
+                        // The stop the person asked for: the sheet goes
+                        // back to its form, nothing failed and nothing
+                        // finished.
+                        QueueState::Cancelled => {
+                            self.phase = ExportPhase::Idle;
+                            self.progress = 0.0;
+                            self.message.clear();
+                        }
                         _ => {}
                     }
                 }

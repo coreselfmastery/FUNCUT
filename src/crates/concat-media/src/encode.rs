@@ -170,7 +170,11 @@ impl VideoCodec {
     }
 
     /// The encoders for it the linked FFmpeg carries, best first, less any
-    /// the environment has switched off (see [`switched_on`]).
+    /// the environment has switched off (see [`switched_on`]). A VAAPI
+    /// encoder is carried only where the machine has the DRI render node
+    /// the driver needs (see [`vaapi_possible`]) - never on the strength of
+    /// the FFmpeg build alone, whose VAAPI can be stub libraries that
+    /// abort the process when the driver is not installed.
     fn linked(self, hardware: bool, ten_bit: bool) -> impl Iterator<Item = &'static str> {
         ffi::init();
         self.encoders(hardware)
@@ -178,6 +182,7 @@ impl VideoCodec {
             .copied()
             .filter(move |name| !ten_bit || takes_ten_bits(name))
             .filter(|name| switched_on(name, |key| std::env::var_os(key)))
+            .filter(|name| Family::of(name) != Family::Vaapi || vaapi_possible())
             .filter(|name| encoder::find_by_name(name).is_some())
     }
 
@@ -539,6 +544,25 @@ fn opens(codec: VideoCodec, encoder_name: &'static str) -> bool {
     result.is_ok()
 }
 
+/// Whether this machine has the VAAPI door at all: a DRI render node,
+/// which is what every Intel and AMD chip exposes and a machine without
+/// the video hardware does not. The question is asked of the filesystem
+/// and never of the libraries, because an FFmpeg whose VAAPI is carried
+/// as stub libraries aborts the process at the dlopen, rather than
+/// handing back an error, when the driver is not installed - a prebuilt
+/// FFmpeg on a machine without the driver does exactly that, and the
+/// encoder lists must never reach it. Answered once per process.
+fn vaapi_possible() -> bool {
+    static KNOWN: OnceLock<bool> = OnceLock::new();
+    *KNOWN.get_or_init(|| {
+        std::fs::read_dir("/dev/dri").is_ok_and(|entries| {
+            entries
+                .flatten()
+                .any(|entry| entry.file_name().to_string_lossy().starts_with("renderD"))
+        })
+    })
+}
+
 /// Whether the machine's own video hardware encodes through VAAPI: the
 /// linked FFmpeg carries its encoders, the device opens and one of them
 /// opens at 720p. The export sheet asks this once per process to say
@@ -552,7 +576,8 @@ pub fn vaapi_encode_available() -> bool {
     static KNOWN: OnceLock<bool> = OnceLock::new();
     *KNOWN.get_or_init(|| {
         ffi::init();
-        encoder::find_by_name("h264_vaapi").is_some()
+        vaapi_possible()
+            && encoder::find_by_name("h264_vaapi").is_some()
             && crate::hardware::device(crate::HwDevice::Vaapi).is_some()
             && opens(VideoCodec::H264, "h264_vaapi")
     })

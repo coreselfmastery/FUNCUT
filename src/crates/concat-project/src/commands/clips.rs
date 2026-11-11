@@ -1543,5 +1543,4 @@ mod motion_clip_tests {
         }
         assert!(project.active().clips.is_empty());
     }
-
 }

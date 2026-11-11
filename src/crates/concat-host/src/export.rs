@@ -177,6 +177,64 @@ mod tests {
     use concat_project::DocumentSettings;
 
     #[test]
+    fn non_active_timeline_request_uses_its_own_format_without_switching_tabs() {
+        let scratch =
+            std::env::temp_dir().join(format!("concat-export-non-active-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(&scratch).expect("scratch dir");
+        let settings = DocumentSettings {
+            name: "Multiple timelines".into(),
+            width: 1920,
+            height: 1080,
+            rate_num: 30,
+            rate_den: 1,
+        };
+        let mut session = Session::open(&scratch.to_string_lossy(), settings).expect("opens");
+        let original_id = session.project().active_timeline_id.clone();
+
+        let created = session
+            .apply(concat_project::Command::AddTimeline)
+            .expect("adds a second timeline")
+            .created_id
+            .expect("new timeline id");
+        session
+            .set_video(concat_project::model::VideoSettings {
+                width: 1080,
+                height: 1920,
+                rate_num: 30000,
+                rate_den: 1001,
+                color_space: Default::default(),
+            })
+            .expect("sets the second timeline's portrait format");
+        session
+            .apply(concat_project::Command::SelectTimeline {
+                timeline_id: original_id.clone(),
+            })
+            .expect("returns to the original timeline");
+        assert_eq!(session.project().active_timeline_id, original_id);
+
+        // This second timeline is intentionally empty and is not active.
+        // It must still be a valid export target with its own format.
+        let request = request_for_timeline(
+            &session,
+            &ExportSpec::default(),
+            Vec::new(),
+            &created,
+        )
+        .expect("non-active timeline exists");
+        assert_eq!((request.width, request.height), (1080, 1920));
+        assert_eq!((request.rate_num, request.rate_den), (30000, 1001));
+        assert!(request.clips.is_empty(), "empty timeline must not borrow active clips");
+        assert_eq!(
+            session.project().active_timeline_id,
+            original_id,
+            "building an export request must not switch the editor's active tab"
+        );
+
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
     fn timeline_request_uses_that_timelines_format_and_rejects_unknown_ids() {
         let scratch =
             std::env::temp_dir().join(format!("concat-export-request-test-{}", std::process::id()));

@@ -130,6 +130,48 @@ impl Default for TimelinePane {
     }
 }
 
+/// Cached view state for timelines that are not currently active.
+///
+/// The editor keeps one live pane because Slint publishes one set of lane
+/// properties. This cache swaps that pane when the active document timeline
+/// changes, so zoom, scroll, tool, snap, and lane sizing do not leak between
+/// tabs.
+#[derive(Default)]
+pub struct TimelineViews {
+    saved: HashMap<String, TimelinePane>,
+}
+
+impl TimelineViews {
+    /// Save the outgoing pane and restore (or initialise) the incoming one.
+    /// The active playhead is used to re-centre phone layouts after restore.
+    pub fn switch(
+        &mut self,
+        from_id: &str,
+        to_id: &str,
+        current: &mut TimelinePane,
+        playhead: f32,
+    ) {
+        if from_id == to_id {
+            return;
+        }
+
+        let outgoing = std::mem::take(current);
+        self.saved.insert(from_id.to_owned(), outgoing);
+        *current = self.saved.remove(to_id).unwrap_or_default();
+        current.recentre(playhead);
+    }
+
+    /// Forget a timeline that has been removed from the project.
+    pub fn remove(&mut self, timeline_id: &str) {
+        self.saved.remove(timeline_id);
+    }
+
+    /// A newly opened project must not inherit view state from the old one.
+    pub fn clear(&mut self) {
+        self.saved.clear();
+    }
+}
+
 impl TimelinePane {
     /// Applies one message. The studio is the rest of the window; while
     /// this runs the studio's copy of the pane is a blank it must not read.
@@ -300,6 +342,47 @@ mod tests {
             seconds_per_pixel,
             ..TimelinePane::default()
         }
+    }
+
+    #[test]
+    fn switching_timelines_restores_independent_view_state() {
+        let mut views = TimelineViews::default();
+        let mut current = pane(900.0, 12.0, 0.08);
+        current.tool = TimelineTool::Hand;
+        current.snap = false;
+        current.lane_view.insert(
+            "track-a".to_owned(),
+            LaneView { locked: true, size: TrackSize::Small },
+        );
+
+        views.switch("timeline-a", "timeline-b", &mut current, 4.0);
+        assert_eq!(current.scroll_left, 0.0);
+        assert_eq!(current.seconds_per_pixel, 0.05);
+        assert_eq!(current.tool, TimelineTool::Select);
+        assert!(current.snap);
+        assert!(current.lane_view.is_empty());
+
+        current.scroll_left = 75.0;
+        current.seconds_per_pixel = 0.2;
+        views.switch("timeline-b", "timeline-a", &mut current, 8.0);
+        assert_eq!(current.scroll_left, 12.0);
+        assert_eq!(current.seconds_per_pixel, 0.08);
+        assert_eq!(current.tool, TimelineTool::Hand);
+        assert!(!current.snap);
+        let lane = current.lane_view.get("track-a").expect("saved lane view");
+        assert!(lane.locked);
+        assert!(matches!(lane.size, TrackSize::Small));
+    }
+
+    #[test]
+    fn removing_a_timeline_discards_its_cached_view() {
+        let mut views = TimelineViews::default();
+        let mut current = pane(800.0, 30.0, 0.1);
+        views.switch("timeline-a", "timeline-b", &mut current, 0.0);
+        views.remove("timeline-a");
+        views.switch("timeline-b", "timeline-a", &mut current, 0.0);
+        assert_eq!(current.scroll_left, 0.0);
+        assert_eq!(current.seconds_per_pixel, 0.05);
     }
 
     #[test]

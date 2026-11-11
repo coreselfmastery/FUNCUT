@@ -16,17 +16,17 @@
 //! | Engine | What it draws | Cost |
 //! | --- | --- | --- |
 //! | [`engine::EngineKind::Geneva`] | everything, markup included, browserless | one pinned binary |
-//! | [`engine::EngineKind::Native`] | shapes, paths, text, images, vector/solid Lottie, nested comps, masks, mattes and supported effects | in-process tiny-skia + tlottie compositor |
+//! | [`engine::EngineKind::Native`] | shapes, paths, text, images, vector/solid Lottie, nested comps, masks, mattes and supported effects | in-process tiny-skia + rasterlottie compositor |
 //! | [`engine::EngineKind::Lottie`] | Lottie and dotLottie files | reserved; a player is not implemented |
 //!
 //! [`engine::EnginePreference::default`] is Geneva, because a comp written by a
 //! designer, a template or an agent may contain markup. The native engine is
 //! implemented in-process and is the fallback for supported non-markup comps
 //! when Geneva is unavailable. It renders vector/solid Lottie and dotLottie
-//! nodes through the pinned pure-Rust player. Lottie image and text layers,
-//! HTML/markup and shader packages remain unsupported by the native engine
-//! and are reported rather than silently presented as rendered. The Bodymovin
-//! adapter still imports a supported subset of JSON into native comp nodes.
+//! nodes through the pure-Rust rasterlottie player, including supported image
+//! and text assets. Unsupported Lottie features are surfaced by its support
+//! analyzer; HTML/markup and shader packages remain outside the native engine.
+//! The Bodymovin adapter still imports a supported subset of JSON into comp nodes.
 //!
 //! # Where it plugs in
 //!

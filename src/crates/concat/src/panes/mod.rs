@@ -22,6 +22,7 @@ pub mod glide;
 pub mod magick;
 pub mod media_bin;
 pub mod monitor;
+pub mod motion;
 pub mod openvid;
 pub mod pace;
 pub mod project;
@@ -68,6 +69,8 @@ pub enum Msg {
     Magick(magick::MagickMsg),
     /// To the library's Forge page.
     Forge(forge::ForgeMsg),
+    /// To the library's Motion page.
+    Motion(motion::MotionMsg),
 }
 
 /// What a message says in the log: the activity trail of what the person
@@ -105,7 +108,8 @@ pub fn activity(msg: &Msg) -> Option<Activity> {
         | Msg::Music(bgm::MusicMsg::Tick)
         | Msg::Magick(magick::MagickMsg::Tick)
         | Msg::Settings(SettingsMsg::ModelProgress { .. } | SettingsMsg::InstallProgress { .. })
-        | Msg::Forge(ForgeMsg::Line(_) | ForgeMsg::Shown(_)) => {
+        | Msg::Forge(ForgeMsg::Line(_) | ForgeMsg::Shown(_))
+        | Msg::Motion(motion::MotionMsg::Shown(_)) => {
             return None;
         }
         // A wheel tick that zooms by nothing - a trackpad's idle events -
@@ -115,6 +119,9 @@ pub fn activity(msg: &Msg) -> Option<Activity> {
         }
         Msg::Export(ExportMsg::Start) => {
             return Some(Activity::once(Info, "export: started".to_owned()));
+        }
+        Msg::Motion(motion::MotionMsg::Add { comp, .. }) => {
+            return Some(Activity::once(Info, format!("motion: clip added, {comp}")));
         }
         Msg::Export(ExportMsg::Finished {
             result: Ok(path), ..

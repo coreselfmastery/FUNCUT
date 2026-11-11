@@ -37,7 +37,7 @@ with one click.
 | maestro reference modules | 28 over 10 corpora; **157** shot cards | `.claude/skills/maestro/` |
 | Whisper models offered | 6 (tiny.en/tiny/base.en/base/small.en/small) | `src/crates/concat-speech/src/transcribe.rs` |
 | Neural models in the engine | 6 ONNX + 1 compiled-in | see *Models* below |
-| Library pages in the window | 13 | `src/crates/concat/ui/workspace/media-pane.slint` |
+| Library pages in the window | 14 | `src/crates/concat/ui/workspace/media-pane.slint` |
 
 ## The engine
 
@@ -417,11 +417,12 @@ always win; maestro refines how a floor is met, never lowers it. See
 - **A Blender-style dock**: 5 pane kinds (media, preview, inspector,
   timeline, keyframes), any pane in any seat, drag-to-swap seats,
   splitters, add/remove panels.
-- **13 library pages**: Media (categories, sort, marquee select), Audio,
-  OpenVid, Music, Stickers, **Forge**, Text (31 presets), Shapes,
-  Transitions, Effects, Filters (audition a look by clicking its card),
-  Adjustments (adjustment layers + LUT import), Templates. Favourites with
-  hearts, per-shelf search.
+- **14 library pages**: Media (categories, sort, marquee select), Audio,
+  OpenVid, Music, Stickers, **Forge**, **Motion** (the project's comps,
+  listed with their bakes and placed at the playhead), Text (31 presets),
+  Shapes, Transitions, Effects, Filters (audition a look by clicking its
+  card), Adjustments (adjustment layers + LUT import), Templates.
+  Favourites with hearts, per-shelf search.
 - **The monitor**: transport, draggable timecode, quality ladder
   (full/half/quarter), output-ratio picker, fit/pan/zoom, on-stage
   transform with snap guides and rotation, mask overlay with grips, save

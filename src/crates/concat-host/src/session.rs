@@ -415,6 +415,73 @@ mod tests {
         let _ = std::fs::remove_dir_all(&scratch);
     }
 
+    /// A motion clip placed through the command path is an edit like any
+    /// other: it saves with the project, reopens with it, and undoes
+    /// away - the Motion page's Add button rides the same door.
+    #[test]
+    fn a_motion_clip_saves_reopens_and_undoes() {
+        let scratch =
+            std::env::temp_dir().join(format!("concat-session-motion-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&scratch);
+        std::fs::create_dir_all(&scratch).expect("scratch dir");
+        let info = projects::create(&scratch.to_string_lossy(), "Motion", 1920, 1080, 30, 1)
+            .expect("creates");
+        let mut session = Session::open_info(&info).expect("opens");
+        let hash = "a1b2c3d4e5f60718";
+        let view = session
+            .apply(Command::AddMotionClip {
+                start: 2.0,
+                comp: "lower-third".into(),
+                hash: hash.into(),
+            })
+            .expect("places a motion clip");
+        let created = view.created_id.expect("the new clip's id");
+
+        let clip = session
+            .project()
+            .active()
+            .clips
+            .iter()
+            .find(|clip| clip.id == created)
+            .expect("the clip is on the timeline");
+        assert_eq!(clip.kind, concat_project::model::ClipKind::Motion);
+        let motion = clip.motion.as_ref().expect("the clip's motion facts");
+        assert_eq!(motion.comp, "lower-third");
+        assert_eq!(motion.hash, hash);
+        session.save(None).expect("saves");
+
+        let reopened = Session::open(&info.path, settings()).expect("reopens");
+        let motion = reopened
+            .project()
+            .active()
+            .clips
+            .iter()
+            .find(|clip| clip.kind == concat_project::model::ClipKind::Motion)
+            .expect("the motion clip survived the save and reopen")
+            .motion
+            .as_ref()
+            .expect("its motion facts");
+        assert_eq!(
+            (motion.comp.as_str(), motion.hash.as_str()),
+            ("lower-third", hash)
+        );
+
+        // And it undoes away, like every command-placed clip.
+        let mut undoer = session;
+        undoer.undo();
+        assert!(
+            undoer
+                .project()
+                .active()
+                .clips
+                .iter()
+                .all(|clip| clip.kind != concat_project::model::ClipKind::Motion),
+            "the motion clip is gone with the undo"
+        );
+
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
     #[test]
     fn timeline_specific_export_inputs_require_a_real_timeline_id() {
         let scratch = std::env::temp_dir().join(format!(

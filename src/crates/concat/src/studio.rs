@@ -717,6 +717,7 @@ pub struct Models {
     pub magick_results: Rc<VecModel<crate::ui::MagickCardData>>,
     /// The Forge page's log.
     pub forge_log: Rc<VecModel<SharedString>>,
+    pub motion_comps: Rc<VecModel<crate::ui::MotionCompData>>,
     pub voices_saved: Rc<VecModel<crate::ui::VoiceCardData>>,
     pub sounds_concat: Rc<VecModel<crate::ui::SoundCardData>>,
     pub voices_builtin: Rc<VecModel<crate::ui::VoiceCardData>>,
@@ -802,6 +803,7 @@ impl Models {
             music_categories: Rc::new(VecModel::default()),
             magick_results: Rc::new(VecModel::default()),
             forge_log: Rc::new(VecModel::default()),
+            motion_comps: Rc::new(VecModel::default()),
             voices_saved: Rc::new(VecModel::default()),
             sounds_concat: Rc::new(VecModel::default()),
             voices_builtin: Rc::new(VecModel::default()),
@@ -1092,6 +1094,8 @@ pub struct Studio {
     pub sounds: crate::panes::sounds::SoundsPane,
     /// The library's Forge page: the AI director's chair.
     pub forge: crate::panes::forge::ForgePane,
+    /// The library's Motion page: the project's comps, listed and placed.
+    pub motion: crate::panes::motion::MotionPane,
     pub openvid: crate::panes::openvid::OpenvidPane,
     /// The library's Music page: the background-music library.
     pub music: crate::panes::bgm::MusicPane,
@@ -2535,6 +2539,7 @@ impl Studio {
             speech: crate::panes::speech::SpeechPane::with_saved(&host.dirs),
             sounds: crate::panes::sounds::SoundsPane::open(&host.dirs),
             forge: crate::panes::forge::ForgePane::default(),
+            motion: crate::panes::motion::MotionPane::default(),
             openvid: crate::panes::openvid::OpenvidPane::open(&host.dirs),
             music: crate::panes::bgm::MusicPane::open(&host.dirs),
             magick: crate::panes::magick::MagickPane::open(&host.dirs),
@@ -9418,6 +9423,11 @@ impl Studio {
                 pane.update(msg, self);
                 self.forge = pane;
             }
+            crate::panes::Msg::Motion(msg) => {
+                let mut pane = std::mem::take(&mut self.motion);
+                pane.update(msg, self);
+                self.motion = pane;
+            }
             crate::panes::Msg::Openvid(msg) => {
                 // The stock library's licence is said before its first use:
                 // the page still turns and its state still reads - the
@@ -12134,6 +12144,26 @@ impl Studio {
             page.set_sambanova_key(keys.sambanova.clone().into());
             page.set_nim_key(keys.nim.clone().into());
             page.set_hf_key(keys.hf.clone().into());
+        }
+        // The Motion page.
+        sync(
+            &models.motion_comps,
+            self.motion
+                .comps
+                .iter()
+                .map(|comp| crate::ui::MotionCompData {
+                    id: comp.id.as_str().into(),
+                    name: comp.name.as_str().into(),
+                    hash: comp.hash.as_str().into(),
+                    shape: format!("{} × {} · {:.1} s", comp.width, comp.height, comp.duration)
+                        .into(),
+                    baked: comp.baked,
+                })
+                .collect(),
+        );
+        {
+            let page = app.global::<crate::ui::Motion>();
+            page.set_has_project(self.session.is_some());
         }
         // The OpenVid page.
         sync(&models.openvid_results, self.openvid.rows());

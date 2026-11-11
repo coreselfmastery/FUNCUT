@@ -648,6 +648,48 @@ mod tests {
     }
 
     #[test]
+    fn nested_markup_stays_on_geneva_when_the_sidecar_is_missing() {
+        let mut outer = comp_with(NodeKind::Composition {
+            comp: "inner".into(),
+        });
+        let inner = comp_with(NodeKind::Html {
+            markup: "<div>nested</div>".into(),
+            css: String::new(),
+            width: Length::Auto,
+            height: Length::Auto,
+        });
+        outer.comps.insert("inner".into(), inner);
+        assert!(outer.needs_markup());
+        assert_eq!(
+            EnginePreference::default().engine_for(&outer, false),
+            EngineKind::Geneva
+        );
+    }
+
+    #[test]
+    fn nested_native_only_features_select_the_native_compositor() {
+        let mut outer = comp_with(NodeKind::Composition {
+            comp: "inner".into(),
+        });
+        let inner = comp_with(NodeKind::Ellipse {
+            width: Length::px(100.0),
+            height: Length::px(100.0),
+            fill: Some(Paint::Gradient {
+                stops: vec![(0.0, Rgba::hex("#ff0000")), (1.0, Rgba::hex("#0000ff"))],
+                ramp: Default::default(),
+                angle: 90.0,
+                from: 0.0,
+                to: 1.0,
+            }),
+        });
+        outer.comps.insert("inner".into(), inner);
+        assert_eq!(
+            EnginePreference::default().engine_for(&outer, true),
+            EngineKind::Native
+        );
+    }
+
+    #[test]
     fn a_shape_gradient_uses_native_instead_of_genevas_solid_colour_approximation() {
         let comp = comp_with(NodeKind::Ellipse {
             width: Length::px(100.0),

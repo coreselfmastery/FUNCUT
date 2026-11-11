@@ -1,3 +1,5 @@
+> **Historical audit notice (11 November 2026):** This report is a dated investigation, not the live task list. Its original “Findings register” and “What remains” sections are superseded by the 3 November postscript below and by the current root-level [GENEVA_MASTER_LIST.md](../../GENEVA_MASTER_LIST.md). Use that master list for current status; retain this report for the original findings and their evidence.
+
 # Geneva, audited against the four pillars: 1 November 2026
 
 The in-depth review of the motion engine against the roadmap it was

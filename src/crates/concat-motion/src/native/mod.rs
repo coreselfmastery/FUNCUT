@@ -429,7 +429,7 @@ mod tests {
                "s":{"a":0,"k":[100,100]},"r":{"a":0,"k":0},"o":{"a":0,"k":100}}
             ]}]}]
         }"##;
-let dir = tempfile::tempdir().expect("asset directory");
+        let dir = tempfile::tempdir().expect("asset directory");
         std::fs::write(dir.path().join("animation.json"), SOLID_LOTTIE).unwrap();
         let mut comp = comp_of(
             "lottie",

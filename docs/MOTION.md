@@ -1106,9 +1106,11 @@ A table is a row a point - the label left, its number right, ruled like a ledger
 ```
 
 Two honest notes on the engine. A line is a chain of thin rotated rectangles and a donut a ring of
-them, because the sidecar draws no vector paths (`NodeKind::Path` is the native engine's alone, and
-the native `CompEngine` impl is still to come) - approximated at a resolution the frame cannot
-tell from the curve, and said plainly here. And the caps are the document's health, not physics':
+them, because the Geneva sidecar draws no vector paths (`NodeKind::Path` is rendered by the shipped
+native compositor, not by Geneva) - approximated at a resolution the frame cannot tell from the curve,
+and said plainly here. The native compositor also handles shapes, text, still images, nested comps,
+masks, mattes and supported effects; it does not render HTML, Lottie or shader packages. And the caps
+are the document's health, not physics':
 at most 48 points, 12 slices, and a box at least 80×80, each refused with the fix in the message.
 
 `add-counter` is the one-number case: no renderer animates a number, so the count is **baked** -

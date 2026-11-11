@@ -135,7 +135,7 @@ impl EnginePreference {
                             .to_owned()
                     }),
                 }
-            },
+            }
             Sidecar::Missing => Choice {
                 engine: self.engine_for(comp, false),
                 note: (!comp.needs_markup() && self.default == EngineKind::Geneva).then(|| {
@@ -667,7 +667,11 @@ mod tests {
         let choice = preference.choose(&comp, Sidecar::Ready);
         assert_eq!(choice.engine, EngineKind::Native);
         assert!(
-            choice.note.as_deref().unwrap_or_default().contains("preserve fidelity")
+            choice
+                .note
+                .as_deref()
+                .unwrap_or_default()
+                .contains("preserve fidelity")
         );
         // Missing-sidecar behaviour remains the same.
         assert_eq!(preference.engine_for(&comp, false), EngineKind::Native);

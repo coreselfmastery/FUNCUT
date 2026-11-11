@@ -4,17 +4,17 @@ This file records limitations that remain on `main`. It is not a list of histori
 
 ## Remaining limitations
 
-1. **No Lottie/dotLottie playback on `main` yet.** `EngineKind::Lottie` remains reserved. PR #91 is open with rasterlottie-backed `NodeKind::Lottie` playback, bounded v1/v2 dotLottie loading, image resolution and support diagnostics; its full CI/Geneva/Nix matrix must pass before merge. The Bodymovin adapter's conversion alone is not playback.
+1. **Lottie/dotLottie playback is implemented on `main`.** PR #91 merged as `4a65a7b07b66d20d586d59c9da01cc05ab6624e9`: rasterlottie-backed `NodeKind::Lottie` playback, bounded v1/v2 dotLottie loading, image resolution and support diagnostics, with its full CI/Geneva/Nix matrix green on the exact merge head.
 
 2. **Geneva sidecar is a pinned binary (v1.6.0, closed source).** Its limitations are documented in `docs/MOTION.md`: no path drawing, no variable-font axes, no in-keyframe weights, keyframes in px/% only, and markup animations static per bake. Keep the documented guards and warnings aligned with the actual sidecar behavior.
 
-3. **Linux hardware acceleration is incomplete, not wholly absent.** VAAPI decode is implemented in `concat-media::hardware` and can be selected explicitly, but Linux has no automatic platform default (`HwDevice::platform_default()` returns `None`). The normal export encoder list does not include VAAPI encoders, so native VAAPI hardware encoding is still missing. Device availability, driver compatibility, fallback behavior and performance need testing on real Intel/AMD Linux hardware before enabling it by default.
+3. **Linux VAAPI encode is integrated; on-hardware validation remains.** PR #95 merged as `48cdcd898b97b930884bacddcbfcf8f877a02897`: the export sheet names the machine's own GPU (VAAPI) or the CPU by choice, the encoders carry the field, and `vaapi_possible` gates every VAAPI encoder name on the DRI render node the driver needs, so a machine without the hardware never reaches the stub dlopen. Linux still has no automatic platform default (`HwDevice::platform_default()` returns `None`) - VAAPI stays opt-in. Driver compatibility, fallback behavior and performance still need testing on real Intel/AMD Linux hardware before it is ever considered for a default.
 
 4. **Per-timeline view-state is implemented and validated on main.** PR #88 merged as `56bde7c85e9fedc817092e2fdad59a3c19aeb09f`. It caches/restores zoom, horizontal and vertical scroll, playhead, selection, tool, snap and lane sizing per timeline. Switching/restoration/removal regression tests pass. Fresh exact-merge-commit CI passed all 3 jobs, Geneva both jobs, and Build app both Linux architectures (`43020200650`, `43020200640`, `43020200660`).
 
-5. **Export remains single-slot and targets the active timeline.** There is no export queue or explicit timeline picker. The output is now read back and verified after export, but that verification does not add queueing or timeline selection.
+5. **The export queue is implemented on `main`.** PR #96 merged as `30a91b06b4bc6f0e90cfd8d5034a905acafe919f` (carrying PR #93's timeline-specific request building): a visible timeline picker, multiple queued jobs, per-job progress/stage/cancel/failure state, and tests proving each job exports the timeline it selected. Output read-back verification from PR #78 rides beside it.
 
-6. **Motion-clip workflow is not complete on `main`.** PR #89 adds a compact project command for a five-second native Motion clip with comp/hash validation and automatic lane placement; it is under CI/Geneva review and is not merged. A visual comp picker, metadata editing, save/reopen, preview and final-export acceptance remain missing.
+6. **Motion-clip workflow: the command and the Motion page are merged; acceptance remains.** The validated `AddMotionClip` project command (comp/hash validation, automatic lane placement) and the Motion page - the project's comps listed and placed - landed on `main` through PR #97 (`ea589c73d7791572c75d5f1f12c557694d0cb269`, carrying PR #89's command work). Metadata editing, save/reopen round-trips, in-page preview and final-export acceptance tests remain.
 
 7. **1080p proxy performance still needs target-hardware measurement and a user-default decision.** Proxy scrubbing defaults on, but the codec defaults to H.264; MJPEG is available as an optional codec and trades substantially larger files for easier random-frame decoding. If the product goal is maximum scrub responsiveness, decide whether MJPEG should be the default or remain an explicit disk-space trade-off. CI cannot establish smooth scrubbing on the user's antiX laptop. Verify proxy generation, proxy selection while scrubbing, original-frame restoration after pause, memory use, and sustained playback on the actual machine. Do not publish an 8–12x speedup claim without repeatable before/after measurements.
 
@@ -22,6 +22,10 @@ This file records limitations that remain on `main`. It is not a list of histori
 
 ## Previously reported issues now fixed on main
 
+- **Native Lottie and dotLottie playback: implemented.** PR #91: `NodeKind::Lottie` renders through rasterlottie with bounded v1/v2 dotLottie loading, image resolution and support diagnostics; CI/Geneva/Nix green on the merge.
+- **VAAPI hardware encode: implemented (opt-in).** PR #95: the export sheet's GPU-by-name choice, `vaapi_first`, and the `vaapi_possible` render-node gate; CI green with the encoder lists never reaching a stub dlopen on hardwareless runners.
+- **The export queue and timeline picker: implemented.** PR #96 (carrying PR #93): timeline picker, multiple jobs, per-job progress and cancel.
+- **The MCP context cap: re-measured.** The export surface's growth (VAAPI choice, the queue's timeline picker) read 242,070 over 109 tools; the cap moved to 243,000 (`d13a4eec`), function, not prose.
 - **Native `CompEngine`: implemented.** PR #79 merged the in-process tiny-skia compositor, including paths, shapes, text, still images, nested comps, masks, mattes, and supported effects. Lottie and shader packages remain outside its supported render set.
 - **E303 timeline collision: fixed with regression coverage.** PR #78 handles sub-millisecond key collisions.
 - **Export output verification: implemented.** PR #78 reads back the exported file and checks that it opens, contains video, and is close to the requested timeline duration.

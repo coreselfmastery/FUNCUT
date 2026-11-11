@@ -398,8 +398,8 @@ fn archive_image_candidates(asset: &LottieAsset) -> Result<Vec<String>, String> 
         candidates.push(format!("i/{file_name}"));
         candidates.push(format!("images/{file_name}"));
     }
-    candidates.sort();
-    candidates.dedup();
+    let mut seen = std::collections::HashSet::new();
+    candidates.retain(|candidate| seen.insert(candidate.clone()));
     Ok(candidates)
 }
 
@@ -592,6 +592,23 @@ mod tests {
         )
         .unwrap();
         assert!(Lottie::load(&path).is_err());
+    }
+
+    #[test]
+    fn dotlottie_image_resolution_prefers_the_declared_base_path() {
+        let asset = LottieAsset {
+            id: "image".into(),
+            name: None,
+            width: Some(32),
+            height: Some(32),
+            base_path: Some("images".into()),
+            path: Some("logo.png".into()),
+            embedded: None,
+            layers: Vec::new(),
+        };
+        let candidates = archive_image_candidates(&asset).unwrap();
+        assert_eq!(candidates.first().map(String::as_str), Some("images/logo.png"));
+        assert!(candidates.contains(&"logo.png".to_owned()));
     }
 
     #[test]

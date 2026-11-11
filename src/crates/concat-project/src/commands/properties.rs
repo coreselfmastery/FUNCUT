@@ -28,6 +28,12 @@ pub(super) fn apply(
             let Some(clip) = timeline.clip_mut(&clip_id) else {
                 return Ok(Outcome::default());
             };
+            if let Some(motion) = &patch.motion
+                && (clip.kind != ClipKind::Motion
+                    || !valid_motion_reference(&motion.comp, &motion.hash, &motion.engine))
+            {
+                return Err(CommandError::InvalidMotion);
+            }
             let mut applied = false;
             if let Some(name) = patch.name {
                 applied |= assign(&mut clip.name, name);
@@ -94,6 +100,11 @@ pub(super) fn apply(
             }
             if let Some(background) = patch.background {
                 applied |= assign(&mut clip.background, background.map(Background::tidy));
+            }
+            if let Some(mut motion) = patch.motion {
+                motion.comp = motion.comp.trim().to_owned();
+                motion.hash = motion.hash.trim().to_ascii_lowercase();
+                applied |= assign(&mut clip.motion, Some(motion));
             }
             Ok(Outcome {
                 created_id: None,

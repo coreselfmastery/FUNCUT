@@ -245,8 +245,8 @@ jobs:
       # needed is only for machines that cannot apt; here apt is honest.
       - name: System libraries
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          bash scripts/ci/apt-retry.sh update
+          bash scripts/ci/apt-retry.sh install -y \
             libclang-18-dev libasound2-dev libfontconfig1-dev libfreetype6-dev \
             libxkbcommon-dev libgl1-mesa-dev libgtk-3-dev libvulkan1 mesa-vulkan-drivers
       # The cmake wheel, pinned exactly, because whisper.cpp's build

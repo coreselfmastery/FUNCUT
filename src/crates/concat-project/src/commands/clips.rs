@@ -252,7 +252,7 @@ pub(super) fn apply(
             clip.motion = Some(crate::model::MotionClip {
                 comp,
                 hash,
-                engine,
+                engine: "native".into(),
                 width: 0,
                 height: 0,
             });

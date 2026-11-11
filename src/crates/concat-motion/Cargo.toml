@@ -19,7 +19,8 @@ raster = [
     "dep:png",
     "dep:jpeg-decoder",
     "dep:image-webp",
-    "dep:tlottie",
+    "dep:base64",
+    "dep:rasterlottie",
     "dep:zip",
 ]
 
@@ -50,10 +51,10 @@ concat-text = { workspace = true, optional = true }
 png = { workspace = true, optional = true }
 jpeg-decoder = { version = "0.3", optional = true }
 image-webp = { version = "0.2", optional = true }
-# Safe, pure-Rust Lottie JSON parser and CPU rasterizer. Pin to an immutable
-# upstream commit so preview/export pixels do not drift under a tag.
-tlottie = { git = "https://github.com/dkaraush/tlottie", rev = "92df98dc209bc39b1e567ec74a8c86a0af5239de", optional = true }
-# dotLottie is a bounded ZIP container around manifest-selected JSON assets.
+# Pure-Rust Lottie rasterizer with an explicit support analyzer and image/text support.
+rasterlottie = { version = "0.2.4", default-features = false, features = ["images", "text"], optional = true }
+base64 = { version = "0.23", optional = true }
+# dotLottie archive inspection is bounded before parsing; no archive paths are extracted.
 zip = { version = "2.4.2", default-features = false, features = ["deflate"], optional = true }
 
 [lints]

@@ -47,6 +47,22 @@ pub const TIMELINE_VERSION: &str = "1.1";
 /// but a different major version is refused with the reason.
 pub const TESTED_VERSION: &str = "1.6.0";
 
+
+/// Whether flattening this comp onto Geneva would lose a capability the
+/// native compositor already implements. The timeline mapper is the single
+/// source of truth for this decision: do not maintain a second list of
+/// unsupported node kinds in engine selection.
+pub(crate) fn requires_native_fidelity(comp: &Comp) -> bool {
+    let (_, warnings) = Geneva::at(Path::new("geneva")).timeline(comp, &BakeRequest::default());
+    warnings.iter().any(|warning| {
+        warning.contains("native engine only")
+            || warning.contains("approximated by")
+            || warning.contains("geneva does not read")
+            || warning.contains("geneva draws the node unmatted")
+            || warning.contains("geneva masks nothing")
+    })
+}
+
 /// Why a version cannot be trusted, when its major is not the one this crate
 /// was written for. Optional fields may arrive within a major; a different
 /// major is a different format, and is never silently baked with.

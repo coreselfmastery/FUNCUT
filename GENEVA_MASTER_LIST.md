@@ -101,13 +101,13 @@ The canonical workflow is `.github/workflows/geneva.yml`. It has two jobs:
 - PR #80 passed all five PR CI checks and merged as `dce1a750`; its native still-image bake-cache fix is on `main`.
 - PR #86 passed all five PR CI checks, including the hosted 1080p30 benchmark smoke and workspace clippy, then merged as `cc48ce81`. The installer refuses an unverified sidecar when no SHA-256 tool is available; hosted benchmark correctness is not antiX laptop performance evidence.
 - PR #80 passed all five PR CI checks and merged as `dce1a750`; native still-image pixels are cached across bake frames, with a regression test proving the cache avoids rereading the source.
-- PR #81 and PR #83 are now merged. Final merge commit `e3114ca8` is undergoing fresh main-branch Build-app, CI and Geneva workflows; do not treat the earlier PR-head checks as a substitute for those final-commit results.
+- PR #81 and PR #83 are historical merged prerequisites. The current main baseline is the later PR #88 merge `56bde7c85e9fedc817092e2fdad59a3c19aeb09f`; fresh checks on that exact merge commit remain a release-gate item.
 
 ## 7. Remaining work — Geneva scope
 
 No item from the original ten-finding register is currently listed as open. The following are the remaining validation/roadmap boundaries, not claims that the closed findings are still broken:
 
-- [ ] Confirm the final merged `main` commit `e3114ca8` passes the fresh Geneva workflow and the full CI/build matrix.
+- [ ] Confirm the current merged `main` commit `56bde7c85e9fedc817092e2fdad59a3c19aeb09f` passes fresh Geneva and the full CI/build matrix.
 - [ ] Keep scene-quality and golden-frame gates green on every relevant change; review any intentional golden/quality-floor update.
 - [ ] Run and record representative timing/memory measurements on the target low-memory Linux machine for realistic 1080p motion workloads. PR #86 is merged: the reproducible cold 1080p30 Geneva benchmark records machine, sidecar version, wall time, output size and sampled process-tree RSS. Hosted CI proves correctness, not target-device speed; a real antiX run remains required.
 - [x] Mixed markup comps that also use native-only shape gradients, mattes, effects, paths or masks are refused by Geneva bake/frame instead of being silently degraded; PR #84 shipped the safe refusal and native fallback for non-markup comps. PR #85 added the selection-time explanation and regression test; it merged as `cf82462c`.

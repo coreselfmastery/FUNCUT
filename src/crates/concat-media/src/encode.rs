@@ -2157,6 +2157,7 @@ mod tests {
             ten_bit: false,
             color_range: ColorRange::Limited,
             hardware: false,
+            vaapi_first: false,
             threads: 0,
         };
         let rate = FrameRate::new(concat_core::time::Rational::new(25, 1));

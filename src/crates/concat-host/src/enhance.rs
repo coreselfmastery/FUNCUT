@@ -417,6 +417,7 @@ fn footage(
             ten_bit: false,
             color_range: concat_media::ColorRange::Limited,
             hardware: false,
+            vaapi_first: false,
             threads: 2,
         },
     )

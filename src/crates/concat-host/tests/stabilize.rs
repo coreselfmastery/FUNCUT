@@ -74,6 +74,7 @@ fn shoot(path: &Path) {
         ten_bit: false,
         color_range: concat_media::ColorRange::Limited,
         hardware: false,
+        vaapi_first: false,
         threads: 0,
     };
     let mut encoder = Encoder::create(path, WIDTH, HEIGHT, FrameRate::THIRTY, &options)

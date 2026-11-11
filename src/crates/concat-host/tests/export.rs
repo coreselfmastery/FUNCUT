@@ -93,6 +93,7 @@ fn picture(path: &Path, rate: FrameRate, seconds: u32, codec: VideoCodec) {
         ten_bit: false,
         color_range: concat_media::ColorRange::Limited,
         hardware: false,
+        vaapi_first: false,
         threads: 0,
     };
     let mut encoder =
@@ -125,6 +126,7 @@ fn quadrants(path: &Path) {
         ten_bit: false,
         color_range: concat_media::ColorRange::Limited,
         hardware: false,
+        vaapi_first: false,
         threads: 0,
     };
     let mut encoder = Encoder::create(path, WIDTH, HEIGHT, FrameRate::THIRTY, &options)
@@ -1074,6 +1076,7 @@ fn solid(path: &Path, colour: [u8; 3]) {
         ten_bit: false,
         color_range: concat_media::ColorRange::Limited,
         hardware: false,
+        vaapi_first: false,
         threads: 0,
     };
     let mut encoder = Encoder::create(path, WIDTH, HEIGHT, FrameRate::THIRTY, &options)
@@ -1206,6 +1209,7 @@ fn an_hlg_clip_exports_through_the_gpu_conversion() {
             ten_bit: true,
             color_range: concat_media::ColorRange::Limited,
             hardware: false,
+            vaapi_first: false,
             threads: 0,
         };
         let mut encoder = Encoder::create_mislabelled_hdr(
@@ -1266,6 +1270,7 @@ fn an_hlg_timeline_exports_as_hdr_or_sdr() {
         ten_bit: true,
         color_range: concat_media::ColorRange::Limited,
         hardware: false,
+        vaapi_first: false,
         threads: 0,
     };
     {

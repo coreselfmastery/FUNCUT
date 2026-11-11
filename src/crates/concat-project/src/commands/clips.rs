@@ -220,6 +220,58 @@ pub(super) fn apply(
             })
         }
 
+        Command::AddMotionClip {
+            track_id,
+            above,
+            start,
+            duration,
+            comp,
+            hash,
+            engine,
+            width,
+            height,
+            name,
+        } => {
+            let comp = comp.trim().to_owned();
+            let hash = hash.trim().to_ascii_lowercase();
+            if comp.is_empty()
+                || hash.len() != 64
+                || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+                || !matches!(engine.as_str(), "geneva" | "native" | "lottie")
+            {
+                return Err(CommandError::InvalidMotion);
+            }
+            let duration = duration
+                .unwrap_or(DEFAULT_LAYER_DURATION)
+                .max(MIN_CLIP_DURATION);
+            let start = within_timeline(start);
+            let timeline = project.active_mut();
+            let track_id = match track_id {
+                Some(id) if timeline.track(&id).is_some() => id,
+                Some(_) => return Err(CommandError::TrackGone),
+                None if above => first_free_track_above(timeline, start, duration)
+                    .unwrap_or_else(|| fresh_track(timeline, mint)),
+                None => first_free_track(timeline, start, duration)
+                    .unwrap_or_else(|| fresh_track(timeline, mint)),
+            };
+            let start = timeline.nearest_free_start(&track_id, start, duration, &[]);
+            let id = mint.next("c");
+            let label = if name.trim().is_empty() { comp.clone() } else { name };
+            let mut clip = Clip::blank(id.clone(), track_id, ClipKind::Motion, label, start, duration);
+            clip.motion = Some(crate::model::MotionClip {
+                comp,
+                hash,
+                engine,
+                width,
+                height,
+            });
+            timeline.clips.push(Arc::new(clip));
+            Ok(Outcome {
+                created_id: Some(id),
+                applied: true,
+            })
+        }
+
         Command::AddLayerClip {
             track_id,
             start,
@@ -1450,4 +1502,71 @@ pub fn consolidation_clips(
         return Err(refuse("Include both sides of a transition in the merge."));
     }
     Ok(clips)
+}
+
+
+#[cfg(test)]
+mod motion_clip_tests {
+    use super::*;
+
+    #[test]
+    fn add_motion_clip_creates_a_valid_timeline_reference() {
+        let mut project = Project::new();
+        let mut mint = IdMint::default();
+        let hash = "a".repeat(64);
+        let outcome = apply(
+            &mut project,
+            &mut mint,
+            Command::AddMotionClip {
+                track_id: Some("T2".into()),
+                above: true,
+                start: 2.0,
+                duration: Some(4.0),
+                comp: "lower-third".into(),
+                hash: hash.clone(),
+                engine: "native".into(),
+                width: 1920,
+                height: 1080,
+                name: "Lower third".into(),
+            },
+        ).expect("valid motion clip");
+
+        let id = outcome.created_id.expect("new clip id");
+        let clip = project.active().clip(&id).expect("placed clip");
+        assert_eq!(clip.kind, ClipKind::Motion);
+        assert_eq!(clip.track_id, "T2");
+        assert_eq!(clip.start, 2.0);
+        assert_eq!(clip.duration, 4.0);
+        let motion = clip.motion.as_ref().expect("motion payload");
+        assert_eq!(motion.comp, "lower-third");
+        assert_eq!(motion.hash, hash);
+        assert_eq!(motion.engine, "native");
+        assert_eq!((motion.width, motion.height), (1920, 1080));
+    }
+
+    #[test]
+    fn add_motion_clip_rejects_invalid_hash_or_engine() {
+        let mut project = Project::new();
+        let mut mint = IdMint::default();
+        for (hash, engine) in [("short", "native"), (&"b".repeat(64), "unknown")] {
+            let result = apply(
+                &mut project,
+                &mut mint,
+                Command::AddMotionClip {
+                    track_id: None,
+                    above: true,
+                    start: 0.0,
+                    duration: None,
+                    comp: "comp".into(),
+                    hash: hash.into(),
+                    engine: engine.into(),
+                    width: 0,
+                    height: 0,
+                    name: String::new(),
+                },
+            );
+            assert_eq!(result, Err(CommandError::InvalidMotion));
+        }
+        assert!(project.active().clips.is_empty());
+    }
 }

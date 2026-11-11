@@ -611,7 +611,7 @@ impl ExportPane {
     /// job's id alone. Called whenever a job is queued or ends, so the
     /// slot never sits idle while work waits.
     fn pump(&mut self, studio: &mut Studio) {
-        if !studio.host.exporter.is_busy() && !self.queue.running().is_some() {
+        if !studio.host.exporter.is_busy() && self.queue.running().is_none() {
             let Some((job, request)) = self.queue.start_next() else {
                 return;
             };

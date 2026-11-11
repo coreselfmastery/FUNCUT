@@ -2180,6 +2180,53 @@ mod phase1_tests {
     }
 
     #[test]
+    fn animated_child_under_nested_static_ancestor_routes_away_from_geneva() {
+        let mut grandparent = shell(
+            "grandparent",
+            NodeKind::Rect {
+                width: Length::Px(100.0),
+                height: Length::Px(100.0),
+                fill: None,
+                radius: 0.0,
+            },
+        );
+        grandparent.transform.position = Some(Point::new(40.0, 20.0));
+
+        let mut parent = shell(
+            "parent",
+            NodeKind::Rect {
+                width: Length::Px(80.0),
+                height: Length::Px(80.0),
+                fill: None,
+                radius: 0.0,
+            },
+        );
+        parent.parent = Some("grandparent".into());
+
+        let mut child = shell("child", NodeKind::Text(Box::default()));
+        child.parent = Some("parent".into());
+        child.tracks.insert(
+            "position".into(),
+            crate::track::Track::new(vec![
+                crate::track::Key::new(
+                    0.0,
+                    Value::Point { x: 0.0, y: 0.0 },
+                ),
+                crate::track::Key::new(
+                    1.0,
+                    Value::Point { x: 100.0, y: 50.0 },
+                ),
+            ]),
+        );
+
+        let comp = comp_with(vec![grandparent, parent, child]);
+        assert!(
+            comp.geneva_inexpressible().contains(&"an inherited parent transform"),
+            "a positioned grandparent must be considered even when the immediate parent is unpositioned"
+        );
+    }
+
+    #[test]
     fn a_document_from_before_the_fields_loads_unchanged() {
         // The JSON of a comp written before trim, morph, matte, motion blur,
         // adjustment and radial gradients existed must parse into the new

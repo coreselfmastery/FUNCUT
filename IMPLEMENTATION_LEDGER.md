@@ -23,17 +23,19 @@ Working and CI-proven (7/7 checks green at baseline):
   variable-font axes, or in-keyframe weights; the code measures and guards
   each refusal.
 
-## Known real gaps (audited this session, code-verified)
+## Historical findings and current limitations
 
-| # | Gap | Evidence |
-| --- | --- | --- |
-| G1 | Latent E303: `keyframes()` rounds key times to ms but never dedups after rounding → two keys <0.5 ms apart refuse the whole bake | geneva.rs `keyframes()`, pulse.rs merge does dedup, camera.rs dedups pre-rounding only |
-| G2 | No particle presets (snow/rain/embers/...) — the simulator is finished, the vocabulary is not named | particles.rs |
-| G3 | Camera is from/to only; no multi-waypoint paths | camera.rs `CameraMove` |
-| G4 | Export never verifies its own output file after the atomic rename | concat-export/src/lib.rs:1535 |
-| G5 | Docs drift: MOTION.md "still to come" lists the PNG-sequence export that flatten.rs already has (d07597c8); lib.rs:19 says the native engine is "already shipped" (no impl exists); geneva-adapter lib.rs:34-37 claims Lottie "plays as an asset" (no player exists); FEATURES.md:315 omits director Phase 1c | files cited |
-| G6 | Native `CompEngine` is implemented on main (PR #79); remaining unsupported render kinds include Lottie and shader packages, which must continue to warn rather than silently disappear | `concat-motion/src/native/{mod.rs,scene.rs}`; PR #79 |
-| G7 | Dead code: `BeatGrid` never constructed, `Value::Size` produced/consumed nowhere, `BakeRequest.crf` unread by the only impl | pulse.rs, track.rs, engine.rs |
+The original G1–G5 findings below are closed by PR #78 and the subsequent documentation/native-engine reconciliation; they are retained as history, not current blockers. PR #79 supplies the native `CompEngine`. The current product limitations are tracked in `KNOWN_ISSUES.md`.
+
+| # | Finding | Current status | Evidence |
+| --- | --- | --- | --- |
+| G1 | E303 keyframe collision after millisecond rounding | **Fixed** | PR #78 regression test; `geneva.rs` keyframe normalization |
+| G2 | Missing named particle presets | **Fixed** | PR #78 particle preset vocabulary and patch semantics |
+| G3 | Camera limited to from/to | **Fixed** | PR #78 multi-waypoint camera paths and per-segment curves |
+| G4 | Export output not verified after write | **Fixed** | PR #78 read-back probe and `verifying` stage |
+| G5 | Stale motion/native-engine documentation | **Corrected** | PR #78 docs pass and PR #81 reconciliation |
+| G6 | Native `CompEngine` implementation | **Implemented** | PR #79; `concat-motion/src/native/{mod.rs,scene.rs}` |
+| G7 | Dead code: `BeatGrid`, `Value::Size`, and unread `BakeRequest.crf` | **Audit item; verify before removal** | `pulse.rs`, `track.rs`, `engine.rs` |
 
 ## Units
 
@@ -50,6 +52,9 @@ Working and CI-proven (7/7 checks green at baseline):
 | — | Ledger section 47 + state files + handoff | **merged via PR #78** | `1ce22147`, `68dbf225`, `4b9f8f81` |
 | B | `motion_edit` MCP tool | dropped — `motion_bake` already persists ops-edited comps; 242k token cap has 119 tokens headroom; convenience not worth the guarded budget | — |
 | I | Fix G6: native `CompEngine` impl | **merged via PR #79** | `de804c75` |
+| J | Preserve decoded native still-image cache across bake frames | **merged via PR #80** | `dce1a750` |
+| K | Explain and test mixed-markup safe refusal at selection time | **merged via PR #85** | `cf82462c` |
+| L | Fail-closed Geneva installer checks + reproducible 1080p30 benchmark | **merged via PR #86** | `cc48ce81` |
 
 **PR #79 merged at `de804c75`** after all five checks passed on its
 head: native `CompEngine` (shapes, paths, text, stills, nested comps, masks,

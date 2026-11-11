@@ -663,6 +663,22 @@ mod tests {
     }
 
     #[test]
+    fn a_scaled_or_rotated_group_uses_native_for_its_children() {
+        let mut comp = comp_with(NodeKind::Group { children: vec!["child".into()] });
+        comp.nodes[0].transform.scale = 1.5;
+        let mut child = comp_with(NodeKind::Rect {
+            width: Length::px(10.0),
+            height: Length::px(10.0),
+            fill: Some(Paint::Solid { color: Rgba::hex("#fff") }),
+            radius: 0.0,
+        }).nodes.remove(0);
+        child.id = "child".into();
+        child.parent = Some("n".into());
+        comp.nodes.push(child);
+        assert_eq!(EnginePreference::default().engine_for(&comp, true), EngineKind::Native);
+    }
+
+    #[test]
     fn a_plain_shape_still_uses_geneva_when_it_preserves_fidelity() {
         let comp = comp_with(NodeKind::Rect {
             width: Length::px(10.0),

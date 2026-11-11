@@ -178,8 +178,10 @@ mod tests {
 
     #[test]
     fn non_active_timeline_request_uses_its_own_format_without_switching_tabs() {
-        let scratch =
-            std::env::temp_dir().join(format!("concat-export-non-active-test-{}", std::process::id()));
+        let scratch = std::env::temp_dir().join(format!(
+            "concat-export-non-active-test-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&scratch);
         std::fs::create_dir_all(&scratch).expect("scratch dir");
         let settings = DocumentSettings {

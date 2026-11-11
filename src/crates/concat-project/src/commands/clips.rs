@@ -1498,10 +1498,10 @@ mod motion_clip_tests {
         let mut mint = IdMint::default();
         let footage_track = project.active().tracks[0].id.clone();
         project.active_mut().clips.push(Arc::new(Clip::blank(
-            "footage".into(),
+            "footage",
             footage_track.clone(),
             ClipKind::Video,
-            "media".into(),
+            "media",
             0.0,
             12.0,
         )));

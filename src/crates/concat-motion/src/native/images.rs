@@ -217,7 +217,10 @@ fn read_bounded_child_file(
     })?;
     let candidate = canonical_base.join(relative);
     let canonical_file = candidate.canonicalize().map_err(|error| {
-        format!("cannot resolve image asset {}: {error}", candidate.display())
+        format!(
+            "cannot resolve image asset {}: {error}",
+            candidate.display()
+        )
     })?;
     if !canonical_file.starts_with(&canonical_base) {
         return Err("image path resolves outside the animation asset directory".into());
@@ -642,7 +645,9 @@ mod tests {
         let error = resolve_external_image(&assets, &asset)
             .expect_err("symlink must not escape the animation directory");
         assert!(
-            error.to_string().contains("outside the animation asset directory"),
+            error
+                .to_string()
+                .contains("outside the animation asset directory"),
             "{error}"
         );
     }

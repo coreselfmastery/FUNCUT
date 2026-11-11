@@ -7,6 +7,20 @@ license.workspace = true
 publish = false
 description = "Motion comps: the document model, the curves, and the engines that bake one into an RGBA frame sequence."
 
+[features]
+default = ["raster"]
+# The native engine: a CPU raster compositor over tiny-skia, with the
+# shaped-run text path from concat-text. Default because the fallback
+# story needs it - a machine without the Geneva sidecar bakes comps on
+# this engine, so it is only optional for builds that render nothing.
+raster = [
+    "dep:tiny-skia",
+    "dep:concat-text",
+    "dep:png",
+    "dep:jpeg-decoder",
+    "dep:image-webp",
+]
+
 [dependencies]
 # The comp document is JSON a template, an agent or the editor writes; serde
 # is the whole format layer, and nothing here needs a pixel.
@@ -23,6 +37,17 @@ oximedia-auto = "=0.1.8"
 # types oximedia-auto's beats and cuts carry, so a beat never crosses a
 # timebase boundary on the way in or out.
 oximedia-core = "0.1.8"
+# The raster behind the native engine, and the image decodes it reads:
+# the same versions concat-text and the window already build against, so
+# the lock does not move. png-format because a bake is a PNG sequence.
+tiny-skia = { version = "0.12", features = ["png-format"], optional = true }
+# The shaped-run text path: faces, shaping, bidi, wrapping and the
+# outlines a text node paints, the same one the window's titles use.
+concat-text = { workspace = true, optional = true }
+# Still decode: the formats an image asset may be.
+png = { workspace = true, optional = true }
+jpeg-decoder = { version = "0.3", optional = true }
+image-webp = { version = "0.2", optional = true }
 
 [lints]
 workspace = true

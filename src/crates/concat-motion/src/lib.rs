@@ -85,6 +85,12 @@ pub mod grade;
 pub mod graphics;
 pub mod lint;
 pub mod looks;
+/// The native engine, behind the `raster` feature: the in-process
+/// compositor a machine without the Geneva sidecar falls back to, and
+/// the only engine that draws vector paths, shape gradients, track
+/// mattes and adjustment layers.
+#[cfg(feature = "raster")]
+pub mod native;
 pub mod noise;
 pub mod particles;
 pub mod plan;

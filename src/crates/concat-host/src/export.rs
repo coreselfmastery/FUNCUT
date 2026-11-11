@@ -202,7 +202,7 @@ pub enum QueueState {
 /// queued - later edits do not leak into a job already queued, and what
 /// the person queued is what renders - held until the render slot takes
 /// it, and the state the sheet shows for it.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct QueueJob {
     /// The job's id, unique for as long as the queue lives.
     pub id: u64,
@@ -241,7 +241,7 @@ pub enum Cancelled {
 /// Jobs run in the order they were queued. A job's request is built from
 /// the timeline it names at the moment it is queued: the queue is what
 /// the person saw, not whatever the timeline becomes while it waits.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct ExportQueue {
     next_id: u64,
     jobs: Vec<QueueJob>,

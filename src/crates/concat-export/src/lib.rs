@@ -424,7 +424,7 @@ fn unity() -> f64 {
 
 /// Everything a full export needs: the destination, the output format, and
 /// the flattened clip list.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportRequest {
     /// The file to write. Siblings named `.{stem}.concat-*` are used as

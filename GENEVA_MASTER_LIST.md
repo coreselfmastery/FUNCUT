@@ -100,14 +100,15 @@ The canonical workflow is `.github/workflows/geneva.yml`. It has two jobs:
 - PR #85 passed all five CI checks on head `d8877703` and merged as `cf82462c`; its selection-time refusal explanation and regression test are now on `main`.
 - PR #80 passed all five PR CI checks and merged as `dce1a750`; its native still-image bake-cache fix is on `main`.
 - PR #86 passed all five PR CI checks, including the hosted 1080p30 benchmark smoke and workspace clippy, then merged as `cc48ce81`. The installer refuses an unverified sidecar when no SHA-256 tool is available; hosted benchmark correctness is not antiX laptop performance evidence.
+- PR #88 merged to `main` as `56bde7c85e9fedc817092e2fdad59a3c19aeb09f`: per-timeline zoom, horizontal/vertical scroll, tool, snap, lane sizing, playhead and clip selection are cached/restored, with switching/removal regression tests. The exact merge commit is validated separately below: main CI passed 3/3 jobs, Geneva passed 2/2 jobs, and Build app passed Linux x86_64 and aarch64.
 - PR #80 passed all five PR CI checks and merged as `dce1a750`; native still-image pixels are cached across bake frames, with a regression test proving the cache avoids rereading the source.
-- PR #81 and PR #83 are now merged. Final merge commit `e3114ca8` is undergoing fresh main-branch Build-app, CI and Geneva workflows; do not treat the earlier PR-head checks as a substitute for those final-commit results.
+- PR #81 and PR #83 are historical merged prerequisites. The current main baseline is the later PR #88 merge `56bde7c85e9fedc817092e2fdad59a3c19aeb09f`; fresh checks on that exact merge commit remain a release-gate item.
 
 ## 7. Remaining work — Geneva scope
 
 No item from the original ten-finding register is currently listed as open. The following are the remaining validation/roadmap boundaries, not claims that the closed findings are still broken:
 
-- [ ] Confirm the final merged `main` commit `e3114ca8` passes the fresh Geneva workflow and the full CI/build matrix.
+- [x] Current merged `main` commit `56bde7c85e9fedc817092e2fdad59a3c19aeb09f`: fresh CI passed all 3 jobs, Geneva passed both dependency-dance and rendered-example jobs, and Build app passed Linux x86_64 and aarch64 (`43020200650`, `43020200640`, `43020200660`).
 - [ ] Keep scene-quality and golden-frame gates green on every relevant change; review any intentional golden/quality-floor update.
 - [ ] Run and record representative timing/memory measurements on the target low-memory Linux machine for realistic 1080p motion workloads. PR #86 is merged: the reproducible cold 1080p30 Geneva benchmark records machine, sidecar version, wall time, output size and sampled process-tree RSS. Hosted CI proves correctness, not target-device speed; a real antiX run remains required.
 - [x] Mixed markup comps that also use native-only shape gradients, mattes, effects, paths or masks are refused by Geneva bake/frame instead of being silently degraded; PR #84 shipped the safe refusal and native fallback for non-markup comps. PR #85 added the selection-time explanation and regression test; it merged as `cf82462c`.
@@ -122,9 +123,9 @@ No item from the original ten-finding register is currently listed as open. The 
 
 These must remain on the broader FUNCUT release tracker, not be misreported as Geneva defects:
 
-- Native Lottie/dotLottie playback; the `lottie` engine is reserved and import/conversion is not playback.
-- Timeline Motion-clip creation/edit command and full editor UI lifecycle.
-- Per-timeline view-state isolation.
+- Native Lottie/dotLottie playback: PR #91 adds rasterlottie-backed JSON playback, external image resolution, bounded v1/v2 dotLottie loading and support diagnostics; CI/Geneva/Nix validation is pending and the PR is not merged.
+- Timeline Motion clips: PR #89 adds a compact five-second native clip-creation command with comp/hash validation and automatic lane placement; CI/Geneva validation is pending and the PR is not merged. A visual comp picker, metadata editing, save/reopen, preview and final-export acceptance remain outstanding.
+- Per-timeline view-state isolation — closed on `main` by PR #88 (`56bde7c85e9fedc817092e2fdad59a3c19aeb09f`); exact-commit CI, Geneva and Build-app checks are all green.
 - Export queue and explicit timeline picker.
 - Linux VAAPI encode integration and hardware validation.
 - 1080p proxy performance measurements on the actual antiX laptop, including H.264 versus MJPEG tradeoffs.
@@ -134,12 +135,12 @@ These must remain on the broader FUNCUT release tracker, not be misreported as G
 
 Geneva is ready for a release candidate when all of the following are true on the same commit:
 
-- [x] The current `main` SHA is recorded: `e3114ca8168b6008dc0366cb99c81b1c8e22c5e7`.
-- [ ] Geneva example and dependency-dance jobs pass on that SHA.
-- [ ] Required workspace tests, clippy and formatting checks pass on that SHA.
-- [ ] Scene-quality and golden-frame checks pass without unreviewed baseline changes.
+- [x] The current `main` SHA is recorded: `56bde7c85e9fedc817092e2fdad59a3c19aeb09f` (PR #88 merge).
+- [x] Geneva example and dependency-dance jobs pass on that SHA (`43020200640`).
+- [x] Required workspace tests, clippy and formatting checks pass on that SHA (`43020200650`).
+- [x] Scene-quality and golden-frame checks pass in the Geneva rendered-example job (`43020200640`), without a baseline update.
 - [x] Mixed markup comps that contain native-only features are explicitly refused with a useful diagnostic; PR #85's selection-time explanation and regression test merged as `cf82462c`.
-- [ ] The pinned sidecar installs and is discovered on each supported package/platform target.
+- [x] The pinned sidecar installs and is discovered in the Linux x86_64 and aarch64 package builds (`43020200660`); other release targets must be checked when their packages are built.
 - [ ] Target-machine timing/memory evidence is attached, or the release notes clearly state that only hosted correctness—not target performance—has been validated.
 
 **Status rule:** never mark the whole FUNCUT product “ready” from this Geneva checklist alone. This page certifies only the Geneva motion-rendering subsystem and its stated boundaries.

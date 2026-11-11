@@ -4,17 +4,17 @@ This file records limitations that remain on `main`. It is not a list of histori
 
 ## Remaining limitations
 
-1. **No Lottie/dotLottie playback engine.** `EngineKind::Lottie` is reserved, not implemented. The Bodymovin adapter imports a supported subset into comp nodes, but conversion is not playback; native `NodeKind::Lottie` explicitly draws nothing and warns.
+1. **No Lottie/dotLottie playback on `main` yet.** `EngineKind::Lottie` remains reserved. PR #91 is open with rasterlottie-backed `NodeKind::Lottie` playback, bounded v1/v2 dotLottie loading, image resolution and support diagnostics; its full CI/Geneva/Nix matrix must pass before merge. The Bodymovin adapter's conversion alone is not playback.
 
 2. **Geneva sidecar is a pinned binary (v1.6.0, closed source).** Its limitations are documented in `docs/MOTION.md`: no path drawing, no variable-font axes, no in-keyframe weights, keyframes in px/% only, and markup animations static per bake. Keep the documented guards and warnings aligned with the actual sidecar behavior.
 
 3. **Linux hardware acceleration is incomplete, not wholly absent.** VAAPI decode is implemented in `concat-media::hardware` and can be selected explicitly, but Linux has no automatic platform default (`HwDevice::platform_default()` returns `None`). The normal export encoder list does not include VAAPI encoders, so native VAAPI hardware encoding is still missing. Device availability, driver compatibility, fallback behavior and performance need testing on real Intel/AMD Linux hardware before enabling it by default.
 
-4. **Timeline view state is not isolated per timeline.** Zoom, scroll, playhead, and selection state can reset or carry incorrectly when switching timeline tabs. This requires a GUI-level fix and regression coverage.
+4. **Per-timeline view-state is implemented and validated on main.** PR #88 merged as `56bde7c85e9fedc817092e2fdad59a3c19aeb09f`. It caches/restores zoom, horizontal and vertical scroll, playhead, selection, tool, snap and lane sizing per timeline. Switching/restoration/removal regression tests pass. Fresh exact-merge-commit CI passed all 3 jobs, Geneva both jobs, and Build app both Linux architectures (`43020200650`, `43020200640`, `43020200660`).
 
 5. **Export remains single-slot and targets the active timeline.** There is no export queue or explicit timeline picker. The output is now read back and verified after export, but that verification does not add queueing or timeline selection.
 
-6. **Motion comps cannot yet be created as timeline clips through a normal edit command.** The exporter can resolve hand-authored `ClipKind::Motion` documents and motion-agent output, but the editor currently lacks the command that creates those clips in ordinary timeline use.
+6. **Motion-clip workflow is not complete on `main`.** PR #89 adds a compact project command for a five-second native Motion clip with comp/hash validation and automatic lane placement; it is under CI/Geneva review and is not merged. A visual comp picker, metadata editing, save/reopen, preview and final-export acceptance remain missing.
 
 7. **1080p proxy performance still needs target-hardware measurement and a user-default decision.** Proxy scrubbing defaults on, but the codec defaults to H.264; MJPEG is available as an optional codec and trades substantially larger files for easier random-frame decoding. If the product goal is maximum scrub responsiveness, decide whether MJPEG should be the default or remain an explicit disk-space trade-off. CI cannot establish smooth scrubbing on the user's antiX laptop. Verify proxy generation, proxy selection while scrubbing, original-frame restoration after pause, memory use, and sustained playback on the actual machine. Do not publish an 8–12x speedup claim without repeatable before/after measurements.
 

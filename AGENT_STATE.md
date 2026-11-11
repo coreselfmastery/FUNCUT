@@ -2,7 +2,10 @@
 
 Principal agent: the FUNCUT completion mission (2026-11-10 start).
 Baseline `main` for the 2026-11-10 completion pass: `ab7c0704917d6f3181b1fb847fead86dc6392fcf` (CI: 7/7 green).
-Subsequent verified `main` (11 November 2026): PR #78 and #79 are merged; PR #80 merged persistent native image caching; PR #81 merged the known-issues reconciliation; PR #83 merged the canonical Geneva master list; PR #84 merged Geneva fidelity-preserving engine selection and safe refusal; PR #85 merged the mixed-markup refusal explanation; PR #86 merged checksum-fail-closed Geneva installation and the reproducible 1080p30 benchmark. Latest observed `main` commit: `124f93bdd97e7b5d6ace254c0b427a2bcc6a2e35` (`docs(geneva): refresh final PR merge and CI status`).
+Subsequent verified `main` (11 November 2026): PR #78 and #79 are merged; PR #80 merged persistent native image caching; PR #81 merged the known-issues reconciliation; PR #83 merged the canonical Geneva master list; PR #84 merged Geneva fidelity-preserving engine selection and safe refusal; PR #85 merged the mixed-markup refusal explanation; PR #86 merged checksum-fail-closed Geneva installation and the reproducible 1080p30 benchmark. Latest observed `main` commit: `56bde7c85e9fedc817092e2fdad59a3c19aeb09f` (PR #88: per-timeline view-state isolation).
+
+- PR #88 exact merge commit `56bde7c85e9fedc817092e2fdad59a3c19aeb09f` is fully green: CI 3/3, Geneva 2/2 and Build app Linux x86_64 + aarch64 2/2 (`43020200650`, `43020200640`, `43020200660`).
+- Open engineering PR #89 adds a minimal native Motion-clip project command; PR #91 adds rasterlottie-backed native Lottie/dotLottie playback. Both are review branches only and require full CI/Geneva/Nix validation before merge.
 
 ## Mission
 
@@ -58,11 +61,11 @@ and an honest feature ledger. No fake green, no doc-only features.
 
 ## Next actions
 
-1. Implement and regression-test native Lottie/dotLottie playback (the existing adapter is import/conversion only).
-2. Add the normal editor command/UI path for creating, editing, moving, saving, previewing and exporting Motion clips on timelines.
-3. Isolate zoom, scroll, playhead and selection state per timeline tab, with GUI switching tests.
-4. Add a timeline picker and multi-job export queue with progress, cancellation, failure handling and per-job timeline identity tests.
+1. Finish review and exact-head CI/Geneva/Nix validation for PR #91's supported native Lottie/dotLottie renderer; merge only when all required checks pass, retaining explicit unsupported-feature diagnostics.
+2. Extend PR #89's validated Motion-clip command foundation with the normal editor authoring path: composition picker, metadata editing, move/trim, save/reopen, undo/redo, preview and final-export acceptance.
+3. PR #88 per-timeline view-state is merged and its exact merge-commit CI/Geneva/Build-app checks are green.
+4. Add an explicit target-timeline picker and multi-job export queue with progress, cancellation, failure/retry handling and per-job timeline identity tests.
 5. Integrate explicit Linux VAAPI encoding capability detection, selection and safe fallback; validate on supported Intel/AMD hardware.
-6. Run the documented 1080p30 benchmark and proxy scrub/playback measurements on the actual antiX laptop; do not infer results from hosted CI.
+6. Run the documented 1080p30 benchmark and proxy scrub/playback measurements on the actual antiX laptop; compare H.264 and MJPEG generation time, responsiveness and disk use. Do not infer results from hosted CI.
 7. Run a real AI Director brief-to-final-export acceptance project and attach artifacts/logs.
 8. Keep `KNOWN_ISSUES.md` and this state file synchronized with implementation and evidence; close blockers only after code, regression tests and required validation are present on `main`.

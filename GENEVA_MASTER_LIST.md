@@ -100,7 +100,7 @@ The canonical workflow is `.github/workflows/geneva.yml`. It has two jobs:
 - PR #85 passed all five CI checks on head `d8877703` and merged as `cf82462c`; its selection-time refusal explanation and regression test are now on `main`.
 - PR #80 passed all five PR CI checks and merged as `dce1a750`; its native still-image bake-cache fix is on `main`.
 - PR #86 passed all five PR CI checks, including the hosted 1080p30 benchmark smoke and workspace clippy, then merged as `cc48ce81`. The installer refuses an unverified sidecar when no SHA-256 tool is available; hosted benchmark correctness is not antiX laptop performance evidence.
-- PR #88 merged to `main` as `56bde7c85e9fedc817092e2fdad59a3c19aeb09f`: per-timeline zoom, horizontal/vertical scroll, tool, snap, lane sizing, playhead and clip selection are cached/restored, with switching/removal regression tests. Its PR-head Format/locales/models and real-fixture checks passed; the engine Clippy/tests and Geneva rendered-example checks were still running at the last poll on head `0d321ce3881e70f6b4ebe630171e702ae71db0be`. PR-head checks are not merge-commit evidence.
+- PR #88 merged to `main` as `56bde7c85e9fedc817092e2fdad59a3c19aeb09f`: per-timeline zoom, horizontal/vertical scroll, tool, snap, lane sizing, playhead and clip selection are cached/restored, with switching/removal regression tests. Its PR-head Format/locales/models, real-fixture analysis and Clippy passed; both Geneva jobs passed. The Rust test build was still running at the last poll on head `0d321ce3881e70f6b4ebe630171e702ae71db0be`. PR-head checks are not merge-commit evidence.
 - PR #80 passed all five PR CI checks and merged as `dce1a750`; native still-image pixels are cached across bake frames, with a regression test proving the cache avoids rereading the source.
 - PR #81 and PR #83 are historical merged prerequisites. The current main baseline is the later PR #88 merge `56bde7c85e9fedc817092e2fdad59a3c19aeb09f`; fresh checks on that exact merge commit remain a release-gate item.
 
@@ -123,9 +123,9 @@ No item from the original ten-finding register is currently listed as open. The 
 
 These must remain on the broader FUNCUT release tracker, not be misreported as Geneva defects:
 
-- Native Lottie/dotLottie playback; the `lottie` engine is reserved and import/conversion is not playback.
-- Timeline Motion-clip creation/edit command and full editor UI lifecycle.
-- Per-timeline view-state isolation (implemented by PR #88; merge-commit CI evidence still required).
+- Native Lottie/dotLottie playback: PR #91 adds rasterlottie-backed JSON playback, external image resolution, bounded v1/v2 dotLottie loading and support diagnostics; CI/Geneva/Nix validation is pending and the PR is not merged.
+- Timeline Motion clips: PR #89 adds a compact five-second native clip-creation command with comp/hash validation and automatic lane placement; CI/Geneva validation is pending and the PR is not merged. A visual comp picker, metadata editing, save/reopen, preview and final-export acceptance remain outstanding.
+- Per-timeline view-state isolation is implemented by PR #88; PR-head Clippy and both Geneva jobs passed, while the Rust test build and fresh merge-commit CI evidence remain outstanding.
 - Export queue and explicit timeline picker.
 - Linux VAAPI encode integration and hardware validation.
 - 1080p proxy performance measurements on the actual antiX laptop, including H.264 versus MJPEG tradeoffs.

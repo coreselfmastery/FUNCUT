@@ -466,6 +466,17 @@ pub struct ExportRequest {
     /// What the timeline is output in. SDR when a request does not say.
     #[serde(default)]
     pub color_space: ColorSpace,
+    /// Let the platform's hardware encoder lead where there is one.
+    /// True when a request does not say, which is what every export the
+    /// sheet starts has always meant.
+    #[serde(default = "hardware_by_default")]
+    pub hardware: bool,
+    /// The machine's own video hardware by name: the VAAPI encoders lead
+    /// every codec's list, with the software encoder as the fallback for
+    /// a chip that refuses this export's size or depth. See
+    /// [`concat_media::vaapi_encode_available`].
+    #[serde(default)]
+    pub vaapi_first: bool,
     /// An HDR timeline written as HDR - HEVC or AV1 in ten bits, BT.2020
     /// with its HLG or PQ - rather than tone-mapped to SDR as the monitor
     /// shows it. Nothing for an SDR timeline. False when a request does not
@@ -512,6 +523,12 @@ fn codec_by_name<'de, D: serde::Deserializer<'de>>(
     VideoCodec::parse(&name).ok_or_else(|| {
         serde::de::Error::custom(format!("unknown codec {name:?}: h264, hevc or av1"))
     })
+}
+
+/// The hardware encoders lead when a request does not say, which is
+/// what every export the sheet starts has always meant.
+fn hardware_by_default() -> bool {
+    true
 }
 
 /// A rate mode named the way [`RateMode::name`] names it, refusing a name
@@ -2022,7 +2039,8 @@ fn render_picture(
         bitrate_kbps: request.bitrate_kbps,
         ten_bit: request.ten_bit,
         color_range: request.color_range,
-        hardware: true,
+        hardware: request.hardware,
+        vaapi_first: request.vaapi_first,
         threads: 0,
     };
     // An HDR file comes out of the compositor as its signal, sixteen bits a
@@ -2782,6 +2800,8 @@ pub fn preview_plan(
         bitrate_kbps: 0,
         color_range: concat_media::ColorRange::Limited,
         color_space,
+        hardware: true,
+        vaapi_first: false,
         hdr: false,
         effect_time_offset: 0.0,
         clips: Vec::new(),
@@ -3781,6 +3801,8 @@ mod tests {
             bitrate_kbps: 0,
             color_range: concat_media::ColorRange::Limited,
             color_space: ColorSpace::Sdr,
+            hardware: true,
+            vaapi_first: false,
             hdr: false,
             effect_time_offset: 0.0,
             clips: vec![footage],
@@ -3855,6 +3877,8 @@ mod tests {
             bitrate_kbps: 0,
             color_range: concat_media::ColorRange::Limited,
             color_space: ColorSpace::Sdr,
+            hardware: true,
+            vaapi_first: false,
             hdr: false,
             effect_time_offset: 0.0,
             clips: vec![footage],
@@ -3995,6 +4019,8 @@ mod tests {
             bitrate_kbps: 0,
             color_range: concat_media::ColorRange::Limited,
             color_space: ColorSpace::Sdr,
+            hardware: true,
+            vaapi_first: false,
             hdr: false,
             effect_time_offset: 0.0,
             clips: vec![footage],
@@ -4097,6 +4123,8 @@ mod tests {
             bitrate_kbps: 0,
             color_range: concat_media::ColorRange::Limited,
             color_space: ColorSpace::Sdr,
+            hardware: true,
+            vaapi_first: false,
             hdr: false,
             effect_time_offset: 0.0,
             clips: vec![footage],

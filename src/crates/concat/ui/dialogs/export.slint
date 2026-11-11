@@ -70,7 +70,19 @@ export struct ExportData {
     rate-details: [string],
     /// index into the codec list: H.264, HEVC, AV1
     codec: int,
-    /// Which of them this device can encode. A phone's chip may lack
+    /// Who makes the file: 0 automatic, 1 the machine's own video
+    /// hardware (VAAPI), 2 the CPU.
+    encoder: int,
+    /// The three rows of the encoder picker, already in the person's
+    /// language.
+    encoders: [string],
+    /// What each row says under it.
+    encoder-details: [string],
+    /// Whether the GPU row can be picked: the machine's own video
+    /// hardware, probed once. A row that cannot is greyed, not gone,
+    /// so the list never moves under a finger.
+    encoder-available: bool,
+    /// Which of the codecs this device can encode. A phone's chip may lack
     /// HEVC or AV1; the picker says so rather than failing on Export.
     h264-encodable: bool,
     hevc-encodable: bool,
@@ -314,6 +326,7 @@ component OutputSection inherits DialogSection {
     callback rate-changed(index: int);
     callback bitrate-changed(mbps: float);
     callback codec-changed(index: int);
+    callback encoder-changed(index: int);
     callback ten-bit-changed(on: bool);
     callback hdr-changed(on: bool);
 
@@ -403,6 +416,22 @@ component OutputSection inherits DialogSection {
                 !root.data.av1-encodable,
             ];
             changed(index) => { root.codec-changed(index + 1); }
+        }
+    }
+
+    // Who makes the file: the lists' own order (the hardware leads where
+    // it wins), the machine's own video hardware by name, or the CPU -
+    // for a driver that misbehaves, or a person who would rather the
+    // export did not take the chip the editor draws with. The GPU row is
+    // greyed on a machine without it, in the picker's own way.
+    DialogRow {
+        label: I18n.t("export.encoder");
+        Select {
+            current: root.data.encoder;
+            options: root.data.encoders;
+            details: root.data.encoder-details;
+            disabled: [false, !root.data.encoder-available, false];
+            changed(index) => { root.encoder-changed(index); }
         }
     }
 
@@ -743,6 +772,7 @@ export component ExportDialog inherits Rectangle {
     callback timeline-changed(index: int);
     callback rate-changed(index: int);
     callback codec-changed(index: int);
+    callback encoder-changed(index: int);
     callback ten-bit-changed(on: bool);
     callback hdr-changed(on: bool);
     callback bitrate-changed(mbps: float);
@@ -885,6 +915,7 @@ export component ExportDialog inherits Rectangle {
                             bitrate-changed(mbps) => { root.bitrate-changed(mbps); }
                             rate-changed(index) => { root.rate-changed(index); }
                             codec-changed(index) => { root.codec-changed(index); }
+                            encoder-changed(index) => { root.encoder-changed(index); }
                             ten-bit-changed(on) => { root.ten-bit-changed(on); }
                             hdr-changed(on) => { root.hdr-changed(on); }
                         }

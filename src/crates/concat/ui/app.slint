@@ -261,6 +261,7 @@ export component App inherits Window {
     callback export-timeline-changed(index: int);
     callback export-rate-changed(index: int);
     callback export-codec-changed(index: int);
+    callback export-encoder-changed(index: int);
     callback export-ten-bit-changed(on: bool);
     callback export-hdr-changed(on: bool);
     callback export-bitrate-changed(mbps: float);
@@ -871,6 +872,7 @@ export component App inherits Window {
         timeline-changed(index) => { root.export-timeline-changed(index); }
         rate-changed(index) => { root.export-rate-changed(index); }
         codec-changed(index) => { root.export-codec-changed(index); }
+        encoder-changed(index) => { root.export-encoder-changed(index); }
         ten-bit-changed(on) => { root.export-ten-bit-changed(on); }
         hdr-changed(on) => { root.export-hdr-changed(on); }
         bitrate-changed(mbps) => { root.export-bitrate-changed(mbps); }

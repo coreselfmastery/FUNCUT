@@ -2019,6 +2019,7 @@ mod tests {
             ten_bit: true,
             color_range: ColorRange::Limited,
             hardware: false,
+            vaapi_first: false,
             threads: 0,
         };
         let mut encoder = Encoder::create_tagged(

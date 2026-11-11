@@ -98,8 +98,13 @@ impl EnginePreference {
     /// that is not installed is not an error here: it becomes one at bake
     /// time, with the comp's id in the message.
     pub fn engine_for(&self, comp: &Comp, geneva_available: bool) -> EngineKind {
-        if self.default == EngineKind::Geneva && !geneva_available && !comp.needs_markup() {
-            return EngineKind::Native;
+        if self.default == EngineKind::Geneva && !comp.needs_markup() {
+            // Prefer the native compositor when Geneva's own mapper says a
+            // feature would be dropped or approximated. This keeps the
+            // default engine from silently trading fidelity for availability.
+            if !geneva_available || crate::geneva::requires_native_fidelity(comp) {
+                return EngineKind::Native;
+            }
         }
         self.default
     }

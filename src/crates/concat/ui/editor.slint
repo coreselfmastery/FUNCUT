@@ -368,6 +368,9 @@ export global Editor {
     in-out property <float> seconds-per-pixel;
     /// Where the cut ends, in seconds: how far the lanes can scroll to.
     in-out property <float> duration-seconds;
+    /// Vertical lane-stack offset, kept with the active timeline.
+    in-out property <length> track-scroll;
+    callback track-scroll-changed(value: length);
 
     callback tab-selected(index: int);
     callback tab-renamed(index: int, name: string);

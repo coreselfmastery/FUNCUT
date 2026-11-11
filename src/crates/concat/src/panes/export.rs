@@ -35,6 +35,9 @@ pub enum ExportMsg {
     NameEdited(String),
     RateChanged(i32),
     CodecChanged(i32),
+    /// Which encoder makes the file: automatic, the machine's own video
+    /// hardware, or the CPU.
+    EncoderChanged(i32),
     TenBitChanged(bool),
     /// For an HDR timeline: written HDR (true), or tone-mapped to SDR.
     HdrChanged(bool),
@@ -82,6 +85,11 @@ pub struct ExportPane {
     pub custom: bool,
     /// Index into `VideoCodec::ALL`.
     pub codec: usize,
+    /// Who makes the file: 0 the lists' own order (the hardware leads
+    /// where it wins), 1 the machine's own video hardware by name
+    /// (VAAPI), 2 the CPU. The picker greys the GPU row on a machine
+    /// without it.
+    pub encoder: usize,
     pub ten_bit: bool,
     /// An HDR timeline written tone-mapped to SDR rather than as it is.
     pub sdr: bool,
@@ -107,6 +115,7 @@ impl Default for ExportPane {
             rate: 0,
             custom: false,
             codec: 0,
+            encoder: 0,
             ten_bit: false,
             sdr: false,
             bitrate: 8000,
@@ -150,6 +159,12 @@ impl ExportPane {
                         .position(|codec| codec.encodable())
                         .unwrap_or(index);
                 }
+                // A GPU choice a machine without the video hardware cannot
+                // keep is the automatic one, not a greyed row the sheet
+                // opens on with no way off it.
+                if self.encoder == 1 && !concat_media::vaapi_encode_available() {
+                    self.encoder = 0;
+                }
             }
             ExportMsg::Close => self.open = false,
             ExportMsg::NameEdited(name) => self.name = name,
@@ -162,6 +177,15 @@ impl ExportPane {
                 let index = (index.max(0) as usize).min(concat_media::VideoCodec::ALL.len() - 1);
                 if concat_media::VideoCodec::ALL[index].encodable() {
                     self.codec = index;
+                }
+            }
+            // The GPU row is greyed rather than gone on a machine without
+            // the video hardware, so the list never moves under a finger;
+            // a greyed press is refused the same way a codec's is.
+            ExportMsg::EncoderChanged(index) => {
+                let index = (index.max(0) as usize).min(2);
+                if index != 1 || concat_media::vaapi_encode_available() {
+                    self.encoder = index;
                 }
             }
             ExportMsg::TenBitChanged(on) => self.ten_bit = on,
@@ -490,6 +514,8 @@ impl ExportPane {
             bitrate_kbps: self.target_kbps(studio),
             // Video range, what every player and every platform expects.
             color_range: ColorRange::Limited,
+            hardware: self.encoder != 2,
+            vaapi: self.encoder == 1,
             hdr: self.hdr(studio),
         };
         let (frame_w, frame_h) = studio.output_size();
@@ -619,6 +645,29 @@ impl ExportPane {
             h264_encodable: concat_media::VideoCodec::H264.encodable(),
             hevc_encodable: concat_media::VideoCodec::Hevc.encodable(),
             av1_encodable: concat_media::VideoCodec::Av1.encodable(),
+            encoder: self.encoder as i32,
+            encoders: {
+                let names: Vec<SharedString> = vec![
+                    t("export.encoderAutomatic").into(),
+                    t("export.encoderGpu").into(),
+                    t("export.encoderCpu").into(),
+                ];
+                ModelRc::new(VecModel::from(names))
+            },
+            encoder_details: {
+                let gpu = if concat_media::vaapi_encode_available() {
+                    t("export.encoderGpuDetail")
+                } else {
+                    t("export.notOnThisDevice")
+                };
+                let names: Vec<SharedString> = vec![
+                    t("export.encoderAutoDetail").into(),
+                    gpu.into(),
+                    t("export.encoderCpuDetail").into(),
+                ];
+                ModelRc::new(VecModel::from(names))
+            },
+            encoder_available: concat_media::vaapi_encode_available(),
             ten_bit: self.ten_bit,
             hdr_timeline: studio.timeline().video.color_space.is_hdr(),
             hdr: self.hdr(studio),
@@ -649,7 +698,12 @@ impl ExportPane {
                         .to_owned(),
                     );
                 }
-                if codec.hardware_encoded(true, self.deep(studio)) {
+                if self.encoder == 1 {
+                    words.push(format!("· {}", t("export.vaapi")));
+                } else if self.encoder == 2 {
+                    // The CPU by name: no suffix at all, which is what the
+                    // words already say.
+                } else if codec.hardware_encoded(true, self.deep(studio)) {
                     words.push(format!("· {}", t("export.hardware")));
                 }
                 words.join(" ")

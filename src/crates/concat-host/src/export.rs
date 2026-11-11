@@ -42,6 +42,13 @@ pub struct ExportSpec {
     /// 16-235, unless the sheet's Advanced section says full.
     /// https://github.com/jub0t/Concat/issues/103
     pub color_range: ColorRange,
+    /// Let the platform's hardware encoder lead where there is one; the
+    /// export sheet's "Automatic" and "GPU" say yes, its "CPU" says no.
+    pub hardware: bool,
+    /// The person named the machine's own video hardware (VAAPI), which
+    /// leads every codec's encoder list with the software one as the
+    /// fallback; see [`concat_media::vaapi_encode_available`].
+    pub vaapi: bool,
     /// An HDR timeline written as HDR, its own HLG or PQ, rather than
     /// tone-mapped to SDR. Nothing for an SDR timeline.
     pub hdr: bool,
@@ -77,6 +84,8 @@ pub fn request(session: &Session, spec: &ExportSpec, titles: Vec<ExportClip>) ->
         bitrate_kbps: spec.bitrate_kbps,
         color_range: spec.color_range,
         color_space: session.video().color_space,
+        hardware: spec.hardware,
+        vaapi_first: spec.vaapi,
         hdr: spec.hdr,
         effect_time_offset: 0.0,
         clips,

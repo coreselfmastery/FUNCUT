@@ -220,7 +220,13 @@ impl CompEngine for Native {
         for index in first..=last.max(first) {
             let at = f64::from(index - 1) / fps;
             let frame = self.draw(
-                comp, at, width, height, &source_dir, &mut warnings, &mut pictures,
+                comp,
+                at,
+                width,
+                height,
+                &source_dir,
+                &mut warnings,
+                &mut pictures,
             )?;
             let path = frames.join(Baked::frame_name(index));
             frame.save_png(&path).map_err(|source| MotionError::Io {
@@ -317,7 +323,13 @@ impl CompEngine for Native {
         let mut warnings = Vec::new();
         let mut pictures = Pictures::default();
         let drawn = self.draw(
-            comp, at, width, height, source_dir, &mut warnings, &mut pictures,
+            comp,
+            at,
+            width,
+            height,
+            source_dir,
+            &mut warnings,
+            &mut pictures,
         )?;
         let out = scratch.join("frame.png");
         drawn.save_png(&out).map_err(|source| MotionError::Io {

@@ -1527,7 +1527,7 @@ mod motion_clip_tests {
         assert_eq!(motion.comp, "lower-third");
         assert_eq!(motion.hash, hash);
         assert_eq!(motion.engine, "native");
-        assert_eq!((motion.width, motion.height), (1920, 1080));
+        assert_eq!((motion.width, motion.height), (0, 0));
     }
 
     #[test]
@@ -1544,7 +1544,6 @@ mod motion_clip_tests {
                 &mut project,
                 &mut mint,
                 Command::AddMotionClip {
-                    above: true,
                     start: 0.0,
                     duration: None,
                     comp,

@@ -1071,6 +1071,9 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     editor.on_scrolled(on_lanes!(|state, seconds: f32| {
         state.handle(Msg::Timeline(TimelineMsg::Scrolled(seconds)));
     }));
+    editor.on_track_scroll_changed(on_lanes!(|state, pixels: f32| {
+        state.lanes.track_scroll = pixels;
+    }));
     editor.on_zoom(on_lanes!(|state, factor: f32, anchor: f32| {
         state.handle(Msg::Timeline(TimelineMsg::Zoomed { factor, anchor }));
     }));

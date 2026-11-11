@@ -256,8 +256,19 @@ pub(super) fn apply(
             };
             let start = timeline.nearest_free_start(&track_id, start, duration, &[]);
             let id = mint.next("c");
-            let label = if name.trim().is_empty() { comp.clone() } else { name };
-            let mut clip = Clip::blank(id.clone(), track_id, ClipKind::Motion, label, start, duration);
+            let label = if name.trim().is_empty() {
+                comp.clone()
+            } else {
+                name
+            };
+            let mut clip = Clip::blank(
+                id.clone(),
+                track_id,
+                ClipKind::Motion,
+                label,
+                start,
+                duration,
+            );
             clip.motion = Some(crate::model::MotionClip {
                 comp,
                 hash,
@@ -1504,7 +1515,6 @@ pub fn consolidation_clips(
     Ok(clips)
 }
 
-
 #[cfg(test)]
 mod motion_clip_tests {
     use super::*;
@@ -1529,7 +1539,8 @@ mod motion_clip_tests {
                 height: 1080,
                 name: "Lower third".into(),
             },
-        ).expect("valid motion clip");
+        )
+        .expect("valid motion clip");
 
         let id = outcome.created_id.expect("new clip id");
         let clip = project.active().clip(&id).expect("placed clip");

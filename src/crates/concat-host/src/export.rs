@@ -267,7 +267,10 @@ mod tests {
             })
             .expect("sets target format");
 
-        let target_path = scratch.join("target-only.mp4").to_string_lossy().into_owned();
+        let target_path = scratch
+            .join("target-only.mp4")
+            .to_string_lossy()
+            .into_owned();
         let target_media = session
             .apply(Command::AddMedia {
                 item: NewMedia {
@@ -305,7 +308,10 @@ mod tests {
                 timeline_id: active_id.clone(),
             })
             .expect("returns to active timeline");
-        let active_path = scratch.join("active-only.mp4").to_string_lossy().into_owned();
+        let active_path = scratch
+            .join("active-only.mp4")
+            .to_string_lossy()
+            .into_owned();
         let active_media = session
             .apply(Command::AddMedia {
                 item: NewMedia {
@@ -338,16 +344,16 @@ mod tests {
             })
             .expect("places active clip");
 
-        let request = request_for_timeline(
-            &session,
-            &ExportSpec::default(),
-            Vec::new(),
-            &target_id,
-        )
-        .expect("builds request for non-active timeline");
+        let request =
+            request_for_timeline(&session, &ExportSpec::default(), Vec::new(), &target_id)
+                .expect("builds request for non-active timeline");
         assert_eq!((request.width, request.height), (1080, 1920));
         assert_eq!((request.rate_num, request.rate_den), (30000, 1001));
-        assert_eq!(request.clips.len(), 1, "only the target timeline clip exports");
+        assert_eq!(
+            request.clips.len(),
+            1,
+            "only the target timeline clip exports"
+        );
         assert_eq!(request.clips[0].path, target_path);
         assert_ne!(request.clips[0].path, active_path);
         assert_eq!(

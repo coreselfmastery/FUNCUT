@@ -248,11 +248,7 @@ fn read_bounded_child_file(
     read_bounded_file(&canonical_file, maximum)
 }
 
-fn account_image_bytes(
-    total: &Cell<u64>,
-    id: &str,
-    bytes: &[u8],
-) -> Result<(), RasterlottieError> {
+fn account_image_bytes(total: &Cell<u64>, id: &str, bytes: &[u8]) -> Result<(), RasterlottieError> {
     let next = total
         .get()
         .checked_add(bytes.len() as u64)

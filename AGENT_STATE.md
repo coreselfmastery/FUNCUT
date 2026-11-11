@@ -1,11 +1,8 @@
 # AGENT_STATE.md — the mission's running state
 
 Principal agent: the FUNCUT completion mission (2026-11-10 start).
-Baseline `main`: `ab7c0704917d6f3181b1fb847fead86dc6392fcf` (CI: 7/7 green).
-Final delivered `main`: `3adb448cb44ab6f27d83773194c1dbf14158f62d` —
-PR #76 merged at `6dafbeee` (7/7 checks green), PR #78 (the completion
-pass: five units) merged at `3adb448c` after **all five** of its checks
-went green on head `4b9f8f81`.
+Baseline `main` for the 2026-11-10 completion pass: `ab7c0704917d6f3181b1fb847fead86dc6392fcf` (CI: 7/7 green).
+Subsequent verified `main`: PR #78 merged at `3adb448c`; PR #79 then merged the native compositor at `de804c75`. PR #80 and PR #81 are follow-up work in progress and are not part of main until their checks pass and they merge.
 
 ## Mission
 

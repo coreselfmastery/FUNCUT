@@ -418,7 +418,7 @@ mod tests {
 
     #[test]
     fn native_engine_renders_vector_lottie_assets() {
-        const SOLID_LOTTIE: &str = r##"{
+                    const SOLID_LOTTIE: &str = r##"{
                 "v":"5.7.6","fr":30,"ip":0,"op":30,"w":32,"h":32,
                 "layers":[{"nm":"Red star","ind":1,"ty":4,"shapes":[{"ty":"gr","it":[
                   {"ty":"sr","sy":1,"d":1,"pt":{"a":0,"k":5},"p":{"a":0,"k":[16,16]},
@@ -429,8 +429,7 @@ mod tests {
                    "s":{"a":0,"k":[100,100]},"r":{"a":0,"k":0},"o":{"a":0,"k":100}}
                 ]}]}]
             }"##;
-        
-                let dir = tempfile::tempdir().expect("asset directory");
+        let dir = tempfile::tempdir().expect("asset directory");
         std::fs::write(dir.path().join("animation.json"), SOLID_LOTTIE).unwrap();
         let mut comp = comp_of(
             "lottie",

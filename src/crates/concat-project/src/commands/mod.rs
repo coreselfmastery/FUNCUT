@@ -195,6 +195,10 @@ pub struct ClipPatch {
     pub motion: Option<MotionClip>,
 }
 
+fn yes() -> bool {
+    true
+}
+
 /// Whether a motion clip points at a safe comp id, a SHA-256 digest and a
 /// known renderer. Comp ids are path components, never arbitrary paths.
 fn valid_motion_reference(comp: &str, hash: &str, engine: &str) -> bool {

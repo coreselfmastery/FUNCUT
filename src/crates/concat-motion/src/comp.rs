@@ -1061,8 +1061,11 @@ impl Comp {
                 let Some(parent_node) = self.node(id) else {
                     break;
                 };
-                if parent_node.transform.position.is_some()
-                    || parent_node.transform.scale != 1.0
+                // Static parent translations are composable in Geneva's
+                // flattened timeline (the mapper folds them into each child's
+                // position). Scale, rotation, and animated parent transforms
+                // still require hierarchy-aware composition and must fall back.
+                if parent_node.transform.scale != 1.0
                     || parent_node.transform.rotation != 0.0
                     || parent_node.tracks.contains_key("position")
                     || parent_node.tracks.contains_key("scale")

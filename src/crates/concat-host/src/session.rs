@@ -417,19 +417,32 @@ mod tests {
 
     #[test]
     fn timeline_specific_export_inputs_require_a_real_timeline_id() {
-        let scratch =
-            std::env::temp_dir().join(format!("concat-timeline-export-test-{}", std::process::id()));
+        let scratch = std::env::temp_dir().join(format!(
+            "concat-timeline-export-test-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&scratch);
         std::fs::create_dir_all(&scratch).expect("scratch dir");
-        let info = projects::create(&scratch.to_string_lossy(), "Timeline export", 1920, 1080, 30, 1)
-            .expect("creates");
+        let info = projects::create(
+            &scratch.to_string_lossy(),
+            "Timeline export",
+            1920,
+            1080,
+            30,
+            1,
+        )
+        .expect("creates");
         let session = Session::open_info(&info).expect("opens");
         let timeline_id = session.project().active_timeline_id.clone();
 
         assert!(session.video_for_timeline(&timeline_id).is_some());
         assert!(session.flattened_clips_for_timeline(&timeline_id).is_some());
         assert!(session.video_for_timeline("missing-timeline").is_none());
-        assert!(session.flattened_clips_for_timeline("missing-timeline").is_none());
+        assert!(
+            session
+                .flattened_clips_for_timeline("missing-timeline")
+                .is_none()
+        );
 
         let _ = std::fs::remove_dir_all(&scratch);
     }

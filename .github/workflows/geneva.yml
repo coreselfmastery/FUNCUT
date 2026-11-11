@@ -136,6 +136,28 @@ jobs:
           assert size > 500_000, f"the reel is only {size} bytes"
           print("rendered:", report["output"], f"{size} bytes,", summary)
           PY
+      # Exercise the exact cold benchmark command that users will run on
+      # their own Linux machine. This hosted result is only a smoke test;
+      # it is never substituted for the user's hardware measurement.
+      - name: The target benchmark tool, exercised
+        run: |
+          set -euo pipefail
+          cargo build --release -p concat-motion --example layers
+          cd ..
+          python3 scripts/motion/benchmark-geneva.py --skip-build --output-dir check/geneva-benchmark
+          python3 - <<'PY'
+          import json, os
+          path = "check/geneva-benchmark/benchmark.json"
+          report = json.load(open(path))
+          assert report["workload"]["width"] == 1920, report
+          assert report["workload"]["height"] == 1080, report
+          assert report["workload"]["fps"] == 30, report
+          assert report["measurement"]["render_wall_seconds"] > 0, report
+          assert report["measurement"]["output_bytes"] > 0, report
+          assert report["render_report"].get("ok"), report["render_report"]
+          print("benchmark tool rendered:", report["measurement"])
+          PY
+        working-directory: src
       # Measurement is not inspection: the pixel claims are asserted -
       # the card on the scene, the screen blend over the plate - and one
       # A/B frame (the same frame with the leak layer dropped) is

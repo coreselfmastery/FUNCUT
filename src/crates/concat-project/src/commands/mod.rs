@@ -339,13 +339,11 @@ pub enum Command {
         #[serde(default)]
         ripple: bool,
     },
-    /// [`Command::AddClip`] without naming a lane: lands on the lowest
-    /// track with nothing in the clip's span, falling back to the bottom
-    /// track (overlap and all) rather than refusing. With `above`, the
-    /// walk is the titles' instead - the first free lane *above* the
-    /// highest one occupied over the clip's span, a new one at the top
-    /// when every one above is taken - which is what anything meant to
-    /// sit *over* the picture wants: a sticker, a caption, a title.
+    /// [`Command::AddClip`] without naming a lane: the lowest track with
+    /// nothing in the clip's span, the bottom track rather than a refusal.
+    /// With `above`, the titles' walk instead - the first free lane over
+    /// the highest occupied one, a new one at the top - which is what
+    /// anything meant to sit over the picture wants.
     AddClipAtFirstFree {
         /// The bin item to cut from.
         media_id: String,
@@ -425,13 +423,13 @@ pub enum Command {
         /// language, which the document cannot know.
         name: String,
     },
-    /// Add a native motion clip.
+    /// Add a motion clip.
     AddMotionClip {
         /// Timeline seconds.
         start: f64,
         /// Comp id.
         comp: String,
-        /// SHA-256 hex digest.
+        /// Bake key: 16 hex digits.
         hash: String,
     },
     /// Places a layer: a look or an effect over a span of the timeline that
@@ -630,16 +628,14 @@ pub enum Command {
         /// The cut point, in timeline seconds.
         time: f64,
     },
-    /// Cuts spans out of the middle of a clip, which is what pause removal
-    /// does to a take: each span is clamped into the clip, overlaps merge,
-    /// and what is left is re-cut into source-continuous pieces that each
-    /// carry the clip's looks, the first keeping the clip's id. The way in
-    /// belongs to the first piece and the way out to the last, as in a
-    /// split; a piece too short to keep is folded into the span beside it.
-    /// With `ripple` the lane closes up behind every cut, as a delete does;
-    /// without it the clip's pieces keep their places and the cuts leave
-    /// gaps. Spans that leave nothing to keep remove the clip. An unknown
-    /// clip, or spans that miss it, is a no-op.
+    /// Cuts spans out of the middle of a clip, as pause removal does:
+    /// spans are clamped into the clip, overlaps merge, and what is left
+    /// is re-cut into source-continuous pieces, the first keeping the
+    /// clip's id. Fades belong to the end pieces, as in a split; a piece
+    /// too short to keep folds into the span beside it. With `ripple` the
+    /// lane closes up behind every cut; without it the cuts leave gaps.
+    /// Spans that leave nothing remove the clip; an unknown clip or spans
+    /// that miss it are a no-op.
     RemoveSpans {
         /// The clip to cut.
         clip_id: String,

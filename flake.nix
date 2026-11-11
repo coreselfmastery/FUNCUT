@@ -153,7 +153,14 @@
 
           cargoRoot = "src";
           buildAndTestSubdir = "src";
-          cargoLock.lockFile = ./src/Cargo.lock;
+          cargoLock = {
+            lockFile = ./src/Cargo.lock;
+            outputHashes = {
+              # The pure-Rust Lottie renderer is pinned to an immutable Git
+              # revision; Nix needs the source hash when vendoring Cargo.lock.
+              "tlottie-1.0.6" = "sha256-WtYyyf7AL+jtYY368X26PTnKSBUSZ9+IZjod/T5Oceg=";
+            };
+          };
           cargoBuildFlags = [
             "-p"
             "concat"

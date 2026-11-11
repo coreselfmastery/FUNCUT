@@ -551,7 +551,7 @@ mod tests {
         path
     }
 
-        const SOLID_LOTTIE: &str = r##"{
+    const SOLID_LOTTIE: &str = r##"{
         "v":"5.7.6","fr":30,"ip":0,"op":30,"w":32,"h":32,
         "layers":[{"nm":"Red star","ind":1,"ty":4,"shapes":[{"ty":"gr","it":[
           {"ty":"sr","sy":1,"d":1,"pt":{"a":0,"k":5},"p":{"a":0,"k":[16,16]},
@@ -563,7 +563,8 @@ mod tests {
         ]}]}]
     }"##;
 
-fn a_lottie_json_renders_and_its_parser_is_cached() {
+    #[test]
+    fn a_lottie_json_renders_and_its_parser_is_cached() {
         let path = temp("animation.json");
         std::fs::write(&path, SOLID_LOTTIE).unwrap();
         let mut pictures = Pictures::default();

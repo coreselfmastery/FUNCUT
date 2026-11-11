@@ -1265,9 +1265,9 @@ decode, so it logs a warning naming the clip and tells you to run `motion_bake {
 use comps still reach the timeline as media clips; this closes the gap for hand-authored documents
 and the motion agent's output.
 
-**Still to come** (nothing here is faked): the `motion.*` API methods, the
-Lottie engine, and the native engine's `CompEngine` impl. The PNG-sequence
-export path this list once named is no longer missing: the exporter resolves
+**Still to come** (nothing here is faked): a Lottie/dotLottie playback
+engine and a timeline edit command that creates `ClipKind::Motion` clips.
+The native compositor is shipped; the PNG-sequence export path this list once named is no longer missing: the exporter resolves
 a transparent bake through an `.ffconcat` script over its RGBA frames
 (`concat-export/src/flatten.rs`), so a comp with alpha exports without an
 intermediate encode.

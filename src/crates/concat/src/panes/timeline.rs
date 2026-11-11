@@ -105,6 +105,8 @@ pub struct TimelinePane {
     /// The lanes' width on screen, in logical pixels; zero until Slint has
     /// said, and then every clip is published.
     pub width: f32,
+    /// Vertical offset of the lane stack, in logical pixels.
+    pub track_scroll: f32,
     /// The playhead is held at the middle of the lanes and the cut moves
     /// under it: the phone's timeline, where a finger drags the lanes to
     /// scrub. `scroll_left` is then a fact about the playhead - half a
@@ -125,8 +127,69 @@ impl Default for TimelinePane {
             pan_mode: false,
             lane_view: HashMap::new(),
             width: 0.0,
+            track_scroll: 0.0,
             centred: false,
         }
+    }
+}
+
+/// Cached view state for timelines that are not currently active.
+///
+/// The editor keeps one live pane because Slint publishes one set of lane
+/// properties. This cache swaps that pane when the active document timeline
+/// changes, so zoom, scroll, tool, snap, and lane sizing do not leak between
+/// tabs.
+#[derive(Default)]
+pub struct TimelineViews {
+    saved: HashMap<String, TimelinePane>,
+    playheads: HashMap<String, f32>,
+    selections: HashMap<String, Vec<String>>,
+}
+
+impl TimelineViews {
+    /// Save the outgoing pane and restore (or initialise) the incoming one.
+    /// The active playhead is used to re-centre phone layouts after restore.
+    pub fn switch(
+        &mut self,
+        from_id: &str,
+        to_id: &str,
+        current: &mut TimelinePane,
+        playhead: &mut f32,
+        selection: &mut Vec<String>,
+    ) {
+        if from_id == to_id {
+            return;
+        }
+
+        let width = current.width;
+        let outgoing = std::mem::take(current);
+        self.saved.insert(from_id.to_owned(), outgoing);
+        self.playheads.insert(from_id.to_owned(), *playhead);
+        self.selections
+            .insert(from_id.to_owned(), std::mem::take(selection));
+
+        *current = self.saved.remove(to_id).unwrap_or_default();
+        *playhead = self.playheads.remove(to_id).unwrap_or(0.0);
+        *selection = self.selections.remove(to_id).unwrap_or_default();
+
+        // The pane geometry belongs to the window, not the timeline. Slint
+        // need not emit another resize event just because a tab changed.
+        current.width = width;
+        current.recentre(*playhead);
+    }
+
+    /// Forget a timeline that has been removed from the project.
+    pub fn remove(&mut self, timeline_id: &str) {
+        self.saved.remove(timeline_id);
+        self.playheads.remove(timeline_id);
+        self.selections.remove(timeline_id);
+    }
+
+    /// A newly opened project must not inherit view state from the old one.
+    pub fn clear(&mut self) {
+        self.saved.clear();
+        self.playheads.clear();
+        self.selections.clear();
     }
 }
 
@@ -300,6 +363,90 @@ mod tests {
             seconds_per_pixel,
             ..TimelinePane::default()
         }
+    }
+
+    #[test]
+    fn switching_timelines_restores_independent_view_state() {
+        let mut views = TimelineViews::default();
+        let mut current = pane(900.0, 12.0, 0.08);
+        let mut playhead = 12.5;
+        let mut selection = vec!["clip-a".to_owned()];
+        current.tool = TimelineTool::Split;
+        current.snap = false;
+        current.track_scroll = 124.0;
+        current.lane_view.insert(
+            "track-a".to_owned(),
+            LaneView {
+                locked: true,
+                size: TrackSize::Small,
+            },
+        );
+
+        views.switch(
+            "timeline-a",
+            "timeline-b",
+            &mut current,
+            &mut playhead,
+            &mut selection,
+        );
+        assert_eq!(current.scroll_left, 0.0);
+        assert_eq!(current.seconds_per_pixel, 0.05);
+        assert_eq!(current.width, 900.0);
+        assert!(matches!(current.tool, TimelineTool::Select));
+        assert!(current.snap);
+        assert_eq!(current.track_scroll, 0.0);
+        assert!(current.lane_view.is_empty());
+        assert_eq!(playhead, 0.0);
+        assert!(selection.is_empty());
+
+        current.scroll_left = 75.0;
+        playhead = 42.0;
+        selection.push("clip-b".to_owned());
+        current.seconds_per_pixel = 0.2;
+        views.switch(
+            "timeline-b",
+            "timeline-a",
+            &mut current,
+            &mut playhead,
+            &mut selection,
+        );
+        assert_eq!(current.scroll_left, 12.0);
+        assert_eq!(current.seconds_per_pixel, 0.08);
+        assert!(matches!(current.tool, TimelineTool::Split));
+        assert!(!current.snap);
+        assert_eq!(current.track_scroll, 124.0);
+        assert_eq!(playhead, 12.5);
+        assert_eq!(selection, vec!["clip-a".to_owned()]);
+        let lane = current.lane_view.get("track-a").expect("saved lane view");
+        assert!(lane.locked);
+        assert!(matches!(lane.size, TrackSize::Small));
+    }
+
+    #[test]
+    fn removing_a_timeline_discards_its_cached_view() {
+        let mut views = TimelineViews::default();
+        let mut current = pane(800.0, 30.0, 0.1);
+        let mut playhead = 30.0;
+        let mut selection = vec!["old-clip".to_owned()];
+        views.switch(
+            "timeline-a",
+            "timeline-b",
+            &mut current,
+            &mut playhead,
+            &mut selection,
+        );
+        views.remove("timeline-a");
+        views.switch(
+            "timeline-b",
+            "timeline-a",
+            &mut current,
+            &mut playhead,
+            &mut selection,
+        );
+        assert_eq!(current.scroll_left, 0.0);
+        assert_eq!(current.seconds_per_pixel, 0.05);
+        assert_eq!(playhead, 0.0);
+        assert!(selection.is_empty());
     }
 
     #[test]

@@ -913,6 +913,8 @@ pub struct Studio {
     /// The timeline's view: scroll, zoom, tool, and what the lanes know
     /// about a track that the document does not.
     pub lanes: crate::panes::timeline::TimelinePane,
+    /// Saved pane state for timelines that are not currently active.
+    pub timeline_views: crate::panes::timeline::TimelineViews,
     pub selection: Vec<String>,
     pub playhead: f32,
     pub playing: bool,
@@ -2466,6 +2468,7 @@ impl Studio {
             window_pending: HashSet::new(),
             waves: RefCell::new(HashMap::new()),
             lanes: crate::panes::timeline::TimelinePane::default(),
+            timeline_views: crate::panes::timeline::TimelineViews::default(),
             selection: Vec::new(),
             playhead: 0.0,
             // ~20px a second: a ten-second cut fits a pane at its default width.
@@ -9067,6 +9070,8 @@ impl Studio {
                 self.project_name = info.name.clone();
                 self.export.name = projects::folder_name(&info.name);
                 self.selection.clear();
+                self.timeline_views.clear();
+                self.lanes = crate::panes::timeline::TimelinePane::default();
                 self.transition_selected = None;
                 self.media.selected.clear();
                 self.playhead = 0.0;
@@ -9817,6 +9822,18 @@ impl Studio {
         self.lanes.recentre(playhead);
     }
 
+    /// Switches the live timeline pane to another timeline, preserving the
+    /// outgoing timeline's zoom, scroll, tools, snap and lane sizing.
+    pub fn switch_timeline_view(&mut self, from_id: &str, to_id: &str) {
+        self.timeline_views.switch(
+            from_id,
+            to_id,
+            &mut self.lanes,
+            &mut self.playhead,
+            &mut self.selection,
+        );
+    }
+
     /// Shows the compact dock, or the wide one, keeping whichever is put
     /// away whole; see `COMPACT_WIDTH`.
     pub fn set_compact(&mut self, compact: bool) {
@@ -10089,6 +10106,7 @@ impl Studio {
         editor.set_playhead(self.playhead);
         sync(&models.key_marks, self.key_marks());
         editor.set_scroll_left(self.lanes.scroll_left);
+        editor.set_track_scroll(self.lanes.track_scroll);
         editor.set_seconds_per_pixel(self.lanes.seconds_per_pixel);
         editor.set_duration_seconds(self.duration());
         editor.set_frame_rate(self.frame_rate());

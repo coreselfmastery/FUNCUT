@@ -948,7 +948,8 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         else {
             return;
         };
-        state.selection.clear();
+        let previous_id = state.timeline().id.clone();
+        state.switch_timeline_view(&previous_id, &id);
         state.apply(concat_project::Command::SelectTimeline { timeline_id: id });
     }));
     editor.on_tab_renamed(on_window!(|state, index: i32, name: SharedString| {
@@ -972,8 +973,9 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         state.move_timeline(from, to);
     }));
     editor.on_tab_added(on_window!(|state| {
+        let previous_id = state.timeline().id.clone();
         if let Some(id) = state.apply(concat_project::Command::AddTimeline) {
-            state.selection.clear();
+            state.switch_timeline_view(&previous_id, &id);
             state.apply(concat_project::Command::SelectTimeline { timeline_id: id });
         }
     }));
@@ -986,8 +988,13 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         else {
             return;
         };
-        state.selection.clear();
-        state.apply(concat_project::Command::RemoveTimeline { timeline_id: id });
+        let previous_id = state.timeline().id.clone();
+        state.apply(concat_project::Command::RemoveTimeline {
+            timeline_id: id.clone(),
+        });
+        let next_id = state.timeline().id.clone();
+        state.switch_timeline_view(&previous_id, &next_id);
+        state.timeline_views.remove(&id);
     }));
 
     // ── the tray ──
@@ -1063,6 +1070,9 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     }));
     editor.on_scrolled(on_lanes!(|state, seconds: f32| {
         state.handle(Msg::Timeline(TimelineMsg::Scrolled(seconds)));
+    }));
+    editor.on_track_scroll_changed(on_lanes!(|state, pixels: f32| {
+        state.lanes.track_scroll = pixels;
     }));
     editor.on_zoom(on_lanes!(|state, factor: f32, anchor: f32| {
         state.handle(Msg::Timeline(TimelineMsg::Zoomed { factor, anchor }));

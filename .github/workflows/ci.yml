@@ -52,6 +52,9 @@ jobs:
           components: rustfmt
       - run: cargo fmt --check
         working-directory: src
+      # The Linux installer carries architecture-specific, checksum-pinned
+      # Geneva downloads; keep its shell syntax in the same fast CI gate.
+      - run: bash -n install-linux.sh
       # Every string the interface shows is a key in a locale file; this
       # keeps en.json the inventory of them and every shipped language
       # keyed off it. See TRANSLATING.md.

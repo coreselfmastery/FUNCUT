@@ -1496,6 +1496,15 @@ mod motion_clip_tests {
     fn add_motion_clip_creates_a_valid_timeline_reference() {
         let mut project = Project::new();
         let mut mint = IdMint::default();
+        let footage_track = project.active().tracks[0].id.clone();
+        project.active_mut().clips.push(Arc::new(Clip::blank(
+            "footage".into(),
+            footage_track.clone(),
+            ClipKind::Video,
+            "media".into(),
+            0.0,
+            12.0,
+        )));
         let hash = "a".repeat(64);
         let outcome = apply(
             &mut project,
@@ -1512,6 +1521,18 @@ mod motion_clip_tests {
         let clip = project.active().clip(&id).expect("placed clip");
         assert_eq!(clip.kind, ClipKind::Motion);
         assert!(!clip.track_id.is_empty());
+        let timeline = project.active();
+        let footage_row = timeline
+            .tracks
+            .iter()
+            .position(|track| track.id == footage_track)
+            .expect("footage lane");
+        let motion_row = timeline
+            .tracks
+            .iter()
+            .position(|track| track.id == clip.track_id)
+            .expect("motion lane");
+        assert!(motion_row > footage_row, "motion clip must be above footage");
         assert_eq!(clip.start, 2.0);
         assert_eq!(clip.duration, DEFAULT_LAYER_DURATION);
         let motion = clip.motion.as_ref().expect("motion payload");

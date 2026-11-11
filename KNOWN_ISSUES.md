@@ -10,7 +10,7 @@ This file records limitations that remain on `main`. It is not a list of histori
 
 3. **Linux hardware acceleration is incomplete, not wholly absent.** VAAPI decode is implemented in `concat-media::hardware` and can be selected explicitly, but Linux has no automatic platform default (`HwDevice::platform_default()` returns `None`). The normal export encoder list does not include VAAPI encoders, so native VAAPI hardware encoding is still missing. Device availability, driver compatibility, fallback behavior and performance need testing on real Intel/AMD Linux hardware before enabling it by default.
 
-4. **Timeline view state is not isolated per timeline.** Zoom, scroll, playhead, and selection state can reset or carry incorrectly when switching timeline tabs. This requires a GUI-level fix and regression coverage.
+4. **Timeline view-state fix is merged; final merge-commit CI confirmation remains.** PR #88 (`56bde7c85e9fedc817092e2fdad59a3c19aeb09f`) now caches/restores zoom, horizontal and vertical scroll, playhead, selection, tool, snap and lane sizing per timeline. Regression tests cover switching, restoration and removal. Keep this item open in the release gate until the exact merge commit's full CI/Geneva validation is green.
 
 5. **Export remains single-slot and targets the active timeline.** There is no export queue or explicit timeline picker. The output is now read back and verified after export, but that verification does not add queueing or timeline selection.
 

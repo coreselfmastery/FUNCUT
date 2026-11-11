@@ -835,11 +835,11 @@ if ! command -v geneva >/dev/null 2>&1 \
                 GENEVA_CHECKED="yes"
             fi
         else
-            GENEVA_CHECKED="unchecked"
+            GENEVA_CHECKED="no-tool"
         fi
         case "$GENEVA_CHECKED" in
-            yes|unchecked)
-                [ "$GENEVA_CHECKED" = yes ] && say "  checksum ok" || say "  no sha256 tool found - installing unchecked"
+            yes)
+                say "  checksum ok"
                 mkdir -p "$TMP/geneva-out" "$HOME/.local/bin"
                 tar -xzf "$TMP/geneva.tar.gz" -C "$TMP/geneva-out" ||
                     { say "  could not unpack it - the editor runs without it"; }
@@ -856,6 +856,9 @@ if ! command -v geneva >/dev/null 2>&1 \
                 else
                     say "  the tarball held no binary - the editor runs without it"
                 fi
+                ;;
+            no-tool)
+                say "  no sha256 tool found - refusing to install an unverified sidecar"
                 ;;
             *)
                 say "  checksum mismatch - not installed; the editor runs without it"

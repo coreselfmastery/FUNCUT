@@ -53,6 +53,32 @@ pub const TESTED_VERSION: &str = "1.6.0";
 /// source of truth for this decision: do not maintain a second list of
 /// unsupported node kinds in engine selection.
 pub(crate) fn requires_native_fidelity(comp: &Comp) -> bool {
+    // Geneva's flattened timeline can add ancestor translations, but it
+    // cannot compose an animated/scaled/rotated parent world transform.
+    // The native scene graph can, so keep those comps on the native path.
+    for node in &comp.nodes {
+        let mut cursor = node.parent.as_deref();
+        let mut depth = 0;
+        while let Some(parent) = cursor {
+            if depth >= 32 {
+                return true;
+            }
+            let Some(parent_node) = comp.node(parent) else {
+                break;
+            };
+            if parent_node.transform.scale != 1.0
+                || parent_node.transform.rotation != 0.0
+                || parent_node.tracks.contains_key("scale")
+                || parent_node.tracks.contains_key("rotation")
+                || parent_node.tracks.contains_key("position")
+            {
+                return true;
+            }
+            cursor = parent_node.parent.as_deref();
+            depth += 1;
+        }
+    }
+
     let (_, warnings) = Geneva::at(Path::new("geneva")).timeline(comp, &BakeRequest::default());
     warnings.iter().any(|warning| {
         warning.contains("native engine only")

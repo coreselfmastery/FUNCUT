@@ -1622,6 +1622,25 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         ));
     }
 
+    // ── the library's Motion page ──
+    {
+        let motion = app.global::<crate::ui::Motion>();
+        motion.on_shown(on_window!(|state, on: bool| {
+            state.handle(Msg::Motion(crate::panes::motion::MotionMsg::Shown(on)));
+        }));
+        motion.on_refresh(on_window!(|state| {
+            state.handle(Msg::Motion(crate::panes::motion::MotionMsg::Refresh));
+        }));
+        motion.on_add(on_window!(
+            |state, hash: SharedString, comp: SharedString| {
+                state.handle(Msg::Motion(crate::panes::motion::MotionMsg::Add {
+                    hash: hash.to_string(),
+                    comp: comp.to_string(),
+                }));
+            }
+        ));
+    }
+
     // The New voice sheet: the recording's name, a line about it, where
     // in it the voice is kept from, a picture through the same picker as
     // Text to speech's, and the save.

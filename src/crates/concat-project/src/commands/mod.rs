@@ -201,6 +201,21 @@ pub struct ClipPatch {
     pub background: Option<Option<Background>>,
 }
 
+/// Whether a motion clip names a safe comp id and the 16-digit bake key
+/// written by `motion_bake`. Comp ids are path components, never paths.
+fn valid_motion_reference(comp: &str, hash: &str, engine: &str) -> bool {
+    let comp = comp.trim();
+    let hash = hash.trim();
+    !comp.is_empty()
+        && !matches!(comp, "." | "..")
+        && comp.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
+        })
+        && hash.len() == 16
+        && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && matches!(engine, "geneva" | "native" | "lottie")
+}
+
 /// `Option<Option<T>>` over JSON: absent → None, null → Some(None).
 mod double_option {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -335,13 +350,11 @@ pub enum Command {
         #[serde(default)]
         ripple: bool,
     },
-    /// [`Command::AddClip`] without naming a lane: lands on the lowest
-    /// track with nothing in the clip's span, falling back to the bottom
-    /// track (overlap and all) rather than refusing. With `above`, the
-    /// walk is the titles' instead - the first free lane *above* the
-    /// highest one occupied over the clip's span, a new one at the top
-    /// when every one above is taken - which is what anything meant to
-    /// sit *over* the picture wants: a sticker, a caption, a title.
+    /// [`Command::AddClip`] without naming a lane: the lowest track with
+    /// nothing in the clip's span, the bottom track rather than a refusal.
+    /// With `above`, the titles' walk instead - the first free lane over
+    /// the highest occupied one, a new one at the top - which is what
+    /// anything meant to sit over the picture wants.
     AddClipAtFirstFree {
         /// The bin item to cut from.
         media_id: String,
@@ -421,6 +434,15 @@ pub enum Command {
         /// What the lane calls it: the figure's name in the interface's
         /// language, which the document cannot know.
         name: String,
+    },
+    /// Add a motion clip.
+    AddMotionClip {
+        /// Timeline seconds.
+        start: f64,
+        /// Comp id.
+        comp: String,
+        /// Bake key: 16 hex digits.
+        hash: String,
     },
     /// Places a layer: a look or an effect over a span of the timeline that
     /// treats everything beneath it. No media; the chain starts as the one
@@ -618,16 +640,14 @@ pub enum Command {
         /// The cut point, in timeline seconds.
         time: f64,
     },
-    /// Cuts spans out of the middle of a clip, which is what pause removal
-    /// does to a take: each span is clamped into the clip, overlaps merge,
-    /// and what is left is re-cut into source-continuous pieces that each
-    /// carry the clip's looks, the first keeping the clip's id. The way in
-    /// belongs to the first piece and the way out to the last, as in a
-    /// split; a piece too short to keep is folded into the span beside it.
-    /// With `ripple` the lane closes up behind every cut, as a delete does;
-    /// without it the clip's pieces keep their places and the cuts leave
-    /// gaps. Spans that leave nothing to keep remove the clip. An unknown
-    /// clip, or spans that miss it, is a no-op.
+    /// Cuts spans out of the middle of a clip, as pause removal does:
+    /// spans are clamped into the clip, overlaps merge, and what is left
+    /// is re-cut into source-continuous pieces, the first keeping the
+    /// clip's id. Fades belong to the end pieces, as in a split; a piece
+    /// too short to keep folds into the span beside it. With `ripple` the
+    /// lane closes up behind every cut; without it the cuts leave gaps.
+    /// Spans that leave nothing remove the clip; an unknown clip or spans
+    /// that miss it are a no-op.
     RemoveSpans {
         /// The clip to cut.
         clip_id: String,
@@ -1007,6 +1027,9 @@ pub enum CommandError {
     /// one stored would poison every duration and key that touched it.
     #[error("A number in that edit is not finite.")]
     NotANumber,
+    /// A motion clip command named an invalid comp id, digest or engine.
+    #[error("That motion composition reference is invalid.")]
+    InvalidMotion,
     /// [`Command::AddTextClip`], or an `updateClip` patching its `text`,
     /// carried a style whose words are empty or whitespace. A title with
     /// no words renders nothing yet reports itself placed; refused is
@@ -1176,6 +1199,7 @@ impl Command {
             Command::AddLayerClip {
                 start, duration, ..
             } => bad([*start]) || bad(*duration),
+            Command::AddMotionClip { start, .. } => bad([*start]),
             Command::SetClipSpeedCurve { curve, .. } => {
                 bad(curve
                     .iter()
@@ -1360,6 +1384,7 @@ pub fn apply(
         | Command::AddTextClip { .. }
         | Command::AddShapeClip { .. }
         | Command::AddLayerClip { .. }
+        | Command::AddMotionClip { .. }
         | Command::MoveClips { .. }
         | Command::TrimClip { .. }
         | Command::SplitClips { .. }

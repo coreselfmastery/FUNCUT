@@ -315,9 +315,10 @@ fn read_zip_entry(
     path: &str,
     maximum: usize,
 ) -> Result<Vec<u8>, String> {
-    let mut file = archive
-        .by_name(path)
-        .map_err(|error| format!("missing archive entry {path:?}: {error}"))?;
+    let mut file = archive.by_name(path).map_err(|error| match error {
+        ZipError::FileNotFound => format!("missing archive entry {path:?}"),
+        other => format!("cannot open dotLottie entry {path:?}: {other}"),
+    })?;
     if file.size() > maximum as u64 {
         return Err(format!("dotLottie entry {path:?} exceeds the {maximum}-byte limit"));
     }
@@ -574,10 +575,11 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_lottie_image_and_text_layers_are_reported() {
+    fn unsupported_lottie_layers_are_reported_by_the_support_analyzer() {
         for kind in [2, 5, 99] {
-            let json = format!(r#"{{"layers":[{{"ty":{kind}}}]}}"#);
-            assert!(ensure_supported_lottie(json.as_bytes()).is_err());
+            let json = format!(r#"{{"v":"5.7.4","fr":30,"ip":0,"op":30,"w":32,"h":32,"layers":[{{"ty":{kind}}}]}}"#);
+            let animation = LottieAnimation::from_json_str(&json).unwrap();
+            assert!(Renderer::target_corpus().prepare(&animation).is_err());
         }
     }
 
@@ -600,7 +602,8 @@ mod tests {
         writer.write_all(SOLID_LOTTIE.as_bytes()).unwrap();
         let bytes = writer.finish().unwrap().into_inner();
         std::fs::write(&path, bytes).unwrap();
-        assert_eq!(read_dotlottie_json(&path).unwrap(), SOLID_LOTTIE.as_bytes());
+        let animation = read_dotlottie_animation(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!((animation.width, animation.height), (32, 32));
     }
 
     #[test]
@@ -621,7 +624,8 @@ mod tests {
         writer.write_all(SOLID_LOTTIE.as_bytes()).unwrap();
         let bytes = writer.finish().unwrap().into_inner();
         std::fs::write(&path, bytes).unwrap();
-        assert_eq!(read_dotlottie_json(&path).unwrap(), SOLID_LOTTIE.as_bytes());
+        let animation = read_dotlottie_animation(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!((animation.width, animation.height), (32, 32));
 
         let unsafe_manifest = br#"{"version":"2","initial":{"animation":"../escape"},"animations":[{"id":"../escape"}]}"#;
         let manifest_path = temp("unsafe.lottie");
@@ -630,7 +634,7 @@ mod tests {
         writer.write_all(unsafe_manifest).unwrap();
         let bytes = writer.finish().unwrap().into_inner();
         std::fs::write(&manifest_path, bytes).unwrap();
-        assert!(read_dotlottie_json(&manifest_path).is_err());
+        assert!(read_dotlottie_animation(&std::fs::read(&manifest_path).unwrap()).is_err());
     }
 
     #[test]

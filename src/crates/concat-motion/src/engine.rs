@@ -125,16 +125,33 @@ impl EnginePreference {
         match sidecar {
             Sidecar::Ready => {
                 let engine = self.engine_for(comp, true);
-                Choice {
-                    engine,
-                    note: (engine == EngineKind::Native
-                        && self.default == EngineKind::Geneva
-                        && !comp.needs_markup())
-                    .then(|| {
-                        "geneva would drop or approximate a feature in this comp; drawing it                          on the native engine to preserve fidelity"
-                            .to_owned()
-                    }),
-                }
+                let note = if engine == EngineKind::Native
+                    && self.default == EngineKind::Geneva
+                    && !comp.needs_markup()
+                {
+                    Some(
+                        concat!(
+                            "geneva would drop or approximate a feature in this comp; ",
+                            "drawing it on the native engine to preserve fidelity"
+                        )
+                        .to_owned(),
+                    )
+                } else if engine == EngineKind::Geneva
+                    && self.default == EngineKind::Geneva
+                    && comp.needs_markup()
+                    && !comp.geneva_inexpressible().is_empty()
+                {
+                    Some(
+                        concat!(
+                            "this markup comp also uses native-only features; ",
+                            "Geneva will refuse the bake rather than silently degrade the output"
+                        )
+                        .to_owned(),
+                    )
+                } else {
+                    None
+                };
+                Choice { engine, note }
             }
             Sidecar::Missing => Choice {
                 engine: self.engine_for(comp, false),
@@ -663,6 +680,40 @@ mod tests {
         assert_eq!(
             EnginePreference::default().engine_for(&outer, false),
             EngineKind::Geneva
+        );
+    }
+
+    #[test]
+    fn mixed_markup_selection_explains_the_safe_refusal() {
+        let mut comp = comp_with(NodeKind::Html {
+            markup: "<div>title</div>".into(),
+            css: String::new(),
+            width: Length::Auto,
+            height: Length::Auto,
+        });
+        let mut gradient = comp_with(NodeKind::Ellipse {
+            width: Length::px(100.0),
+            height: Length::px(100.0),
+            fill: Some(Paint::Gradient {
+                stops: vec![(0.0, Rgba::hex("#ff0000")), (1.0, Rgba::hex("#0000ff"))],
+                ramp: Default::default(),
+                angle: 90.0,
+                from: 0.0,
+                to: 1.0,
+            }),
+        })
+        .nodes
+        .remove(0);
+        gradient.id = "gradient".into();
+        comp.nodes.push(gradient);
+        let choice = EnginePreference::default().choose(&comp, Sidecar::Ready);
+        assert_eq!(choice.engine, EngineKind::Geneva);
+        assert!(
+            choice
+                .note
+                .as_deref()
+                .unwrap_or_default()
+                .contains("refuse the bake")
         );
     }
 

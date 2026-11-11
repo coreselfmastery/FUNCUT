@@ -190,8 +190,8 @@ pub struct ClipPatch {
     pub background: Option<Option<Background>>,
 }
 
-/// Whether a motion clip points at a safe comp id, a SHA-256 digest and a
-/// known renderer. Comp ids are path components, never arbitrary paths.
+/// Whether a motion clip names a safe comp id and the 16-digit bake key
+/// written by `motion_bake`. Comp ids are path components, never paths.
 fn valid_motion_reference(comp: &str, hash: &str, engine: &str) -> bool {
     let comp = comp.trim();
     let hash = hash.trim();
@@ -200,7 +200,7 @@ fn valid_motion_reference(comp: &str, hash: &str, engine: &str) -> bool {
         && comp.chars().all(|character| {
             character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.')
         })
-        && hash.len() == 64
+        && hash.len() == 16
         && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
         && matches!(engine, "geneva" | "native" | "lottie")
 }

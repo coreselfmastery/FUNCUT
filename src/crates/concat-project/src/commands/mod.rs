@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::model::{
     AppliedFilter, AudioTrack, Background, Clip, ClipKind, ClipMask, ColorRange, ColorSpace, Crop,
     CustomFont, Cutout, CutoutMode, Enhanced, Framing, KeyEase, KeyProperty, MediaItem, MediaKind,
-    MediaOrigin, MotionClip, Project, RunStyle, ShapeStyle, SpeedPoint, Stabilize, Stroke,
+    MediaOrigin, Project, RunStyle, ShapeStyle, SpeedPoint, Stabilize, Stroke,
     TextStyle, Timeline, Track, Transition, VideoSettings,
 };
 
@@ -188,15 +188,6 @@ pub struct ClipPatch {
     )]
     #[cfg_attr(feature = "schema", schemars(with = "Option<Background>"))]
     pub background: Option<Option<Background>>,
-    /// Replacement motion-comp reference for an existing motion clip.
-    /// Missing leaves it unchanged; other clip kinds cannot be converted
-    /// through a generic property patch.
-    #[serde(default)]
-    pub motion: Option<MotionClip>,
-}
-
-fn yes() -> bool {
-    true
 }
 
 /// Whether a motion clip points at a safe comp id, a SHA-256 digest and a
@@ -434,35 +425,28 @@ pub enum Command {
         /// language, which the document cannot know.
         name: String,
     },
-    /// Places a motion composition on a timeline lane. The referenced comp
-    /// must already be saved in the project's `comps/` directory and its
-    /// content hash must be a 64-character hexadecimal digest. A missing
-    /// track is chosen above the picture by default; occupied space is
-    /// avoided rather than covered.
+    /// Add a motion clip to the timeline.
     AddMotionClip {
-        /// Explicit lane, or None to choose one using `above`.
+        /// Lane id; absent selects a free lane above the picture.
         track_id: Option<String>,
-        /// Whether an automatically chosen lane should sit above the picture.
-        #[serde(default = "yes")]
-        above: bool,
-        /// Timeline position in seconds, floored at zero.
+        /// Timeline start in seconds.
         start: f64,
-        /// Timeline duration; defaults to five seconds.
+        /// Duration in seconds; absent defaults to five.
         #[serde(default)]
         duration: Option<f64>,
-        /// Stable comp document id.
+        /// Saved comp id.
         comp: String,
-        /// SHA-256 content hash of the saved comp document.
+        /// 64-character SHA-256 digest.
         hash: String,
-        /// `geneva`, `native`, or `lottie`.
+        /// Renderer: geneva, native or lottie.
         engine: String,
-        /// Optional bake width; zero uses the comp's authoring width.
+        /// Bake width; zero uses the comp width.
         #[serde(default)]
         width: u32,
-        /// Optional bake height; zero uses the comp's authoring height.
+        /// Bake height; zero uses the comp height.
         #[serde(default)]
         height: u32,
-        /// Display name in the timeline.
+        /// Timeline label.
         #[serde(default)]
         name: String,
     },

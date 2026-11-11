@@ -96,7 +96,7 @@ The canonical workflow is `.github/workflows/geneva.yml`. It has two jobs:
 **Observed evidence at this reconciliation:**
 - Geneva workflow run `42975353241` (PR #81): both rendered-example and dependency-dance jobs completed successfully.
 - PR #81's separate general Rust engine/lint job was still in progress at the last poll; do not call the entire PR green until that job completes.
-- PR #84 merged as `c45ac873`. Its main-commit Geneva rendered-example and dependency-dance jobs both passed in run `42979489279`. The general Rust engine/clippy job and Linux x86_64/aarch64 build jobs were still running at the last poll; verify those before calling the whole merged commit fully green.
+- PR #84 merged as `c45ac873`. Its main-commit Geneva rendered-example and dependency-dance jobs both passed in run `42979489279`. Both Linux x86_64 and aarch64 build jobs passed. The general Rust engine/clippy job remained in progress at the last poll; verify it before calling the whole merged commit fully green.
 - PR #85's Geneva rendered-example and dependency-dance jobs both passed in run `42980390753`; its general Rust engine/clippy job remained in progress.
 - PR #86's fast CI gate passed the installer shell check, x86_64/aarch64/Rust version pin parity, benchmark syntax, CLI and unit tests in run `42981939795`; its full Geneva render/benchmark smoke and workspace clippy are still in progress.
 - PR #80's general Rust engine/lint job was also still in progress at the last poll.

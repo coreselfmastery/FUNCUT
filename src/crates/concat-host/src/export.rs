@@ -306,13 +306,13 @@ impl ExportQueue {
     /// any other id - a job already ended, one never queued - is not an
     /// error to the caller; the queue just takes no notice.
     pub fn progress(&mut self, id: u64, progress: f32, stage: impl Into<String>) {
-        if let Some(job) = self.jobs.iter_mut().find(|job| job.id == id) {
-            if let QueueState::Running { .. } = job.state {
-                job.state = QueueState::Running {
-                    progress: progress.clamp(0.0, 1.0),
-                    stage: stage.into(),
-                };
-            }
+        if let Some(job) = self.jobs.iter_mut().find(|job| job.id == id)
+            && let QueueState::Running { .. } = job.state
+        {
+            job.state = QueueState::Running {
+                progress: progress.clamp(0.0, 1.0),
+                stage: stage.into(),
+            };
         }
     }
 

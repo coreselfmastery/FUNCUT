@@ -253,11 +253,10 @@ impl ExportPane {
             // The footer's cancel stops the running job; the queued ones
             // stay, each with its own cancel on its row.
             ExportMsg::Cancel => {
-                if let Some(job) = self.queue.running() {
-                    let id = job.id;
-                    if self.queue.cancel(id) == concat_host::export::Cancelled::Stopping {
-                        studio.host.exporter.cancel();
-                    }
+                if let Some(id) = self.queue.running().map(|job| job.id)
+                    && self.queue.cancel(id) == concat_host::export::Cancelled::Stopping
+                {
+                    studio.host.exporter.cancel();
                 }
             }
             // A row's own cancel: a waiting job is gone outright, the

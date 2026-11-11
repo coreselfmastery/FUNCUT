@@ -607,9 +607,7 @@ mod tests {
                 br#"{"version":"2","initial":{"animation":"selected"},"animations":[{"id":"first"},{"id":"selected"}]}"#,
             )
             .unwrap();
-        writer
-            .start_file("a/selected.json", options)
-            .unwrap();
+        writer.start_file("a/selected.json", options).unwrap();
         writer.write_all(SOLID_LOTTIE.as_bytes()).unwrap();
         let bytes = writer.finish().unwrap().into_inner();
         std::fs::write(&path, bytes).unwrap();

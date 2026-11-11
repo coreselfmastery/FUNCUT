@@ -162,7 +162,8 @@ impl TimelineViews {
         let outgoing = std::mem::take(current);
         self.saved.insert(from_id.to_owned(), outgoing);
         self.playheads.insert(from_id.to_owned(), *playhead);
-        self.selections.insert(from_id.to_owned(), std::mem::take(selection));
+        self.selections
+            .insert(from_id.to_owned(), std::mem::take(selection));
 
         *current = self.saved.remove(to_id).unwrap_or_default();
         *playhead = self.playheads.remove(to_id).unwrap_or(0.0);

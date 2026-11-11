@@ -400,6 +400,15 @@ fn embed_dotlottie_images(
     archive: &mut ZipArchive<Cursor<&[u8]>>,
     animation: &mut LottieAnimation,
 ) -> Result<(), String> {
+    if animation
+        .assets
+        .iter()
+        .filter(|asset| asset.is_image_asset())
+        .count()
+        > MAX_LOTTIE_IMAGE_ASSETS
+    {
+        return Err("dotLottie animation contains too many image assets".into());
+    }
     let mut total_image_bytes = 0_u64;
     for asset in &mut animation.assets {
         if !asset.is_image_asset() || asset.is_embedded_image_asset() {
@@ -649,6 +658,13 @@ mod tests {
             .lottie_frame(&path, 0.5, false)
             .expect("cached Lottie parser");
         assert_eq!(first.data(), second.data());
+    }
+
+    #[test]
+    fn lottie_image_budget_is_aggregate_not_per_file_only() {
+        let total = Cell::new(MAX_LOTTIE_TOTAL_IMAGE_BYTES - 1);
+        assert!(account_image_bytes(&total, "image", &[0, 0]).is_err());
+        assert_eq!(total.get(), MAX_LOTTIE_TOTAL_IMAGE_BYTES - 1);
     }
 
     #[test]

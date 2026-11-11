@@ -58,12 +58,14 @@ and an honest feature ledger. No fake green, no doc-only features.
 
 ## Next actions
 
-1. ~~Open the PR; merge when green~~ — **done**: PR #78's head `4b9f8f81`
-   passed all five checks (Format/locales/models, analysis senses,
-   dependency dance, Engine tests and lints, the multi-layer Geneva
-   render) and merged as `3adb448c`.
-2. ~~Verify main's `94ebfdde` CI~~ — **done**: 7/7 green.
-3. This state push, then the final report. Verify its check-runs as the
-   last gate.
-4. Stretch (next session, if authorized): the native `CompEngine` impl
-   — see KNOWN_ISSUES.md and SESSION_HANDOFF.md for the scoped plan.
+1. PR #80: keep the native still-image decode cache alive across all frames
+   in one bake; merge only after every required CI lane passes.
+2. PR #81: reconcile the known-issues list, implementation ledger, and
+   agent state with the code already merged in PRs #78 and #79.
+3. Remaining engineering work: native Lottie playback, VAAPI integration
+   with hardware validation, per-timeline view-state isolation, export
+   queue and timeline picker.
+4. Acceptance work that cannot be certified by hosted CI alone: measure
+   1080p proxy scrubbing on the actual antiX laptop and run a real
+   script-to-export Director project end to end. Do not claim hardware
+   speedups or complete workflow readiness without those tests.

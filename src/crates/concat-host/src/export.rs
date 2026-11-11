@@ -721,9 +721,9 @@ mod tests {
 
         queue.progress(first, 0.5, "Rendering video");
         let running = queue.running().expect("one job runs");
-        match running.state {
+        match &running.state {
             QueueState::Running { progress, stage } => {
-                assert_eq!(progress, 0.5);
+                assert_eq!(*progress, 0.5);
                 assert_eq!(stage, "Rendering video");
             }
             other => panic!("the job is running, not {other:?}"),
@@ -732,8 +732,8 @@ mod tests {
         // A report for a job that is not running changes nothing.
         queue.progress(99, 0.9, "Rendering video");
         let running = queue.running().expect("still running");
-        match running.state {
-            QueueState::Running { progress, .. } => assert_eq!(progress, 0.5),
+        match &running.state {
+            QueueState::Running { progress, .. } => assert_eq!(*progress, 0.5),
             other => panic!("still running, not {other:?}"),
         }
     }

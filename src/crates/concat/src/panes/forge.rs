@@ -387,8 +387,8 @@ impl ForgePane {
 
 /// Reads the run on its own thread: each line of the harness's output is
 /// posted as it comes, and the run's exit code is posted after the last.
-/// A Cancel is honoured at the next line by killing the child; the posts
-/// that follow say what happened, not that it was read to the end.
+/// A separate supervisor polls the child, so Cancel is honoured even
+/// while the model call is silent; the posts that follow report the exit.
 fn read_the_run(mut child: Child, kill: Arc<AtomicBool>) {
     // Drain both pipes independently: a full stderr pipe must never block
     // stdout, and cancellation must never depend on the child printing.

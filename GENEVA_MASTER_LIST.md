@@ -1,6 +1,6 @@
 # Geneva master list — current verified state
 
-**Last reconciled:** 11 November 2026  
+**Last reconciled:** 12 November 2026  
 **Repository:** `coreselfmastery/FUNCUT`  
 **Canonical implementation:** `src/crates/concat-motion`  
 **Sidecar contract:** Geneva 1.6.0, pinned by the installer and CI dependency lock  
@@ -10,7 +10,7 @@
 
 Geneva is a substantial, integrated motion-rendering path, not a placeholder. The four pillars—Creative, Performance, Reliability and Agent—are implemented in the repository. The ten findings in the original 1 November register are recorded as closed in the 3 November postscript. The current Geneva workflow also exercises the real sidecar, rendered output, scene-quality floors and golden-frame comparisons.
 
-**Do not interpret this as proof that every FUNCUT release requirement is complete.** This page is scoped to Geneva. It does not certify the separate full AI Director workflow, target-laptop performance, Lottie playback, or the editor's general release readiness.
+**Do not interpret this as proof that every FUNCUT release requirement is complete.** This page is scoped to Geneva. It does not certify the separate full AI Director workflow, target-laptop performance, Lottie playback, or the editor's general release readiness. The latest observed `main` commit is `22adc015f5d56f19965e3508a03382b1c54c0d60` (12 November 2026). Geneva's two jobs and the Linux x86_64/aarch64 app build passed on that commit; the general CI engine/lint job and Nix build were still running at the time of this reconciliation.
 
 ## 1. Creative pillar — implemented
 
@@ -108,12 +108,12 @@ The canonical workflow is `.github/workflows/geneva.yml`. It has two jobs:
 
 No item from the original ten-finding register is currently listed as open. The following are the remaining validation/roadmap boundaries, not claims that the closed findings are still broken:
 
-- [x] Current merged `main` commit `56bde7c85e9fedc817092e2fdad59a3c19aeb09f`: fresh CI passed all 3 jobs, Geneva passed both dependency-dance and rendered-example jobs, and Build app passed Linux x86_64 and aarch64 (`43020200650`, `43020200640`, `43020200660`).
-- [ ] Keep scene-quality and golden-frame gates green on every relevant change; review any intentional golden/quality-floor update.
+- [x] Latest observed `main` commit `22adc015f5d56f19965e3508a03382b1c54c0d60`: Geneva passed both dependency-dance and rendered-example jobs (`43160525723`); Build app passed (`43160525483`). General engine tests/lints and Nix build were still running (`43160525529`, `43160525595`) at reconciliation time.
+- [x] Current scene-quality and golden-frame gates passed on the latest observed `main` SHA in Geneva run `43160525723`; keep these as mandatory gates on every relevant future change and review any intentional golden/quality-floor update.
 - [ ] Run and record representative timing/memory measurements on the target low-memory Linux machine for realistic 1080p motion workloads. PR #86 is merged: the reproducible cold 1080p30 Geneva benchmark records machine, sidecar version, wall time, output size and sampled process-tree RSS. Hosted CI proves correctness, not target-device speed; a real antiX run remains required.
 - [x] Mixed markup comps that also use native-only shape gradients, mattes, effects, paths or masks are refused by Geneva bake/frame instead of being silently degraded; PR #84 shipped the safe refusal and native fallback for non-markup comps. PR #85 added the selection-time explanation and regression test; it merged as `cf82462c`.
 - [ ] Optional future feature: implement true Geneva rendering support for those mixed markup/native-only cases. This is a feature-parity enhancement, not a silent-degradation blocker while the refusal remains in place.
-- [ ] Decide whether mixed markup needs full inherited transform parity; the native fallback cannot be used for HTML/CSS comps.
+- [ ] Decide whether mixed markup needs full inherited transform parity; static ancestor translations are now folded into child positions by PR #92 (merged as `059d231f`), but animated child positions under translated parents, animated parent transforms, and inherited scale/rotation still require native fallback or future Geneva composition work. The native fallback cannot be used for HTML/CSS comps.
 - [x] PR #84 makes `needs_markup()` recursive so nested HTML sub-comps do not incorrectly fall back to native when the sidecar is missing; regression coverage is included.
 - [ ] If offline cache use without the sidecar is desired, change the version/key contract deliberately and test compatibility; current behaviour intentionally requires the sidecar.
 - [ ] Keep Geneva 1.6.0 pin, checksum, installer, package contents and supported platform binaries aligned whenever the sidecar is upgraded.
@@ -123,11 +123,11 @@ No item from the original ten-finding register is currently listed as open. The 
 
 These must remain on the broader FUNCUT release tracker, not be misreported as Geneva defects:
 
-- Native Lottie/dotLottie playback: PR #91 adds rasterlottie-backed JSON playback, external image resolution, bounded v1/v2 dotLottie loading and support diagnostics; CI/Geneva/Nix validation is pending and the PR is not merged.
-- Timeline Motion clips: PR #89 adds a compact five-second native clip-creation command with comp/hash validation and automatic lane placement; CI/Geneva validation is pending and the PR is not merged. A visual comp picker, metadata editing, save/reopen, preview and final-export acceptance remain outstanding.
-- Per-timeline view-state isolation — closed on `main` by PR #88 (`56bde7c85e9fedc817092e2fdad59a3c19aeb09f`); exact-commit CI, Geneva and Build-app checks are all green.
-- Export queue and explicit timeline picker.
-- Linux VAAPI encode integration and hardware validation.
+- Native Lottie/dotLottie playback — PR #91 merged as `4a65a7b0`; bounded JSON/dotLottie playback and explicit unsupported-feature diagnostics are implemented. This is not full After Effects/Bodymovin parity.
+- Timeline Motion clips — PR #97 merged as `ea589c73`; the Motion page and validated AddMotionClip command are on main. The PR reports metadata preservation, undo/redo, save/reopen regression coverage, preview and final-export bake paths. Real-project acceptance should still be included in the broader AI Director/export validation.
+- Per-timeline view-state isolation — PR #88 merged as `56bde7c8`.
+- Export queue and explicit timeline picker — PR #96 merged as `30a91b06`.
+- Linux VAAPI encode integration — PR #95 merged as `48cdcd89`; real Intel/AMD hardware validation remains outstanding.
 - 1080p proxy performance measurements on the actual antiX laptop, including H.264 versus MJPEG tradeoffs.
 - Full AI Director brief-to-final-export acceptance.
 
@@ -135,10 +135,10 @@ These must remain on the broader FUNCUT release tracker, not be misreported as G
 
 Geneva is ready for a release candidate when all of the following are true on the same commit:
 
-- [x] The current `main` SHA is recorded: `56bde7c85e9fedc817092e2fdad59a3c19aeb09f` (PR #88 merge).
-- [x] Geneva example and dependency-dance jobs pass on that SHA (`43020200640`).
-- [x] Required workspace tests, clippy and formatting checks pass on that SHA (`43020200650`).
-- [x] Scene-quality and golden-frame checks pass in the Geneva rendered-example job (`43020200640`), without a baseline update.
+- [x] The current `main` SHA is recorded: `22adc015f5d56f19965e3508a03382b1c54c0d60` (12 November 2026).
+- [x] Geneva example and dependency-dance jobs pass on that SHA (`43160525723`).
+- [ ] Required workspace engine tests/lints and Nix build are still running on that SHA (`43160525529`, `43160525595`); recheck before declaring the full main matrix green.
+- [x] Scene-quality and golden-frame checks pass in the Geneva rendered-example job (`43160525723`), without a baseline update.
 - [x] Mixed markup comps that contain native-only features are explicitly refused with a useful diagnostic; PR #85's selection-time explanation and regression test merged as `cf82462c`.
 - [x] The pinned sidecar installs and is discovered in the Linux x86_64 and aarch64 package builds (`43020200660`); other release targets must be checked when their packages are built.
 - [ ] Target-machine timing/memory evidence is attached, or the release notes clearly state that only hosted correctness—not target performance—has been validated.

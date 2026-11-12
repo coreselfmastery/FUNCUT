@@ -1047,13 +1047,14 @@ impl Comp {
             if node.matte.is_some() {
                 note("a track matte");
             }
-            // A parent's world transform is inherited by its children,
-            // but Geneva's flattened timeline cannot compose the full
-            // hierarchy. Route any such comp to native instead of silently
-            // dropping a parent placement or transform.
+            // A parent's world transform is inherited by its children.
+            // Geneva's flattened timeline can fold static translations into
+            // both a child's base position and every key in its position
+            // track. Scale, rotation, and animated parent transforms still
+            // require hierarchy-aware composition and must fall back rather
+            // than silently dropping part of the world transform.
             let mut parent = node.parent.as_deref();
             let mut depth = 0;
-            let mut has_static_parent_position = false;
             while let Some(id) = parent {
                 if depth >= 32 {
                     note("a parent chain deeper than Geneva can flatten");
@@ -1062,19 +1063,11 @@ impl Comp {
                 let Some(parent_node) = self.node(id) else {
                     break;
                 };
-                // Static parent translations are composable in Geneva's
-                // flattened timeline (the mapper folds them into each child's
-                // position). Scale, rotation, and animated parent transforms
-                // still require hierarchy-aware composition and must fall back.
-                has_static_parent_position |= parent_node.transform.position.is_some();
                 if parent_node.transform.scale != 1.0
                     || parent_node.transform.rotation != 0.0
                     || parent_node.tracks.contains_key("position")
                     || parent_node.tracks.contains_key("scale")
                     || parent_node.tracks.contains_key("rotation")
-                    // A child's animated position needs every static ancestor
-                    // offset applied to every keyframe, not just its parent's.
-                    || (has_static_parent_position && node.tracks.contains_key("position"))
                 {
                     note("an inherited parent transform");
                     break;

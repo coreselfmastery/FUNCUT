@@ -394,27 +394,22 @@ fn read_the_run(mut child: Child, kill: Arc<AtomicBool>) {
     // stdout, and cancellation must never depend on the child printing.
     let out = child.stdout.take();
     let err = child.stderr.take();
-    let read_lines = |pipe: Option<std::process::ChildStdout>| {
-        std::thread::spawn(move || {
-            let Some(pipe) = pipe else {
-                return;
-            };
+    let stdout_reader = std::thread::spawn(move || {
+        if let Some(pipe) = out {
             for line in BufReader::new(pipe).lines().map_while(Result::ok) {
                 crate::host::on_ui(move |studio, _, _| {
                     studio.handle(Msg::Forge(ForgeMsg::Line(line)));
                 });
             }
-        })
-    };
-    let stdout_reader = read_lines(out);
+        }
+    });
     let stderr_reader = std::thread::spawn(move || {
-        let Some(pipe) = err else {
-            return;
-        };
-        for line in BufReader::new(pipe).lines().map_while(Result::ok) {
-            crate::host::on_ui(move |studio, _, _| {
-                studio.handle(Msg::Forge(ForgeMsg::Line(line)));
-            });
+        if let Some(pipe) = err {
+            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+                crate::host::on_ui(move |studio, _, _| {
+                    studio.handle(Msg::Forge(ForgeMsg::Line(line)));
+                });
+            }
         }
     });
 

@@ -305,20 +305,18 @@ impl MonitorPane {
             width,
             height,
             moving: studio.playing || studio.source.as_ref().is_some_and(|source| source.playing),
-            // Playback reads the proxies at Half and Quarter; Full plays
-            // the files themselves, or Full would be the proxy blurred up.
-            // A scrub of the playhead reads them too, when Settings
-            // allows it: the drag asks for frames as fast as the pointer
-            // moves, and the working copy is the one that can keep up -
-            // a drag that stops is followed by the original's frame a
-            // beat later (the studio's `scrub_beat`). With proxies off in
-            // Settings it plays the files at every quality, a proxy left
-            // from before included.
+            // Playback reads proxies at Half and Quarter; Full playback
+            // reads the originals so it is not blurred up. Scrubbing is a
+            // separate fast-interaction path: when enabled, it may use the
+            // proxy even at Full, temporarily trading sharpness for a frame
+            // that can follow the pointer. Once the drag settles, the
+            // studio's scrub beat requests the original frame again.
+            // Turning proxies off disables both paths, including old copies.
             proxy: studio.prefs.proxies()
-                && (studio.playing
-                    || studio.source.as_ref().is_some_and(|source| source.playing)
-                    || (studio.prefs.proxies_on_scrub() && studio.scrubbing()))
-                && quality > 0,
+                && ((quality > 0
+                    && (studio.playing
+                        || studio.source.as_ref().is_some_and(|source| source.playing)))
+                    || (studio.prefs.proxies_on_scrub() && studio.scrubbing())),
             color_space: studio.project().active().video.color_space,
         };
         self.frame_was_proxied = spec.proxy;

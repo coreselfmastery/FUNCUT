@@ -53,9 +53,12 @@ jobs:
       #   - The image is the same one that passed: 20261028.624 on the green
       #     run of 11 November and on every red one after it, so this is not
       #     an image update underneath us.
-      #   - The runner already has swap now ("swap already present"), and
-      #     rustc is killed anyway - so the swap cure of the last commit was
-      #     a no-op, and plain RAM pressure is not the whole story. A deadly
+      #   - The runner already has swap now ("swap already present" -
+      #     three gigabytes of it, which satisfied the guard, not the eight
+      #     the cure meant), and rustc is killed anyway - so the swap cure
+      #     of the last commit never actually landed, and the machine held
+      #     fifteen of RAM and three of swap, not the fifteen-plus-eight
+      #     the cure was written for. A deadly
       #     signal to a single rustc with swap available is what a full disk
       #     gives: the rlib is written through a mapping, and the write fault
       #     that cannot be served kills the process (SIGBUS) rather than
@@ -84,25 +87,39 @@ jobs:
       # now one hundred and twenty-eight, every piece half the size again,
       # the same cure the knob gave every time the module outgrew it. One
       # cure for the memory, one for the disk: the next run's diagnostics
-      # say which one was binding.
+      # say which one was binding. And the run at a29f44ad added its own
+      # answer to half of that: the guard below answered "is there any
+      # swap" where the cure asked "is there the eight gigabytes", so
+      # the runner's default three satisfied it and the file never landed
+      # - every red run since built on eighteen gigabytes of memory, not
+      # the twenty-three the cure meant. The guard now measures what is
+      # there and adds the eight whenever less is present, and a build
+      # that dies prints the machine at its death beside the kernel's own
+      # record of the kill - so the next cure targets the constraint that
+      # was binding, not the one that was last time.
       - name: Room for the build
         run: |
           echo "== memory =="; free -h
           echo "== swap =="; swapon --show || true
           echo "== disk before =="; df -h / /mnt || true
           echo "== the build's own limits =="; ulimit -a
-          if ! swapon --show | grep -q .; then
+          # The cure meant eight gigabytes, not "some swap exists": the
+          # guard that shipped answered the second question and skipped
+          # the fallocate on the runner's default three every time.
+          swap_kib() { awk 'NR>1 { sum += $3 } END { print sum + 0 }' /proc/swaps; }
+          had_kib=$(swap_kib)
+          if [ "$had_kib" -lt 8388608 ]; then
             for where in /mnt /; do
               if sudo fallocate -l 8G "$where/swapfile" 2>/dev/null; then
                 sudo chmod 600 "$where/swapfile"
                 sudo mkswap "$where/swapfile"
                 sudo swapon "$where/swapfile"
-                echo "swap on at $where/swapfile"
+                echo "swap on at $where/swapfile, beside the ${had_kib} KiB that was already there"
                 break
               fi
             done
-            swapon --show || echo "no room for a swapfile; building on RAM alone" >&2
           fi
+          swapon --show || echo "no swap at all; building on RAM alone" >&2
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
             /usr/local/.ghcup /usr/local/share/boost \
             /opt/hostedtoolcache/CodeQL /usr/local/lib/node_modules \
@@ -121,7 +138,19 @@ jobs:
           fi
 
       - name: Build
-        run: nix build .#concat --print-build-logs
+        run: |
+          if nix build .#concat --print-build-logs; then
+            exit 0
+          fi
+          # A build that died says what the machine held when it died:
+          # memory, swap, disk, and the kernel's own record of the kill,
+          # so the next cure targets the constraint that was binding
+          # instead of the one that was last time.
+          echo "== the machine at the failure =="; free -h
+          swapon --show || true
+          df -h / /mnt || true
+          sudo dmesg | tail -n 40 || true
+          exit 1
 
       # A window cannot open on the runner, so the check is that the binary
       # is there, links, and resolves every library it needs.

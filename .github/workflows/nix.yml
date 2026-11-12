@@ -43,6 +43,32 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
 
+      # The window crate's rustc has outgrown the builder's memory three
+      # cures in a row now - the codegen-units ladder in flake.nix (sixteen,
+      # thirty-two, sixty-four), then one core instead of four - and the
+      # last three runs still end "rustc was terminated by a deadly signal",
+      # one process, no neighbour, dead the same way each time. The runner
+      # ships no swap at all, so there is nowhere for a peak to go but out.
+      # Eight gigabytes beside the sixteen the machine has is cheaper than
+      # another halving of the units and holds the compile with room for
+      # the crate to keep growing; /mnt is where the runner keeps its
+      # spare disk, and the root as the fallback when it has none.
+      - name: Give the builder swap
+        run: |
+          if sudo swapon --show | grep -q .; then
+            echo "swap already present"; exit 0
+          fi
+          for where in /mnt /; do
+            if sudo fallocate -l 8G "$where/swapfile" 2>/dev/null; then
+              sudo chmod 600 "$where/swapfile"
+              sudo mkswap "$where/swapfile"
+              sudo swapon "$where/swapfile"
+              echo "swap on at $where/swapfile"
+              exit 0
+            fi
+          done
+          echo "no room for a swapfile; building on RAM alone" >&2
+
       # Refreshes nothing: a lock that would change here is a lock the
       # commit should have carried.
       - name: The lock matches the flake

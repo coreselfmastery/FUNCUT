@@ -640,7 +640,7 @@
   "settings.proxyCodecH264": "H.264 (smaller files)",
   "settings.proxyCodecH264Detail": "The small copy, quick enough to decode",
   "settings.proxyCodecHint": "What the smaller copies are written in, once, in the background.",
-  "settings.proxyCodecMjpeg": "MJPEG (fastest scrubbing)",
+  "settings.proxyCodecMjpeg": "MJPEG (default · fastest scrubbing)",
   "settings.proxyCodecMjpegDetail": "Every frame a keyframe, several times the file",
   "settings.proxyScrub": "Use proxies while scrubbing",
   "settings.proxyScrubHint": "On, dragging the playhead reads the smaller copies too, so the picture follows the pointer; the original's frame returns when the drag stops.",

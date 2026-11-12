@@ -390,38 +390,59 @@ impl ForgePane {
 /// A Cancel is honoured at the next line by killing the child; the posts
 /// that follow say what happened, not that it was read to the end.
 fn read_the_run(mut child: Child, kill: Arc<AtomicBool>) {
+    // Drain both pipes independently: a full stderr pipe must never block
+    // stdout, and cancellation must never depend on the child printing.
     let out = child.stdout.take();
     let err = child.stderr.take();
-    let err_kill = Arc::clone(&kill);
-    let reader = std::thread::spawn(move || {
+    let read_lines = |pipe: Option<std::process::ChildStdout>| {
+        std::thread::spawn(move || {
+            let Some(pipe) = pipe else {
+                return;
+            };
+            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+                crate::host::on_ui(move |studio, _, _| {
+                    studio.handle(Msg::Forge(ForgeMsg::Line(line)));
+                });
+            }
+        })
+    };
+    let stdout_reader = read_lines(out);
+    let stderr_reader = std::thread::spawn(move || {
         let Some(pipe) = err else {
             return;
         };
         for line in BufReader::new(pipe).lines().map_while(Result::ok) {
-            if err_kill.load(Ordering::Relaxed) {
-                break;
-            }
             crate::host::on_ui(move |studio, _, _| {
                 studio.handle(Msg::Forge(ForgeMsg::Line(line)));
             });
         }
     });
+
+    // This supervisor polls the process while the reader threads drain output.
+    // A quiet model call can take minutes without writing a line; Cancel must
+    // still terminate it promptly instead of waiting for another stdout event.
     std::thread::spawn(move || {
-        if let Some(pipe) = out {
-            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
-                if kill.load(Ordering::Relaxed) {
-                    let _ = child.kill();
-                    break;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Some(status),
+                Ok(None) => {
+                    if kill.load(Ordering::Relaxed) {
+                        let _ = child.kill();
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
                 }
-                crate::host::on_ui(move |studio, _, _| {
-                    studio.handle(Msg::Forge(ForgeMsg::Line(line)));
-                });
+                Err(error) => {
+                    log::warn!("could not poll Forge child: {error}");
+                    let _ = child.kill();
+                    break child.wait().ok();
+                }
             }
-        }
-        let _ = reader.join();
-        let code = child.wait().ok().and_then(|status| status.code());
+        };
+        let _ = stdout_reader.join();
+        let _ = stderr_reader.join();
+        let code = status.and_then(|status| status.code()).unwrap_or(-1);
         crate::host::on_ui(move |studio, _, _| {
-            studio.handle(Msg::Forge(ForgeMsg::Ended(code.unwrap_or(-1))));
+            studio.handle(Msg::Forge(ForgeMsg::Ended(code)));
         });
     });
 }
@@ -433,6 +454,16 @@ struct VoiceoverSource {
     project: String,
     /// The voiceover files, absolute paths, in the order they play.
     files: Vec<String>,
+}
+
+/// Names a copied voiceover without allowing equal basenames from
+/// different source folders to overwrite one another.
+fn voiceover_copy_name(index: usize, source: &std::path::Path) -> String {
+    let name = source
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("voiceover.wav");
+    format!("voiceover-{index:03}-{name}")
 }
 
 /// Makes the sibling project a voiceover run edits: the open project's
@@ -520,18 +551,32 @@ fn voiceover_project(studio: &Studio) -> Result<VoiceoverSource, String> {
     // The voiceover files are copied in, so the edit stands on its own
     // and the source project can be moved or deleted without breaking it.
     let into = std::path::Path::new(&info.path).join("voiceover");
-    std::fs::create_dir_all(&into).map_err(|error| error.to_string())?;
-    let mut copied = Vec::new();
-    for file in &files {
-        let name = std::path::Path::new(file)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("voiceover.wav")
-            .to_owned();
-        let target = into.join(&name);
-        std::fs::copy(file, &target).map_err(|error| error.to_string())?;
-        copied.push(target.to_string_lossy().into_owned());
-    }
+    let copied = (|| -> Result<Vec<String>, String> {
+        std::fs::create_dir_all(&into).map_err(|error| error.to_string())?;
+        let mut copied = Vec::with_capacity(files.len());
+        for (index, file) in files.iter().enumerate() {
+            let target = into.join(voiceover_copy_name(index, std::path::Path::new(file)));
+            std::fs::copy(file, &target).map_err(|error| {
+                format!("could not copy voiceover {}: {error}", file)
+            })?;
+            copied.push(target.to_string_lossy().into_owned());
+        }
+        Ok(copied)
+    })();
+    let copied = match copied {
+        Ok(copied) => copied,
+        Err(error) => {
+            // This sibling project was created solely for this run; do not
+            // leave a half-populated project behind after a failed copy.
+            if let Err(cleanup) = std::fs::remove_dir_all(&info.path) {
+                log::warn!(
+                    "could not remove incomplete Forge project {}: {cleanup}",
+                    info.path
+                );
+            }
+            return Err(error);
+        }
+    };
     Ok(VoiceoverSource {
         project: info.path,
         files: copied,
@@ -749,4 +794,26 @@ fn first_line(words: &str) -> Option<String> {
         .map(str::trim)
         .find(|line| !line.is_empty())
         .map(str::to_owned)
+}
+#[cfg(test)]
+mod tests {
+    use super::voiceover_copy_name;
+    use std::path::Path;
+
+    #[test]
+    fn voiceover_copies_with_the_same_basename_keep_distinct_names() {
+        let first = voiceover_copy_name(0, Path::new("/first/take.wav"));
+        let second = voiceover_copy_name(1, Path::new("/second/take.wav"));
+        assert_ne!(first, second);
+        assert!(first.ends_with("take.wav"));
+        assert!(second.ends_with("take.wav"));
+    }
+
+    #[test]
+    fn voiceover_copy_name_falls_back_for_a_path_without_a_filename() {
+        assert_eq!(
+            voiceover_copy_name(2, Path::new("/")),
+            "voiceover-002-voiceover.wav"
+        );
+    }
 }

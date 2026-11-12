@@ -44,11 +44,11 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
 
       # The window crate's rustc has outgrown the builder three cures in a
-      # row now - the codegen-units ladder in flake.nix (sixteen, thirty-two,
-      # sixty-four), then one core instead of four - and the last runs still
-      # end "rustc was terminated by a deadly signal", one process, no
-      # neighbour, dead the same way each time. The evidence, gathered from
-      # four dead runs and one live one:
+      # row now - the codegen-units ladder (sixteen, thirty-two, sixty-four,
+      # now one hundred and twenty-eight), then one core instead of four -
+      # and the last runs still end "rustc was terminated by a deadly
+      # signal", one process, no neighbour, dead the same way each time.
+      # The evidence, gathered from four dead runs and one live one:
       #
       #   - The image is the same one that passed: 20261028.624 on the green
       #     run of 11 November and on every red one after it, so this is not
@@ -75,7 +75,16 @@ jobs:
       # instead of guessing), make sure swap exists (the earlier cure, kept,
       # now that it can be told apart from the disk), and clear the ~20 GB
       # of preinstalled SDKs this job never touches - Android, dotnet, GHC,
-      # CodeQL, boost - which is where the room comes from.
+      # CodeQL, boost - which is where the room comes from. The ladder's
+      # next rung is climbed beside all of this in src/Cargo.toml, where it
+      # has always lived: the window crate's units are the manifest's
+      # [profile.release.package.concat] override, which beats the flake's
+      # CARGO_PROFILE_RELEASE_CODEGEN_UNITS env var - so the env var never
+      # governed the crate that was dying, and the manifest's sixty-four is
+      # now one hundred and twenty-eight, every piece half the size again,
+      # the same cure the knob gave every time the module outgrew it. One
+      # cure for the memory, one for the disk: the next run's diagnostics
+      # say which one was binding.
       - name: Room for the build
         run: |
           echo "== memory =="; free -h

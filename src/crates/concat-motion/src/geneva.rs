@@ -1399,7 +1399,15 @@ fn effective_transform(comp: &Comp, node: &Node, warnings: &mut Vec<String>) -> 
     let position = node
         .tracks
         .get("position")
-        .and_then(|track| keyframes(track, Kind::Point, span_of(comp, node), warnings))
+        .and_then(|track| {
+            let translated = translated_position_track(comp, node, track);
+            keyframes(
+                &translated,
+                Kind::Point,
+                span_of(comp, node),
+                warnings,
+            )
+        })
         .or_else(|| {
             let point = base.position.unwrap_or(crate::comp::Point::new(0.0, 0.0));
             let inherited = has_ancestor_position(comp, node);
@@ -1491,6 +1499,32 @@ fn absolute_position(comp: &Comp, node: &Node, point: crate::comp::Point) -> (f6
         depth += 1;
     }
     (x, y)
+}
+
+/// A position track with the same static ancestor offset as the node's
+/// resting position. The key curves and normalized times are preserved;
+/// only the point values move into the flattened world coordinate space.
+fn translated_position_track(comp: &Comp, node: &Node, track: &Track) -> Track {
+    let (x, y) = absolute_position(
+        comp,
+        node,
+        crate::comp::Point::new(0.0, 0.0),
+    );
+    let mut translated = track.clone();
+    if x == 0.0 && y == 0.0 {
+        return translated;
+    }
+    for key in &mut translated.keys {
+        if let Value::Point {
+            x: point_x,
+            y: point_y,
+        } = &mut key.value
+        {
+            *point_x += x;
+            *point_y += y;
+        }
+    }
+    translated
 }
 
 /// A shape's fill, as Geneva takes it: one colour.

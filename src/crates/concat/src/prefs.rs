@@ -78,11 +78,9 @@ pub struct Preferences {
     /// [`Preferences::proxies_on_scrub`].
     pub proxy_scrub: Option<bool>,
     /// The codec the proxies are written in, by name - "h264" or
-    /// "mjpeg" - or `None` for H.264, the default and the smaller file:
-    /// quick enough to decode, and what every proxy was before the codec
-    /// was a choice. MJPEG is the other one - every frame a keyframe, at
-    /// several times the file, and the fastest scrub there is. Read
-    /// through [`Preferences::proxy_codec`].
+    /// "mjpeg" - or `None` for MJPEG, the responsive-scrubbing default.
+    /// H.264 remains available for a smaller disk footprint. Read through
+    /// [`Preferences::proxy_codec`].
     pub proxy_codec: Option<String>,
     /// Drawing in software: the window and the compositor on the
     /// platform's software rasteriser (WARP, lavapipe) instead of the GPU,
@@ -217,12 +215,10 @@ impl Preferences {
         self.proxy_scrub.unwrap_or(true)
     }
 
-    /// The codec the proxies are written in; see `proxy_codec`. H.264
-    /// unless the sheet was told otherwise, and for a name nothing
-    /// stores - a codec a newer build chose and this one does not know -
-    /// back to H.264 rather than to whatever happens to sit at the old
-    /// position, the way a name the accent list no longer has falls back
-    /// to the default.
+    /// The codec the proxies are written in; see `proxy_codec`. MJPEG
+    /// unless the sheet was told otherwise, and for an unknown stored
+    /// codec name fall back to the default rather than to a positional
+    /// choice that may have changed between builds.
     pub fn proxy_codec(&self) -> concat_host::proxy::ProxyCodec {
         self.proxy_codec
             .as_deref()

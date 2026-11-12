@@ -640,7 +640,7 @@
   "settings.proxyCodecH264": "H.264 (ছোট ফাইল)",
   "settings.proxyCodecH264Detail": "ছোট কপি, ডিকোড করতে যথেষ্ট দ্রুত",
   "settings.proxyCodecHint": "ছোট কপিগুলো একবার, ব্যাকগ্রাউন্ডে কী দিয়ে লেখা হয়।",
-  "settings.proxyCodecMjpeg": "MJPEG (দ্রুততম স্ক্রাবিং)",
+  "settings.proxyCodecMjpeg": "MJPEG (ডিফল্ট · দ্রুততম স্ক্রাবিং)",
   "settings.proxyCodecMjpegDetail": "প্রতিটি ফ্রেম কীফ্রেম, ফাইলের কয়েকগুণ বড়",
   "settings.proxyScrub": "স্ক্রাব করার সময় প্রক্সি ব্যবহার করুন",
   "settings.proxyScrubHint": "চালু থাকলে প্লেহেড ড্রাগ করলে ছোট কপিগুলোও পড়ে, তাই ছবি কার্সরকে অনুসরণ করে; ড্রাগ থামলে আসল ফ্রেম ফিরে আসে।",

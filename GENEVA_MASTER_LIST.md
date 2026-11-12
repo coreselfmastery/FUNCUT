@@ -144,9 +144,9 @@ Geneva is ready for a release candidate when all of the following are true on th
 - [x] The current `main` SHA is recorded: `cbcf821e465c265aef26071be3350fe239619aaf` (12 November 2026).
 - [x] Geneva example and dependency-dance jobs pass on that SHA (`43236482716`).
 - [x] Nix build and binary-link checks pass on that SHA (`43236482693`). Workspace Clippy passed in CI `43236482894`, but test-binary compilation was still running; unit tests, documentation examples and gRPC checks had not yet started at the last poll.
-- [x] Scene-quality and golden-frame checks pass in the Geneva rendered-example job (`43160525723`), without a baseline update.
+- [x] Scene-quality and golden-frame checks pass in the Geneva rendered-example job (`43236482716`), without a baseline update.
 - [x] Mixed markup comps that contain native-only features are explicitly refused with a useful diagnostic; PR #85's selection-time explanation and regression test merged as `cf82462c`.
-- [x] The pinned sidecar installs and is discovered in the Linux x86_64 and aarch64 package builds (`43020200660`); other release targets must be checked when their packages are built.
+- [x] The pinned sidecar installs and is discovered in the Linux x86_64 and aarch64 package builds (`43236482829`); other release targets must be checked when their packages are built.
 - [ ] Target-machine timing/memory evidence is attached, or the release notes clearly state that only hosted correctness—not target performance—has been validated.
 
 **Status rule:** never mark the whole FUNCUT product “ready” from this Geneva checklist alone. This page certifies only the Geneva motion-rendering subsystem and its stated boundaries.

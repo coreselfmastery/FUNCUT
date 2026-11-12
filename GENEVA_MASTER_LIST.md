@@ -52,7 +52,7 @@ Geneva is a substantial, integrated motion-rendering path, not a placeholder. Th
 
 **Known boundaries, not silently “fixed”:**
 - Shape gradients are reduced to a representative colour by the Geneva bridge. PR #84 is merged to `main` (merge commit `c45ac873`). Non-markup comps now route to native; mixed markup comps with native-only features are refused rather than silently degraded. True Geneva support for those mixed cases remains a separate feature.
-- `absolute_position` folds static ancestor translations into child positions, including children with no own position. A child's animated position under a translated parent, animated parent transforms, and inherited scale/rotation still route to native because the flattened Geneva timeline cannot yet compose those cases losslessly. Regression tests cover translated children with and without a base position.
+- `absolute_position` folds static ancestor translations into child positions, including children with no own position. The follow-on `translated_position_track` path now applies the same accumulated offset to every animated child position keyframe (12 November 2026). Animated parent transforms and inherited scale/rotation still route to native because those cases require hierarchy-aware composition.
 - Geneva's PNG-sequence output carries alpha. The `alpha` request field is retained in cache/manifest identity, but does not change Geneva's RGBA pixels.
 - A missing sidecar can fall back to the native compositor only for content that native supports. Native fallback is not equivalent to Geneva markup/CSS rendering.
 - A golden update is a reviewed change: do not refresh reference images merely to silence a failing visual regression.
@@ -106,6 +106,10 @@ The canonical workflow is `.github/workflows/geneva.yml`. It has two jobs:
 
 **12 November 2026 refresh (supersedes the older baseline snapshots above):** `main` is `22adc015f5d56f19965e3508a03382b1c54c0d60`. Geneva passed both jobs (`43160525723`) and Build app passed (`43160525483`). General CI's formatting/locales/models and real-fixture jobs passed, while engine tests/lints were still running (`43160525529`); Nix was also still running (`43160525595`). PR #92's static ancestor translation support merged as `059d231f`; PRs #91, #95, #96 and #97 are also merged. Treat the earlier PR #88 baseline as historical evidence, not the current release gate.
 
+
+
+**12 November 2026 follow-on implementation:** after PR #99, `main` advanced through the proxy-scrub and proxy-codec improvements and the Geneva follow-on commit `7497922b93dbff68c9cd4fef04ee7f13b4364023`, which offsets animated child position keyframes by their static ancestor translations. This closes that specific flattened-timeline gap. Animated parent transforms and inherited scale/rotation remain unsupported. The older CI snapshot above is evidence for its recorded SHA only; it is not a validation claim for these later commits.
+
 ## 7. Remaining work — Geneva scope
 
 No item from the original ten-finding register is currently listed as open. The following are the remaining validation/roadmap boundaries, not claims that the closed findings are still broken:
@@ -115,7 +119,7 @@ No item from the original ten-finding register is currently listed as open. The 
 - [ ] Run and record representative timing/memory measurements on the target low-memory Linux machine for realistic 1080p motion workloads. PR #86 is merged: the reproducible cold 1080p30 Geneva benchmark records machine, sidecar version, wall time, output size and sampled process-tree RSS. Hosted CI proves correctness, not target-device speed; a real antiX run remains required.
 - [x] Mixed markup comps that also use native-only shape gradients, mattes, effects, paths or masks are refused by Geneva bake/frame instead of being silently degraded; PR #84 shipped the safe refusal and native fallback for non-markup comps. PR #85 added the selection-time explanation and regression test; it merged as `cf82462c`.
 - [ ] Optional future feature: implement true Geneva rendering support for those mixed markup/native-only cases. This is a feature-parity enhancement, not a silent-degradation blocker while the refusal remains in place.
-- [ ] Decide whether mixed markup needs full inherited transform parity; static ancestor translations are now folded into child positions by PR #92 (merged as `059d231f`), but animated child positions under translated parents, animated parent transforms, and inherited scale/rotation still require native fallback or future Geneva composition work. The native fallback cannot be used for HTML/CSS comps.
+- [ ] Decide whether mixed markup needs full inherited transform parity; static ancestor translations and animated child position keyframes under those static translations are now folded into child positions (PR #92 and follow-on commit `7497922b`). Animated parent transforms and inherited scale/rotation still require native fallback or future Geneva composition work. The native fallback cannot be used for HTML/CSS comps.
 - [x] PR #84 makes `needs_markup()` recursive so nested HTML sub-comps do not incorrectly fall back to native when the sidecar is missing; regression coverage is included.
 - [ ] If offline cache use without the sidecar is desired, change the version/key contract deliberately and test compatibility; current behaviour intentionally requires the sidecar.
 - [ ] Keep Geneva 1.6.0 pin, checksum, installer, package contents and supported platform binaries aligned whenever the sidecar is upgraded.

@@ -46,20 +46,22 @@ const SHORTEST_LONG_SIDE: u32 = 960;
 /// The codec a proxy is written in, chosen in Settings > General. An HDR
 /// file's proxy keeps its signal whatever this says - HEVC in ten bits,
 /// HLG or PQ as the file is - because MJPEG carries neither.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ProxyCodec {
-    /// H.264, veryfast, CRF 23: the small copy, quick enough to decode.
-    /// The default - the one every proxy was before the setting existed,
-    /// which is why its name stays the one those copies are filed under.
-    #[default]
+    /// H.264, veryfast, CRF 23: the smaller copy, available when disk
+    /// footprint matters more than maximum random-access responsiveness.
     H264,
-    /// MJPEG at qscale 3: every frame a keyframe, nothing to seek to and
-    /// no neighbours to reconstruct first, so a drag of the playhead
-    /// reads whatever frame it lands on at once - about half again the
-    /// scrub speed of H.264 on the same machine, in Blender's proxy
-    /// benchmark, for several times the file. The choice for a disk with
-    /// room and a timeline that must follow the pointer.
+    /// MJPEG at qscale 3: the default for responsive scrubbing. Every
+    /// frame is a keyframe, so a drag can read the requested frame without
+    /// reconstructing neighbouring frames. It uses more disk space; H.264
+    /// remains available as the compact alternative.
     Mjpeg,
+}
+
+impl Default for ProxyCodec {
+    fn default() -> Self {
+        Self::Mjpeg
+    }
 }
 
 impl ProxyCodec {
@@ -214,7 +216,9 @@ pub fn path_for(
 pub fn existing(project: &Path, media: &str, range: Option<ColorRange>) -> Option<PathBuf> {
     [true, false]
         .into_iter()
-        .flat_map(|hdr| ProxyCodec::ALL.map(move |codec| (hdr, codec)))
+        // Prefer the default's independently decodable frames when both
+        // codecs exist for the same source.
+        .flat_map(|hdr| [ProxyCodec::Mjpeg, ProxyCodec::H264].map(move |codec| (hdr, codec)))
         .filter_map(|(hdr, codec)| path_for(project, media, range, hdr, codec))
         .find(|path| path.is_file())
 }

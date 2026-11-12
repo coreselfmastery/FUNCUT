@@ -663,6 +663,20 @@ digest_ok() {
     fi
 }
 
+# The digest a file actually carries, so a mismatch can say which of
+# the two it was between: the hex digest, or nothing when no tool can
+# compute one.
+digest_of() {
+    # digest_of FILE
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{ print $1 }'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$1" | awk '{ print $1 }'
+    else
+        return 1
+    fi
+}
+
 # Places one model row: download from the mirror, check, put it where
 # the engine looks. Says what it did; never dies - a download that
 # cannot happen today is a download the editor will offer again on the
@@ -697,13 +711,24 @@ install_model() {
         return 0
     fi
     MB_HUMAN=$(awk -v b="$MBYTES" 'BEGIN { printf "%.0f MB", b / 1048576 }')
-    if ! fetch "https://github.com/$FORK_REPO/releases/download/models-v1/$MFILE" "$TMP/model-file"; then
-        say "  $MID: could not download it - the editor will offer it again"
+    MURL="https://github.com/$FORK_REPO/releases/download/models-v1/$MFILE"
+    if ! fetch "$MURL" "$TMP/model-file"; then
+        say "  $MID: could not download it ($MURL) - the editor will offer it again"
         return 0
     fi
     if ! digest_ok "$TMP/model-file" "$MSHA"; then
+        # Both digests and the URL, so the mismatch names itself: a
+        # fresh actual that matches what the upstream serves is a stale
+        # row in models/manifest.toml wanting its digest refreshed; a
+        # random actual is a broken download or a broken mirror. Either
+        # way the file is deleted, never installed.
+        MGOT=$(digest_of "$TMP/model-file") \
+            || MGOT="(no sha256 tool to compute it with)"
         rm -f "$TMP/model-file"
         say "  $MID: checksum FAILED - not installed; the editor will offer it again"
+        say "    url:      $MURL"
+        say "    expected: $MSHA"
+        say "    actual:   $MGOT"
         return 0
     fi
     mkdir -p "$(dirname "$MTARGET")"

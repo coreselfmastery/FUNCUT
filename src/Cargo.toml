@@ -81,10 +81,18 @@ codegen-units = 1
 # opt-level 1 was killed the same way ("rustc was terminated by a
 # deadly signal", Nix run on 4a65a7b0). Sixty-four: every piece half
 # the size again, the same cure the knob gave every time before, and
+# the thin LTO still joins them all. The data-graphics layer, the
+# Geneva phases and the director's own page grew the module again, and
+# on the Nix builder sixty-four units was killed the same way a third
+# time (the same signature, one process, no neighbour, dead forty-two
+# minutes in, Nix run on 04d16d9 - whose eight gigabytes of swap
+# bought nothing, the runner already carrying swap of its own).
+# One hundred and twenty-eight: every piece half the size again, the
+# same cure this knob has given every time the module outgrew it, and
 # the thin LTO still joins them all.
 [profile.release.package.concat]
 opt-level = 1
-codegen-units = 64
+codegen-units = 128
 
 # For trying a change in the window: `cargo dev` (an alias for
 # `cargo run --bin concat --profile quick`, see .cargo/config.toml).

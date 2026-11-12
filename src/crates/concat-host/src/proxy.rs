@@ -46,7 +46,7 @@ const SHORTEST_LONG_SIDE: u32 = 960;
 /// The codec a proxy is written in, chosen in Settings > General. An HDR
 /// file's proxy keeps its signal whatever this says - HEVC in ten bits,
 /// HLG or PQ as the file is - because MJPEG carries neither.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum ProxyCodec {
     /// H.264, veryfast, CRF 23: the smaller copy, available when disk
     /// footprint matters more than maximum random-access responsiveness.
@@ -55,13 +55,8 @@ pub enum ProxyCodec {
     /// frame is a keyframe, so a drag can read the requested frame without
     /// reconstructing neighbouring frames. It uses more disk space; H.264
     /// remains available as the compact alternative.
+    #[default]
     Mjpeg,
-}
-
-impl Default for ProxyCodec {
-    fn default() -> Self {
-        Self::Mjpeg
-    }
 }
 
 impl ProxyCodec {

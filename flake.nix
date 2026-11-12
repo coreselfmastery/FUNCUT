@@ -190,6 +190,20 @@
           # the same signature, no neighbour, one process, dead fifty
           # minutes in. Sixty-four: every piece half the size again, the
           # cure this knob has given every time the module outgrew it.
+          #
+          # A correction this row now carries: an env var here has never
+          # reached the window crate. Cargo lets a manifest's
+          # [profile.release.package.concat] override beat
+          # CARGO_PROFILE_RELEASE_CODEGEN_UNITS, so the units the window
+          # crate actually compiled at were always the manifest's, and
+          # this env var governed only the crates beside it. The ladder's
+          # sixteen-thirty-two-sixty-four rungs on the window crate live
+          # in src/Cargo.toml, which is where the next rung - one
+          # hundred and twenty-eight, after the data-graphics layer and
+          # the Geneva phases grew the module past sixty-four on the Nix
+          # builder (04d16d9, swap and all) - was added. This env var
+          # holds the rest of the workspace at sixty-four so no other
+          # crate's rustc is the one that outgrows the builder either.
           env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "64";
           # And the crate beside its neighbours: at cargo's default width
           # the window crate's rustc ran beside slint's, motion's and the

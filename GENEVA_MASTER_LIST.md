@@ -104,6 +104,8 @@ The canonical workflow is `.github/workflows/geneva.yml`. It has two jobs:
 - PR #80 passed all five PR CI checks and merged as `dce1a750`; native still-image pixels are cached across bake frames, with a regression test proving the cache avoids rereading the source.
 - PR #81 and PR #83 are historical merged prerequisites. The current main baseline is the later PR #88 merge `56bde7c85e9fedc817092e2fdad59a3c19aeb09f`; fresh checks on that exact merge commit remain a release-gate item.
 
+**12 November 2026 refresh (supersedes the older baseline snapshots above):** `main` is `22adc015f5d56f19965e3508a03382b1c54c0d60`. Geneva passed both jobs (`43160525723`) and Build app passed (`43160525483`). General CI's formatting/locales/models and real-fixture jobs passed, while engine tests/lints were still running (`43160525529`); Nix was also still running (`43160525595`). PR #92's static ancestor translation support merged as `059d231f`; PRs #91, #95, #96 and #97 are also merged. Treat the earlier PR #88 baseline as historical evidence, not the current release gate.
+
 ## 7. Remaining work — Geneva scope
 
 No item from the original ten-finding register is currently listed as open. The following are the remaining validation/roadmap boundaries, not claims that the closed findings are still broken:

@@ -1401,12 +1401,7 @@ fn effective_transform(comp: &Comp, node: &Node, warnings: &mut Vec<String>) -> 
         .get("position")
         .and_then(|track| {
             let translated = translated_position_track(comp, node, track);
-            keyframes(
-                &translated,
-                Kind::Point,
-                span_of(comp, node),
-                warnings,
-            )
+            keyframes(&translated, Kind::Point, span_of(comp, node), warnings)
         })
         .or_else(|| {
             let point = base.position.unwrap_or(crate::comp::Point::new(0.0, 0.0));
@@ -1505,11 +1500,7 @@ fn absolute_position(comp: &Comp, node: &Node, point: crate::comp::Point) -> (f6
 /// resting position. The key curves and normalized times are preserved;
 /// only the point values move into the flattened world coordinate space.
 fn translated_position_track(comp: &Comp, node: &Node, track: &Track) -> Track {
-    let (x, y) = absolute_position(
-        comp,
-        node,
-        crate::comp::Point::new(0.0, 0.0),
-    );
+    let (x, y) = absolute_position(comp, node, crate::comp::Point::new(0.0, 0.0));
     let mut translated = track.clone();
     if x == 0.0 && y == 0.0 {
         return translated;
@@ -2404,6 +2395,62 @@ mod tests {
             document["layers"][2]["clips"][0]["transform"]["position"],
             json!([130.0, 60.0])
         );
+    }
+
+    #[test]
+    fn an_animated_position_under_nested_static_ancestors_folds_into_keys() {
+        // The fold the capability check promises: an animated child whose
+        // immediate parent is unpositioned still inherits a positioned
+        // grandparent's offset, and every key of its position track moves
+        // by that offset - the curves and times are kept, the points move.
+        let mut comp = text_comp();
+        let mut parent = comp.nodes[0].clone();
+        let mut grandparent = comp.nodes[0].clone();
+        let mut child = comp.nodes[0].clone();
+
+        grandparent.id = "grandparent".into();
+        grandparent.transform.position = Some(crate::comp::Point::new(40.0, 20.0));
+        grandparent.kind = NodeKind::Rect {
+            width: Length::px(100.0),
+            height: Length::px(100.0),
+            fill: Some(Paint::Solid {
+                color: Rgba::hex("#ffffff"),
+            }),
+            radius: 0.0,
+        };
+
+        parent.id = "parent".into();
+        parent.parent = Some("grandparent".into());
+        parent.transform.position = None;
+        parent.kind = NodeKind::Rect {
+            width: Length::px(100.0),
+            height: Length::px(100.0),
+            fill: Some(Paint::Solid {
+                color: Rgba::hex("#ffffff"),
+            }),
+            radius: 0.0,
+        };
+
+        child.id = "child".into();
+        child.parent = Some("parent".into());
+        child.transform.position = None;
+        child.duration = 1.0;
+        child.tracks.insert(
+            "position".into(),
+            Track::new(vec![
+                Key::new(0.0, Value::Point { x: 0.0, y: 0.0 }),
+                Key::new(1.0, Value::Point { x: 100.0, y: 50.0 }),
+            ]),
+        );
+
+        comp.nodes = vec![grandparent, parent, child];
+
+        assert!(comp.geneva_inexpressible().is_empty());
+        let (document, warnings) = Geneva::at("geneva").timeline(&comp, &BakeRequest::default());
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let position = &document["layers"][2]["clips"][0]["transform"]["position"];
+        assert_eq!(position["keyframes"][0], json!(["0s", [40.0, 20.0]]));
+        assert_eq!(position["keyframes"][1], json!(["1s", [140.0, 70.0]]));
     }
 
     #[test]

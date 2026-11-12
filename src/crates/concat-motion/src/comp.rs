@@ -2173,7 +2173,12 @@ mod phase1_tests {
     }
 
     #[test]
-    fn animated_child_under_nested_static_ancestor_routes_away_from_geneva() {
+    fn animated_child_under_nested_static_ancestor_stays_with_geneva() {
+        // Static ancestor translations fold into every key of an animated
+        // child's position track (see the mapper's
+        // `translated_position_track`), so the comp routes to Geneva -
+        // the immediate parent being unpositioned does not hide a
+        // positioned grandparent from the fold, and neither drops it.
         let mut grandparent = shell(
             "grandparent",
             NodeKind::Rect {
@@ -2208,9 +2213,8 @@ mod phase1_tests {
 
         let comp = comp_with(vec![grandparent, parent, child]);
         assert!(
-            comp.geneva_inexpressible()
-                .contains(&"an inherited parent transform"),
-            "a positioned grandparent must be considered even when the immediate parent is unpositioned"
+            comp.geneva_inexpressible().is_empty(),
+            "static ancestor translations fold into an animated child's keyframes"
         );
     }
 

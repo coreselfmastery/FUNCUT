@@ -551,9 +551,8 @@ fn voiceover_project(studio: &Studio) -> Result<VoiceoverSource, String> {
         let mut copied = Vec::with_capacity(files.len());
         for (index, file) in files.iter().enumerate() {
             let target = into.join(voiceover_copy_name(index, std::path::Path::new(file)));
-            std::fs::copy(file, &target).map_err(|error| {
-                format!("could not copy voiceover {}: {error}", file)
-            })?;
+            std::fs::copy(file, &target)
+                .map_err(|error| format!("could not copy voiceover {}: {error}", file))?;
             copied.push(target.to_string_lossy().into_owned());
         }
         Ok(copied)

@@ -40,12 +40,14 @@ each through the program's own paths rather than a mock-up:
   random instants across a 60 s 1080p30 clip through one `concat-cli
   api` process. Random instants, not sequential ones, because scrubbing
   is random access. What this lane is **not**: a measurement of the
-  window's proxy-based timeline scrubbing - the drag of the playhead
-  reading a project's quarter-size working copies at Half and Quarter
-  quality. It reads the original file, at one quality, with no project
-  open; the proxy path is faster than this on footage large enough to
-  get one, and has not been measured here. A number for it belongs on
-  this page as soon as a run of it exists, and not before.
+  window's proxy-based timeline scrubbing. That interactive path reads
+  the project's working copies during a drag when the proxy-scrub
+  preference is on, including at Full monitor quality; the original
+  frame is requested again after the drag settles. During playback,
+  proxies are used at Half and Quarter quality, while Full playback
+  remains on the original. The default proxy codec is now MJPEG for
+  independently decodable frames; H.264 remains selectable for smaller
+  files. These are implementation facts, not measured speedup claims.
 - **Export** — `concat-cli render`, the end-to-end slice: decode,
   composite, encode, one process, 300 frames.
 - **Peak RSS** — each process's own high-water mark (`VmHWM`), read

@@ -201,7 +201,13 @@
           # in src/Cargo.toml, which is where the next rung - one
           # hundred and twenty-eight, after the data-graphics layer and
           # the Geneva phases grew the module past sixty-four on the Nix
-          # builder (04d16d9, swap and all) - was added. This env var
+          # builder (04d16d9, swap and all) - was added; and where the
+          # rung after that now lives too, two hundred and fifty-six,
+          # after the run at a29f44ad died at one hundred and twenty-eight
+          # on a machine whose swap cure had never landed (the guard
+          # mistook the runner's default three gigabytes for the eight it
+          # asked for; see .github/workflows/nix.yml for the correction
+          # and the death-time diagnostics beside it). This env var
           # holds the rest of the workspace at sixty-four so no other
           # crate's rustc is the one that outgrows the builder either.
           env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "64";

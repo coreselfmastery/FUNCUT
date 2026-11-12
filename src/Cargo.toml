@@ -86,13 +86,21 @@ codegen-units = 1
 # on the Nix builder sixty-four units was killed the same way a third
 # time (the same signature, one process, no neighbour, dead forty-two
 # minutes in, Nix run on 04d16d9 - whose eight gigabytes of swap
-# bought nothing, the runner already carrying swap of its own).
+# never landed, the guard adding them only when no swap existed at
+# all while the runner carried three of its own; see the correction
+# in .github/workflows/nix.yml).
 # One hundred and twenty-eight: every piece half the size again, the
 # same cure this knob has given every time the module outgrew it, and
-# the thin LTO still joins them all.
+# the thin LTO still joins them all - and the run at a29f44ad still
+# died at it, eighteen gigabytes of memory under the lone rustc.
+# Two hundred and fifty-six: every piece half the size again, the
+# ladder's next rung, climbed with the swap cure actually in force
+# this time and a build that dies saying what the machine held when
+# it died, so the rung after this one - if the module outgrows this
+# one - aims at the constraint the diagnostics name.
 [profile.release.package.concat]
 opt-level = 1
-codegen-units = 128
+codegen-units = 256
 
 # For trying a change in the window: `cargo dev` (an alias for
 # `cargo run --bin concat --profile quick`, see .cargo/config.toml).

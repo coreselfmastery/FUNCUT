@@ -293,9 +293,14 @@ Nothing here is bundled whole; indexes download once, media arrives per pick.
 - **Motion design** ([docs/MOTION.md](MOTION.md)): a comp is a JSON scene
   graph (groups, rects, ellipses, paths, text with per-word timing, HTML
   nodes, images, Lottie, nested comps; animated tracks on every numeric
-  property; linear/steps/spring curves, springs solved analytically) baked
-  by the **Geneva** sidecar — a browserless HTML/CSS renderer — to an RGBA
-  PNG sequence, or drawn by the native engine with no sidecar. 18 presets
+  property; linear/steps/spring curves, springs solved analytically; and
+  the vector craft — paths that trim their length for draw-on reveals and
+  morph command for command into a second outline, track mattes,
+  adjustment layers, per-node multi-sample motion blur, glow and chromatic
+  aberration among the per-node effects, path masks, and radial gradients)
+  baked by the **Geneva** sidecar — a browserless HTML/CSS renderer — to an
+  RGBA PNG sequence, or drawn by the native engine with no sidecar. 18
+  presets
   (glass and minimal lower thirds, kinetic caption, stat triptych, wordmark
   sting, pull quote, chapter chip, numbered chapter, agenda list, subscribe
   card, end card, terminal, code diff, bar chart, progress bar, split
@@ -305,7 +310,8 @@ Nothing here is bundled whole; indexes download once, media arrives per pick.
   any domain's numbers, drawn
   as rects, ellipses
   and text so the default engine renders them as they stand), `add-counter`
-  (a baked count-up), `add-particles` (a seeded, deterministic particle
+  (a baked count-up — the data graphics' counters, climbing `from` a number
+  `to` a number), `add-particles` (a seeded, deterministic particle
   field baked to keyframes) and `set-camera` (a zoom/pan/roll with per-layer
   depth for parallax, folded into each root layer's own tracks);
   `motion_overlay` composites a transparent bake over real footage

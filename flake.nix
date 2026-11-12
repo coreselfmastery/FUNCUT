@@ -183,7 +183,14 @@
           # builder's whole problem (jub0t/Concat#225); the thin LTO still
           # joins them, and the joiner is a linker, not a rustc.
           # https://github.com/jub0t/Concat/issues/225
-          env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "32";
+          # The export queue and the Motion page grew the window crate
+          # again (export.rs by five hundred lines, export.slint by nearly
+          # two hundred), and on the merge that carried them (4a65a7b0)
+          # the lone rustc was killed at thirty-two units and opt-level 1 -
+          # the same signature, no neighbour, one process, dead fifty
+          # minutes in. Sixty-four: every piece half the size again, the
+          # cure this knob has given every time the module outgrew it.
+          env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "64";
           # And the crate beside its neighbours: at cargo's default width
           # the window crate's rustc ran beside slint's, motion's and the
           # mcp's at once, and after the interface grew three and a half

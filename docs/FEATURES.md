@@ -20,8 +20,8 @@ with one click.
 | What | Count | Where it lives |
 | --- | --- | --- |
 | MCP tools | **109** | `src/crates/concat-mcp/src/tools.rs` (`catalogue()`) |
-| JSON-RPC API methods | 48 requests + 8 progress notifications | `src/crates/concat-api/src/message.rs` |
-| Core edit commands (`edit.apply` ops) | **52** | `src/crates/concat-project/src/commands/mod.rs` |
+| JSON-RPC API methods | 48 requests + 7 progress notifications | `src/crates/concat-api/src/message.rs` |
+| Core edit commands (`edit.apply` ops) | **55** plus `batch`, the atomic wrapper | `src/crates/concat-project/src/commands/mod.rs` |
 | Effect/filter/transition/audio packages | **327** = 57 filters + 123 effects + 122 transitions + 25 audio | `src/crates/concat-effects/packages/` |
 | Text presets | 31 named + default | `src/crates/concat/text-presets/` |
 | Motion presets | 18 | `src/crates/concat-motion/src/presets.rs` |
@@ -32,8 +32,8 @@ with one click.
 | Stickers | 1,285 (Fluent Emoji, MIT) | ~135 KB index, fetched per sticker |
 | Bundled fonts | 41 title faces + 6 script fallbacks + UI face | `src/crates/concat-text/src/lib.rs` |
 | UI languages | 26 | `src/crates/concat/src/i18n.rs` |
-| Rebindable keyboard actions | 28 | `src/crates/concat/src/keymap.rs` |
-| Director-skill prompt playbooks | 18 | `.claude/skills/funcut-director/prompts/` |
+| Rebindable keyboard actions | 30 | `src/crates/concat/src/keymap.rs` |
+| Director-skill prompt playbooks | 19 | `.claude/skills/funcut-director/prompts/` |
 | maestro reference modules | 28 over 10 corpora; **157** shot cards | `.claude/skills/maestro/` |
 | Whisper models offered | 6 (tiny.en/tiny/base.en/base/small.en/small) | `src/crates/concat-speech/src/transcribe.rs` |
 | Neural models in the engine | 6 ONNX + 1 compiled-in | see *Models* below |
@@ -49,14 +49,16 @@ Everything upstream Concat is, verified in this tree:
   mirror, rotate, per-lane lock/visibility/mute/height, marquee and band
   selection, keyframe diamonds on the ruler, continuous zoom about the
   pointer, phone pinch zoom with glide momentum.
-- **Cutting vocabulary (the 52 commands).** Media (add/remove/placeholder/
-  fill-slot), clips (add, add-at-first-free, sequence, match, replace, move,
-  trim, split, remove-spans, remove, update, consolidate, merge, freeze,
-  detach/reattach audio, enhanced copies, colour range), speed (set + curve),
-  transforms (place/scale/rotate, fit/fill), text and shape clips, effect
-  layers, keyframes (set/clear/clear-all on clips and effects), masks,
-  cutout, cutout strokes, stabilize, tracks, timelines (add/remove/rename/
-  reorder/select, background, video format), fonts, media paths.
+- **Cutting vocabulary (the 55 commands, plus `batch` the atomic
+  wrapper).** Media (add/remove/placeholder/fill-slot), clips (add,
+  add-at-first-free, sequence, match, replace, move, trim, split,
+  remove-spans, remove, update, consolidate, merge, freeze, detach/reattach
+  audio, enhanced copies, colour range), speed (set + curve), transforms
+  (place/scale/rotate, fit/fill), text and shape clips, text styling
+  (style a range, clear the styles), motion clips, effect layers, keyframes
+  (set/clear/clear-all on clips and effects), masks, cutout, cutout strokes,
+  stabilize, tracks, timelines (add/remove/rename/reorder/select/linkage,
+  background, video format), fonts, media paths.
 - **Keyframes.** 12 animatable properties per clip (scale, offset x/y,
   rotation, opacity, volume + 7 mask numbers) with full CSS cubic-bezier
   easing — arbitrary curves, not just presets — edited in a dopesheet or a
@@ -363,11 +365,12 @@ variety, one text system, the memory journal, honest captions, loudness
 targets, sticker licensing) and **9 hard rules** (never claim done before
 the gates pass, never a segment without a visual, never invent ids, the
 preview budget, blockers are blockers, one video one look, searches
-parallel/placements sequential, surface remedies, job discipline) — and 18
-prompt playbooks in `prompts/` (script analysis, edit plan, B-roll matching,
+parallel/placements sequential, surface remedies, job discipline) — and 19
+prompt playbooks in `prompts/` (script analysis, creative direction,
+creative visual direction, edit plan, B-roll matching,
 cuts and pacing, transitions, SFX design, motion comps, music and ducking,
 text animation, colour grading, keyframe motion, 10 niche playbooks, reels
-vs longform, memory, review, creative direction, the quality loop, the tool
+vs longform, memory, review, the quality loop, and the tool
 reference).
 
 ## maestro (the judgment shelf)
@@ -495,7 +498,7 @@ model at all.
 | GPU compositor + plans | `src/crates/concat-render` |
 | The 327 effect packages + WGSL libraries | `src/crates/concat-effects` |
 | Text shaping and painting | `src/crates/concat-text` |
-| The document and its 52 commands | `src/crates/concat-project` |
+| The document and its 55 commands | `src/crates/concat-project` |
 | Vision models (cutout, brushes, enhance) | `src/crates/concat-vision` |
 | Speech (whisper.cpp, three TTS families) | `src/crates/concat-speech` |
 | Motion engine (Geneva, presets, authoring) | `src/crates/concat-motion` |

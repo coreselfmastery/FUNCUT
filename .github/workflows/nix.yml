@@ -43,31 +43,62 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
 
-      # The window crate's rustc has outgrown the builder's memory three
-      # cures in a row now - the codegen-units ladder in flake.nix (sixteen,
-      # thirty-two, sixty-four), then one core instead of four - and the
-      # last three runs still end "rustc was terminated by a deadly signal",
-      # one process, no neighbour, dead the same way each time. The runner
-      # ships no swap at all, so there is nowhere for a peak to go but out.
-      # Eight gigabytes beside the sixteen the machine has is cheaper than
-      # another halving of the units and holds the compile with room for
-      # the crate to keep growing; /mnt is where the runner keeps its
-      # spare disk, and the root as the fallback when it has none.
-      - name: Give the builder swap
+      # The window crate's rustc has outgrown the builder three cures in a
+      # row now - the codegen-units ladder in flake.nix (sixteen, thirty-two,
+      # sixty-four), then one core instead of four - and the last runs still
+      # end "rustc was terminated by a deadly signal", one process, no
+      # neighbour, dead the same way each time. The evidence, gathered from
+      # four dead runs and one live one:
+      #
+      #   - The image is the same one that passed: 20261028.624 on the green
+      #     run of 11 November and on every red one after it, so this is not
+      #     an image update underneath us.
+      #   - The runner already has swap now ("swap already present"), and
+      #     rustc is killed anyway - so the swap cure of the last commit was
+      #     a no-op, and plain RAM pressure is not the whole story. A deadly
+      #     signal to a single rustc with swap available is what a full disk
+      #     gives: the rlib is written through a mapping, and the write fault
+      #     that cannot be served kills the process (SIGBUS) rather than
+      #     erroring. Upstream Concat's Nix lane died the same death the same
+      #     week (their window crate grew by 2,700 lines between their last
+      #     green run and their first red one; ours grew by 1,900), and the
+      #     runner-images repo has Rust CI disk exhaustion on record as
+      #     #13367 (closed as a duplicate of the standing disk-space issue).
+      #   - GitHub guarantees only ~14 GB free, and this build fills it: the
+      #     whole workspace compiles into one sandboxed target dir - every
+      #     rlib, with thin-LTO bitcode beside the native code - while the
+      #     Nix store grows its own multi-gigabyte share beside it, on the
+      #     same disk.
+      #
+      # So before building: say what the machine actually has (memory, swap,
+      # disk, the build's limits - so the next failure names its cause
+      # instead of guessing), make sure swap exists (the earlier cure, kept,
+      # now that it can be told apart from the disk), and clear the ~20 GB
+      # of preinstalled SDKs this job never touches - Android, dotnet, GHC,
+      # CodeQL, boost - which is where the room comes from.
+      - name: Room for the build
         run: |
-          if sudo swapon --show | grep -q .; then
-            echo "swap already present"; exit 0
+          echo "== memory =="; free -h
+          echo "== swap =="; swapon --show || true
+          echo "== disk before =="; df -h / /mnt || true
+          echo "== the build's own limits =="; ulimit -a
+          if ! swapon --show | grep -q .; then
+            for where in /mnt /; do
+              if sudo fallocate -l 8G "$where/swapfile" 2>/dev/null; then
+                sudo chmod 600 "$where/swapfile"
+                sudo mkswap "$where/swapfile"
+                sudo swapon "$where/swapfile"
+                echo "swap on at $where/swapfile"
+                break
+              fi
+            done
+            swapon --show || echo "no room for a swapfile; building on RAM alone" >&2
           fi
-          for where in /mnt /; do
-            if sudo fallocate -l 8G "$where/swapfile" 2>/dev/null; then
-              sudo chmod 600 "$where/swapfile"
-              sudo mkswap "$where/swapfile"
-              sudo swapon "$where/swapfile"
-              echo "swap on at $where/swapfile"
-              exit 0
-            fi
-          done
-          echo "no room for a swapfile; building on RAM alone" >&2
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
+            /usr/local/.ghcup /usr/local/share/boost \
+            /opt/hostedtoolcache/CodeQL /usr/local/lib/node_modules \
+            /var/lib/apt/lists/*
+          echo "== disk after =="; df -h / /mnt || true
 
       # Refreshes nothing: a lock that would change here is a lock the
       # commit should have carried.

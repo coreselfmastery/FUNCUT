@@ -742,9 +742,12 @@ impl Api {
                 model,
                 language,
                 initial_prompt,
-            } => Ok(Reply::Started(
-                self.speech_transcribe(&path, model, language, initial_prompt)?,
-            )),
+            } => Ok(Reply::Started(self.speech_transcribe(
+                &path,
+                model,
+                language,
+                initial_prompt,
+            )?)),
             #[cfg(not(feature = "speech"))]
             Request::SpeechTranscribe { .. } => Err(ApiError::new(
                 ErrorCode::Refused,

@@ -603,8 +603,9 @@ impl Library {
             let read = std::fs::read_to_string("/proc/meminfo")
                 .ok()
                 .and_then(|info| {
-                    let line =
-                        info.lines().find(|line| line.starts_with("MemAvailable:"))?;
+                    let line = info
+                        .lines()
+                        .find(|line| line.starts_with("MemAvailable:"))?;
                     let kib: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
                     Some(kib.saturating_mul(1024))
                 });

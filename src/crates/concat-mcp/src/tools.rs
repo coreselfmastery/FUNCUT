@@ -5303,25 +5303,27 @@ mod tests {
 
         // The availability ask, then one search: every clip carries a
         // localPath, so the CLIP half needs no openvid.fetch round trips.
+        // The search comes first - the rank's BM25 page - and the status
+        // ask is the rerank's, before it would fetch a single frame.
         let calls = backend.0.borrow();
         assert_eq!(
             calls.len(),
             2,
-            "the status ask, then one search; the localPaths need no fetches"
+            "one search, then the status ask; the localPaths need no fetches"
         );
-        assert_eq!(calls[0]["method"], "openvid.status");
-        assert_eq!(calls[1]["method"], "openvid.search");
+        assert_eq!(calls[0]["method"], "openvid.search");
+        assert_eq!(calls[1]["method"], "openvid.status");
         assert_eq!(
-            calls[1]["limit"],
+            calls[0]["limit"],
             json!(RANK_POOL),
             "the fetch is as wide as the pool"
         );
         assert_eq!(
-            calls[1]["excludeIds"],
+            calls[0]["excludeIds"],
             json!([1, 2, 3]),
             "the used ids ride the request"
         );
-        assert_eq!(calls[1]["minMotion"], 1.5, "the floor rides the request");
+        assert_eq!(calls[0]["minMotion"], 1.5, "the floor rides the request");
 
         // The filters held ahead of the ranking: the excluded ids and the
         // two under the floor are gone from the page the blend scored.

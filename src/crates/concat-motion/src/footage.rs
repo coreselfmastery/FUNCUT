@@ -31,13 +31,19 @@
 //! [`oximedia_auto`]: https://docs.rs/oximedia-auto
 
 use oximedia_auto::b_roll_selector::{
-    BRollClip, BRollSelection, BRollSelector, BRollSelectorConfig, CoverageGap, SceneCategory,
+    BRollClip, BRollSelection, BRollSelector, BRollSelectorConfig,
 };
 use oximedia_auto::color_continuity::{
     ClipColorStats, ColorContinuityChecker, ContinuityConfig, Discontinuity,
 };
-use oximedia_auto::cuts::{Beat, CutConfig, CutDetector, CutPoint, DialogueSegment};
+use oximedia_auto::cuts::{CutConfig, CutDetector, CutPoint, DialogueSegment};
 use oximedia_core::types::{Rational, Timestamp};
+// The planner's input and output vocabulary, re-exported for the layers
+// that build a beat grid or read a plan without depending on oximedia
+// themselves: the beat is what a caller hands in, and the coverage gap,
+// the scene category and the cut type are what the plan hands back.
+pub use oximedia_auto::b_roll_selector::{CoverageGap, SceneCategory};
+pub use oximedia_auto::cuts::{Beat, CutType};
 
 /// One stretch of spoken words, on the timeline's own clock.
 ///
@@ -358,6 +364,15 @@ fn dialogue_boundary_cuts(beats: &[Beat], transcript: &Transcript) -> Vec<CutPoi
     CutDetector::new(CutConfig::new())
         .detect_cuts(&[], Some(beats), Some(&dialogue))
         .unwrap_or_default()
+}
+
+/// A beat at `seconds` with `strength`, on the planner's own millisecond
+/// timebase: the door a caller without oximedia's clock hands its beat
+/// grid through - seconds and a strength, downbeat by default, because a
+/// strength the caller measured is the news and the grid placement is
+/// not. The tool layer builds its beats here.
+pub fn beat_at(seconds: f64, strength: f64) -> Beat {
+    Beat::new(at_seconds(seconds), strength, true)
 }
 
 /// A timestamp on the planning timebase: one millisecond a tick, so a

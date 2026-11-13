@@ -194,6 +194,7 @@ pub(crate) const DIRECTOR_ALLOWLIST: &[&str] = &[
     "openvid_fetch",
     "openvid_import",
     "footage_continuity",
+    "footage_plan_suggest",
     "stock_contact_sheet",
     "sounds_search",
     "sounds_add",

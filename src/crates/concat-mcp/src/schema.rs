@@ -518,7 +518,11 @@ mod tests {
         // growth: the VAAPI hardware choice and the queue's timeline
         // picker sit in the export schema the way every option does -
         // 242,070 measured over 109 tools on the merged tree, function
-        // again, no prose. The
+        // again, no prose. And once more, 243,000 -> 246,000 at 110: the
+        // footage planner's own door (footage_plan_suggest) opened the
+        // engine the continuity gate gates, one schema of ~2,050
+        // characters - function again, and the last of the growth this
+        // comment knows. The
         // director's default surface - what `concat --mcp` serves an
         // agent that names no list, and the budget that matters by
         // default - keeps its own, tighter cap below.
@@ -533,7 +537,7 @@ mod tests {
             "CONTEXT whole catalogue: {total} over {} tools",
             sizes.len()
         );
-        assert!(total < 243_000, "{total}: {sizes:?}");
+        assert!(total < 246_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }
@@ -564,8 +568,11 @@ mod tests {
             "CONTEXT director surface: {director} over {} tools",
             crate::protocol::DIRECTOR_ALLOWLIST.len()
         );
+        // 230,000 -> 232,000 with the footage planner's door: the
+        // director shops for coverage with it, so it belongs on the
+        // surface, and the surface's budget carries its schema.
         assert!(
-            director < 230_000,
+            director < 232_000,
             "the director's default surface is {director} characters - too much for an agent to hold"
         );
     }

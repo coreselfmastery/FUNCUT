@@ -166,6 +166,10 @@ pub enum Action {
     /// motion, scale, monotony, stillness - each flag with its slot,
     /// rule and remedy.
     FootageContinuity,
+    /// The footage planner's own door: dialogue gaps and monotony runs
+    /// from a transcript (and a beat grid, when the caller has one), as
+    /// the B-roll shopping list written before the plan is.
+    FootagePlanSuggest,
 }
 
 /// How a reply is shown to the agent.
@@ -426,6 +430,15 @@ pub fn catalogue() -> Vec<Tool> {
             destructive: false,
             idempotent: true,
             action: Action::FootageContinuity,
+        },
+        Tool {
+            name: "footage_plan_suggest",
+            title: "Suggest footage coverage",
+            description: "Dialogue gaps and monotony runs from the transcript, as a B-roll shopping list: which spans beg for coverage before the plan is written.",
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+            action: Action::FootagePlanSuggest,
         },
         method(
             "openvid_get",
@@ -1488,8 +1501,13 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
                 "exclude_ids": {
                     "type": "array",
                     "maxItems": 500,
-                    "items": { "type": "integer" },
-                    "description": "Hard filter: clip ids already used in this edit are never returned. (excludeIds accepted.)",
+                    "items": {
+                        "anyOf": [
+                            { "type": "integer" },
+                            { "type": "string" },
+                        ],
+                    },
+                    "description": "Hard filter: clip ids already used in this edit are never returned, each a number or a numeric string. (excludeIds accepted.)",
                 },
             },
             "required": ["description"],
@@ -1509,8 +1527,8 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
                         "properties": {
                             "slotId": { "type": "string", "minLength": 1 },
                             "clipId": { "type": "string", "minLength": 1 },
-                            "colorTemperature": { "type": "number", "minimum": -1, "maximum": 1, "description": "Colour bias, -1.0 cool through +1.0 warm." },
-                            "motion": { "type": "number", "description": "How much moves, on the library's own motion scale." },
+                            "colorTemperature": { "type": ["number", "null"], "minimum": -1, "maximum": 1, "description": "Colour bias, -1.0 cool through +1.0 warm. Absent or null is unmeasured, never a fake neutral: an unmeasured clip is never flagged for a colour jump." },
+                            "motion": { "type": ["number", "null"], "description": "How much moves, on the library's own motion scale. Absent or null is unmeasured: the motion rules stand down for a clip nobody measured." },
                             "dominantDirection": { "type": "string", "enum": ["left", "right", "up", "down", "zoom_in", "zoom_out", "static"] },
                             "shotScale": { "type": "string", "enum": ["wide", "medium", "close_up"] },
                             "category": { "type": "string", "description": "The clip's broad category, as the plan's vocabulary names it." },
@@ -1520,6 +1538,61 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
                 },
             },
             "required": ["clips"],
+            "additionalProperties": false,
+        })),
+        Action::FootagePlanSuggest => Some(json!({
+            "type": "object",
+            "properties": {
+                "transcript": {
+                    "type": "object",
+                    "properties": {
+                        "segments": {
+                            "type": "array",
+                            "maxItems": 2000,
+                            "description": "The spoken stretches, in start order - transcribe's own segments shape.",
+                            "items": {
+                                "type": "object",
+                                "required": ["start", "end", "text"],
+                                "additionalProperties": false,
+                                "properties": {
+                                    "start": { "type": "number", "description": "When the words start, in seconds from the edit's start." },
+                                    "end": { "type": "number", "description": "When the words end, in seconds; after `start`." },
+                                    "text": { "type": "string", "description": "The words." },
+                                    "words": { "type": "array", "items": { "type": "object" }, "description": "Word timings when the recogniser carried them; accepted for shape, not read by the planner." },
+                                },
+                            },
+                        },
+                    },
+                    "required": ["segments"],
+                    "additionalProperties": false,
+                },
+                "segments": {
+                    "type": "array",
+                    "maxItems": 2000,
+                    "items": { "type": "object" },
+                    "description": "The transcript as a top-level list, when that is what the caller holds: the same stretches as transcript.segments.",
+                },
+                "lines": {
+                    "type": "array",
+                    "maxItems": 2000,
+                    "items": { "type": "object" },
+                    "description": "The transcript as a top-level `lines` list: the same stretches as transcript.segments.",
+                },
+                "beats": {
+                    "type": "array",
+                    "maxItems": 2000,
+                    "description": "The soundtrack's beat grid, analyze_beats' own times; absent means no beats, and the monotony read stands down for every run.",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "seconds": { "type": "number", "description": "When the beat lands, in seconds (`t` accepted)." },
+                            "t": { "type": "number", "description": "Alias for seconds." },
+                            "strength": { "type": "number", "minimum": 0, "maximum": 1, "description": "How hard the beat lands, 0.0-1.0; absent is 0.5." },
+                        },
+                    },
+                },
+            },
             "additionalProperties": false,
         })),
         Action::MotionPresets
@@ -2702,6 +2775,7 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         Action::OpenvidSearchBatch => openvid_search_batch(arguments, backend),
         Action::OpenvidRankForSlot => openvid_rank_for_slot(arguments, backend),
         Action::FootageContinuity => footage_continuity(arguments),
+        Action::FootagePlanSuggest => footage_plan_suggest(arguments),
         Action::Mask => {
             let result = backend.call(mask(arguments)?)?;
             Ok(Outcome::json(summary::view(&result)))
@@ -3026,8 +3100,22 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
         }
         if let Some(previous_end) = previous_end {
             let delta = start - previous_end;
+            // A breath between segments is not a hole in the plan: a
+            // voiceover's natural pause, a beat the picture holds through.
+            // Up to 1.5 s it warns - the visuals must survive it, and a
+            // director who never hears the warning ships a hole in the
+            // picture where the words went quiet - and past that it is
+            // dead air the plan owes an answer for, so it stays the hard
+            // error it always was.
+            if delta > 1.5 {
+                return Err(format!(
+                    "gap of {delta:.3}s before segments[{index}] is past the 1.5 s a breath may take"
+                ));
+            }
             if delta > 0.05 {
-                return Err(format!("gap of {delta:.3}s before segments[{index}]"));
+                warnings.push(format!(
+                    "gap of {delta:.3}s before segments[{index}]: a breath gap the visuals must survive - a hole in the picture"
+                ));
             }
             if delta < -0.05 {
                 return Err(format!(
@@ -3296,8 +3384,13 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
     }
     // Footage slots are validated individually. There is deliberately no
     // plan-wide B-roll percentage: the right balance depends on the story,
-    // source material, evidence density, and the visual language of this film.
+    // source material, evidence density, and the visual language of this
+    // film. But slots[] is the shopping list for segments[].visual - the
+    // executor runs the segments, not the slots - so where the plan has
+    // B-roll segments the two must agree: as many b-roll slots as b-roll
+    // segments, and a segment that names its slot by slotId must find it.
     if let Some(slots) = object.get("slots").and_then(Value::as_array) {
+        let mut broll_slot_ids: Vec<&str> = Vec::new();
         for (index, slot) in slots.iter().enumerate() {
             let slot = slot
                 .as_object()
@@ -3328,6 +3421,9 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
                             "slots[{index}] is b-roll; it takes at least one non-empty query"
                         ));
                     }
+                    if let Some(slot_id) = slot.get("slotId").and_then(Value::as_str) {
+                        broll_slot_ids.push(slot_id);
+                    }
                 }
                 "hold" | "graphic" | "black" => {
                     if queries.iter().any(|query| !query.trim().is_empty()) {
@@ -3339,6 +3435,38 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
                 other => {
                     return Err(format!("slots[{index}].treatment `{other}` is unsupported"));
                 }
+            }
+        }
+        // The cross-check the standalone loop cannot make: the segments are
+        // what the executor actually places, and a slots[] they never meet
+        // is a list the director wrote for a cut that does not happen -
+        // one more b-roll slot than segment shops for footage nothing
+        // plays, one fewer leaves a segment shopping blind.
+        let broll_segments: Vec<(usize, &Value)> = segments
+            .iter()
+            .enumerate()
+            .filter(|(_, segment)| {
+                segment
+                    .get("visual")
+                    .and_then(|visual| visual.get("type"))
+                    .and_then(Value::as_str)
+                    == Some("broll")
+            })
+            .collect();
+        if !broll_segments.is_empty() && broll_slot_ids.len() != broll_segments.len() {
+            return Err(format!(
+                "slots[] is the shopping list for segments[].visual: {} b-roll slots for {} b-roll segments",
+                broll_slot_ids.len(),
+                broll_segments.len()
+            ));
+        }
+        for (index, segment) in broll_segments {
+            if let Some(slot_id) = segment.get("slotId").and_then(Value::as_str)
+                && !broll_slot_ids.contains(&slot_id)
+            {
+                return Err(format!(
+                    "segments[{index}] names slot `{slot_id}`, which slots[] does not carry"
+                ));
             }
         }
     }
@@ -4142,12 +4270,37 @@ fn openvid_rank_for_slot(arguments: Value, backend: &mut dyn Backend) -> Result<
         .get("motion_min")
         .or_else(|| fields.get("motionMin"))
         .and_then(Value::as_f64);
-    let exclude_ids: Vec<i64> = fields
+    // The used-clip list, integers or numeric strings: an agent copying
+    // ids out of a reply meets them as JSON numbers, but one reading them
+    // out of prose - or a manifest that keeps them as text - meets them
+    // as strings, and both name the same clip. A string that parses as
+    // nothing is refused naming the entry itself, never quietly dropped:
+    // a dropped exclude is a clip shopped twice.
+    let exclude_ids: Vec<i64> = match fields
         .get("exclude_ids")
         .or_else(|| fields.get("excludeIds"))
         .and_then(Value::as_array)
-        .map(|list| list.iter().filter_map(Value::as_i64).collect())
-        .unwrap_or_default();
+    {
+        Some(list) => list
+            .iter()
+            .map(|entry| match entry {
+                Value::Number(_) => entry.as_i64().ok_or_else(|| {
+                    invalid(&format!(
+                        "`exclude_ids` entry {entry} is not an integer clip id"
+                    ))
+                }),
+                Value::String(text) => text.trim().parse::<i64>().map_err(|_| {
+                    invalid(&format!(
+                        "`exclude_ids` entry `{text}` does not parse as a clip id: ids are numbers or numeric strings"
+                    ))
+                }),
+                other => Err(invalid(&format!(
+                    "`exclude_ids` entry {other} is neither a number nor a numeric string"
+                ))),
+            })
+            .collect::<Result<Vec<i64>, ApiError>>()?,
+        None => Vec::new(),
+    };
 
     let mut search = json!({
         "query": description,
@@ -4257,6 +4410,166 @@ fn footage_continuity(arguments: Value) -> Result<Outcome, ApiError> {
     Ok(Outcome::json(json!({
         "count": flags.len(),
         "flags": flags,
+    })))
+}
+
+/// `footage_plan_suggest`: the footage planner's own door, as a tool.
+///
+/// The engine behind the slot schema and the continuity gate has had an
+/// entry point nothing called - [`concat_motion::footage::suggest_footage`]
+/// read a transcript and a beat grid and answered where the openings are,
+/// and the only caller it ever had was its own tests. This is the door:
+/// the dialogue gaps (spans where no words run) and the monotony runs
+/// (long stretches of speech no beat lands in), each with the topic tags
+/// the words either side asked for and how urgently it wants covering,
+/// plus the J/L cuts the dialogue's own boundaries propose. Nothing
+/// searches, nothing fetches; the plan is arithmetic over times the
+/// caller already measured, and it is written before the plan is - the
+/// B-roll shopping list, not the shop.
+fn footage_plan_suggest(arguments: Value) -> Result<Outcome, ApiError> {
+    let invalid = |why: &str| ApiError::invalid(format!("invalid arguments: {why}"));
+    let fields = arguments
+        .as_object()
+        .ok_or_else(|| invalid("the arguments are an object"))?;
+    // The transcript, wherever the caller kept it: under `transcript`
+    // (transcribe's own reply shape) or as a bare `segments`/`lines` list
+    // at the top level - lenient the way every tool that reads a reply
+    // has to be, because replies move and callers keep old shapes.
+    let list = fields
+        .get("transcript")
+        .and_then(|transcript| transcript.get("segments"))
+        .or_else(|| fields.get("segments"))
+        .or_else(|| fields.get("lines"))
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            invalid(
+                "the transcript is required: `transcript.segments`, or a top-level `segments` or `lines` list",
+            )
+        })?;
+    let mut segments = Vec::with_capacity(list.len());
+    for (index, segment) in list.iter().enumerate() {
+        let segment = segment
+            .as_object()
+            .ok_or_else(|| invalid(&format!("transcript[{index}] must be an object")))?;
+        let number = |key: &str| {
+            segment
+                .get(key)
+                .and_then(Value::as_f64)
+                .filter(|value| value.is_finite())
+                .ok_or_else(|| {
+                    invalid(&format!("transcript[{index}].{key} must be a finite number"))
+                })
+        };
+        segments.push(concat_motion::footage::TranscriptSegment {
+            start_s: number("start")?,
+            end_s: number("end")?,
+            text: segment
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+        });
+    }
+    let transcript = concat_motion::footage::Transcript::new(segments);
+    // The beat grid, when the caller has one: seconds (or `t`) and a
+    // strength. None given is a real answer, not a failure - the two
+    // reads are independent, and the gaps are still the gaps.
+    let beats: Vec<concat_motion::footage::Beat> = fields
+        .get("beats")
+        .and_then(Value::as_array)
+        .map(|list| {
+            list.iter()
+                .filter_map(|beat| {
+                    let seconds = beat
+                        .get("seconds")
+                        .or_else(|| beat.get("t"))
+                        .and_then(Value::as_f64)
+                        .filter(|value| value.is_finite())?;
+                    let strength = beat
+                        .get("strength")
+                        .and_then(Value::as_f64)
+                        .filter(|value| value.is_finite())
+                        .unwrap_or(0.5);
+                    Some(concat_motion::footage::beat_at(seconds, strength))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let plan = concat_motion::footage::suggest_footage(&beats, &transcript);
+    // The plan as JSON, in the shapes the planner's own types carry: the
+    // oximedia types carry no serde of their own, so their public fields
+    // are written out here, by hand, under the names their docs use.
+    let category = |category: concat_motion::footage::SceneCategory| match category {
+        concat_motion::footage::SceneCategory::Indoor => "indoor",
+        concat_motion::footage::SceneCategory::Outdoor => "outdoor",
+        concat_motion::footage::SceneCategory::CloseUp => "close_up",
+        concat_motion::footage::SceneCategory::Wide => "wide",
+        concat_motion::footage::SceneCategory::Aerial => "aerial",
+        concat_motion::footage::SceneCategory::Animation => "animation",
+        concat_motion::footage::SceneCategory::Unknown => "unknown",
+    };
+    let cut_kind = |cut: concat_motion::footage::CutType| match cut {
+        concat_motion::footage::CutType::Hard => "hard",
+        concat_motion::footage::CutType::Soft => "soft",
+        concat_motion::footage::CutType::Fade => "fade",
+        concat_motion::footage::CutType::Dissolve => "dissolve",
+        concat_motion::footage::CutType::Wipe => "wipe",
+        concat_motion::footage::CutType::Jump => "jump",
+        concat_motion::footage::CutType::LCut => "l_cut",
+        concat_motion::footage::CutType::JCut => "j_cut",
+    };
+    let gaps: Vec<Value> = plan
+        .gaps
+        .iter()
+        .map(|gap| {
+            json!({
+                "startMs": gap.start_ms,
+                "endMs": gap.end_ms,
+                "topicTags": gap.topic_tags,
+            })
+        })
+        .collect();
+    let suggestions: Vec<Value> = plan
+        .suggestions
+        .iter()
+        .map(|suggestion| {
+            json!({
+                "kind": match suggestion.kind {
+                    concat_motion::footage::SuggestionKind::DialogueGap => "dialogue_gap",
+                    concat_motion::footage::SuggestionKind::MonotonyRun => "monotony_run",
+                },
+                "needBRoll": suggestion.need_b_roll,
+                "category": category(suggestion.category),
+                "startS": suggestion.start_s(),
+                "endS": suggestion.end_s(),
+                "durationMs": suggestion.duration_ms,
+                "priority": suggestion.priority,
+                "topicTags": suggestion.gap.topic_tags,
+            })
+        })
+        .collect();
+    let cuts: Vec<Value> = plan
+        .cuts
+        .iter()
+        .map(|cut| {
+            json!({
+                "atS": cut.timestamp.to_seconds(),
+                "type": cut_kind(cut.cut_type),
+                "confidence": cut.confidence,
+                "transitionMs": cut.transition_duration_ms,
+                "onBeat": cut.on_beat,
+                "priority": cut.priority,
+                "reason": cut.reason,
+            })
+        })
+        .collect();
+    Ok(Outcome::json(json!({
+        "gapCount": gaps.len(),
+        "suggestionCount": suggestions.len(),
+        "cutCount": cuts.len(),
+        "gaps": gaps,
+        "suggestions": suggestions,
+        "cuts": cuts,
     })))
 }
 
@@ -4663,6 +4976,16 @@ mod tests {
                     { "slotId": "setup.1", "clipId": "clip.2", "colorTemperature": 0.1, "motion": 2.5, "dominantDirection": "right", "shotScale": "close_up", "category": "ocean", "motionMin": 1.0 },
                 ] }),
             ),
+            (
+                "footage_plan_suggest",
+                json!({
+                    "transcript": { "segments": [
+                        { "start": 0.5, "end": 3.0, "text": "the city skyline at dusk" },
+                        { "start": 5.4, "end": 7.0, "text": "crowds crossing the street" },
+                    ] },
+                    "beats": [{ "seconds": 1.0, "strength": 0.9 }],
+                }),
+            ),
         ]
     }
 
@@ -4919,6 +5242,21 @@ mod tests {
                         serde_json::from_value(sample).expect("the sample reads");
                     let flags = concat_motion::continuity::check_continuity(&manifest);
                     assert!(flags.is_empty(), "{flags:?}");
+                    continue;
+                }
+                Action::FootagePlanSuggest => {
+                    // The planner is arithmetic over the transcript's own
+                    // times, so the sample runs for real - two stretches
+                    // with a 2.4 s quiet span between them, and the plan
+                    // must flag it as the gap it is.
+                    let outcome =
+                        footage_plan_suggest(sample).expect("the sample plans");
+                    let said = outcome.structured.expect("the plan is JSON");
+                    assert_eq!(said["gapCount"], 1, "{said}");
+                    assert_eq!(
+                        said["suggestions"][0]["kind"], "dialogue_gap",
+                        "{said}"
+                    );
                     continue;
                 }
             };
@@ -5255,6 +5593,47 @@ mod tests {
         assert_eq!(tag_similarity(&[], "anything"), 0.0);
     }
 
+    /// The used-clip list takes its ids as numbers or numeric strings -
+    /// both name the same clip - and a string that parses as nothing is
+    /// refused naming the entry, never dropped on the floor: a dropped
+    /// exclude is a clip shopped twice.
+    #[test]
+    fn the_slot_ranker_takes_string_clip_ids_and_refuses_the_unparseable() {
+        let mut backend = PagedIndex(
+            std::cell::RefCell::new(Vec::new()),
+            vec![json!({ "id": 1, "caption": "city skyline", "motion": 2.0 })],
+        );
+        let outcome = openvid_rank_for_slot(
+            json!({
+                "description": "a city skyline at dusk",
+                "exclude_ids": [1, "2"],
+            }),
+            &mut backend,
+        )
+        .expect("ranks");
+        assert!(!outcome.is_error);
+        let calls = backend.0.borrow();
+        assert_eq!(
+            calls[0]["excludeIds"],
+            json!([1, 2]),
+            "a numeric string lands as the id it names"
+        );
+
+        let mut backend = PagedIndex(std::cell::RefCell::new(Vec::new()), Vec::new());
+        let error = openvid_rank_for_slot(
+            json!({
+                "description": "a city skyline at dusk",
+                "exclude_ids": ["not-an-id"],
+            }),
+            &mut backend,
+        )
+        .expect_err("a string that parses as nothing refuses");
+        assert!(
+            error.to_string().contains("not-an-id"),
+            "the refusal names the entry: {error}"
+        );
+    }
+
     /// The widened fetch is the recall it promised: one hundred clips
     /// seeded, the correct one at BM25 rank 50 - the last row of the old
     /// fifty-wide page, where its sliding rank score was zero and it
@@ -5375,10 +5754,13 @@ mod tests {
             json!({ "replace": { "avoid": "a clip cooler than slot `a`'s" } })
         );
 
-        // Two wides in a row: the scale rule, the second slot's name.
+        // Two wides in a row: the scale rule, the second slot's name. The
+        // first clip carries no measurements at all and the second an
+        // explicit null: absent and null are both unmeasured, and neither
+        // is read as a 0.0 that would invent a jump nobody measured.
         let outcome = footage_continuity(json!({ "clips": [
             { "slotId": "a", "clipId": "clip.a", "shotScale": "wide", "category": "city" },
-            { "slotId": "b", "clipId": "clip.b", "shotScale": "wide", "category": "ocean" },
+            { "slotId": "b", "clipId": "clip.b", "colorTemperature": null, "motion": null, "shotScale": "wide", "category": "ocean" },
         ] }))
         .expect("flags");
         let reply = outcome.structured.expect("structured");
@@ -5401,6 +5783,77 @@ mod tests {
             Ok(_) => panic!("a manifest that does not read refuses"),
         };
         assert!(error.to_string().contains("does not read"), "{error}");
+    }
+
+    /// The footage planner's door: a tiny transcript with a 2.5 s quiet
+    /// span between its two segments answers a plan that flags exactly
+    /// that gap, with the tags the words either side asked for - and the
+    /// J/L cuts the dialogue's own boundaries propose, beats or no beats.
+    #[test]
+    fn footage_plan_suggest_flags_the_dialogue_gap() {
+        let outcome = footage_plan_suggest(json!({
+            "transcript": { "segments": [
+                { "start": 0.0, "end": 2.0, "text": "the city skyline at dusk" },
+                { "start": 4.5, "end": 6.0, "text": "crowds crossing the street" },
+            ] },
+        }))
+        .expect("plans");
+        assert!(!outcome.is_error);
+        let reply = outcome.structured.expect("structured");
+        assert_eq!(reply["gapCount"], 1, "{reply}");
+        assert_eq!(reply["suggestionCount"], 1, "{reply}");
+        let gap = &reply["gaps"][0];
+        assert_eq!(gap["startMs"], 2000, "{reply}");
+        assert_eq!(gap["endMs"], 4500, "{reply}");
+        // The gap carries the words' own ask: the tags around the quiet
+        // span are the city's, the planner's own vocabulary.
+        let tags: Vec<&str> = gap["topicTags"]
+            .as_array()
+            .expect("tags")
+            .iter()
+            .filter_map(|tag| tag.as_str())
+            .collect();
+        assert!(
+            tags.starts_with(&["city", "skyline", "dusk"]),
+            "the tags are the words either side: {tags:?}"
+        );
+        assert_eq!(reply["suggestions"][0]["kind"], "dialogue_gap", "{reply}");
+        assert_eq!(reply["suggestions"][0]["needBRoll"], true, "{reply}");
+        assert_eq!(reply["suggestions"][0]["durationMs"], 2500, "{reply}");
+        // No beats were given, and the cuts answer anyway: the J/L cuts
+        // are the dialogue's own boundaries, a pair a stretch - the beat
+        // grid is the monotony read's, not the cut detector's.
+        assert_eq!(reply["cutCount"], 4, "{reply}");
+        let kinds: Vec<&str> = reply["cuts"]
+            .as_array()
+            .expect("cuts")
+            .iter()
+            .filter_map(|cut| cut["type"].as_str())
+            .collect();
+        assert_eq!(kinds, vec!["j_cut", "l_cut", "j_cut", "l_cut"], "{reply}");
+
+        // The transcript is accepted wherever the caller kept it: a bare
+        // top-level `segments` list plans the same gap.
+        let outcome = footage_plan_suggest(json!({
+            "segments": [
+                { "start": 0.0, "end": 2.0, "text": "the city skyline at dusk" },
+                { "start": 4.5, "end": 6.0, "text": "crowds crossing the street" },
+            ],
+        }))
+        .expect("plans");
+        let reply = outcome.structured.expect("structured");
+        assert_eq!(reply["gapCount"], 1, "{reply}");
+
+        // And a transcript nobody can read is refused with words, not
+        // guessed at.
+        let error = match footage_plan_suggest(json!({ "beats": [] })) {
+            Err(error) => error,
+            Ok(_) => panic!("a call with no transcript refuses"),
+        };
+        assert!(
+            error.to_string().contains("the transcript is required"),
+            "{error}"
+        );
     }
 
     /// The footage filters reach the search: the tool's schema spells the
@@ -5665,8 +6118,11 @@ mod tests {
     }
 
     #[test]
-    fn plan_validator_rejects_gaps_and_unsupported_word_sync() {
-        let base = json!({
+    fn plan_validator_warns_on_breath_gaps_and_rejects_dead_air() {
+        // A breath between segments - anything up to 1.5 s - is a warning
+        // the director reads, not a refusal: the visuals must survive the
+        // pause, and silence about it is how a hole ships in the picture.
+        let breath = json!({
             "aspect": "9:16",
             "audio": {},
             "segments": [
@@ -5674,8 +6130,22 @@ mod tests {
                 { "start": 2.2, "end": 4.0, "visual": { "type": "textCard", "text": "SALT" } }
             ]
         });
-        assert!(validate_edit_plan(&base).unwrap_err().contains("gap"));
-        let mut no_gap = base;
+        let result = validate_edit_plan(&breath).expect("a breath is not a refusal");
+        let warnings = result["warnings"].as_array().expect("warnings");
+        assert!(
+            warnings.iter().any(|warning| warning
+                .as_str()
+                .is_some_and(|text| text.contains("breath gap"))),
+            "the breath gap warns: {warnings:?}"
+        );
+        // Past 1.5 s the gap is dead air, and stays the hard error it
+        // always was.
+        let mut dead_air = breath;
+        dead_air["segments"][1]["start"] = json!(4.0);
+        assert!(validate_edit_plan(&dead_air).unwrap_err().contains("gap"));
+        // A plan that fits together still refuses the word-synced caption
+        // shape, naming the door that does it right.
+        let mut no_gap = breath;
         no_gap["segments"][1]["start"] = json!(2.0);
         no_gap["captions"] = json!({ "wordSynced": true });
         assert!(
@@ -5785,7 +6255,9 @@ mod tests {
 
     /// B-roll coverage is a story decision, not a universal percentage.
     /// Plans with sparse, balanced, or footage-heavy slot mixes all pass
-    /// the plan-wide gate; each slot still has to satisfy its own contract.
+    /// the plan-wide gate; each slot still has to satisfy its own
+    /// contract, and the b-roll slots have to match the b-roll segments
+    /// the executor runs - the mix is free, the count is not.
     #[test]
     fn plan_validator_does_not_enforce_a_broll_percentage() {
         let slot = |index: usize, treatment: &str| {
@@ -5803,16 +6275,25 @@ mod tests {
                 "durationS": 2.5
             })
         };
-        let base = json!({
-            "aspect": "9:16",
-            "audio": {},
-            "segments": [
-                { "start": 0.0, "end": 2.0, "visual": { "type": "broll", "query": "ocean" } },
-                { "start": 2.0, "end": 4.0, "visual": { "type": "textCard", "text": "SALT" } }
-            ]
-        });
-        let slots = |broll: usize, total: usize| -> Vec<Value> {
-            (0..total)
+        // A plan whose segments are `broll` B-roll and the rest text
+        // cards, two seconds each, edge to edge: the share moves while
+        // the segments themselves stay a plan the validator accepts.
+        let plan_with = |broll: usize, total: usize| {
+            let segments: Vec<Value> = (0..total)
+                .map(|index| {
+                    let visual = if index < broll {
+                        json!({ "type": "broll", "query": "city skyline aerial" })
+                    } else {
+                        json!({ "type": "textCard", "text": "SALT" })
+                    };
+                    json!({
+                        "start": (index * 2) as f64,
+                        "end": (index * 2 + 2) as f64,
+                        "visual": visual,
+                    })
+                })
+                .collect();
+            let slots: Vec<Value> = (0..total)
                 .map(|index| {
                     if index < broll {
                         slot(index, "broll")
@@ -5820,12 +6301,17 @@ mod tests {
                         slot(index, "hold")
                     }
                 })
-                .collect()
+                .collect();
+            json!({
+                "aspect": "9:16",
+                "audio": {},
+                "segments": segments,
+                "slots": slots,
+            })
         };
 
         for (broll, total) in [(0, 10), (2, 10), (5, 10), (7, 10), (10, 10)] {
-            let mut plan = base.clone();
-            plan["slots"] = Value::Array(slots(broll, total));
+            let plan = plan_with(broll, total);
             let result = validate_edit_plan(&plan).unwrap_or_else(|error| {
                 panic!("{broll}/{total} B-roll slots should be allowed: {error}")
             });
@@ -5839,14 +6325,83 @@ mod tests {
         }
 
         // Removing the percentage gate does not remove slot-level safety.
-        let mut invalid = base;
-        invalid["slots"] = Value::Array(vec![slot(0, "broll")]);
+        let mut invalid = plan_with(1, 2);
         invalid["slots"][0]["queries"] = json!([]);
         assert!(
             validate_edit_plan(&invalid)
                 .unwrap_err()
                 .contains("at least one non-empty query")
         );
+    }
+
+    /// The slots[] a plan carries are cross-checked against the segments
+    /// the executor runs: as many b-roll slots as b-roll segments, and a
+    /// b-roll segment that names its slot by slotId finds it. A slots[]
+    /// the segments ignore is a shopping list for groceries never bought.
+    #[test]
+    fn plan_validator_cross_checks_the_slots_against_the_broll_segments() {
+        let slot = |slot_id: &str, treatment: &str, queries: Value| {
+            json!({
+                "slotId": slot_id,
+                "role": "setup",
+                "treatment": treatment,
+                "job": "illustrate",
+                "entry": "on_emphasis",
+                "exit": "on_beat",
+                "description": "a slow aerial drift across the city skyline at dusk, camera gliding left",
+                "queries": queries,
+                "hero": false,
+                "motionMin": 1.0,
+                "durationS": 2.5
+            })
+        };
+        let base = json!({
+            "aspect": "9:16",
+            "audio": {},
+            "segments": [
+                { "start": 0.0, "end": 2.0, "visual": { "type": "broll", "query": "ocean" } },
+                { "start": 2.0, "end": 4.0, "visual": { "type": "broll", "query": "city" } },
+                { "start": 4.0, "end": 6.0, "visual": { "type": "textCard", "text": "SALT" } }
+            ]
+        });
+
+        // Two b-roll segments, one b-roll slot: the count must name both.
+        let mut short = base.clone();
+        short["slots"] = json!([
+            slot("hook.1", "broll", json!(["city skyline aerial"])),
+            slot("setup.1", "hold", json!([])),
+        ]);
+        assert!(
+            validate_edit_plan(&short)
+                .unwrap_err()
+                .contains("1 b-roll slots for 2 b-roll segments"),
+            "the mismatch names both counts"
+        );
+
+        // A b-roll segment naming a slot the list does not carry is
+        // refused even when the counts agree.
+        let mut orphan = base.clone();
+        orphan["segments"][1]["slotId"] = json!("gone.1");
+        orphan["slots"] = json!([
+            slot("hook.1", "broll", json!(["city skyline aerial"])),
+            slot("setup.1", "broll", json!(["harbour cranes at night"])),
+        ]);
+        assert!(
+            validate_edit_plan(&orphan)
+                .unwrap_err()
+                .contains("which slots[] does not carry")
+        );
+
+        // Matching counts with the slotId spoken for passes clean, and a
+        // plan whose B-roll segments are all spoken for agrees with itself.
+        let mut agreed = base.clone();
+        agreed["segments"][0]["slotId"] = json!("hook.1");
+        agreed["segments"][1]["slotId"] = json!("setup.1");
+        agreed["slots"] = json!([
+            slot("hook.1", "broll", json!(["ocean waves aerial"])),
+            slot("setup.1", "broll", json!(["city skyline aerial"])),
+        ]);
+        assert!(validate_edit_plan(&agreed).is_ok(), "the agreed plan passes");
     }
 
     /// A director plan's structure is checked, not just its timing: the

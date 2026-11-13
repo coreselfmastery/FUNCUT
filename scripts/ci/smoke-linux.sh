@@ -150,6 +150,18 @@ host() {
     say "concat --whisper-cpu on an emulated Sandy Bridge"
     HOME=$(fresh_home) expect_ok "concat --whisper-cpu under SDE -snb" 600 "$sde" -snb -- "$bin" --whisper-cpu
   fi
+
+  # The director's Rust ears, staged beside the editor: their selftest
+  # synthesises a take, runs every ear over it and asserts the reading,
+  # so a bundle that left the binary out - or shipped one whose ears the
+  # build broke - fails here instead of at a director's first call.
+  local ears="$dir/voice-signals"
+  if [ -x "$ears" ]; then
+    say "voice-signals selftest"
+    HOME=$(fresh_home) expect_ok "voice-signals selftest" 240 "$ears" selftest
+  else
+    fail "$ears is not there: the Rust ears must ship beside the editor"
+  fi
 }
 
 container() {

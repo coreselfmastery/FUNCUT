@@ -76,6 +76,12 @@ concat                         -     -     ~1000  -          -
 # covers it until the first CI run prints its real count.
 concat-motion-agent            -     -     ~1000  -          -
 
+# The director's Rust ears, built from the same tree as the motion CLI:
+# pure Rust, no GPU and no third-party kernels, so the same provisional
+# compiler-made BMI limit covers it until the first CI run prints its
+# real count.
+voice-signals                  -     -     ~1000  -          -
+
 # The motion sidecar, a prebuilt third-party binary staged beside the
 # editor: its kernels are its own business, picked by asking the CPU at
 # run time the way FFmpeg's are, so the vector classes are not limited.

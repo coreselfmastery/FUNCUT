@@ -16,6 +16,7 @@ package() {
   install -Dm755 "$stage/concat" "$pkgdir/opt/concat/concat"
   install -Dm755 "$stage/geneva" "$pkgdir/opt/concat/geneva"
   install -Dm755 "$stage/concat-motion-agent" "$pkgdir/opt/concat/concat-motion-agent"
+  install -Dm755 "$stage/voice-signals" "$pkgdir/opt/concat/voice-signals"
   install -d "$pkgdir/opt/concat/lib"
   cp -a "$stage"/lib/. "$pkgdir/opt/concat/lib/"
 
@@ -24,6 +25,8 @@ package() {
   chmod 755 "$pkgdir/usr/bin/concat"
   printf '#!/bin/sh\nexec /opt/concat/concat-motion-agent "$@"\n' > "$pkgdir/usr/bin/concat-motion-agent"
   chmod 755 "$pkgdir/usr/bin/concat-motion-agent"
+  printf '#!/bin/sh\nexec /opt/concat/voice-signals "$@"\n' > "$pkgdir/usr/bin/voice-signals"
+  chmod 755 "$pkgdir/usr/bin/voice-signals"
   # The motion sidecar beside the executable, where Geneva::discover looks.
   ln -s /opt/concat/geneva "$pkgdir/usr/bin/geneva"
   install -Dm644 "$stage/concat.desktop" "$pkgdir/usr/share/applications/concat.desktop"

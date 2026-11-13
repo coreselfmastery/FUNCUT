@@ -41,6 +41,14 @@ contents:
     dst: /opt/concat/concat-motion-agent
     file_info:
       mode: 0755
+  # The director's Rust ears, found beside the executable through the
+  # FUNCUT_VOICE_SIGNALS_BIN pin the MCP sense layer sets. Without it a
+  # packaged install's voice readings note the prosody, forensic,
+  # speaker and NER ears' absence.
+  - src: voice-signals
+    dst: /opt/concat/voice-signals
+    file_info:
+      mode: 0755
   - src: lib/*
     dst: /opt/concat/lib/
   - src: pkg/concat
@@ -49,6 +57,10 @@ contents:
       mode: 0755
   - src: pkg/concat-motion-agent
     dst: /usr/bin/concat-motion-agent
+    file_info:
+      mode: 0755
+  - src: pkg/voice-signals
+    dst: /usr/bin/voice-signals
     file_info:
       mode: 0755
   - src: pkg/concat.desktop

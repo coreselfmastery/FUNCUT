@@ -112,6 +112,14 @@ fn python() -> String {
         .unwrap_or_else(|_| if cfg!(windows) { "python" } else { "python3" }.to_owned())
 }
 
+/// The Rust ears' binary beside an executable, when it is there: the
+/// same place every bundle stages it and the Geneva sidecar. Pure, so a
+/// test can drive it with a made-up folder.
+pub(crate) fn voice_signals_beside(exe: &Path) -> Option<std::path::PathBuf> {
+    let beside = exe.parent()?.join("voice-signals");
+    beside.is_file().then_some(beside)
+}
+
 /// Take down every process in `leader`'s group. std cannot signal a
 /// group, and this stays out of libc's dependency tree by asking the
 /// shell's own `kill` instead - POSIX, no shell involved, the same binary
@@ -171,6 +179,19 @@ pub(crate) fn run_py(
         .stdin(Stdio::piped())
         .stdout(Stdio::from(out_file))
         .stderr(Stdio::from(err_file));
+    // The Rust ears' binary ships beside the executable in every bundle
+    // (AppImage, .deb, .rpm, Arch), the way the Geneva sidecar does. The
+    // Python bridge looks for it through FUNCUT_VOICE_SIGNALS_BIN first,
+    // so the pin is handed over when the binary is there and the caller
+    // has not pinned one of their own - and the prosody, forensic,
+    // speaker and NER readings answer instead of noting their absence.
+    if std::env::var_os("FUNCUT_VOICE_SIGNALS_BIN").is_none() {
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(beside) = voice_signals_beside(&exe) {
+                command.env("FUNCUT_VOICE_SIGNALS_BIN", beside);
+            }
+        }
+    }
     // A process group of its own, so a timeout can take the sidecar's
     // ffmpeg grandchildren down with it: an overlay encode left alive
     // would burn CPU for minutes after the tool had already given up.
@@ -2555,5 +2576,30 @@ mod tests {
         );
         // An unknown family is refused too.
         assert!(sense_family_action("nope", json!({ "action": "x" })).is_err());
+    }
+
+    /// The Rust ears' pin: a `voice-signals` beside the executable is
+    /// found, and nothing else is - the bundle stages it exactly there,
+    /// beside the Geneva sidecar, and the bridge honours the pin first.
+    #[test]
+    fn the_rust_ears_are_pinned_beside_the_executable() {
+        let dir = std::env::temp_dir().join(format!(
+            "concat-ears-pin-{}-{}",
+            std::process::id(),
+            NONCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&dir).expect("the folder is made");
+        let exe = dir.join("concat");
+        std::fs::write(&exe, b"binary").expect("the executable is written");
+        assert!(
+            super::voice_signals_beside(&exe).is_none(),
+            "no ears beside an executable that has none"
+        );
+        std::fs::write(dir.join("voice-signals"), b"binary").expect("the ears are written");
+        let found = super::voice_signals_beside(&exe).expect("the ears are found");
+        assert_eq!(found, dir.join("voice-signals"));
+        // A pathless executable is not a crash.
+        assert!(super::voice_signals_beside(Path::new("concat")).is_none());
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

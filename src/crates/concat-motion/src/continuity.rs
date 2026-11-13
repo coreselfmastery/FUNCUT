@@ -43,10 +43,16 @@ pub struct ManifestClip {
     /// The clip the search picked.
     pub clip_id: String,
     /// The clip's colour bias, -1.0 cool through +1.0 warm, as the
-    /// search's own measurement carries it.
-    pub color_temperature: f64,
-    /// How much moves, on the library's own motion scale.
-    pub motion: f64,
+    /// search's own measurement carries it. `None` is *not measured*:
+    /// absent and null both mean it, and an unmeasured clip is never
+    /// compared as if it were a neutral 0.0 - a fake reading that flags
+    /// real jumps beside it and invents ones that are not there.
+    pub color_temperature: Option<f64>,
+    /// How much moves, on the library's own motion scale. `None` is *not
+    /// measured*: the motion rules - a reversed travel, a clip under its
+    /// slot's floor - stand down for a clip nobody measured rather than
+    /// judge it as a stillness it may not have.
+    pub motion: Option<f64>,
     /// The way the clip's camera or subject travels.
     pub dominant_direction: TravelDirection,
     /// The shot's scale, as the plan named it.
@@ -63,8 +69,8 @@ impl Default for ManifestClip {
         ManifestClip {
             slot_id: String::new(),
             clip_id: String::new(),
-            color_temperature: 0.0,
-            motion: 0.0,
+            color_temperature: None,
+            motion: None,
             dominant_direction: TravelDirection::Static,
             shot_scale: ShotScale::Medium,
             category: String::new(),
@@ -204,24 +210,33 @@ pub fn check_continuity(manifest: &AssetManifest) -> Vec<Discontinuity> {
 
     // Colour, motion and scale are adjacency reads, pair by pair; the
     // flag lands on the second clip of the pair, because that is the one
-    // the editor would re-shoot or re-order.
+    // the editor would re-shoot or re-order. A reading either side of a
+    // pair did not measure stands the pair's rule down: the gate judges
+    // jumps it was shown, not guesses about numbers it was not.
     for pair in clips.windows(2) {
         let (a, b) = (&pair[0], &pair[1]);
-        let delta = a.color_temperature - b.color_temperature;
-        if delta >= ManifestClip::COLOUR_JUMP {
-            flags.push(Discontinuity {
-                slot_id: b.slot_id.clone(),
-                rule: ContinuityRule::Colour,
-                detail: format!(
-                    "slot `{}` is {delta:.1} cooler than slot `{}`, a warm-to-cool jump past the {:.1} threshold",
-                    b.slot_id, a.slot_id, ManifestClip::COLOUR_JUMP
-                ),
-                remedy: Remedy::Replace {
-                    avoid: format!("a clip cooler than slot `{}`'s", a.slot_id),
-                },
-            });
+        if let (Some(a_temperature), Some(b_temperature)) =
+            (a.color_temperature, b.color_temperature)
+        {
+            let delta = a_temperature - b_temperature;
+            if delta >= ManifestClip::COLOUR_JUMP {
+                flags.push(Discontinuity {
+                    slot_id: b.slot_id.clone(),
+                    rule: ContinuityRule::Colour,
+                    detail: format!(
+                        "slot `{}` is {delta:.1} cooler than slot `{}`, a warm-to-cool jump past the {:.1} threshold",
+                        b.slot_id, a.slot_id, ManifestClip::COLOUR_JUMP
+                    ),
+                    remedy: Remedy::Replace {
+                        avoid: format!("a clip cooler than slot `{}`'s", a.slot_id),
+                    },
+                });
+            }
         }
-        if a.dominant_direction.reverses(b.dominant_direction) {
+        if a.motion.is_some()
+            && b.motion.is_some()
+            && a.dominant_direction.reverses(b.dominant_direction)
+        {
             flags.push(Discontinuity {
                 slot_id: b.slot_id.clone(),
                 rule: ContinuityRule::Motion,
@@ -276,13 +291,15 @@ pub fn check_continuity(manifest: &AssetManifest) -> Vec<Discontinuity> {
     // the honest remedy may be the slot's - if stillness is wanted, the
     // slot can hold instead of shop.
     for clip in clips {
-        if clip.motion < clip.motion_min {
+        if let Some(motion) = clip.motion
+            && motion < clip.motion_min
+        {
             flags.push(Discontinuity {
                 slot_id: clip.slot_id.clone(),
                 rule: ContinuityRule::Static,
                 detail: format!(
                     "slot `{}`'s clip carries motion {} under the {} the slot asked for",
-                    clip.slot_id, clip.motion, clip.motion_min
+                    clip.slot_id, motion, clip.motion_min
                 ),
                 remedy: Remedy::DowngradeToHold,
             });
@@ -321,8 +338,8 @@ mod tests {
         ManifestClip {
             slot_id: slot_id.to_owned(),
             clip_id: format!("clip.{slot_id}"),
-            color_temperature: 0.0,
-            motion: 2.0,
+            color_temperature: Some(0.0),
+            motion: Some(2.0),
             dominant_direction: TravelDirection::Static,
             shot_scale: ShotScale::Medium,
             category: "city".into(),
@@ -353,9 +370,9 @@ mod tests {
     #[test]
     fn a_warm_to_cool_pair_is_flagged() {
         let mut warm = filled("warm");
-        warm.color_temperature = 0.8;
+        warm.color_temperature = Some(0.8);
         let mut cool = filled("cool");
-        cool.color_temperature = -0.6;
+        cool.color_temperature = Some(-0.6);
         cool.shot_scale = ShotScale::CloseUp;
         cool.category = "ocean".into();
         let flags = check_continuity(&AssetManifest {
@@ -368,11 +385,11 @@ mod tests {
 
         // Half the scale is the threshold; a nudge is not a jump.
         let mut nudge = filled("nudge");
-        nudge.color_temperature = 0.4;
+        nudge.color_temperature = Some(0.4);
         nudge.shot_scale = ShotScale::CloseUp;
         nudge.category = "ocean".into();
         let warm = ManifestClip {
-            color_temperature: 0.8,
+            color_temperature: Some(0.8),
             ..filled("warm")
         };
         let flags = check_continuity(&AssetManifest {
@@ -395,11 +412,11 @@ mod tests {
     fn a_clean_manifest_returns_an_empty_list() {
         let mut a = filled("a");
         a.shot_scale = ShotScale::Wide;
-        a.color_temperature = 0.3;
+        a.color_temperature = Some(0.3);
         a.dominant_direction = TravelDirection::Right;
         let mut b = filled("b");
         b.shot_scale = ShotScale::CloseUp;
-        b.color_temperature = 0.1;
+        b.color_temperature = Some(0.1);
         b.category = "ocean".into();
         b.dominant_direction = TravelDirection::Right;
         b.motion_min = 1.0;
@@ -501,7 +518,7 @@ mod tests {
     #[test]
     fn a_clip_under_its_own_floor_is_flagged_as_static() {
         let mut still = filled("still");
-        still.motion = 0.2;
+        still.motion = Some(0.2);
         still.motion_min = 1.0;
         let flags = check_continuity(&AssetManifest { clips: vec![still] });
         assert_eq!(flags.len(), 1, "{flags:?}");
@@ -509,6 +526,52 @@ mod tests {
         assert_eq!(flags[0].slot_id, "still");
         assert_eq!(flags[0].remedy, Remedy::DowngradeToHold);
         assert!(flags[0].detail.contains("0.2 under the 1"), "{flags:?}");
+    }
+
+    /// An unmeasured reading is not a neutral one: a clip whose colour
+    /// or motion was never measured stands its rules down instead of
+    /// being compared as if it were 0.0 - the fake neutral that flagged
+    /// real jumps beside it and invented stillness it did not have.
+    #[test]
+    fn an_unmeasured_clip_is_never_judged_as_a_fake_neutral() {
+        // A warm clip beside one nobody measured: no colour jump, because
+        // there is no second reading to jump from.
+        let mut warm = filled("warm");
+        warm.color_temperature = Some(0.8);
+        warm.shot_scale = ShotScale::Wide;
+        let mut unmeasured = filled("unmeasured");
+        unmeasured.color_temperature = None;
+        unmeasured.shot_scale = ShotScale::CloseUp;
+        unmeasured.category = "ocean".into();
+        let flags = check_continuity(&AssetManifest {
+            clips: vec![warm, unmeasured.clone()],
+        });
+        assert!(flags.is_empty(), "{flags:?}");
+
+        // The same clip, motion unmeasured under a floor the slot set: the
+        // stillness rule stands down - `None` is not 0.0.
+        let mut floored = unmeasured;
+        floored.motion = None;
+        floored.motion_min = 1.0;
+        let flags = check_continuity(&AssetManifest {
+            clips: vec![floored],
+        });
+        assert!(flags.is_empty(), "{flags:?}");
+
+        // And a reversal either side of an unmeasured clip is not judged
+        // either: the motion rule needs both readings.
+        let mut left = filled("left");
+        left.dominant_direction = TravelDirection::Left;
+        left.shot_scale = ShotScale::Wide;
+        let mut blind = filled("blind");
+        blind.motion = None;
+        blind.dominant_direction = TravelDirection::Right;
+        blind.shot_scale = ShotScale::CloseUp;
+        blind.category = "ocean".into();
+        let flags = check_continuity(&AssetManifest {
+            clips: vec![left, blind],
+        });
+        assert!(flags.is_empty(), "{flags:?}");
     }
 
     /// The gate reads the manifest in its given order, and the wire shape

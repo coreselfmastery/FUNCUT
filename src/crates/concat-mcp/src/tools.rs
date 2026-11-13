@@ -5036,6 +5036,17 @@ mod tests {
         fn call(&mut self, request: Request) -> Result<Value, ApiError> {
             let written = serde_json::to_value(&request).expect("writes");
             self.0.borrow_mut().push(written.clone());
+            // The rerank's availability ask, answered as a machine with
+            // the model in place: the search then runs its second half.
+            if matches!(request, Request::OpenvidStatus) {
+                return Ok(json!({
+                    "state": "ready",
+                    "percent": 100,
+                    "rows": self.1.len(),
+                    "measured": 0,
+                    "rerank": { "available": true, "dir": "/models", "files": [] }
+                }));
+            }
             let limit = written["limit"].as_u64().unwrap_or(RANK_POOL as u64) as usize;
             let clips: Vec<Value> = self.1.iter().take(limit).cloned().collect();
             Ok(json!({ "total": self.1.len(), "clips": clips }))
@@ -5290,22 +5301,27 @@ mod tests {
         assert!(!outcome.is_error);
         let reply = outcome.structured.expect("structured");
 
-        // The fetch is the hundred the widening promised, with the hard
-        // filters riding under their API names.
+        // The availability ask, then one search: every clip carries a
+        // localPath, so the CLIP half needs no openvid.fetch round trips.
         let calls = backend.0.borrow();
-        assert_eq!(calls.len(), 1, "one search; the localPaths need no fetches");
-        assert_eq!(calls[0]["method"], "openvid.search");
         assert_eq!(
-            calls[0]["limit"],
+            calls.len(),
+            2,
+            "the status ask, then one search; the localPaths need no fetches"
+        );
+        assert_eq!(calls[0]["method"], "openvid.status");
+        assert_eq!(calls[1]["method"], "openvid.search");
+        assert_eq!(
+            calls[1]["limit"],
             json!(RANK_POOL),
             "the fetch is as wide as the pool"
         );
         assert_eq!(
-            calls[0]["excludeIds"],
+            calls[1]["excludeIds"],
             json!([1, 2, 3]),
             "the used ids ride the request"
         );
-        assert_eq!(calls[0]["minMotion"], 1.5, "the floor rides the request");
+        assert_eq!(calls[1]["minMotion"], 1.5, "the floor rides the request");
 
         // The filters held ahead of the ranking: the excluded ids and the
         // two under the floor are gone from the page the blend scored.

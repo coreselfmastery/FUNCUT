@@ -568,11 +568,11 @@ fn build_voiceover_sibling(
     // every run gets a fresh project and an earlier edit is never
     // overwritten. The canvas matches the source project's.
     let video = timeline.video;
-    let folder = std::path::Path::new(session.path())
+    let folder = source_root
         .parent()
         .map(std::path::Path::to_path_buf)
         .ok_or_else(|| t("forge.needProject"))?;
-    let stem = std::path::Path::new(session.path())
+    let stem = source_root
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("funcut")
@@ -716,7 +716,7 @@ fn build_voiceover_sibling(
         let mut mapping = serde_json::Map::new();
         mapping.insert(
             "schema".to_owned(),
-            serde_json::Value::string("funcut.voiceover-mapping/1"),
+            serde_json::json!("funcut.voiceover-mapping/1"),
         );
         mapping.insert(
             "segments".to_owned(),

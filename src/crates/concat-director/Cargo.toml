@@ -1,0 +1,17 @@
+[package]
+name = "concat-director"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The auto-edit runner: the state machine, the progress events, the cancellation with rollback and the retry contract an unattended edit needs, for the AUTO EDIT tool that will stand on it."
+
+[dependencies]
+# The run's records cross to whoever is watching as JSON - the same
+# camelCase wire the API's own events speak.
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

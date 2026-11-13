@@ -315,6 +315,41 @@ pub fn semantic_rerank(arguments: &Value, mut found: Value, backend: &mut dyn Ba
     let Some(query) = query else {
         return found;
     };
+    // The rerank cannot run without its model, and a model that is not
+    // installed must not be paid for: fetching fifty candidate videos
+    // for a second pass that can only report its own absence is minutes
+    // of network for a page that keeps its BM25 order anyway.
+    // `openvid.status` names whether the two ONNX files are in place -
+    // the same directories rerank.py looks in, so what this asks is what
+    // the script itself would find - and the page answers with the BM25
+    // order and the reason before a single byte moves. A status that
+    // cannot be asked is not a verdict: the optimistic path keeps the
+    // old fetch-then-find-out behaviour for backends that do not speak
+    // for the model.
+    let rerank_ready = request("openvid.status", json!({}))
+        .and_then(|status| backend.call(status))
+        .ok()
+        .and_then(|reply| {
+            reply
+                .get("rerank")
+                .and_then(|rerank| rerank.get("available"))
+                .and_then(Value::as_bool)
+        })
+        .unwrap_or(true);
+    if !rerank_ready {
+        if let Some(slot) = found.as_object_mut() {
+            slot.insert(
+                "rerank".into(),
+                json!({
+                    "applied": false,
+                    "reason": "the vision rerank model is not installed - openvid_status names \
+                               where its two files go; the BM25 order stands, and \
+                               stock_contact_sheet is the way to look at the page",
+                }),
+            );
+        }
+        return found;
+    }
     let page: Vec<Value> = found
         .get("clips")
         .and_then(Value::as_array)
@@ -2301,6 +2336,65 @@ mod tests {
         fn describe(&self) -> Value {
             json!({ "mode": "test" })
         }
+    }
+
+    /// A backend that answers `openvid.status` with the rerank model
+    /// missing, and refuses every fetch: the availability gate must keep
+    /// a single byte from moving when the second pass cannot run.
+    struct NoRerankModel {
+        fetches: usize,
+    }
+
+    impl Backend for NoRerankModel {
+        fn call(&mut self, request: Request) -> Result<Value, ApiError> {
+            match request {
+                Request::OpenvidStatus => Ok(json!({
+                    "state": "ready",
+                    "percent": 100,
+                    "rows": 937_957,
+                    "measured": 0,
+                    "rerank": { "available": false, "dir": "/models/mobileclip2-s0", "files": [] }
+                })),
+                Request::OpenvidFetch { .. } => {
+                    self.fetches += 1;
+                    Err(ApiError::failed(
+                        "a fetch must not happen when the rerank model is missing",
+                    ))
+                }
+                other => Err(ApiError::failed(format!("unexpected {other:?}"))),
+            }
+        }
+        fn describe(&self) -> Value {
+            json!({ "mode": "test" })
+        }
+    }
+
+    #[test]
+    fn a_missing_rerank_model_is_found_before_any_fetch() {
+        // A relevance page long enough to reach the rerank (the tiny-page
+        // early-out keeps ten or fewer untouched), against a backend whose
+        // model is absent: the gate must answer before the fetch loop.
+        let arguments = json!({ "query": "a face lit by cold screen glow", "sort": "relevance" });
+        let clips: Vec<Value> = (0..12)
+            .map(|id| json!({ "id": id, "caption": format!("clip {id}"), "seconds": 3.0 }))
+            .collect();
+        let found = json!({ "total": 12, "clips": clips });
+        let mut backend = NoRerankModel { fetches: 0 };
+        let ranked = super::semantic_rerank(&arguments, found.clone(), &mut backend);
+        assert_eq!(
+            backend.fetches, 0,
+            "no candidate video is fetched when the model is missing"
+        );
+        assert_eq!(ranked["rerank"]["applied"], false);
+        assert!(
+            ranked["rerank"]["reason"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("not installed"),
+            "the reason names the missing model: {ranked}"
+        );
+        // The BM25 page is the answer, unchanged.
+        assert_eq!(ranked["clips"], found["clips"]);
     }
 
     #[test]

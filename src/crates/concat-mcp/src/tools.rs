@@ -5036,6 +5036,17 @@ mod tests {
         fn call(&mut self, request: Request) -> Result<Value, ApiError> {
             let written = serde_json::to_value(&request).expect("writes");
             self.0.borrow_mut().push(written.clone());
+            // The rerank's availability ask, answered as a machine with
+            // the model in place: the search then runs its second half.
+            if matches!(request, Request::OpenvidStatus) {
+                return Ok(json!({
+                    "state": "ready",
+                    "percent": 100,
+                    "rows": self.1.len(),
+                    "measured": 0,
+                    "rerank": { "available": true, "dir": "/models", "files": [] }
+                }));
+            }
             let limit = written["limit"].as_u64().unwrap_or(RANK_POOL as u64) as usize;
             let clips: Vec<Value> = self.1.iter().take(limit).cloned().collect();
             Ok(json!({ "total": self.1.len(), "clips": clips }))
@@ -5290,11 +5301,18 @@ mod tests {
         assert!(!outcome.is_error);
         let reply = outcome.structured.expect("structured");
 
-        // The fetch is the hundred the widening promised, with the hard
-        // filters riding under their API names.
+        // The availability ask, then one search: every clip carries a
+        // localPath, so the CLIP half needs no openvid.fetch round trips.
+        // The search comes first - the rank's BM25 page - and the status
+        // ask is the rerank's, before it would fetch a single frame.
         let calls = backend.0.borrow();
-        assert_eq!(calls.len(), 1, "one search; the localPaths need no fetches");
+        assert_eq!(
+            calls.len(),
+            2,
+            "one search, then the status ask; the localPaths need no fetches"
+        );
         assert_eq!(calls[0]["method"], "openvid.search");
+        assert_eq!(calls[1]["method"], "openvid.status");
         assert_eq!(
             calls[0]["limit"],
             json!(RANK_POOL),

@@ -1239,6 +1239,7 @@ impl Tool {
 
 /// What a tool call came to: MCP content, and whether it is an error the
 /// agent should read and correct.
+#[derive(Debug)]
 pub struct Outcome {
     /// The content blocks.
     pub content: Vec<Value>,
@@ -6138,8 +6139,9 @@ mod tests {
         );
         // Past 1.5 s the gap is dead air, and stays the hard error it
         // always was.
-        let mut dead_air = breath;
+        let mut dead_air = breath.clone();
         dead_air["segments"][1]["start"] = json!(4.0);
+        dead_air["segments"][1]["end"] = json!(5.8);
         assert!(validate_edit_plan(&dead_air).unwrap_err().contains("gap"));
         // A plan that fits together still refuses the word-synced caption
         // shape, naming the door that does it right.

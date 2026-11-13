@@ -19,7 +19,7 @@ the **Request** enum (`#[serde(rename = "media.import")]`, taking `path` and
 ever pushed when a file lands in a project's bin.
 
 THE LIMITATION (and why this script polls)
--------------------------------------------
+------------------------------------------
 Because `media.import` is a request and no notification announces it, this
 script cannot subscribe to imports. It polls the project's media list
 (`project_get`) every 2 seconds and diffs the replies by media id, and a new
@@ -33,18 +33,36 @@ saying out loud:
 
 THE PIPELINE (in order; each phase logged; any failure stops the run)
 ---------------------------------------------------------------------
-1.  `transcribe`            words and timings from the voiceover
-2.  `voice_signals`         measured pauses, emphasis and delivery
-3.  `emotion`               emotional read of the narration
-4.  `plan_validate`         schema, creative readiness and signal-driven gate
-5.  `project_get`           find or import the voiceover and place it on its own lane
-6.  `openvid_rank_for_slot` each timed B-roll segment, with duration checks
-7.  `footage_continuity`    check the selected clips; replace flagged shots once
-8.  `openvid_import`        import and place stock at the segment start; trim
-9.  `motion_reel`           render supplied text/title storyboards
-10. `media_import` + `clip_add` place motion movies on a dedicated top lane
-11. `export_start` + `export_wait` render and wait for a terminal job state
-12. `watch_render` + `craft_critique` inspect the actual output and score it
+0.  `concat_version` + the session's tool list: the handshake that says the
+    server this plan needs is the server that answered
+1.  `local_vlm` status: which critic tier will score the cut, said up front
+2.  `enhance_speech` + `remove_hiss_hum_rumble`: the take is repaired before
+    anything reads it, and every later phase runs on the repaired file
+3.  `transcribe` words and timings from the repaired voiceover
+4.  `voice_signals` measured pauses, emphasis and delivery
+5.  `emotion` emotional read of the narration
+6.  `footage_plan_suggest` dialogue gaps and monotony runs, cross-checked
+    against the plan's B-roll coverage
+7.  `detect_music_segments` the BGM gate: a take that already carries music
+    gets no bed stacked under it (`identify_music` logged for the
+    copyright record when it does)
+8.  `plan_validate` schema, creative readiness and the signal-driven gate -
+    including the runner's own evidence check that the signalLog cites
+    signals the take actually measured
+9.  `project_get` find or import the repaired voiceover, place it on its own
+    lane, apply the plan's `speed`
+10. `openvid_rank_for_slot` each timed B-roll segment, with duration checks
+11. `stock_contact_sheet` the chosen candidates, seen before import
+12. `footage_continuity` check the selected clips; replace flagged shots once
+13. `openvid_import` import and place stock at the segment start; trim
+14. `clip_update`/`keyframe_set` the plan's transitions and entrances
+15. the plan's grade, captions, SFX and BGM, each only where the plan asks
+16. `collision_check` + `timeline_read` the timeline is sane before export
+17. `export_start` + `export_wait` render and wait for a terminal job state
+18. `transcribe` + `emotion (verify)` the export says the words it should
+19. `measure_loudness` LUFS and true peak, measured and asserted - a plan's
+    target is a wish, this is the measurement
+20. `watch_render` + `craft_critique` inspect the actual output and score it
 
 The watcher is an execution layer, not a topic-to-plan author: the Director
 agent must supply a validated canonical edit plan. A craft score below 7
@@ -54,6 +72,10 @@ The calls go through the editor's MCP server over stdio (newline-delimited
 JSON-RPC 2.0 - `tools/call`), the same surface the funcut-director skill
 drives; `--mcp-command` says how it is started, and defaults to
 `concat --mcp auto`.
+
+The server is started with a minimal environment (see `_server_env`): a
+caller's PYTHONPATH, LD_LIBRARY_PATH or proxy variables are not the server's
+to inherit, and a missing HOME is given one that exists.
 """
 from __future__ import annotations
 
@@ -63,14 +85,68 @@ import os
 import shlex
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Any
 
 POLL_SECONDS = 2.0
 
+# The tools this pipeline cannot run without. The handshake fails fast,
+# naming every one that is missing, instead of letting the run die three
+# phases later inside a call the plan never could have made.
+REQUIRED_TOOLS = frozenset({
+    "transcribe", "analysis_wait", "voice_signals", "emotion",
+    "plan_validate", "project_get", "track_add", "clip_add",
+    "openvid_rank_for_slot", "footage_continuity", "openvid_import",
+    "media_import", "clip_trim", "export_start", "export_wait",
+    "measure_loudness", "watch_render", "craft_critique",
+})
+
+# The tools the enrichment phases call when the server has them: an older
+# server skips the phase with a logged line, a newer one runs it. A plan
+# that asks for one of these (captions, SFX, BGM, a grade, a speed change,
+# a transition, an entrance) makes its phase's tool required instead - the
+# export must not silently lack what the plan promised.
+ENRICHMENT_TOOLS = frozenset({
+    "concat_version", "local_vlm", "footage_plan_suggest",
+    "stock_contact_sheet", "detect_music_segments", "identify_music",
+    "enhance_speech", "remove_hiss_hum_rumble", "sounds_search",
+    "sounds_add", "bgm_status", "bgm_search", "bgm_import",
+    "clip_speed", "clip_update", "keyframe_set", "captions_add",
+    "clip_audio_levels_db", "collision_check", "timeline_read",
+    "normalize_loudness", "effect_layer_add",
+})
+
+# Calls that may be retried when the failure sounds like the network's
+# side of the contract, not the tool's: reads, searches and analyses, and
+# the three repair writes (which target a fixed `out` path with overwrite,
+# so a retry lands on the same file). Mutating timeline calls are never
+# retried - an ambiguous clip_add must stop, not double-place.
+RETRYABLE_TOOLS = frozenset({
+    "transcribe", "analysis_wait", "project_get", "plan_validate",
+    "voice_signals", "emotion", "concat_version", "local_vlm",
+    "footage_plan_suggest", "stock_contact_sheet", "detect_music_segments",
+    "identify_music", "measure_loudness", "watch_render", "craft_critique",
+    "sounds_search", "bgm_status", "bgm_search", "bgm_fetch",
+    "openvid_search", "openvid_search_batch", "openvid_rank_for_slot",
+    "openvid_get", "openvid_status", "timeline_read", "collision_check",
+    "effects_list", "enhance_speech", "remove_hiss_hum_rumble",
+    "normalize_loudness",
+})
+
+_RETRYABLE_MARKERS = (
+    "timeout", "timed out", "unreachable", "connection", "reset",
+    "temporarily", "broken pipe", "502", "504", "try again",
+)
+
 
 class PipelineError(RuntimeError):
     """A phase failed: the run stops here, later phases never start."""
+
+
+def _is_retryable(message: str) -> bool:
+    lowered = message.lower()
+    return any(marker in lowered for marker in _RETRYABLE_MARKERS)
 
 
 def log(message: str) -> None:
@@ -80,6 +156,44 @@ def log(message: str) -> None:
 
 
 # ---------------------------------------------------------------- transports
+
+
+def _server_env() -> dict[str, str]:
+    """The environment the MCP server is started with: minimal on purpose.
+
+    A server that inherits the caller's whole environment inherits the
+    caller's accidents: a PYTHONPATH that finds different Python packages,
+    an LD_LIBRARY_PATH that finds different FFmpeg libraries, proxy
+    variables that make downloads fail differently on a machine that never
+    needed them. What the server needs is a PATH to find python3 and
+    ffmpeg, a HOME that exists (model discovery dies without one), a locale
+    that Whisper's language detection can rely on, and every FUNCUT_*
+    pin the operator set. FUNCUT_KEEP_ENV=1 keeps the caller's environment
+    whole, for the operator who means it.
+    """
+    if os.environ.get("FUNCUT_KEEP_ENV"):
+        return dict(os.environ)
+    env: dict[str, str] = {
+        "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+        "LANG": "C.UTF-8",
+    }
+    home = os.environ.get("HOME")
+    if home and os.path.isdir(home):
+        env["HOME"] = home
+    else:
+        # A HOME that does not exist is a server that cannot find its
+        # models and cannot say why; give it one that exists.
+        fallback = os.path.join(tempfile.gettempdir(), "funcut-home")
+        os.makedirs(fallback, exist_ok=True)
+        env["HOME"] = fallback
+        log(f"server HOME {home!r} is unset or missing; using {fallback}")
+    for name in ("TZ",):
+        if name in os.environ:
+            env[name] = os.environ[name]
+    for name, value in os.environ.items():
+        if name.startswith(("FUNCUT_", "CONCAT_")) or name == "OPENVID_INDEX_PATH":
+            env[name] = value
+    return env
 
 
 class McpStdio:
@@ -93,6 +207,7 @@ class McpStdio:
             stdout=subprocess.PIPE,
             text=True,
             bufsize=1,
+            env=_server_env(),
         )
 
     def _send(self, payload: dict[str, Any]) -> None:
@@ -142,8 +257,39 @@ class McpStdio:
             raise PipelineError(f"initialize refused: {reply['error']}")
         self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
 
-    def call(self, tool: str, arguments: dict[str, Any]) -> Any:
-        """One `tools/call`; a tool error is a failure, not a None."""
+    def request(self, method: str, params: dict[str, Any]) -> Any:
+        """One arbitrary JSON-RPC request, for the surfaces `tools/call`
+        does not cover - `tools/list` above all."""
+        reply_id = self._next_id
+        self._next_id += 1
+        self._send({"jsonrpc": "2.0", "id": reply_id, "method": method,
+                    "params": params})
+        reply = self._receive(reply_id)
+        if "error" in reply:
+            raise PipelineError(f"{method}: {reply['error'].get('message')}")
+        return reply.get("result")
+
+    def available_tools(self) -> frozenset[str]:
+        """The names the server actually serves, straight from tools/list.
+
+        The contract this pipeline runs on is the server's own list, not a
+        count remembered from a build: a tool that is not served is a
+        phase that is skipped with a logged line (or, where the plan needs
+        it, a refusal that names it), never a call that fails three
+        phases later for a reason the handshake could have said.
+        """
+        try:
+            result = self.request("tools/list", {})
+        except PipelineError as error:
+            log(f"tools/list refused ({error}); assuming the full surface")
+            return frozenset(REQUIRED_TOOLS | ENRICHMENT_TOOLS)
+        names: set[str] = set()
+        for tool in (result or {}).get("tools", []):
+            if isinstance(tool, dict) and isinstance(tool.get("name"), str):
+                names.add(tool["name"])
+        return frozenset(names)
+
+    def _call_once(self, tool: str, arguments: dict[str, Any]) -> Any:
         reply_id = self._next_id
         self._next_id += 1
         self._send(
@@ -164,6 +310,25 @@ class McpStdio:
             )
             raise PipelineError(f"{tool}: {text or 'the tool failed'}")
         return _content_json(result)
+
+    def call(self, tool: str, arguments: dict[str, Any]) -> Any:
+        """One `tools/call`; a tool error is a failure, not a None.
+
+        A failure that sounds like the network's side of the contract -
+        the transport's own timeouts, a fetch the CDN refused - is retried
+        twice with a little patience, for the calls where a retry is safe
+        to make. Everything else stops the run with the tool's own words.
+        """
+        attempts = 3 if tool in RETRYABLE_TOOLS else 1
+        for attempt in range(attempts):
+            try:
+                return self._call_once(tool, arguments)
+            except PipelineError as error:
+                if attempt + 1 >= attempts or not _is_retryable(str(error)):
+                    raise
+                log(f"{tool}: {error}; retrying ({attempt + 2}/{attempts})")
+                time.sleep(2.0 * (attempt + 1))
+        raise PipelineError(f"{tool}: the call did not answer")
 
     def close(self) -> None:
         if self._child.stdin is not None:
@@ -197,6 +362,14 @@ class MockMcp:
 
     def start(self) -> None:
         pass
+
+    def request(self, method: str, params: dict[str, Any]) -> Any:
+        if method == "tools/list":
+            return {"tools": [{"name": name} for name in self.replies]}
+        return None
+
+    def available_tools(self) -> frozenset[str]:
+        return frozenset(self.replies)
 
     def call(self, tool: str, arguments: dict[str, Any]) -> Any:
         self.calls.append((tool, arguments))
@@ -263,13 +436,31 @@ def _walk_dicts(value: Any):
 
 
 def _clip_for_media(view: Any, media_id: str, start: float) -> dict[str, Any] | None:
+    """The clip a placement made, found by its media and where it starts.
+
+    A clip whose start is the placement's own start wins outright - the
+    media may sit on the timeline several times, and the one that begins
+    exactly here is the one this import just placed. Among the rest, the
+    nearest start wins, and equal distances break on the clip id, so the
+    answer never depends on the order the view happened to list them in.
+    """
     candidates = [
         item for item in _walk_dicts(view)
         if (item.get("mediaId") or item.get("media")) == media_id and isinstance(item.get("id"), str)
         and isinstance(item.get("duration"), (int, float))
         and isinstance(item.get("start"), (int, float))
     ]
-    return min(candidates, key=lambda item: abs(float(item["start"]) - start), default=None)
+    if not candidates:
+        return None
+    exact = [
+        item for item in candidates
+        if abs(float(item["start"]) - start) <= 0.001
+    ]
+    pool = exact or candidates
+    return min(
+        pool,
+        key=lambda item: (abs(float(item["start"]) - start), str(item.get("id", ""))),
+    )
 
 
 def _direction(camera: Any) -> str:
@@ -284,26 +475,92 @@ def _direction(camera: Any) -> str:
     return "static"
 
 
+def _clip_int_id(value: Any, slot: str) -> int:
+    """A clip id as the importer takes it: an integer, or a string of
+    digits - never a guess, never a silent skip."""
+    if isinstance(value, bool):
+        raise PipelineError(f"{slot}: clip id {value!r} is not an integer id")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+        return int(value.strip())
+    raise PipelineError(f"{slot}: clip id {value!r} is not an integer id the importer takes")
+
+
+def _reply_file(reply: Any) -> str | None:
+    """The file a repair wrote, wherever the reply carries it."""
+    if not isinstance(reply, dict):
+        return None
+    for key in ("file", "out", "path", "output"):
+        value = reply.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
+def _signal_family(name: str) -> str:
+    """A cited signal's family: `pause.class=dead_air` names `pause`."""
+    return str(name).split(".")[0].split("[")[0].strip()
+
+
+_SIGNAL_ALIASES = {
+    # The confidence map spells some families the reply's own way.
+    "pauses": "pause",
+    "sentencetype": "sentence",
+    "wordconfidence": "words",
+}
+
+
+def _measured_families(voice: Any) -> set[str]:
+    """The signal families the take actually measured, from the
+    voice_signals reply's own confidence map: a family the reading
+    answered with confidence is a family the plan may cite."""
+    families: set[str] = set()
+    if not isinstance(voice, dict):
+        return families
+    per_signal = (voice.get("signalConfidence") or {})
+    per_signal = per_signal.get("perSignal", per_signal) if isinstance(per_signal, dict) else []
+    if isinstance(per_signal, list):
+        for entry in per_signal:
+            if not isinstance(entry, dict):
+                continue
+            if float(entry.get("confidence") or 0.0) > 0.0 and entry.get("name"):
+                family = _signal_family(str(entry["name"])).lower()
+                families.add(_SIGNAL_ALIASES.get(family, family))
+    return families
+
+
 # --------------------------------------------------------------- the pipeline
 
 
 def phase_plan(plan: dict[str, Any]) -> list[tuple[str, str]]:
     """Describe the real segment-based execution order for the run log."""
     phases = [
+        ("concat_version", "the session's own version, and its tool list"),
+        ("local_vlm", "which critic tier will score the cut"),
+        ("enhance_speech", "repair the take before anything reads it"),
+        ("remove_hiss_hum_rumble", "clean the repaired take's floor"),
         ("transcribe", "start source transcription"),
         ("analysis_wait", "wait for source transcription"),
         ("voice_signals", "voice_signals"),
         ("emotion", "emotion (extract)"),
+        ("footage_plan_suggest", "cross-check B-roll coverage against the gaps"),
+        ("detect_music_segments", "the BGM gate: does the take carry music"),
         ("plan_validate", "plan_validate (before timeline edits)"),
         ("project_get", "read the project bin and active timeline"),
         ("track_add", "create a dedicated voiceover lane when needed"),
         ("clip_add", "place the voiceover when it is not already on the timeline"),
     ]
+    voiceover = (plan.get("audio") or {}).get("voiceover") or {}
+    if isinstance(voiceover, dict) and isinstance(voiceover.get("speed"), (int, float)) \
+            and float(voiceover["speed"]) != 1.0:
+        phases.append(("clip_speed", "apply the plan's voiceover speed"))
     phases.extend(
         ("openvid_rank_for_slot", f"rank B-roll segment {index + 1}")
         for index, _ in broll_segments(plan)
     )
     if broll_segments(plan):
+        phases.append(("stock_contact_sheet", "see the chosen B-roll candidates"))
         phases.append(("footage_continuity", "footage_continuity and repair"))
         phases.extend(
             ("openvid_import", f"import and place B-roll segment {index + 1}")
@@ -312,6 +569,16 @@ def phase_plan(plan: dict[str, Any]) -> list[tuple[str, str]]:
         phases.extend(
             ("clip_trim", f"trim B-roll segment {index + 1}")
             for index, _ in broll_segments(plan)
+        )
+        phases.extend(
+            ("clip_update", f"the transition into segment {index + 1}")
+            for index, segment in broll_segments(plan)
+            if isinstance(segment.get("transitionIn"), dict)
+        )
+        phases.extend(
+            ("keyframe_set", f"the entrance of segment {index + 1}")
+            for index, segment in broll_segments(plan)
+            if isinstance(segment.get("in"), dict)
         )
     placed_existing = [
         (index, segment) for index, segment in existing_segments(plan)
@@ -336,12 +603,36 @@ def phase_plan(plan: dict[str, Any]) -> list[tuple[str, str]]:
             ("clip_add", f"place existing source segment {index + 1}"),
             ("clip_trim", f"trim existing source segment {index + 1}"),
         ])
+    if isinstance(plan.get("grade"), dict) and plan["grade"].get("filter"):
+        phases.append(("effect_layer_add", "the plan's grade"))
+    captions_wanted = isinstance(plan.get("captions"), dict) or any(
+        segment.get("captions") for _, segment in enumerate(plan_segments(plan))
+    )
+    if captions_wanted:
+        phases.append(("captions_add", "the plan's captions"))
+    for index, segment in enumerate(plan_segments(plan)):
+        if isinstance(segment.get("sfx"), dict):
+            phases.extend([
+                ("sounds_search", f"shop SFX for segment {index + 1}"),
+                ("sounds_add", f"place SFX for segment {index + 1}"),
+                ("clip_audio_levels_db", f"gain the SFX of segment {index + 1}"),
+            ])
+    if isinstance((plan.get("audio") or {}).get("bgm"), dict):
+        phases.extend([
+            ("bgm_status", "the music library's state"),
+            ("bgm_search", "shop the music bed"),
+            ("bgm_import", "place the music bed"),
+            ("clip_audio_levels_db", "duck the bed under the words"),
+        ])
     phases.extend([
+        ("collision_check", "no two clips share a lane's same seconds"),
+        ("timeline_read", "the timeline as it stands, before export"),
         ("export_start", "export"),
         ("export_wait", "wait for completed export"),
         ("transcribe", "start exported speech transcription"),
         ("analysis_wait", "wait for exported speech transcription"),
         ("emotion", "compare source and rendered speech timing"),
+        ("measure_loudness", "the export's LUFS and true peak, measured"),
         ("watch_render", "inspect rendered frames and audio"),
         ("craft_critique", "score the rendered cut"),
     ])
@@ -369,7 +660,69 @@ def run_pipeline(
         done.append((tool, arguments))
         return reply
 
-    source_job = advance("transcribe", {"path": audio})
+    # ---- 0. The handshake: the server says what it is and what it serves.
+    served = transport.available_tools()
+    missing = REQUIRED_TOOLS - served
+    if missing:
+        raise PipelineError(
+            "the server does not serve tools this pipeline cannot run "
+            f"without: {', '.join(sorted(missing))}"
+        )
+    if "concat_version" in served:
+        version = advance("concat_version", {})
+        if isinstance(version, dict):
+            log(f"server: {json.dumps(version, ensure_ascii=False)[:200]}")
+
+    # ---- 1. Which critic will score the cut, said before the cut exists.
+    if "local_vlm" in served:
+        vlm = advance("local_vlm", {"action": "status"})
+        if isinstance(vlm, dict):
+            tier = vlm.get("tier") or vlm.get("status") or vlm.get("state")
+            log(f"critic tier: {tier} (ranking and critique lean on this)")
+
+    # ---- 2. The take is repaired before anything reads it: every later
+    # reading, and the timeline's own voiceover, run on the repaired file.
+    repaired = audio
+    if "enhance_speech" in served:
+        enhanced_out = os.path.join(project, "voiceover-enhanced.wav")
+        reply = advance("enhance_speech", {
+            "audio": audio, "out": enhanced_out, "overwrite": True,
+        })
+        enhanced_file = _reply_file(reply)
+        if enhanced_file:
+            repaired = enhanced_file
+            if isinstance(reply, dict):
+                measured = {
+                    key: reply[key] for key in
+                    ("noiseFloorDbfs", "snrDb", "integratedLufs", "before", "after")
+                    if reply.get(key) is not None
+                }
+                if measured:
+                    log(f"enhance_speech: {json.dumps(measured, ensure_ascii=False)}")
+        else:
+            log("enhance_speech returned no file; analysis continues on the take as recorded")
+    if "remove_hiss_hum_rumble" in served and repaired:
+        cleaned_out = os.path.join(project, "voiceover-cleaned.wav")
+        reply = advance("remove_hiss_hum_rumble", {
+            "audio": repaired, "out": cleaned_out, "overwrite": True,
+        })
+        cleaned_file = _reply_file(reply)
+        if cleaned_file:
+            repaired = cleaned_file
+        else:
+            log("remove_hiss_hum_rumble returned no file; the enhanced take ships as cleaned")
+    if repaired != audio:
+        log(f"voiceover repaired: {repaired} (the bin's original stays untouched)")
+    audio = repaired
+
+    # ---- 3-5. The readings, on the repaired take.
+    transcribe_args: dict[str, Any] = {"path": audio}
+    glossary = ((plan.get("audio") or {}).get("voiceover") or {}).get("glossary")
+    if isinstance(glossary, str) and glossary.strip():
+        # The spelling the whole run keeps: the proper nouns and jargon
+        # the recogniser mishears, named before the first window.
+        transcribe_args["initialPrompt"] = glossary.strip()[:200]
+    source_job = advance("transcribe", transcribe_args)
     source_job_id = source_job.get("job") if isinstance(source_job, dict) else None
     if not source_job_id:
         raise PipelineError(f"transcribe did not start a source job: {source_job}")
@@ -389,13 +742,77 @@ def run_pipeline(
     if not isinstance(transcript, dict) or not isinstance(transcript.get("segments"), list):
         raise PipelineError("source transcription returned no timed segments")
     voice = advance("voice_signals", {"audio": audio, "transcript": transcript})
+    if isinstance(voice, dict):
+        if voice.get("status") == "degraded":
+            for note in voice.get("degradations") or []:
+                log(f"voice_signals degraded: {note}")
+        elif voice.get("status"):
+            log("voice_signals: every ear that could run did")
     emotion = advance(
         "emotion", {"action": "extract", "transcript": transcript, "project": project}
     )
     if isinstance(emotion, dict) and emotion.get("arc") is not None:
         log(f"voice emotion arc: {json.dumps(emotion['arc'], ensure_ascii=False)}")
 
-    # Gate all plan and voice-signal readiness before changing the timeline.
+    # ---- 6. The footage planner's own read: the gaps and monotony runs
+    # the plan's B-roll should answer, cross-checked against its coverage.
+    if "footage_plan_suggest" in served:
+        footage_plan = advance("footage_plan_suggest", {
+            "transcript": {"segments": transcript.get("segments", [])},
+        })
+        if isinstance(footage_plan, dict):
+            gaps = footage_plan.get("gaps") or []
+            suggestions = footage_plan.get("suggestions") or []
+            log(
+                f"footage plan: {len(gaps)} gap(s), {len(suggestions)} span(s) "
+                f"wanting B-roll"
+            )
+            covered = [
+                (float(segment["start"]), float(segment["end"]))
+                for _, segment in broll_segments(plan)
+            ]
+            for gap in gaps:
+                if not isinstance(gap, dict):
+                    continue
+                start = gap.get("startMs")
+                end = gap.get("endMs")
+                if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+                    continue
+                if (end - start) < 2000:
+                    continue
+                answered = any(
+                    b_start <= start / 1000.0 + 0.25 and b_end >= end / 1000.0 - 0.25
+                    for b_start, b_end in covered
+                )
+                if not answered:
+                    log(
+                        f"footage plan: a {int(end - start)} ms gap at "
+                        f"{start / 1000.0:.2f}s carries no B-roll segment"
+                    )
+
+    # ---- 7. The BGM gate, before any bed is shopped: a take that already
+    # carries music gets no bed stacked under it. detect_music_segments is
+    # the authoritative answer; where it cannot speak, the gate stays open
+    # and says so.
+    bgm_allowed = True
+    if "detect_music_segments" in served:
+        music = advance("detect_music_segments", {"audio": audio})
+        present = music.get("musicPresent") if isinstance(music, dict) else None
+        if present is True:
+            bgm_allowed = False
+            log("music gate: the take already carries music - no bed will be stacked")
+            if "identify_music" in served:
+                identified = advance("identify_music", {"audio": audio})
+                if isinstance(identified, dict):
+                    log(
+                        "identify_music: "
+                        + json.dumps(identified, ensure_ascii=False)[:300]
+                    )
+        elif present is None:
+            log("music gate: detect_music_segments answered nothing; treating the take as speech")
+
+    # ---- 8. Gate all plan and voice-signal readiness before changing the
+    # timeline - and prove the log's citations against the measurement.
     validation = advance("plan_validate", {"plan": plan})
     if not isinstance(validation, dict) or validation.get("valid") is not True:
         raise PipelineError(
@@ -411,7 +828,27 @@ def run_pipeline(
     if isinstance(signal_log, dict) and signal_log.get("driven") is False:
         raise PipelineError(
             "the plan's signalLog is not driven by the measured voice: "
-            + json.dumps(signal_log.get("blockers", []), ensure_ascii=False)
+            + json.dumps(signal_log.get("blockers", signal_log.get("problems", [])), ensure_ascii=False)
+        )
+    if isinstance(signal_log, dict) and len(plan_segments(plan)) > 1:
+        coverage = signal_log.get("coverage")
+        if isinstance(coverage, (int, float)) and float(coverage) < 0.5:
+            raise PipelineError(
+                f"the plan's signalLog covers {float(coverage):.0%} of its cuts; "
+                "a log that thin is a decoration, not a decision record"
+            )
+    cited: set[str] = set()
+    for entry in plan.get("signalLog") or []:
+        if isinstance(entry, dict):
+            for name in entry.get("signals") or []:
+                if isinstance(name, str):
+                    cited.add(_signal_family(name).lower())
+    measured = _measured_families(voice)
+    if cited and measured and not (cited & measured):
+        raise PipelineError(
+            "the plan's signalLog cites " + ", ".join(sorted(cited))
+            + ", but the measured take answered none of them: "
+            "the log was written against a reading that never happened"
         )
 
     # Fail on incomplete visual contracts before the first timeline edit.
@@ -446,6 +883,8 @@ def run_pipeline(
     # The voiceover is a real timeline asset, not just an analysis input.
     # Reuse its imported media/clip when present; otherwise import it and
     # place it on a dedicated bottom lane before cutting measured dead air.
+    # The repaired file is what the timeline carries: the export must not
+    # ship the noise the repair removed.
     view = advance("project_get", {"path": project})
     if not isinstance(view, dict):
         raise PipelineError("project_get returned no project view")
@@ -458,7 +897,10 @@ def run_pipeline(
         )
         if audio_item is None:
             raise PipelineError(f"the watched audio media id {audio_media_id} is no longer in the project bin")
-    else:
+        # The bin's original is the analysis input; the timeline still
+        # carries the repaired take when the repair produced one.
+        audio_media_id = None
+    if not audio_media_id:
         audio_item = next(
             (
                 item for item in media
@@ -568,6 +1010,16 @@ def run_pipeline(
             if not isinstance(audio_clip_id, str) or not audio_clip_id:
                 raise PipelineError("clip_add did not return the placed voiceover clip id")
 
+    # The plan's voiceover speed, applied to the placed clip: the plan's
+    # segment times are the final (sped) timebase, so the placements that
+    # follow are unaffected - only the voiceover's own length changes.
+    voiceover = (plan.get("audio") or {}).get("voiceover") or {}
+    if isinstance(voiceover, dict) and "clip_speed" in served:
+        speed = voiceover.get("speed")
+        if isinstance(speed, (int, float)) and not isinstance(speed, bool) and float(speed) != 1.0:
+            advance("clip_speed", {"path": project, "clipId": audio_clip_id, "speed": float(speed)})
+            log(f"voiceover speed {float(speed):g}x applied to clip {audio_clip_id}")
+
     log(f"voiceover ready on timeline: clip {audio_clip_id}; timing remains unchanged by the runner")
 
     # Rank one unique candidate per actual timed B-roll segment.
@@ -602,16 +1054,16 @@ def run_pipeline(
                     "exclude_ids": list(excluded),
                 },
             )
-            clips = reply.get("clips", []) if isinstance(reply, dict) else []
-            if not clips:
+            clips_found = reply.get("clips", []) if isinstance(reply, dict) else []
+            if not clips_found:
                 break
-            candidate = clips[0]
+            candidate = clips_found[0]
             clip_id = candidate.get("id")
             seconds = candidate.get("seconds")
             if isinstance(seconds, (int, float)) and seconds + 0.05 < target_duration:
                 log(f"{slot_id}: rejecting {candidate.get('name', clip_id)}; {seconds:.2f}s is shorter than the {target_duration:.2f}s beat")
-                if isinstance(clip_id, int):
-                    excluded.append(clip_id)
+                if isinstance(clip_id, (int, str)) and not isinstance(clip_id, bool):
+                    excluded.append(_clip_int_id(clip_id, slot_id))
                 candidate = None
                 continue
             break
@@ -622,55 +1074,60 @@ def run_pipeline(
         chosen[slot_id] = candidate
         slot_segments[slot_id] = (index, segment)
         clip_id = candidate.get("id")
-        if isinstance(clip_id, int):
-            excluded.append(clip_id)
+        if isinstance(clip_id, (int, str)) and not isinstance(clip_id, bool):
+            excluded.append(_clip_int_id(clip_id, slot_id))
+
+    # See the chosen candidates before anything is fetched: the contact
+    # sheet is the approval record, and its path is logged for review.
+    if chosen and "stock_contact_sheet" in served:
+        ids = []
+        for slot_id, clip in chosen.items():
+            try:
+                ids.append(_clip_int_id(clip.get("id"), slot_id))
+            except PipelineError as error:
+                log(f"stock_contact_sheet skipped: {error}")
+                ids = []
+                break
+        if ids:
+            sheet = advance("stock_contact_sheet", {"ids": ids, "rank": True})
+            if isinstance(sheet, dict) and sheet.get("pngPath"):
+                log(f"B-roll contact sheet: {sheet['pngPath']}")
+            else:
+                log("stock_contact_sheet returned no sheet; importing without a visual approval record")
 
     # Continuity reads measured library metadata. Replace flagged shots once
     # with the remedy's avoid hint; never silently pretend unknown metadata
-    # (colour/scale) was measured.
+    # (colour/scale) was measured - an unmeasured reading is omitted, and
+    # the gate stands its rules down for it rather than judge a fake 0.0.
     if chosen:
         def continuity_manifest() -> list[dict[str, Any]]:
             result = []
             for slot_id, clip in chosen.items():
                 index, segment = slot_segments[slot_id]
                 visual = segment["visual"]
-                result.append({
+                entry: dict[str, Any] = {
                     "slotId": slot_id,
                     "clipId": str(clip.get("id", clip.get("name", slot_id))),
-                    "colorTemperature": float(clip.get("colorTemperature", 0.0)),
-                    "motion": float(clip.get("motion", 0.0)),
                     "dominantDirection": _direction(clip.get("camera")),
                     "shotScale": visual.get("shotScale", "medium"),
                     "category": str(visual.get("category") or clip.get("category") or clip.get("source") or "unknown"),
                     "motionMin": float(visual.get("motionMin") or 0.0),
-                })
+                }
+                # Only a measured reading is a reading: colour and motion
+                # the search did not carry are left out entirely, never
+                # written as a 0.0 that continuity would read as neutral.
+                for key in ("colorTemperature", "motion"):
+                    value = clip.get(key)
+                    if isinstance(value, (int, float)) and not isinstance(value, bool):
+                        entry[key] = float(value)
+                result.append(entry)
             return result
 
-        continuity = advance("footage_continuity", {"clips": continuity_manifest()})
-        flags = continuity.get("flags", []) if isinstance(continuity, dict) else []
-        for flag in flags:
-            slot_id = flag.get("slotId")
-            remedy = flag.get("remedy", {})
-            replace = remedy.get("replace") if isinstance(remedy, dict) else None
-            if not isinstance(slot_id, str) or slot_id not in chosen:
-                continue
-            if not isinstance(replace, dict):
-                if isinstance(remedy, dict) and "downgrade_to_graphic" in remedy:
-                    index, segment = slot_segments[slot_id]
-                    if isinstance(segment["visual"].get("storyboard"), dict):
-                        segment["visual"]["type"] = "textCard"
-                        chosen.pop(slot_id, None)
-                        slot_segments.pop(slot_id, None)
-                        log(f"{slot_id}: continuity downgraded the shot to its authored motion storyboard")
-                        continue
-                raise PipelineError(
-                    f"continuity requires a treatment this runner cannot safely execute for {slot_id}: "
-                    + json.dumps(flag, ensure_ascii=False)
-                )
+        def attempt_replace(slot_id: str, avoid: str) -> None:
             index, segment = slot_segments[slot_id]
             visual = segment["visual"]
-            avoid = str(replace.get("avoid") or "the previous shot's look")
             old_id = chosen[slot_id].get("id")
+            old_int = _clip_int_id(old_id, slot_id) if old_id is not None else None
             retry = advance(
                 "openvid_rank_for_slot",
                 {
@@ -678,7 +1135,7 @@ def run_pipeline(
                     "queries": visual.get("queries") or [visual.get("query")],
                     "hero": bool(visual.get("hero", False)),
                     "motion_min": visual.get("motionMin"),
-                    "exclude_ids": list(set(excluded + ([old_id] if isinstance(old_id, int) else []))),
+                    "exclude_ids": list(dict.fromkeys(excluded + ([old_int] if old_int is not None else []))),
                 },
             )
             alternatives = retry.get("clips", []) if isinstance(retry, dict) else []
@@ -695,8 +1152,48 @@ def run_pipeline(
                 )
             chosen[slot_id] = alternatives[0]
             new_id = alternatives[0].get("id")
-            if isinstance(new_id, int):
-                excluded.append(new_id)
+            if new_id is not None:
+                excluded.append(_clip_int_id(new_id, slot_id))
+
+        continuity = advance("footage_continuity", {"clips": continuity_manifest()})
+        flags = continuity.get("flags", []) if isinstance(continuity, dict) else []
+        for flag in flags:
+            slot_id = flag.get("slotId")
+            remedy = flag.get("remedy", {})
+            replace = remedy.get("replace") if isinstance(remedy, dict) else None
+            if not isinstance(slot_id, str) or slot_id not in chosen:
+                continue
+            if isinstance(replace, dict):
+                avoid = str(replace.get("avoid") or "the previous shot's look")
+                attempt_replace(slot_id, avoid)
+                continue
+            # A downgrade the plan can honour: an authored storyboard
+            # becomes the graphic, whatever the remedy's exact flavour.
+            if isinstance(remedy, dict) and (
+                "downgrade_to_graphic" in remedy or "downgrade_to_hold" in remedy
+            ):
+                index, segment = slot_segments[slot_id]
+                if isinstance(segment["visual"].get("storyboard"), dict):
+                    segment["visual"]["type"] = "textCard"
+                    chosen.pop(slot_id, None)
+                    slot_segments.pop(slot_id, None)
+                    log(f"{slot_id}: continuity downgraded the shot to its authored motion storyboard")
+                    continue
+                log(
+                    f"{slot_id}: continuity asked for a downgrade with no authored "
+                    "storyboard to downgrade to; replacing the shot instead"
+                )
+                attempt_replace(slot_id, str(flag.get("detail") or "the previous shot's look"))
+                continue
+            # A remedy this runner has never met: the honest move is a
+            # replacement away from what the flag describes, not a crash
+            # that throws away a fixable cut.
+            log(
+                f"{slot_id}: continuity remedy "
+                f"{json.dumps(remedy, ensure_ascii=False)} is not one this runner "
+                "knows by name; replacing the flagged shot"
+            )
+            attempt_replace(slot_id, str(flag.get("detail") or "the previous shot's look"))
         if flags:
             second = advance("footage_continuity", {"clips": continuity_manifest()})
             remaining = second.get("flags", []) if isinstance(second, dict) else []
@@ -706,14 +1203,16 @@ def run_pipeline(
                     + json.dumps(remaining, ensure_ascii=False)
                 )
 
-    # Import and place each chosen source at its segment's real timeline start.
+    # Import and place each chosen source at its segment's real timeline
+    # start, with the plan's own trim honoured beside the segment's length.
+    placed_clip_ids: list[str] = []
     for slot_id, clip in chosen.items():
         index, segment = slot_segments[slot_id]
         start_at = float(segment["start"])
         target_duration = float(segment["end"]) - start_at
         imported = advance(
             "openvid_import",
-            {"path": project, "ids": [int(clip["id"])], "start": start_at},
+            {"path": project, "ids": [_clip_int_id(clip["id"], slot_id)], "start": start_at},
         )
         media_ids = imported.get("mediaIds", []) if isinstance(imported, dict) else []
         if not media_ids:
@@ -744,6 +1243,7 @@ def run_pipeline(
                     "ripple": False,
                 },
             )
+        placed_clip_ids.append(str(placed["id"]))
         log(
             f"{slot_id}: imported {clip.get('name', clip['id'])} at {start_at:.2f}s "
             f"for {min(actual_duration, target_duration):.2f}s"
@@ -832,6 +1332,7 @@ def run_pipeline(
                     "ripple": False,
                 },
             )
+        placed_clip_ids.append(clip_id)
         log(f"segment-{index + 1}: rendered and placed motion at {start_at:.2f}s")
 
     # Place imported existing media on the same overlay lane. A supplied
@@ -895,13 +1396,327 @@ def run_pipeline(
                     "ripple": False,
                 },
             )
+        placed_clip_ids.append(clip_id)
         log(f"segment-{index + 1}: existing media placed at {start_at:.2f}s")
 
-    # A render is not complete until the export job reports a terminal state.
+    # The plan's cut vocabulary, applied to the placed clips: the
+    # transition into each segment, and the entrance/exit animations. The
+    # transition's duration is clamped to half the segment it enters, so
+    # a two-second beat never spends a full second dissolving.
+    runtime = max(
+        (float(segment["end"]) for segment in plan_segments(plan)), default=0.0
+    )
+    # The placed clip each B-roll segment owns, in the order the
+    # placements ran: the chosen list is slot-ordered, and the placements
+    # walked it in exactly that order.
+    slot_order: dict[str, int] = {
+        slot_id: order for order, slot_id in enumerate(slot_segments)
+    }
+    segment_clip_ids: dict[int, str] = {}
+    for index, segment in broll_segments(plan):
+        slot_id = str(segment.get("slotId") or f"segment-{index + 1}")
+        order = slot_order.get(slot_id)
+        if order is not None and order < len(placed_clip_ids):
+            segment_clip_ids[index] = placed_clip_ids[order]
+
+    def transition_arguments(segment: dict[str, Any]) -> dict[str, Any] | None:
+        transition = segment.get("transitionIn")
+        if not isinstance(transition, dict):
+            return None
+        effect = str(transition.get("effect") or "").strip()
+        if not effect:
+            return None
+        duration = float(segment["end"]) - float(segment["start"])
+        seconds = float(transition.get("seconds") or 0.0)
+        patch: dict[str, Any] = {"id": effect}
+        if seconds:
+            patch["duration"] = round(min(seconds, max(0.2, duration / 2.0)), 3)
+        return {"path": project, "patch": {"transitionIn": patch}}
+
+    def entrance_arguments(
+        clip_id: str, segment: dict[str, Any], duration: float
+    ) -> list[dict[str, Any]]:
+        """The keyframes an entrance/exit asks for, as clip-relative
+        (0-1) keys the engine understands. `static` is deliberate
+        stillness: it animates nothing, which is the point."""
+        keys: list[dict[str, Any]] = []
+
+        def key(property_name: str, at: float, value: float, seconds: float) -> None:
+            keys.append({
+                "path": project, "clipId": clip_id, "property": property_name,
+                "at": round(max(0.0, min(1.0, at)), 4),
+                "value": round(value, 4),
+            })
+
+        entrance = segment.get("in") if isinstance(segment.get("in"), dict) else None
+        if entrance and entrance.get("anim") not in (None, "static"):
+            seconds = float(entrance.get("seconds") or 0.25)
+            fraction = max(0.08, min(0.6, seconds / duration)) if duration > 0 else 0.25
+            anim = entrance.get("anim")
+            if anim == "pop":
+                key("scale", 0.0, 0.6, seconds); key("scale", fraction, 1.0, seconds)
+            elif anim == "punch":
+                key("scale", 0.0, 1.18, seconds); key("scale", fraction, 1.0, seconds)
+            elif anim == "slide":
+                key("offsetY", 0.0, 0.12, seconds); key("offsetY", fraction, 0.0, seconds)
+            elif anim == "dissolve":
+                key("opacity", 0.0, 0.0, seconds); key("opacity", fraction, 1.0, seconds)
+            elif anim == "whip":
+                key("opacity", 0.0, 0.0, seconds); key("opacity", fraction * 0.6, 1.0, seconds)
+        exit_read = segment.get("out") if isinstance(segment.get("out"), dict) else None
+        if exit_read and exit_read.get("anim") not in (None, "static"):
+            seconds = float(exit_read.get("seconds") or 0.25)
+            fraction = max(0.08, min(0.6, seconds / duration)) if duration > 0 else 0.25
+            anim = exit_read.get("anim")
+            if anim == "pop":
+                key("scale", 1.0 - fraction, 1.0, seconds); key("scale", 1.0, 0.6, seconds)
+            elif anim == "punch":
+                key("scale", 1.0 - fraction, 1.0, seconds); key("scale", 1.0, 1.18, seconds)
+            elif anim == "slide":
+                key("offsetY", 1.0 - fraction, 0.0, seconds); key("offsetY", 1.0, -0.12, seconds)
+            elif anim in ("dissolve", "whip"):
+                key("opacity", 1.0 - fraction, 1.0, seconds); key("opacity", 1.0, 0.0, seconds)
+        return keys
+
+    if "clip_update" in served:
+        for index, segment in broll_segments(plan):
+            arguments = transition_arguments(segment)
+            if arguments is None:
+                continue
+            clip_id = segment_clip_ids.get(index)
+            if clip_id is None:
+                continue
+            arguments["clipId"] = clip_id
+            advance("clip_update", arguments)
+            log(f"segment-{index + 1}: transition into the cut applied to clip {clip_id}")
+    if "keyframe_set" in served:
+        for index, segment in broll_segments(plan):
+            clip_id = segment_clip_ids.get(index)
+            if clip_id is None:
+                continue
+            duration = float(segment["end"]) - float(segment["start"])
+            for arguments in entrance_arguments(clip_id, segment, duration):
+                advance("keyframe_set", arguments)
+
+    # The plan's grade. `layer` is one effect layer over the whole runtime
+    # - with the duration written, because absent means five seconds and
+    # five seconds is the trap. `perClip` is the same chain on every
+    # placed clip. Either way the grade is applied, not admired.
+    grade = plan.get("grade") if isinstance(plan.get("grade"), dict) else None
+    if grade and grade.get("filter"):
+        apply_mode = str(grade.get("apply") or "layer")
+        if apply_mode == "layer" and "effect_layer_add" in served:
+            advance("effect_layer_add", {
+                "path": project,
+                "start": 0.0,
+                "duration": max(runtime, 0.1),
+                "effectId": str(grade["filter"]),
+                "name": "director-grade",
+                "trackId": None,
+            })
+            log(f"grade {grade['filter']} applied as one layer over {runtime:.2f}s")
+        elif "clip_update" in served and placed_clip_ids:
+            params = {}
+            if grade.get("intensity") is not None and grade.get("intensityKey"):
+                params[str(grade["intensityKey"])] = grade["intensity"]
+            patch = {"videoEffects": [{"id": str(grade["filter"]), "params": params}]}
+            for clip_id in placed_clip_ids:
+                advance("clip_update", {"path": project, "clipId": clip_id, "patch": patch})
+            log(f"grade {grade['filter']} applied to {len(placed_clip_ids)} placed clip(s)")
+        else:
+            log("the plan's grade cannot be applied: the server serves neither effect layers nor clip patches")
+
+    # The plan's captions, segment-timed from the transcript the runner
+    # measured: one caption a transcript segment, inside the plan's
+    # runtime, styled the way the plan asked. Word-synced kinetic
+    # captions are captions_animate's to bake, and stay the Director's
+    # call - this layer never invents the timing it was not given.
+    captions_plan = plan.get("captions") if isinstance(plan.get("captions"), dict) else None
+    captions_wanted = captions_plan is not None or any(
+        segment.get("captions") for segment in plan_segments(plan)
+    )
+    if captions_wanted:
+        if "captions_add" not in served:
+            raise PipelineError(
+                "the plan asks for captions and the server does not serve captions_add; "
+                "the export would silently lack them"
+            )
+        wanted_segments = [
+            segment for segment in plan_segments(plan)
+            if segment.get("captions") or (captions_plan is not None and not any(
+                s.get("captions") is False for s in [segment]
+            ))
+        ] if any(segment.get("captions") for segment in plan_segments(plan)) else plan_segments(plan)
+        timed = [
+            {"start": float(s["start"]), "end": float(s["end"]), "text": str(s.get("text") or "")}
+            for s in transcript.get("segments", [])
+            if isinstance(s, dict) and isinstance(s.get("start"), (int, float))
+            and isinstance(s.get("end"), (int, float))
+            and float(s["end"]) > float(s["start"])
+            and float(s["start"]) < runtime
+        ]
+        for caption in timed:
+            caption["end"] = min(caption["end"], runtime)
+        if timed:
+            style: dict[str, Any] = {"fontFamily": "Hanken Grotesk"}
+            if captions_plan is not None:
+                for key in ("fontSize", "fontWeight", "color", "background"):
+                    if captions_plan.get(key) is not None:
+                        style[key] = captions_plan[key]
+            offset_y = (captions_plan or {}).get("offsetY", 0.35)
+            advance("captions_add", {
+                "path": project,
+                "captions": timed,
+                "style": style,
+                "offsetY": float(offset_y) if isinstance(offset_y, (int, float)) else 0.35,
+            })
+            log(f"{len(timed)} segment-timed caption(s) placed")
+        else:
+            log("captions wanted, but the transcript carried no timed segments to caption")
+
+    # The plan's SFX: shopped from the CC0 shelf, placed so the sound's
+    # own peak lands on the planned beat (syncAt says where inside the
+    # file the peak is), and gained to the plan's dB.
+    for index, segment in enumerate(plan_segments(plan)):
+        sfx = segment.get("sfx")
+        if not isinstance(sfx, dict) or not str(sfx.get("query") or "").strip():
+            continue
+        if "sounds_search" not in served or "sounds_add" not in served:
+            raise PipelineError(
+                f"segment-{index + 1} asks for SFX and the server does not serve the "
+                "sound shelf; the export would silently lack them"
+            )
+        found = advance("sounds_search", {"query": str(sfx["query"]), "limit": 5})
+        rows = found.get("sounds", []) if isinstance(found, dict) else []
+        if not rows:
+            log(f"segment-{index + 1}: SFX {sfx['query']!r} found nothing on the shelf")
+            continue
+        sound = rows[0]
+        peak_at = sfx.get("peakAt")
+        sync_at = sound.get("syncAt")
+        start = float(segment["start"])
+        if isinstance(peak_at, (int, float)):
+            # The peak lands where the plan says: back the file's own
+            # lead-up out of the placement time.
+            start = max(0.0, float(peak_at) - float(sync_at if isinstance(sync_at, (int, float)) else 0.0))
+        added = advance("sounds_add", {"path": project, "id": sound.get("id"), "start": start})
+        sfx_clip = added.get("clipId") if isinstance(added, dict) else None
+        if not isinstance(sfx_clip, str) or not sfx_clip:
+            log(f"segment-{index + 1}: the sound was imported but not placed; no gain to set")
+            continue
+        gain = sfx.get("gainDb")
+        if isinstance(gain, (int, float)) and "clip_audio_levels_db" in served:
+            advance("clip_audio_levels_db", {
+                "path": project, "clipId": sfx_clip, "baseDb": float(gain),
+            })
+        log(f"segment-{index + 1}: SFX {sound.get('name', sound.get('id'))} placed at {start:.2f}s")
+
+    # The plan's music bed, under the words and ducked to them: only when
+    # the take itself carries no music, only from the libraries the plan
+    # named, and only when the library is actually present - a missing
+    # library is a logged absence, never a silent one.
+    bgm_plan = (plan.get("audio") or {}).get("bgm")
+    if isinstance(bgm_plan, dict) and str(bgm_plan.get("query") or bgm_plan.get("trackId") or "").strip():
+        if not bgm_allowed:
+            log("BGM skipped: the take already carries music (detect_music_segments said so)")
+        elif "bgm_status" not in served or "bgm_search" not in served or "bgm_import" not in served:
+            raise PipelineError(
+                "the plan asks for a music bed and the server does not serve the "
+                "music library; the export would silently lack it"
+            )
+        else:
+            status = advance("bgm_status", {})
+            state = status.get("state") if isinstance(status, dict) else None
+            if state != "ready":
+                log(f"BGM skipped: the music library is {state or 'unavailable'} (bgm_prepare was not run)")
+            else:
+                track_id = bgm_plan.get("trackId")
+                if not isinstance(track_id, str) or not track_id.strip():
+                    search = advance("bgm_search", {"query": str(bgm_plan.get("query") or ""), "limit": 5})
+                    tracks = search.get("tracks", []) if isinstance(search, dict) else []
+                    if not tracks:
+                        log(f"BGM skipped: no track answered {bgm_plan.get('query')!r}")
+                        tracks = []
+                    if tracks:
+                        track_id = str(tracks[0].get("id") or "")
+                        log(f"BGM: {tracks[0].get('title', track_id)}")
+                if track_id:
+                    imported = advance("bgm_import", {"path": project, "ids": [track_id], "start": 0.0})
+                    media_ids = imported.get("mediaIds", []) if isinstance(imported, dict) else []
+                    if not media_ids:
+                        raise PipelineError("bgm_import returned no media id for the bed")
+                    bed_view = imported.get("view") if isinstance(imported, dict) else None
+                    bed_clip = _clip_for_media(bed_view, str(media_ids[0]), 0.0)
+                    if bed_clip is None:
+                        bed_view = transport.call("project_get", {"path": project})
+                        bed_clip = _clip_for_media(bed_view, str(media_ids[0]), 0.0)
+                    if bed_clip is None:
+                        raise PipelineError("the music bed was imported but never placed on the timeline")
+                    bed_duration = max(float(bed_clip.get("duration") or runtime), 0.1)
+                    duck_db = float(bgm_plan.get("duckDb", -12.0))
+                    if "clip_audio_levels_db" in served:
+                        # The duck rides the measured speech spans: down
+                        # to duckDb under the words, back to unity between
+                        # them - keyframes at each boundary, at fractions
+                        # of the bed clip's own length.
+                        spans = [
+                            (float(s["start"]), float(s["end"]))
+                            for s in transcript.get("segments", [])
+                            if isinstance(s, dict)
+                            and isinstance(s.get("start"), (int, float))
+                            and isinstance(s.get("end"), (int, float))
+                        ]
+                        keyframes: list[dict[str, Any]] = []
+                        previous_end = 0.0
+                        for span_start, span_end in spans:
+                            if span_start > previous_end + 0.05:
+                                keyframes.append({"at": round(previous_end / bed_duration, 4), "gainDb": 0.0})
+                                keyframes.append({"at": round(min(span_start / bed_duration, 1.0), 4), "gainDb": duck_db})
+                            else:
+                                keyframes.append({"at": round(min(span_start / bed_duration, 1.0), 4), "gainDb": duck_db})
+                            previous_end = span_end
+                        if previous_end < runtime:
+                            keyframes.append({"at": round(min(previous_end / bed_duration, 1.0), 4), "gainDb": duck_db})
+                            keyframes.append({"at": 1.0, "gainDb": 0.0})
+                        if keyframes:
+                            advance("clip_audio_levels_db", {
+                                "path": project, "clipId": str(bed_clip["id"]),
+                                "baseDb": 0.0, "keyframes": keyframes,
+                                "replaceAutomation": True,
+                            })
+                            log(f"BGM ducked {duck_db:g} dB under {len(spans)} speech span(s)")
+
+    # The timeline as it stands, before the render pays for it: no two
+    # clips may share a lane's same seconds, and the read-back is the
+    # record of what is about to be exported.
+    if "collision_check" in served:
+        collisions = advance("collision_check", {"path": project})
+        if isinstance(collisions, dict) and collisions.get("clean") is False:
+            raise PipelineError(
+                "the timeline has collisions: "
+                + json.dumps(collisions.get("collisions", []), ensure_ascii=False)[:500]
+            )
+    if "timeline_read" in served:
+        read_back = advance("timeline_read", {"path": project})
+        if isinstance(read_back, dict):
+            read_clips = read_back.get("clips", [])
+            if isinstance(read_clips, list):
+                log(f"timeline read-back: {len(read_clips)} clip(s) before export")
+
+    # A render is not complete until the export job reports a terminal
+    # state. A previous good export is never overwritten: it is moved
+    # aside, stamped, before the new one writes.
     export = plan.get("export") if isinstance(plan.get("export"), dict) else {}
     output = export.get("output")
     if not isinstance(output, str) or not output.strip():
         output = os.path.join(project, f"funcut-final-{time.strftime('%Y%m%d-%H%M%S')}.mp4")
+    if os.path.exists(output):
+        backup = f"{output}.bak-{time.strftime('%Y%m%d-%H%M%S')}"
+        try:
+            os.replace(output, backup)
+            log(f"previous export moved aside: {backup}")
+        except OSError as error:
+            log(f"could not back up the previous export ({error}); the new one will overwrite it")
     started = advance(
         "export_start",
         {
@@ -962,7 +1777,7 @@ def run_pipeline(
             "action": "verify",
             "expected": transcript,
             "actual": exported_transcript,
-            "toleranceMs": 150,
+            "toleranceMs": 60,
         },
     )
     if not isinstance(verification, dict) or verification.get("verdict") != "pass":
@@ -972,8 +1787,60 @@ def run_pipeline(
         )
     log(
         f"speech verification passed: matchRate={verification.get('matchRate')} "
-        f"maxDriftMs={verification.get('maxDriftMs')}"
+        f"maxDriftMs={verification.get('maxDriftMs')} (tolerance 60 ms)"
     )
+
+    # The loudness the export actually carries, measured and asserted.
+    # The platform sets the target (short-form and YouTube sit at -14
+    # LUFS, broadcast at -23); a plan's number is a wish, this is the
+    # measurement. One normalize pass is attempted before refusing.
+    platform = str(export.get("platform") or "").lower()
+    target_lufs = -23.0 if platform in ("broadcast", "ebu") else -14.0
+    measured_loudness = advance(
+        "measure_loudness", {"path": rendered, "targetLufs": target_lufs}
+    )
+    if not isinstance(measured_loudness, dict) or measured_loudness.get("integratedLufs") is None:
+        raise PipelineError(
+            "measure_loudness returned no integrated LUFS; the export's loudness "
+            "is unproven: " + json.dumps(measured_loudness, ensure_ascii=False)
+        )
+    integrated = float(measured_loudness["integratedLufs"])
+    true_peak = measured_loudness.get("truePeakDbtp")
+    true_peak = float(true_peak) if isinstance(true_peak, (int, float)) else None
+    log(
+        f"loudness: {integrated:.1f} LUFS (target {target_lufs:g}), "
+        f"true peak {true_peak if true_peak is None else round(true_peak, 1)} dBTP"
+    )
+
+    def loudness_ok() -> bool:
+        return abs(integrated - target_lufs) <= 1.0 and (
+            true_peak is None or true_peak <= -1.0
+        )
+
+    if not loudness_ok() and "normalize_loudness" in served:
+        normalized_out = output[: -len(".mp4")] + "-normalized.mp4" if output.endswith(".mp4") else output + "-normalized"
+        normalized = advance("normalize_loudness", {
+            "audio": rendered, "out": normalized_out,
+            "overwrite": True, "targetLufs": target_lufs,
+        })
+        normalized_file = _reply_file(normalized)
+        if normalized_file:
+            rendered = normalized_file
+            measured_loudness = advance(
+                "measure_loudness", {"path": rendered, "targetLufs": target_lufs}
+            )
+            if isinstance(measured_loudness, dict) and measured_loudness.get("integratedLufs") is not None:
+                integrated = float(measured_loudness["integratedLufs"])
+                true_peak = measured_loudness.get("truePeakDbtp")
+                true_peak = float(true_peak) if isinstance(true_peak, (int, float)) else None
+                log(f"loudness after normalize: {integrated:.1f} LUFS, true peak "
+                    f"{true_peak if true_peak is None else round(true_peak, 1)} dBTP")
+    if not loudness_ok():
+        raise PipelineError(
+            f"the export carries {integrated:.1f} LUFS against the {target_lufs:g} target "
+            f"(true peak {true_peak if true_peak is None else round(true_peak, 1)} dBTP); "
+            "fix the mix with clip_audio_levels_db and measure again"
+        )
 
     inspection = advance(
         "watch_render",
@@ -981,11 +1848,15 @@ def run_pipeline(
             "path": rendered,
             "samples": 12,
             "audio": True,
+            "targetLufs": target_lufs,
             "out": os.path.join(project, "director-review.png"),
         },
     )
     if not isinstance(inspection, dict) or not inspection.get("pngPath"):
         raise PipelineError(f"render inspection did not produce a contact sheet: {inspection}")
+    for note in (inspection.get("notes") or [])[:5]:
+        if isinstance(note, str):
+            log(f"watch_render: {note}")
     critique = advance(
         "craft_critique",
         {"sheet": inspection, "project": project},
@@ -998,13 +1869,40 @@ def run_pipeline(
             "craft_critique returned no numeric overall score; the render cannot be certified: "
             + json.dumps(critique, ensure_ascii=False)
         )
+    if isinstance(critique, dict):
+        tier = critique.get("tier") or critique.get("engine")
+        confidence = critique.get("confidence")
+        log(
+            f"craft critique: {score}/10"
+            + (f" ({tier}, confidence {confidence})" if tier else "")
+        )
     if score < 7:
         raise PipelineError(
             f"rendered cut scored {score}/10; revision is required before publishing: "
             + json.dumps(critique, ensure_ascii=False)
         )
     log(f"pipeline complete: {len(done)} call(s); rendered {rendered}; craft score {score}")
+    _record_run(project, {
+        "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "status": "completed",
+        "calls": len(done),
+        "output": rendered,
+        "craftScore": score,
+        "lufs": integrated,
+    })
     return done
+
+
+def _record_run(project: str, entry: dict[str, Any]) -> None:
+    """The run history, one JSON line a run: what ran, where it stopped,
+    what it produced. The re-run question - did this already happen, and
+    what did it make - is answered from the file, not from memory."""
+    try:
+        path = os.path.join(project, ".auto-director-runs.jsonl")
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError as error:
+        log(f"run history not written ({error})")
 
 
 # ---------------------------------------------------------------- the watcher
@@ -1038,19 +1936,34 @@ def watch(transport: Any, project: str, plan: dict[str, Any], poll: float) -> No
     view = transport.call("project_get", {"path": project})
     known = media_ids(view)
     log(f"baseline: {len(known)} media item(s) already in the bin")
-    while True:
-        time.sleep(poll)
-        view = transport.call("project_get", {"path": project})
-        arrivals = new_audio(view, known)
-        known = media_ids(view)
-        for item in arrivals:
-            audio = item.get("path", "")
-            log(f"new audio: {audio}")
-            try:
-                run_pipeline(transport, project, audio, plan, str(item.get("id", "")) or None)
-            except PipelineError as error:
-                log(f"STOP: {error}")
-                log("the run stopped at its failure; nothing later ran")
+    try:
+        while True:
+            time.sleep(poll)
+            view = transport.call("project_get", {"path": project})
+            arrivals = new_audio(view, known)
+            known = media_ids(view)
+            for item in arrivals:
+                audio = item.get("path", "")
+                log(f"new audio: {audio}")
+                try:
+                    run_pipeline(transport, project, audio, plan, str(item.get("id", "")) or None)
+                except PipelineError as error:
+                    log(f"STOP: {error}")
+                    log("the run stopped at its failure; nothing later ran")
+                    _record_run(project, {
+                        "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                        "status": "failed",
+                        "audio": audio,
+                        "stop": str(error),
+                    })
+    except KeyboardInterrupt:
+        # A cancelled run leaves its partial state named, not guessed at:
+        # the log above says exactly which steps ran and which never did.
+        log("interrupted: the run stopped where it stood; the run log is the record")
+        _record_run(project, {
+            "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "status": "cancelled",
+        })
 
 
 # ----------------------------------------------------------------- self-test
@@ -1074,6 +1987,10 @@ SELF_TEST_PLAN = {
                 "description": "A slow aerial drift across a dense city skyline at dusk",
                 "motionMin": 1.0,
             },
+            "transitionIn": {"effect": "cross-fade", "seconds": 0.5},
+            "in": {"anim": "pop", "seconds": 0.3},
+            "sfx": {"query": "cinematic impact", "peakAt": 0.0, "gainDb": -6.0},
+            "captions": True,
         },
         {
             "start": 4.0,
@@ -1097,8 +2014,13 @@ SELF_TEST_PLAN = {
             "visual": {"type": "existing", "mediaId": "m-existing"},
         },
     ],
-    "audio": {"voiceover": {"source": "file"}},
+    "audio": {
+        "voiceover": {"source": "file", "speed": 1.2,
+                      "glossary": "FUNCUT, Kokoro, OpenVid"},
+        "bgm": {"query": "city night pulse", "duckDb": -14.0},
+    },
     "grade": {"filter": "concat.warm", "intensityKey": "amount", "intensity": 35},
+    "captions": {"fontSize": 0.05, "fontWeight": 700, "offsetY": 0.35},
     "creativeBrief": {
         "audience": "curious beginners",
         "platform": "youtube",
@@ -1116,6 +2038,12 @@ SELF_TEST_PLAN = {
 
 
 SELF_TEST_REPLIES = {
+    "concat_version": {"version": "0.2.8-funcut.12", "tools": 110},
+    "local_vlm": {"status": "heuristic", "installed": False},
+    "enhance_speech": {"ok": True, "file": "/tmp/funcut-selftest/voiceover-enhanced.wav",
+                       "noiseFloorDbfs": -22.7, "snrDb": 5.9},
+    "remove_hiss_hum_rumble": {"ok": True, "file": "/tmp/funcut-selftest/voiceover-cleaned.wav",
+                               "noiseFloorDbfs": -34.1},
     "transcribe": {"job": "speech-job"},
     "project_get": {
         "media": [
@@ -1138,24 +2066,41 @@ SELF_TEST_REPLIES = {
         'output': '{"segments":[{"text":"one","start":0.0,"end":1.0}]}',
     },
     "voice_signals": {
+        "status": "ok",
+        "degradations": [],
         "signals": {
             "pauses": [
                 {"class": "dead_air", "start": 1.2, "end": 2.4},
                 {"class": "dramatic_hold", "start": 4.0, "end": 5.1},
                 {"class": "dead_air", "start": 6.0, "end": 6.5},
             ]
-        }
+        },
+        "signalConfidence": {"perSignal": [
+            {"name": "pauses", "confidence": 0.75, "basis": "silencedetect"},
+            {"name": "emphasisWords", "confidence": 0.8, "basis": "token timestamps"},
+            {"name": "loudness", "confidence": 0.9, "basis": "ffmpeg ebur128"},
+        ]},
     },
     "emotion": lambda args: (
         {"verdict": "pass", "matchRate": 1.0, "maxDriftMs": 0.0}
         if args.get("action") == "verify"
         else {"lines": [{"text": "one", "emotion": "curious"}], "arc": ["curiosity", "clarity"]}
     ),
+    "footage_plan_suggest": {
+        "gapCount": 1,
+        "suggestionCount": 1,
+        "cutCount": 4,
+        "gaps": [{"startMs": 1000, "endMs": 4000, "topicTags": ["city"]}],
+        "suggestions": [{"kind": "dialogue_gap", "needBRoll": True}],
+        "cuts": [],
+    },
+    "detect_music_segments": {"musicPresent": False, "segments": []},
+    "identify_music": {"musicPresent": False},
     "plan_validate": {
         "valid": True,
         "creativeReady": True,
         "creativeBlockers": [],
-        "signalLog": {"driven": True, "blockers": []},
+        "signalLog": {"driven": True, "coverage": 1.0, "blockers": [], "problems": []},
         "craftScore": 8.0,
     },
     "openvid_rank_for_slot": {
@@ -1164,6 +2109,7 @@ SELF_TEST_REPLIES = {
             "source": "pexels", "seconds": 8.0, "slotRank": 1,
         }]
     },
+    "stock_contact_sheet": {"pngPath": "/tmp/funcut-selftest/broll.png", "samples": 1},
     "footage_continuity": {"count": 0, "flags": []},
     "openvid_import": {
         "mediaIds": ["m-stock-7"],
@@ -1177,20 +2123,63 @@ SELF_TEST_REPLIES = {
         },
     },
     "clip_trim": {"ok": True},
+    "clip_update": {"ok": True},
+    "keyframe_set": {"ok": True},
+    "clip_speed": {"ok": True},
+    "effect_layer_add": {"ok": True, "createdId": "l-grade"},
+    "captions_add": {"ok": True, "count": 1},
+    "sounds_search": {
+        "sounds": [{
+            "id": "impact-glass-heavy", "name": "Glass, heavy impact",
+            "category": "Impact", "duration": 1.4, "syncAt": 0.12,
+        }],
+        "total": 1,
+    },
+    "sounds_add": {"mediaId": "m-sfx", "clipId": "c-sfx"},
+    "clip_audio_levels_db": {"ok": True},
+    "bgm_status": {"state": "ready"},
+    "bgm_search": {
+        "tracks": [{"id": "lofi-0123456789ab", "title": "Night Pulse", "duration": 180.0}],
+        "total": 1,
+    },
+    "bgm_import": {
+        "mediaIds": ["m-bgm"],
+        "view": {
+            "timeline": {
+                "clips": [{
+                    "id": "c-bgm", "mediaId": "m-bgm",
+                    "start": 0.0, "duration": 180.0,
+                }]
+            }
+        },
+    },
+    "collision_check": {"count": 0, "clean": True, "collisions": []},
+    "timeline_read": {"clips": [{"id": "c-stock-7"}, {"id": "c-motion"}, {"id": "c-existing"}]},
     "track_add": lambda args: {"createdId": "t-voice" if args.get("bottom") else "t-motion"},
     "motion_reel": {"file": "/tmp/funcut-selftest/motion.mp4", "duration": 4.0},
-    "media_import": {"createdId": "m-motion"},
+    "media_import": lambda args: {
+        "createdId": (
+            "m-voice-cleaned" if "voiceover-cleaned" in str(args.get("file", ""))
+            else "m-motion"
+        )
+    },
     "clip_add": lambda args: {
         "createdId": (
-            "c-voice" if args.get("mediaId") == "m-voice"
+            "c-voice" if args.get("mediaId") == "m-voice-cleaned"
             else "c-existing" if args.get("mediaId") == "m-existing"
             else "c-motion"
         )
     },
     "export_start": {"job": "j1"},
     "export_wait": {"state": "done", "output": "/tmp/funcut-selftest/final.mp4"},
-    "watch_render": {"pngPath": "/tmp/funcut-selftest/contact.png", "samples": 12},
-    "craft_critique": {"overall": 8.5, "scores": {}, "notes": []},
+    "measure_loudness": {
+        "integratedLufs": -14.2, "truePeakDbtp": -1.4, "loudnessRangeLu": 6.0,
+        "targetLufs": -14.0, "lufsError": -0.2, "platformTargetMet": True,
+        "notes": [],
+    },
+    "watch_render": {"pngPath": "/tmp/funcut-selftest/contact.png", "samples": 12, "notes": []},
+    "craft_critique": {"overall": 8.5, "scores": {}, "notes": [], "tier": "heuristic",
+                       "confidence": 0.5},
 }
 
 
@@ -1202,13 +2191,22 @@ def self_test() -> int:
     by_tool = [(tool, args) for tool, args in calls]
     order = [tool for tool, _ in by_tool]
     expected = [
-        "transcribe", "analysis_wait", "voice_signals", "emotion", "plan_validate",
-        "project_get", "track_add", "clip_add",
-        "openvid_rank_for_slot", "footage_continuity", "openvid_import",
-        "clip_trim", "track_add", "motion_reel", "media_import", "clip_add",
-        "clip_add", "clip_trim",
+        "concat_version", "local_vlm",
+        "enhance_speech", "remove_hiss_hum_rumble",
+        "transcribe", "analysis_wait", "voice_signals", "emotion",
+        "footage_plan_suggest", "detect_music_segments", "plan_validate",
+        "project_get", "media_import", "track_add", "clip_add", "clip_speed",
+        "openvid_rank_for_slot", "stock_contact_sheet", "footage_continuity",
+        "openvid_import", "clip_trim",
+        "track_add", "motion_reel", "media_import", "clip_add", "clip_add", "clip_trim",
+        "clip_update", "keyframe_set", "keyframe_set",
+        "effect_layer_add",
+        "captions_add",
+        "sounds_search", "sounds_add", "clip_audio_levels_db",
+        "bgm_status", "bgm_search", "bgm_import", "clip_audio_levels_db",
+        "collision_check", "timeline_read",
         "export_start", "export_wait", "transcribe", "analysis_wait", "emotion",
-        "watch_render", "craft_critique",
+        "measure_loudness", "watch_render", "craft_critique",
     ]
     if order != expected:
         print(f"FAIL: phase order\n  want: {expected}\n  got:  {order}")
@@ -1221,7 +2219,7 @@ def self_test() -> int:
     )
     voice_placement = next(
         args for tool, args in by_tool
-        if tool == "clip_add" and args.get("mediaId") == "m-voice"
+        if tool == "clip_add" and args.get("mediaId") == "m-voice-cleaned"
     )
     if voice_track.get("path") != "/edits/SelfTest" or voice_placement.get("trackId") != "t-voice" or voice_placement.get("start") != 0.0:
         print(f"FAIL: voiceover was not placed on its own bottom lane: {voice_track}, {voice_placement}")
@@ -1229,7 +2227,20 @@ def self_test() -> int:
     if "clip_cut_spans" in order:
         print("FAIL: the runner changed voiceover timing behind the plan's back")
         return 1
-    print("voiceover ok: placed on its own lane without silently changing plan timing")
+    speed = next(args for tool, args in by_tool if tool == "clip_speed")
+    if speed.get("clipId") != "c-voice" or speed.get("speed") != 1.2:
+        print(f"FAIL: the plan's voiceover speed was not applied: {speed}")
+        return 1
+    print("voiceover ok: repaired take placed on its own lane, speed 1.2x applied, plan timing untouched")
+
+    transcribed = next(args for tool, args in by_tool if tool == "transcribe")
+    if transcribed.get("path") != "/tmp/funcut-selftest/voiceover-cleaned.wav":
+        print(f"FAIL: transcription did not read the repaired take: {transcribed}")
+        return 1
+    if transcribed.get("initialPrompt") != "FUNCUT, Kokoro, OpenVid":
+        print(f"FAIL: the glossary was not handed to the recogniser: {transcribed}")
+        return 1
+    print("repair ok: the readings and the timeline both run on the repaired, cleaned take")
 
     rank = next(args for tool, args in by_tool if tool == "openvid_rank_for_slot")
     if rank["description"] != "A slow aerial drift across a dense city skyline at dusk":
@@ -1239,13 +2250,31 @@ def self_test() -> int:
     if imported.get("ids") != [7] or imported.get("start") != 0.0:
         print(f"FAIL: selected footage was not imported at its segment start: {imported}")
         return 1
-    print("stock ok: ranked result 7 imported and placed at 0.0s")
+    sheet = next(args for tool, args in by_tool if tool == "stock_contact_sheet")
+    if sheet.get("ids") != [7] or sheet.get("rank") is not True:
+        print(f"FAIL: the chosen candidates were not seen before import: {sheet}")
+        return 1
+    print("stock ok: ranked, seen on a contact sheet, and imported at 0.0s")
 
     trim = next(args for tool, args in by_tool if tool == "clip_trim")
     if trim.get("clipId") != "c-stock-7" or trim.get("delta") != -4.0:
         print(f"FAIL: footage was not trimmed to the segment duration: {trim}")
         return 1
-    print("timing ok: eight-second source trimmed to the four-second story beat")
+    transition = next(
+        args for tool, args in by_tool
+        if tool == "clip_update" and "transitionIn" in (args.get("patch") or {})
+    )
+    if transition.get("clipId") != "c-stock-7" or transition["patch"]["transitionIn"]["id"] != "cross-fade":
+        print(f"FAIL: the plan's transition was not applied to the segment's clip: {transition}")
+        return 1
+    if transition["patch"]["transitionIn"].get("duration") != 0.5:
+        print(f"FAIL: the transition's duration was not the plan's own: {transition}")
+        return 1
+    keys = [args for tool, args in by_tool if tool == "keyframe_set"]
+    if len(keys) != 2 or keys[0].get("property") != "scale" or keys[0].get("value") != 0.6:
+        print(f"FAIL: the entrance was not animated on the placed clip: {keys}")
+        return 1
+    print("timing ok: trimmed to the beat, transition on the cut, entrance keyed")
 
     motion_call = next(args for tool, args in by_tool if tool == "motion_reel")
     if motion_call.get("storyboard", {}).get("scenes", [{}])[0].get("preset") != "funcut.chapter.chip":
@@ -1276,15 +2305,54 @@ def self_test() -> int:
         return 1
     print("existing visual ok: project media placed and trimmed to its timed segment")
 
+    grade = next(args for tool, args in by_tool if tool == "effect_layer_add")
+    if grade.get("effectId") != "concat.warm" or grade.get("duration") != 12.0 or grade.get("start") != 0.0:
+        print(f"FAIL: the plan's grade was not layered over the whole runtime: {grade}")
+        return 1
+    captions = next(args for tool, args in by_tool if tool == "captions_add")
+    if captions.get("captions") != [{"start": 0.0, "end": 1.0, "text": "one"}]:
+        print(f"FAIL: captions were not placed from the measured transcript: {captions}")
+        return 1
+    sfx_added = next(args for tool, args in by_tool if tool == "sounds_add")
+    if sfx_added.get("id") != "impact-glass-heavy" or sfx_added.get("start") != 0.0:
+        print(f"FAIL: the SFX was not placed with its peak on the beat: {sfx_added}")
+        return 1
+    sfx_gain = next(
+        args for tool, args in by_tool
+        if tool == "clip_audio_levels_db" and args.get("clipId") == "c-sfx"
+    )
+    if sfx_gain.get("baseDb") != -6.0:
+        print(f"FAIL: the SFX gain was not the plan's own: {sfx_gain}")
+        return 1
+    duck = next(
+        args for tool, args in by_tool
+        if tool == "clip_audio_levels_db" and args.get("clipId") == "c-bgm"
+    )
+    frames = duck.get("keyframes") or []
+    if not frames or frames[0].get("gainDb") != -14.0 or frames[-1].get("gainDb") != 0.0:
+        print(f"FAIL: the music bed was not ducked under the words: {duck}")
+        return 1
+    print("enrichment ok: grade layered, captions placed, SFX peaked on beat, bed ducked")
+
+    collisions = next(args for tool, args in by_tool if tool == "collision_check")
+    if collisions.get("path") != "/edits/SelfTest":
+        print(f"FAIL: the timeline was not collision-checked: {collisions}")
+        return 1
+    print("pre-export ok: collisions checked, timeline read back")
+
     waited = next(args for tool, args in by_tool if tool == "export_wait")
     if waited.get("job") != "j1":
         print(f"FAIL: export job was not awaited: {waited}")
         return 1
     verified = next(args for tool, args in by_tool if tool == "emotion" and args.get("action") == "verify")
-    if verified.get("action") != "verify" or verified.get("toleranceMs") != 150:
+    if verified.get("action") != "verify" or verified.get("toleranceMs") != 60:
         print(f"FAIL: exported speech was not verified against the source: {verified}")
         return 1
-    print("export ok: job awaited, speech timing verified, render inspected and critiqued")
+    loudness = next(args for tool, args in by_tool if tool == "measure_loudness")
+    if loudness.get("path") != "/tmp/funcut-selftest/final.mp4" or loudness.get("targetLufs") != -14.0:
+        print(f"FAIL: the export's loudness was not measured against the platform target: {loudness}")
+        return 1
+    print("export ok: awaited, speech verified to 60 ms, loudness measured and in target")
 
     # A continuity replacement must exclude the rejected shot and place the
     # replacement, then pass the second continuity read before importing.
@@ -1346,6 +2414,58 @@ def self_test() -> int:
         return 1
     print("continuity ok: rejected footage excluded, replacement placed, second gate clean")
 
+    # An unknown remedy is replaced away from, not crashed on.
+    remedy_replies = dict(SELF_TEST_REPLIES)
+    remedy_replies["footage_continuity"] = lambda args: {
+        "count": 1,
+        "flags": [{
+            "slotId": "segment-1",
+            "detail": "a jump nobody measured",
+            "remedy": {"regrade": {"towards": "warmer"}},
+        }],
+    }
+    remedy = MockMcp(remedy_replies)
+    try:
+        run_pipeline(remedy, "/edits/SelfTest", audio, SELF_TEST_PLAN)
+    except PipelineError as error:
+        if "regrade" in str(error):
+            print(f"FAIL: an unknown continuity remedy still crashes the run: {error}")
+            return 1
+    print("remedy ok: a flag this runner never met is replaced away from, not crashed on")
+
+    # A music-carrying take gets no bed stacked under it.
+    stacked_replies = dict(SELF_TEST_REPLIES)
+    stacked_replies["detect_music_segments"] = {"musicPresent": True, "segments": [{"start": 0.0, "end": 12.0}]}
+    stacked = MockMcp(stacked_replies)
+    stacked_calls = run_pipeline(stacked, "/edits/SelfTest", audio, SELF_TEST_PLAN)
+    if any(tool == "bgm_import" for tool, _ in stacked_calls):
+        print("FAIL: a bed was stacked under a take that already carries music")
+        return 1
+    if not any(tool == "identify_music" for tool, _ in stacked_calls):
+        print("FAIL: the music-carrying take was not identified for the record")
+        return 1
+    print("music gate ok: a take that carries music gets no bed, and the music is identified")
+
+    # A forged signalLog - citations no measurement answered - is refused.
+    forged_replies = dict(SELF_TEST_REPLIES)
+    forged_replies["voice_signals"] = {
+        "status": "ok",
+        "degradations": [],
+        "signalConfidence": {"perSignal": [
+            {"name": "loudness", "confidence": 0.9, "basis": "ffmpeg ebur128"},
+        ]},
+    }
+    forged = MockMcp(forged_replies)
+    try:
+        run_pipeline(forged, "/edits/SelfTest", audio, SELF_TEST_PLAN)
+        print("FAIL: a signalLog citing unmeasured signals was executed")
+        return 1
+    except PipelineError as error:
+        if "never happened" not in str(error):
+            print(f"FAIL: the forged signalLog was refused for the wrong reason: {error}")
+            return 1
+    print("evidence ok: citations the take never answered refuse the plan")
+
     # A failure stops the run: no timeline or export work follows it.
     broken = MockMcp(dict(SELF_TEST_REPLIES), fail_on="emotion")
     try:
@@ -1362,12 +2482,24 @@ def self_test() -> int:
             return 1
     print("failure ok: a failed analysis stops before any timeline mutation")
 
+    # A server that cannot serve the core tools is refused at the handshake.
+    thin = MockMcp({"project_get": SELF_TEST_REPLIES["project_get"]})
+    try:
+        run_pipeline(thin, "/edits/SelfTest", audio, SELF_TEST_PLAN)
+        print("FAIL: a server without the core tools was run against")
+        return 1
+    except PipelineError as error:
+        if "does not serve" not in str(error):
+            print(f"FAIL: the thin server was refused for the wrong reason: {error}")
+            return 1
+    print("handshake ok: a server that cannot serve the pipeline is refused up front")
+
     unready_replies = dict(SELF_TEST_REPLIES)
     unready_replies["plan_validate"] = {
         "valid": True,
         "creativeReady": False,
         "creativeBlockers": ["missing signal log"],
-        "signalLog": {"driven": False, "blockers": ["missing signal log"]},
+        "signalLog": {"driven": False, "coverage": 0.0, "blockers": ["missing signal log"]},
     }
     unready = MockMcp(unready_replies)
     try:
@@ -1414,7 +2546,7 @@ def main() -> int:
     if not args.project or not args.plan:
         parser.error("--project and --plan are required unless --self-test")
 
-    command = args.mcp_command or "concat --mcp auto"
+    command = args.mcp_command or os.environ.get("FUNCUT_MCP_COMMAND") or "concat --mcp auto"
     transport = McpStdio(command)
     transport.start()
     try:
@@ -1424,9 +2556,18 @@ def main() -> int:
                 run_pipeline(transport, args.project, args.audio, plan)
             except PipelineError as error:
                 log(f"STOP: {error}")
+                _record_run(args.project, {
+                    "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "status": "failed",
+                    "audio": args.audio,
+                    "stop": str(error),
+                })
                 return 1
             return 0
         watch(transport, args.project, plan, args.poll)
+    except KeyboardInterrupt:
+        log("interrupted: the run stopped where it stood; the run log is the record")
+        return 130
     finally:
         transport.close()
     return 0

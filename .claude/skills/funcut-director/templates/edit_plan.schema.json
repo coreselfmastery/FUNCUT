@@ -624,6 +624,11 @@
             "model": {
               "type": "string",
               "default": "kokoro-int8-multi-lang-v1_0"
+            },
+            "glossary": {
+              "type": "string",
+              "maxLength": 200,
+              "description": "The recogniser's glossary - proper nouns, acronyms and jargon the take uses, handed to Whisper as its initial prompt so the spelling the opening words establish is the one the whole run keeps. At most 200 characters; absent is Whisper's own cold start."
             }
           }
         },

@@ -1239,6 +1239,7 @@ impl Tool {
 
 /// What a tool call came to: MCP content, and whether it is an error the
 /// agent should read and correct.
+#[derive(Debug)]
 pub struct Outcome {
     /// The content blocks.
     pub content: Vec<Value>,
@@ -4457,7 +4458,9 @@ fn footage_plan_suggest(arguments: Value) -> Result<Outcome, ApiError> {
                 .and_then(Value::as_f64)
                 .filter(|value| value.is_finite())
                 .ok_or_else(|| {
-                    invalid(&format!("transcript[{index}].{key} must be a finite number"))
+                    invalid(&format!(
+                        "transcript[{index}].{key} must be a finite number"
+                    ))
                 })
         };
         segments.push(concat_motion::footage::TranscriptSegment {
@@ -5249,14 +5252,10 @@ mod tests {
                     // times, so the sample runs for real - two stretches
                     // with a 2.4 s quiet span between them, and the plan
                     // must flag it as the gap it is.
-                    let outcome =
-                        footage_plan_suggest(sample).expect("the sample plans");
+                    let outcome = footage_plan_suggest(sample).expect("the sample plans");
                     let said = outcome.structured.expect("the plan is JSON");
                     assert_eq!(said["gapCount"], 1, "{said}");
-                    assert_eq!(
-                        said["suggestions"][0]["kind"], "dialogue_gap",
-                        "{said}"
-                    );
+                    assert_eq!(said["suggestions"][0]["kind"], "dialogue_gap", "{said}");
                     continue;
                 }
             };
@@ -6140,7 +6139,7 @@ mod tests {
         );
         // Past 1.5 s the gap is dead air, and stays the hard error it
         // always was.
-        let mut dead_air = breath;
+        let mut dead_air = breath.clone();
         dead_air["segments"][1]["start"] = json!(4.0);
         assert!(validate_edit_plan(&dead_air).unwrap_err().contains("gap"));
         // A plan that fits together still refuses the word-synced caption
@@ -6401,7 +6400,10 @@ mod tests {
             slot("hook.1", "broll", json!(["ocean waves aerial"])),
             slot("setup.1", "broll", json!(["city skyline aerial"])),
         ]);
-        assert!(validate_edit_plan(&agreed).is_ok(), "the agreed plan passes");
+        assert!(
+            validate_edit_plan(&agreed).is_ok(),
+            "the agreed plan passes"
+        );
     }
 
     /// A director plan's structure is checked, not just its timing: the

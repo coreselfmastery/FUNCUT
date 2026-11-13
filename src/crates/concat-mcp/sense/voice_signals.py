@@ -651,12 +651,20 @@ def _merge_entities(primary, complement):
 
 
 def _rust_binary():
-    """Where the voice-signals binary hides: the operator's pin, PATH, the
-    script's own directory (where an installer drops it), or a build tree
-    checked out beside the sense scripts."""
+    """Where the voice-signals binary hides: the operator's pin, the app
+    bundle's own directory (FUNCUT_APP_DIR - the host passes the directory
+    of its own executable, where a packaged install drops voice-signals
+    beside it, no PATH entry required), PATH, the script's own directory
+    (where an installer drops it), or a build tree checked out beside the
+    sense scripts."""
     pinned = os.environ.get("FUNCUT_VOICE_SIGNALS_BIN")
     if pinned and os.path.isfile(pinned):
         return pinned
+    app_dir = os.environ.get("FUNCUT_APP_DIR")
+    if app_dir:
+        bundled = os.path.join(app_dir, "voice-signals")
+        if os.path.isfile(bundled):
+            return bundled
     found = shutil.which("voice-signals")
     if found:
         return found
@@ -1100,9 +1108,27 @@ def extract(spec):
     hints = _director_hints(lines_out, pauses, rust, language, arc, bgm)
     confidence = _signal_confidence(sources, audio, rust, wx_words, series, notes)
 
+    # The honest headline the notes bury: which ears did not answer. The
+    # same conditions that append a note name a degradation here, so a
+    # caller reading one field knows the reading's standing without
+    # parsing prose - "ok" only when every ear that could run did, and a
+    # degraded reading is still a reading, never a silent half of one.
+    degradations = []
+    if rust is None:
+        degradations.append(
+            "voice-signals binary absent: prosody/forensics/speakers/NER missing")
+    if wx_words is None:
+        degradations.append("whisperx words absent: word timings estimated")
+    if not sources.get("loudness"):
+        degradations.append("ffmpeg absent: loudness unmeasured")
+    if not sources.get("pauses"):
+        degradations.append("silencedetect absent: pauses unclassified")
+
     out = {
         "ok": True,
         "schema": SCHEMA,
+        "status": "degraded" if degradations else "ok",
+        "degradations": degradations,
         "audio": {"path": audio, "durationSec": round(duration, 3) if duration else None},
         "language": language,
         "lines": lines_out,

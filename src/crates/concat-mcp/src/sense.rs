@@ -171,6 +171,17 @@ pub(crate) fn run_py(
         .stdin(Stdio::piped())
         .stdout(Stdio::from(out_file))
         .stderr(Stdio::from(err_file));
+    // A packaged install keeps its helper binaries beside the app's own
+    // executable, and voice-signals is one of them - a directory a PATH
+    // lookup can never find. Tell the sidecar where we live so its ears
+    // can reach that shelf; cheap and strictly optional, because a dev
+    // build or an exotic layout simply leaves the variable unset and the
+    // sidecar's own search order applies unchanged.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            command.env("FUNCUT_APP_DIR", dir);
+        }
+    }
     // A process group of its own, so a timeout can take the sidecar's
     // ffmpeg grandchildren down with it: an overlay encode left alive
     // would burn CPU for minutes after the tool had already given up.

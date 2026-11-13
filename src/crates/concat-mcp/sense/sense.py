@@ -1365,6 +1365,7 @@ def heuristic(brief, sheet):
         })
     return {
         "engine": "heuristic",
+        "tier": "heuristic",
         "scores": {k: round(v, 1) for k, v in scores.items()},
         "overall": round(overall, 1),
         "confidence": 0.5,
@@ -1698,6 +1699,7 @@ def critique(spec):
             return {
                 "ok": True,
                 "engine": "local-vlm",
+                "tier": "vlm",
                 "model": ep.get("model", "local-vlm"),
                 "scores": blended,
                 "rawScores": {k: round(v, 1) for k, v in scores.items()},
@@ -1730,6 +1732,7 @@ def critique(spec):
         return {
             "ok": True,
             "engine": "local-vlm-flags",
+            "tier": "vlm-flags",
             "model": ep.get("model", "local-vlm"),
             "scores": {k: round(v, 1) for k, v in adjusted.items()},
             "overall": round(sum(adjusted.values()) / len(adjusted), 1),

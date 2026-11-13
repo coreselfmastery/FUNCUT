@@ -268,11 +268,12 @@ impl ForgePane {
     /// A run's narration comes from one of two places. From the script
     /// box, read by the TTS voice the select names. Or from the voiceover
     /// already on the open timeline: a sibling project is made beside it,
-    /// the voiceover's files are copied in, and the director builds the
-    /// whole edit around them there - the window holds the source
-    /// project, and an agent cannot open what the window holds - so the
-    /// finished edit can open back here, on the timeline, when the run
-    /// ends well.
+    /// with the voiceover already reconstructed on its own lane at the
+    /// original timing - every clip's start, in/out points, speed, volume
+    /// and fades - and the director builds the whole edit around it
+    /// there - the window holds the source project, and an agent cannot
+    /// open what the window holds - so the finished edit can open back
+    /// here, on the timeline, when the run ends well.
     fn run(
         &mut self,
         script: String,
@@ -442,13 +443,46 @@ fn read_the_run(mut child: Child, kill: Arc<AtomicBool>) {
     });
 }
 
+/// One voiceover clip's trip from the source timeline to the sibling
+/// project: the identity the narration played with. The sibling is
+/// rebuilt from this mapping, never from a sort of the distinct files -
+/// a sort would drop the gaps, the trims, the speeds and the levels the
+/// take was performed with.
+#[derive(Clone, Debug, serde::Serialize)]
+struct VoiceoverSegment {
+    /// The clip the narration played on the source timeline.
+    source_clip_id: String,
+    /// The clip that plays it on the sibling's voiceover lane.
+    sibling_clip_id: String,
+    /// Seconds into the timeline - the source's own start, so the gaps
+    /// and overlaps between segments survive the handoff exactly.
+    start: f64,
+    /// Where in the source file the clip begins, in source seconds.
+    source_in: f64,
+    /// Where it ends, in source seconds: in plus the span it plays.
+    source_out: f64,
+    /// Playback rate, exactly as the source clip played it.
+    speed: f64,
+    /// Linear gain, 1 being unity.
+    volume: f64,
+    /// The (fade-in, fade-out) ramps, in seconds.
+    fades: (f64, f64),
+    /// The source lane the clip came from.
+    source_track: String,
+    /// The sibling lane the clip sits on.
+    track: String,
+}
+
 /// What a voiceover run builds in: the sibling project the director
-/// edits, and the voiceover files copied into it, in timeline order.
+/// edits, the voiceover files copied into it, and the per-clip mapping
+/// that reconstructed its timeline.
 struct VoiceoverSource {
     /// The new project's folder, ready for `project_open`.
     project: String,
     /// The voiceover files, absolute paths, in the order they play.
     files: Vec<String>,
+    /// One record per voiceover clip: source clip to sibling clip.
+    segments: Vec<VoiceoverSegment>,
 }
 
 /// Names a copied voiceover without allowing equal basenames from
@@ -465,18 +499,34 @@ fn voiceover_copy_name(index: usize, source: &std::path::Path) -> String {
 /// audio clips are found on the timeline, copied into a fresh `<name>
 /// edit` folder beside it (the window holds the source, and an agent
 /// cannot open what the window holds), and the new folder is what the
-/// director opens. The source project is never touched.
+/// director opens. Every clip is reconstructed on a dedicated voiceover
+/// lane with its own start, in/out points, speed, volume and fades, so
+/// the narration arrives in the sibling exactly as it played in the
+/// source - gaps and overlaps included - and `voiceover-mapping.json`
+/// in the sibling's root records the clip-to-clip mapping. The source
+/// project is never touched.
 fn voiceover_project(studio: &Studio) -> Result<VoiceoverSource, String> {
-    use concat_project::model::ClipKind;
-
     let Some(session) = studio.session.as_ref() else {
         return Err(t("forge.needProject"));
     };
-    let project = studio.project();
-    let timeline = project.active();
-    // The voiceover is the timeline's audio clips, in time order: a take
-    // the voiceover panel recorded, or a file imported and placed. Distinct
-    // files once each - a take split into pieces is one voiceover.
+    build_voiceover_sibling(studio.project(), std::path::Path::new(session.path()))
+}
+
+/// The handoff itself, apart from the studio so a test can drive it with
+/// a plain project model: [`voiceover_project`] supplies the window's
+/// two arguments and nothing else.
+fn build_voiceover_sibling(
+    source: &concat_project::model::Project,
+    source_root: &std::path::Path,
+) -> Result<VoiceoverSource, String> {
+    use concat_project::model::ClipKind;
+
+    let timeline = source.active();
+    // The voiceover is EVERY audio clip on the timeline, each carrying the
+    // identity it plays with - not the distinct files once each. A take
+    // split into pieces is several clips of one file; an edit that trims,
+    // retimes or levels the narration lives in those clip fields, not in
+    // the file.
     let mut audio: Vec<&concat_project::model::Clip> = timeline
         .clips
         .iter()
@@ -488,29 +538,41 @@ fn voiceover_project(studio: &Studio) -> Result<VoiceoverSource, String> {
             .partial_cmp(&b.start)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    let mut files: Vec<String> = Vec::new();
+    let mut voiced: Vec<(
+        &concat_project::model::Clip,
+        &concat_project::model::MediaItem,
+    )> = Vec::new();
     for clip in audio {
         // The bin lives on the project, not the timeline: a clip names its
-        // media by id, and the project holds what that id is.
-        let Some(item) = project.media_by_id(&clip.media_id) else {
+        // media by id, and the project holds what that id is. A clip whose
+        // media is gone or pathless cannot be copied - it is skipped, not
+        // guessed at.
+        let Some(item) = source.media_by_id(&clip.media_id) else {
             continue;
         };
-        if !item.path.is_empty() && !files.contains(&item.path) {
-            files.push(item.path.clone());
+        if !item.path.is_empty() {
+            voiced.push((clip, item));
         }
     }
-    if files.is_empty() {
+    if voiced.is_empty() {
         return Err(t("forge.noVoiceover"));
+    }
+    // The distinct files, in first-play order - what gets copied in.
+    let mut files: Vec<&concat_project::model::MediaItem> = Vec::new();
+    for (_, item) in &voiced {
+        if !files.iter().any(|known| known.path == item.path) {
+            files.push(item);
+        }
     }
     // The sibling folder: `<name> edit`, then `edit 2`, `edit 3`, ... so
     // every run gets a fresh project and an earlier edit is never
     // overwritten. The canvas matches the source project's.
     let video = timeline.video;
-    let folder = std::path::Path::new(session.path())
+    let folder = source_root
         .parent()
         .map(std::path::Path::to_path_buf)
         .ok_or_else(|| t("forge.needProject"))?;
-    let stem = std::path::Path::new(session.path())
+    let stem = source_root
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("funcut")
@@ -543,38 +605,151 @@ fn voiceover_project(studio: &Studio) -> Result<VoiceoverSource, String> {
     let Some(info) = made else {
         return Err(t("forge.projectFailed"));
     };
-    // The voiceover files are copied in, so the edit stands on its own
-    // and the source project can be moved or deleted without breaking it.
-    let into = std::path::Path::new(&info.path).join("voiceover");
-    let copied = (|| -> Result<Vec<String>, String> {
+    // Copy the files in and rebuild the narration's clips, as one unit:
+    // a copy that fails or a document that cannot be written removes the
+    // half-populated sibling rather than leaving it behind.
+    let built = (|| -> Result<(Vec<String>, Vec<VoiceoverSegment>), String> {
+        // The voiceover files are copied in, so the edit stands on its own
+        // and the source project can be moved or deleted without breaking
+        // it.
+        let into = std::path::Path::new(&info.path).join("voiceover");
         std::fs::create_dir_all(&into).map_err(|error| error.to_string())?;
-        let mut copied = Vec::with_capacity(files.len());
-        for (index, file) in files.iter().enumerate() {
-            let target = into.join(voiceover_copy_name(index, std::path::Path::new(file)));
-            std::fs::copy(file, &target)
-                .map_err(|error| format!("could not copy voiceover {}: {error}", file))?;
-            copied.push(target.to_string_lossy().into_owned());
+        let mut mint = concat_project::commands::IdMint::default();
+        let mut copied: Vec<String> = Vec::with_capacity(files.len());
+        let mut media_id_of: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+        let mut sibling_media: Vec<concat_project::model::MediaItem> = Vec::new();
+        for item in &files {
+            let target = into.join(voiceover_copy_name(
+                copied.len(),
+                std::path::Path::new(&item.path),
+            ));
+            std::fs::copy(&item.path, &target)
+                .map_err(|error| format!("could not copy voiceover {}: {error}", item.path))?;
+            let path = target.to_string_lossy().into_owned();
+            // The bin item carries the source's own probe metadata - the
+            // duration and kind its clips were cut against - with the
+            // copied file's path and a fresh id of its own.
+            let mut entry = (*item).clone();
+            entry.id = mint.next("m");
+            entry.path = path.clone();
+            media_id_of.insert(item.path.clone(), entry.id.clone());
+            copied.push(path);
+            sibling_media.push(entry);
         }
-        Ok(copied)
+        // One sibling lane per source lane, at the bottom of the stack in
+        // first-play order, so takes recorded across lanes keep their
+        // arrangement - and their overlap, which a single lane cannot
+        // hold.
+        let mut lanes: Vec<(String, String)> = Vec::new();
+        for (clip, _) in &voiced {
+            if !lanes.iter().any(|(from, _)| from == &clip.track_id) {
+                lanes.push((clip.track_id.clone(), mint.next("t")));
+            }
+        }
+        // The sibling document: the copied bin, the voiceover lanes, and
+        // every clip restored to the position, in-point, speed, volume,
+        // fades and stream it played with. The audio filter chain rides
+        // along too - the narration's sound is the edit's, not the file's.
+        let mut sibling = concat_project::model::Project::with_video(video);
+        sibling.media = sibling_media;
+        sibling.active_mut().tracks.splice(
+            0..0,
+            lanes
+                .iter()
+                .map(|(_, id)| concat_project::model::Track {
+                    id: id.clone(),
+                    ..Default::default()
+                })
+                .collect::<Vec<_>>(),
+        );
+        let mut segments: Vec<VoiceoverSegment> = Vec::with_capacity(voiced.len());
+        for (clip, item) in &voiced {
+            let Some((_, lane)) = lanes.iter().find(|(from, _)| from == &clip.track_id) else {
+                continue;
+            };
+            let sibling_clip_id = mint.next("c");
+            let mut restored = concat_project::model::Clip::blank(
+                sibling_clip_id.clone(),
+                lane.clone(),
+                ClipKind::Audio,
+                clip.name.clone(),
+                clip.start,
+                clip.duration,
+            );
+            restored.media_id = media_id_of[&item.path].clone();
+            restored.source_start = clip.source_start;
+            restored.speed = clip.speed;
+            restored.speed_curve = clip.speed_curve.clone();
+            restored.volume = clip.volume;
+            restored.fade_in = clip.fade_in;
+            restored.fade_out = clip.fade_out;
+            restored.preserve_pitch = clip.preserve_pitch;
+            restored.audio_stream = clip.audio_stream;
+            restored.filters = clip.filters.clone();
+            sibling.active_mut().clips.push(Arc::new(restored));
+            segments.push(VoiceoverSegment {
+                source_clip_id: clip.id.clone(),
+                sibling_clip_id,
+                start: clip.start,
+                source_in: clip.source_start,
+                source_out: clip.source_start + clip.duration * clip.speed,
+                speed: clip.speed,
+                volume: clip.volume,
+                fades: (clip.fade_in, clip.fade_out),
+                source_track: clip.track_id.clone(),
+                track: lane.clone(),
+            });
+        }
+        let settings = concat_project::doc::DocumentSettings {
+            name: info.name.clone(),
+            width: video.width,
+            height: video.height,
+            rate_num: video.rate_num,
+            rate_den: video.rate_den,
+        };
+        let document = concat_project::doc::to_document(&settings, &sibling)
+            .map_err(|error| format!("the voiceover project cannot be saved: {error}"))?;
+        concat_host::projects::save(&info.path, &document)?;
+        // The mapping is the provenance record: which sibling clip plays
+        // which source clip, with everything the reconstruction kept.
+        let mut mapping = serde_json::Map::new();
+        mapping.insert(
+            "schema".to_owned(),
+            serde_json::json!("funcut.voiceover-mapping/1"),
+        );
+        mapping.insert(
+            "segments".to_owned(),
+            serde_json::to_value(&segments)
+                .map_err(|error| format!("the voiceover mapping cannot be written: {error}"))?,
+        );
+        let bytes = serde_json::to_vec_pretty(&mapping)
+            .map_err(|error| format!("the voiceover mapping cannot be written: {error}"))?;
+        std::fs::write(
+            std::path::Path::new(&info.path).join("voiceover-mapping.json"),
+            bytes,
+        )
+        .map_err(|error| format!("could not write the voiceover mapping: {error}"))?;
+        Ok((copied, segments))
     })();
-    let copied = match copied {
-        Ok(copied) => copied,
+    match built {
+        Ok((copied, segments)) => Ok(VoiceoverSource {
+            project: info.path,
+            files: copied,
+            segments,
+        }),
         Err(error) => {
             // This sibling project was created solely for this run; do not
-            // leave a half-populated project behind after a failed copy.
+            // leave a half-populated project behind after a failed build.
             if let Err(cleanup) = std::fs::remove_dir_all(&info.path) {
                 log::warn!(
                     "could not remove incomplete Forge project {}: {cleanup}",
                     info.path
                 );
             }
-            return Err(error);
+            Err(error)
         }
-    };
-    Ok(VoiceoverSource {
-        project: info.path,
-        files: copied,
-    })
+    }
 }
 
 /// The one prompt the pane sends. It used to be a single sentence of
@@ -654,15 +829,27 @@ fn director_run_prompt(
             .iter()
             .map(|file| format!("  - {file}\n"))
             .collect::<String>();
+        let lanes = source
+            .segments
+            .iter()
+            .map(|segment| segment.track.clone())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>()
+            .join(", ");
         let material = format!(
             "THE VOICEOVER (already recorded - do NOT run tts_generate, do NOT write a script):\n\
              {files}\
-             Open the project folder '{project}' (project_open), media_import each voiceover \
-             file, place them on the timeline at 0 in the order listed, and direct the WHOLE \
-             edit around them: repair a rough take first (Phase 1), tighten only the dead air \
-             (Phase 2 - a dramatic hold is the performance, keep it), then the full pipeline: \
-             emotion and voice-signal reads, plan, B-roll, captions, motion comps, ONE grade, \
-             the watch/critique loop, export.\n\n",
+             Open the project folder '{project}' (project_open). The narration is ALREADY on \
+             the timeline, reconstructed clip for clip on the voiceover lane(s) {lanes} with \
+             every clip's own start, in/out points, speed, volume and fades - the gaps and \
+             overlaps it played with are the edit's timing, and voiceover-mapping.json in the \
+             project root maps each sibling clip to its source. Do NOT re-import, re-place, \
+             retime or ripple the voiceover clips. Direct the WHOLE edit around that \
+             pre-placed narration: repair a rough take before analysing it (Phase 1), tighten \
+             only the dead air (Phase 2 - a dramatic hold is the performance, keep it), then \
+             the full pipeline: emotion and voice-signal reads, plan, B-roll, captions, \
+             motion comps, ONE grade, the watch/critique loop, export.\n\n",
             project = source.project,
         );
         let tail = if script.trim().is_empty() {
@@ -809,5 +996,131 @@ mod tests {
             voiceover_copy_name(2, Path::new("/")),
             "voiceover-002-voiceover.wav"
         );
+    }
+
+    /// The handoff's contract (PR: fix/voiceover-handoff-preservation): a
+    /// two-segment voiceover with a 1.5 s gap and one clip at 1.2x must
+    /// round-trip into the sibling project with the same starts, the same
+    /// gap, and the same speed - reconstructed from the per-clip mapping,
+    /// never from a sort of the distinct files.
+    #[test]
+    fn a_two_segment_voiceover_round_trips_with_its_gap_and_speed() {
+        use concat_project::model::{Clip, ClipKind, MediaItem, MediaKind, Project, VideoSettings};
+
+        // A source project: two temp voiceover takes on one lane.
+        let dir = std::env::temp_dir().join(format!("funcut-voiceover-{}", std::process::id()));
+        let source_root = dir.join("Narration");
+        let takes = dir.join("takes");
+        std::fs::create_dir_all(&source_root).unwrap();
+        std::fs::create_dir_all(&takes).unwrap();
+        let take_one = takes.join("take-1.wav");
+        let take_two = takes.join("take-2.wav");
+        std::fs::write(&take_one, b"take one").unwrap();
+        std::fs::write(&take_two, b"take two").unwrap();
+
+        let mut source = Project::with_video(VideoSettings {
+            width: 1920,
+            height: 1080,
+            rate_num: 30,
+            rate_den: 1,
+            ..Default::default()
+        });
+        let media = |id: &str, path: &std::path::Path| MediaItem {
+            id: id.to_owned(),
+            path: path.to_string_lossy().into_owned(),
+            name: path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("voiceover.wav")
+                .to_owned(),
+            duration: Some(6.0),
+            kind: MediaKind::Audio,
+            has_audio: true,
+            ..Default::default()
+        };
+        source.media.push(media("m1", &take_one));
+        source.media.push(media("m2", &take_two));
+        let clip =
+            |id: &str, media: &str, start: f64, duration: f64, source_start: f64, speed: f64| {
+                let mut clip = Clip::blank(id, "T1", ClipKind::Audio, id, start, duration);
+                clip.media_id = media.to_owned();
+                clip.source_start = source_start;
+                clip.speed = speed;
+                clip.volume = 0.9;
+                clip.fade_in = 0.05;
+                clip.fade_out = 0.1;
+                clip
+            };
+        // Segment one: 0.0 to 2.0. Segment two: starts at 3.5 - a 1.5 s
+        // gap - trimmed 0.5 s into its file and played at 1.2x.
+        {
+            let timeline = source.active_mut();
+            timeline
+                .clips
+                .push(std::sync::Arc::new(clip("c1", "m1", 0.0, 2.0, 0.0, 1.0)));
+            timeline
+                .clips
+                .push(std::sync::Arc::new(clip("c2", "m2", 3.5, 2.4, 0.5, 1.2)));
+        }
+
+        // The handoff.
+        let built = super::build_voiceover_sibling(&source, &source_root).unwrap();
+        assert_eq!(built.segments.len(), 2);
+
+        // The sibling reopens as a real project, and its voiceover clips
+        // carry the source's timing: same starts, same gap, same speed.
+        let document =
+            std::fs::read_to_string(std::path::Path::new(&built.project).join("concat.json"))
+                .unwrap();
+        let sibling = concat_project::doc::from_document(
+            &serde_json::from_str::<serde_json::Value>(&document).unwrap(),
+        )
+        .unwrap();
+        let timeline = sibling.active();
+        let first = timeline
+            .clips
+            .iter()
+            .find(|clip| clip.id == built.segments[0].sibling_clip_id)
+            .unwrap();
+        let second = timeline
+            .clips
+            .iter()
+            .find(|clip| clip.id == built.segments[1].sibling_clip_id)
+            .unwrap();
+        assert_eq!(first.start, 0.0);
+        assert_eq!(second.start, 3.5);
+        assert_eq!(second.start - (first.start + first.duration), 1.5);
+        assert_eq!(first.speed, 1.0);
+        assert_eq!(second.speed, 1.2);
+        assert_eq!(second.source_start, 0.5);
+        assert_eq!(second.duration, 2.4);
+        assert_eq!(second.volume, 0.9);
+        assert_eq!(second.fade_in, 0.05);
+        assert_eq!(second.fade_out, 0.1);
+        // Both on one dedicated lane at the bottom of the stack, playing
+        // the copies inside the sibling rather than the source's files.
+        assert_eq!(first.track_id, second.track_id);
+        assert_eq!(timeline.tracks.first().unwrap().id, first.track_id);
+        let played = sibling.media_by_id(&second.media_id).unwrap();
+        assert!(played.path.contains("voiceover"));
+        assert!(Path::new(&played.path).exists());
+        assert_ne!(played.path, take_two.to_string_lossy().into_owned());
+
+        // The mapping file agrees with the timeline it wrote.
+        let mapping = std::fs::read_to_string(
+            std::path::Path::new(&built.project).join("voiceover-mapping.json"),
+        )
+        .unwrap();
+        let mapping: serde_json::Value = serde_json::from_str(&mapping).unwrap();
+        assert_eq!(mapping["schema"], "funcut.voiceover-mapping/1");
+        let segments = mapping["segments"].as_array().unwrap();
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[1]["source_clip_id"], "c2");
+        assert_eq!(segments[1]["sibling_clip_id"], second.id);
+        assert_eq!(segments[1]["source_in"], 0.5);
+        assert_eq!(segments[1]["source_out"], 0.5 + 2.4 * 1.2);
+        assert_eq!(segments[1]["track"], second.track_id);
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

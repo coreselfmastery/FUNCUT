@@ -185,12 +185,11 @@ pub(crate) fn run_py(
     // so the pin is handed over when the binary is there and the caller
     // has not pinned one of their own - and the prosody, forensic,
     // speaker and NER readings answer instead of noting their absence.
-    if std::env::var_os("FUNCUT_VOICE_SIGNALS_BIN").is_none() {
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(beside) = voice_signals_beside(&exe) {
-                command.env("FUNCUT_VOICE_SIGNALS_BIN", beside);
-            }
-        }
+    if std::env::var_os("FUNCUT_VOICE_SIGNALS_BIN").is_none()
+        && let Ok(exe) = std::env::current_exe()
+        && let Some(beside) = voice_signals_beside(&exe)
+    {
+        command.env("FUNCUT_VOICE_SIGNALS_BIN", beside);
     }
     // A process group of its own, so a timeout can take the sidecar's
     // ffmpeg grandchildren down with it: an overlay encode left alive

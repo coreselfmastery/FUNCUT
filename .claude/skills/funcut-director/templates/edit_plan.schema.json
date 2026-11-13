@@ -140,12 +140,12 @@
               },
               "query": {
                 "type": "string",
-                "description": "broll: the primary OpenVid search query. Follow prompts/broll_matching.md."
+                "minLength": 1,
+                "description": "Required and non-empty for every broll segment: the primary OpenVid search query. Follow prompts/broll_matching.md."
               },
               "description": {
                 "type": "string",
-                "minLength": 40,
-                "description": "A visual-specific, semantic shot description for CLIP reranking; name subject, action, composition and mood."
+                "description": "For broll, a provided non-empty value must be at least 40 characters. If omitted or empty, segment.spoken must supply at least 40 characters; a short non-empty visual description takes precedence and is refused."
               },
               "queries": {
                 "type": "array",
@@ -178,7 +178,7 @@
                 "required": [
                   "scenes"
                 ],
-                "description": "A complete motion_reel storyboard for textCard/titleCard segments. Use the same storyboard schema as the motion_reel MCP tool; the rendered reel is imported and placed at this segment's start.",
+                "description": "Required for textCard/titleCard segments and must contain at least one scene. Use the same storyboard schema as the motion_reel MCP tool; the rendered reel is imported and placed at this segment's start.",
                 "properties": {
                   "width": {
                     "type": "integer",

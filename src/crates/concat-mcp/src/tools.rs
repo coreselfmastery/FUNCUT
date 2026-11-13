@@ -3140,14 +3140,36 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
             .ok_or_else(|| format!("segments[{index}].visual.type is required"))?;
         match kind {
             "broll" => {
-                let query = visual
+                // The executor shops every B-roll segment with its own
+                // query - both the pre-flight and the shopping phase
+                // refuse without one - and clipId is not honored on
+                // B-roll, so the query is the only door through. A plan
+                // that leaned on clipId alone would pass here and die at
+                // the pre-flight; the two must refuse together.
+                if visual
                     .get("query")
                     .and_then(Value::as_str)
-                    .is_some_and(|q| !q.trim().is_empty());
-                let id = visual.get("clipId").is_some_and(valid_identifier);
-                if !query && !id {
+                    .is_none_or(|q| q.trim().is_empty())
+                {
                     return Err(format!(
-                        "segments[{index}] B-roll needs a search query or a non-empty clipId"
+                        "segments[{index}] B-roll needs a real visual.query - the executor shops every B-roll segment by query; clipId is not honored on B-roll"
+                    ));
+                }
+                // The pre-flight's floor, kept here so a plan the executor
+                // cannot run does not pass validation: the semantic
+                // description the CLIP rerank ranks against, with the
+                // segment's spoken words allowed to carry it when the
+                // visual does not name one.
+                let description = visual
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .or_else(|| segment.get("spoken").and_then(Value::as_str))
+                    .map(str::trim)
+                    .unwrap_or("");
+                let characters = description.chars().count();
+                if characters < 40 {
+                    return Err(format!(
+                        "segments[{index}] B-roll's semantic description is {characters} characters; it is what CLIP ranks against and must be at least 40 (visual.description, or the segment's spoken words)"
                     ));
                 }
             }
@@ -3174,6 +3196,25 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
                     .is_none_or(|text| text.trim().is_empty())
                 {
                     return Err(format!("segments[{index}] {kind} needs non-empty text"));
+                }
+                // The executor refuses a graphic beat without an authored
+                // storyboard - the rendered reel IS the visual - so a text
+                // card without scenes would pass here and die at the
+                // pre-flight, with the edit half-applied. Refuse it as a
+                // plan, while it is still only a plan.
+                let storyboard = visual
+                    .get("storyboard")
+                    .and_then(Value::as_object)
+                    .is_some_and(|board| {
+                        board
+                            .get("scenes")
+                            .and_then(Value::as_array)
+                            .is_some_and(|scenes| !scenes.is_empty())
+                    });
+                if !storyboard {
+                    return Err(format!(
+                        "segments[{index}] {kind} needs a complete visual.storyboard with at least one scene - the executor refuses to export an empty graphic beat"
+                    ));
                 }
             }
             other => {
@@ -4607,8 +4648,8 @@ mod tests {
                         { "role": "body", "start": 2.0, "end": 4.0 }
                     ],
                     "segments": [
-                        { "start": 0.0, "end": 2.0, "visual": { "type": "broll", "query": "ocean waves aerial" } },
-                        { "start": 2.0, "end": 4.0, "visual": { "type": "textCard", "text": "THE SALT STAYS" } }
+                        { "start": 0.0, "end": 2.0, "visual": { "type": "broll", "query": "ocean waves aerial", "description": "ocean waves rolling across a dark basalt shelf at dusk, spray catching the last light" } },
+                        { "start": 2.0, "end": 4.0, "visual": { "type": "textCard", "text": "THE SALT STAYS", "storyboard": { "scenes": [{}] } } }
                     ]
                 } }),
             ),
@@ -6125,8 +6166,8 @@ mod tests {
             "aspect": "9:16",
             "audio": {},
             "segments": [
-                { "start": 0.0, "end": 2.0, "visual": { "type": "broll", "query": "ocean" } },
-                { "start": 2.2, "end": 4.0, "visual": { "type": "textCard", "text": "SALT" } }
+                { "start": 0.0, "end": 2.0, "visual": { "type": "broll", "query": "ocean", "description": "ocean waves rolling across a dark basalt shelf at dusk, spray catching the last light" } },
+                { "start": 2.2, "end": 4.0, "visual": { "type": "textCard", "text": "SALT", "storyboard": { "scenes": [{}] } } }
             ]
         });
         let result = validate_edit_plan(&breath).expect("a breath is not a refusal");
@@ -6155,6 +6196,95 @@ mod tests {
         );
     }
 
+    /// The plan validator and the executor refuse the same plans: a
+    /// B-roll that leans on clipId alone dies at the executor's shopping
+    /// phase, a description too thin to rank dies at its pre-flight, and
+    /// a text card without a storyboard dies at the graphics phase - so
+    /// none of them may pass validation, where the refusal is still cheap.
+    #[test]
+    fn plan_validator_refuses_what_the_executor_refuses() {
+        // B-roll with a clipId but no query: the shopping phase raises
+        // "B-roll segment has no real visual.query", and clipId is not
+        // honored on B-roll - the same plan must not pass validation.
+        let clip_only = json!({
+            "aspect": "9:16",
+            "audio": {},
+            "segments": [
+                {
+                    "start": 0.0,
+                    "end": 2.0,
+                    "visual": {
+                        "type": "broll",
+                        "clipId": 4127,
+                        "description": "ocean waves rolling across a dark basalt shelf at dusk, spray catching the last light"
+                    }
+                }
+            ]
+        });
+        assert!(
+            validate_edit_plan(&clip_only)
+                .unwrap_err()
+                .contains("real visual.query"),
+            "clipId is not honored on B-roll; the query is the door"
+        );
+
+        // A query with a description too thin to rank: the pre-flight
+        // raises "B-roll needs a query and a 40+ character semantic
+        // description".
+        let mut thin = clip_only;
+        thin["segments"][0]["visual"]["clipId"].take();
+        thin["segments"][0]["visual"]["query"] = json!("ocean");
+        thin["segments"][0]["visual"]["description"] = json!("ocean");
+        assert!(
+            validate_edit_plan(&thin)
+                .unwrap_err()
+                .contains("at least 40"),
+            "a keyword is not a description"
+        );
+
+        // The spoken words may carry the description when the visual does
+        // not name one: the pre-flight reads segment.spoken as the
+        // fallback, and so does the validator.
+        let mut spoken = thin;
+        spoken["segments"][0]["visual"]["description"].take();
+        spoken["segments"][0]["spoken"] = json!(
+            "Ocean waves roll across a dark basalt shelf at dusk, the spray catching the last light"
+        );
+        assert!(
+            validate_edit_plan(&spoken).is_ok(),
+            "the spoken words carry the description"
+        );
+
+        // A text card with no storyboard: the executor refuses to export
+        // an empty graphic beat, so the plan must not validate.
+        let bare_card = json!({
+            "aspect": "9:16",
+            "audio": {},
+            "segments": [
+                { "start": 0.0, "end": 2.0, "visual": { "type": "textCard", "text": "SALT" } }
+            ]
+        });
+        assert!(
+            validate_edit_plan(&bare_card)
+                .unwrap_err()
+                .contains("storyboard"),
+            "the graphic beat needs its storyboard"
+        );
+        // An empty scenes list is the same refusal; one scene is a beat.
+        let mut bare_card = bare_card;
+        bare_card["segments"][0]["visual"]["storyboard"] = json!({ "scenes": [] });
+        assert!(
+            validate_edit_plan(&bare_card)
+                .unwrap_err()
+                .contains("storyboard")
+        );
+        bare_card["segments"][0]["visual"]["storyboard"] = json!({ "scenes": [{}] });
+        assert!(
+            validate_edit_plan(&bare_card).is_ok(),
+            "one scene is a beat"
+        );
+    }
+
     /// A plan's slots are validated with its segments: the description is
     /// what CLIP ranks against and cannot be a keyword in disguise, and
     /// the treatments keep their own queries law - b-roll shops, the
@@ -6180,8 +6310,8 @@ mod tests {
             "aspect": "9:16",
             "audio": {},
             "segments": [
-                { "start": 0.0, "end": 2.0, "visual": { "type": "broll", "query": "ocean" } },
-                { "start": 2.0, "end": 4.0, "visual": { "type": "textCard", "text": "SALT" } }
+                { "start": 0.0, "end": 2.0, "visual": { "type": "broll", "query": "ocean", "description": "ocean waves rolling across a dark basalt shelf at dusk, spray catching the last light" } },
+                { "start": 2.0, "end": 4.0, "visual": { "type": "textCard", "text": "SALT", "storyboard": { "scenes": [{}] } } }
             ]
         });
 
@@ -6282,9 +6412,9 @@ mod tests {
             let segments: Vec<Value> = (0..total)
                 .map(|index| {
                     let visual = if index < broll {
-                        json!({ "type": "broll", "query": "city skyline aerial" })
+                        json!({ "type": "broll", "query": "city skyline aerial", "description": "a slow aerial drift across the city skyline at dusk, camera gliding left" })
                     } else {
-                        json!({ "type": "textCard", "text": "SALT" })
+                        json!({ "type": "textCard", "text": "SALT", "storyboard": { "scenes": [{}] } })
                     };
                     json!({
                         "start": (index * 2) as f64,
@@ -6359,9 +6489,9 @@ mod tests {
             "aspect": "9:16",
             "audio": {},
             "segments": [
-                { "start": 0.0, "end": 2.0, "visual": { "type": "broll", "query": "ocean" } },
-                { "start": 2.0, "end": 4.0, "visual": { "type": "broll", "query": "city" } },
-                { "start": 4.0, "end": 6.0, "visual": { "type": "textCard", "text": "SALT" } }
+                { "start": 0.0, "end": 2.0, "visual": { "type": "broll", "query": "ocean", "description": "ocean waves rolling across a dark basalt shelf at dusk, spray catching the last light" } },
+                { "start": 2.0, "end": 4.0, "visual": { "type": "broll", "query": "city", "description": "a city skyline glowing across the water at night, cranes working the docks" } },
+                { "start": 4.0, "end": 6.0, "visual": { "type": "textCard", "text": "SALT", "storyboard": { "scenes": [{}] } } }
             ]
         });
 
@@ -6417,7 +6547,7 @@ mod tests {
             json!({
                 "start": start,
                 "end": end,
-                "visual": { "type": "broll", "query": "ocean" },
+                "visual": { "type": "broll", "query": "ocean", "description": "ocean waves rolling across a dark basalt shelf at dusk, spray catching the last light" },
                 "cutType": cut_type,
                 "in": if entrance { json!({ "anim": "pop", "seconds": 0.15 }) } else { Value::Null },
             })
@@ -6568,7 +6698,7 @@ mod tests {
             json!({
                 "start": start,
                 "end": end,
-                "visual": { "type": "broll", "query": "ocean" },
+                "visual": { "type": "broll", "query": "ocean", "description": "ocean waves rolling across a dark basalt shelf at dusk, spray catching the last light" },
                 "cutType": "hard",
             })
         };

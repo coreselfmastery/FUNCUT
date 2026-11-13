@@ -195,7 +195,11 @@ fn an_agent_edits_previews_and_exports_a_project_headless() {
                 "segments": [{
                     "start": 0.0,
                     "end": 2.0,
-                    "visual": { "type": "broll", "query": "sunlit ocean" }
+                    "visual": {
+                        "type": "broll",
+                        "query": "sunlit ocean",
+                        "description": "sunlit ocean swell rolling across a coral shelf, spray catching gold light"
+                    }
                 }]
             }
         }),

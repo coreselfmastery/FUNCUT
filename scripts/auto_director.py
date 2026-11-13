@@ -66,7 +66,11 @@ THE PIPELINE (in order; each phase logged; any failure stops the run)
 
 The watcher is an execution layer, not a topic-to-plan author: the Director
 agent must supply a validated canonical edit plan. A craft score below 7
-stops the run for creative revision; this script does not invent a new plan.
+runs the revision loop: exactly the slots the critic named go back for
+another pass (a B-roll slot re-shops with the old clip excluded, a graphic
+re-renders with the critic's timing fixes folded into its storyboard), at
+most twice, and the edit then ships with the failures recorded per slot -
+this script revises the plan it was given, it never invents a new one.
 
 The calls go through the editor's MCP server over stdio (newline-delimited
 JSON-RPC 2.0 - `tools/call`), the same surface the funcut-director skill
@@ -82,6 +86,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -1252,6 +1257,9 @@ def run_pipeline(
     # Motion reels and imported existing media share one dedicated top
     # video lane; already-placed existing clips are verified in place.
     graphics = motion_segments(plan)
+    # The placed clip each graphic segment owns, for the revision loop's
+    # re-render to swap in place.
+    graphic_clip_ids: dict[int, str] = {}
     existing_to_place = [
         (index, segment) for index, segment in existing_segments(plan)
         if not segment["visual"].get("clipId")
@@ -1332,6 +1340,7 @@ def run_pipeline(
                     "ripple": False,
                 },
             )
+        graphic_clip_ids[index] = clip_id
         placed_clip_ids.append(clip_id)
         log(f"segment-{index + 1}: rendered and placed motion at {start_at:.2f}s")
 
@@ -1842,55 +1851,470 @@ def run_pipeline(
             "fix the mix with clip_audio_levels_db and measure again"
         )
 
-    inspection = advance(
-        "watch_render",
-        {
-            "path": rendered,
-            "samples": 12,
-            "audio": True,
-            "targetLufs": target_lufs,
-            "out": os.path.join(project, "director-review.png"),
-        },
-    )
-    if not isinstance(inspection, dict) or not inspection.get("pngPath"):
-        raise PipelineError(f"render inspection did not produce a contact sheet: {inspection}")
-    for note in (inspection.get("notes") or [])[:5]:
-        if isinstance(note, str):
-            log(f"watch_render: {note}")
-    critique = advance(
-        "craft_critique",
-        {"sheet": inspection, "project": project},
-    )
-    score = None
-    if isinstance(critique, dict):
-        score = critique.get("overall", critique.get("score", critique.get("craftScore")))
-    if not isinstance(score, (int, float)):
-        raise PipelineError(
-            "craft_critique returned no numeric overall score; the render cannot be certified: "
-            + json.dumps(critique, ensure_ascii=False)
+    # The craft gate, run as the loop the motion layer's revision.rs owns
+    # (P1-006/007, INT-04/06, PLAN-05): below the ship line exactly the
+    # slots the critic named go back for another pass - a B-roll slot
+    # re-shops with the old clip excluded, a graphic re-renders with the
+    # critic's timing fixes folded into its storyboard - and after two
+    # revisions the edit ships with the failures recorded per slot.
+    # Shipping with a note beats not shipping.
+
+    def watch_and_critique(path: str, attempt: int) -> tuple[Any, Any, float]:
+        """One look at one render: the sheet, then the score. Every
+        attempt is watched with the same eyes, and its evidence - score,
+        tier, confidence - rides the run record (the plan's signalLog is
+        the planning decision log; what a run MEASURED belongs to the
+        run, and the craft journal the server keeps carries the rest)."""
+        sheet_path = os.path.join(project, f"director-review-v{attempt}.png")
+        inspection = advance(
+            "watch_render",
+            {
+                "path": path,
+                "samples": 12,
+                "audio": True,
+                "targetLufs": target_lufs,
+                "out": sheet_path,
+            },
         )
-    if isinstance(critique, dict):
-        tier = critique.get("tier") or critique.get("engine")
-        confidence = critique.get("confidence")
+        if not isinstance(inspection, dict) or not inspection.get("pngPath"):
+            raise PipelineError(
+                f"render inspection did not produce a contact sheet: {inspection}"
+            )
+        for note in (inspection.get("notes") or [])[:5]:
+            if isinstance(note, str):
+                log(f"watch_render: {note}")
+        critique = advance(
+            "craft_critique",
+            {"sheet": inspection, "project": project},
+        )
+        score = None
+        if isinstance(critique, dict):
+            score = critique.get("overall", critique.get("score", critique.get("craftScore")))
+        if not isinstance(score, (int, float)):
+            raise PipelineError(
+                "craft_critique returned no numeric overall score; the render cannot be certified: "
+                + json.dumps(critique, ensure_ascii=False)
+            )
+        if isinstance(critique, dict):
+            tier = critique.get("tier") or critique.get("engine")
+            confidence = critique.get("confidence")
+            log(
+                f"craft critique: {score}/10"
+                + (f" ({tier}, confidence {confidence})" if tier else "")
+                + f" [pass {attempt}]"
+            )
+        return inspection, critique, float(score)
+
+    def render_attempt(attempt: int) -> str:
+        """A revision renders to its own file - edit_v2, edit_v3 - because
+        an attempt nobody can diff against the one before it is an attempt
+        nobody learns from (revision.rs: attempt_path)."""
+        output = os.path.join(project, f"edit_v{attempt}.mp4")
+        started = advance(
+            "export_start",
+            {
+                "path": project,
+                "output": output,
+                "crf": int(export.get("crf", 20)),
+                "codec": export.get("codec", "h264"),
+            },
+        )
+        job = started.get("job") if isinstance(started, dict) else None
+        if not job:
+            raise PipelineError("export_start did not return a job id")
+        status: Any = None
+        for _ in range(4):
+            status = advance("export_wait", {"job": job, "timeoutSeconds": 590})
+            if not isinstance(status, dict) or status.get("state") != "running":
+                break
+        if not isinstance(status, dict) or status.get("state") == "running":
+            raise PipelineError(f"export did not finish within the wait budget: {status}")
+        if status.get("state") not in {"done", "completed", "succeeded"}:
+            raise PipelineError(f"revision render finished unsuccessfully: {status}")
+        return str(status.get("output") or output)
+
+    def replace_broll_clip(slot_id: str, avoid: str) -> None:
+        """One B-roll slot re-shopped and re-placed: the candidates move
+        away from what the critic saw (exclude_ids carries the old clip
+        and everything before it), the old clip leaves the timeline, and
+        the new one inherits the beat's own trim, transition and entrance
+        keys - a replacement that lost the beat's craft is no repair."""
+        attempt_replace(slot_id, avoid)
+        index, segment = slot_segments[slot_id]
+        start_at = float(segment["start"])
+        target_duration = float(segment["end"]) - start_at
+        clip = chosen[slot_id]
+        imported = advance(
+            "openvid_import",
+            {"path": project, "ids": [_clip_int_id(clip["id"], slot_id)], "start": start_at},
+        )
+        media_ids = imported.get("mediaIds", []) if isinstance(imported, dict) else []
+        if not media_ids:
+            raise PipelineError(f"{slot_id}: OpenVid import did not return a media id")
+        media_id = str(media_ids[0])
+        view = imported.get("view") if isinstance(imported, dict) else None
+        placed = _clip_for_media(view, media_id, start_at)
+        if placed is None:
+            view = transport.call("project_get", {"path": project})
+            placed = _clip_for_media(view, media_id, start_at)
+        if placed is None:
+            raise PipelineError(f"{slot_id}: replacement media is not present on the timeline")
+        new_clip_id = str(placed["id"])
+        actual = float(placed["duration"])
+        if actual + 0.05 < target_duration:
+            raise PipelineError(
+                f"{slot_id}: replacement is {actual:.2f}s, shorter than the "
+                f"{target_duration:.2f}s beat"
+            )
+        if actual > target_duration + 0.05:
+            advance(
+                "clip_trim",
+                {
+                    "path": project,
+                    "clipId": new_clip_id,
+                    "edge": "end",
+                    "delta": target_duration - actual,
+                    "ripple": False,
+                },
+            )
+        old_clip_id = segment_clip_ids.get(index)
+        if (
+            old_clip_id
+            and old_clip_id != new_clip_id
+            and "clips_remove" in served
+        ):
+            advance(
+                "clips_remove",
+                {"path": project, "clipIds": [old_clip_id], "ripple": False},
+            )
+        segment_clip_ids[index] = new_clip_id
+        if old_clip_id in placed_clip_ids:
+            placed_clip_ids[placed_clip_ids.index(old_clip_id)] = new_clip_id
+        if "clip_update" in served:
+            arguments = transition_arguments(segment)
+            if arguments is not None:
+                arguments["clipId"] = new_clip_id
+                advance("clip_update", arguments)
+        if "keyframe_set" in served:
+            for arguments in entrance_arguments(new_clip_id, segment, target_duration):
+                advance("keyframe_set", arguments)
         log(
-            f"craft critique: {score}/10"
-            + (f" ({tier}, confidence {confidence})" if tier else "")
+            f"{slot_id}: re-shopped away from {avoid[:60]!r} "
+            f"-> clip {new_clip_id}"
         )
-    if score < 7:
-        raise PipelineError(
-            f"rendered cut scored {score}/10; revision is required before publishing: "
-            + json.dumps(critique, ensure_ascii=False)
+
+    def revise_graphic(
+        index: int, key: str, sentences: list[str], attempt: int
+    ) -> bool:
+        """A graphic beat re-rendered with the critic's timing fixes folded
+        into its storyboard: a retime moves the scenes, and anything the
+        storyboard cannot carry is said, not pretended - the scene
+        builder's own fix applier is not on this wire yet, so the loop
+        applies what a storyboard can hold and reports the rest."""
+        segment = plan_segments(plan)[index]
+        storyboard = segment["visual"].get("storyboard")
+        scenes = storyboard.get("scenes") if isinstance(storyboard, dict) else None
+        if not isinstance(scenes, list) or not scenes:
+            return False
+        applied = 0
+        for fix in _fixes_for_slot(critique, sentences):
+            op = str(fix.get("op") or "").strip().lower()
+            patch = fix.get("patch") if isinstance(fix.get("patch"), dict) else {}
+            if op != "retime":
+                unaddressed.append(
+                    f"{key}: the critic's {op or 'fix'} "
+                    f"({str(fix.get('change'))[:80]!r}) needs the scene builder's "
+                    "applier; recorded, not applied"
+                )
+                continue
+            seconds = None
+            if isinstance(patch.get("shift"), (int, float)):
+                seconds = float(patch["shift"])
+            elif isinstance(patch.get("start"), (int, float)):
+                base = scenes[0].get("at") if isinstance(scenes[0], dict) else None
+                seconds = float(patch["start"]) - float(base or 0.0)
+            else:
+                match = _CRITIC_SECONDS.search(str(fix.get("change") or ""))
+                seconds = float(match.group(1)) if match else None
+            if seconds is None:
+                unaddressed.append(
+                    f"{key}: a retime with no time with a unit; recorded, not applied"
+                )
+                continue
+            for scene in scenes:
+                if isinstance(scene, dict) and isinstance(scene.get("at"), (int, float)):
+                    scene["at"] = max(0.0, float(scene["at"]) + seconds)
+            applied += 1
+        if not applied:
+            return False
+        start_at = float(segment["start"])
+        target_duration = float(segment["end"]) - start_at
+        reel = advance(
+            "motion_reel",
+            {
+                "project": project,
+                "storyboard": storyboard,
+                "name": f"director-segment-{index + 1}-v{attempt}.mp4",
+                "crf": 18,
+            },
         )
-    log(f"pipeline complete: {len(done)} call(s); rendered {rendered}; craft score {score}")
+        motion_file = reel.get("file") if isinstance(reel, dict) else None
+        rendered_duration = (
+            float(reel.get("duration", target_duration)) if isinstance(reel, dict) else target_duration
+        )
+        if not isinstance(motion_file, str) or not motion_file:
+            raise PipelineError(f"{key}: motion_reel returned no rendered file for the revision")
+        if rendered_duration + 0.05 < target_duration:
+            raise PipelineError(
+                f"{key}: revised motion is {rendered_duration:.2f}s, shorter than "
+                f"the {target_duration:.2f}s beat"
+            )
+        imported = advance("media_import", {"path": project, "file": motion_file})
+        media_id = imported.get("createdId") if isinstance(imported, dict) else None
+        if not isinstance(media_id, str) or not media_id:
+            raise PipelineError(f"{key}: media_import returned no media id for the revision")
+        placed = advance(
+            "clip_add",
+            {"path": project, "mediaId": media_id, "trackId": track_id, "start": start_at},
+        )
+        new_clip_id = placed.get("createdId") if isinstance(placed, dict) else None
+        if not isinstance(new_clip_id, str) or not new_clip_id:
+            raise PipelineError(f"{key}: clip_add returned no clip id for the revision")
+        if rendered_duration > target_duration + 0.05:
+            advance(
+                "clip_trim",
+                {
+                    "path": project,
+                    "clipId": new_clip_id,
+                    "edge": "end",
+                    "delta": target_duration - rendered_duration,
+                    "ripple": False,
+                },
+            )
+        old_clip_id = graphic_clip_ids.get(index)
+        if (
+            old_clip_id
+            and old_clip_id != new_clip_id
+            and "clips_remove" in served
+        ):
+            advance(
+                "clips_remove",
+                {"path": project, "clipIds": [old_clip_id], "ripple": False},
+            )
+        graphic_clip_ids[index] = new_clip_id
+        if old_clip_id in placed_clip_ids:
+            placed_clip_ids[placed_clip_ids.index(old_clip_id)] = new_clip_id
+        log(f"{key}: graphic re-rendered with {applied} retime fix(es) -> clip {new_clip_id}")
+        return True
+
+    unaddressed: list[str] = []
+    attempt = 1
+    inspection, critique, score = watch_and_critique(rendered, 1)
+    while score < CRAFT_SHIP_SCORE and attempt < 1 + CRAFT_MAX_REVISIONS:
+        named = _critic_slot_map(critique, plan)
+        if not named:
+            unaddressed.append(
+                "the critic scored below the ship line but named no slot this runner can revise"
+            )
+            break
+        attempt += 1
+        log(
+            f"craft gate: revision pass {attempt - 1} of {CRAFT_MAX_REVISIONS}, "
+            f"slot(s) {', '.join(named)}"
+        )
+        revised = 0
+        for key, sentences in named.items():
+            if key in slot_segments:
+                try:
+                    replace_broll_clip(key, "; ".join(sentences)[:120])
+                    revised += 1
+                except PipelineError as error:
+                    unaddressed.append(f"{key}: {error}")
+                continue
+            index = key.rsplit("-", 1)[-1]
+            index = int(index) - 1 if index.isdigit() else -1
+            if index in graphic_clip_ids:
+                try:
+                    if revise_graphic(index, key, sentences, attempt):
+                        revised += 1
+                    else:
+                        unaddressed.append(f"{key}: {' '.join(sentences)[:160]}")
+                except PipelineError as error:
+                    unaddressed.append(f"{key}: {error}")
+            else:
+                unaddressed.append(f"{key}: {' '.join(sentences)[:160]}")
+        if not revised:
+            # Nothing the critic named could be revised; another render
+            # would produce the same frames and say so.
+            break
+        rendered = render_attempt(attempt)
+        inspection, critique, score = watch_and_critique(rendered, attempt)
+
+    status = "completed" if score >= CRAFT_SHIP_SCORE else "completed-with-warnings"
+    for note in unaddressed:
+        log(f"craft warning: {note}")
+    log(
+        f"pipeline complete: {len(done)} call(s); rendered {rendered}; "
+        f"craft score {score}"
+        + ("" if status == "completed" else f" ({status})")
+    )
     _record_run(project, {
         "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "status": "completed",
+        "status": status,
         "calls": len(done),
         "output": rendered,
         "craftScore": score,
+        "craftTier": (
+            critique.get("tier") or critique.get("engine")
+            if isinstance(critique, dict) else None
+        ),
+        "craftConfidence": (
+            critique.get("confidence") if isinstance(critique, dict) else None
+        ),
+        "craftNotes": _critic_slot_map(critique, plan) if score < CRAFT_SHIP_SCORE else {},
+        "unaddressed": unaddressed,
         "lufs": integrated,
     })
     return done
+
+
+# ------------------------------------------------------ the revision gate
+
+# The ship line the docs promise, said once (SKILL.md: "Craft score below
+# 7 means rewrite the plan, not proceed") - the one boundary the runner,
+# the skill and the agent's own reading agree on (FALL-04).
+CRAFT_SHIP_SCORE = 7.0
+# Two revisions, three renders in all - the motion layer's own gate
+# (concat-motion/src/revision.rs: MAX_RETRIES), mirrored here so the
+# runner and the reel loop mean the same thing by "one more pass".
+CRAFT_MAX_REVISIONS = 2
+
+# A time with a unit in a critic's sentence: "the hook at 0.4s", "the
+# beat at 12 s", "by 1.5 seconds" - the seconds a note carries are the
+# strongest anchor a slot map has.
+_CRITIC_SECONDS = re.compile(r"(\d+(?:\.\d+)?)\s*(?:s\b|sec|second)", re.IGNORECASE)
+
+
+def _critic_sentences(critique: Any) -> list[str]:
+    """Every sentence the critic said: the notes, the revisions, and each
+    fix's where/problem/change read as one - the slot mapping reads them
+    all, because which field a tier fills is the tier's business, not the
+    loop's."""
+    texts: list[str] = []
+    if not isinstance(critique, dict):
+        return texts
+    for key in ("notes", "revisions"):
+        for note in critique.get(key) or []:
+            if isinstance(note, str) and note.strip():
+                texts.append(note.strip())
+    for fix in critique.get("fixes") or []:
+        if isinstance(fix, dict):
+            text = " ".join(
+                str(fix.get(part) or "").strip()
+                for part in ("where", "problem", "change")
+            ).strip()
+            if text:
+                texts.append(text)
+    return texts
+
+
+def _critic_slot_map(critique: Any, plan: dict[str, Any]) -> dict[str, list[str]]:
+    """The slots the critic's words name, revision.rs's own rule: below
+    the ship line exactly the named slots go back for another pass, and a
+    note that names no slot is a revision round with nothing named, seen
+    plainly rather than the gate inventing work.
+
+    A sentence names a slot three ways, strongest first: by the slot's
+    own id ("hook.1 enters late", "segment-3 is black"), by a time the
+    segment covers ("the beat at 4.5s"), or by the slot's own words (the
+    description, queries or spoken line a sentence shares distinctive
+    words with). Each sentence lands on at most one slot."""
+    segments = plan_segments(plan)
+    broll_keys: dict[int, str] = {}
+    for index, segment in broll_segments(plan):
+        broll_keys[index] = str(segment.get("slotId") or f"segment-{index + 1}")
+    graphic_keys = {
+        index: f"segment-{index + 1}" for index, _ in motion_segments(plan)
+    }
+    key_by_index = {**broll_keys, **graphic_keys}
+    explicit_ids: dict[str, int] = {}
+    for index, key in key_by_index.items():
+        explicit_ids[key.lower()] = index
+        slot_id = str(segments[index].get("slotId") or "").strip()
+        if slot_id:
+            explicit_ids[slot_id.lower()] = index
+    named: dict[str, list[str]] = {}
+    for sentence in _critic_sentences(critique):
+        target: int | None = None
+        # The slot's own id, as a whole word: "hook.1", "segment-3".
+        for slot_id, index in explicit_ids.items():
+            if re.search(rf"(?<![\w.]){re.escape(slot_id)}(?![\w.])", sentence, re.IGNORECASE):
+                target = index
+                break
+        # A time the segment covers: the strongest anchor a sentence
+        # without an id carries.
+        if target is None:
+            for match in _CRITIC_SECONDS.finditer(sentence):
+                seconds = float(match.group(1))
+                for index, segment in enumerate(segments):
+                    if float(segment.get("start", -1)) <= seconds < float(segment.get("end", -1)):
+                        if index in key_by_index:
+                            target = index
+                            break
+                if target is not None:
+                    break
+        # The slot's own words: distinctive shared words, never "the"
+        # or "frame" - a description's nouns are its fingerprint.
+        if target is None:
+            words = {
+                word.strip(".,:;!?\"'()").lower()
+                for word in sentence.split()
+                if len(word) >= 5
+            }
+            best: tuple[int, int] | None = None
+            for index, segment in enumerate(segments):
+                if index not in key_by_index:
+                    continue
+                visual = segment.get("visual") or {}
+                vocabulary = " ".join(
+                    str(part)
+                    for part in (
+                        visual.get("description"),
+                        segment.get("spoken"),
+                        visual.get("query"),
+                        *(visual.get("queries") or []),
+                    )
+                    if part
+                ).lower()
+                shared = sum(1 for word in words if word in vocabulary)
+                if shared >= 2 and (best is None or shared > best[1]):
+                    best = (index, shared)
+            if best is not None:
+                target = best[0]
+        if target is not None:
+            key = key_by_index[target]
+            named.setdefault(key, []).append(sentence)
+    return named
+
+
+def _fixes_for_slot(critique: Any, sentences: list[str]) -> list[dict[str, Any]]:
+    """The structured fixes whose own sentence a slot's sentences carry:
+    the same where/problem/change join built the sentence, so the exact
+    match is the fix's fingerprint."""
+    wanted = {sentence.lower() for sentence in sentences}
+    fixes: list[dict[str, Any]] = []
+    if not isinstance(critique, dict):
+        return fixes
+    for fix in critique.get("fixes") or []:
+        if not isinstance(fix, dict):
+            continue
+        text = " ".join(
+            str(fix.get(part) or "").strip()
+            for part in ("where", "problem", "change")
+        ).strip()
+        if text and text.lower() in wanted:
+            fixes.append(fix)
+    return fixes
 
 
 def _record_run(project: str, entry: dict[str, Any]) -> None:
@@ -2003,7 +2427,7 @@ SELF_TEST_PLAN = {
                     "width": 1920,
                     "height": 1080,
                     "fps": 30,
-                    "scenes": [{"preset": "funcut.chapter.chip", "hold": 4.0}],
+                    "scenes": [{"preset": "funcut.chapter.chip", "hold": 4.0, "at": 0.0}],
                 },
             },
         },
@@ -2519,6 +2943,151 @@ def self_test() -> int:
     return 0
 
 
+def revision_self_test() -> int:
+    """The craft gate's own loop, exercised against mocks that score the
+    first render low and name the B-roll slot: the named slot re-shops
+    with the old clip excluded, the old clip leaves the timeline, the
+    revision renders to its own file, and the second score ships. A
+    critic that never clears the line ships the edit anyway after two
+    passes, with the failures recorded - never a crash that throws away
+    a fixable cut (P1-006/007, the revision.rs contract)."""
+    audio = "/tmp/funcut-selftest/voiceover.wav"
+
+    def replies_always_low(scores: list[float]) -> dict[str, Any]:
+        """One mock world: the shelf offers a fresh candidate every time,
+        the critic speaks in the documented reply shape, and the scores
+        come from the list, one per pass."""
+        rank_calls: list[dict[str, Any]] = []
+        passes: list[dict[str, Any]] = []
+
+        def rank(args: dict[str, Any]) -> dict[str, Any]:
+            rank_calls.append(args)
+            clip_id = 6 + len(rank_calls)  # 7, 8, 9, ... - always fresh
+            return {"clips": [{
+                "id": clip_id, "name": f"city-{clip_id}", "motion": 2.0,
+                "camera": "pan_left", "source": "pexels", "seconds": 8.0,
+                "slotRank": 1,
+            }]}
+
+        def critique(_args: dict[str, Any]) -> dict[str, Any]:
+            index = len(passes)
+            passes.append(_args)
+            score = scores[min(index, len(scores) - 1)]
+            return {
+                "ok": True, "engine": "heuristic", "tier": "heuristic",
+                "overall": score, "scores": {}, "confidence": 0.5,
+                "notes": (
+                    ["segment-1's opening frame is near-black; the hook never lands"]
+                    if score < CRAFT_SHIP_SCORE else []
+                ),
+                "revisions": (
+                    ["replace segment-1 with a brighter establishing shot"]
+                    if score < CRAFT_SHIP_SCORE else []
+                ),
+                "fixes": [],
+            }
+
+        def importer(args: dict[str, Any]) -> dict[str, Any]:
+            clip_id = (args.get("ids") or [7])[0]
+            return {
+                "mediaIds": [f"m-stock-{clip_id}"],
+                "view": {"timeline": {"clips": [{
+                    "id": f"c-stock-{clip_id}", "mediaId": f"m-stock-{clip_id}",
+                    "start": 0.0, "duration": 8.0,
+                }]}},
+            }
+
+        world = dict(SELF_TEST_REPLIES)
+        world["openvid_rank_for_slot"] = rank
+        world["openvid_import"] = importer
+        world["craft_critique"] = critique
+        world["clips_remove"] = {"ok": True}
+        return world
+
+    # One revision, then the score clears the line and the edit ships.
+    transport = MockMcp(replies_always_low([5.5, 7.5]))
+    calls = run_pipeline(transport, "/edits/SelfTest", audio, SELF_TEST_PLAN)
+    by_tool = [(tool, args) for tool, args in calls]
+    ranks = [args for tool, args in by_tool if tool == "openvid_rank_for_slot"]
+    if len(ranks) != 2:
+        print(f"FAIL: expected the shop plus one re-shop, got {len(ranks)}")
+        return 1
+    if ranks[1].get("exclude_ids") != [7]:
+        print(f"FAIL: the re-shop did not exclude the clip the critic saw: {ranks[1]}")
+        return 1
+    removals = [args for tool, args in by_tool if tool == "clips_remove"]
+    if not removals or removals[0].get("clipIds") != ["c-stock-7"]:
+        print(f"FAIL: the replaced clip never left the timeline: {removals}")
+        return 1
+    exports = [args for tool, args in by_tool if tool == "export_start"]
+    if len(exports) != 2 or not str(exports[1].get("output", "")).endswith("edit_v2.mp4"):
+        print(f"FAIL: the revision did not render to its own file: {exports}")
+        return 1
+    if len([args for tool, args in by_tool if tool == "watch_render"]) != 2:
+        print("FAIL: the revision was not watched with the same eyes")
+        return 1
+    reimport = [args for tool, args in by_tool if tool == "openvid_import"]
+    if reimport[-1].get("ids") != [8]:
+        print(f"FAIL: the replacement candidate was not imported: {reimport[-1]}")
+        return 1
+    print("revision ok: the named slot re-shopped, the old clip left, edit_v2 shipped at 7.5")
+
+    # A critic that never clears the line: two passes, then the edit
+    # ships with the failures recorded - never a crash.
+    transport = MockMcp(replies_always_low([5.5, 5.5, 5.5, 5.5]))
+    calls = run_pipeline(transport, "/edits/SelfTest", audio, SELF_TEST_PLAN)
+    by_tool = [(tool, args) for tool, args in calls]
+    exports = [args for tool, args in by_tool if tool == "export_start"]
+    if len(exports) != 3:
+        print(f"FAIL: expected three renders (the edit plus two revisions), got {len(exports)}")
+        return 1
+    if not str(exports[2].get("output", "")).endswith("edit_v3.mp4"):
+        print(f"FAIL: the second revision did not render to its own file: {exports}")
+        return 1
+    if len([args for tool, args in by_tool if tool == "watch_render"]) != 3:
+        print("FAIL: every attempt must be watched and scored")
+        return 1
+    print("exhaustion ok: two revisions, three renders, the edit shipped with its failures recorded")
+
+    # A graphic beat the critic re-times: the fix folds into the
+    # storyboard, the reel re-renders, and the second score ships.
+    world = replies_always_low([5.5, 7.5])
+    plain_critique = world["craft_critique"]
+
+    def critique_with_fix(args: dict[str, Any]) -> dict[str, Any]:
+        reply = plain_critique(args)
+        if reply.get("overall", 10.0) < CRAFT_SHIP_SCORE:
+            reply["notes"] = ["segment-2's chapter title enters before the beat carries it"]
+            reply["revisions"] = []
+            reply["fixes"] = [{
+                "where": "segment-2's chapter title",
+                "problem": "the title enters 0.5s before the beat carries it",
+                "change": "hold it back by 0.5 seconds",
+                "op": "retime",
+                "patch": {"shift": 0.5},
+            }]
+        return reply
+
+    world["craft_critique"] = critique_with_fix
+    transport = MockMcp(world)
+    calls = run_pipeline(transport, "/edits/SelfTest", audio, SELF_TEST_PLAN)
+    by_tool = [(tool, args) for tool, args in calls]
+    reels = [args for tool, args in by_tool if tool == "motion_reel"]
+    if len(reels) != 2:
+        print(f"FAIL: the graphic was not re-rendered: {len(reels)} reel call(s)")
+        return 1
+    retimed = reels[1]["storyboard"]["scenes"][0].get("at")
+    if retimed != 0.5:
+        print(f"FAIL: the retime fix did not fold into the storyboard: {reels[1]['storyboard']}")
+        return 1
+    exports = [args for tool, args in by_tool if tool == "export_start"]
+    if len(exports) != 2:
+        print(f"FAIL: the re-rendered graphic never reached a new render: {len(exports)}")
+        return 1
+    print("graphic ok: the critic's retime folded into the storyboard, the reel re-rendered")
+    return 0
+
+
 # ---------------------------------------------------------------------- main
 
 
@@ -2542,7 +3111,10 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.self_test:
-        return self_test()
+        status = self_test()
+        if status:
+            return status
+        return revision_self_test()
     if not args.project or not args.plan:
         parser.error("--project and --plan are required unless --self-test")
 

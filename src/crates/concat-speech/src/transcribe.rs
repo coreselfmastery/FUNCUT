@@ -411,9 +411,26 @@ fn whisper_language(multilingual: bool, hint: Option<&str>) -> Result<String, St
     Ok(code)
 }
 
+/// The initial prompt, as whisper takes it: a glossary of the proper nouns
+/// and jargon a take uses, handed to the model before the first window so
+/// the spelling the opening words establish is the one the whole run
+/// keeps. A null byte is refused rather than passed on - whisper's own
+/// setter panics on one, and a refusal naming the byte is the honest door -
+/// and an empty prompt is no prompt, the cold start the caller did not
+/// name.
+fn whisper_prompt(prompt: Option<&str>) -> Result<Option<&str>, String> {
+    let Some(prompt) = prompt.map(str::trim).filter(|prompt| !prompt.is_empty()) else {
+        return Ok(None);
+    };
+    if prompt.contains('\0') {
+        return Err("initial prompt must be words, not contain NUL".to_owned());
+    }
+    Ok(Some(prompt))
+}
+
 #[cfg(test)]
 mod language_hint_tests {
-    use super::whisper_language;
+    use super::{whisper_language, whisper_prompt};
 
     #[test]
     fn multilingual_models_receive_normalized_language_hints() {
@@ -435,6 +452,17 @@ mod language_hint_tests {
                 .unwrap_err()
                 .contains("English-only")
         );
+    }
+
+    #[test]
+    fn a_glossary_prompt_is_trimmed_and_a_nul_is_refused() {
+        assert_eq!(whisper_prompt(None).unwrap(), None);
+        assert_eq!(whisper_prompt(Some("  ")).unwrap(), None);
+        assert_eq!(
+            whisper_prompt(Some("  FUNCUT, Kokoro, oximedia  ")).unwrap(),
+            Some("FUNCUT, Kokoro, oximedia")
+        );
+        assert!(whisper_prompt(Some("FUNCUT\0")).is_err());
     }
 }
 
@@ -576,16 +604,20 @@ impl Transcriber {
         request: &TranscribeRequest,
         progress: impl FnMut(JobStage) + Send + 'static,
     ) -> Result<Vec<Segment>, String> {
-        self.transcribe_with_language(dirs, request, None, progress)
+        self.transcribe_with_language(dirs, request, None, None, progress)
     }
 
     /// Transcribes one clip's audio window into caption segments. Blocks
     /// for the whole run: run it on its own thread. `language_hint` accepts
     /// an ISO language code, a BCP-47 tag (primary language is used), or
     /// `auto`; multilingual models honor it, while English-only models refuse
-    /// an explicit non-English hint. `progress` is told each stage as it
-    /// begins, and in whisper's work each window it starts: whisper reads
-    /// thirty seconds at a time, so `next` is a window on.
+    /// an explicit non-English hint. `initial_prompt` is the glossary - the
+    /// proper nouns and jargon the take uses - handed to whisper before its
+    /// first window, so the spelling the opening words establish is the one
+    /// the whole run keeps; `None` is whisper's own cold start. `progress`
+    /// is told each stage as it begins, and in whisper's work each window it
+    /// starts: whisper reads thirty seconds at a time, so `next` is a
+    /// window on.
     ///
     /// Timestamps come back relative to the window: 0 is `source_start`. The
     /// caller owns the clip, so the map onto the timeline (divide by speed,
@@ -595,6 +627,7 @@ impl Transcriber {
         dirs: &AppDirs,
         request: &TranscribeRequest,
         language_hint: Option<&str>,
+        initial_prompt: Option<&str>,
         mut progress: impl FnMut(JobStage) + Send + 'static,
     ) -> Result<Vec<Segment>, String> {
         let job = self.gate.begin("transcription")?;
@@ -668,6 +701,12 @@ impl Transcriber {
         params.set_n_threads(threads as i32);
         let language = whisper_language(context.is_multilingual(), language_hint)?;
         params.set_language(Some(&language));
+        // The glossary, when the caller gave one: whisper starts its run
+        // from these words, so the proper nouns it meets already spelled
+        // right are spelled right in every window that follows.
+        if let Some(prompt) = whisper_prompt(initial_prompt)? {
+            params.set_initial_prompt(prompt);
+        }
         params.set_print_special(false);
         params.set_print_progress(false);
         params.set_print_realtime(false);

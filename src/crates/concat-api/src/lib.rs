@@ -741,8 +741,9 @@ impl Api {
                 path,
                 model,
                 language,
+                initial_prompt,
             } => Ok(Reply::Started(
-                self.speech_transcribe(&path, model, language)?,
+                self.speech_transcribe(&path, model, language, initial_prompt)?,
             )),
             #[cfg(not(feature = "speech"))]
             Request::SpeechTranscribe { .. } => Err(ApiError::new(
@@ -1072,6 +1073,25 @@ impl Api {
             // `Failed`, with these words, rather than a log line this
             // crate has no facade for.
             let _ = library.prepare(&cancel);
+        });
+    }
+
+    /// The cold-load's own cure, on a background thread: open the OpenVid
+    /// index now, so the first search does not pay for it. A
+    /// session-serving caller - the headless MCP server, at its start -
+    /// asks for this once; the open is a 435 MB SQLite connection, its
+    /// pragmas and its caption dictionary, and paying it inside an
+    /// agent's first `openvid.search` is seconds that read as a hang.
+    /// Every outcome is discarded, on purpose: a missing index stays
+    /// missing until `openvid.prepare` downloads it (this warms, it never
+    /// downloads), a broken one stays broken for `openvid.status` to
+    /// say, and a race with the first real asker is settled by the
+    /// library's own `OnceLock` - one connection wins, the loser is
+    /// dropped - so the thread is best-effort the whole way down.
+    pub fn warm_openvid(&self) {
+        let library = self.library();
+        std::thread::spawn(move || {
+            let _ = library.status();
         });
     }
 

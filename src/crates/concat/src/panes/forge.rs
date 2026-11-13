@@ -718,6 +718,12 @@ fn build_voiceover_sibling(
             "schema".to_owned(),
             serde_json::json!("funcut.voiceover-mapping/1"),
         );
+        // The version as its own number, beside the schema's own string:
+        // a consumer that wants to branch on the number should not have to
+        // parse it out of the name. Constant 1 - the version the schema
+        // string already carries - and absent from the mappings the first
+        // builds wrote, so a reader takes missing as 1.
+        mapping.insert("schemaVersion".to_owned(), serde_json::json!(1));
         mapping.insert(
             "segments".to_owned(),
             serde_json::to_value(&segments)
@@ -1113,6 +1119,9 @@ mod tests {
         .unwrap();
         let mapping: serde_json::Value = serde_json::from_str(&mapping).unwrap();
         assert_eq!(mapping["schema"], "funcut.voiceover-mapping/1");
+        // The version stands beside the schema string as its own number,
+        // so a consumer branches on 1 without parsing the name.
+        assert_eq!(mapping["schemaVersion"], 1);
         let segments = mapping["segments"].as_array().unwrap();
         assert_eq!(segments.len(), 2);
         assert_eq!(segments[1]["source_clip_id"], "c2");

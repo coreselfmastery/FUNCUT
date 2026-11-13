@@ -212,6 +212,15 @@ impl Headless {
                 std::env::current_dir().into_iter().collect()
             });
         api.add_capability("mcp");
+        // The stock index, opened on a background thread the moment the
+        // headless session exists: an agent's first openvid search arrives
+        // seconds after the session opens, and the cold open of a 435 MB
+        // SQLite index is seconds of that first call's time otherwise -
+        // time a caller reads as a hang. Best-effort by construction: the
+        // thread discards every outcome, a missing index is still the
+        // prepare's to download, and a race with the first real asker is
+        // settled by the library's own OnceLock.
+        api.warm_openvid();
         if api.roots().is_empty() {
             api.restrict_writes_to(roots);
         }

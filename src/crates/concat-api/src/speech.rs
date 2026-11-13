@@ -65,12 +65,34 @@ impl Api {
         path: &str,
         model: Option<String>,
         language: Option<String>,
+        initial_prompt: Option<String>,
     ) -> Result<Started, ApiError> {
         if !std::path::Path::new(path).is_file() {
             return Err(ApiError::new(
                 ErrorCode::NotFound,
                 format!("no such file: {path}"),
             ));
+        }
+        // The glossary whisper starts from: a prompt is the spelling the
+        // whole run keeps, so one that is too long to be a glossary or
+        // carries a byte whisper's setter panics on is refused at the
+        // door, in one round trip, before a job is booked for it.
+        if let Some(prompt) = initial_prompt.as_deref() {
+            if prompt.chars().count() > 200 {
+                return Err(ApiError::new(
+                    ErrorCode::Invalid,
+                    format!(
+                        "initialPrompt is {} characters; the glossary is at most 200 - name the terms, do not write the script",
+                        prompt.chars().count()
+                    ),
+                ));
+            }
+            if prompt.contains('\0') {
+                return Err(ApiError::new(
+                    ErrorCode::Invalid,
+                    "initialPrompt must not contain NUL",
+                ));
+            }
         }
         let summary = concat_host::media::probe(path).map_err(ApiError::failed)?;
         let Some(duration) = summary.duration.filter(|seconds| *seconds > 0.0) else {
@@ -86,7 +108,14 @@ impl Api {
             window: duration,
             model_id: model.unwrap_or_else(|| DEFAULT_TRANSCRIBER.to_owned()),
         };
-        self.begin_speech(path, Work::Transcribe { request, language })
+        self.begin_speech(
+            path,
+            Work::Transcribe {
+                request,
+                language,
+                prompt: initial_prompt,
+            },
+        )
     }
 
     /// [`crate::Request::SpeechGenerate`]: a WAV of the words, in the
@@ -261,6 +290,9 @@ enum Work {
         request: concat_speech::transcribe::TranscribeRequest,
         /// The language hint, when the caller gave one.
         language: Option<String>,
+        /// The initial-prompt glossary, when the caller gave one: the
+        /// proper nouns and jargon whisper starts its run knowing.
+        prompt: Option<String>,
     },
     /// Say the words.
     Generate {
@@ -300,9 +332,19 @@ impl SpeechJob {
     /// The whole job: work, then say how it went.
     fn run(self) {
         let done = match &self.work {
-            Work::Transcribe { request, language } => self
+            Work::Transcribe {
+                request,
+                language,
+                prompt,
+            } => self
                 .transcriber
-                .transcribe_with_language(&self.dirs, request, language.as_deref(), |_| {})
+                .transcribe_with_language(
+                    &self.dirs,
+                    request,
+                    language.as_deref(),
+                    prompt.as_deref(),
+                    |_| {},
+                )
                 .map(|segments| {
                     serde_json::json!({
                         "segments": rounded(segments),

@@ -721,6 +721,12 @@ pub enum Request {
         /// models refuse explicit non-English hints.
         #[serde(default)]
         language: Option<String>,
+        /// Optional glossary for Whisper's initial prompt: the proper
+        /// nouns, acronyms and jargon the take uses, so the first window
+        /// of words establishes the spelling the whole run keeps. At most
+        /// 200 characters; absent is Whisper's own cold start.
+        #[serde(default)]
+        initial_prompt: Option<String>,
     },
     /// Speaks `text` as a WAV in the project's own audio folder, on a job
     /// of its own - a voiceover in one call. The waited status's `output`

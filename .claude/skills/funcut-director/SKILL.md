@@ -6,7 +6,7 @@ description: >-
   animate, or export a video — including a whole video from just a script or topic — or whenever
   a Forge run says to act as the video director. Covers the full pipeline: script analysis, TTS
   voiceover, transcription, silence removal, scene and beat analysis, B-roll from OpenVid planned
-  as footage slots (a description-ranked search, a continuity gate, and a revision loop that
+  segment by segment (a description-ranked search, a continuity gate, and a revision loop that
   re-shops only what the critic named), background music, SFX placement, titles, segment-timed
   captions, word-timed kinetic captions, motion comps, keyframe motion, color grading,
   transitions, self-verification with watch_render and craft_critique, and export. Professional
@@ -254,19 +254,21 @@ below 7 means rewrite the plan, not proceed. Then compare the plan's `aspect` wi
 differ, set the canvas with `project_set_video` BEFORE gathering assets.
 
 **The canonical plan is segment-based.** `segments[]` is the timeline
-contract the validator and `scripts/auto_director.py` execute; do not add a
-separate `slots[]` array to the canonical JSON. For every timed segment,
-the `visual` object says what actually plays. A `broll` visual carries
-`query`, a 40+ character semantic `description`, optional fallback
-`queries`, `hero`, `motionMin`, intended `shotScale`, and semantic
-`category`. A `textCard`/`titleCard` that needs designed motion carries a
-complete `visual.storyboard` accepted by `motion_reel`; an asset that is
-not rendered and placed is not an executed visual decision. An `existing`
-visual must name a real clip/media id already in the project. Slot-like
-shot notes may help your internal reasoning, but they are not a second
-serialized source of truth. There is no universal footage/graphics/hold
-percentage: choose the mix from this film's story, evidence, emotion, and
-available material.
+contract the validator and `scripts/auto_director.py` execute; for every
+timed segment, the `visual` object says what actually plays. A `broll`
+visual carries `query`, a 40+ character semantic `description`, optional
+fallback `queries`, `hero`, `motionMin`, intended `shotScale`, and
+semantic `category`. A `textCard`/`titleCard` that needs designed motion
+carries a complete `visual.storyboard` accepted by `motion_reel`; an asset
+that is not rendered and placed is not an executed visual decision. An
+`existing` visual must name a real clip/media id already in the project.
+A `slots[]` array may ride along as the optional shopping list - one
+opening at a time, with its role, treatment, entry/exit and the rich
+description the stock search ranks against - but it must agree with the
+segments, and a plan without it is a plan the segments alone describe:
+the slots are a shopping list, never a second timeline. There is no
+universal footage/graphics/hold percentage: choose the mix from this
+film's story, evidence, emotion, and available material.
 
 **Phase 4 — Gather (parallel if your harness allows).**
 **The BGM gate runs before any music is searched.**

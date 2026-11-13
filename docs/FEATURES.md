@@ -335,10 +335,11 @@ instead of randomly calling tools. **Phases 0–8 plus sub-phases 1b, 1c and 5b*
    times retime by exactly what was cut.
 3. **Write the edit plan** — one JSON contract
    (`templates/edit_plan.schema.json`, v2) with sections, per-segment
-   emotion/act/easing/colourTemp/duckDb, visuals, cut types, entrances and
-   exits, SFX with peak times, captions, one required grade, and the
-   footage slots — one per opening, with its treatment, job, entry/exit,
-   rich description, fallback queries, `hero` and `motionMin` — validated
+   emotion/act/easing/colourTemp/duckDb, every segment's `visual`, cut
+   types, entrances and exits, SFX with peak times, captions, one required
+   grade, and the optional `slots[]` shopping list — one per opening, with
+   its treatment, job, entry/exit, rich description, fallback queries,
+   `hero` and `motionMin`, agreeing with the segments — validated
    by `plan_validate` until **both** `valid` and `creativeReady` are true.
 4. **Gather (parallel)** — batched library searches; each `broll` slot
    ranked against its own description (`openvid_rank_for_slot`: used ids

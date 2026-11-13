@@ -226,7 +226,9 @@ extract|brand|gate|verify|template, project?}` · `voice_signals {action:
 extract|selftest, audio?, transcript?, lines?, script?, emotion?}` ·
 `sense_discourse` · `sense_voice_quality` · `sense_prosody_style` ·
 `sense_audio_repair` · `sense_captions` · `measure_loudness {path,
-targetLufs?}` · `suggest_cuts {path, cuts?, minGap?, bpm?}`
+targetLufs?}` · `suggest_cuts {path, cuts?, minGap?, bpm?}` ·
+`footage_plan_suggest {transcript: {segments: [{start,end,text}]}, beats?}`
+(the dialogue gaps and monotony runs that want B-roll, named before the plan is written)
 
 - `voice_signals` is Phase 1c's reader — the acoustic score the plan cuts
   by. Its reply carries `signalConfidence` (how much to lean on each signal

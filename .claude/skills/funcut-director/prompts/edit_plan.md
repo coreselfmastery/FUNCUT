@@ -29,13 +29,16 @@ assets; it validates structure and timeline continuity, not creative quality.
    its own lane. It never cuts or retimes audio behind the plan's back. If
    dead air was cut before planning, use that edited timeline clip and write
    segment times against its edited duration.
-2. **A visual for every segment** — the canonical plan is segment-based;
-   do not create a separate `slots` array. For `broll`, provide a concrete
+2. **A visual for every segment** — the canonical plan is segment-based.
+   For `broll`, provide a concrete
    `query`, a 40+ character semantic `description`, optional fallback
    `queries`, `hero`, `motionMin`, intended `shotScale`, and semantic
    `category` for continuity. The Director
    ranks unique candidates, checks continuity, imports them, places them at
-   the segment start, and trims them to the segment duration.
+   the segment start, and trims them to the segment duration. An optional
+   `slots[]` array may ride along as the shopping list (see
+   `prompts/broll_matching.md`); it must agree with the segments, and a
+   plan without it is a plan the segments alone describe.
 3. **Designed motion is executable, not a label.** For a `textCard` or
    `titleCard` that needs motion, include a complete `visual.storyboard`
    accepted by the `motion_reel` tool. FUNCUT renders it, imports the movie,

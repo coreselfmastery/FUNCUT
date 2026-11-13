@@ -85,8 +85,10 @@ x-vector model; its `method` field says exactly that.
 ## Operating it
 
 - **Build the Rust ears**: `cd src && cargo build -p voice-signals`. The
-  binary is found on `PATH`, beside the unpacked sense scripts, or where
-  `FUNCUT_VOICE_SIGNALS_BIN` points. Without it the Python signals still
+  binary is found where `FUNCUT_VOICE_SIGNALS_BIN` points, beside the
+  app's own executable (`FUNCUT_APP_DIR` — where the Linux packages and
+  the AppImage drop it), on `PATH`, or beside the unpacked sense scripts.
+  Without it the Python signals still
   answer and `notes` says which ear was absent.
 - **WhisperX** (optional, heavy: torch): `pip install whisperx`. When
   importable, word times and confidences come from the alignment;

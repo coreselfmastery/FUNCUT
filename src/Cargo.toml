@@ -18,6 +18,9 @@ concat-host = { path = "crates/concat-host" }
 concat-api = { path = "crates/concat-api" }
 concat-server = { path = "crates/concat-server" }
 concat-mcp = { path = "crates/concat-mcp" }
+# The auto-edit runner's state machine, for the AUTO EDIT tool concat-mcp
+# will stand on it with.
+concat-director = { path = "crates/concat-director" }
 concat-speech = { path = "crates/concat-speech" }
 concat-effects = { path = "crates/concat-effects" }
 concat-text = { path = "crates/concat-text" }

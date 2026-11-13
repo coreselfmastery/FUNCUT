@@ -4643,7 +4643,7 @@ mod tests {
                     ],
                     "segments": [
                         { "start": 0.0, "end": 2.0, "visual": { "type": "broll", "query": "ocean waves aerial", "description": "a slow aerial drift over the ocean waves at dusk, camera gliding left" } },
-                        { "start": 2.0, "end": 4.0, "visual": { "type": "textCard", "text": "THE SALT STAYS", "storyboard": { "scenes": [{}] } } }
+                        { "start": 2.0, "end": 4.0, "visual": { "type": "textCard", "text": "THE SALT STAYS", "storyboard": { "scenes": [{ "preset": "funcut.ticker.count", "hold": 2.0, "ops": [] }] } } }
                     ]
                 } }),
             ),
@@ -6161,7 +6161,7 @@ mod tests {
             "audio": {},
             "segments": [
                 { "start": 0.0, "end": 2.0, "visual": { "type": "broll", "query": "ocean", "description": "a slow aerial drift across the ocean waves at dusk, camera gliding left" } },
-                { "start": 2.2, "end": 4.0, "visual": { "type": "textCard", "text": "SALT", "storyboard": { "scenes": [{}] } } }
+                { "start": 2.2, "end": 4.0, "visual": { "type": "textCard", "text": "SALT", "storyboard": { "scenes": [{ "preset": "funcut.ticker.count", "hold": 2.0, "ops": [] }] } } }
             ]
         });
         let result = validate_edit_plan(&breath).expect("a breath is not a refusal");
@@ -6295,7 +6295,7 @@ mod tests {
             "audio": {},
             "segments": [
                 { "start": 0.0, "end": 2.0, "visual": { "type": "broll", "query": "ocean", "description": "a slow aerial drift across the ocean waves at dusk, camera gliding left" } },
-                { "start": 2.0, "end": 4.0, "visual": { "type": "textCard", "text": "SALT", "storyboard": { "scenes": [{}] } } }
+                { "start": 2.0, "end": 4.0, "visual": { "type": "textCard", "text": "SALT", "storyboard": { "scenes": [{ "preset": "funcut.ticker.count", "hold": 2.0, "ops": [] }] } } }
             ]
         });
 
@@ -6398,7 +6398,7 @@ mod tests {
                     let visual = if index < broll {
                         json!({ "type": "broll", "query": "city skyline aerial", "description": "a slow aerial drift across the city skyline at dusk, camera gliding left" })
                     } else {
-                        json!({ "type": "textCard", "text": "SALT", "storyboard": { "scenes": [{}] } })
+                        json!({ "type": "textCard", "text": "SALT", "storyboard": { "scenes": [{ "preset": "funcut.ticker.count", "hold": 2.0, "ops": [] }] } })
                     };
                     json!({
                         "start": (index * 2) as f64,
@@ -6475,7 +6475,7 @@ mod tests {
             "segments": [
                 { "start": 0.0, "end": 2.0, "visual": { "type": "broll", "query": "ocean", "description": "a slow aerial drift across the ocean waves at dusk, camera gliding left" } },
                 { "start": 2.0, "end": 4.0, "visual": { "type": "broll", "query": "city", "description": "a slow aerial drift across the city skyline at dusk, camera gliding left" } },
-                { "start": 4.0, "end": 6.0, "visual": { "type": "textCard", "text": "SALT", "storyboard": { "scenes": [{}] } } }
+                { "start": 4.0, "end": 6.0, "visual": { "type": "textCard", "text": "SALT", "storyboard": { "scenes": [{ "preset": "funcut.ticker.count", "hold": 2.0, "ops": [] }] } } }
             ]
         });
 

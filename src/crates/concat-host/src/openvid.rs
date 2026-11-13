@@ -602,6 +602,17 @@ impl Library {
         connection
             .pragma_update(None, "journal_mode", "WAL")
             .map_err(|error| open(&error.to_string()))?;
+        // The index is 435 MB of FTS that a query touches a page at a
+        // time: a 256 MB mmap window and a 64 MB page cache keep the hot
+        // pages in memory from the first query on, and cost nothing when
+        // the query never needs them. Set before anything reads, so the
+        // first query is served under the same terms as the rest.
+        connection
+            .pragma_update(None, "mmap_size", 268_435_456_i64)
+            .map_err(|error| open(&error.to_string()))?;
+        connection
+            .pragma_update(None, "cache_size", -64_000_i64)
+            .map_err(|error| open(&error.to_string()))?;
         let meta = |key: &str| -> Result<Vec<u8>, String> {
             connection
                 .query_row("SELECT value FROM meta WHERE key = ?", [key], |row| {

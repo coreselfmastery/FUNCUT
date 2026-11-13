@@ -159,7 +159,23 @@
         "type": "textCard",
         "preset": "concat.impact",
         "text": "4,000,000,000 YEARS",
-        "motion": "punch-zoom"
+        "motion": "punch-zoom",
+        "storyboard": {
+          "width": 1080,
+          "height": 1920,
+          "fps": 30,
+          "scenes": [
+            {
+              "preset": "funcut.ticker.count",
+              "hold": 4.1,
+              "ops": [
+                { "op": "set-slot", "slot": "text", "text": "4,000,000,000" },
+                { "op": "set-slot", "slot": "label", "text": "YEARS OF RAIN" },
+                { "op": "retime", "seconds": 4.1 }
+              ]
+            }
+          ]
+        }
       },
       "cutType": "smash",
       "in": {
@@ -185,10 +201,10 @@
           },
           {
             "op": "retime",
-            "seconds": 3.5
+            "seconds": 4.1
           }
         ],
-        "hold": 3.5
+        "hold": 4.1
       },
       "sfx": {
         "query": "Impact deep boom",

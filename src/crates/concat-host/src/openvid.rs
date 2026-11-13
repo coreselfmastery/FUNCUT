@@ -588,6 +588,30 @@ impl Library {
         })()
     }
 
+    /// The memory the whole app may count on for index work, as the
+    /// kernel's own `MemAvailable` line tells it: what is free plus what
+    /// could be reclaimed without a fight, which is the honest ceiling on
+    /// a machine that is also running a desktop and a browser. Anything
+    /// unreadable - no procfs, a file that will not open, a line that
+    /// will not parse - falls back to 4 GiB, the comfortable-desktop
+    /// answer, so the clamps that shape it land on their upper shelves
+    /// instead of on zero. Read once: /proc/meminfo does not change its
+    /// mind cheaply enough to matter between two pragmas.
+    fn memory_budget() -> u64 {
+        static AVAILABLE: OnceLock<u64> = OnceLock::new();
+        *AVAILABLE.get_or_init(|| {
+            let read = std::fs::read_to_string("/proc/meminfo")
+                .ok()
+                .and_then(|info| {
+                    let line =
+                        info.lines().find(|line| line.starts_with("MemAvailable:"))?;
+                    let kib: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+                    Some(kib.saturating_mul(1024))
+                });
+            read.unwrap_or(4 * 1024 * 1024 * 1024)
+        })
+    }
+
     /// Opens the index, or says why not. The connection is kept in WAL mode
     /// so the frame sizes the page learns as it browses can be written
     /// without ever blocking a search, and the caption dictionary is read
@@ -603,15 +627,22 @@ impl Library {
             .pragma_update(None, "journal_mode", "WAL")
             .map_err(|error| open(&error.to_string()))?;
         // The index is 435 MB of FTS that a query touches a page at a
-        // time: a 256 MB mmap window and a 64 MB page cache keep the hot
-        // pages in memory from the first query on, and cost nothing when
-        // the query never needs them. Set before anything reads, so the
-        // first query is served under the same terms as the rest.
+        // time, and what it deserves to keep hot is the machine's to
+        // give, not ours: a quarter of MemAvailable for the mmap window
+        // and a sixteenth for the page cache, each clamped to a shelf
+        // (32-256 MB and 8-64 MB). A 4 GB laptop must not be handed the
+        // full 256 MB window plus the 64 MB cache a workstation takes
+        // for granted - that is swap, not speed - while a big box still
+        // reaches the top shelf. Set before anything reads, so the first
+        // query is served under the same terms as the rest.
+        let available = Self::memory_budget();
+        let mmap = (available / 4).clamp(32 * 1024 * 1024, 256 * 1024 * 1024);
+        let cache_kib = (available / 16 / 1024).clamp(8_000, 64_000);
         connection
-            .pragma_update(None, "mmap_size", 268_435_456_i64)
+            .pragma_update(None, "mmap_size", mmap as i64)
             .map_err(|error| open(&error.to_string()))?;
         connection
-            .pragma_update(None, "cache_size", -64_000_i64)
+            .pragma_update(None, "cache_size", -(cache_kib as i64))
             .map_err(|error| open(&error.to_string()))?;
         let meta = |key: &str| -> Result<Vec<u8>, String> {
             connection

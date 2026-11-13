@@ -3170,9 +3170,7 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
                     .and_then(Value::as_str)
                     .filter(|description| !description.is_empty())
                     .or_else(|| segment.get("spoken").and_then(Value::as_str));
-                if description.is_none_or(|description| {
-                    description.trim().chars().count() < 40
-                }) {
+                if description.is_none_or(|description| description.trim().chars().count() < 40) {
                     return Err(format!(
                         "segments[{index}] B-roll needs a 40+ character visual.description or spoken line"
                     ));
@@ -6255,13 +6253,18 @@ mod tests {
                     .unwrap_err()
                     .contains("storyboard.scenes")
             );
-            graphic["segments"][0]["visual"]["storyboard"] = json!({ "scenes": [{}] });
+            graphic["segments"][0]["visual"]["storyboard"] = json!({
+                "scenes": [{
+                    "preset": "funcut.ticker.count",
+                    "hold": 2.0,
+                    "ops": []
+                }]
+            });
             assert!(
                 validate_edit_plan(&graphic).is_ok(),
                 "{kind} with a scene passes"
             );
-            graphic["segments"][0]["visual"]["storyboard"]["scenes"] =
-                json!([]);
+            graphic["segments"][0]["visual"]["storyboard"]["scenes"] = json!([]);
             assert!(
                 validate_edit_plan(&graphic)
                     .unwrap_err()

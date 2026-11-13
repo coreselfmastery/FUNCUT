@@ -159,7 +159,31 @@
         "type": "textCard",
         "preset": "concat.impact",
         "text": "4,000,000,000 YEARS",
-        "motion": "punch-zoom"
+        "motion": "punch-zoom",
+        "storyboard": {
+          "width": 1080,
+          "height": 1920,
+          "fps": 30,
+          "scenes": [
+            {
+              "preset": "funcut.sting.wordmark",
+              "hold": 4.1,
+              "ops": [
+                {
+                  "op": "set-slot",
+                  "slot": "Wordmark",
+                  "value": "4,000,000,000 YEARS"
+                },
+                {
+                  "op": "pop",
+                  "node": "mark",
+                  "from": 0.9,
+                  "seconds": 0.7
+                }
+              ]
+            }
+          ]
+        }
       },
       "cutType": "smash",
       "in": {
@@ -176,16 +200,17 @@
           {
             "op": "set-slot",
             "slot": "text",
-            "text": "4,000,000,000"
+            "value": "4,000,000,000"
           },
           {
             "op": "set-slot",
             "slot": "label",
-            "text": "YEARS OF RAIN"
+            "value": "YEARS OF RAIN"
           },
           {
             "op": "retime",
-            "seconds": 3.5
+            "node": "ticker",
+            "duration": 3.5
           }
         ],
         "hold": 3.5

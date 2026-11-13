@@ -1877,8 +1877,15 @@ fn director_visual_schema() -> Value {
         "required": ["type"],
         "properties": {
             "type": { "type": "string", "enum": ["broll", "textCard", "titleCard", "existing"] },
-            "query": { "type": "string", "minLength": 1, "description": "Required and non-empty for broll segments." },
-            "description": { "type": "string", "description": "For broll, a provided non-empty description must be 40+ characters; if omitted or empty, segment.spoken must supply 40+ characters." },
+            "query": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Required and non-empty for broll segments."
+            },
+            "description": {
+                "type": "string",
+                "description": "For broll, a provided non-empty description must be 40+ characters; if omitted or empty, segment.spoken must supply 40+ characters."
+            },
             "queries": { "type": "array", "items": { "type": "string" } },
             "hero": { "type": "boolean" },
             "motionMin": { "type": "number", "minimum": 0 },
@@ -3163,7 +3170,9 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
                     .and_then(Value::as_str)
                     .filter(|description| !description.is_empty())
                     .or_else(|| segment.get("spoken").and_then(Value::as_str));
-                if description.is_none_or(|description| description.trim().chars().count() < 40) {
+                if description.is_none_or(|description| {
+                    description.trim().chars().count() < 40
+                }) {
                     return Err(format!(
                         "segments[{index}] B-roll needs a 40+ character visual.description or spoken line"
                     ));
@@ -6214,10 +6223,7 @@ mod tests {
                 .contains("non-empty visual.query")
         );
         broll["segments"][0]["visual"]["query"] = json!("city skyline aerial");
-        broll["segments"][0]["visual"]
-            .as_object_mut()
-            .expect("visual object")
-            .remove("description");
+        broll["segments"][0]["visual"]["description"] = json!("");
         assert!(
             validate_edit_plan(&broll).is_ok(),
             "a 40+ character spoken line supplies the omitted description"
@@ -6254,7 +6260,8 @@ mod tests {
                 validate_edit_plan(&graphic).is_ok(),
                 "{kind} with a scene passes"
             );
-            graphic["segments"][0]["visual"]["storyboard"]["scenes"] = json!([]);
+            graphic["segments"][0]["visual"]["storyboard"]["scenes"] =
+                json!([]);
             assert!(
                 validate_edit_plan(&graphic)
                     .unwrap_err()

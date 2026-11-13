@@ -177,10 +177,10 @@ pub(crate) fn run_py(
     // can reach that shelf; cheap and strictly optional, because a dev
     // build or an exotic layout simply leaves the variable unset and the
     // sidecar's own search order applies unchanged.
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            command.env("FUNCUT_APP_DIR", dir);
-        }
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+    {
+        command.env("FUNCUT_APP_DIR", dir);
     }
     // A process group of its own, so a timeout can take the sidecar's
     // ffmpeg grandchildren down with it: an overlay encode left alive

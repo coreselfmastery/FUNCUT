@@ -76,6 +76,13 @@ concat                         -     -     ~1000  -          -
 # covers it until the first CI run prints its real count.
 concat-motion-agent            -     -     ~1000  -          -
 
+# The sense layer's Rust ear (build-app.yml says why it ships): plain Rust
+# from the same tree, no GPU, no Skia and no static ONNX Runtime either -
+# the dispatched memchr/aho-corasick paths anno's pattern NER pulls in are
+# its vector code, so the same provisional limit as the other two covers
+# it until the first CI run prints its real count.
+voice-signals                  -     -     ~1000  -          -
+
 # The motion sidecar, a prebuilt third-party binary staged beside the
 # editor: its kernels are its own business, picked by asking the CPU at
 # run time the way FFmpeg's are, so the vector classes are not limited.

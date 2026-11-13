@@ -329,7 +329,14 @@ jobs:
           case "$BUILD_REF" in
             v[0-9]*-funcut.[0-9]*) export FUNCUT_ITERATION="${BUILD_REF##*-funcut.}" ;;
           esac
-          cargo build --profile app -p concat -p concat-motion --target ${{ matrix.target }} 2>&1 | tee build.log
+          # voice-signals is the sense layer's Rust ear (prosody,
+          # forensics, speakers, NER): the Python side looks for that
+          # binary beside the app's own executable (FUNCUT_APP_DIR) and
+          # then on PATH, and a bundle without it answers those readings
+          # from the pure-Python regex ear alone. Building it here is
+          # what lets the stage step below ship it; see
+          # docs/VOICE-SIGNALS.md.
+          cargo build --profile app -p concat -p concat-motion -p voice-signals --target ${{ matrix.target }} 2>&1 | tee build.log
 
       - name: Build log to the summary (failure only)
         if: failure()
@@ -384,6 +391,10 @@ jobs:
           # The motion CLI agents and shell scripts call: same folder, same
           # libraries, one more door into the engine (see docs/MOTION.md).
           cp "src/target/${{ matrix.target }}/app/concat-motion-agent" "stage/$name/concat-motion-agent"
+          # The sense layer's Rust ear (the Build step says why): it ships
+          # beside the executable, where the sense Python's own lookup
+          # finds it without a PATH entry.
+          cp "src/target/${{ matrix.target }}/app/voice-signals" "stage/$name/voice-signals"
           cp -a ffmpeg-dev/lib/*.so* "stage/$name/lib/"
           cp -a "$ORT_DIR"/lib/libonnxruntime.so* "stage/$name/lib/"
           # Sound, from the machine that built the binary, on the ARM
@@ -563,6 +574,8 @@ jobs:
           chmod +x "$STAGE/pkg/concat"
           printf '#!/bin/sh\nexec /opt/concat/concat-motion-agent "$@"\n' > "$STAGE/pkg/concat-motion-agent"
           chmod +x "$STAGE/pkg/concat-motion-agent"
+          printf '#!/bin/sh\nexec /opt/concat/voice-signals "$@"\n' > "$STAGE/pkg/voice-signals"
+          chmod +x "$STAGE/pkg/voice-signals"
           sed 's|^Exec=concat|Exec=/opt/concat/concat %U|' "$STAGE/concat.desktop" > "$STAGE/pkg/concat.desktop"
 
           scripts/ci/fetch.sh "nfpm-$( [ "${{ matrix.arch }}" = x86_64 ] && echo x86_64 || echo arm64 )" nfpm.tar.gz
@@ -584,6 +597,8 @@ jobs:
           cp "$STAGE/geneva" "$appdir/usr/bin/geneva"
           chmod +x "$appdir/usr/bin/geneva"
           cp "$STAGE/concat-motion-agent" "$appdir/usr/bin/concat-motion-agent"
+          cp "$STAGE/voice-signals" "$appdir/usr/bin/voice-signals"
+          chmod +x "$appdir/usr/bin/voice-signals"
           cp -a "$STAGE/lib" "$appdir/usr/bin/lib"
           # The X11 keyboard library the window opens by name at start, the
           # core library under it, and the xcb extension under that: a machine

@@ -596,22 +596,51 @@ def _detect_music_segments(spec):
     coverage = {}
     for s in spans:
         coverage[s["class"]] = coverage.get(s["class"], 0) + 1
-    has_music = any(s["class"].startswith("music") for s in spans)
+    # The gate's word against the tempo's. A "music_or_dense_speech" span
+    # is the classifier saying it cannot tell - and a gated TTS take lands
+    # there every time: continuous energy, a wandering centroid, no beat.
+    # The whole take's onset autocorrelation settles it, the same number
+    # identify_music reports as tempo.strength: music holds a pulse the
+    # autocorrelation can find (>= 0.1); dense speech does not. The reply
+    # records which evidence decided, so a caller can tell a measured
+    # false positive from a clean negative.
+    dense = any(s["class"] == "music_or_dense_speech" for s in spans)
+    clear_music = any(s["class"] == "music" for s in spans)
+    whole_bpm, whole_strength = _tempo_autocorr(curve) if len(curve) >= 100 else (None, 0.0)
+    if clear_music:
+        has_music = True
+        evidence = "gate"
+    elif dense and whole_strength >= 0.1:
+        has_music = True
+        evidence = "gate+tempo"
+    elif dense:
+        has_music = False
+        evidence = "gate_false_positive"
+    else:
+        has_music = False
+        evidence = "gate"
     return _ok(
         "detect_music_segments",
         duration=round(duration, 2),
         segments=merged,
         coverageSeconds={k: round(v * step / 100.0, 1) for k, v in coverage.items()},
         musicPresent=has_music,
+        evidence=evidence,
+        tempoStrength=whole_strength,
         editingAnswer=(
             "this take already carries music: do NOT double the bed - duck or replace, never stack"
             if has_music else
-            "no music in this take: a BGM bed is safe - start it under the first speech, "
-            "duck 10-14 dB while words run"),
+            (f"the dense spans are dense speech, not music - the take's beat strength "
+             f"({whole_strength}) is under the 0.1 a pulse needs: a BGM bed is safe"
+             if evidence == "gate_false_positive" else
+             "no music in this take: a BGM bed is safe - start it under the first speech, "
+             "duck 10-14 dB while words run")),
         directorHints=[
             "silence spans longer than 2 s are either breathing room or a cut candidate - check the pause classes",
             "a music_or_dense_speech span needs the emotion read to settle which it is",
-        ],
+        ] + (["the dense spans' pulse was measured too weak for music - the bed "
+              "decision stands on that measurement"]
+             if evidence == "gate_false_positive" else []),
         source="python (duty cycle, onset autocorrelation beat strength, centroid stability)",
     )
 
@@ -840,6 +869,52 @@ def _synth_music(path, bpm=120.0):
     return len(out) / rate
 
 
+def _synth_dense_speech(path):
+    """Dense speech: short phrases butted together with no gaps, pitch
+    leaping between them and gliding inside them - the gated-TTS pattern
+    whose continuous energy used to read as music_or_dense_speech and
+    gate the BGM decision as music. Lengths, pitches, glides and syllable
+    rates come from a deterministic scramble, so nothing the tempo
+    autocorrelation can search is a period of the whole."""
+    import wave as _wave
+    rate = RATE
+    total = []
+    state = 987654321
+
+    def rnd():
+        nonlocal state
+        state = (state * 1103515245 + 12345) % (1 << 31)
+        return state / (1 << 31)
+
+    for _ in range(110):
+        # Short phrases: a one-second window spans two or three, each at
+        # a very different pitch - that is what drives the centroid
+        # variation past the music classifier's stability floor. No
+        # syllabic amplitude ride: a gated TTS take is continuous energy,
+        # and a periodic ride is exactly what an autocorrelation reads
+        # as a beat. What moves is the pitch - leaping between phrases,
+        # gliding inside them - under a deterministic noise floor.
+        n = int((0.28 + 0.32 * rnd()) * rate)
+        f0 = 110.0 + 300.0 * rnd()
+        glide = (rnd() - 0.5) * 90.0
+        gain = 0.7 + 0.3 * rnd()
+        for i in range(n):
+            t = i / rate
+            carrier = f0 + glide * t
+            v = gain * (0.4 * math.sin(2 * math.pi * carrier * t) +
+                        0.25 * math.sin(6 * math.pi * carrier * t) +
+                        0.1 * math.sin(10 * math.pi * carrier * t))
+            noise = (((i * 2654435761) % 2000) / 1000.0 - 1.0) * 0.09
+            total.append(0.5 * v + noise)
+    with _wave.open(path, "wb") as h:
+        h.setnchannels(1)
+        h.setsampwidth(2)
+        h.setframerate(rate)
+        h.writeframes(b"".join(int(max(-1, min(1, s)) * 32000).to_bytes(2, "little", signed=True)
+                               for s in total))
+    return len(total) / rate
+
+
 def _synth_hum(path):
     """A noisy voiceover with 50 Hz hum and rumble baked in."""
     import wave as _wave
@@ -911,6 +986,29 @@ def selftest(only=None):
             except Exception as exc:  # noqa: BLE001
                 checks.append({"tool": name, "ok": False,
                                "error": f"{type(exc).__name__}: {exc}"})
+        # The gate's two directions, proven beyond the loop above: a
+        # dense-speech take (the gated-TTS pattern) must NOT gate as
+        # music - the tempo veto names it a false positive - and a take
+        # with a real beat grid must.
+        dense = str(Path(tmp) / "dense.wav")
+        _synth_dense_speech(dense)
+        dense_gate = _detect_music_segments({"audio": dense})
+        checks.append({
+            "tool": "detect_music_segments (dense speech)",
+            "ok": bool(dense_gate.get("ok")) and dense_gate.get("musicPresent") is False
+                  and dense_gate.get("evidence") == "gate_false_positive",
+            "error": dense_gate.get("error"),
+            "extra": f"evidence={dense_gate.get('evidence')} "
+                     f"tempoStrength={dense_gate.get('tempoStrength')}",
+        })
+        music_gate = _detect_music_segments({"audio": music})
+        checks.append({
+            "tool": "detect_music_segments (real music)",
+            "ok": bool(music_gate.get("ok")) and music_gate.get("musicPresent") is True,
+            "error": music_gate.get("error"),
+            "extra": f"evidence={music_gate.get('evidence')} "
+                     f"tempoStrength={music_gate.get('tempoStrength')}",
+        })
     failed = [c for c in checks if not c.get("ok")]
     return {
         "ok": not failed,

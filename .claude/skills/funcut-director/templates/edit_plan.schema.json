@@ -950,6 +950,11 @@
               "type": "string"
             }
           ]
+        },
+        "monetized": {
+          "type": "boolean",
+          "default": false,
+          "description": "True when the edit ships on a monetised channel or as client work. Arms the licence gates: plan_validate blocks OpenVid B-roll and MobyGratis beds, openvid_import refuses outright (the index carries no per-clip licence record), and bgm_import refuses MobyGratis (non-commercial only). Default false."
         }
       },
       "minProperties": 7

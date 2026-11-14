@@ -532,7 +532,13 @@ mod tests {
         // -12 duck, every knob a plan names when it wants another
         // answer - the block bone-dry, its one hint a maxLength the
         // runtime already enforced; schema the catalogue carries for
-        // the agent that plans, function not prose. The
+        // the agent that plans, function not prose. And once more,
+        // 248,000 -> 250,000, still at 110: the licence gates - the
+        // `monetized` flag on openvid_import and bgm_import, the plan
+        // schema's creativeBrief.monetized, and the three tool
+        // descriptions that say the gates exist - 249,336 measured;
+        // function, not prose: the flag a monetised edit needs before
+        // it shops stock. The
         // director's default surface - what `concat --mcp` serves an
         // agent that names no list, and the budget that matters by
         // default - keeps its own, tighter cap below.
@@ -547,7 +553,7 @@ mod tests {
             "CONTEXT whole catalogue: {total} over {} tools",
             sizes.len()
         );
-        assert!(total < 248_000, "{total}: {sizes:?}");
+        assert!(total < 250_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }
@@ -589,9 +595,15 @@ mod tests {
         // plan_validate onto the surface. And 234,000 -> 235,000 with
         // edit.apply's `idempotencyKey`: the director's placements name
         // themselves, so a resumed run cannot double what a finished one
-        // already placed (IDEM) - one field on the one edit tool.
+        // already placed (IDEM) - one field on the one edit tool. And
+        // 248,000 -> 250,000 (236,000 on the surface below), still at
+        // 110: the licence gates - the `monetized` flag openvid_import
+        // and bgm_import take, creativeBrief.monetized in the plan
+        // schema, and the three descriptions that say the gates exist -
+        // 249,336 measured; function, not prose: the flag a monetised
+        // edit needs before it shops stock.
         assert!(
-            director < 235_000,
+            director < 236_000,
             "the director's default surface is {director} characters - too much for an agent to hold"
         );
     }

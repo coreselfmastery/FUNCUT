@@ -459,7 +459,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "openvid_import",
             "Import stock clips",
-            "Fetch stock clips and add them to a project's bin, each copied into the project's own openvid folder.",
+            "Fetch stock clips and add them to a project's bin, each copied into the project's own openvid folder. Refuses when monetized is true: the OpenVid index carries no per-clip licence record.",
             "openvid.import",
             Raw,
         ),
@@ -497,7 +497,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "bgm_search",
             "Search music",
-            "Search the free music library by mood words; candidates carry ids, durations and licenses.",
+            "Search the free music library by mood words; candidates carry ids, durations and licenses - FreePD is CC0-1.0, MobyGratis (the lofi shelf) is non-commercial only.",
             "bgm.search",
             Raw,
         )
@@ -513,7 +513,7 @@ pub fn catalogue() -> Vec<Tool> {
         method(
             "bgm_import",
             "Import music",
-            "Fetch a music track and add it to a project's bin, optionally placing it on the timeline.",
+            "Fetch a music track and add it to a project's bin, optionally placing it on the timeline. Refuses MobyGratis (lofi) tracks when monetized is true - the shelf is non-commercial only.",
             "bgm.import",
             Raw,
         ),
@@ -1826,7 +1826,7 @@ fn sense_schema(name: &str) -> Option<Value> {
         "creative_brief" => json!({
             "path": string("The project folder."),
             "action": { "type": "string", "enum": ["get", "set"], "default": "get" },
-            "brief": { "type": "object", "description": "Fields to merge: audience, platform, goal, thesis, curiosityGap, payoff, emotionalArc, referenceStyle, tone, durationSeconds, brandKit, constraints, avoid." },
+            "brief": { "type": "object", "description": "Fields to merge: audience, platform, goal, thesis, curiosityGap, payoff, emotionalArc, referenceStyle, tone, durationSeconds, brandKit, constraints, avoid, monetized (true arms the licence gates: OpenVid stock and MobyGratis beds are then refused)." },
         }),
         _ => return None,
     };
@@ -1966,7 +1966,7 @@ fn plan_validate_schema() -> Option<Value> {
                     },
                     "creativeBrief": {
                         "type": "object",
-                        "description": "Brief: audience, platform, goal, thesis, curiosity gap, payoff, emotional arc, style, tone, brand kit, constraints, avoidances. Missing brief returns blockers.",
+                        "description": "Brief: audience, platform, goal, thesis, curiosity gap, payoff, emotional arc, style, tone, brand kit, constraints, avoidances, monetized flag. Missing brief returns blockers.",
                         "properties": {
                             "audience": { "type": "string" },
                             "platform": { "type": "string" },
@@ -1983,7 +1983,11 @@ fn plan_validate_schema() -> Option<Value> {
                             "durationSeconds": { "type": "number" },
                             "brandKit": {},
                             "constraints": {},
-                            "avoid": {}
+                            "avoid": {},
+                            "monetized": {
+                                "type": "boolean",
+                                "description": "True when the edit ships on a monetised channel or as client work. The licence gates are then armed: openvid_import refuses (the index carries no per-clip licence record) and bgm_import refuses MobyGratis (non-commercial only). Default false."
+                            }
                         }
                     },
                     "signalLog": {
@@ -3873,6 +3877,37 @@ fn creative_gate(object: &Value, segments: &[Value], runtime: f64, warnings: &[S
             }
         }
         Some(_) => blockers.push("creativeBrief must be an object".to_owned()),
+    }
+
+    // RISK-01/RISK-02: a monetized brief cannot stand on stock whose
+    // licence does not permit commercial use. The plan is where the
+    // intention is declared, so the gate fires here - before a single
+    // clip is fetched - and again in the import tools themselves
+    // (`openvid_import` and `bgm_import` both take `monetized`).
+    let monetized = object.pointer("/creativeBrief/monetized") == Some(&Value::Bool(true));
+    if monetized {
+        if let Some(track) = object.pointer("/audio/bgm/trackId").and_then(Value::as_str)
+            && track.starts_with("lofi-")
+        {
+            blockers.push(
+                "the brief is monetized and the bed names a MobyGratis track \
+                 (audio.bgm.trackId): the shelf is free for non-commercial use only - \
+                 name a FreePD (CC0-1.0) track or plan the edit non-monetized"
+                    .to_owned(),
+            );
+            score -= 1.0;
+        }
+        if segments.iter().any(|segment| {
+            segment.pointer("/visual/type") == Some(&Value::String("broll".to_owned()))
+        }) {
+            blockers.push(
+                "the brief is monetized and a segment's B-roll is OpenVid stock: the index \
+                 carries no per-clip licence record, so a monetized edit cannot import it - \
+                 use cleared footage as existing media or plan the edit non-monetized"
+                    .to_owned(),
+            );
+            score -= 1.0;
+        }
     }
 
     // Sections must take the viewer somewhere, not just exist.
@@ -6767,6 +6802,54 @@ mod tests {
         let result = creative_gate(&plan, &segments, 30.0, &[]);
         assert_eq!(result["ready"], json!(true), "{result}");
         assert_eq!(result["blockers"], json!([]), "{result}");
+    }
+
+    /// RISK-01/RISK-02: a monetized brief arms the licence gates - a
+    /// MobyGratis bed and OpenVid B-roll are blockers said at
+    /// validation, before a single clip is fetched - while the same
+    /// plan non-monetized carries neither: the stock is then the
+    /// caller's call to make, as it always was.
+    #[test]
+    fn a_monetized_brief_blocks_unlicensed_stock() {
+        let mut plan = json!({
+            "creativeBrief": {
+                "audience": "curious beginners",
+                "platform": "youtube",
+                "goal": "understand the story",
+                "thesis": "The evidence changes the common explanation",
+                "curiosityGap": "What actually happened?",
+                "payoff": "The evidence reveals the cause",
+                "emotionalArc": ["curiosity", "tension", "clarity"]
+            },
+            "audio": { "bgm": { "trackId": "lofi-0123456789ab" } },
+            "sections": [
+                { "role": "hook", "start": 0.0, "end": 3.0 },
+                { "role": "body", "start": 3.0, "end": 10.0 }
+            ]
+        });
+        let segments = vec![
+            json!({ "start": 0.0, "end": 3.0, "visual": { "type": "broll", "query": "city skyline at dusk" } }),
+            json!({ "start": 3.0, "end": 10.0, "visual": { "type": "textCard", "text": "THE EVIDENCE" } }),
+        ];
+        let clean = creative_gate(&plan, &segments, 10.0, &[]);
+        assert_eq!(clean["ready"], json!(true), "{clean}");
+        assert_eq!(clean["blockers"], json!([]), "{clean}");
+        plan["creativeBrief"]["monetized"] = json!(true);
+        let gated = creative_gate(&plan, &segments, 10.0, &[]);
+        assert_eq!(gated["ready"], json!(false), "{gated}");
+        let blockers = gated["blockers"].as_array().expect("blockers");
+        assert!(
+            blockers.iter().any(|blocker| blocker
+                .as_str()
+                .is_some_and(|text| text.contains("MobyGratis"))),
+            "the MobyGratis bed is a blocker: {gated}"
+        );
+        assert!(
+            blockers.iter().any(|blocker| blocker
+                .as_str()
+                .is_some_and(|text| text.contains("OpenVid"))),
+            "the OpenVid B-roll is a blocker: {gated}"
+        );
     }
 
     /// The decision log: a plan with a voiceover and no signalLog is not

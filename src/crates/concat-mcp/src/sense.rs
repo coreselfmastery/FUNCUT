@@ -2238,6 +2238,10 @@ const BRIEF_KEYS: &[&str] = &[
     "brandKit",
     "constraints",
     "avoid",
+    // RISK-01/RISK-02: true when the edit ships on a monetised channel
+    // or as client work - the flag that arms the stock and BGM licence
+    // gates in the plan validator and the import tools.
+    "monetized",
 ];
 
 fn load_brief(project: Option<&str>) -> Value {

@@ -30,6 +30,12 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Read the repository's pinned Rust toolchain
+        id: toolchain
+        run: echo "channel=$(sed -n 's/^channel = \"\(.*\)\"/\1/p' src/rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master (v1), 2026-10-09
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
       - name: Install pinned cargo-audit
         run: cargo install --locked --version 0.22.2 cargo-audit
       - name: Audit the committed dependency lockfile

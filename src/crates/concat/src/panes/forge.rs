@@ -760,9 +760,9 @@ fn voiceover_copy_name(index: usize, source: &std::path::Path) -> String {
 }
 
 /// The same, in the AUTO EDIT's own spelling: the file the timeline's
-/// clips play is the TAKE, and the repair stage's clean pass lands on it
-/// - overwriting this pristine copy with the repaired chain, exactly as
-/// the watcher's "the timeline carries the repaired take" promises.
+/// clips play is the TAKE, and the repair stage's clean pass lands on
+/// it, overwriting this pristine copy with the repaired chain, exactly
+/// as the watcher's "the timeline carries the repaired take" promises.
 fn take_copy_name(index: usize, source: &std::path::Path) -> String {
     let name = source
         .file_name()
@@ -810,6 +810,19 @@ struct AutoEditSource {
     /// server refuses absolute write paths, and the sheet is written
     /// through it.
     sheet: String,
+}
+
+/// What the sibling build collected, as one unit: a copy that fails or
+/// a document that cannot be written removes the half-populated sibling
+/// rather than leaving any of it behind.
+struct BuiltSibling {
+    /// The voiceover files, absolute paths, in the order they play.
+    files: Vec<String>,
+    /// One record per voiceover clip: source clip to sibling clip.
+    segments: Vec<VoiceoverSegment>,
+    /// The AUTO EDIT's take rows, one per distinct file - empty for a
+    /// forge run's sibling, which names its copies its own way.
+    takes: Vec<TakePaths>,
 }
 
 /// Makes the sibling project a voiceover run edits: the open project's
@@ -936,7 +949,7 @@ fn build_voiceover_sibling(
     // Copy the files in and rebuild the narration's clips, as one unit:
     // a copy that fails or a document that cannot be written removes the
     // half-populated sibling rather than leaving it behind.
-    let built = (|| -> Result<(Vec<String>, Vec<VoiceoverSegment>, Vec<TakePaths>), String> {
+    let built = (|| -> Result<BuiltSibling, String> {
         // The voiceover files are copied in, so the edit stands on its own
         // and the source project can be moved or deleted without breaking
         // it. The AUTO EDIT's copies take the take- spelling: the repair
@@ -1079,10 +1092,18 @@ fn build_voiceover_sibling(
             bytes,
         )
         .map_err(|error| format!("could not write the voiceover mapping: {error}"))?;
-        Ok((copied, segments, takes))
+        Ok(BuiltSibling {
+            files: copied,
+            segments,
+            takes,
+        })
     })();
     match built {
-        Ok((copied, segments, takes)) => {
+        Ok(BuiltSibling {
+            files: copied,
+            segments,
+            takes,
+        }) => {
             // The AUTO EDIT's fixed paths: the export folder is made now,
             // so the run's first write into it is the export itself.
             let auto = for_auto_edit.then(|| {

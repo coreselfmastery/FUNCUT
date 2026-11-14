@@ -17,14 +17,15 @@
 //! comes first. [`openvid`](crate::openvid) holds the gate for the
 //! whole of a download and the whole of a first open - an RAII
 //! [`IndexWarm`] token, so a warm that panics still releases - and
-//! while any warm is held, [`proxy`](crate::proxy) parks the copies it
-//! is asked to ensure instead of submitting them. The moment the last
-//! warm finishes, everything parked is submitted on the scheduler's
-//! proxy lane in the order it arrived, and proxy generation runs as it
-//! always did. Nothing is ever interrupted: a warm never waits (the
-//! gate is not a lock the warm takes; it is a flag it raises), and a
-//! proxy already encoding when a warm begins is left to finish - the
-//! disk is only ever told which of the two starts next.
+//! every proxy checks the gate when a scheduler worker is ready to
+//! start it. This matters because a proxy can already be queued when
+//! a warm begins: checking only when the caller enqueues it would let
+//! that queued job start under the warm. Such a worker parks the job;
+//! the outermost warm release resubmits parked jobs through the same
+//! worker-start check, so a new warm cannot slip into that gap either.
+//! Nothing is ever interrupted: a warm never waits (the gate is not a
+//! lock the warm takes; it is a flag it raises), and a proxy that has
+//! passed the worker-start check is left to finish if a warm begins.
 //!
 //! The gate is process-local and best-effort by design: it orders the
 //! work this one process starts, which is the interleaving this app
@@ -88,10 +89,8 @@ impl Drop for IndexWarm {
                 Vec::new()
             }
         };
-        // Submitted outside the lock: a job that itself asks about the
-        // gate - none does today, and none may, or the release would
-        // wait on itself - must never be able to hold the lock the
-        // release holds.
+        // Submit outside the gate lock. A worker may start immediately
+        // and must be able to take this lock for its own start-time check.
         for job in released {
             submit_proxy(job);
         }

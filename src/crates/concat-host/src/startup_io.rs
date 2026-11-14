@@ -99,16 +99,30 @@ impl Drop for IndexWarm {
 }
 
 /// Whether an index warm is in flight and proxy generation should
-/// park. A cheap lock; [`crate::proxy::ensure`] reads it once per ask.
+/// park. The tests' read of the gate; the park itself answers its own
+/// question atomically (see [`park_until_index_warm`]).
+#[cfg(test)]
 pub(crate) fn index_warming() -> bool {
     lock().depth > 0
 }
 
-/// Park a proxy job until every in-flight index warm has finished.
-/// The caller has already recorded the job's target in its own
-/// writing set, so a second ask for the same target parks nothing.
-pub(crate) fn park_until_index_warm(job: Job) {
-    lock().pending.push_back(job);
+/// Park a proxy job until every in-flight index warm has finished,
+/// answered as one move under the gate's lock: `None` when the job is
+/// parked, `Some(job)` when no warm is in flight and the job is handed
+/// back for the caller to submit as it always did. The check and the
+/// park are one acquisition because they must not come apart - a warm
+/// that released between a separate `index_warming` read and the park
+/// would drain a queue the job had not joined yet, and the job would
+/// sit parked with no warm left to ever free it. The caller has
+/// already recorded the job's target in its own writing set, so a
+/// second ask for the same target parks nothing.
+pub(crate) fn park_until_index_warm(job: Job) -> Option<Job> {
+    let mut gate = lock();
+    if gate.depth == 0 {
+        return Some(job);
+    }
+    gate.pending.push_back(job);
+    None
 }
 
 #[cfg(test)]
@@ -169,6 +183,26 @@ pub(crate) mod tests {
             ran.load(Ordering::SeqCst),
             "the job ran after the outer warm"
         );
+    }
+
+    /// A park with no warm in flight is refused rather than stranded:
+    /// the check and the park are one move under the gate's lock, so a
+    /// warm that released between the two can never leave a job parked
+    /// with no warm left to free it. The job a refused park hands back
+    /// is dropped unrun here - which is also what it wants: the caller
+    /// goes on to submit it on the scheduler's own lane.
+    #[test]
+    fn a_park_with_no_warm_in_flight_is_refused_rather_than_stranded() {
+        let _alone = for_this_test_only()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        assert!(!index_warming(), "no warm is in flight");
+        let refused = park_until_index_warm(Box::new(|| {
+            panic!("a refused park must not run its job");
+        }))
+        .expect("the park was refused: no warm holds the gate");
+        drop(refused);
+        assert_eq!(parked(), 0, "nothing is left stranded in the queue");
     }
 
     /// How many jobs are parked, for the tests and for nothing else:

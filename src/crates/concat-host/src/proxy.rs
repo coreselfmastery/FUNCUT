@@ -277,10 +277,12 @@ pub fn ensure(
     // set, so a second ask parks nothing), and the job is submitted the
     // moment the warm releases the gate, in arrival order. A proxy
     // already encoding when a warm begins is never interrupted: the
-    // gate orders what starts next, not what is running.
-    if crate::startup_io::index_warming() {
-        crate::startup_io::park_until_index_warm(Box::new(job));
-    } else {
+    // gate orders what starts next, not what is running. The park is
+    // answered atomically - a warm that released between a separate
+    // check and the park would strand the job - so the gate itself
+    // says whether it parked, and a job it hands back is submitted as
+    // it always was.
+    if let Some(job) = crate::startup_io::park_until_index_warm(Box::new(job)) {
         crate::scheduler().submit(Priority::Proxy, job);
     }
     true

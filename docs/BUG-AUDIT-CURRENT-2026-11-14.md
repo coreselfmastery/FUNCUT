@@ -82,7 +82,7 @@ The code search also found upstream/vendor TODOs in the bundled Whisper/ggml and
 
 These require real workflow acceptance before the feature can be called fully verified:
 
-1. **AI Director:** no recorded real project from brief/script through research, asset selection, voice, motion, edit, final export and review. Unit tests and mocked provider calls are not equivalent to a real end-to-end acceptance.
+1. **AI Director — major integration gap:** the Forge AUTO EDIT button is wired, but `auto_edit_program` only runs HandoffVoiceover, AudioRepair, Transcribe, VoiceSignals, Understand, Timeline, Export, Verify and Watch. It omits topic/research/script/plan generation, B-roll gathering, motion, captions, preview and revision. The separate Python helper requires a Director-authored plan; its two-pass revise loop is not wired into the UI Runner. No real brief-to-final-export project has been accepted. Unit tests and mocked provider calls are not equivalent to end-to-end acceptance.
 2. **Motion clips:** the command and Motion page exist, but the project-level authoring path still needs a representative real-project acceptance for edit metadata, save/reopen, undo/redo, preview and final export.
 3. **Lottie/dotLottie:** implementation exists with an intentionally bounded feature profile. Validate representative real files, asset references, unsupported-feature refusal and final export; do not describe it as full After Effects parity.
 4. **VAAPI:** the integration is present, but real Intel/AMD hardware acceptance is outstanding. This is a functional hardware-compatibility check, not a performance benchmark.

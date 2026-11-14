@@ -1258,10 +1258,7 @@ impl Api {
     /// A fetched clip, proven before use (DEG-08): fetch, then the head
     /// check, and a file that fails it leaves the cache so the next ask
     /// re-downloads instead of serving the corruption forever.
-    fn fetched_clip_checked(
-        library: &openvid::Library,
-        id: i64,
-    ) -> Result<PathBuf, ApiError> {
+    fn fetched_clip_checked(library: &openvid::Library, id: i64) -> Result<PathBuf, ApiError> {
         let cancel = std::sync::atomic::AtomicBool::new(false);
         let path = library.fetch(id, &cancel).map_err(ApiError::failed)?;
         if !Self::mp4_head_ok(&path) {
@@ -2805,7 +2802,10 @@ mod tests {
         let mut mp4 = b"\0\0\0\x18ftypmp42\0\0\0\0mp42isom".to_vec();
         mp4.extend_from_slice(&[0_u8; 64]);
         std::fs::write(&good, mp4).expect("writes");
-        assert!(Api::mp4_head_ok(&good), "an ftyp box at the front is an MP4");
+        assert!(
+            Api::mp4_head_ok(&good),
+            "an ftyp box at the front is an MP4"
+        );
         let bad = scratch.path().join("bad.mp4");
         std::fs::write(&bad, b"<html><body>502 Bad Gateway</body></html>").expect("writes");
         assert!(

@@ -91,7 +91,9 @@ impl Script {
             '\u{1100}'..='\u{11FF}' | '\u{3130}'..='\u{318F}' | '\u{AC00}'..='\u{D7A3}' => {
                 Script::Hangul
             }
-            '\u{0600}'..='\u{06FF}' | '\u{0750}'..='\u{077F}' | '\u{FB50}'..='\u{FDFF}'
+            '\u{0600}'..='\u{06FF}'
+            | '\u{0750}'..='\u{077F}'
+            | '\u{FB50}'..='\u{FDFF}'
             | '\u{FE70}'..='\u{FEFF}' => Script::Arabic,
             '\u{0590}'..='\u{05FF}' => Script::Hebrew,
             '\u{0900}'..='\u{097F}' => Script::Devanagari,
@@ -599,7 +601,7 @@ fn delivery_preset(name: &str) -> Option<(f32, Option<f32>)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{delivery_preset, dominant_script, language_mismatch, Script};
+    use super::{Script, delivery_preset, dominant_script, language_mismatch};
 
     #[test]
     fn delivery_names_a_pacing_not_a_fake_emotion() {

@@ -68,12 +68,23 @@ THE PIPELINE (in order; each phase logged; any failure stops the run)
     target is a wish, this is the measurement
 20. `watch_render` + `craft_critique` inspect the actual output and score it
 
-The run keeps its own two records beside the plan's: a signalLog of what
-it measured and what it could not - the footage planner's evidence for
-every B-roll slot, the degradations with their provenance, fallback or
-measured - and an audit of all nineteen plan fields, executed or
-rejected or skipped, with nothing the runner did not consume dropped
-silently. Both ride the run history the run writes.
+The run keeps its own three records beside the plan's: a signalLog of
+what it measured and what it could not - the footage planner's
+evidence for every B-roll slot, the degradations with their provenance,
+fallback or measured - an audit of all nineteen plan fields, executed
+or rejected or skipped, with nothing the runner did not consume dropped
+silently, and the Verify stage's own report. All three ride the run
+history the run writes.
+
+Steps 18-19 are the Verify stage, and the stage keeps its own record
+(VERIFY-01..05, 08..14): every check the finished export must answer -
+black frames, captions present and on-frame, transcript sync, visual
+quality, media availability, duplicate clips on a lane, codec, frame
+size, frame rate, the true-peak ceiling, the post-final-edit timeline
+hash - each one a structured entry, and the whole record written beside
+the export as `verification-report.json` for the acceptance read. A
+failed check stops the run naming its ids; a check the environment
+cannot run is skipped with its reason written down.
 
 The watcher is an execution layer, not a topic-to-plan author: the Director
 agent must supply a validated canonical edit plan. A craft score below 7
@@ -96,14 +107,17 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
+from fractions import Fraction
 from typing import Any
 
 POLL_SECONDS = 2.0
@@ -747,11 +761,667 @@ def phase_plan(plan: dict[str, Any]) -> list[tuple[str, str]]:
         ("transcribe", "start exported speech transcription"),
         ("analysis_wait", "wait for exported speech transcription"),
         ("emotion", "compare source and rendered speech timing"),
+        ("timeline_read", "the timeline re-read, as the export left it"),
+        ("project_get", "the bin re-read, every clip's source accounted for"),
         ("measure_loudness", "the export's LUFS and true peak, measured"),
         ("watch_render", "inspect rendered frames and audio"),
         ("craft_critique", "score the rendered cut"),
     ])
     return phases
+
+
+# ----------------------------------------------------------- the verification
+#
+# The Verify stage's own record: the checks the finished export must
+# answer before the run may call itself complete (VERIFY-01..05,
+# 08..14; 06 and 07 are the transcript-similarity and loudness gates the
+# stage has always run, now folded into the same record). Every check
+# emits one structured entry - id, check, status, reason, evidence -
+# and the entries are written beside the export as
+# verification-report.json, so an acceptance read does not have to
+# replay the log to know what was proven. A failed entry stops the run
+# naming its ids; a check the environment cannot run is skipped with
+# its reason written down, never silently dropped.
+
+#: The report's own name for its shape, the way auto-edit-report names its.
+VERIFICATION_REPORT_SCHEMA = "funcut.verification-report/1"
+#: How many frames the black-frame and visual-quality scans sample.
+VERIFICATION_SAMPLES = 10
+#: A sampled frame whose pixels move less than this (variance, 0-255
+#: gray) and whose mean sits under it is a black frame.
+VERIFICATION_BLACK = 16.0
+#: Ten samples whose brightness spread and per-frame contrast all sit
+#: inside this are a still field, not a cut.
+VERIFICATION_STILL = 2.0
+#: How far a word may start from where the edit placed it (VERIFY-03).
+VERIFICATION_SYNC_TOLERANCE_MS = 60
+#: The absolute ceiling true peak may touch (VERIFY-13; the loudness
+#: gate's own -1 dBTP pairing is asserted beside it, unchanged).
+VERIFICATION_TRUE_PEAK_DBFS = 0.0
+
+
+def _verification_entry(
+    check_id: str, check: str, status: str, reason: str | None = None, **evidence: Any
+) -> dict[str, Any]:
+    """One check's structured record: what ran, what it found, why."""
+    entry: dict[str, Any] = {"id": check_id, "check": check, "status": status}
+    if reason:
+        entry["reason"] = reason
+    if evidence:
+        entry["evidence"] = evidence
+    return entry
+
+
+def _ffprobe(path: str) -> dict[str, Any] | None:
+    """The render's own video stream as ffprobe reads it: codec, size,
+    frame rate, duration. None when ffprobe is absent, the file is not
+    there, or it does not answer - the caller decides what that means,
+    because a probe that never ran must not be read as a pass."""
+    if not shutil.which("ffprobe") or not os.path.isfile(path):
+        return None
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-select_streams", "v:0",
+                "-show_entries", "stream=codec_name,width,height,avg_frame_rate",
+                "-show_entries", "format=duration", "-of", "json", path,
+            ],
+            capture_output=True, text=True, timeout=60, check=True,
+        )
+        probe = json.loads(result.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    streams = probe.get("streams") if isinstance(probe, dict) else None
+    if not isinstance(streams, list) or not streams:
+        return None
+    stream = streams[0] if isinstance(streams[0], dict) else {}
+    rate = stream.get("avg_frame_rate") or "0/1"
+    try:
+        fps = float(Fraction(str(rate)))
+    except (ValueError, ZeroDivisionError):
+        fps = None
+    try:
+        duration = float(probe.get("format", {}).get("duration"))
+    except (TypeError, ValueError):
+        duration = None
+    return {
+        "codec": stream.get("codec_name"),
+        "width": stream.get("width"),
+        "height": stream.get("height"),
+        "fps": fps,
+        "duration": duration,
+    }
+
+
+def _sample_frames(
+    path: str, duration: float | None, samples: int = VERIFICATION_SAMPLES
+) -> list[dict[str, Any]] | None:
+    """Evenly spaced frames from the render, each measured as a small
+    gray raster: its mean (brightness) and its variance (contrast). The
+    two verify scans ride on these numbers - a black frame is a frame
+    whose mean and variance both sit under the floor; a still render is
+    ten samples that never moved. None when ffmpeg is absent or no
+    frame could be read - an unmeasured render is never a passed one."""
+    if not shutil.which("ffmpeg") or not os.path.isfile(path):
+        return None
+    if not isinstance(duration, (int, float)) or duration <= 0:
+        probe = _ffprobe(path)
+        duration = probe.get("duration") if probe else None
+    if not isinstance(duration, (int, float)) or duration <= 0:
+        return None
+    frames: list[dict[str, Any]] = []
+    for index in range(samples):
+        # Midpoints, not edges: a render that leads or trails with black
+        # gets its black counted where it is, not sampled into it by
+        # construction.
+        at = duration * (index + 0.5) / samples
+        try:
+            result = subprocess.run(
+                [
+                    "ffmpeg", "-nostdin", "-v", "error", "-ss", f"{at:.6f}", "-i", path,
+                    "-frames:v", "1", "-vf", "scale=64:36", "-f", "rawvideo",
+                    "-pix_fmt", "gray", "pipe:1",
+                ],
+                capture_output=True, timeout=60, check=True,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        pixels = result.stdout
+        if len(pixels) < 64 * 36:
+            return None
+        mean = sum(pixels) / len(pixels)
+        variance = sum((value - mean) ** 2 for value in pixels) / len(pixels)
+        frames.append({
+            "t": round(at, 3), "mean": round(mean, 2),
+            "variance": round(variance, 2),
+        })
+    return frames
+
+
+def _codec_family(codec: str) -> str:
+    """The one word a plan's codec and a probe's codec agree by: h265 is
+    hevc's other name, and both spellings mean the same encoder."""
+    lowered = str(codec or "").strip().lower()
+    return "hevc" if lowered in ("h265", "hevc") else lowered or "unknown"
+
+
+def _probe_checks(
+    rendered: str,
+    plan: dict[str, Any],
+    export: dict[str, Any],
+    probe: dict[str, Any] | None,
+    frames: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """The checks that read the render itself (VERIFY-01, 04, 09, 10,
+    11): what the file actually carries, against what the plan promised
+    and what a finished cut must look like. A render that cannot be
+    probed is skipped with the reason - the export tools already proved
+    the file exists; what could not be measured is said, not guessed."""
+    entries: list[dict[str, Any]] = []
+    if probe is None:
+        skipped = _verification_entry(
+            "VERIFY-01", "black-frame-scan", "skipped",
+            "the render was not probed (ffprobe is absent or did not answer); "
+            "the black-frame scan did not run",
+        )
+        entries.extend([
+            skipped,
+            _verification_entry(
+                "VERIFY-04", "visual-quality", "skipped",
+                "the render's frames were not sampled; the visual-quality scan did not run",
+            ),
+            _verification_entry(
+                "VERIFY-09", "codec-match", "skipped",
+                "the render's codec was not measured",
+            ),
+            _verification_entry(
+                "VERIFY-10", "resolution-match", "skipped",
+                "the render's frame size was not measured",
+            ),
+            _verification_entry(
+                "VERIFY-11", "frame-rate-match", "skipped",
+                "the render's frame rate was not measured",
+            ),
+        ])
+        return entries
+
+    # VERIFY-09: the codec the file carries against the one the plan named.
+    wanted_codec = _codec_family(export.get("codec") or "h264")
+    actual_codec = _codec_family(probe.get("codec"))
+    if actual_codec == "unknown":
+        entries.append(_verification_entry(
+            "VERIFY-09", "codec-match", "skipped",
+            "the probe carried no codec name",
+            probed=rendered,
+        ))
+    elif actual_codec != wanted_codec:
+        entries.append(_verification_entry(
+            "VERIFY-09", "codec-match", "fail",
+            f"the render carries {actual_codec} where the plan promised {wanted_codec}",
+            planCodec=wanted_codec, renderCodec=actual_codec, probed=rendered,
+        ))
+    else:
+        entries.append(_verification_entry(
+            "VERIFY-09", "codec-match", "pass",
+            evidence={"codec": actual_codec, "probed": rendered},
+        ))
+
+    # VERIFY-10: the frame the plan named (or its aspect) against the
+    # frame the render carries.
+    wanted_width, wanted_height = export.get("width"), export.get("height")
+    actual_width, actual_height = probe.get("width"), probe.get("height")
+    if isinstance(wanted_width, int) and isinstance(wanted_height, int):
+        if (actual_width, actual_height) != (wanted_width, wanted_height):
+            entries.append(_verification_entry(
+                "VERIFY-10", "resolution-match", "fail",
+                f"the render is {actual_width}x{actual_height} where the plan "
+                f"promised {wanted_width}x{wanted_height}",
+                planSize=[wanted_width, wanted_height],
+                renderSize=[actual_width, actual_height],
+                probed=rendered,
+            ))
+        else:
+            entries.append(_verification_entry(
+                "VERIFY-10", "resolution-match", "pass",
+                evidence={"size": [actual_width, actual_height], "probed": rendered},
+            ))
+    elif isinstance(actual_width, int) and isinstance(actual_height, int) and actual_height > 0:
+        ratios = {"16:9": 16.0 / 9.0, "9:16": 9.0 / 16.0, "1:1": 1.0, "4:5": 4.0 / 5.0}
+        aspect = plan.get("aspect")
+        if aspect in ratios:
+            actual_ratio = actual_width / actual_height
+            wanted_ratio = ratios[aspect]
+            if abs(actual_ratio - wanted_ratio) / wanted_ratio > 0.02:
+                entries.append(_verification_entry(
+                    "VERIFY-10", "resolution-match", "fail",
+                    f"the render's frame is {actual_width}x{actual_height} "
+                    f"({actual_ratio:.3f}), not the {aspect} the plan promised",
+                    planAspect=aspect, renderSize=[actual_width, actual_height],
+                ))
+            else:
+                entries.append(_verification_entry(
+                    "VERIFY-10", "resolution-match", "pass",
+                    evidence={"size": [actual_width, actual_height], "aspect": aspect},
+                ))
+        else:
+            entries.append(_verification_entry(
+                "VERIFY-10", "resolution-match", "skipped",
+                "the plan names no frame size or aspect to match",
+                renderSize=[actual_width, actual_height],
+            ))
+    else:
+        entries.append(_verification_entry(
+            "VERIFY-10", "resolution-match", "skipped",
+            "the render's frame size was not measured",
+        ))
+
+    # VERIFY-11: the frame rate the plan named against the one measured.
+    wanted_fps = export.get("fps")
+    actual_fps = probe.get("fps")
+    if not isinstance(wanted_fps, (int, float)) or wanted_fps <= 0:
+        entries.append(_verification_entry(
+            "VERIFY-11", "frame-rate-match", "skipped",
+            "the plan names no frame rate to match",
+            renderFps=actual_fps,
+        ))
+    elif not isinstance(actual_fps, (int, float)):
+        entries.append(_verification_entry(
+            "VERIFY-11", "frame-rate-match", "skipped",
+            "the render's frame rate was not measured",
+        ))
+    elif abs(actual_fps - float(wanted_fps)) > max(0.01, float(wanted_fps) * 0.0005):
+        entries.append(_verification_entry(
+            "VERIFY-11", "frame-rate-match", "fail",
+            f"the render carries {actual_fps:g} fps where the plan promised "
+            f"{float(wanted_fps):g} fps",
+            planFps=float(wanted_fps), renderFps=actual_fps,
+        ))
+    else:
+        entries.append(_verification_entry(
+            "VERIFY-11", "frame-rate-match", "pass",
+            evidence={"fps": actual_fps},
+        ))
+
+    # VERIFY-01 and VERIFY-04: the ten sampled frames, read twice.
+    if frames is None:
+        entries.extend([
+            _verification_entry(
+                "VERIFY-01", "black-frame-scan", "skipped",
+                "the render's frames were not sampled (ffmpeg is absent or "
+                "did not answer); the black-frame scan did not run",
+            ),
+            _verification_entry(
+                "VERIFY-04", "visual-quality", "skipped",
+                "the render's frames were not sampled; the visual-quality scan did not run",
+            ),
+        ])
+        return entries
+    black = [
+        frame for frame in frames
+        if frame["mean"] <= VERIFICATION_BLACK and frame["variance"] <= VERIFICATION_BLACK
+    ]
+    if black:
+        entries.append(_verification_entry(
+            "VERIFY-01", "black-frame-scan", "fail",
+            "the render carries black frames: "
+            + ", ".join(f"{frame['t']}s" for frame in black[:3])
+            + (" and more" if len(black) > 3 else ""),
+            samples=len(frames),
+            blackAt=[frame["t"] for frame in black],
+        ))
+    else:
+        entries.append(_verification_entry(
+            "VERIFY-01", "black-frame-scan", "pass",
+            evidence={"samples": len(frames)},
+        ))
+    brightness = [frame["mean"] for frame in frames]
+    contrast = [max(frame["variance"], 0.0) ** 0.5 for frame in frames]
+    spread = max(brightness) - min(brightness) if brightness else 0.0
+    mean_contrast = sum(contrast) / len(contrast) if contrast else 0.0
+    if spread <= VERIFICATION_STILL and mean_contrast <= VERIFICATION_STILL:
+        entries.append(_verification_entry(
+            "VERIFY-04", "visual-quality", "fail",
+            "the render is a still field: ten samples that never moved and "
+            "carried no contrast - the cut the plan describes is not on the screen",
+            brightnessSpread=round(spread, 2),
+            meanContrast=round(mean_contrast, 2),
+        ))
+    else:
+        entries.append(_verification_entry(
+            "VERIFY-04", "visual-quality", "pass",
+            evidence={
+                "brightnessSpread": round(spread, 2),
+                "meanContrast": round(mean_contrast, 2),
+            },
+        ))
+    return entries
+
+
+def _sync_entry(verification: Any) -> dict[str, Any]:
+    """VERIFY-03: the words the export says, against the words the edit
+    placed - the gate the stage has always run, one structured entry
+    now. matchRate and maxDriftMs are the evidence the tool measured."""
+    if isinstance(verification, dict) and verification.get("verdict") == "pass":
+        return _verification_entry(
+            "VERIFY-03", "transcript-sync", "pass",
+            evidence={
+                "matchRate": verification.get("matchRate"),
+                "maxDriftMs": verification.get("maxDriftMs"),
+                "toleranceMs": VERIFICATION_SYNC_TOLERANCE_MS,
+            },
+        )
+    return _verification_entry(
+        "VERIFY-03", "transcript-sync", "fail",
+        "the exported speech failed transcript/timing verification: "
+        + json.dumps(verification, ensure_ascii=False)[:400],
+        matchRate=verification.get("matchRate") if isinstance(verification, dict) else None,
+        maxDriftMs=verification.get("maxDriftMs") if isinstance(verification, dict) else None,
+        toleranceMs=VERIFICATION_SYNC_TOLERANCE_MS,
+    )
+
+
+def _timeline_clips(view: Any) -> list[dict[str, Any]]:
+    if isinstance(view, dict) and isinstance(view.get("clips"), list):
+        return [clip for clip in view["clips"] if isinstance(clip, dict)]
+    return []
+
+
+def _timeline_hash(view: Any) -> str | None:
+    """The timeline's own fingerprint: every clip's placement - id,
+    media, lane, start, length - as one canonical string hashed. Two
+    reads that agree here agree placement-for-placement; two that do
+    not mean something edited the project between them."""
+    clips = _timeline_clips(view)
+    if not clips:
+        return None
+    placed = [
+        {
+            "id": str(clip.get("id")),
+            "mediaId": str(clip.get("mediaId")),
+            "trackId": str(clip.get("trackId")),
+            "start": round(float(clip.get("start") or 0.0), 3),
+            "duration": round(float(clip.get("duration") or 0.0), 3),
+        }
+        for clip in clips
+    ]
+    placed.sort(key=lambda clip: (clip["id"], clip["start"]))
+    canonical = json.dumps(placed, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _timeline_checks(
+    timeline_then: Any, timeline_now: Any, media_view: Any
+) -> list[dict[str, Any]]:
+    """The checks that read the project's own state at verify time
+    (VERIFY-05, 08, 14): the timeline the export rendered is the
+    timeline the run finished with, no two clips are the same source
+    stacked on one lane's same seconds, and every clip's media is still
+    in the bin - and still on the disk it claims."""
+    entries: list[dict[str, Any]] = []
+    then_hash = _timeline_hash(timeline_then)
+    now_hash = _timeline_hash(timeline_now)
+    if timeline_then is None:
+        entries.append(_verification_entry(
+            "VERIFY-14", "post-final-edit-hash", "skipped",
+            "the timeline was never read back before the export; there is "
+            "no pre-export state to hash against",
+        ))
+    elif now_hash is None:
+        entries.append(_verification_entry(
+            "VERIFY-14", "post-final-edit-hash", "skipped",
+            "the timeline re-read carried no clips to hash",
+        ))
+    elif then_hash != now_hash:
+        entries.append(_verification_entry(
+            "VERIFY-14", "post-final-edit-hash", "fail",
+            "the timeline changed after the export's edit was final: the "
+            "project the run verified is not the project the run exported",
+            preExportSha=then_hash, atVerifySha=now_hash,
+        ))
+    else:
+        entries.append(_verification_entry(
+            "VERIFY-14", "post-final-edit-hash", "pass",
+            evidence={"sha256": now_hash},
+        ))
+
+    clips = _timeline_clips(timeline_now)
+    lanes: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    unplaced = 0
+    for clip in clips:
+        track = clip.get("trackId")
+        media = clip.get("mediaId")
+        if not isinstance(track, str) or not isinstance(media, str):
+            unplaced += 1
+            continue
+        lanes.setdefault((track, media), []).append(clip)
+    duplicates: list[str] = []
+    for (track, media), group in sorted(lanes.items()):
+        spans = sorted(
+            (float(clip.get("start") or 0.0), float(clip.get("start") or 0.0)
+             + float(clip.get("duration") or 0.0), str(clip.get("id")))
+            for clip in group
+        )
+        for (start, end, clip_id), later in zip(spans, spans[1:]):
+            if later[0] < end - 0.001:
+                duplicates.append(
+                    f"clips {clip_id} and {later[2]} overlap at {later[0]:.2f}s "
+                    f"on lane {track} (source {media})"
+                )
+    if timeline_now is None:
+        entries.append(_verification_entry(
+            "VERIFY-08", "duplicate-clip-same-lane", "skipped",
+            "the timeline was not re-read; duplicate clips were not checked",
+        ))
+    elif duplicates:
+        entries.append(_verification_entry(
+            "VERIFY-08", "duplicate-clip-same-lane", "fail",
+            "; ".join(duplicates[:3]) + (" and more" if len(duplicates) > 3 else ""),
+            duplicates=duplicates[:10],
+        ))
+    elif unplaced:
+        entries.append(_verification_entry(
+            "VERIFY-08", "duplicate-clip-same-lane", "pass",
+            evidence={"clips": len(clips), "unlaneChecked": unplaced},
+        ))
+    else:
+        entries.append(_verification_entry(
+            "VERIFY-08", "duplicate-clip-same-lane", "pass",
+            evidence={"clips": len(clips)},
+        ))
+
+    media = media_view.get("media", []) if isinstance(media_view, dict) else []
+    media = [item for item in media if isinstance(item, dict)]
+    bin_ids = {str(item.get("id")) for item in media if item.get("id") is not None}
+    referenced = {
+        str(clip.get("mediaId")) for clip in clips if clip.get("mediaId") is not None
+    }
+    missing_from_bin = sorted(referenced - bin_ids)
+    missing_on_disk = [
+        str(item.get("path")) for item in media
+        if isinstance(item.get("path"), str) and not os.path.isfile(item["path"])
+    ]
+    if media_view is None:
+        entries.append(_verification_entry(
+            "VERIFY-05", "media-availability", "skipped",
+            "the project's bin was not re-read; media availability was not checked",
+        ))
+    elif missing_from_bin:
+        entries.append(_verification_entry(
+            "VERIFY-05", "media-availability", "fail",
+            "the timeline references media the bin no longer holds: "
+            + ", ".join(missing_from_bin[:5]),
+            missingFromBin=missing_from_bin[:10],
+        ))
+    elif missing_on_disk:
+        entries.append(_verification_entry(
+            "VERIFY-05", "media-availability", "fail",
+            "the bin's media is not on the disk it names: "
+            + ", ".join(missing_on_disk[:3]),
+            missingOnDisk=missing_on_disk[:10],
+        ))
+    else:
+        entries.append(_verification_entry(
+            "VERIFY-05", "media-availability", "pass",
+            evidence={"binMedia": len(bin_ids), "referenced": len(referenced)},
+        ))
+    return entries
+
+
+def _caption_checks(
+    captions_wanted: bool,
+    placed_captions: list[dict[str, Any]],
+    captions_plan: dict[str, Any] | None,
+    duration: float | None,
+) -> list[dict[str, Any]]:
+    """The caption checks (VERIFY-02, 12): a plan that asks for
+    captions gets captions that exist, land inside the render's own
+    runtime, and sit inside the frame - a caption the viewer cannot
+    see is a promise the export did not keep. The band a caption
+    occupies is its anchor (offsetY) plus its line height (fontSize
+    as a share of frame height, 0.04 the tool's own default)."""
+    entries: list[dict[str, Any]] = []
+    if not captions_wanted:
+        entries.extend([
+            _verification_entry(
+                "VERIFY-02", "caption-present", "skipped",
+                "the plan asks for no captions",
+            ),
+            _verification_entry(
+                "VERIFY-12", "caption-on-frame", "skipped",
+                "the plan asks for no captions",
+            ),
+        ])
+        return entries
+    if not placed_captions:
+        entries.append(_verification_entry(
+            "VERIFY-02", "caption-present", "fail",
+            "the plan asks for captions and none were placed",
+        ))
+    elif isinstance(duration, (int, float)) and duration > 0:
+        off_render = [
+            caption for caption in placed_captions
+            if float(caption.get("end", 0.0)) <= 0.0
+            or float(caption.get("start", 0.0)) >= duration
+        ]
+        if off_render:
+            entries.append(_verification_entry(
+                "VERIFY-02", "caption-present", "fail",
+                "captions land outside the render's own runtime and are "
+                "never on screen: "
+                + ", ".join(
+                    f"[{caption.get('start')}-{caption.get('end')}]"
+                    for caption in off_render[:3]
+                ),
+                placed=len(placed_captions), renderDuration=round(duration, 3),
+            ))
+        else:
+            entries.append(_verification_entry(
+                "VERIFY-02", "caption-present", "pass",
+                evidence={"placed": len(placed_captions),
+                          "renderDuration": round(duration, 3)},
+            ))
+    else:
+        entries.append(_verification_entry(
+            "VERIFY-02", "caption-present", "pass",
+            evidence={"placed": len(placed_captions)},
+        ))
+
+    offset_y = (captions_plan or {}).get("offsetY", 0.35)
+    offset_y = float(offset_y) if isinstance(offset_y, (int, float)) else 0.35
+    font_size = (captions_plan or {}).get("fontSize", 0.04)
+    font_size = float(font_size) if isinstance(font_size, (int, float)) else 0.04
+    half_band = 0.7 * font_size
+    top, bottom = offset_y - half_band, offset_y + half_band
+    if top < 0.0 or bottom > 1.0:
+        entries.append(_verification_entry(
+            "VERIFY-12", "caption-on-frame", "fail",
+            f"the caption band sits at offsetY {offset_y:g} with fontSize "
+            f"{font_size:g} - the band [{top:.3f}, {bottom:.3f}] crosses the "
+            "frame edge and the viewer cannot see all of the caption",
+            offsetY=offset_y, fontSize=font_size,
+            band=[round(top, 4), round(bottom, 4)],
+        ))
+    else:
+        entries.append(_verification_entry(
+            "VERIFY-12", "caption-on-frame", "pass",
+            evidence={"offsetY": offset_y, "fontSize": font_size,
+                      "band": [round(top, 4), round(bottom, 4)]},
+        ))
+    return entries
+
+
+def _true_peak_entry(true_peak: float | None) -> dict[str, Any]:
+    """VERIFY-13: the absolute ceiling - a true peak above 0 dBFS is
+    digital clipping, whatever the loudness target allowed. A reply
+    that carried no number is said, not guessed."""
+    if true_peak is None:
+        return _verification_entry(
+            "VERIFY-13", "true-peak-ceiling", "skipped",
+            "measure_loudness carried no true peak to assert",
+        )
+    if true_peak > VERIFICATION_TRUE_PEAK_DBFS:
+        return _verification_entry(
+            "VERIFY-13", "true-peak-ceiling", "fail",
+            f"the render's true peak is {true_peak:g} dBTP, over the "
+            f"{VERIFICATION_TRUE_PEAK_DBFS:g} dBFS ceiling - the export clips",
+            truePeakDbtp=true_peak, ceilingDbfs=VERIFICATION_TRUE_PEAK_DBFS,
+        )
+    return _verification_entry(
+        "VERIFY-13", "true-peak-ceiling", "pass",
+        evidence={"truePeakDbtp": true_peak, "ceilingDbfs": VERIFICATION_TRUE_PEAK_DBFS},
+    )
+
+
+def _verification_summary(entries: list[dict[str, Any]]) -> dict[str, Any]:
+    counts: dict[str, int] = {"pass": 0, "fail": 0, "skipped": 0}
+    for entry in entries:
+        status = entry.get("status")
+        if status in counts:
+            counts[status] += 1
+    return {
+        "total": len(entries), "passed": counts["pass"],
+        "failed": counts["fail"], "skipped": counts["skipped"],
+    }
+
+
+def _verification_report(rendered: str, probed: str, entries: list[dict[str, Any]]) -> dict[str, Any]:
+    """The whole record, one JSON object: the schema name, the file the
+    checks ran against, every entry, and the summary an acceptance read
+    starts from."""
+    return {
+        "schema": VERIFICATION_REPORT_SCHEMA,
+        "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "output": rendered,
+        "probed": probed,
+        "checks": entries,
+        "summary": _verification_summary(entries),
+    }
+
+
+def _write_verification_report(project: str, report: dict[str, Any]) -> str | None:
+    """The record beside the export, where the acceptance read looks:
+    <project>/verification-report.json. A report that cannot be written
+    is logged, not fatal - the entries already crossed as log lines."""
+    try:
+        path = os.path.join(project, "verification-report.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+        return path
+    except OSError as error:
+        log(f"verification report not written ({error})")
+        return None
+
+
+def _verification_failed(entries: list[dict[str, Any]]) -> None:
+    """The one refusal the whole record ends on, naming every check that
+    failed and why - the run stops here, nothing later runs."""
+    failed = [entry for entry in entries if entry.get("status") == "fail"]
+    if not failed:
+        return
+    sentences = "; ".join(
+        f"{entry['id']} ({entry['check']}): {entry.get('reason')}" for entry in failed
+    )
+    raise PipelineError(f"the export failed verification: {sentences}")
 
 
 def run_pipeline(
@@ -1815,6 +2485,10 @@ def run_pipeline(
             kinetic_setting = True
         elif isinstance(captions_plan.get("kinetic"), dict):
             kinetic_setting = captions_plan["kinetic"]
+    # The captions the run actually placed, kept for the Verify stage's
+    # own record: a plan that asks for captions is measured for having
+    # them, not assumed (VERIFY-02, 12).
+    placed_captions: list[dict[str, Any]] = []
     if captions_wanted:
         if kinetic_setting is not None:
             # The word-timed path: the recogniser's own word times, the
@@ -1870,6 +2544,14 @@ def run_pipeline(
                 _signal(0.0, "captions", provenance="measured",
                         words=len(words),
                         note="word-timed kinetic captions baked from the recogniser's own word times")
+                # The words the reel carries are the captions the run
+                # placed: the Verify stage measures them for being on the
+                # screen (VERIFY-02), the same as it measures the
+                # timeline's own.
+                placed_captions = [
+                    {"start": start, "end": end, "text": text}
+                    for text, start, end in words
+                ]
                 if baked_file:
                     # The reel lands where the graphics do: the overlay
                     # lane, its own lane made when no graphic came first.
@@ -1940,6 +2622,7 @@ def run_pipeline(
                     "style": style,
                     "offsetY": float(offset_y) if isinstance(offset_y, (int, float)) else 0.35,
                 })
+                placed_captions = timed
                 log(f"{len(timed)} segment-timed caption(s) placed")
                 _audit(
                     "captions", "executed",
@@ -2089,7 +2772,9 @@ def run_pipeline(
 
     # The timeline as it stands, before the render pays for it: no two
     # clips may share a lane's same seconds, and the read-back is the
-    # record of what is about to be exported.
+    # record of what is about to be exported - the state the Verify
+    # stage hashes the project against (VERIFY-14).
+    read_back: Any = None
     if "collision_check" in served:
         collisions = advance("collision_check", {"path": project})
         if isinstance(collisions, dict) and collisions.get("clean") is False:
@@ -2108,6 +2793,31 @@ def run_pipeline(
     # state. A previous good export is never overwritten: it is moved
     # aside, stamped, before the new one writes.
     export = plan.get("export") if isinstance(plan.get("export"), dict) else {}
+
+    def export_arguments(destination: str) -> dict[str, Any]:
+        """The export call's own arguments, the plan's profile carried
+        whole: width, height and frame rate included when the plan named
+        them - VERIFY-10 and 11's promise starts here, the export asked
+        for what the plan says, then measured for having it."""
+        arguments: dict[str, Any] = {
+            "path": project,
+            "output": destination,
+            "crf": int(export.get("crf", 20)),
+            "codec": export.get("codec", "h264"),
+        }
+        for field in ("width", "height", "preset"):
+            if export.get(field) is not None:
+                arguments[field] = export[field]
+        frame_rate = export.get("fps")
+        if (
+            isinstance(frame_rate, (int, float)) and not isinstance(frame_rate, bool)
+            and float(frame_rate) > 0
+        ):
+            rate = Fraction(float(frame_rate)).limit_denominator(1001)
+            arguments["rateNum"] = rate.numerator
+            arguments["rateDen"] = rate.denominator
+        return arguments
+
     output = export.get("output")
     if not isinstance(output, str) or not output.strip():
         output = os.path.join(project, f"funcut-final-{time.strftime('%Y%m%d-%H%M%S')}.mp4")
@@ -2118,15 +2828,7 @@ def run_pipeline(
             log(f"previous export moved aside: {backup}")
         except OSError as error:
             log(f"could not back up the previous export ({error}); the new one will overwrite it")
-    started = advance(
-        "export_start",
-        {
-            "path": project,
-            "output": output,
-            "crf": int(export.get("crf", 20)),
-            "codec": export.get("codec", "h264"),
-        },
-    )
+    started = advance("export_start", export_arguments(output))
     job = started.get("job") if isinstance(started, dict) else None
     if not job:
         raise PipelineError("export_start did not return a job id")
@@ -2172,23 +2874,56 @@ def run_pipeline(
         exported_transcript = json.loads(export_transcript_status.get("output", ""))
     except (TypeError, json.JSONDecodeError) as error:
         raise PipelineError(f"exported transcription returned invalid JSON: {error}") from error
+
+    # ---- 18/19. The Verify stage's own record: every check the finished
+    # export must answer, each one a structured entry that rides the
+    # report written beside the export (VERIFY-01..05, 08..14). The sync
+    # gate the stage has always run is one entry now; the rest are the
+    # render probed and sampled, the project re-read, the captions'
+    # placement measured - and the refusal, when one fails, names every
+    # id that did.
+    verify_entries: list[dict[str, Any]] = []
+    probed_path = rendered
+    probe = _ffprobe(rendered)
+    frames = _sample_frames(rendered, (probe or {}).get("duration"))
+    verify_entries.extend(_probe_checks(rendered, plan, export, probe, frames))
+
     verification = advance(
         "emotion",
         {
             "action": "verify",
             "expected": transcript,
             "actual": exported_transcript,
-            "toleranceMs": 60,
+            "toleranceMs": VERIFICATION_SYNC_TOLERANCE_MS,
         },
     )
-    if not isinstance(verification, dict) or verification.get("verdict") != "pass":
-        raise PipelineError(
-            "exported speech failed transcript/timing verification: "
-            + json.dumps(verification, ensure_ascii=False)
+    verify_entries.append(_sync_entry(verification))
+    if isinstance(verification, dict) and verification.get("verdict") == "pass":
+        log(
+            f"speech verification passed: matchRate={verification.get('matchRate')} "
+            f"maxDriftMs={verification.get('maxDriftMs')} "
+            f"(tolerance {VERIFICATION_SYNC_TOLERANCE_MS} ms)"
         )
-    log(
-        f"speech verification passed: matchRate={verification.get('matchRate')} "
-        f"maxDriftMs={verification.get('maxDriftMs')} (tolerance 60 ms)"
+
+    # The project as the export left it: the timeline re-read and hashed
+    # against the read-back before the render (VERIFY-14), the same
+    # source never twice on one lane's same seconds (VERIFY-08), and
+    # every clip's media still in the bin and on the disk it names
+    # (VERIFY-05).
+    timeline_now = (
+        advance("timeline_read", {"path": project})
+        if "timeline_read" in served else None
+    )
+    media_now = (
+        advance("project_get", {"path": project})
+        if "project_get" in served else None
+    )
+    verify_entries.extend(_timeline_checks(read_back, timeline_now, media_now))
+    verify_entries.extend(
+        _caption_checks(
+            captions_wanted, placed_captions, captions_plan,
+            (probe or {}).get("duration"),
+        )
     )
 
     # The loudness the export actually carries, measured and asserted.
@@ -2236,6 +2971,32 @@ def run_pipeline(
                 true_peak = float(true_peak) if isinstance(true_peak, (int, float)) else None
                 log(f"loudness after normalize: {integrated:.1f} LUFS, true peak "
                     f"{true_peak if true_peak is None else round(true_peak, 1)} dBTP")
+
+    # VERIFY-13: the absolute ceiling. The loudness gate's own pairing
+    # (the -1 dBTP inside loudness_ok) asserts beside it, unchanged.
+    verify_entries.append(_true_peak_entry(true_peak))
+
+    # The whole record, written beside the export before anything may
+    # refuse: an acceptance read reads the file, not the log. Then the
+    # per-check lines cross, and a failed entry stops the run naming
+    # every id that failed - the export did not keep the plan's promise,
+    # and the run says so before the craft gate scores anything.
+    verify_summary = _verification_summary(verify_entries)
+    verify_report = _verification_report(rendered, probed_path, verify_entries)
+    verify_report_path = _write_verification_report(project, verify_report)
+    for entry in verify_entries:
+        log(
+            f"verify {entry['id']} {entry['check']}: {entry['status']}"
+            + (f" - {entry['reason']}" if entry.get("reason") else "")
+        )
+    if verify_report_path:
+        log(
+            f"verification report: {verify_report_path} "
+            f"({verify_summary['passed']} passed, {verify_summary['failed']} failed, "
+            f"{verify_summary['skipped']} skipped)"
+        )
+    _verification_failed(verify_entries)
+
     if not loudness_ok():
         raise PipelineError(
             f"the export carries {integrated:.1f} LUFS against the {target_lufs:g} target "
@@ -2300,17 +3061,11 @@ def run_pipeline(
     def render_attempt(attempt: int) -> str:
         """A revision renders to its own file - edit_v2, edit_v3 - because
         an attempt nobody can diff against the one before it is an attempt
-        nobody learns from (revision.rs: attempt_path)."""
+        nobody learns from (revision.rs: attempt_path). It renders with
+        the plan's own export profile, the same arguments the first
+        export carried."""
         output = os.path.join(project, f"edit_v{attempt}.mp4")
-        started = advance(
-            "export_start",
-            {
-                "path": project,
-                "output": output,
-                "crf": int(export.get("crf", 20)),
-                "codec": export.get("codec", "h264"),
-            },
-        )
+        started = advance("export_start", export_arguments(output))
         job = started.get("job") if isinstance(started, dict) else None
         if not job:
             raise PipelineError("export_start did not return a job id")
@@ -2580,6 +3335,11 @@ def run_pipeline(
         "output": rendered,
         "signalLog": run_signals,
         "planAudit": audit,
+        "verification": {
+            "summary": verify_summary,
+            "report": verify_report_path,
+            "checks": [entry["id"] for entry in verify_entries],
+        },
         "craftScore": score,
         "craftTier": (
             critique.get("tier") or critique.get("engine")
@@ -2874,7 +3634,8 @@ SELF_TEST_PLAN = {
     "signalLog": [
         {"at": 0.0, "decision": "cut", "signals": ["emphasisWords"]},
     ],
-    "export": {"output": "/tmp/funcut-selftest/final.mp4", "crf": 20, "codec": "h264"},
+    "export": {"output": "/tmp/funcut-selftest/final.mp4", "crf": 20, "codec": "h264",
+               "width": 320, "height": 180, "fps": 30},
 }
 
 
@@ -2886,22 +3647,6 @@ SELF_TEST_REPLIES = {
     "remove_hiss_hum_rumble": {"ok": True, "file": "/tmp/funcut-selftest/voiceover-cleaned.wav",
                                "noiseFloorDbfs": -34.1},
     "transcribe": {"job": "speech-job"},
-    "project_get": {
-        "media": [
-            {
-                "id": "m-voice",
-                "path": "/tmp/funcut-selftest/voiceover.wav",
-                "kind": "audio",
-            },
-            {
-                "id": "m-existing",
-                "path": "/tmp/funcut-selftest/existing.mp4",
-                "kind": "video",
-                "duration": 8.0,
-            },
-        ],
-        "timeline": {"tracks": [], "clips": []},
-    },
     "analysis_wait": {
         "state": "done",
         'output': '{"segments":[{"text":"one","start":0.0,"end":1.0,'
@@ -2997,7 +3742,22 @@ SELF_TEST_REPLIES = {
         },
     },
     "collision_check": {"count": 0, "clean": True, "collisions": []},
-    "timeline_read": {"clips": [{"id": "c-stock-7"}, {"id": "c-motion"}, {"id": "c-existing"}]},
+    "timeline_read": {
+        "clips": [
+            {"id": "c-voice", "mediaId": "m-voice-cleaned", "trackId": "t-voice",
+             "start": 0.0, "duration": 10.0},
+            {"id": "c-stock-7", "mediaId": "m-stock-7", "trackId": "t-video",
+             "start": 0.0, "duration": 4.0},
+            {"id": "c-motion", "mediaId": "m-motion", "trackId": "t-motion",
+             "start": 4.0, "duration": 4.0},
+            {"id": "c-existing", "mediaId": "m-existing", "trackId": "t-video",
+             "start": 8.0, "duration": 4.0},
+            {"id": "c-bgm", "mediaId": "m-bgm", "trackId": "t-bgm",
+             "start": 0.0, "duration": 12.0},
+            {"id": "c-sfx", "mediaId": "m-sfx", "trackId": "t-sfx",
+             "start": 0.0, "duration": 1.4},
+        ],
+    },
     "track_add": lambda args: {"createdId": "t-voice" if args.get("bottom") else "t-motion"},
     "motion_reel": {"file": "/tmp/funcut-selftest/motion.mp4", "duration": 4.0},
     "media_import": lambda args: {
@@ -3034,12 +3794,154 @@ SELF_TEST_REPLIES = {
 }
 
 
+#: The bin as the run first reads it: the voiceover take and the one
+#: existing visual, before anything the run itself imports.
+SELF_TEST_BASELINE_BIN = {
+    "media": [
+        {
+            "id": "m-voice",
+            "path": "/tmp/funcut-selftest/voiceover.wav",
+            "kind": "audio",
+        },
+        {
+            "id": "m-existing",
+            "path": "/tmp/funcut-selftest/existing.mp4",
+            "kind": "video",
+            "duration": 8.0,
+        },
+    ],
+    "timeline": {"tracks": [], "clips": []},
+}
+
+#: The bin as the Verify stage re-reads it: everything the run imported -
+#: the repaired take, the stock it shopped, the reel it baked, the bed and
+#: the SFX - beside the two it started from. The items the mocks have no
+#: real file for carry no path; media availability checks exactly what
+#: the bin claims, not what a mock pretends.
+SELF_TEST_GROWN_BIN = {
+    "media": [
+        {
+            "id": "m-voice",
+            "path": "/tmp/funcut-selftest/voiceover.wav",
+            "kind": "audio",
+        },
+        {
+            "id": "m-existing",
+            "path": "/tmp/funcut-selftest/existing.mp4",
+            "kind": "video",
+            "duration": 8.0,
+        },
+        {"id": "m-voice-cleaned", "kind": "audio"},
+        {"id": "m-stock-7", "kind": "video"},
+        {"id": "m-stock-8", "kind": "video"},
+        {"id": "m-stock-9", "kind": "video"},
+        {"id": "m-motion", "kind": "video"},
+        {"id": "m-bgm", "kind": "audio"},
+        {"id": "m-sfx", "kind": "audio"},
+    ],
+    "timeline": {"tracks": [], "clips": []},
+}
+
+
+def selftest_world() -> dict[str, Any]:
+    """A fresh mock world, one per run: the stateful replies start from
+    scratch, so two runs never share a call count. The bin reads its
+    baseline first - the handoff reads the take it was handed - and every
+    later read sees the bin the run's imports grew, the state the Verify
+    stage's media-availability check reads. The export answers like a
+    renderer does: export_start remembers where the render will land,
+    and export_wait, answering done, has written the master render there
+    - a file on the disk the verify checks can actually read."""
+    world = dict(SELF_TEST_REPLIES)
+    reads = {"project_get": 0}
+    renders = {"output": None}
+
+    def project_get(_args: dict[str, Any]) -> dict[str, Any]:
+        reads["project_get"] += 1
+        if reads["project_get"] > 1:
+            return SELF_TEST_GROWN_BIN
+        return SELF_TEST_BASELINE_BIN
+
+    def export_start(args: dict[str, Any]) -> dict[str, Any]:
+        renders["output"] = args.get("output")
+        return {"job": "j1"}
+
+    def export_wait(_args: dict[str, Any]) -> dict[str, Any]:
+        output = renders["output"]
+        master = "/tmp/funcut-selftest/master.mp4"
+        if output and os.path.isfile(master):
+            try:
+                shutil.copyfile(master, output)
+            except OSError:
+                pass
+        return {"state": "done", "output": output}
+
+    world["project_get"] = project_get
+    world["export_start"] = export_start
+    world["export_wait"] = export_wait
+    return world
+
+
+def selftest_media() -> bool:
+    """The self-test's own little world, on real files where the machine
+    has ffmpeg: a rendered export with moving frames at the plan's own
+    size and rate, a black render for the scan that must catch one, a
+    voiceover take and an existing visual the bin can name, and a real
+    project folder for the records the run writes. Without ffmpeg the
+    files still exist, empty: the probe checks answer `skipped` for them,
+    and the run proves the honest skip instead of a pretend pass."""
+    root = "/tmp/funcut-selftest"
+    os.makedirs(os.path.join(root, "project"), exist_ok=True)
+    renders = [
+        ["ffmpeg", "-y", "-v", "error",
+         "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=2",
+         "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+         "-af", "volume=-18dB", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+         "-c:a", "aac", f"{root}/master.mp4"],
+        ["ffmpeg", "-y", "-v", "error",
+         "-f", "lavfi", "-i", "color=black:size=320x180:rate=30:duration=2",
+         "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+         "-af", "volume=-18dB", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+         "-c:a", "aac", f"{root}/final-black.mp4"],
+        ["ffmpeg", "-y", "-v", "error",
+         "-f", "lavfi", "-i", "sine=frequency=300:duration=12",
+         "-ac", "1", f"{root}/voiceover.wav"],
+        ["ffmpeg", "-y", "-v", "error",
+         "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=4",
+         "-c:v", "libx264", "-pix_fmt", "yuv420p", f"{root}/existing.mp4"],
+    ]
+    rendered = bool(shutil.which("ffmpeg"))
+    if rendered:
+        for command in renders:
+            try:
+                if subprocess.run(
+                    command, capture_output=True, timeout=120
+                ).returncode != 0:
+                    rendered = False
+                    break
+            except (OSError, subprocess.SubprocessError):
+                rendered = False
+                break
+    for name in ("master.mp4", "final-black.mp4", "voiceover.wav", "existing.mp4"):
+        path = os.path.join(root, name)
+        if not rendered and os.path.exists(path):
+            os.remove(path)
+        if not os.path.exists(path):
+            with open(path, "wb"):
+                pass
+    if rendered:
+        log("self-test media rendered with ffmpeg: the verify scans run for real")
+    else:
+        log("self-test media is empty: the probe checks answer skipped, not passed")
+    return rendered
+
+
 def self_test() -> int:
     """A synthetic canonical plan exercises the real execution contract."""
-    audio = "/tmp/funcut-selftest/voiceover.wav"
+    have_media = selftest_media()
     project = "/tmp/funcut-selftest/project"
-    os.makedirs(project, exist_ok=True)
-    transport = MockMcp(dict(SELF_TEST_REPLIES))
+    audio = "/tmp/funcut-selftest/voiceover.wav"
+    transport = MockMcp(selftest_world())
     calls = run_pipeline(transport, project, audio, SELF_TEST_PLAN)
     by_tool = [(tool, args) for tool, args in calls]
     order = [tool for tool, _ in by_tool]
@@ -3059,6 +3961,7 @@ def self_test() -> int:
         "bgm_status", "bgm_search", "bgm_import", "clip_audio_levels_db",
         "collision_check", "timeline_read",
         "export_start", "export_wait", "transcribe", "analysis_wait", "emotion",
+        "timeline_read", "project_get",
         "measure_loudness", "watch_render", "craft_critique",
     ]
     if order != expected:
@@ -3258,7 +4161,7 @@ def self_test() -> int:
 
     # A planner the server does not serve: every slot carries the
     # degradation, provenance fallback, in the run's signalLog (P1-004).
-    unplanned = dict(SELF_TEST_REPLIES)
+    unplanned = selftest_world()
     unplanned.pop("footage_plan_suggest", None)
     unplanned_run = run_pipeline(MockMcp(unplanned), project, audio, SELF_TEST_PLAN)
     if not unplanned_run:
@@ -3290,7 +4193,7 @@ def self_test() -> int:
     # lane, and the timeline's segment-timed captions do not double it.
     kinetic_plan = copy.deepcopy(SELF_TEST_PLAN)
     kinetic_plan["captions"]["wordTimed"] = True
-    kinetic_world = dict(SELF_TEST_REPLIES)
+    kinetic_world = selftest_world()
     kinetic_transport = MockMcp(kinetic_world)
     kinetic_calls = run_pipeline(kinetic_transport, project, audio, kinetic_plan)
     animate_call = next(
@@ -3336,7 +4239,7 @@ def self_test() -> int:
     # in the run's signalLog with provenance fallback (P1-010).
     wordless = copy.deepcopy(SELF_TEST_PLAN)
     wordless["captions"]["wordTimed"] = True
-    wordless_world = dict(SELF_TEST_REPLIES)
+    wordless_world = selftest_world()
     wordless_world["analysis_wait"] = {
         "state": "done",
         'output': '{"segments":[{"text":"one","start":0.0,"end":1.0}]}',
@@ -3356,6 +4259,222 @@ def self_test() -> int:
         return 1
     print("kinetic fallback ok: no word timings, segment-timed captions placed, the degradation recorded")
 
+    # The Verify stage's own record: twelve structured entries, the report
+    # written beside the export, every entry's status the truth the
+    # environment could measure (VERIFY-01..05, 08..14).
+    try:
+        with open(os.path.join(project, "verification-report.json"), encoding="utf-8") as handle:
+            report = json.load(handle)
+    except (OSError, ValueError) as error:
+        print(f"FAIL: the verification report was not written: {error}")
+        return 1
+    if report.get("schema") != "funcut.verification-report/1":
+        print(f"FAIL: the report's schema is wrong: {report.get('schema')}")
+        return 1
+    entries = report.get("checks", [])
+    by_check = {entry.get("id"): entry for entry in entries}
+    wanted_ids = [f"VERIFY-{number:02d}" for number in (1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13, 14)]
+    if sorted(entry.get("id") for entry in entries) != wanted_ids:
+        print(f"FAIL: the report's checks are not the twelve the stage owes: "
+              f"{[entry.get('id') for entry in entries]}")
+        return 1
+    probe_ids = ("VERIFY-01", "VERIFY-04", "VERIFY-09", "VERIFY-10", "VERIFY-11")
+    for check_id in wanted_ids:
+        status = by_check[check_id].get("status")
+        expected_status = "pass" if have_media or check_id not in probe_ids else "skipped"
+        if status != expected_status:
+            print(f"FAIL: {check_id} answered {status!r}, not {expected_status!r}: "
+                  f"{by_check[check_id]}")
+            return 1
+    summary = report.get("summary", {})
+    if summary.get("total") != 12 or summary.get("failed") != 0:
+        print(f"FAIL: the report's summary is wrong: {summary}")
+        return 1
+    print(
+        "verify record ok: 12 entries, report written, "
+        + f"{summary.get('passed')} passed / {summary.get('skipped')} skipped "
+        + "(probe checks skipped: no ffmpeg)" * (not have_media)
+    )
+
+    # A caption the frame cannot hold: the plan asks for the bottom edge,
+    # the entry names the band that crosses it, the run stops before the
+    # craft gate scores anything.
+    off_frame_plan = copy.deepcopy(SELF_TEST_PLAN)
+    off_frame_plan["captions"]["offsetY"] = 1.2
+    try:
+        run_pipeline(MockMcp(selftest_world()), project, audio, off_frame_plan)
+        print("FAIL: an off-frame caption shipped without a refusal")
+        return 1
+    except PipelineError as error:
+        if "VERIFY-12" not in str(error):
+            print(f"FAIL: the off-frame caption was refused for the wrong reason: {error}")
+            return 1
+    print("caption frame ok: an off-frame band is refused as VERIFY-12, naming the band")
+
+    # A plan that asks for captions but has none to place: the entry says
+    # so, and the refusal names it.
+    no_caption_transcript = selftest_world()
+    no_caption_transcript["analysis_wait"] = {
+        "state": "done",
+        'output': '{"segments":[]}',
+    }
+    try:
+        run_pipeline(MockMcp(no_caption_transcript), project, audio, SELF_TEST_PLAN)
+        print("FAIL: a captionless export shipped without a refusal")
+        return 1
+    except PipelineError as error:
+        if "VERIFY-02" not in str(error):
+            print(f"FAIL: the missing captions were refused for the wrong reason: {error}")
+            return 1
+    print("caption presence ok: captions wanted and none placed is refused as VERIFY-02")
+
+    # A drifted timeline: something edited the project after the export's
+    # edit was final; the hash names it, the run refuses.
+    drifted_world = selftest_world()
+    timeline_reads = {"count": 0}
+
+    def drifting_timeline(_args: dict[str, Any]) -> dict[str, Any]:
+        timeline_reads["count"] += 1
+        view = {"clips": [dict(clip) for clip in SELF_TEST_REPLIES["timeline_read"]["clips"]]}
+        if timeline_reads["count"] > 1:
+            view["clips"][1]["start"] = 0.5
+        return view
+
+    drifted_world["timeline_read"] = drifting_timeline
+    try:
+        run_pipeline(MockMcp(drifted_world), project, audio, SELF_TEST_PLAN)
+        print("FAIL: a timeline that drifted after the final edit shipped without a refusal")
+        return 1
+    except PipelineError as error:
+        if "VERIFY-14" not in str(error):
+            print(f"FAIL: the drifted timeline was refused for the wrong reason: {error}")
+            return 1
+    print("post-edit hash ok: a timeline that moved after the final edit is refused as VERIFY-14")
+
+    # The same source twice on one lane's same seconds: the entry names
+    # the pair and the lane, the run refuses.
+    duplicated_world = selftest_world()
+    duplicated_world["timeline_read"] = {
+        "clips": SELF_TEST_REPLIES["timeline_read"]["clips"] + [
+            {"id": "c-stock-7-again", "mediaId": "m-stock-7", "trackId": "t-video",
+             "start": 1.0, "duration": 3.0},
+        ],
+    }
+    try:
+        run_pipeline(MockMcp(duplicated_world), project, audio, SELF_TEST_PLAN)
+        print("FAIL: the same clip twice on one lane shipped without a refusal")
+        return 1
+    except PipelineError as error:
+        if "VERIFY-08" not in str(error):
+            print(f"FAIL: the duplicated clip was refused for the wrong reason: {error}")
+            return 1
+    print("duplicate lane ok: the same source twice on one lane is refused as VERIFY-08")
+
+    # Media the bin no longer holds: the clip references an id the re-read
+    # does not answer, and the entry names the id.
+    vanished_world = selftest_world()
+    vanished_world["project_get"] = lambda _args: {
+        "media": [
+            item for item in SELF_TEST_GROWN_BIN["media"]
+            if item["id"] != "m-stock-7"
+        ],
+        "timeline": {"tracks": [], "clips": []},
+    }
+    try:
+        run_pipeline(MockMcp(vanished_world), project, audio, SELF_TEST_PLAN)
+        print("FAIL: media that vanished from the bin shipped without a refusal")
+        return 1
+    except PipelineError as error:
+        if "VERIFY-05" not in str(error):
+            print(f"FAIL: the vanished media was refused for the wrong reason: {error}")
+            return 1
+    print("media availability ok: a clip whose source left the bin is refused as VERIFY-05")
+
+    # A sync refusal that is the entry's, not a crash's: the verdict fails,
+    # the entry carries the tool's own numbers, the refusal names VERIFY-03.
+    unsynced_world = selftest_world()
+    unsynced_world["emotion"] = lambda args: (
+        {"verdict": "fail", "matchRate": 0.62, "maxDriftMs": 340.0}
+        if args.get("action") == "verify"
+        else {"lines": [{"text": "one", "emotion": "curious"}], "arc": ["curiosity", "clarity"]}
+    )
+    try:
+        run_pipeline(MockMcp(unsynced_world), project, audio, SELF_TEST_PLAN)
+        print("FAIL: an export whose speech drifted shipped without a refusal")
+        return 1
+    except PipelineError as error:
+        if "VERIFY-03" not in str(error):
+            print(f"FAIL: the drifting speech was refused for the wrong reason: {error}")
+            return 1
+    print("sync entry ok: a failed verdict is refused as VERIFY-03 with the tool's numbers")
+
+    # A clipping export: the true peak over the 0 dBFS ceiling, measured
+    # and named, even with the loudness target itself met.
+    clipping_world = selftest_world()
+    clipping_world["measure_loudness"] = {
+        "integratedLufs": -14.0, "truePeakDbtp": 0.8,
+        "loudnessRangeLu": 6.0, "targetLufs": -14.0,
+        "lufsError": 0.0, "platformTargetMet": True, "notes": [],
+    }
+    try:
+        run_pipeline(MockMcp(clipping_world), project, audio, SELF_TEST_PLAN)
+        print("FAIL: a clipping export shipped without a refusal")
+        return 1
+    except PipelineError as error:
+        if "VERIFY-13" not in str(error):
+            print(f"FAIL: the clipping export was refused for the wrong reason: {error}")
+            return 1
+    print("true peak ok: a peak over the 0 dBFS ceiling is refused as VERIFY-13")
+
+    # The checks on their own inputs, where the machine has ffmpeg to
+    # render them: a black render fails the black-frame scan and the
+    # visual-quality scan; the plan's codec, size and rate are measured
+    # against what the render carries; the caption band that fits says so.
+    if have_media:
+        render = "/tmp/funcut-selftest/final.mp4"
+        probe = _ffprobe(render)
+        frames = _sample_frames(render, (probe or {}).get("duration"))
+        checks = {
+            entry["id"]: entry
+            for entry in _probe_checks(render, SELF_TEST_PLAN, SELF_TEST_PLAN["export"], probe, frames)
+        }
+        for check_id in ("VERIFY-01", "VERIFY-04", "VERIFY-09", "VERIFY-10", "VERIFY-11"):
+            if checks[check_id]["status"] != "pass":
+                print(f"FAIL: {check_id} did not pass on a clean render: {checks[check_id]}")
+                return 1
+        black = "/tmp/funcut-selftest/final-black.mp4"
+        black_probe = _ffprobe(black)
+        black_frames = _sample_frames(black, (black_probe or {}).get("duration"))
+        black_checks = {
+            entry["id"]: entry
+            for entry in _probe_checks(black, SELF_TEST_PLAN, SELF_TEST_PLAN["export"], black_probe, black_frames)
+        }
+        for check_id in ("VERIFY-01", "VERIFY-04"):
+            if black_checks[check_id]["status"] != "fail":
+                print(f"FAIL: {check_id} did not fail on a black render: {black_checks[check_id]}")
+                return 1
+        mismatch = _probe_checks(
+            render, SELF_TEST_PLAN,
+            {"codec": "hevc", "width": 640, "height": 360, "fps": 24},
+            probe, frames,
+        )
+        for entry in mismatch:
+            if entry["id"] in ("VERIFY-09", "VERIFY-10", "VERIFY-11") and entry["status"] != "fail":
+                print(f"FAIL: {entry['id']} did not fail on a mismatched plan: {entry}")
+                return 1
+        print("probe checks ok: clean render passes, black render fails, mismatches name themselves")
+    else:
+        print("probe checks: skipped - no ffmpeg on this machine; the skips were proven above")
+
+    # A caption that lands outside the render's own runtime: present, on
+    # the frame, and never on screen.
+    late = _caption_checks(
+        True, [{"start": 3.0, "end": 4.0}], {"offsetY": 0.35, "fontSize": 0.05}, 2.0
+    )
+    if late[0]["status"] != "fail" or late[1]["status"] != "pass":
+        print(f"FAIL: a caption outside the render's runtime was not caught: {late}")
+        return 1
+    print("caption runtime ok: a caption that never shows is caught by VERIFY-02")
 
     # A continuity replacement must exclude the rejected shot and place the
     # replacement, then pass the second continuity read before importing.
@@ -3387,7 +4506,7 @@ def self_test() -> int:
             }
         return {"count": 0, "flags": []}
 
-    repair_replies = dict(SELF_TEST_REPLIES)
+    repair_replies = selftest_world()
     repair_replies["openvid_rank_for_slot"] = repair_rank
     repair_replies["footage_continuity"] = repair_continuity
     repair_replies["openvid_import"] = lambda args: {
@@ -3418,7 +4537,7 @@ def self_test() -> int:
     print("continuity ok: rejected footage excluded, replacement placed, second gate clean")
 
     # An unknown remedy is replaced away from, not crashed on.
-    remedy_replies = dict(SELF_TEST_REPLIES)
+    remedy_replies = selftest_world()
     remedy_replies["footage_continuity"] = lambda args: {
         "count": 1,
         "flags": [{
@@ -3437,7 +4556,7 @@ def self_test() -> int:
     print("remedy ok: a flag this runner never met is replaced away from, not crashed on")
 
     # A music-carrying take gets no bed stacked under it.
-    stacked_replies = dict(SELF_TEST_REPLIES)
+    stacked_replies = selftest_world()
     stacked_replies["detect_music_segments"] = {"musicPresent": True, "segments": [{"start": 0.0, "end": 12.0}]}
     stacked = MockMcp(stacked_replies)
     stacked_calls = run_pipeline(stacked, project, audio, SELF_TEST_PLAN)
@@ -3450,7 +4569,7 @@ def self_test() -> int:
     print("music gate ok: a take that carries music gets no bed, and the music is identified")
 
     # A forged signalLog - citations no measurement answered - is refused.
-    forged_replies = dict(SELF_TEST_REPLIES)
+    forged_replies = selftest_world()
     forged_replies["voice_signals"] = {
         "status": "ok",
         "degradations": [],
@@ -3470,7 +4589,7 @@ def self_test() -> int:
     print("evidence ok: citations the take never answered refuse the plan")
 
     # A failure stops the run: no timeline or export work follows it.
-    broken = MockMcp(dict(SELF_TEST_REPLIES), fail_on="emotion")
+    broken = MockMcp(selftest_world(), fail_on="emotion")
     try:
         run_pipeline(broken, project, audio, SELF_TEST_PLAN)
         print("FAIL: a failing phase did not stop the pipeline")
@@ -3486,7 +4605,7 @@ def self_test() -> int:
     print("failure ok: a failed analysis stops before any timeline mutation")
 
     # A server that cannot serve the core tools is refused at the handshake.
-    thin = MockMcp({"project_get": SELF_TEST_REPLIES["project_get"]})
+    thin = MockMcp({"project_get": lambda _args: SELF_TEST_BASELINE_BIN})
     try:
         run_pipeline(thin, project, audio, SELF_TEST_PLAN)
         print("FAIL: a server without the core tools was run against")
@@ -3497,7 +4616,7 @@ def self_test() -> int:
             return 1
     print("handshake ok: a server that cannot serve the pipeline is refused up front")
 
-    unready_replies = dict(SELF_TEST_REPLIES)
+    unready_replies = selftest_world()
     unready_replies["plan_validate"] = {
         "valid": True,
         "creativeReady": False,
@@ -3531,6 +4650,7 @@ def revision_self_test() -> int:
     passes, with the failures recorded - never a crash that throws away
     a fixable cut (P1-006/007, the revision.rs contract)."""
     audio = "/tmp/funcut-selftest/voiceover.wav"
+    project = "/tmp/funcut-selftest/project"
 
     def replies_always_low(scores: list[float]) -> dict[str, Any]:
         """One mock world: the shelf offers a fresh candidate every time,
@@ -3576,7 +4696,7 @@ def revision_self_test() -> int:
                 }]}},
             }
 
-        world = dict(SELF_TEST_REPLIES)
+        world = selftest_world()
         world["openvid_rank_for_slot"] = rank
         world["openvid_import"] = importer
         world["craft_critique"] = critique
@@ -3585,7 +4705,7 @@ def revision_self_test() -> int:
 
     # One revision, then the score clears the line and the edit ships.
     transport = MockMcp(replies_always_low([5.5, 7.5]))
-    calls = run_pipeline(transport, "/edits/SelfTest", audio, SELF_TEST_PLAN)
+    calls = run_pipeline(transport, project, audio, SELF_TEST_PLAN)
     by_tool = [(tool, args) for tool, args in calls]
     ranks = [args for tool, args in by_tool if tool == "openvid_rank_for_slot"]
     if len(ranks) != 2:
@@ -3614,7 +4734,7 @@ def revision_self_test() -> int:
     # A critic that never clears the line: two passes, then the edit
     # ships with the failures recorded - never a crash.
     transport = MockMcp(replies_always_low([5.5, 5.5, 5.5, 5.5]))
-    calls = run_pipeline(transport, "/edits/SelfTest", audio, SELF_TEST_PLAN)
+    calls = run_pipeline(transport, project, audio, SELF_TEST_PLAN)
     by_tool = [(tool, args) for tool, args in calls]
     exports = [args for tool, args in by_tool if tool == "export_start"]
     if len(exports) != 3:
@@ -3649,7 +4769,7 @@ def revision_self_test() -> int:
 
     world["craft_critique"] = critique_with_fix
     transport = MockMcp(world)
-    calls = run_pipeline(transport, "/edits/SelfTest", audio, SELF_TEST_PLAN)
+    calls = run_pipeline(transport, project, audio, SELF_TEST_PLAN)
     by_tool = [(tool, args) for tool, args in calls]
     reels = [args for tool, args in by_tool if tool == "motion_reel"]
     if len(reels) != 2:

@@ -269,6 +269,11 @@ pub struct Api {
     dirs: AppDirs,
     /// Open projects by canonical folder path.
     sessions: BTreeMap<String, Session>,
+    /// The answers [`Request::EditApply`] already gave, by the caller's
+    /// own idempotency key and the project it named (IDEM): a re-sent
+    /// key returns its recorded view instead of a second edit. Keyed by
+    /// `"{path}\n{key}"` so two projects' keys never collide.
+    applied: BTreeMap<String, EditorView>,
     /// Where this API may write: a created project, an instantiated
     /// template, an export or a preview file lands under one of these.
     /// Empty means anywhere, for the process's own owner at a terminal.
@@ -347,6 +352,7 @@ impl Api {
         };
         Api {
             book,
+            applied: BTreeMap::new(),
             titles: Titles::new(&dirs),
             cutouts: Arc::new(Cutouts::new(&dirs.data)),
             stabilizers: Arc::new(Stabilizers::new()),
@@ -543,7 +549,11 @@ impl Api {
                 self.autosave(&path);
                 set
             }
-            Request::EditApply { path, command } => view(self.apply(&path, *command)?),
+            Request::EditApply {
+                path,
+                command,
+                idempotency_key,
+            } => view(self.apply_keyed(&path, *command, idempotency_key)?),
             Request::EditUndo { path } => {
                 let undone = view(self.session_mut(&path)?.undo());
                 self.autosave(&path);
@@ -966,6 +976,35 @@ impl Api {
         // template's fills - and media is the one thing whose working
         // copy is worth having before anything reads it.
         self.ensure_proxies(path);
+        Ok(view)
+    }
+
+    /// [`Request::EditApply`] with the caller's idempotency key (IDEM):
+    /// a key this project already answered returns the recorded view
+    /// without a second edit - the same batch, asked twice, lands once.
+    /// A key never seen (or absent) applies and is remembered under the
+    /// key, so the reply a caller re-asks for is the reply it got. The
+    /// caller's own key names the batch; two different batches under one
+    /// key is a caller bug the API answers by design - the first batch's
+    /// view, not a merge.
+    pub fn apply_keyed(
+        &mut self,
+        path: &str,
+        command: Command,
+        key: Option<String>,
+    ) -> Result<EditorView, ApiError> {
+        let Some(key) = key else {
+            return self.apply(path, command);
+        };
+        if key.is_empty() {
+            return self.apply(path, command);
+        }
+        let id = format!("{path}\n{key}");
+        if let Some(view) = self.applied.get(&id) {
+            return Ok(view.clone());
+        }
+        let view = self.apply(path, command)?;
+        self.applied.insert(id, view.clone());
         Ok(view)
     }
 
@@ -2942,6 +2981,7 @@ mod tests {
             command: Box::new(Command::AddMedia {
                 item: still("/nowhere/still.png"),
             }),
+            idempotency_key: None,
         })));
         let media_id = added.created_id.expect("minted");
         ok(api.dispatch(Request::EditApply {
@@ -2951,6 +2991,7 @@ mod tests {
                 start: 2.0,
                 above: false,
             }),
+            idempotency_key: None,
         }));
         ok(api.dispatch(Request::ProjectClose {
             path: path.clone(),
@@ -3083,6 +3124,7 @@ mod tests {
                     duration: None,
                     offset_y: None,
                 }),
+                idempotency_key: None,
             }
         );
     }
@@ -3129,6 +3171,7 @@ mod tests {
             command: Box::new(Command::AddMedia {
                 item: still("/nowhere/still.png"),
             }),
+            idempotency_key: None,
         })));
         let media_id = added.created_id.expect("minted");
         let placed = view(ok(api.dispatch(Request::EditApply {
@@ -3138,6 +3181,7 @@ mod tests {
                 start: 2.0,
                 above: false,
             }),
+            idempotency_key: None,
         })));
         assert!(placed.can_undo);
         assert_eq!(placed.project.active().clips.len(), 1);
@@ -3176,6 +3220,7 @@ mod tests {
             command: Box::new(Command::AddMedia {
                 item: still("/nowhere/still.png"),
             }),
+            idempotency_key: None,
         })));
         let placed = view(ok(api.dispatch(Request::EditApply {
             path: path.clone(),
@@ -3184,6 +3229,7 @@ mod tests {
                 start: 0.0,
                 above: false,
             }),
+            idempotency_key: None,
         })));
         let clip_id = placed.project.active().clips[0].id.clone();
         for command in [
@@ -3223,9 +3269,65 @@ mod tests {
                 start: 0.0,
                 ripple: false,
             }),
+            idempotency_key: None,
         }));
         assert_eq!(refused.code, ErrorCode::Refused);
         assert_eq!(refused.message, "That media is no longer in the bin.");
+    }
+
+    #[test]
+    fn a_keyed_apply_lands_once_no_matter_how_often_it_is_re_sent() {
+        // IDEM: the same idempotency key, re-sent after the reply was
+        // lost or the run restarted, returns the recorded view and adds
+        // no second edit - the history holds one step, the undo steps
+        // back over one, and a second key (or none) edits as usual.
+        let (mut api, scratch, _) = api();
+        let path = project(&mut api, &scratch, "Keyed");
+        let created = view(ok(api.dispatch(Request::ProjectGet { path: path.clone() })));
+        let track_id = created.project.active().tracks[0].id.clone();
+        let media = view(ok(api.dispatch(Request::EditApply {
+            path: path.clone(),
+            command: Box::new(Command::AddMedia {
+                item: still("/nowhere/still.png"),
+            }),
+            idempotency_key: None,
+        })));
+        let media_id = media.created_id.expect("minted");
+        let place = |key: Option<&str>| Request::EditApply {
+            path: path.clone(),
+            command: Box::new(Command::AddClip {
+                media_id: media_id.clone(),
+                track_id: track_id.clone(),
+                start: 0.0,
+                ripple: false,
+            }),
+            idempotency_key: key.map(str::to_owned),
+        };
+        let first = view(ok(api.dispatch(place(Some("run-1:timeline")))));
+        let before = first.project.active().clips.len();
+        let again = view(ok(api.dispatch(place(Some("run-1:timeline")))));
+        assert_eq!(
+            again.project.active().clips.len(),
+            before,
+            "a re-sent key adds no second clip"
+        );
+        assert_eq!(
+            again.project.active().clips[0].id,
+            first.project.active().clips[0].id,
+            "a re-sent key answers with the recorded view"
+        );
+        let other = view(ok(api.dispatch(place(Some("run-2:timeline")))));
+        assert_eq!(
+            other.project.active().clips.len(),
+            before + 1,
+            "a different key is a different edit"
+        );
+        let plain = view(ok(api.dispatch(place(None))));
+        assert_eq!(
+            plain.project.active().clips.len(),
+            before + 2,
+            "an unkeyed apply edits as it always did"
+        );
     }
 
     #[test]
@@ -3330,6 +3432,7 @@ mod tests {
                 duration: Some(3.0),
                 offset_y: None,
             }),
+            idempotency_key: None,
         }));
         let undone = view(ok(api.dispatch(Request::EditUndo { path: path.clone() })));
         assert!(undone.project.active().clips.is_empty());
@@ -3392,6 +3495,7 @@ mod tests {
             command: Box::new(Command::AddMedia {
                 item: still("/nowhere/still.png"),
             }),
+            idempotency_key: None,
         })));
         ok(api.dispatch(Request::EditApply {
             path: path.clone(),
@@ -3400,6 +3504,7 @@ mod tests {
                 start: 0.0,
                 above: false,
             }),
+            idempotency_key: None,
         }));
         let started = match ok(api.dispatch(Request::ExportRun {
             path: path.clone(),

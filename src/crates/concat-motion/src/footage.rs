@@ -280,7 +280,7 @@ impl BRollSuggester {
                 continue;
             }
             let beaten = beats.iter().any(|beat| {
-                let at = beat.timestamp.to_seconds();
+                let at = plan_seconds(&beat.timestamp);
                 at > start && at < end
             });
             if !beaten {
@@ -373,6 +373,19 @@ fn dialogue_boundary_cuts(beats: &[Beat], transcript: &Transcript) -> Vec<CutPoi
 /// not. The tool layer builds its beats here.
 pub fn beat_at(seconds: f64, strength: f64) -> Beat {
     Beat::new(at_seconds(seconds), strength, true)
+}
+
+/// A timestamp read in the plan's own seconds, without drift: the ticks
+/// times the timebase's numerator, over its denominator - one division,
+/// never a multiplication by the quotient's own rounding. `Timestamp`'s
+/// own `to_seconds` multiplies by `timebase.to_f64()`, and the quotient
+/// of 1/1000 rounds before the multiply: 1500 ms happens to read 1.5 s,
+/// but 1001 ms reads 1.0010000000000001 - a drift the plan's seconds
+/// must not carry (P1-009: a second and a half stays a second and a
+/// half, and every other second stays itself).
+pub fn plan_seconds(timestamp: &Timestamp) -> f64 {
+    (timestamp.pts as f64 * timestamp.timebase.num as f64)
+        / timestamp.timebase.den as f64
 }
 
 /// A timestamp on the planning timebase: one millisecond a tick, so a
@@ -662,5 +675,43 @@ mod tests {
             );
             assert_eq!(cut[1].timestamp.pts, to_ms(segment.end_s) + 200);
         }
+    }
+
+    /// A second and a half is a second and a half: the planner's
+    /// RationalTime crosses to the plan's seconds time base without
+    /// drift, whichever door it came through - the beat grid the tool
+    /// layer builds, the sweep of every millisecond tick the planner can
+    /// carry, and the dialogue boundaries the cuts ride. `to_seconds`
+    /// multiplies by the quotient's own rounding and 1001 ms reads
+    /// 1.0010000000000001 through it; the plan's own read divides once
+    /// and every tick reads itself (P1-009).
+    #[test]
+    fn a_second_and_a_half_stays_a_second_and_a_half() {
+        let beat = beat_at(1.5, 0.9);
+        assert_eq!(beat.timestamp.pts, 1500);
+        assert_eq!(plan_seconds(&beat.timestamp), 1.5);
+        // The drift `to_seconds` itself carries, named so the fix is not
+        // read as superstition: the multiplication by the rounded
+        // quotient drifts where the one division does not.
+        let drifting = Timestamp::new(1001, Rational::new(1, 1000));
+        assert_ne!(drifting.to_seconds(), 1.001);
+        assert_eq!(plan_seconds(&drifting), 1.001);
+        // Every tick the planner's millisecond timebase can hold, both
+        // ways, without a single drift.
+        for ms in 0..=3000 {
+            let timestamp = Timestamp::new(ms, Rational::new(1, 1000));
+            let seconds = plan_seconds(&timestamp);
+            assert_eq!(seconds, ms as f64 / 1000.0, "{ms} ms drifted");
+            assert_eq!(at_seconds(seconds).pts, ms, "{ms} ms did not come back");
+        }
+        // The cuts: a boundary at 1.5 s proposes its J-cut 200 ms early
+        // and its L-cut 200 ms late, and both read in the plan's own
+        // seconds exactly - the numbers a plan's atS carries.
+        let transcript = Transcript::new(vec![said(1.5, 4.0, "one")]);
+        let beats = vec![beat(5.0, 0.5)];
+        let plan = suggest_footage(&beats, &transcript);
+        assert_eq!(plan.cuts.len(), 2, "{:?}", plan.cuts);
+        assert_eq!(plan_seconds(&plan.cuts[0].timestamp), 1.3);
+        assert_eq!(plan_seconds(&plan.cuts[1].timestamp), 4.2);
     }
 }

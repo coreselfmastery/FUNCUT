@@ -57,12 +57,23 @@ THE PIPELINE (in order; each phase logged; any failure stops the run)
 13. `openvid_import` import and place stock at the segment start; trim
 14. `clip_update`/`keyframe_set` the plan's transitions and entrances
 15. the plan's grade, captions, SFX and BGM, each only where the plan asks
+    - captions word-timed and kinetic when the plan asks for them
+    (`captions.wordTimed` or `captions.kinetic`): the measured word
+    timings bake one reel through `captions_animate`, placed where the
+    graphics are; the timeline's segment-timed captions do not double it
 16. `collision_check` + `timeline_read` the timeline is sane before export
 17. `export_start` + `export_wait` render and wait for a terminal job state
 18. `transcribe` + `emotion (verify)` the export says the words it should
 19. `measure_loudness` LUFS and true peak, measured and asserted - a plan's
     target is a wish, this is the measurement
 20. `watch_render` + `craft_critique` inspect the actual output and score it
+
+The run keeps its own two records beside the plan's: a signalLog of what
+it measured and what it could not - the footage planner's evidence for
+every B-roll slot, the degradations with their provenance, fallback or
+measured - and an audit of all nineteen plan fields, executed or
+rejected or skipped, with nothing the runner did not consume dropped
+silently. Both ride the run history the run writes.
 
 The watcher is an execution layer, not a topic-to-plan author: the Director
 agent must supply a validated canonical edit plan. A craft score below 7
@@ -84,6 +95,7 @@ to inherit, and a missing HOME is given one that exists.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import re
@@ -535,6 +547,104 @@ def _measured_families(voice: Any) -> set[str]:
     return families
 
 
+# ------------------------------------------------------- the plan field audit
+#
+# The plan's own vocabulary, the nineteen fields this runner knows how to
+# read (P1-005): the audit answers for every one of them - executed,
+# rejected with its reason, or skipped because the plan does not carry it
+# - and names any top-level key it does not know, so a plan is never
+# silently half-read: a field the run did not consume is seen as one.
+
+#: field -> what the runner reads off it. The order is the plan's own
+#: reading order, top to bottom.
+PLAN_FIELDS: dict[str, str] = {
+    "aspect": "the frame the plan promises; the render is measured against it",
+    "mode": "reel or longform; the shape the plan is cut to",
+    "sections": "the acts and their spans; validated whole",
+    "slots": "the shopping list the B-roll segments draw their ids from",
+    "segments": "the timed beats: placements, trims, spoken lines",
+    "segments.visual": "each beat's picture: broll shopping, graphics, existing media",
+    "segments.transitionIn": "the transition into each cut",
+    "segments.in/out": "the entrance and exit animations",
+    "segments.sfx": "the sound effects, shopped and peaked on the beat",
+    "segments.captions": "the per-segment caption flags",
+    "audio.voiceover": "the take: its repair, its speed, its glossary",
+    "audio.bgm": "the music bed: its query or track, its duck",
+    "audioClipId": "an existing voiceover clip reused in place",
+    "grade": "the look, layered or per-clip",
+    "captions": "the words on screen: style, offset, or the kinetic reel",
+    "signalLog": "the decisions and the signals that drove them",
+    "creativeBrief": "the brief the creative gate and the emotion read answer to",
+    "export": "where the render lands and the profile it carries",
+    "segments.visual.existing": "the plan's own media: mediaId, file or clipId",
+}
+
+
+def plan_field_audit(
+    plan: dict[str, Any], consumed: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    """The audit of every field the runner knows (P1-005): each of the
+    nineteen answers for itself - the status the run recorded, or
+    `skipped` when the plan does not carry it - and a top-level key the
+    registry has never met is named `unrecognized`, never dropped. The
+    plan's half-read is the bug this refuses to ship silently."""
+    audit: dict[str, Any] = {}
+    for field in PLAN_FIELDS:
+        recorded = consumed.get(field)
+        if recorded is not None:
+            audit[field] = recorded
+            continue
+        key = field.split(".", 1)[0]
+        present = key in plan
+        if field == "segments.visual.existing":
+            present = any(existing_segments(plan))
+        elif field == "segments.visual":
+            present = bool(plan_segments(plan))
+        elif field == "segments.transitionIn":
+            present = any(
+                isinstance(segment.get("transitionIn"), dict)
+                for segment in plan_segments(plan)
+            )
+        elif field == "segments.in/out":
+            present = any(
+                isinstance(segment.get(side), dict)
+                for segment in plan_segments(plan) for side in ("in", "out")
+            )
+        elif field == "segments.sfx":
+            present = any(
+                isinstance(segment.get("sfx"), dict)
+                for segment in plan_segments(plan)
+            )
+        elif field == "segments.captions":
+            present = any(segment.get("captions") for segment in plan_segments(plan))
+        elif field == "audio.voiceover":
+            present = isinstance((plan.get("audio") or {}).get("voiceover"), dict)
+        elif field == "audio.bgm":
+            present = isinstance((plan.get("audio") or {}).get("bgm"), dict)
+        elif field == "audioClipId":
+            present = plan.get("audioClipId") is not None
+        elif field == "captions":
+            present = isinstance(plan.get("captions"), dict)
+        elif field == "signalLog":
+            present = bool(plan.get("signalLog"))
+        elif field == "creativeBrief":
+            present = isinstance(plan.get("creativeBrief"), dict)
+        elif field == "export":
+            present = isinstance(plan.get("export"), dict)
+        elif field == "grade":
+            present = isinstance(plan.get("grade"), dict)
+        elif field == "slots":
+            present = isinstance(plan.get("slots"), list) and bool(plan.get("slots"))
+        audit[field] = {
+            "status": "skipped" if not present else "unconsumed",
+            "note": "the plan does not carry it" if not present
+            else "the run ended before this field's phase recorded it",
+        }
+    known_top = {field.split(".", 1)[0] for field in PLAN_FIELDS}
+    unknown = sorted(key for key in plan if key not in known_top)
+    return {"fields": audit, "unrecognized": unknown}
+
+
 # --------------------------------------------------------------- the pipeline
 
 
@@ -665,6 +775,28 @@ def run_pipeline(
         done.append((tool, arguments))
         return reply
 
+    # The run's own two records (P1-004, P1-005): the signalLog the run
+    # keeps - what it measured, what it could not, per slot - and the
+    # audit of every plan field it consumed. Both ride the run record;
+    # neither is the plan's own signalLog, which is the Director's.
+    run_signals: list[dict[str, Any]] = []
+    plan_audit: dict[str, dict[str, Any]] = {}
+
+    def _audit(field: str, status: str, note: str) -> None:
+        """One field's answer, recorded where the field is consumed: the
+        status the run gave it and the sentence that says why. A field
+        the run refused or degraded records `rejected` here - a logged
+        absence is still an answer, never a silent drop (P1-005)."""
+        plan_audit[field] = {"status": status, "note": note}
+
+    def _signal(at: float, decision: str, **entry: Any) -> None:
+        """One signalLog entry in the run's own log: the decision, the
+        signals or degradation behind it, the provenance - measured when
+        a reading answered, fallback when one did not (P1-004)."""
+        record = {"at": round(float(at), 3), "decision": decision}
+        record.update(entry)
+        run_signals.append(record)
+
     # ---- 0. The handshake: the server says what it is and what it serves.
     served = transport.available_tools()
     missing = REQUIRED_TOOLS - served
@@ -760,7 +892,13 @@ def run_pipeline(
         log(f"voice emotion arc: {json.dumps(emotion['arc'], ensure_ascii=False)}")
 
     # ---- 6. The footage planner's own read: the gaps and monotony runs
-    # the plan's B-roll should answer, cross-checked against its coverage.
+    # the plan's B-roll should answer, cross-checked against its coverage
+    # - and recorded per slot, in the run's own signalLog: every B-roll
+    # slot carries the planner's evidence for its span, or the
+    # degradation of not having one (P1-004). A slot the planner's read
+    # says nothing about is a slot the plan cut on its own authority -
+    # said plainly, not lost in a log line.
+    planner_spans: list[tuple[float, float, str]] = []
     if "footage_plan_suggest" in served:
         footage_plan = advance("footage_plan_suggest", {
             "transcript": {"segments": transcript.get("segments", [])},
@@ -772,6 +910,23 @@ def run_pipeline(
                 f"footage plan: {len(gaps)} gap(s), {len(suggestions)} span(s) "
                 f"wanting B-roll"
             )
+            for gap in gaps:
+                if not isinstance(gap, dict):
+                    continue
+                start = gap.get("startMs")
+                end = gap.get("endMs")
+                if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+                    continue
+                planner_spans.append((start / 1000.0, end / 1000.0, "dialogue_gap"))
+            for suggestion in suggestions:
+                if not isinstance(suggestion, dict):
+                    continue
+                start = suggestion.get("startS")
+                end = suggestion.get("endS")
+                kind = str(suggestion.get("kind") or "")
+                if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+                    continue
+                planner_spans.append((float(start), float(end), kind or "suggestion"))
             covered = [
                 (float(segment["start"]), float(segment["end"]))
                 for _, segment in broll_segments(plan)
@@ -794,6 +949,59 @@ def run_pipeline(
                         f"footage plan: a {int(end - start)} ms gap at "
                         f"{start / 1000.0:.2f}s carries no B-roll segment"
                     )
+        else:
+            log("footage plan: the planner's reply was not a reading; coverage is unmeasured")
+    else:
+        log("footage plan: the server does not serve footage_plan_suggest; coverage is unmeasured")
+
+    # The per-slot record: what the planner's read says about each
+    # B-roll slot's own seconds (P1-004). A span the planner asked to
+    # cover is evidence the cut is signal-driven; a span it said nothing
+    # about is the plan's own choice, named as one; a planner that never
+    # answered is a degradation every slot carries.
+    for index, segment in broll_segments(plan):
+        slot_id = str(segment.get("slotId") or f"segment-{index + 1}")
+        slot_start = float(segment["start"])
+        slot_end = float(segment["end"])
+        evidence = sorted({
+            kind for start, end, kind in planner_spans
+            if start < slot_end + 0.25 and end > slot_start - 0.25
+        })
+        if not planner_spans and "footage_plan_suggest" not in served:
+            _signal(
+                slot_start, "broll-coverage", slotId=slot_id,
+                signals=[], provenance="fallback",
+                note="the footage planner was not served; this slot's coverage is unmeasured",
+            )
+        elif not planner_spans:
+            _signal(
+                slot_start, "broll-coverage", slotId=slot_id,
+                signals=[], provenance="fallback",
+                note="the footage planner did not answer; this slot's coverage is unmeasured",
+            )
+        elif evidence:
+            _signal(
+                slot_start, "broll-coverage", slotId=slot_id,
+                signals=evidence, provenance="measured",
+                note="the planner's read asked for this span",
+            )
+        else:
+            _signal(
+                slot_start, "broll-coverage", slotId=slot_id,
+                signals=[], provenance="measured",
+                note="the planner's read named no gap or run inside this span; the plan cut it on its own authority",
+            )
+    _audit(
+        "segments.visual", "executed",
+        f"{len(broll_segments(plan))} B-roll segment(s) shopped with the planner's per-slot record",
+    )
+    _audit(
+        "slots", "executed" if isinstance(plan.get("slots"), list) and plan.get("slots")
+        else "skipped",
+        "the shopping list the B-roll segments draw their ids from"
+        if isinstance(plan.get("slots"), list) and plan.get("slots")
+        else "the plan does not carry it",
+    )
 
     # ---- 7. The BGM gate, before any bed is shopped: a take that already
     # carries music gets no bed stacked under it. detect_music_segments is
@@ -855,6 +1063,15 @@ def run_pipeline(
             + ", but the measured take answered none of them: "
             "the log was written against a reading that never happened"
         )
+    _audit("signalLog", "executed",
+           "validated: driven, covered, and every citation answered by the measured take")
+    _audit("creativeBrief", "executed",
+           "validated: the creative gate answered ready against it")
+    _audit("aspect", "executed", "validated: the frame the plan promises")
+    _audit("mode", "executed", "validated: the shape the plan is cut to")
+    _audit("sections", "executed", "validated: the acts and their spans")
+    _audit("segments", "executed",
+           f"{len(plan_segments(plan))} timed segment(s) placed, trimmed and read")
 
     # Fail on incomplete visual contracts before the first timeline edit.
     for index, segment in enumerate(plan_segments(plan)):
@@ -1026,6 +1243,16 @@ def run_pipeline(
             log(f"voiceover speed {float(speed):g}x applied to clip {audio_clip_id}")
 
     log(f"voiceover ready on timeline: clip {audio_clip_id}; timing remains unchanged by the runner")
+    _audit(
+        "audio.voiceover", "executed",
+        "the take repaired, its glossary handed to the recogniser, its speed applied",
+    )
+    _audit(
+        "audioClipId",
+        "executed" if requested_audio_clip else "skipped",
+        f"the existing voiceover clip {requested_audio_clip} reused in place"
+        if requested_audio_clip else "the plan does not carry it",
+    )
 
     # Rank one unique candidate per actual timed B-roll segment.
     excluded: list[int] = []
@@ -1407,6 +1634,11 @@ def run_pipeline(
             )
         placed_clip_ids.append(clip_id)
         log(f"segment-{index + 1}: existing media placed at {start_at:.2f}s")
+    if existing_to_place or any(existing_segments(plan)):
+        _audit(
+            "segments.visual.existing", "executed",
+            f"{len(existing_segments(plan))} existing-media segment(s) placed and trimmed to their beats",
+        )
 
     # The plan's cut vocabulary, applied to the placed clips: the
     # transition into each segment, and the entrance/exit animations. The
@@ -1488,6 +1720,7 @@ def run_pipeline(
         return keys
 
     if "clip_update" in served:
+        applied_transitions = 0
         for index, segment in broll_segments(plan):
             arguments = transition_arguments(segment)
             if arguments is None:
@@ -1497,7 +1730,13 @@ def run_pipeline(
                 continue
             arguments["clipId"] = clip_id
             advance("clip_update", arguments)
+            applied_transitions += 1
             log(f"segment-{index + 1}: transition into the cut applied to clip {clip_id}")
+        _audit(
+            "segments.transitionIn", "executed" if applied_transitions else "skipped",
+            f"{applied_transitions} transition(s) applied on the cut"
+            if applied_transitions else "the plan does not carry it",
+        )
     if "keyframe_set" in served:
         for index, segment in broll_segments(plan):
             clip_id = segment_clip_ids.get(index)
@@ -1506,6 +1745,18 @@ def run_pipeline(
             duration = float(segment["end"]) - float(segment["start"])
             for arguments in entrance_arguments(clip_id, segment, duration):
                 advance("keyframe_set", arguments)
+        keyed = sum(
+            1
+            for segment in plan_segments(plan)
+            for side in ("in", "out")
+            if isinstance(segment.get(side), dict)
+            and segment[side].get("anim") not in (None, "static")
+        )
+        _audit(
+            "segments.in/out", "executed" if keyed else "skipped",
+            f"{keyed} entrance/exit animation(s) keyed on the placed clips"
+            if keyed else "the plan does not carry it",
+        )
 
     # The plan's grade. `layer` is one effect layer over the whole runtime
     # - with the duration written, because absent means five seconds and
@@ -1524,6 +1775,8 @@ def run_pipeline(
                 "trackId": None,
             })
             log(f"grade {grade['filter']} applied as one layer over {runtime:.2f}s")
+            _audit("grade", "executed",
+                   f"{grade['filter']} applied as one layer over {runtime:.2f}s")
         elif "clip_update" in served and placed_clip_ids:
             params = {}
             if grade.get("intensity") is not None and grade.get("intensityKey"):
@@ -1532,56 +1785,172 @@ def run_pipeline(
             for clip_id in placed_clip_ids:
                 advance("clip_update", {"path": project, "clipId": clip_id, "patch": patch})
             log(f"grade {grade['filter']} applied to {len(placed_clip_ids)} placed clip(s)")
+            _audit("grade", "executed",
+                   f"{grade['filter']} applied per clip over {len(placed_clip_ids)} placed clip(s)")
         else:
             log("the plan's grade cannot be applied: the server serves neither effect layers nor clip patches")
+            _audit("grade", "rejected",
+                   "the server serves neither effect layers nor clip patches")
+    elif isinstance(plan.get("grade"), dict):
+        _audit("grade", "rejected", "the plan's grade names no filter")
 
     # The plan's captions, segment-timed from the transcript the runner
     # measured: one caption a transcript segment, inside the plan's
     # runtime, styled the way the plan asked. Word-synced kinetic
-    # captions are captions_animate's to bake, and stay the Director's
-    # call - this layer never invents the timing it was not given.
+    # captions are captions_animate's to bake - and when the plan asks
+    # for them (captions.wordTimed, or a kinetic setting), the runner
+    # wires the call: the measured word timings are the timing it was
+    # told never to invent, the bake rides the plan's own preset and
+    # kinetic settings, and the reel lands on the timeline where the
+    # graphics do (P1-010). The timeline's segment-timed captions are
+    # the kinetic reel's to replace, not double: the words appear once.
     captions_plan = plan.get("captions") if isinstance(plan.get("captions"), dict) else None
     captions_wanted = captions_plan is not None or any(
         segment.get("captions") for segment in plan_segments(plan)
     )
+    kinetic_setting = None
+    words: list[list[Any]] = []
+    if captions_plan is not None:
+        if captions_plan.get("wordTimed") is True or captions_plan.get("kinetic") is True:
+            kinetic_setting = True
+        elif isinstance(captions_plan.get("kinetic"), dict):
+            kinetic_setting = captions_plan["kinetic"]
     if captions_wanted:
-        if "captions_add" not in served:
+        if kinetic_setting is not None:
+            # The word-timed path: the recogniser's own word times, the
+            # plan's kinetic hand, one baked reel.
+            if "captions_animate" not in served:
+                raise PipelineError(
+                    "the plan asks for word-timed kinetic captions and the server does "
+                    "not serve captions_animate; the export would silently lack them"
+                )
+            words = []
+            for segment in transcript.get("segments", []):
+                if not isinstance(segment, dict):
+                    continue
+                for word in segment.get("words") or []:
+                    if not isinstance(word, dict):
+                        continue
+                    text, start, end = word.get("text"), word.get("start"), word.get("end")
+                    if isinstance(text, str) and text.strip() and isinstance(start, (int, float)) \
+                            and isinstance(end, (int, float)) and float(end) > float(start):
+                        words.append([text, float(start), float(end)])
+            if not words:
+                log(
+                    "kinetic captions wanted, but the transcript carried no word "
+                    "timings; segment-timed captions placed instead"
+                )
+                _signal(0.0, "captions", provenance="fallback",
+                        note="kinetic captions wanted and no word timings answered; "
+                             "segment-timed captions placed instead")
+            else:
+                animate: dict[str, Any] = {
+                    "project": project,
+                    "words": words,
+                    "kinetic": kinetic_setting,
+                }
+                if isinstance(captions_plan.get("preset"), str) and captions_plan["preset"].strip():
+                    animate["preset"] = captions_plan["preset"]
+                if captions_plan.get("curtain") is False:
+                    animate["curtain"] = False
+                baked = advance("captions_animate", animate)
+                baked_file = _reply_file(baked)
+                baked_duration = (
+                    float(baked.get("duration")) if isinstance(baked, dict)
+                    and isinstance(baked.get("duration"), (int, float)) else runtime
+                )
+                if isinstance(baked, dict):
+                    log(
+                        f"kinetic captions baked: {baked.get('lines')} line(s) over "
+                        f"{len(words)} word(s), {baked.get('width')}x{baked.get('height')}"
+                        f" at {baked.get('fps'):g} fps"
+                        if isinstance(baked.get("fps"), (int, float))
+                        else f"kinetic captions baked: {baked.get('lines')} line(s) over {len(words)} word(s)"
+                    )
+                _signal(0.0, "captions", provenance="measured",
+                        words=len(words),
+                        note="word-timed kinetic captions baked from the recogniser's own word times")
+                if baked_file:
+                    # The reel lands where the graphics do: the overlay
+                    # lane, its own lane made when no graphic came first.
+                    # The encoded reel is opaque - it is the picture for
+                    # its span, not a burn-in over the B-roll; the PNG
+                    # sequence is the path that keeps a transparent
+                    # comp's alpha. Said out loud, never silently.
+                    imported = advance("media_import", {"path": project, "file": baked_file})
+                    kinetic_media = imported.get("createdId") if isinstance(imported, dict) else None
+                    if not isinstance(kinetic_media, str) or not kinetic_media:
+                        raise PipelineError("the kinetic caption reel was baked but not imported")
+                    if not isinstance(track_id, str) or not track_id:
+                        track_id = advance("track_add", {"path": project})
+                        if not isinstance(track_id, str) or not track_id:
+                            raise PipelineError("track_add did not return the overlay lane for the captions")
+                    placed = advance("clip_add", {
+                        "path": project,
+                        "mediaId": kinetic_media,
+                        "trackId": track_id,
+                        "start": 0.0,
+                    })
+                    kinetic_clip = placed.get("createdId") if isinstance(placed, dict) else None
+                    if not isinstance(kinetic_clip, str) or not kinetic_clip:
+                        raise PipelineError("the kinetic caption reel was imported but never placed")
+                    log(
+                        f"kinetic caption reel placed on the overlay lane: clip {kinetic_clip}, "
+                        f"{baked_duration:.2f}s (the encoded reel is opaque: it is the "
+                        "picture for its span, not a burn-in over the B-roll)"
+                    )
+                else:
+                    log("kinetic captions baked, but the reply named no file to import")
+                _audit(
+                    "captions", "executed",
+                    "the kinetic reel baked from the measured word timings and placed on the overlay lane",
+                )
+        elif "captions_add" not in served:
             raise PipelineError(
                 "the plan asks for captions and the server does not serve captions_add; "
                 "the export would silently lack them"
             )
-        wanted_segments = [
-            segment for segment in plan_segments(plan)
-            if segment.get("captions") or (captions_plan is not None and not any(
-                s.get("captions") is False for s in [segment]
-            ))
-        ] if any(segment.get("captions") for segment in plan_segments(plan)) else plan_segments(plan)
-        timed = [
-            {"start": float(s["start"]), "end": float(s["end"]), "text": str(s.get("text") or "")}
-            for s in transcript.get("segments", [])
-            if isinstance(s, dict) and isinstance(s.get("start"), (int, float))
-            and isinstance(s.get("end"), (int, float))
-            and float(s["end"]) > float(s["start"])
-            and float(s["start"]) < runtime
-        ]
-        for caption in timed:
-            caption["end"] = min(caption["end"], runtime)
-        if timed:
-            style: dict[str, Any] = {"fontFamily": "Hanken Grotesk"}
-            if captions_plan is not None:
-                for key in ("fontSize", "fontWeight", "color", "background"):
-                    if captions_plan.get(key) is not None:
-                        style[key] = captions_plan[key]
-            offset_y = (captions_plan or {}).get("offsetY", 0.35)
-            advance("captions_add", {
-                "path": project,
-                "captions": timed,
-                "style": style,
-                "offsetY": float(offset_y) if isinstance(offset_y, (int, float)) else 0.35,
-            })
-            log(f"{len(timed)} segment-timed caption(s) placed")
-        else:
-            log("captions wanted, but the transcript carried no timed segments to caption")
+        if kinetic_setting is None or not words:
+            wanted_segments = [
+                segment for segment in plan_segments(plan)
+                if segment.get("captions") or (captions_plan is not None and not any(
+                    s.get("captions") is False for s in [segment]
+                ))
+            ] if any(segment.get("captions") for segment in plan_segments(plan)) else plan_segments(plan)
+            timed = [
+                {"start": float(s["start"]), "end": float(s["end"]), "text": str(s.get("text") or "")}
+                for s in transcript.get("segments", [])
+                if isinstance(s, dict) and isinstance(s.get("start"), (int, float))
+                and isinstance(s.get("end"), (int, float))
+                and float(s["end"]) > float(s["start"])
+                and float(s["start"]) < runtime
+            ]
+            for caption in timed:
+                caption["end"] = min(caption["end"], runtime)
+            if timed:
+                style: dict[str, Any] = {"fontFamily": "Hanken Grotesk"}
+                if captions_plan is not None:
+                    for key in ("fontSize", "fontWeight", "color", "background"):
+                        if captions_plan.get(key) is not None:
+                            style[key] = captions_plan[key]
+                offset_y = (captions_plan or {}).get("offsetY", 0.35)
+                advance("captions_add", {
+                    "path": project,
+                    "captions": timed,
+                    "style": style,
+                    "offsetY": float(offset_y) if isinstance(offset_y, (int, float)) else 0.35,
+                })
+                log(f"{len(timed)} segment-timed caption(s) placed")
+                _audit(
+                    "captions", "executed",
+                    f"{len(timed)} segment-timed caption(s) placed from the measured transcript",
+                )
+            else:
+                log("captions wanted, but the transcript carried no timed segments to caption")
+                _audit(
+                    "captions", "rejected",
+                    "captions wanted and the transcript carried no timed segments to caption",
+                )
 
     # The plan's SFX: shopped from the CC0 shelf, placed so the sound's
     # own peak lands on the planned beat (syncAt says where inside the
@@ -1620,6 +1989,15 @@ def run_pipeline(
             })
         log(f"segment-{index + 1}: SFX {sound.get('name', sound.get('id'))} placed at {start:.2f}s")
 
+    sfx_asked = sum(
+        1 for segment in plan_segments(plan) if isinstance(segment.get("sfx"), dict)
+    )
+    if sfx_asked:
+        _audit(
+            "segments.sfx", "executed",
+            f"{sfx_asked} SFX beat(s) shopped, peaked and gained",
+        )
+
     # The plan's music bed, under the words and ducked to them: only when
     # the take itself carries no music, only from the libraries the plan
     # named, and only when the library is actually present - a missing
@@ -1628,6 +2006,10 @@ def run_pipeline(
     if isinstance(bgm_plan, dict) and str(bgm_plan.get("query") or bgm_plan.get("trackId") or "").strip():
         if not bgm_allowed:
             log("BGM skipped: the take already carries music (detect_music_segments said so)")
+            _audit("audio.bgm", "rejected",
+                   "the take already carries music; no bed stacked (the music gate's own rule)")
+            _signal(0.0, "bgm", provenance="measured",
+                    note="detect_music_segments found music in the take; the bed was refused")
         elif "bgm_status" not in served or "bgm_search" not in served or "bgm_import" not in served:
             raise PipelineError(
                 "the plan asks for a music bed and the server does not serve the "
@@ -1638,6 +2020,10 @@ def run_pipeline(
             state = status.get("state") if isinstance(status, dict) else None
             if state != "ready":
                 log(f"BGM skipped: the music library is {state or 'unavailable'} (bgm_prepare was not run)")
+                _audit("audio.bgm", "rejected",
+                       f"the music library is {state or 'unavailable'}; no bed was shopped")
+                _signal(0.0, "bgm", provenance="fallback",
+                        note=f"the music library is {state or 'unavailable'}; the plan's bed did not land")
             else:
                 track_id = bgm_plan.get("trackId")
                 if not isinstance(track_id, str) or not track_id.strip():
@@ -1645,6 +2031,10 @@ def run_pipeline(
                     tracks = search.get("tracks", []) if isinstance(search, dict) else []
                     if not tracks:
                         log(f"BGM skipped: no track answered {bgm_plan.get('query')!r}")
+                        _audit("audio.bgm", "rejected",
+                               f"no track answered {bgm_plan.get('query')!r}")
+                        _signal(0.0, "bgm", provenance="fallback",
+                                note=f"no track answered {bgm_plan.get('query')!r}")
                         tracks = []
                     if tracks:
                         track_id = str(tracks[0].get("id") or "")
@@ -1694,6 +2084,8 @@ def run_pipeline(
                                 "replaceAutomation": True,
                             })
                             log(f"BGM ducked {duck_db:g} dB under {len(spans)} speech span(s)")
+                            _audit("audio.bgm", "executed",
+                                   "the bed imported, placed and ducked under the measured speech spans")
 
     # The timeline as it stands, before the render pays for it: no two
     # clips may share a lane's same seconds, and the read-back is the
@@ -2158,11 +2550,36 @@ def run_pipeline(
         f"craft score {score}"
         + ("" if status == "completed" else f" ({status})")
     )
+    # The audit's own last word: every plan field accounted for, and the
+    # one the runner did not consume named as one (P1-005). The run's
+    # signalLog rides the record with it (P1-004).
+    _audit("export", "executed",
+           f"rendered to {rendered} with the plan's own profile and awaited to done")
+    audit = plan_field_audit(plan, plan_audit)
+    audit_counts: dict[str, int] = {}
+    for entry in audit["fields"].values():
+        audit_counts[entry["status"]] = audit_counts.get(entry["status"], 0) + 1
+    if audit["unrecognized"]:
+        log(
+            "plan audit: unrecognized plan field(s) the runner did not consume: "
+            + ", ".join(audit["unrecognized"])
+        )
+    log(
+        "plan audit: "
+        + ", ".join(
+            f"{count} {name}"
+            for name, count in sorted(audit_counts.items())
+        )
+        + (f"; {len(audit['unrecognized'])} unrecognized" if audit["unrecognized"] else "")
+        + "; nothing dropped silently"
+    )
     _record_run(project, {
         "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "status": status,
         "calls": len(done),
         "output": rendered,
+        "signalLog": run_signals,
+        "planAudit": audit,
         "craftScore": score,
         "craftTier": (
             critique.get("tier") or critique.get("engine")
@@ -2487,7 +2904,9 @@ SELF_TEST_REPLIES = {
     },
     "analysis_wait": {
         "state": "done",
-        'output': '{"segments":[{"text":"one","start":0.0,"end":1.0}]}',
+        'output': '{"segments":[{"text":"one","start":0.0,"end":1.0,'
+                  '"words":[{"text":"The","start":0.0,"end":0.4},'
+                  '{"text":"city","start":0.4,"end":1.0}]}]}',
     },
     "voice_signals": {
         "status": "ok",
@@ -2584,6 +3003,7 @@ SELF_TEST_REPLIES = {
     "media_import": lambda args: {
         "createdId": (
             "m-voice-cleaned" if "voiceover-cleaned" in str(args.get("file", ""))
+            else "m-kinetic" if "captions-" in str(args.get("file", ""))
             else "m-motion"
         )
     },
@@ -2591,8 +3011,15 @@ SELF_TEST_REPLIES = {
         "createdId": (
             "c-voice" if args.get("mediaId") == "m-voice-cleaned"
             else "c-existing" if args.get("mediaId") == "m-existing"
+            else "c-kinetic" if args.get("mediaId") == "m-kinetic"
             else "c-motion"
         )
+    },
+    "captions_animate": {
+        "file": "/tmp/funcut-selftest/project/motion/captions-selftest.mp4",
+        "duration": 12.0, "lines": 1, "words": 2,
+        "width": 1920, "height": 1080, "fps": 30,
+        "preset": "funcut.caption.kinetic", "kinetic": True, "warnings": [],
     },
     "export_start": {"job": "j1"},
     "export_wait": {"state": "done", "output": "/tmp/funcut-selftest/final.mp4"},
@@ -2610,8 +3037,10 @@ SELF_TEST_REPLIES = {
 def self_test() -> int:
     """A synthetic canonical plan exercises the real execution contract."""
     audio = "/tmp/funcut-selftest/voiceover.wav"
+    project = "/tmp/funcut-selftest/project"
+    os.makedirs(project, exist_ok=True)
     transport = MockMcp(dict(SELF_TEST_REPLIES))
-    calls = run_pipeline(transport, "/edits/SelfTest", audio, SELF_TEST_PLAN)
+    calls = run_pipeline(transport, project, audio, SELF_TEST_PLAN)
     by_tool = [(tool, args) for tool, args in calls]
     order = [tool for tool, _ in by_tool]
     expected = [
@@ -2645,7 +3074,7 @@ def self_test() -> int:
         args for tool, args in by_tool
         if tool == "clip_add" and args.get("mediaId") == "m-voice-cleaned"
     )
-    if voice_track.get("path") != "/edits/SelfTest" or voice_placement.get("trackId") != "t-voice" or voice_placement.get("start") != 0.0:
+    if voice_track.get("path") != project or voice_placement.get("trackId") != "t-voice" or voice_placement.get("start") != 0.0:
         print(f"FAIL: voiceover was not placed on its own bottom lane: {voice_track}, {voice_placement}")
         return 1
     if "clip_cut_spans" in order:
@@ -2759,7 +3188,7 @@ def self_test() -> int:
     print("enrichment ok: grade layered, captions placed, SFX peaked on beat, bed ducked")
 
     collisions = next(args for tool, args in by_tool if tool == "collision_check")
-    if collisions.get("path") != "/edits/SelfTest":
+    if collisions.get("path") != project:
         print(f"FAIL: the timeline was not collision-checked: {collisions}")
         return 1
     print("pre-export ok: collisions checked, timeline read back")
@@ -2777,6 +3206,156 @@ def self_test() -> int:
         print(f"FAIL: the export's loudness was not measured against the platform target: {loudness}")
         return 1
     print("export ok: awaited, speech verified to 60 ms, loudness measured and in target")
+
+    # The run's own records (P1-004, P1-005): the signalLog the run kept
+    # and the audit of every plan field it consumed, both read back from
+    # the run history the run wrote.
+    try:
+        with open(os.path.join(project, ".auto-director-runs.jsonl"), encoding="utf-8") as handle:
+            recorded = [json.loads(line) for line in handle if line.strip()]
+    except (OSError, ValueError) as error:
+        print(f"FAIL: the run history was not written: {error}")
+        return 1
+    if not recorded or recorded[-1].get("status") != "completed":
+        print(f"FAIL: the run's own record is missing or wrong: {recorded[-1:] }")
+        return 1
+    run_record = recorded[-1]
+    signals = run_record.get("signalLog") or []
+    coverage = [entry for entry in signals if entry.get("decision") == "broll-coverage"]
+    if len(coverage) != 1 or coverage[0].get("slotId") != "segment-1":
+        print(f"FAIL: the per-slot planner record is missing: {signals}")
+        return 1
+    if coverage[0].get("signals") != ["dialogue_gap"] or coverage[0].get("provenance") != "measured":
+        print(f"FAIL: the slot's planner evidence is wrong: {coverage[0]}")
+        return 1
+    audit = run_record.get("planAudit") or {}
+    audited = audit.get("fields") or {}
+    if len(audited) != len(PLAN_FIELDS):
+        print(f"FAIL: the audit does not answer for every field: {sorted(audited)}")
+        return 1
+    if audit.get("unrecognized"):
+        print(f"FAIL: fields the runner does not know went unnamed: {audit['unrecognized']}")
+        return 1
+    expected_executed = {
+        "aspect", "mode", "sections", "segments", "segments.visual",
+        "segments.visual.existing", "segments.transitionIn", "segments.in/out",
+        "segments.sfx", "audio.voiceover", "audio.bgm", "grade", "captions",
+        "signalLog", "creativeBrief", "export",
+    }
+    executed = {field for field, entry in audited.items() if entry.get("status") == "executed"}
+    if not expected_executed <= executed:
+        print(f"FAIL: fields the run consumed were not audited as executed: "
+              f"{sorted(expected_executed - executed)}")
+        return 1
+    if audited.get("audioClipId", {}).get("status") != "skipped":
+        print(f"FAIL: the absent audioClipId was not audited as skipped: {audited.get('audioClipId')}")
+        return 1
+    print(
+        "run records ok: the slot's planner evidence and the 19-field audit "
+        f"rode the run ({len(executed)} executed, "
+        f"{sum(1 for e in audited.values() if e.get('status') == 'skipped')} skipped)"
+    )
+
+    # A planner the server does not serve: every slot carries the
+    # degradation, provenance fallback, in the run's signalLog (P1-004).
+    unplanned = dict(SELF_TEST_REPLIES)
+    unplanned.pop("footage_plan_suggest", None)
+    unplanned_run = run_pipeline(MockMcp(unplanned), project, audio, SELF_TEST_PLAN)
+    if not unplanned_run:
+        print("FAIL: the run without a planner did not complete")
+        return 1
+    with open(os.path.join(project, ".auto-director-runs.jsonl"), encoding="utf-8") as handle:
+        degraded = [json.loads(line) for line in handle if line.strip()][-1]
+    degraded_coverage = [
+        entry for entry in degraded.get("signalLog") or []
+        if entry.get("decision") == "broll-coverage"
+    ]
+    if len(degraded_coverage) != 1 or degraded_coverage[0].get("provenance") != "fallback":
+        print(f"FAIL: the unserved planner's degradation was not recorded per slot: {degraded_coverage}")
+        return 1
+    print("planner degradation ok: an unserved planner is recorded per slot, provenance fallback")
+
+    # A plan field the runner has never met: named, never dropped (P1-005).
+    strange = copy.deepcopy(SELF_TEST_PLAN)
+    strange["mysteryField"] = {"anything": True}
+    strange_audit = plan_field_audit(strange, {})
+    if strange_audit["unrecognized"] != ["mysteryField"]:
+        print(f"FAIL: an unknown plan field went unnamed: {strange_audit['unrecognized']}")
+        return 1
+    print("audit ok: an unknown plan field is named unrecognized, never dropped")
+
+    # Word-timed kinetic captions, asked for by the plan (P1-010): the
+    # measured word timings are the words, the plan's kinetic setting
+    # rides along, the reel is baked, imported and placed on the overlay
+    # lane, and the timeline's segment-timed captions do not double it.
+    kinetic_plan = copy.deepcopy(SELF_TEST_PLAN)
+    kinetic_plan["captions"]["wordTimed"] = True
+    kinetic_world = dict(SELF_TEST_REPLIES)
+    kinetic_transport = MockMcp(kinetic_world)
+    kinetic_calls = run_pipeline(kinetic_transport, project, audio, kinetic_plan)
+    animate_call = next(
+        (args for tool, args in kinetic_calls if tool == "captions_animate"), None,
+    )
+    if animate_call is None:
+        print("FAIL: the plan's kinetic captions were never baked")
+        return 1
+    if animate_call.get("words") != [["The", 0.0, 0.4], ["city", 0.4, 1.0]]:
+        print(f"FAIL: the bake did not carry the measured word timings: {animate_call}")
+        return 1
+    if animate_call.get("kinetic") is not True or animate_call.get("project") != project:
+        print(f"FAIL: the bake did not carry the plan's kinetic setting and project: {animate_call}")
+        return 1
+    if any(tool == "captions_add" for tool, _ in kinetic_calls):
+        print("FAIL: segment-timed captions doubled the kinetic reel")
+        return 1
+    kinetic_placement = next(
+        (
+            args for tool, args in kinetic_calls
+            if tool == "clip_add" and args.get("mediaId") == "m-kinetic"
+        ),
+        None,
+    )
+    if kinetic_placement is None or kinetic_placement.get("trackId") != "t-motion" \
+            or kinetic_placement.get("start") != 0.0:
+        print(f"FAIL: the kinetic reel was not placed on the overlay lane: {kinetic_placement}")
+        return 1
+    kinetic_import = next(
+        (
+            args for tool, args in kinetic_calls
+            if tool == "media_import" and "captions-" in str(args.get("file", ""))
+        ),
+        None,
+    )
+    if kinetic_import is None:
+        print("FAIL: the baked reel was never imported")
+        return 1
+    print("kinetic captions ok: baked from the measured words, placed once, never doubled")
+
+    # Kinetic captions asked for, word timings absent: the honest
+    # fallback - segment-timed captions placed, the degradation recorded
+    # in the run's signalLog with provenance fallback (P1-010).
+    wordless = copy.deepcopy(SELF_TEST_PLAN)
+    wordless["captions"]["wordTimed"] = True
+    wordless_world = dict(SELF_TEST_REPLIES)
+    wordless_world["analysis_wait"] = {
+        "state": "done",
+        'output': '{"segments":[{"text":"one","start":0.0,"end":1.0}]}',
+    }
+    wordless_calls = run_pipeline(MockMcp(wordless_world), project, audio, wordless)
+    if not any(tool == "captions_add" for tool, _ in wordless_calls):
+        print("FAIL: the wordless kinetic fallback placed no captions at all")
+        return 1
+    with open(os.path.join(project, ".auto-director-runs.jsonl"), encoding="utf-8") as handle:
+        wordless_record = [json.loads(line) for line in handle if line.strip()][-1]
+    wordless_signal = [
+        entry for entry in wordless_record.get("signalLog") or []
+        if entry.get("decision") == "captions"
+    ]
+    if len(wordless_signal) != 1 or wordless_signal[0].get("provenance") != "fallback":
+        print(f"FAIL: the wordless kinetic degradation was not recorded: {wordless_signal}")
+        return 1
+    print("kinetic fallback ok: no word timings, segment-timed captions placed, the degradation recorded")
+
 
     # A continuity replacement must exclude the rejected shot and place the
     # replacement, then pass the second continuity read before importing.
@@ -2824,7 +3403,7 @@ def self_test() -> int:
     }
     repaired = MockMcp(repair_replies)
     repaired_calls = run_pipeline(
-        repaired, "/edits/SelfTest", audio, SELF_TEST_PLAN
+        repaired, project, audio, SELF_TEST_PLAN
     )
     replacement_rank = repair_rank_calls[1]
     imported_choice = next(
@@ -2850,7 +3429,7 @@ def self_test() -> int:
     }
     remedy = MockMcp(remedy_replies)
     try:
-        run_pipeline(remedy, "/edits/SelfTest", audio, SELF_TEST_PLAN)
+        run_pipeline(remedy, project, audio, SELF_TEST_PLAN)
     except PipelineError as error:
         if "regrade" in str(error):
             print(f"FAIL: an unknown continuity remedy still crashes the run: {error}")
@@ -2861,7 +3440,7 @@ def self_test() -> int:
     stacked_replies = dict(SELF_TEST_REPLIES)
     stacked_replies["detect_music_segments"] = {"musicPresent": True, "segments": [{"start": 0.0, "end": 12.0}]}
     stacked = MockMcp(stacked_replies)
-    stacked_calls = run_pipeline(stacked, "/edits/SelfTest", audio, SELF_TEST_PLAN)
+    stacked_calls = run_pipeline(stacked, project, audio, SELF_TEST_PLAN)
     if any(tool == "bgm_import" for tool, _ in stacked_calls):
         print("FAIL: a bed was stacked under a take that already carries music")
         return 1
@@ -2881,7 +3460,7 @@ def self_test() -> int:
     }
     forged = MockMcp(forged_replies)
     try:
-        run_pipeline(forged, "/edits/SelfTest", audio, SELF_TEST_PLAN)
+        run_pipeline(forged, project, audio, SELF_TEST_PLAN)
         print("FAIL: a signalLog citing unmeasured signals was executed")
         return 1
     except PipelineError as error:
@@ -2893,7 +3472,7 @@ def self_test() -> int:
     # A failure stops the run: no timeline or export work follows it.
     broken = MockMcp(dict(SELF_TEST_REPLIES), fail_on="emotion")
     try:
-        run_pipeline(broken, "/edits/SelfTest", audio, SELF_TEST_PLAN)
+        run_pipeline(broken, project, audio, SELF_TEST_PLAN)
         print("FAIL: a failing phase did not stop the pipeline")
         return 1
     except PipelineError:
@@ -2909,7 +3488,7 @@ def self_test() -> int:
     # A server that cannot serve the core tools is refused at the handshake.
     thin = MockMcp({"project_get": SELF_TEST_REPLIES["project_get"]})
     try:
-        run_pipeline(thin, "/edits/SelfTest", audio, SELF_TEST_PLAN)
+        run_pipeline(thin, project, audio, SELF_TEST_PLAN)
         print("FAIL: a server without the core tools was run against")
         return 1
     except PipelineError as error:
@@ -2927,7 +3506,7 @@ def self_test() -> int:
     }
     unready = MockMcp(unready_replies)
     try:
-        run_pipeline(unready, "/edits/SelfTest", audio, SELF_TEST_PLAN)
+        run_pipeline(unready, project, audio, SELF_TEST_PLAN)
         print("FAIL: a creatively unready plan was executed")
         return 1
     except PipelineError:

@@ -1,0 +1,36 @@
+name: Dependency security audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/Cargo.lock'
+      - 'src/**/Cargo.toml'
+      - '.github/workflows/security-audit.yml'
+  pull_request:
+    paths:
+      - 'src/Cargo.lock'
+      - 'src/**/Cargo.toml'
+      - '.github/workflows/security-audit.yml'
+  schedule:
+    - cron: '17 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cargo-audit:
+    name: RustSec dependency vulnerability audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install pinned cargo-audit
+        run: cargo install --locked --version 0.22.2 cargo-audit
+      - name: Audit the committed dependency lockfile
+        run: cargo audit --file src/Cargo.lock

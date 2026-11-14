@@ -233,7 +233,7 @@ pub(crate) mod tests {
     /// The gate is process-global, so every test that holds it - these,
     /// and the proxy test that proves the ordering end to end - takes
     /// this lock first and runs alone. A parallel runner would otherwise
-    /// answer `index_warming` with another test's warm.
+    /// answer `warming` with another test's warm.
     pub(crate) fn for_this_test_only() -> &'static std::sync::Mutex<()> {
         static SERIAL: OnceLock<Mutex<()>> = OnceLock::new();
         SERIAL.get_or_init(|| Mutex::new(()))

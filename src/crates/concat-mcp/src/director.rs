@@ -274,7 +274,7 @@ mod tests {
         };
         let error = answered(
             "export_start",
-            json!({ "path": "/edits/Reel" }),
+            json!({ "path": "/edits/Reel", "output": "/edits/Reel/export.mp4" }),
             &mut backend,
         )
         .expect_err("the export was refused");

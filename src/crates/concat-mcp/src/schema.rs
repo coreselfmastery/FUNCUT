@@ -521,8 +521,12 @@ mod tests {
         // again, no prose. And once more, 243,000 -> 246,000 at 110: the
         // footage planner's own door (footage_plan_suggest) opened the
         // engine the continuity gate gates, one schema of ~2,050
-        // characters - function again, and the last of the growth this
-        // comment knows. The
+        // characters - function again. And 246,000 -> 247,000, still at
+        // 110: export.status learned to be asked by what a job was
+        // started on (`path`, beside the job's own id) - the ask an
+        // unattended run makes, its program written before the job was
+        // minted - and both waits carry the field; function, the last of
+        // the growth this comment knows. The
         // director's default surface - what `concat --mcp` serves an
         // agent that names no list, and the budget that matters by
         // default - keeps its own, tighter cap below.
@@ -537,7 +541,7 @@ mod tests {
             "CONTEXT whole catalogue: {total} over {} tools",
             sizes.len()
         );
-        assert!(total < 246_000, "{total}: {sizes:?}");
+        assert!(total < 247_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }
@@ -570,9 +574,12 @@ mod tests {
         );
         // 230,000 -> 232,000 with the footage planner's door: the
         // director shops for coverage with it, so it belongs on the
-        // surface, and the surface's budget carries its schema.
+        // surface, and the surface's budget carries its schema. And
+        // 232,000 -> 233,000 with export.status's `path`: the director
+        // waits on its exports and analyses, and the waits take the ask
+        // by what the job was started on.
         assert!(
-            director < 232_000,
+            director < 233_000,
             "the director's default surface is {director} characters - too much for an agent to hold"
         );
     }

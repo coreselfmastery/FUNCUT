@@ -2741,7 +2741,7 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         }
         Action::PlanValidate => Ok(Outcome::json(validate_plan_tool(arguments)?)),
         Action::ExportWait => export_wait(
-            &tool.name,
+            tool.name,
             arguments,
             backend,
             context.cancelled,

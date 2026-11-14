@@ -17,8 +17,10 @@ concat-api = { workspace = true, features = ["schema", "speech"] }
 concat-server.workspace = true
 # The motion layer the five motion tools wrap: presets, comps, frames,
 # bakes and word-timed caption reels - the design door an agent had no way
-# through before, which the director skill's Phase 5b always assumed.
-concat-motion.workspace = true
+# through before, which the director skill's Phase 5b always assumed. The
+# `schema` feature generates the plan slots' JSON Schema from the types,
+# which is what the canonical edit-plan schema splices in (SCH-02).
+concat-motion = { workspace = true, features = ["schema"] }
 # The Lottie and GSAP adapters motion_import exposes: motion made
 # elsewhere, read here.
 geneva-adapter.workspace = true

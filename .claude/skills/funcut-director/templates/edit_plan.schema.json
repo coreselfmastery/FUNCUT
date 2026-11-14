@@ -1,916 +1,181 @@
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "funcut-director/edit-plan/v2",
-  "title": "FUNCUT edit plan",
+  "$schema": "http://json-schema.org/draft-07/schema#",
   "description": "The one-pass plan a director emits after measuring, before cutting. Times are seconds unless a field says otherwise.",
-  "type": "object",
-  "required": [
-    "aspect",
-    "mode",
-    "sections",
-    "segments",
-    "audio",
-    "grade"
-  ],
   "properties": {
-    "title": {
-      "type": "string",
-      "description": "Working title of the video."
-    },
     "aspect": {
-      "type": "string",
+      "description": "Delivery aspect; 9:16 for shorts/reels/tiktok.",
       "enum": [
         "16:9",
         "9:16",
         "1:1",
         "4:5"
       ],
-      "description": "Delivery aspect; 9:16 for shorts/reels/tiktok."
-    },
-    "niche": {
-      "type": "string",
-      "description": "The niche playbook in use, e.g. history, tech, luxury, motivation, finance, science, horror, fitness, gaming, howto."
-    },
-    "segments": {
-      "type": "array",
-      "minItems": 1,
-      "description": "The timeline, in order. Segment i covers [start, end); gaps or overlaps are plan errors.",
-      "items": {
-        "type": "object",
-        "required": [
-          "start",
-          "end",
-          "visual"
-        ],
-        "properties": {
-          "start": {
-            "type": "number",
-            "minimum": 0
-          },
-          "end": {
-            "type": "number",
-            "minimum": 0,
-            "description": "Must be greater than start."
-          },
-          "spoken": {
-            "type": "string",
-            "description": "The narration words this segment covers (for caption grouping)."
-          },
-          "emotion": {
-            "type": "string",
-            "enum": [
-              "anger",
-              "disgust",
-              "fear",
-              "joy",
-              "neutral",
-              "sadness",
-              "surprise"
-            ],
-            "description": "What this segment's narration FEELS like, from the `emotion` tool's read of the transcript (action extract). The layer every other per-segment choice answers to: the easing, the colour push, the SFX register, the stock vocabulary."
-          },
-          "act": {
-            "type": "string",
-            "enum": [
-              "hook",
-              "setup",
-              "tension",
-              "turn",
-              "reveal",
-              "proof",
-              "cta"
-            ],
-            "description": "The dramaturgical act this segment plays - the emotion read assigns it, the plan's sections may override it. Drives the shot register (extreme close-up for a hook, wide establishing for setup, hero shot for the reveal) and the BGM duck depth."
-          },
-          "easing": {
-            "oneOf": [
-              {
-                "type": "string",
-                "enum": [
-                  "ease-in",
-                  "ease-out",
-                  "ease-in-out",
-                  "emphasis",
-                  "snap-in",
-                  "spring",
-                  "spring-pop"
-                ]
-              },
-              {
-                "type": "object",
-                "description": "The exact concat-motion authoring curve object the emotion read returns ({kind: bezier|spring, ...})."
-              }
-            ],
-            "description": "How this segment's motion enters, from the emotion: tense lines ease in, warm ones ease out, a burst pops, anger snaps."
-          },
-          "colourTemp": {
-            "type": "string",
-            "enum": [
-              "hot",
-              "cold",
-              "warm",
-              "cool",
-              "sickly",
-              "split",
-              "balanced"
-            ],
-            "description": "The colour-temperature push this segment rides on top of the base grade, from the emotion read (fear is cold and crushed, joy golden and lifted, disgust sickly)."
-          },
-          "duckDb": {
-            "type": "number",
-            "minimum": -60,
-            "maximum": 0,
-            "description": "How deep the BGM ducks under this segment's speech, as an absolute dB target from the act's profile in the emotion read (-15 under the naked hook, -9 letting the reveal ride)."
-          },
-          "visual": {
-            "type": "object",
-            "required": [
-              "type"
-            ],
-            "properties": {
-              "type": {
-                "type": "string",
-                "enum": [
-                  "broll",
-                  "textCard",
-                  "titleCard",
-                  "existing"
-                ],
-                "description": "broll = OpenVid clip; textCard/titleCard = styled text over background (fallbacks); existing = footage already imported."
-              },
-              "query": {
-                "type": "string",
-                "description": "broll: the primary OpenVid search query. Follow prompts/broll_matching.md."
-              },
-              "description": {
-                "type": "string",
-                "minLength": 40,
-                "description": "A visual-specific, semantic shot description for CLIP reranking; name subject, action, composition and mood."
-              },
-              "queries": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "description": "Fallback BM25 search phrases for this B-roll segment."
-              },
-              "hero": {
-                "type": "boolean",
-                "description": "Whether this is the hero shot; widens candidate search."
-              },
-              "motionMin": {
-                "type": "number",
-                "minimum": 0,
-                "description": "Minimum measured motion score accepted for this shot."
-              },
-              "shotScale": {
-                "type": "string",
-                "enum": [
-                  "wide",
-                  "medium",
-                  "close_up"
-                ],
-                "description": "The intended shot scale, used by the continuity check."
-              },
-              "storyboard": {
-                "type": "object",
-                "required": [
-                  "scenes"
-                ],
-                "description": "A complete motion_reel storyboard for textCard/titleCard segments. Use the same storyboard schema as the motion_reel MCP tool; the rendered reel is imported and placed at this segment's start.",
-                "properties": {
-                  "width": {
-                    "type": "integer",
-                    "minimum": 1
-                  },
-                  "height": {
-                    "type": "integer",
-                    "minimum": 1
-                  },
-                  "fps": {
-                    "type": "number",
-                    "minimum": 1
-                  },
-                  "scenes": {
-                    "type": "array",
-                    "minItems": 1,
-                    "items": {
-                      "type": "object"
-                    }
-                  },
-                  "assets": {
-                    "type": "object"
-                  },
-                  "audio": {
-                    "type": "array"
-                  },
-                  "curtain": {
-                    "type": "object"
-                  }
-                }
-              },
-              "sort": {
-                "type": "string",
-                "enum": [
-                  "relevance",
-                  "aesthetic",
-                  "motion",
-                  "temporal",
-                  "shortest",
-                  "longest",
-                  "surprise"
-                ]
-              },
-              "clipId": {
-                "type": [
-                  "integer",
-                  "string",
-                  "null"
-                ],
-                "description": "A real OpenVid clip id or existing timeline clip id, returned by a tool; never invented."
-              },
-              "mediaId": {
-                "type": "string",
-                "description": "For existing footage: the media-bin id returned by project_get/timeline_read."
-              },
-              "file": {
-                "type": "string",
-                "description": "For a source file not yet represented by a clip or media id: its actual path."
-              },
-              "trimIn": {
-                "type": "number",
-                "minimum": 0,
-                "description": "Seconds into the source where the clip starts."
-              },
-              "trimOut": {
-                "type": "number",
-                "description": "Seconds into the source where it ends (leave longer than the segment; trim after placing)."
-              },
-              "preset": {
-                "type": "string",
-                "description": "textCard/titleCard: one of the 31 text presets, e.g. concat.impact, concat.lower-third, concat.bold-caption."
-              },
-              "text": {
-                "type": "string",
-                "description": "textCard/titleCard: the words on screen."
-              },
-              "motion": {
-                "type": "string",
-                "enum": [
-                  "ken-burns-in",
-                  "ken-burns-out",
-                  "slide-left",
-                  "slide-right",
-                  "parallax-up",
-                  "punch-zoom",
-                  "static"
-                ],
-                "description": "Keyframe recipe from prompts/keyframes_motion.md."
-              },
-              "fit": {
-                "type": "string",
-                "enum": [
-                  "fill",
-                  "blurPlate"
-                ],
-                "description": "fill = clip_frame framing 'fill' (cover + crop; the default on every aspect mismatch - OpenVid is landscape-only, so 9:16 canvases fill from landscape sources). blurPlate = timeline_background blur as a deliberate style. A letterboxed frame at review is a defect."
-              },
-              "category": {
-                "type": "string",
-                "minLength": 1,
-                "description": "A concise semantic continuity category for this shot, such as people, landscape, machinery, or data."
-              }
-            }
-          },
-          "sfx": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "properties": {
-              "query": {
-                "type": "string",
-                "description": "sounds_search query using a real category: Whoosh, Impact, Riser, Motion, UI, Notification, Keyboard, Digital, Foley, Writing, Ambience, Music."
-              },
-              "peakAt": {
-                "type": "number",
-                "description": "The time the sound's PEAK must land on — usually the segment's first frame."
-              },
-              "gainDb": {
-                "type": "number",
-                "minimum": -60,
-                "maximum": 0,
-                "default": -6,
-                "description": "An absolute dB target; 0 dB is unity, negative levels attenuate, and -60 dB is the editor's silence floor. Typical SFX support levels are around -12 to -6 dB."
-              }
-            }
-          },
-          "transitionIn": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "properties": {
-              "effect": {
-                "type": "string",
-                "description": "One of the 122 transition ids, e.g. concat.dissolve, concat.whip-pan, concat.glitch-transition, concat.punch-in."
-              },
-              "seconds": {
-                "type": "number",
-                "default": 0.5,
-                "description": "0.25-1.0; 0 (absent) means a hard cut."
-              }
-            }
-          },
-          "captions": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "Whether captions are included for this segment; timing is segment-level, not word-aligned. Null = follow the video default."
-          },
-          "cutType": {
-            "type": "string",
-            "enum": [
-              "hard",
-              "match",
-              "jump",
-              "smash",
-              "j",
-              "l",
-              "whip",
-              "montage",
-              "action",
-              "beat",
-              "flash",
-              "speed"
-            ],
-            "description": "How this segment begins; the twelve-cut vocabulary in prompts/cuts_and_pacing.md. A run of six hards is a pacing smell."
-          },
-          "in": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "description": "The entrance; hard floor M: every clip enters on purpose.",
-            "properties": {
-              "anim": {
-                "type": "string",
-                "enum": [
-                  "pop",
-                  "slide",
-                  "punch",
-                  "dissolve",
-                  "whip",
-                  "static"
-                ],
-                "description": "static = deliberate, at most one per piece."
-              },
-              "seconds": {
-                "type": "number",
-                "minimum": 0.08,
-                "maximum": 0.6
-              }
-            }
-          },
-          "out": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "description": "The exit or hand-off; section boundaries exit, interiors hand off.",
-            "properties": {
-              "anim": {
-                "type": "string",
-                "enum": [
-                  "fade",
-                  "slide",
-                  "dissolve",
-                  "none"
-                ]
-              },
-              "seconds": {
-                "type": "number",
-                "minimum": 0.08,
-                "maximum": 0.6
-              }
-            }
-          },
-          "comp": {
-            "type": [
-              "object",
-              "null"
-            ],
-            "description": "The designed beat on this segment (motion_bake / captions_animate). Density floor: one per section, one per 15 s.",
-            "properties": {
-              "preset": {
-                "type": "string",
-                "enum": [
-                  "funcut.lower-third.glass",
-                  "funcut.caption.kinetic",
-                  "funcut.stats.triptych",
-                  "funcut.sting.wordmark",
-                  "funcut.quote.pull",
-                  "funcut.chapter.chip",
-                  "funcut.cta.subscribe",
-                  "funcut.code.terminal",
-                  "funcut.chart.bars",
-                  "funcut.compare.split",
-                  "funcut.ticker.count",
-                  "funcut.backdrop.mesh"
-                ]
-              },
-              "ops": {
-                "type": "array",
-                "description": "Authoring operations: set-slot, set-text, set-words, retime, pop, fade-in, ...",
-                "items": {
-                  "type": "object"
-                }
-              },
-              "hold": {
-                "type": "number",
-                "description": "Seconds the comp holds on screen."
-              }
-            }
-          }
-        }
-      }
-    },
-    "slots": {
-      "type": "array",
-      "maxItems": 60,
-      "description": "The footage slots the edit spends: one opening at a time, with the role it plays, the treatment that fills it, and the rich description a stock search ranks against. Optional - a plan without slots is a plan the segments alone describe. The validator keeps the b-roll share inside the 30-45% band and refuses past 60%.",
-      "items": {
-        "type": "object",
-        "required": [
-          "slotId",
-          "role",
-          "treatment",
-          "job",
-          "entry",
-          "exit",
-          "description",
-          "queries",
-          "hero",
-          "motionMin",
-          "durationS"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "slotId": {
-            "type": "string",
-            "minLength": 1,
-            "description": "The slot's own id, unique in the plan: \"hook.1\", \"reveal.hero\". The per-slot notes the critic sends back name it."
-          },
-          "role": {
-            "type": "string",
-            "enum": [
-              "hook",
-              "setup",
-              "tension",
-              "turn",
-              "reveal",
-              "proof",
-              "cta"
-            ],
-            "description": "The dramaturgical role the slot plays - the same seven acts a segment's `act` names, because a slot spends a beat."
-          },
-          "treatment": {
-            "type": "string",
-            "enum": [
-              "hold",
-              "broll",
-              "graphic",
-              "black"
-            ],
-            "description": "What fills the slot's screen time. Only broll shops for stock; hold, graphic and black are treatments the edit draws itself and take no queries."
-          },
-          "job": {
-            "type": "string",
-            "enum": [
-              "illustrate",
-              "contrast",
-              "punctuate",
-              "transition",
-              "breathe"
-            ],
-            "description": "The work the slot's picture does for the edit."
-          },
-          "entry": {
-            "type": "string",
-            "enum": [
-              "on_emphasis",
-              "before_line",
-              "on_beat",
-              "after_line"
-            ],
-            "description": "When the picture enters, against the words and the beat grid."
-          },
-          "exit": {
-            "type": "string",
-            "enum": [
-              "before_next_emphasis",
-              "on_beat",
-              "source_cut",
-              "early"
-            ],
-            "description": "How the picture leaves."
-          },
-          "description": {
-            "type": "string",
-            "minLength": 1,
-            "description": "The rich noun+adjective string the stock search ranks against, twelve to twenty-five words: what is in frame, what it is doing, what it feels like. The validator refuses anything under 40 characters - it is what CLIP ranks against."
-          },
-          "queries": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 1
-            },
-            "description": "The fallback keyword phrases only, for the BM25 pass. A treatment the edit draws itself (hold, graphic, black) takes none; broll takes at least one."
-          },
-          "hero": {
-            "type": "boolean",
-            "description": "Whether this slot is the shot the thumbnail and the first glance live on; a hero slot searches wider and ranks longer."
-          },
-          "motionMin": {
-            "type": "number",
-            "minimum": 0,
-            "description": "The least motion the slot's clip may carry, on the library's own motion scale."
-          },
-          "durationS": {
-            "type": "number",
-            "exclusiveMinimum": 0,
-            "description": "How long the slot's screen time runs, in seconds."
-          },
-          "visualRationale": {
-            "type": "object",
-            "description": "A concise, film-specific reason for this visual choice. Required in practice for major beats; it must explain intent rather than repeat a template.",
-            "properties": {
-              "job": {
-                "type": "string",
-                "minLength": 1,
-                "description": "What this beat must communicate or make the viewer feel."
-              },
-              "medium": {
-                "type": "string",
-                "enum": [
-                  "footage",
-                  "motion",
-                  "chart",
-                  "typography",
-                  "generated",
-                  "hold",
-                  "hybrid"
-                ],
-                "description": "The selected visual medium."
-              },
-              "reason": {
-                "type": "string",
-                "minLength": 1,
-                "description": "Why this medium is stronger than the plausible alternatives for this beat."
-              },
-              "style": {
-                "type": "string",
-                "minLength": 1,
-                "description": "The film-specific visual treatment: composition, palette, type, movement, texture, or camera language."
-              },
-              "transition": {
-                "type": "string",
-                "description": "Why and how the visual enters or leaves in relation to story, speech, and rhythm."
-              },
-              "fallback": {
-                "type": "string",
-                "description": "A meaningful alternative if the selected asset, model, or renderer is unavailable."
-              }
-            },
-            "required": [
-              "job",
-              "medium",
-              "reason",
-              "style"
-            ]
-          }
-        }
-      }
+      "type": "string"
     },
     "audio": {
-      "type": "object",
       "description": "The audio beds.",
       "properties": {
-        "voiceover": {
-          "type": [
-            "object",
-            "null"
-          ],
-          "properties": {
-            "source": {
-              "type": "string",
-              "enum": [
-                "tts",
-                "file"
-              ],
-              "description": "tts = tts_generate made it; file = user-provided."
-            },
-            "voice": {
-              "type": "integer",
-              "description": "TTS voice id (Kokoro 0-52; e.g. 2 af_bella, 8 af_river, 11 am_adam)."
-            },
-            "speed": {
-              "type": "number",
-              "default": 1
-            },
-            "model": {
-              "type": "string",
-              "default": "kokoro-int8-multi-lang-v1_0"
-            },
-            "glossary": {
-              "type": "string",
-              "maxLength": 200,
-              "description": "The recogniser's glossary - proper nouns, acronyms and jargon the take uses, handed to Whisper as its initial prompt so the spelling the opening words establish is the one the whole run keeps. At most 200 characters; absent is Whisper's own cold start."
-            }
-          }
-        },
         "bgm": {
-          "type": [
-            "object",
-            "null"
-          ],
           "properties": {
-            "query": {
-              "type": "string",
-              "description": "bgm_search query (mood words: 'epic tension', 'chillhop', 'upbeat')"
-            },
-            "source": {
-              "type": "string",
-              "enum": [
-                "freepd",
-                "lofi"
-              ]
-            },
-            "trackId": {
-              "type": [
-                "string",
-                "null"
-              ],
-              "description": "Filled after search; never invented."
-            },
             "alignTo": {
-              "type": "string",
               "enum": [
                 "downbeats",
                 "beats",
                 "none"
-              ]
+              ],
+              "type": "string"
             },
             "duckDb": {
-              "type": "number",
-              "minimum": -60,
-              "maximum": 0,
               "default": -12,
-              "description": "Absolute music level under speech in dB; a negative target attenuates from unity. Convert through clip_audio_levels_db; never pass this number directly as the engine's linear volume."
+              "description": "Absolute music level under speech in dB; a negative target attenuates from unity. Convert through clip_audio_levels_db; never pass this number directly as the engine's linear volume.",
+              "maximum": 0,
+              "minimum": -60,
+              "type": "number"
+            },
+            "mood": {
+              "description": "Mood words the bed shops by when no query is given (bgm_search reads mood: 'epic tension', 'chillhop', 'upbeat').",
+              "type": "string"
+            },
+            "query": {
+              "description": "bgm_search query (mood words: 'epic tension', 'chillhop', 'upbeat')",
+              "type": "string"
+            },
+            "source": {
+              "enum": [
+                "freepd",
+                "lofi"
+              ],
+              "type": "string"
+            },
+            "trackId": {
+              "description": "Filled after search; never invented.",
+              "type": [
+                "string",
+                "null"
+              ]
             }
-          }
+          },
+          "type": [
+            "object",
+            "null"
+          ]
         },
         "sfxEnabled": {
-          "type": "boolean",
-          "default": true
+          "default": true,
+          "type": "boolean"
+        },
+        "voiceover": {
+          "properties": {
+            "glossary": {
+              "description": "The recogniser's glossary - proper nouns, acronyms and jargon the take uses, handed to Whisper as its initial prompt so the spelling the opening words establish is the one the whole run keeps. At most 200 characters; absent is Whisper's own cold start.",
+              "maxLength": 200,
+              "type": "string"
+            },
+            "model": {
+              "default": "kokoro-int8-multi-lang-v1_0",
+              "type": "string"
+            },
+            "source": {
+              "description": "tts = tts_generate made it; file = user-provided.",
+              "enum": [
+                "tts",
+                "file"
+              ],
+              "type": "string"
+            },
+            "speed": {
+              "default": 1,
+              "description": "Playback rate for the generated take; 1.0 is natural.",
+              "maximum": 2.0,
+              "minimum": 0.5,
+              "type": "number"
+            },
+            "voice": {
+              "description": "TTS voice id (Kokoro 0-52; e.g. 2 af_bella, 8 af_river, 11 am_adam).",
+              "maximum": 52,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "whisperModel": {
+              "description": "The recogniser's model for this take, e.g. base.en; the server's own default applies when absent.",
+              "type": "string"
+            }
+          },
+          "type": [
+            "object",
+            "null"
+          ]
         }
-      }
+      },
+      "type": "object"
+    },
+    "audioClipId": {
+      "description": "Optional real timeline clip id for the already-placed voiceover. The runner reuses this clip but does not cut it; plan segment times must already match the clip. Never invent the id.",
+      "minLength": 1,
+      "type": "string"
     },
     "captions": {
-      "type": "object",
       "description": "Video-wide caption style; the current transcription/caption pipeline provides segment timing, not word alignment. Per-segment flags override presence only.",
       "properties": {
+        "background": {
+          "description": "Optional plate '#rrggbb[aa]' for readability; null = no plate.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "emphasisColor": {
+          "description": "#rrggbb for key words.",
+          "type": "string"
+        },
+        "fontSize": {
+          "default": 0.05,
+          "description": "Fraction of frame height; 0.04 engine default, 0.05-0.06 for short-form.",
+          "type": "number"
+        },
+        "fontWeight": {
+          "default": 700,
+          "type": "integer"
+        },
+        "offsetY": {
+          "default": 0.35,
+          "description": "Fraction from center; positive is lower.",
+          "type": "number"
+        },
         "syncMode": {
-          "type": "string",
+          "default": "segment",
+          "description": "Only segment-level timing is supported; do not claim word-level synchronization.",
           "enum": [
             "segment"
           ],
-          "default": "segment",
-          "description": "Only segment-level timing is supported; do not claim word-level synchronization."
-        },
-        "fontSize": {
-          "type": "number",
-          "default": 0.05,
-          "description": "Fraction of frame height; 0.04 engine default, 0.05-0.06 for short-form."
-        },
-        "fontWeight": {
-          "type": "integer",
-          "default": 700
-        },
-        "offsetY": {
-          "type": "number",
-          "default": 0.35,
-          "description": "Fraction from center; positive is lower."
-        },
-        "emphasisColor": {
-          "type": "string",
-          "description": "#rrggbb for key words."
-        },
-        "background": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "Optional plate '#rrggbb[aa]' for readability; null = no plate."
-        }
-      }
-    },
-    "grade": {
-      "type": "object",
-      "description": "Required. A video with no grade is a rough cut.",
-      "properties": {
-        "filter": {
-          "type": "string",
-          "description": "One of the 57 filter ids, e.g. concat.teal-orange, concat.noir, concat.warm."
-        },
-        "intensityKey": {
-          "type": "string",
-          "description": "The package's own intensity param key from effects_list (concat.teal-orange -> 'amount' 0-100; concat.warm/cool -> 'temperature' in K)."
-        },
-        "intensity": {
-          "type": "number",
-          "description": "Value within the param's min/max from effects_list."
-        },
-        "apply": {
-          "type": "string",
-          "enum": [
-            "layer",
-            "perClip"
-          ],
-          "default": "layer",
-          "description": "layer = ONE effect_layer_add {start: 0, duration: <runtime>} with duration WRITTEN (absent defaults to 5 s - the trap); perClip = the same videoEffects chain on every clip."
+          "type": "string"
         }
       },
-      "required": [
-        "filter",
-        "intensityKey",
-        "intensity"
-      ]
-    },
-    "export": {
-      "type": "object",
-      "properties": {
-        "output": {
-          "type": "string",
-          "description": "The .mp4 path to write."
-        },
-        "crf": {
-          "type": "integer",
-          "default": 20
-        },
-        "codec": {
-          "type": "string",
-          "enum": [
-            "h264",
-            "hevc",
-            "av1"
-          ],
-          "default": "h264"
-        },
-        "platform": {
-          "type": "string",
-          "description": "youtube, shorts, reels, tiktok — sets loudness/length expectations only."
-        }
-      }
-    },
-    "mode": {
-      "type": "string",
-      "enum": [
-        "reel",
-        "longform"
-      ],
-      "description": "reel = retention engineering (<= 60 s, hook in 3 s, loop or single CTA, interrupts every 2-4 s); longform = an argument with chapters (> 60 s, hook -> title -> chapters -> re-hook at the 50-60% dip -> outro CTA). See prompts/reels_vs_longform.md."
-    },
-    "sections": {
-      "type": "array",
-      "description": "The piece's structure, by role. Reel: hook + body + cta. Longform: hook + intro + body(chapters) + cta + outro. Boundaries align to segments.",
-      "items": {
-        "type": "object",
-        "required": [
-          "role",
-          "start",
-          "end"
-        ],
-        "properties": {
-          "role": {
-            "type": "string",
-            "enum": [
-              "hook",
-              "intro",
-              "body",
-              "chapter",
-              "rehook",
-              "cta",
-              "outro"
-            ]
-          },
-          "label": {
-            "type": "string",
-            "description": "Chapters' names become chapter chips."
-          },
-          "start": {
-            "type": "number",
-            "minimum": 0
-          },
-          "end": {
-            "type": "number",
-            "minimum": 0
-          }
-        }
-      }
-    },
-    "maxSegmentSeconds": {
-      "type": "number",
-      "default": 4,
-      "description": "Hard floor P: no visual segment runs past this (4.0 energetic niches, 6.0 calm)."
-    },
-    "text": {
-      "type": "object",
-      "description": "The one text system: tokens fixed here, zones in prompts/text_animation.md.",
-      "properties": {
-        "ink": {
-          "type": "string",
-          "description": "#rrggbb - white over dark/busy footage, near-black over bright."
-        },
-        "accent": {
-          "type": "string",
-          "description": "#rrggbb - ONE accent per video: active caption words, chapter bars, stat numbers."
-        },
-        "plate": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "description": "#rrggbb[aa] contrast layer, or null."
-        },
-        "fontStack": {
-          "type": "string",
-          "default": "Inter, DejaVu Sans"
-        }
-      }
+      "type": "object"
     },
     "creativeBrief": {
-      "type": "object",
       "description": "The WHY of the piece. A plan without this is structurally valid but creatively unready: plan_validate reports creativeReady=false and lists blockers. Set it with creative_brief before planning.",
+      "minProperties": 7,
       "properties": {
         "audience": {
-          "type": "string",
+          "description": "Who this is for, specifically enough to choose shots for. Not 'everyone' - name the person, their problem and what they already believe.",
           "minLength": 1,
-          "description": "Who this is for, specifically enough to choose shots for. Not 'everyone' - name the person, their problem and what they already believe."
+          "type": "string"
         },
-        "platform": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Where it plays (tiktok, reels, shorts, youtube, ...). Determines hook length, safe margins and pacing."
-        },
-        "goal": {
-          "type": "string",
-          "minLength": 1,
-          "description": "What the viewer should think, feel or do after the last frame."
-        },
-        "thesis": {
-          "type": "string",
-          "minLength": 1,
-          "description": "The one sentence the whole video argues or reveals. Every shot serves it."
-        },
-        "curiosityGap": {
-          "type": "string",
-          "minLength": 1,
-          "description": "The question opened in the first 1-2 seconds. It must be answerable by the payoff."
-        },
-        "payoff": {
-          "type": "string",
-          "minLength": 1,
-          "description": "What resolves the curiosityGap. If this is weak, no amount of motion will save the edit."
-        },
-        "emotionalArc": {
-          "description": "Three or more emotional beats in order. Either an array of strings (e.g. ['unease','wonder','relief']) or one string separated by '->' or commas.",
+        "avoid": {
+          "description": "Clichés and stock shots to refuse (e.g. generic handshake, lens flare, waving flag).",
           "oneOf": [
             {
-              "type": "array",
-              "minItems": 3,
               "items": {
                 "type": "string"
-              }
+              },
+              "type": "array"
             },
             {
-              "type": "string",
-              "minLength": 3
+              "type": "string"
             }
           ]
-        },
-        "referenceStyle": {
-          "type": "string",
-          "minLength": 1,
-          "description": "A director/editor/show whose rhythm and taste this cut borrows from, and what exactly to borrow."
-        },
-        "tone": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Voice and attitude: e.g. dry, urgent, awed, conspiratorial."
         },
         "brandKit": {
           "description": "Colours, fonts, logo/end-card rules. Object or a short string.",
@@ -927,51 +192,604 @@
           "description": "Hard limits: runtime, footage you must use, claims you cannot make.",
           "oneOf": [
             {
-              "type": "array",
               "items": {
                 "type": "string"
-              }
+              },
+              "type": "array"
             },
             {
               "type": "string"
             }
           ]
         },
-        "avoid": {
-          "description": "Clichés and stock shots to refuse (e.g. generic handshake, lens flare, waving flag).",
+        "curiosityGap": {
+          "description": "The question opened in the first 1-2 seconds. It must be answerable by the payoff.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "emotionalArc": {
+          "description": "Three or more emotional beats in order. Either an array of strings (e.g. ['unease','wonder','relief']) or one string separated by '->' or commas.",
           "oneOf": [
             {
-              "type": "array",
               "items": {
                 "type": "string"
-              }
+              },
+              "minItems": 3,
+              "type": "array"
             },
             {
+              "minLength": 3,
               "type": "string"
             }
           ]
+        },
+        "goal": {
+          "description": "What the viewer should think, feel or do after the last frame.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "payoff": {
+          "description": "What resolves the curiosityGap. If this is weak, no amount of motion will save the edit.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "platform": {
+          "description": "Where it plays (tiktok, reels, shorts, youtube, ...). Determines hook length, safe margins and pacing.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "referenceStyle": {
+          "description": "A director/editor/show whose rhythm and taste this cut borrows from, and what exactly to borrow.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "thesis": {
+          "description": "The one sentence the whole video argues or reveals. Every shot serves it.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "tone": {
+          "description": "Voice and attitude: e.g. dry, urgent, awed, conspiratorial.",
+          "minLength": 1,
+          "type": "string"
         }
       },
-      "minProperties": 7
+      "type": "object"
+    },
+    "export": {
+      "properties": {
+        "codec": {
+          "default": "h264",
+          "enum": [
+            "h264",
+            "hevc",
+            "av1"
+          ],
+          "type": "string"
+        },
+        "crf": {
+          "default": 20,
+          "maximum": 51,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "output": {
+          "description": "The .mp4 path to write.",
+          "type": "string"
+        },
+        "platform": {
+          "description": "youtube, shorts, reels, tiktok — sets loudness/length expectations only.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "grade": {
+      "description": "Required. A video with no grade is a rough cut.",
+      "properties": {
+        "apply": {
+          "default": "layer",
+          "description": "layer = ONE effect_layer_add {start: 0, duration: <runtime>} with duration WRITTEN (absent defaults to 5 s - the trap); perClip = the same videoEffects chain on every clip.",
+          "enum": [
+            "layer",
+            "perClip"
+          ],
+          "type": "string"
+        },
+        "filter": {
+          "description": "One of the 57 filter ids, e.g. concat.teal-orange, concat.noir, concat.warm.",
+          "type": "string"
+        },
+        "intensity": {
+          "description": "Value within the param's min/max from effects_list.",
+          "type": "number"
+        },
+        "intensityKey": {
+          "description": "The package's own intensity param key from effects_list (concat.teal-orange -> 'amount' 0-100; concat.warm/cool -> 'temperature' in K).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "filter",
+        "intensityKey",
+        "intensity"
+      ],
+      "type": "object"
+    },
+    "maxSegmentSeconds": {
+      "default": 4,
+      "description": "Hard floor P: no visual segment runs past this (4.0 energetic niches, 6.0 calm).",
+      "type": "number"
+    },
+    "mode": {
+      "description": "reel = retention engineering (<= 60 s, hook in 3 s, loop or single CTA, interrupts every 2-4 s); longform = an argument with chapters (> 60 s, hook -> title -> chapters -> re-hook at the 50-60% dip -> outro CTA). See prompts/reels_vs_longform.md.",
+      "enum": [
+        "reel",
+        "longform"
+      ],
+      "type": "string"
+    },
+    "niche": {
+      "description": "The niche playbook in use, e.g. history, tech, luxury, motivation, finance, science, horror, fitness, gaming, howto.",
+      "type": "string"
+    },
+    "sections": {
+      "description": "The piece's structure, by role. Reel: hook + body + cta. Longform: hook + intro + body(chapters) + cta + outro. Boundaries align to segments.",
+      "items": {
+        "properties": {
+          "end": {
+            "minimum": 0,
+            "type": "number"
+          },
+          "label": {
+            "description": "Chapters' names become chapter chips.",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "hook",
+              "intro",
+              "body",
+              "chapter",
+              "rehook",
+              "cta",
+              "outro"
+            ],
+            "type": "string"
+          },
+          "start": {
+            "minimum": 0,
+            "type": "number"
+          }
+        },
+        "required": [
+          "role",
+          "start",
+          "end"
+        ],
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "segments": {
+      "description": "The timeline, in order. Segment i covers [start, end); gaps or overlaps are plan errors.",
+      "items": {
+        "properties": {
+          "act": {
+            "description": "The dramaturgical act this segment plays - the emotion read assigns it, the plan's sections may override it. Drives the shot register (extreme close-up for a hook, wide establishing for setup, hero shot for the reveal) and the BGM duck depth.",
+            "enum": [
+              "hook",
+              "setup",
+              "tension",
+              "turn",
+              "reveal",
+              "proof",
+              "cta"
+            ],
+            "type": "string"
+          },
+          "captions": {
+            "description": "Whether captions are included for this segment; timing is segment-level, not word-aligned. Null = follow the video default.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "colourTemp": {
+            "description": "The colour-temperature push this segment rides on top of the base grade, from the emotion read (fear is cold and crushed, joy golden and lifted, disgust sickly).",
+            "enum": [
+              "hot",
+              "cold",
+              "warm",
+              "cool",
+              "sickly",
+              "split",
+              "balanced"
+            ],
+            "type": "string"
+          },
+          "comp": {
+            "description": "The designed beat on this segment (motion_bake / captions_animate). Density floor: one per section, one per 15 s.",
+            "properties": {
+              "hold": {
+                "description": "Seconds the comp holds on screen.",
+                "type": "number"
+              },
+              "ops": {
+                "description": "Authoring operations: set-slot, set-text, set-words, retime, pop, fade-in, ...",
+                "items": {
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              "preset": {
+                "enum": [
+                  "funcut.lower-third.glass",
+                  "funcut.caption.kinetic",
+                  "funcut.stats.triptych",
+                  "funcut.sting.wordmark",
+                  "funcut.quote.pull",
+                  "funcut.chapter.chip",
+                  "funcut.cta.subscribe",
+                  "funcut.code.terminal",
+                  "funcut.chart.bars",
+                  "funcut.compare.split",
+                  "funcut.ticker.count",
+                  "funcut.backdrop.mesh"
+                ],
+                "type": "string"
+              }
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "cutType": {
+            "description": "How this segment begins; the twelve-cut vocabulary in prompts/cuts_and_pacing.md. A run of six hards is a pacing smell.",
+            "enum": [
+              "hard",
+              "match",
+              "jump",
+              "smash",
+              "j",
+              "l",
+              "whip",
+              "montage",
+              "action",
+              "beat",
+              "flash",
+              "speed"
+            ],
+            "type": "string"
+          },
+          "duckDb": {
+            "description": "How deep the BGM ducks under this segment's speech, as an absolute dB target from the act's profile in the emotion read (-15 under the naked hook, -9 letting the reveal ride).",
+            "maximum": 0,
+            "minimum": -60,
+            "type": "number"
+          },
+          "easing": {
+            "description": "How this segment's motion enters, from the emotion: tense lines ease in, warm ones ease out, a burst pops, anger snaps.",
+            "oneOf": [
+              {
+                "enum": [
+                  "ease-in",
+                  "ease-out",
+                  "ease-in-out",
+                  "emphasis",
+                  "snap-in",
+                  "spring",
+                  "spring-pop"
+                ],
+                "type": "string"
+              },
+              {
+                "description": "The exact concat-motion authoring curve object the emotion read returns ({kind: bezier|spring, ...}).",
+                "type": "object"
+              }
+            ]
+          },
+          "emotion": {
+            "description": "What this segment's narration FEELS like, from the `emotion` tool's read of the transcript (action extract). The layer every other per-segment choice answers to: the easing, the colour push, the SFX register, the stock vocabulary.",
+            "enum": [
+              "anger",
+              "disgust",
+              "fear",
+              "joy",
+              "neutral",
+              "sadness",
+              "surprise"
+            ],
+            "type": "string"
+          },
+          "end": {
+            "description": "Must be greater than start.",
+            "minimum": 0,
+            "type": "number"
+          },
+          "in": {
+            "description": "The entrance; hard floor M: every clip enters on purpose.",
+            "properties": {
+              "anim": {
+                "description": "static = deliberate, at most one per piece.",
+                "enum": [
+                  "pop",
+                  "slide",
+                  "punch",
+                  "dissolve",
+                  "whip",
+                  "static"
+                ],
+                "type": "string"
+              },
+              "seconds": {
+                "maximum": 0.6,
+                "minimum": 0.08,
+                "type": "number"
+              }
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "out": {
+            "description": "The exit or hand-off; section boundaries exit, interiors hand off.",
+            "properties": {
+              "anim": {
+                "enum": [
+                  "fade",
+                  "slide",
+                  "dissolve",
+                  "none"
+                ],
+                "type": "string"
+              },
+              "seconds": {
+                "maximum": 0.6,
+                "minimum": 0.08,
+                "type": "number"
+              }
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "sfx": {
+            "properties": {
+              "gainDb": {
+                "default": -6,
+                "description": "An absolute dB target; 0 dB is unity, negative levels attenuate, and -60 dB is the editor's silence floor. Typical SFX support levels are around -12 to -6 dB.",
+                "maximum": 0,
+                "minimum": -60,
+                "type": "number"
+              },
+              "peakAt": {
+                "description": "The time the sound's PEAK must land on — usually the segment's first frame.",
+                "type": "number"
+              },
+              "query": {
+                "description": "sounds_search query using a real category: Whoosh, Impact, Riser, Motion, UI, Notification, Keyboard, Digital, Foley, Writing, Ambience, Music.",
+                "type": "string"
+              }
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "spoken": {
+            "description": "The narration words this segment covers (for caption grouping).",
+            "type": "string"
+          },
+          "start": {
+            "minimum": 0,
+            "type": "number"
+          },
+          "transitionIn": {
+            "properties": {
+              "effect": {
+                "description": "One of the 122 transition ids, e.g. concat.dissolve, concat.whip-pan, concat.glitch-transition, concat.punch-in.",
+                "type": "string"
+              },
+              "seconds": {
+                "default": 0.5,
+                "description": "0.25-1.0; 0 (absent) means a hard cut.",
+                "type": "number"
+              }
+            },
+            "type": [
+              "object",
+              "null"
+            ]
+          },
+          "visual": {
+            "properties": {
+              "category": {
+                "description": "A concise semantic continuity category for this shot, such as people, landscape, machinery, or data.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "clipId": {
+                "description": "A real OpenVid clip id or existing timeline clip id, returned by a tool; never invented.",
+                "type": [
+                  "integer",
+                  "string",
+                  "null"
+                ]
+              },
+              "description": {
+                "description": "A visual-specific, semantic shot description for CLIP reranking; name subject, action, composition and mood.",
+                "minLength": 40,
+                "type": "string"
+              },
+              "file": {
+                "description": "For a source file not yet represented by a clip or media id: its actual path.",
+                "type": "string"
+              },
+              "fit": {
+                "description": "fill = clip_frame framing 'fill' (cover + crop; the default on every aspect mismatch - OpenVid is landscape-only, so 9:16 canvases fill from landscape sources). blurPlate = timeline_background blur as a deliberate style. A letterboxed frame at review is a defect.",
+                "enum": [
+                  "fill",
+                  "blurPlate"
+                ],
+                "type": "string"
+              },
+              "hero": {
+                "description": "Whether this is the hero shot; widens candidate search.",
+                "type": "boolean"
+              },
+              "mediaId": {
+                "description": "For existing footage: the media-bin id returned by project_get/timeline_read.",
+                "type": "string"
+              },
+              "motion": {
+                "description": "Keyframe recipe from prompts/keyframes_motion.md.",
+                "enum": [
+                  "ken-burns-in",
+                  "ken-burns-out",
+                  "slide-left",
+                  "slide-right",
+                  "parallax-up",
+                  "punch-zoom",
+                  "static"
+                ],
+                "type": "string"
+              },
+              "motionMin": {
+                "description": "Minimum measured motion score accepted for this shot.",
+                "minimum": 0,
+                "type": "number"
+              },
+              "preset": {
+                "description": "textCard/titleCard: one of the 31 text presets, e.g. concat.impact, concat.lower-third, concat.bold-caption.",
+                "type": "string"
+              },
+              "queries": {
+                "description": "Fallback BM25 search phrases for this B-roll segment.",
+                "items": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "query": {
+                "description": "broll: the primary OpenVid search query. Follow prompts/broll_matching.md.",
+                "type": "string"
+              },
+              "shotScale": {
+                "description": "The intended shot scale, used by the continuity check.",
+                "enum": [
+                  "wide",
+                  "medium",
+                  "close_up"
+                ],
+                "type": "string"
+              },
+              "sort": {
+                "enum": [
+                  "relevance",
+                  "aesthetic",
+                  "motion",
+                  "temporal",
+                  "shortest",
+                  "longest",
+                  "surprise"
+                ],
+                "type": "string"
+              },
+              "storyboard": {
+                "description": "A complete motion_reel storyboard for textCard/titleCard segments. Use the same storyboard schema as the motion_reel MCP tool; the rendered reel is imported and placed at this segment's start.",
+                "properties": {
+                  "assets": {
+                    "type": "object"
+                  },
+                  "audio": {
+                    "type": "array"
+                  },
+                  "curtain": {
+                    "type": "object"
+                  },
+                  "fps": {
+                    "minimum": 1,
+                    "type": "number"
+                  },
+                  "height": {
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "scenes": {
+                    "items": {
+                      "type": "object"
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "width": {
+                    "minimum": 1,
+                    "type": "integer"
+                  }
+                },
+                "required": [
+                  "scenes"
+                ],
+                "type": "object"
+              },
+              "text": {
+                "description": "textCard/titleCard: the words on screen.",
+                "type": "string"
+              },
+              "trimIn": {
+                "description": "Seconds into the source where the clip starts.",
+                "minimum": 0,
+                "type": "number"
+              },
+              "trimOut": {
+                "description": "Seconds into the source where it ends (leave longer than the segment; trim after placing).",
+                "type": "number"
+              },
+              "type": {
+                "description": "broll = OpenVid clip; textCard/titleCard = styled text over background (fallbacks); existing = footage already imported.",
+                "enum": [
+                  "broll",
+                  "textCard",
+                  "titleCard",
+                  "existing"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "visual"
+        ],
+        "type": "object"
+      },
+      "maxItems": 500,
+      "minItems": 1,
+      "type": "array"
     },
     "signalLog": {
-      "type": "array",
       "description": "The decision log: which voice_signals signals drove each choice. One entry per cut, caption, graphic, BGM and transition decision, naming the signals (from the profile's decisionPolicy) behind it. A plan with a voiceover and no signalLog is NOT creativeReady.",
       "items": {
-        "type": "object",
-        "required": [
-          "at",
-          "decision",
-          "signals"
-        ],
+        "additionalProperties": false,
         "properties": {
           "at": {
-            "type": "number",
+            "description": "Seconds into the timeline where the decision lands.",
             "minimum": 0,
-            "description": "Seconds into the timeline where the decision lands."
+            "type": "number"
           },
           "decision": {
-            "type": "string",
+            "description": "The kind of choice: where to cut, what a caption highlights, what graphic to add, whether to add BGM, where to transition.",
             "enum": [
               "cut",
               "caption",
@@ -979,28 +797,355 @@
               "bgm",
               "transition"
             ],
-            "description": "The kind of choice: where to cut, what a caption highlights, what graphic to add, whether to add BGM, where to transition."
+            "type": "string"
+          },
+          "note": {
+            "description": "One sentence a reviewer reads: why these signals drove this choice.",
+            "type": "string"
           },
           "signals": {
-            "type": "array",
-            "minItems": 1,
+            "description": "The profile signals behind the choice, e.g. [\"pause.class=dead_air\", \"emphasisWords\", \"speechRate.pace\"].",
             "items": {
               "type": "string"
             },
-            "description": "The profile signals behind the choice, e.g. [\"pause.class=dead_air\", \"emphasisWords\", \"speechRate.pace\"]."
-          },
-          "note": {
-            "type": "string",
-            "description": "One sentence a reviewer reads: why these signals drove this choice."
+            "minItems": 1,
+            "type": "array"
           }
         },
-        "additionalProperties": false
-      }
+        "required": [
+          "at",
+          "decision",
+          "signals"
+        ],
+        "type": "object"
+      },
+      "type": "array"
     },
-    "audioClipId": {
-      "type": "string",
-      "minLength": 1,
-      "description": "Optional real timeline clip id for the already-placed voiceover. The runner reuses this clip but does not cut it; plan segment times must already match the clip. Never invent the id."
+    "slots": {
+      "description": "The footage slots the edit spends: one opening at a time, with the\nrole it plays, the treatment that fills it, and the rich description\na stock search ranks against. Optional - a plan without slots is a\nplan the segments alone describe. The b-roll slots must match the\nb-roll segments one for one, and a segment that names its slot by\nslotId must find it.",
+      "items": {
+        "additionalProperties": false,
+        "description": "One opening the edit promises a picture for.\n\nThe `description` is the contract with the search: a rich\nnoun-plus-adjective string of twelve to twenty-five words that CLIP\nranks the candidates against. The `queries` are the fallback keyword\nphrases only - what BM25 gets when the description's shortlist comes\nback thin. A treatment the edit draws itself takes no queries at all.",
+        "properties": {
+          "description": {
+            "description": "The rich noun+adjective string the stock search ranks against,\ntwelve to twenty-five words: what is in frame, what it is doing,\nwhat it feels like. The validator refuses anything under 40\ncharacters - it is what CLIP ranks against.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "durationS": {
+            "description": "How long the slot's screen time runs, in seconds.",
+            "format": "float",
+            "type": "number"
+          },
+          "entry": {
+            "description": "When the picture enters, against the words and the beat grid.",
+            "oneOf": [
+              {
+                "const": "on_emphasis",
+                "description": "On the emphasis the words carry.",
+                "type": "string"
+              },
+              {
+                "const": "before_line",
+                "description": "Just before the line starts, so the picture is there to meet it.",
+                "type": "string"
+              },
+              {
+                "const": "on_beat",
+                "description": "On a beat the grid names.",
+                "type": "string"
+              },
+              {
+                "const": "after_line",
+                "description": "After the line has landed - the picture follows the words.",
+                "type": "string"
+              }
+            ]
+          },
+          "exit": {
+            "description": "How the picture leaves.",
+            "oneOf": [
+              {
+                "const": "before_next_emphasis",
+                "description": "Before the next emphasis the words carry, so the picture leaves\nbefore it outstays its welcome.",
+                "type": "string"
+              },
+              {
+                "const": "on_beat",
+                "description": "On a beat the grid names.",
+                "type": "string"
+              },
+              {
+                "const": "source_cut",
+                "description": "Where the source clip itself cuts - the join hides in the source.",
+                "type": "string"
+              },
+              {
+                "const": "early",
+                "description": "Early, before the words are done with it: the picture owes the\nedit less than the span asks.",
+                "type": "string"
+              }
+            ]
+          },
+          "hero": {
+            "description": "Whether this slot is the shot the thumbnail and the first glance\nlive on; a hero slot searches wider and ranks longer.",
+            "type": "boolean"
+          },
+          "job": {
+            "description": "The work the slot's picture does for the edit.",
+            "oneOf": [
+              {
+                "const": "illustrate",
+                "description": "Show what the words describe.",
+                "type": "string"
+              },
+              {
+                "const": "contrast",
+                "description": "Show the opposite the words sit against.",
+                "type": "string"
+              },
+              {
+                "const": "punctuate",
+                "description": "Land a beat - the punctuation mark the cut makes.",
+                "type": "string"
+              },
+              {
+                "const": "transition",
+                "description": "Bridge two stretches the edit joins.",
+                "type": "string"
+              },
+              {
+                "const": "breathe",
+                "description": "Give the viewer a breath.",
+                "type": "string"
+              }
+            ]
+          },
+          "motionMin": {
+            "description": "The least motion the slot's clip may carry, on the library's own\nmotion scale: a `breathe` slot wants stillness, a `punctuate`\nslot wants the opposite.",
+            "format": "float",
+            "minimum": 0,
+            "type": "number"
+          },
+          "queries": {
+            "description": "The fallback keyword phrases only, for the BM25 pass. A treatment\nthe edit draws itself (hold, graphic, black) takes none; broll\ntakes at least one.",
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "role": {
+            "description": "The dramaturgical role the slot plays - the same seven acts a\nsegment's `act` names, because a slot spends a beat.",
+            "oneOf": [
+              {
+                "const": "hook",
+                "description": "The opening grab: read at a glance, over in a breath.",
+                "type": "string"
+              },
+              {
+                "const": "setup",
+                "description": "The ground the video stands on.",
+                "type": "string"
+              },
+              {
+                "const": "tension",
+                "description": "The problem, wound up.",
+                "type": "string"
+              },
+              {
+                "const": "turn",
+                "description": "The shift the video exists for.",
+                "type": "string"
+              },
+              {
+                "const": "reveal",
+                "description": "The answer, shown.",
+                "type": "string"
+              },
+              {
+                "const": "proof",
+                "description": "The receipts.",
+                "type": "string"
+              },
+              {
+                "const": "cta",
+                "description": "The ask.",
+                "type": "string"
+              }
+            ]
+          },
+          "slotId": {
+            "description": "The slot's own id, unique in the plan: `\"hook.1\"`, `\"reveal.hero\"`.\nThe per-slot notes the critic sends back name it.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "treatment": {
+            "description": "What fills the slot's screen time. Only `broll` shops for stock;\n`hold`, `graphic` and `black` are treatments the edit draws itself\nand take no queries.",
+            "oneOf": [
+              {
+                "const": "hold",
+                "description": "The A-roll holds: the picture stays where it is.",
+                "type": "string"
+              },
+              {
+                "const": "broll",
+                "description": "Stock footage covers the span.",
+                "type": "string"
+              },
+              {
+                "const": "graphic",
+                "description": "The edit draws the span itself - a chart, a card, a caption.",
+                "type": "string"
+              },
+              {
+                "const": "black",
+                "description": "Black, on purpose - the dip, the breath, the act break.",
+                "type": "string"
+              }
+            ]
+          },
+          "visualRationale": {
+            "description": "A concise, film-specific reason for this visual choice. Required\nin practice for major beats; it must explain intent rather than\nrepeat a template.",
+            "properties": {
+              "fallback": {
+                "description": "A meaningful alternative if the selected asset, model, or renderer\nis unavailable.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "job": {
+                "description": "What this beat must communicate or make the viewer feel.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "medium": {
+                "description": "The selected visual medium.",
+                "oneOf": [
+                  {
+                    "const": "footage",
+                    "description": "Stock or imported footage.",
+                    "type": "string"
+                  },
+                  {
+                    "const": "motion",
+                    "description": "A motion comp.",
+                    "type": "string"
+                  },
+                  {
+                    "const": "chart",
+                    "description": "A chart.",
+                    "type": "string"
+                  },
+                  {
+                    "const": "typography",
+                    "description": "Type on screen.",
+                    "type": "string"
+                  },
+                  {
+                    "const": "generated",
+                    "description": "Generated imagery.",
+                    "type": "string"
+                  },
+                  {
+                    "const": "hold",
+                    "description": "The A-roll holds.",
+                    "type": "string"
+                  },
+                  {
+                    "const": "hybrid",
+                    "description": "More than one medium together.",
+                    "type": "string"
+                  }
+                ]
+              },
+              "reason": {
+                "description": "Why this medium is stronger than the plausible alternatives for\nthis beat.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "style": {
+                "description": "The film-specific visual treatment: composition, palette, type,\nmovement, texture, or camera language.",
+                "minLength": 1,
+                "type": "string"
+              },
+              "transition": {
+                "description": "Why and how the visual enters or leaves in relation to story,\nspeech, and rhythm.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "job",
+              "medium",
+              "reason",
+              "style"
+            ],
+            "type": [
+              "object",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "slotId",
+          "role",
+          "treatment",
+          "job",
+          "entry",
+          "exit",
+          "description",
+          "queries",
+          "hero",
+          "motionMin",
+          "durationS"
+        ],
+        "type": "object"
+      },
+      "maxItems": 60,
+      "type": "array"
+    },
+    "text": {
+      "description": "The one text system: tokens fixed here, zones in prompts/text_animation.md.",
+      "properties": {
+        "accent": {
+          "description": "#rrggbb - ONE accent per video: active caption words, chapter bars, stat numbers.",
+          "type": "string"
+        },
+        "fontStack": {
+          "default": "Inter, DejaVu Sans",
+          "type": "string"
+        },
+        "ink": {
+          "description": "#rrggbb - white over dark/busy footage, near-black over bright.",
+          "type": "string"
+        },
+        "plate": {
+          "description": "#rrggbb[aa] contrast layer, or null.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "title": {
+      "description": "Working title of the video.",
+      "type": "string"
     }
-  }
+  },
+  "required": [
+    "aspect",
+    "mode",
+    "sections",
+    "segments",
+    "audio",
+    "grade"
+  ],
+  "title": "FUNCUT edit plan",
+  "type": "object"
 }

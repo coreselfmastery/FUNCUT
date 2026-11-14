@@ -17,11 +17,15 @@
 //! server when the Automation page has it on, or an API in this process
 //! when it does not, and the AUTO EDIT seam ([`director`]): the runner's
 //! port stood on this crate's own toolbox and backend, for the window's
-//! button and an agent's tool alike.
+//! button and an agent's tool alike. The edit plan's own schemas are
+//! generated here too ([`plan_schema`]): the canonical assembled from a
+//! template and the plan types, the compact projected from the canonical,
+//! both committed and drift-tested.
 
 pub mod backend;
 pub mod director;
 pub mod motion;
+pub mod plan_schema;
 pub mod protocol;
 pub mod schema;
 pub mod sense;

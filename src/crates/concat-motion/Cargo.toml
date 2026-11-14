@@ -23,6 +23,11 @@ raster = [
     "dep:rasterlottie",
     "dep:zip",
 ]
+# JSON Schema for the plan's own types, so the canonical edit-plan schema
+# is generated from what the validator actually deserializes instead of
+# being hand-maintained beside it (SCH-02). What concat-mcp splices into
+# edit_plan.schema.json rides this feature.
+schema = ["dep:schemars"]
 
 [dependencies]
 # The comp document is JSON a template, an agent or the editor writes; serde
@@ -30,6 +35,11 @@ raster = [
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror.workspace = true
+# The plan types' JSON Schema, behind the `schema` feature: the canonical
+# edit-plan schema is generated from these types so it cannot drift from
+# what the validator deserializes. The same workspace pin concat-project
+# and concat-api generate their request schemas with.
+schemars = { workspace = true, optional = true }
 # The footage planner's engine room: gap coverage and B-roll selection,
 # colour-continuity flags and cut positions come from oximedia-auto rather
 # than being rebuilt here. Pinned patch-exact, like ort above: the planning

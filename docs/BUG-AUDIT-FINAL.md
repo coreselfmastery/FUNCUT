@@ -186,7 +186,7 @@ audio-stream check in the Verify record) is prepared this session on
 | --- | --- |
 | UNVER-01 (antiX 1080p playhead/proxy/memory/export) | hardware-blocked; recorded `KNOWN_ISSUES.md` item 7 and the tracker. |
 | UNVER-02 (real Intel/AMD VAAPI) | hardware-blocked; `KNOWN_ISSUES.md` item 3. |
-| UNVER-03 (.deb in fresh container, `voice-signals --self-test`, OxiMedia signals) | sandbox-verifiable; **not yet run this session** (needs the release `.deb` or a build; this sandbox has no Rust toolchain — the same limitation Sessions 1-5 recorded). |
+| UNVER-03 (.deb in fresh container, `voice-signals --self-test`, OxiMedia signals) | **run against the published release this session; the check cannot pass there**: the `v0.2.8-funcut.12` `.deb` (x86_64, 197 MB, extracted with `dpkg-deb -x` in this container) contains exactly `concat` and `concat-motion-agent` — **no `voice-signals` binary**, no sense scripts. Expected per KNOWN_ISSUES item 9: `.12` (2026-11-12) predates the verified staging (build-app.yml:332-339, 397, 577-600, both arches). The named self-test still needs a build of current `main` — no Rust toolchain in this sandbox. Evidence: `UNVER-03-evidence.md` beside the session report. Not silently accepted. |
 | UNVER-04 (motion clip: project create, save, reopen, play, export) | sandbox-verifiable with a built binary; not yet run. |
 | UNVER-05 (Lottie playback + export + honest refusal) | sandbox-verifiable with a built binary; not yet run. |
 

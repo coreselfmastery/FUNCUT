@@ -573,8 +573,14 @@ def _classify_recording_quality(spec):
     err, samples, env = _need_audio(spec)
     if err:
         return {"ok": False, "error": err}
-    # Noise floor: the quietest quartile of 250 ms windows.
-    win_frames = 25  # 250 ms at 100 fps
+    # Noise floor: the quietest windows, measured at 50 ms so a pause
+    # shorter than a quarter-second still counts. The old 250 ms window
+    # could not see a gap shorter than itself - a take whose breaths are
+    # a tenth of a second, the way a TTS take's are, measured its softest
+    # SPEECH as the floor and every synthesis take read rough no matter
+    # how clean it was. A room's floor is continuous - any window inside
+    # a pause sees it - so finer windows only make the estimate truer.
+    win_frames = 5  # 50 ms at 100 fps
     windows = []
     for i in range(0, len(env) - win_frames, win_frames):
         windows.append(max(env[i:i + win_frames]))
@@ -1060,6 +1066,26 @@ def selftest(only=None):
             except Exception as exc:  # noqa: BLE001
                 checks.append({"tool": name, "ok": False,
                                "error": f"{type(exc).__name__}: {exc}"})
+        # The floor measurement's own proof: the synthetic take's quiet
+        # parts are baked at a true level, and the classifier must read
+        # THAT, not speech bled into the window. The 250 ms window the
+        # floor used to take could not see a pause shorter than itself,
+        # so a take with tenth-of-a-second breaths - a TTS take - had
+        # its softest speech measured as the floor and read rough no
+        # matter how clean it was.
+        graded = _classify_recording_quality(audio_spec)
+        measures = graded.get("measures", {})
+        checks.append({
+            "tool": "classify_recording_quality (the floor sees the pauses)",
+            "ok": bool(graded.get("ok"))
+                  and graded.get("verdict") in ("clean", "broadcast")
+                  and isinstance(measures.get("noiseFloorDbfs"), (int, float))
+                  and measures["noiseFloorDbfs"] < -45,
+            "error": graded.get("error"),
+            "extra": f"verdict={graded.get('verdict')} "
+                     f"floor={measures.get('noiseFloorDbfs')} "
+                     f"snr={measures.get('snrDb')}",
+        })
     failed = [c for c in checks if not c.get("ok")]
     return {
         "ok": not failed,

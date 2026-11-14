@@ -24,18 +24,18 @@ a fresh clone:
   with comments naming their replacements.
 - `funcut-env.sh` is **NOT FOUND** on main (verified by `git ls-files` on a
   fresh clone); no environment script of that name exists in the tree.
-- The runner crate is still **not wired** into `concat-mcp` or the editor
-  UI: no AUTO EDIT button, no integrated progress/cancel surface. That
-  wiring is this session's Task A (branch `feat/auto-edit-button`).
+- The runner crate is **wired**: PR #118 (merged as `621420fb`) landed the
+  `concat_mcp::director` seam (the Backend → ToolCaller adapter), the
+  AUTO EDIT button on the Forge page with its progress/cancel surface
+  and terminal-state toasts, `export.status` by path, and the wait's
+  dead-job refusal. A parallel session shared the CI loop on the same
+  branch; the head that merged is `9f710c2d`.
 - No credential material or credential-store paths belong in this
   repository or tracker. Use the connected GitHub integration or an
   approved secret manager; never paste tokens into repository files.
 
 ## Current execution order
 
-1. Wire `concat-director` into the MCP backend and editor UI: the Backend →
-   ToolCaller adapter, the AUTO EDIT button, progress/cancel and the
-   terminal states (Task A, branch `feat/auto-edit-button`).
 2. Verification expansion: the 11 missing Verify-stage checks (VERIFY-01..05,
    08..14), branch `fix/verification-contract`.
 3. P1 leftovers (P1-004, 005, 009, 010), branch `fix/p1-leftovers`.
@@ -58,6 +58,14 @@ Progress log:
 - [2026-11-14] Session 3 opened: preconditions verified (token, main SHA,
   merge CI), PR #112 and #108 closed with comments, this tracker brought up
   to the real state.
+- [2026-11-14] Task 0 merged: the tracker reconciliation is PR #117,
+  `1cbaac2b`.
+- [2026-11-14] Task A merged: the AUTO EDIT button is PR #118, `621420fb` -
+  the seam, the button, the progress pane, the toasts, `export.status` by
+  path, and the wait's dead-job refusal. Two CI flakes were re-run (a pip
+  wheel shard and a runner that died building the window crate); the code
+  fixes the engine job asked for landed across the session and a parallel
+  one sharing the branch.
 - [2026-11-13] PR #110 merged; PR #112 opened for the plan/executor
   contract mismatch (later made redundant by #115); PR #113 opened for
   Geneva evidence.

@@ -40,14 +40,22 @@ GitHub check-runs API for the exact SHA.
 
 ## Local build environment reproduction (for reproducibility)
 
-`bash /home/z/my-project/scripts/setup-build-env.sh` fetches the exact
-digest-pinned FFmpeg 8.1.3/ONNX 1.28.0/sherpa 1.13.7 from
-`scripts/ci/deps.lock` (all sha256-verified), then
-`source /home/z/my-project/scripts/funcut-env.sh` provides the env the CI
-engine job uses. No system packages are installed (no root): clang 19 and
-the dev sysroot come from extracted Debian debs under
-`/home/z/my-project/clang-deb` and `/home/z/my-project/sysroot`, cmake from
-the portable 3.31.6 tarball.
+`bash scripts/setup-build-env.sh` (in the checkout, repo-relative) fetches
+the exact digest-pinned FFmpeg 8.1.3/ONNX 1.28.0/sherpa 1.13.7 through
+`scripts/ci/fetch.sh` (all sha256-verified against `scripts/ci/deps.lock`)
+and unpacks them at the repo root the way the CI engine job does, then
+`source scripts/funcut-env.sh` exports the env the CI engine job uses
+(`FFMPEG_DIR`, `ORT_LIB_LOCATION`, `ORT_PREFER_DYNAMIC_LINK`,
+`LD_LIBRARY_PATH`, `SHERPA_ONNX_LIB_DIR`). No system packages are
+installed (no root): `bash scripts/setup-build-env.sh --debs` also
+downloads the clang 19 runtime and builtin headers as Debian packages
+(`apt-get download`, nothing installed) and unpacks them under `sysroot/`,
+where `funcut-env.sh` picks them up as `LIBCLANG_PATH` for the bindgen
+crates. Verified on a clean clone of `dd109b8d` plus this change
+(2 cores / 4 GB / no root): `cargo check -p concat-media` green against
+the pinned FFmpeg, and `cargo test -p concat-host --lib` green (198/198)
+with the alsa pkg-config entry the sysroot provides on such a box;
+cmake for whisper.cpp remains the system's to give (the script names it).
 
 The `concat` GUI crate cannot compile on this box (rustc OOM at 4 GB even
 in check mode, `-j1`, no incremental, debuginfo 0). Its validation is CI's;

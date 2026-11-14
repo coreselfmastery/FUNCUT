@@ -23,13 +23,18 @@ and an honest feature ledger. No fake green, no doc-only features.
   on the unmodified tree; CI's lavapipe passes them), `concat-mcp` builds
   and its context-budget test passes (241,881 / 242,000 tokens, 119
   tokens of headroom).
-- Build env script: `/home/z/my-project/scripts/funcut-env.sh` (FFmpeg 8.1
-  dev digest-pinned, ONNX Runtime 1.28.0, sherpa-onnx 1.13.7, libclang 19
-  from extracted debs + `/home/z/my-project/clang-lib`, portable cmake
-  3.31.6, dev sysroot incl. libasound2t64 runtime, `CARGO_PROFILE_DEV_DEBUG=0`,
-  `CARGO_INCREMENTAL=0`).
-- Disk management: `/home/z/my-project/scripts/prune-dupes.sh` reclaims
-  duplicate cargo artifacts (2.7 GB reclaimed once). Run it when full.
+- Build env scripts, in the repo and repo-relative (see TEST_EVIDENCE.md's
+  reproduction section): `bash scripts/setup-build-env.sh` fetches the
+  digest-pinned FFmpeg 8.1 dev / ONNX Runtime 1.28.0 / sherpa-onnx 1.13.7
+  from `scripts/ci/deps.lock`, and `--debs` adds the no-root clang 19
+  runtime and headers under `sysroot/`; `source scripts/funcut-env.sh`
+  before any cargo command in `src/` exports the CI engine job's env
+  (`FFMPEG_DIR`, `ORT_LIB_LOCATION`, `ORT_PREFER_DYNAMIC_LINK`,
+  `LD_LIBRARY_PATH`, `SHERPA_ONNX_LIB_DIR`, `CARGO_PROFILE_DEV_DEBUG=0`,
+  `CARGO_INCREMENTAL=0`, and `LIBCLANG_PATH` when the sysroot is there).
+- Disk management: `bash scripts/prune-dupes.sh` hardlinks byte-identical
+  rlib/rmeta duplicates under `src/target` (2.7 GB reclaimed once on the
+  machine that record is from; `--dry-run` reports only). Run it when full.
 - Git credentials: store helper at `/home/z/.git-credentials-funcut`
   (admin token, never committed).
 - CI triggers: `ci.yml` push filter is `[main]` (verified at byte level —

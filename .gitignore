@@ -77,4 +77,10 @@ check/
 # The CI dependency set this checkout fetched and verified (deps.lock):
 # the ffmpeg-dev and onnxruntime extracts, warm-machine archives.
 /onnxruntime-linux-x64-*/
+/onnxruntime-linux-aarch64-*/
+# The sherpa-onnx extract the same fetch unpacks (the CI engine job and
+# scripts/setup-build-env.sh both land it here), and the no-root clang
+# that script's --debs unpacks: both machine-built, never committed.
+/sherpa/
+/sysroot/
 

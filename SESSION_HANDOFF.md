@@ -61,11 +61,11 @@ surface. Do NOT claim area A complete until paths actually render.
 - Background processes are killed when a Bash call returns: run long
   builds in the foreground with `timeout 600000`; cargo resumes
   incrementally across calls.
-- `source /home/z/my-project/scripts/funcut-env.sh` before any cargo
-  command in `src/`.
+- `source scripts/funcut-env.sh` (repo-relative, after `bash
+  scripts/setup-build-env.sh` once) before any cargo command in `src/`.
 - Disk fills at ~5.8 GB of target/ artifacts: run
-  `/home/z/my-project/scripts/prune-dupes.sh` (reclaims duplicate
-  cargo artifacts; 2.7 GB once).
+  `bash scripts/prune-dupes.sh` (hardlinks byte-identical rlib/rmeta
+  duplicates; reclaimed 2.7 GB once).
 - Tool-output display can mangle brackets (a `[main]` once read as
   `ain]`): verify surprising bytes with `od -c` before declaring a bug.
 - The token lives in the git credential store file; never write it into

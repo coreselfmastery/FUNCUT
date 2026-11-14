@@ -16,7 +16,7 @@ Current corrections to the snapshot:
 - **VERIFY-16:** PR #134 adds the audio-stream probe. Its first CI attempt failed because the Director self-test ran in the no-FFmpeg format job, so the synthetic silent render could not be probed. The self-test has been moved to the FFmpeg-equipped real-fixture job; the new run is pending.
 - **P3-008:** PR #136 records archive.org as an environmental dependency of the FreePD shelf and remains open.
 - **Current-main CI:** formatting/locales/models and real-fixture analysis passed; engine tests are still running. Geneva passed both jobs. Build app passed both Linux x86_64 and ARM64 lanes, including clean-distribution smoke tests, and uploaded artifacts. Nix remains in progress. No current-main release tag has been cut.
-- **Review and protection:** the open PRs have no submitted approvals in the current review lists. The repository rulesets endpoint returned an empty list; the classic branch-protection endpoint returned HTTP 403 to the connected GitHub integration, so classic protection cannot be confirmed here.
+- **Review and protection:** the open PRs have no submitted approvals in the current review lists. The GitHub branch endpoint reports `protected: false` and required-status-check enforcement `off`; the rulesets endpoint is empty. The detailed classic branch-protection endpoint itself returned HTTP 403, but the branch object confirms that `main` has no required checks.
 
 Do not use the historical rows below as evidence that the current `main` is still at the earlier SHA. The current release gate remains open until the exact-head checks finish and the hardware/real-project acceptance evidence is recorded.
 

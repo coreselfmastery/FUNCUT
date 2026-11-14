@@ -4597,7 +4597,7 @@ fn footage_plan_suggest(arguments: Value) -> Result<Outcome, ApiError> {
         .iter()
         .map(|cut| {
             json!({
-                "atS": cut.timestamp.to_seconds(),
+                "atS": concat_motion::footage::plan_seconds(&cut.timestamp),
                 "type": cut_kind(cut.cut_type),
                 "confidence": cut.confidence,
                 "transitionMs": cut.transition_duration_ms,

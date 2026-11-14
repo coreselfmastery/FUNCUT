@@ -686,9 +686,9 @@ mod tests {
     /// and every tick reads itself (P1-009).
     #[test]
     fn a_second_and_a_half_stays_a_second_and_a_half() {
-        let beat = beat_at(1.5, 0.9);
-        assert_eq!(beat.timestamp.pts, 1500);
-        assert_eq!(plan_seconds(&beat.timestamp), 1.5);
+        let one_and_a_half = beat_at(1.5, 0.9);
+        assert_eq!(one_and_a_half.timestamp.pts, 1500);
+        assert_eq!(plan_seconds(&one_and_a_half.timestamp), 1.5);
         // The drift `to_seconds` itself carries, named so the fix is not
         // read as superstition: the multiplication by the rounded
         // quotient drifts where the one division does not.

@@ -142,9 +142,16 @@ paste a three-sentence script, select the voiceover language and Start.
 Capture the actual provider calls, phases, asset resolution, timeline
 commands and failures. Verify audio, video, timing, captions and final
 export; do not treat a phase log or a populated timeline as acceptance.
+This chapter is a demonstration, one happy path — the acceptance itself
+is the recorded run the tracker names: the real brief-to-export run with
+its thirteen-check Verify record (speech re-read to the 60 ms line,
+loudness measured on the render, timeline hash, media availability,
+caption presence and frame fit, the AI-voice disclosure), the critic
+loop's scores, and the target-machine run — none of which a screen
+recording substitutes for.
 
 **Say:** *"The director is an agent on the app's own MCP server — a
-hundred and nine tools, senses for cuts, beats, dead air, and an emotion
+hundred and ten tools, senses for cuts, beats, dead air, and an emotion
 reader. What it edits, you can undo; nothing it does is outside the
 editor."*
 

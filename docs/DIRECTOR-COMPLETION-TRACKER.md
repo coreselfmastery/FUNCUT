@@ -1,4 +1,74 @@
-## Session 5 — 2026-11-14 (current status)
+# DIRECTOR-COMPLETION-TRACKER
+
+## Session 5, continued — 2026-11-14 (the session's second half)
+
+The continuation session verified the first half's merges, landed the CI
+fixes the stack needed, and opened the two task PRs the first half left
+owed. Live API throughout; no page HTML trusted.
+
+- `main` = `242f763e87d80f6355e55aa159c76dd4a9060277` at this writing —
+  **PR #123 merged** (the first half's tracker follow-up: Task A landed,
+  execution order from Task B), all five CI checks green at its head.
+- All four first-half merge questions re-verified MERGED by API: #118
+  `621420fb`, #119 `2eb5ff54`, #120 `c8eeac78`, #122 `34a2a87` — the
+  ~105-of-216 total stands.
+- CI fixes landed on the in-flight stack, each read from the failing
+  job's own log:
+  - **#124** head `319f4705` — the engine job's two speech-test
+    failures: `dominant_script` answered Thai for a punctuation-only
+    text (`max_by_key` returns the last of equals, Thai is the table's
+    end), and the Japanese/Han arm answered both directions (kana under
+    a zh hint is a real disagreement the PR's own test asserts).
+  - **#125** head `07c87f85` (via `9dc7a0cc`) — the dependency dance's
+    catalogue budget: the compressed audio block still read 247,665 over
+    the 247,000 cap; the block went bone-dry and **the caps rose with
+    history entries** (whole catalogue 247,000 → 248,000, director
+    surface 233,000 → 234,000 — the audio block is the FALL-07..09
+    contract, function not prose).
+  - **#126** head `d5abac5b` — carries both fixes by stack merge.
+- **PR #127** (`feat/runner-idempotency`, head `3c20eeab`) — IDEM-01..10,
+  opened this half: the watcher's durable run state
+  (`.auto-director-state.json`, per-stage evidence, live re-verification,
+  downgrade replay), run-scoped exports under `runs/<run-id>/` with
+  diffable `report.json`, the failure record's stagesDone; the Rust
+  runner's completed-set (skip/re resume/fresh) and deterministic
+  `edit_apply` idempotency keys; the server's optional `edit.apply`
+  `idempotencyKey` with dedupe. Self-test green (53 calls then 20, twelve
+  stages reused; resume places only the failed stage). First CI run was
+  red (Stage lacked Ord, three rustfmt diffs, and a second-resolution
+  run id that collided on the faster CI machine); all three fixed
+  on-branch.
+- **PR #128** (`docs/contradiction-cleanup`, head carries this tracker) —
+  CONTRA-01..07: the live contradictions fixed (TTS-take repair contract,
+  footage_plan_suggest in Phase 4, the 60 ms tolerance named, the
+  automation boundary rewritten to what the runner does, the E2E chapter
+  anchored to the acceptance it is not), three verified already-resolved.
+  Rides with it: the Step-6 release-readiness entries (KNOWN_ISSUES
+  items 9 and 10) and this tracker update.
+- Issue #82: interim status posted (merged set, in-flight set, next
+  exact task) at the half's start.
+- **Step 6 (read-only, verified):** `build-app.yml` stages voice-signals
+  for x86_64 AND aarch64; the Forge page with the AUTO EDIT button
+  builds green on both arch checks; all 26 locales carry all 18
+  `forge.autoEdit` toast keys (0 missing, 0 stale); the last release is
+  still `v0.2.8-funcut.12`. No release cut, per instruction.
+
+Next exact task (Session 6):
+
+1. Merge the stack in order the moment each is all-green: #124 → #125 →
+   #126 → #127 → #128 (heads at this writing: `319f4705`, `07c87f85`,
+   `d5abac5b`, `3c20eeab`, and #128's own head). Nothing else rides those
+   branches; do not push to them.
+2. Then the hardware work, which no CI can do: UNVER-01..05 — a real
+   brief-to-export run on the target laptop (the AUTO EDIT button on the
+   window's own server, real provider calls, the export's real
+   measurements, cancel/rollback observed), plus the target-machine
+   proxy/VAAPI acceptance the tracker has carried.
+3. Release prep once the above lands: the KNOWN_ISSUES items 9 and 10
+   name exactly what a cut still owes; the release channel is a `v*` tag
+   push.
+
+## Session 5 — 2026-11-14 (first half; the continuation above supersedes its in-flight list)
 
 Verified against the live API at session close:
 

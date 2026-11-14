@@ -104,8 +104,12 @@ import that, transcribe that, and run every later analysis
 (`analyze_silence`, `voice_signals`, beats) on the cleaned audio, never
 on the raw take. An un-repaired rough take puts its noise floor into
 every downstream signal; the enhance chain filters and never cuts, so
-timings survive the repair. A TTS take is clean by construction and
-skips this.
+timings survive the repair. A TTS take is **not** clean by construction:
+the server's default voice model is the int8 Kokoro, and its
+quantisation adds a hiss above the noise floor — the same grading and
+repair chain runs on a synthesized take (a take from the project's own
+`audio/` folder is synthesized; the runner records the chain it ran),
+and only a plan that names a full-precision model may skip it.
 If narration exists as audio/video,
 `transcribe` it with an ISO language hint when known; the default `base.en`
 model is English-only, so choose a multilingual model for non-English. Each
@@ -285,6 +289,13 @@ name the song), and you WARN THE USER at once, and again in the Phase-8
 report: this voiceover embeds a music track whose licence is unknown;
 confirm the rights or replace the take before publishing. Only a take
 that answers `musicPresent: false` gets the BGM searches below.
+
+**Cross-check the plan's coverage before you shop (the runner does the
+same).** `footage_plan_suggest {project, transcript}` reads the dialogue
+gaps and monotony runs the take actually contains and answers the
+footage each gap asks for; hold the plan's B-roll slots against it — a
+planned slot the gaps never asked for and a gap no slot answers are
+both found here, before anything is fetched, not after it is placed.
 
 **Shop each timed B-roll segment, not a generic keyword.** Consult
 clip-skills' B-roll matching module. The B-roll reinforces the line's job
@@ -474,8 +485,10 @@ true peak under −1 dBTP; fix with `clip_audio_levels_db` and measure
 again. Never claim LUFS compliance from the plan alone. And prove the SPEECH
 itself survived the render: `transcribe` the exported file, then
 `emotion {action: "verify", expected: <the edit's word timings>, actual:
-<the export's words>}` — matchRate ≥ 0.9, worst drift within toleranceMs
-(default 150), no duplicated words is the pass; a failure names clipped,
+<the export's words>}` — matchRate ≥ 0.9, worst drift within
+`toleranceMs` (the runner's own line is the named 60 ms constant —
+not the 150 ms an older text here claimed), no duplicated words is the
+pass; a failure names clipped,
 shifted or duplicated audio the eye cannot see (check clip ends, trims and
 ripple cuts against the retime rule in Phase 2). And if Phase 4's gate
 found embedded music, the closing report repeats the copyright warning
@@ -623,18 +636,32 @@ for source transcription, reads voice signals/emotion, validates the plan,
 reuses or places the voiceover without silently retiming it, ranks and
 duration-checks B-roll, checks continuity and attempts targeted replacements,
 imports/places/trims stock, renders supplied motion storyboards and places
-them on a top lane, exports and waits, transcribes the exported file, verifies
-speech timing, samples the actual render and scores it. A score below 7,
-missing asset/storyboard, unresolved continuity flag, or failed verification
-stops the run.
+them on a top lane, places the plan's captions (segment-timed from the
+measured transcript, or the kinetic bake when the plan asks for word-timed
+captions), shops and places the SFX to their computed peaks, shops and ducks
+the music bed under the measured speech spans, applies the transitions,
+entrance keys and the grade the plan carries, exports and waits, transcribes
+the exported file, verifies speech timing, samples the actual render and
+scores it. A score below 7, missing asset/storyboard, unresolved continuity
+flag, or failed verification stops the run.
 
-The runner does **not** yet author and apply a new creative revision after a
-low score, or execute every optional finishing operation (SFX/BGM design,
-captions, transitions and the final grade) by itself. The Director agent must
-perform those remaining phases through this skill and then re-run the review.
-The OpenVid index also does not supply measured colour temperature; do not
-pretend the automated continuity pass measured a colour jump it cannot see.
-Use the stock contact sheet for that visual judgment.
+The craft loop's own revision passes are the runner's too: a score below the
+line names its slots, and the named slot is re-shopped with the old clip
+excluded, the old clip leaves the timeline, a graphic's named fix is folded
+into its storyboard and re-rendered — at most two passes, then the edit
+ships with the failures recorded, never a crash. What the runner still does
+**not** do is author a NEW creative revision — re-write the plan's structure,
+thesis or pacing after a low score; that judgment is the Director's, and the
+runner's recorded notes are where the Director reads what to change.
+
+The run is idempotent and resumable (IDEM): every stage records the evidence
+of its completion, a re-run skips what still stands on the timeline, the
+export lands under the run's own `runs/<run-id>/` directory (with
+`report.json`, diffable between runs), and a failed run's next run picks up
+after its last completed stage. The OpenVid index also does not supply
+measured colour temperature; do not pretend the automated continuity pass
+measured a colour jump it cannot see. Use the stock contact sheet for that
+visual judgment.
 
 ## 4. Hard rules
 

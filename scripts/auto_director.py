@@ -982,9 +982,10 @@ def _probe_checks(
                 "the render's frame rate was not measured",
             ),
             _verification_entry(
-                "VERIFY-16", "audio-stream-present", "skipped",
-                "the render's streams were not probed; "
-                "the audio-stream check did not run",
+                "VERIFY-16", "audio-stream-present", "fail",
+                "the render's audio stream could not be verified because "
+                "ffprobe was absent or did not answer; refusing to accept "
+                "an unverified export",
             ),
         ])
         return entries
@@ -4943,6 +4944,12 @@ def selftest_media() -> bool:
 def self_test() -> int:
     """A synthetic canonical plan exercises the real execution contract."""
     have_media = selftest_media()
+    if not have_media or not shutil.which("ffprobe"):
+        print(
+            "FAIL: the Director safety self-test requires working ffmpeg "
+            "and ffprobe; skipped media checks cannot prove export integrity"
+        )
+        return 1
     project = "/tmp/funcut-selftest/project"
     audio = "/tmp/funcut-selftest/voiceover.wav"
     # A self-test starts as a first run, not a resume of whatever the
@@ -5441,7 +5448,7 @@ def self_test() -> int:
     probe_ids = ("VERIFY-01", "VERIFY-04", "VERIFY-09", "VERIFY-10", "VERIFY-11", "VERIFY-16")
     for check_id in wanted_ids:
         status = by_check[check_id].get("status")
-        expected_status = "pass" if have_media or check_id not in probe_ids else "skipped"
+        expected_status = "pass"
         if status != expected_status:
             print(f"FAIL: {check_id} answered {status!r}, not {expected_status!r}: "
                   f"{by_check[check_id]}")
@@ -5450,6 +5457,34 @@ def self_test() -> int:
     if summary.get("total") != 14 or summary.get("failed") != 0:
         print(f"FAIL: the report's summary is wrong: {summary}")
         return 1
+
+    # A missing or unresponsive ffprobe is not evidence that the render
+    # has audio. The Director must refuse an unmeasured export rather than
+    # treating VERIFY-16 as a harmless skip.
+    unprobed = _probe_checks(
+        "/tmp/funcut-selftest/unprobed.mp4",
+        SELF_TEST_PLAN,
+        SELF_TEST_PLAN["export"],
+        None,
+        None,
+    )
+    missing_audio = next(
+        (entry for entry in unprobed if entry.get("id") == "VERIFY-16"), None
+    )
+    if not isinstance(missing_audio, dict) or missing_audio.get("status") != "fail":
+        print(f"FAIL: an unprobed export did not fail VERIFY-16: {missing_audio}")
+        return 1
+    try:
+        _verification_failed(unprobed)
+    except PipelineError as error:
+        if "VERIFY-16" not in str(error):
+            print(f"FAIL: an unprobed export was refused for the wrong reason: {error}")
+            return 1
+    else:
+        print("FAIL: an unprobed export was accepted without an audio-stream check")
+        return 1
+    print("probe availability ok: missing ffprobe refuses the export as VERIFY-16")
+
     print(
         "verify record ok: 14 entries, report written, "
         + f"{summary.get('passed')} passed / {summary.get('skipped')} skipped "

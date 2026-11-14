@@ -146,7 +146,7 @@ pub(crate) mod tests {
         let ran = Arc::new(AtomicBool::new(false));
         let probe = ran.clone();
         let warm = begin_index_warm();
-        assert!(index_warming(), "the warm holds the gate");
+        assert!(warming(), "the warm holds the gate");
         submit_proxy(Box::new(move || {
             probe.store(true, Ordering::SeqCst);
         }));
@@ -156,7 +156,7 @@ pub(crate) mod tests {
         assert_eq!(parked(), 1, "the job is parked, not running");
         assert!(!ran.load(Ordering::SeqCst), "nothing starts under the warm");
         drop(warm);
-        assert!(!index_warming(), "the warm released the gate");
+        assert!(!warming(), "the warm released the gate");
         assert_eq!(parked(), 0, "the parked job was submitted");
         // The scheduler's own drain waits for the submitted job; the
         // probe runs on the worker, so drain first, then read it.
@@ -181,7 +181,7 @@ pub(crate) mod tests {
         }));
         crate::scheduler().drain();
         drop(open); // the inner warm ends; the download still holds
-        assert!(index_warming());
+        assert!(warming());
         assert_eq!(parked(), 1, "still parked: the download is the outer warm");
         assert!(!ran.load(Ordering::SeqCst));
         drop(download); // the outermost warm ends; the gate opens
@@ -217,6 +217,11 @@ pub(crate) mod tests {
         drop(warm);
         crate::scheduler().drain();
         assert!(ran.load(Ordering::SeqCst), "the proxy ran after the warm");
+    }
+
+    /// Whether a warm currently owns the gate; test-only observation.
+    fn warming() -> bool {
+        lock().depth > 0
     }
 
     /// How many jobs are parked, for the tests and for nothing else:

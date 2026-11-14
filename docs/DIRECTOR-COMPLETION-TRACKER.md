@@ -1,9 +1,125 @@
 # DIRECTOR-COMPLETION-TRACKER
 
-## Session 3 — 2026-11-14 (current status)
+## Session 4 — 2026-11-14 (current status)
 
-Fresh repository state for this reconciliation, verified against the API and
-a fresh clone:
+Fresh repository state for this reconciliation, verified against the live
+API at every step (token login `coreselfmastery`; never printed, never
+committed):
+
+- `main` at this writing = `1cbaac2b3d7b34a9bd59515e96481d5246414608`, the
+  merge of PR #117 (this tracker's session-3 record). Before it:
+  `2eb5ff54492a7659469aecc2eafebecd410ee4d4`, the merge of PR #119.
+- **PR #119 → `2eb5ff54` MERGED (all five checks green on head `00fc26ba`):
+  the verification expansion** (VERIFY-01..05, 08..14). The watcher's Verify
+  stage keeps its own record now: twelve structured checks — black-frame
+  scan (ten sampled frames, mean/variance), captions present and inside
+  the render's runtime, transcript sync (±60 ms, the gate the stage always
+  ran, now an entry), visual quality (brightness spread and contrast — a
+  still field is a dead render), media availability (bin re-read, every
+  clip's source still in it and on disk), duplicate clips on one lane,
+  codec / frame size / frame rate measured against the plan's export
+  promise (which the runner now passes to `export_start` whole — width,
+  height, fps as `rateNum`/`rateDen`, revisions included), the caption band
+  on-frame, the true-peak ceiling (≤ 0 dBFS), and the post-final-edit
+  timeline hash (pre-export read-back vs verify-time re-read). Every entry
+  `{id, check, status, reason, evidence}`; the whole record written beside
+  the export as `verification-report.json` *before* anything may refuse; a
+  failed entry stops the run naming its ids; an unrunnable check is
+  **skipped with its reason, never dropped**. Self-test proves both the
+  ffmpeg-present path (12/12 pass, black render fails the scans) and the
+  ffmpeg-absent path (7 pass / 5 skipped with reasons) — CI-safe on
+  runners without ffmpeg.
+- **PR #117 → `1cbaac2b` MERGED (all five green on `6bee705d`)**: this
+  tracker's session-3 state — the stale `77392956` head is gone from main.
+- **PR #120 OPEN, head `90103536`, all checks green or in flight** — the
+  P1 leftovers (P1-004, P1-005, P1-009, P1-010), merged with main so the
+  two runners are one:
+  - P1-004: the footage planner's read recorded **per B-roll slot** in the
+    run's own signalLog (evidence with `provenance: measured`; an unserved
+    or unanswered planner is a degradation every slot carries,
+    `provenance: fallback`).
+  - P1-005: the nineteen-field plan audit — executed / rejected-with-
+    reason / skipped, unknown top-level keys named `unrecognized`, nothing
+    silently dropped — riding the run history beside the signalLog.
+  - P1-009: `plan_seconds` — RationalTime → plan seconds through one
+    division (`to_seconds` multiplies by the rounded quotient and 1001 ms
+    reads `1.0010000000000001`); both public reads cross through it; the
+    sweep, the beat grid and the dialogue cuts pinned by test. **A second
+    and a half stays a second and a half.**
+  - P1-010: word-timed kinetic captions wired to the plan's own ask
+    (`captions.wordTimed` / `captions.kinetic`): the measured word
+    timings bake one reel through `captions_animate`, placed on the
+    overlay lane, never doubled by the timeline's segment captions; no
+    word timings → segment-timed placed, the degradation recorded.
+  - Merge note: the branch carries `merge: main's verification record
+    meets the P1 leftovers` — the captions phase keeps both the kinetic
+    reel and `placed_captions` (the words the reel carries ARE the placed
+    captions for VERIFY-02); the run history's last line carries
+    signalLog + planAudit + verification together. Self-test green over
+    the union (19 fields audited, 12 verify entries, 1 signalLog entry).
+- **PR #118 OPEN, head `9f710c2d`** (AUTO EDIT button — Session 3 Task A,
+  P4-001/002): the CI-fix chain this session walked, newest first:
+  `9f710c2d` (the elapsed-line test's missing `Duration` import) →
+  `e4d298f5` (clippy: doc lazy continuation, the sibling-build type alias)
+  → `fe168ca0` (clippy needless-borrow on the wait's borrowed name) →
+  `b31bbad6` (rustfmt shapes + a compile fix) → `8b480403` (the wait's
+  refusal names the tool that waited; e2e reads `isError`; analysis_wait
+  keeps its structured `state` answer — semantics now coherent for
+  unattended runs) → `c529ec63` (schema budget caps + the refusal test's
+  named output) → `f0a48279` (the original feature). Merge **only** when
+  all five checks are green on the exact head.
+- Step 8 (PR #105 verification, read-only): the cold-load **mechanism** is
+  confirmed on main — `semantic_rerank`'s pre-flight `openvid.status` check
+  (`concat-mcp/src/sense.rs`, from PR #105's `ef8a4c64`) answers the page
+  with the BM25 order and the reason *before a single byte moves* when the
+  rerank model is absent. A measured wall-time needs the built server, the
+  OpenVid index and the target machine; this sandbox has no Rust toolchain
+  and the repo's own rule applies (exact-head CI for source validation,
+  real hardware for target measurements). **Not failed — unmeasured**; no
+  KNOWN_ISSUES entry is honest until a machine that can run it observes
+  the failure. The measurement is a next-task item below.
+- Bug count: ~75 (session 3) + #119's twelve VERIFY checks + #120's four
+  P1 items when it merges = **~91 of 216**.
+
+## Next exact task (session 5)
+
+1. **Land the two open PRs**: #118 (`feat/auto-edit-button`, head
+   `9f710c2d`) and #120 (`fix/p1-leftovers`, head `90103536`) — merge each
+   only when all five checks are green on its exact head, then update this
+   tracker with the merge SHAs.
+2. **Step 4 — silent degradation** (`fix/silent-degradation`, branches
+   off main *after* #120 merges — it rides #120's signalLog): DEG-01
+   (entities_available: "no entities found" ≠ "NER missing"), the ranking
+   keyword-tier record when MobileCLIP is absent (read
+   `rerank.applied:false` out of `openvid_rank_for_slot`'s reply into the
+   run's signalLog), the critic tier + confidence threshold warning,
+   identify_music failure ≠ "no music", bgm_prepare dying with the server
+   (bgm_status error ≠ state-not-ready), wrong-language transcribes
+   flagged against the plan's language, the int8 fallback chain recorded.
+   Every degradation writes `provenance: fallback` in the run's
+   signalLog. openvid_fetch partial-download validation (DEG-07) needs a
+   look at the fetch path first.
+3. Steps 5-7 as planned: provider fallbacks (FALL-01..03, 06..10),
+   data/resource/schema (DATA, RES-02/03, SCH-02, FAIL-02/03,
+   SRC-08..12), runner idempotency (IDEM-01..10 — `runs/<timestamp>/
+   report.json` diffable between runs builds on #119's
+   verification-report.json and #120's run-history records).
+4. The real OpenVid cold-load measurement on a machine that can run the
+   built server (Step 8's unfinished half).
+5. CONTRA-01..07 docs cleanup, then the real brief-to-export acceptance
+   run, target-machine proxy/VAAPI, and publish only on full green.
+
+No credential material or credential-store paths belong in this
+repository or tracker. Use the connected GitHub integration or an
+approved secret manager; never paste tokens into repository files.
+
+---
+
+## Session 3 record (2026-11-14) — superseded, preserved below
+
+The state this record describes was true at its writing; its open items
+were since resolved or carried forward (see the Session 4 header above).
+
 
 - `main` = `80d98b6985c17e045d061bd4568ef3698b2cf7f6`, the merge of PR #111
   (Kokoro classifier floor window, P3-004).

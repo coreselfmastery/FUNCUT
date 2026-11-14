@@ -37,6 +37,8 @@ use serde::{Deserialize, Serialize};
 /// The kind of beat a moment of the edit is - the same seven acts the
 /// emotion read names, because that read is what drives the edit's plan.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "schema", schemars(inline))]
 #[serde(rename_all = "kebab-case")]
 pub enum BeatType {
     /// The opening grab: read at a glance, over in a breath.

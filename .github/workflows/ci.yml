@@ -299,6 +299,14 @@ jobs:
         timeout-minutes: 15
         working-directory: src
         run: cargo test --workspace --doc -j 1
+      # SCH-02: the two committed plan schemas are generated from the
+      # plan types and the template, never hand-edited. The drift test in
+      # concat-mcp's own suite answers the same question; this step puts
+      # the refusal on the job's face, with the reconciling command.
+      - name: The plan schemas are generated, not hand-edited
+        timeout-minutes: 15
+        working-directory: src
+        run: cargo run -p concat-mcp --bin plan-schema -- --check
       # The gRPC transport is a feature nothing else in the workspace turns
       # on, so it is linted and tested here on its own. See concat-server.
       # One job at a time, like the lint above and the test build below

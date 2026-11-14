@@ -1,0 +1,444 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "plan": {
+      "description": "Canonical edit plan; validated at runtime.",
+      "properties": {
+        "aspect": {
+          "enum": [
+            "16:9",
+            "9:16",
+            "1:1",
+            "4:5"
+          ],
+          "type": "string"
+        },
+        "audio": {
+          "description": "Voiceover and bed. Defaults: whisperModel base.en, TTS model kokoro-int8, bgm.duckDb -12; the bed shops with query, falling back to mood.",
+          "properties": {
+            "bgm": {
+              "properties": {
+                "alignTo": {
+                  "enum": [
+                    "downbeats",
+                    "beats",
+                    "none"
+                  ],
+                  "type": "string"
+                },
+                "duckDb": {
+                  "default": -12,
+                  "maximum": 0,
+                  "minimum": -60,
+                  "type": "number"
+                },
+                "mood": {
+                  "type": "string"
+                },
+                "query": {
+                  "type": "string"
+                },
+                "source": {
+                  "enum": [
+                    "freepd",
+                    "lofi"
+                  ],
+                  "type": "string"
+                },
+                "trackId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "sfxEnabled": {
+              "default": true,
+              "type": "boolean"
+            },
+            "voiceover": {
+              "properties": {
+                "glossary": {
+                  "maxLength": 200,
+                  "type": "string"
+                },
+                "model": {
+                  "default": "kokoro-int8-multi-lang-v1_0",
+                  "type": "string"
+                },
+                "source": {
+                  "enum": [
+                    "tts",
+                    "file"
+                  ],
+                  "type": "string"
+                },
+                "speed": {
+                  "default": 1,
+                  "maximum": 2.0,
+                  "minimum": 0.5,
+                  "type": "number"
+                },
+                "voice": {
+                  "maximum": 52,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "whisperModel": {
+                  "type": "string"
+                }
+              },
+              "type": [
+                "object",
+                "null"
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "audioClipId": {
+          "description": "Existing audio clip id to reuse; its timing must match the plan.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "creativeBrief": {
+          "description": "Brief: audience, platform, goal, thesis, curiosity gap, payoff, emotional arc, style, tone, brand kit, constraints, avoidances. Missing brief returns blockers.",
+          "minProperties": 7,
+          "properties": {
+            "audience": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "avoid": {
+              "oneOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "brandKit": {
+              "oneOf": [
+                {
+                  "type": "object"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "constraints": {
+              "oneOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "curiosityGap": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "emotionalArc": {
+              "oneOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "minItems": 3,
+                  "type": "array"
+                },
+                {
+                  "minLength": 3,
+                  "type": "string"
+                }
+              ]
+            },
+            "goal": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "payoff": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "platform": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "referenceStyle": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "thesis": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "tone": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "grade": {
+          "properties": {
+            "apply": {
+              "default": "layer",
+              "enum": [
+                "layer",
+                "perClip"
+              ],
+              "type": "string"
+            },
+            "filter": {
+              "type": "string"
+            },
+            "intensity": {
+              "type": "number"
+            },
+            "intensityKey": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "filter",
+            "intensityKey",
+            "intensity"
+          ],
+          "type": "object"
+        },
+        "mode": {
+          "enum": [
+            "reel",
+            "longform"
+          ],
+          "type": "string"
+        },
+        "sections": {
+          "items": {
+            "properties": {
+              "end": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "role": {
+                "enum": [
+                  "hook",
+                  "intro",
+                  "body",
+                  "chapter",
+                  "rehook",
+                  "cta",
+                  "outro"
+                ],
+                "type": "string"
+              },
+              "start": {
+                "minimum": 0,
+                "type": "number"
+              }
+            },
+            "required": [
+              "role",
+              "start",
+              "end"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "segments": {
+          "items": {
+            "properties": {
+              "end": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "start": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "visual": {
+                "properties": {
+                  "category": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "clipId": {
+                    "type": [
+                      "integer",
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "description": {
+                    "minLength": 40,
+                    "type": "string"
+                  },
+                  "file": {
+                    "type": "string"
+                  },
+                  "hero": {
+                    "type": "boolean"
+                  },
+                  "mediaId": {
+                    "type": "string"
+                  },
+                  "motionMin": {
+                    "minimum": 0,
+                    "type": "number"
+                  },
+                  "queries": {
+                    "items": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "query": {
+                    "type": "string"
+                  },
+                  "shotScale": {
+                    "enum": [
+                      "wide",
+                      "medium",
+                      "close_up"
+                    ],
+                    "type": "string"
+                  },
+                  "storyboard": {
+                    "description": "Complete motion_reel storyboard for text/title segments.",
+                    "properties": {
+                      "assets": {
+                        "type": "object"
+                      },
+                      "audio": {
+                        "type": "array"
+                      },
+                      "curtain": {
+                        "type": "object"
+                      },
+                      "fps": {
+                        "minimum": 1,
+                        "type": "number"
+                      },
+                      "height": {
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "scenes": {
+                        "items": {
+                          "type": "object"
+                        },
+                        "minItems": 1,
+                        "type": "array"
+                      },
+                      "width": {
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "scenes"
+                    ],
+                    "type": "object"
+                  },
+                  "type": {
+                    "enum": [
+                      "broll",
+                      "textCard",
+                      "titleCard",
+                      "existing"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "start",
+              "end",
+              "visual"
+            ],
+            "type": "object"
+          },
+          "maxItems": 500,
+          "minItems": 1,
+          "type": "array"
+        },
+        "signalLog": {
+          "description": "The decision log: for each cut, caption, graphic, BGM and transition choice, which voice_signals signals drove it. An entry is {at: seconds, decision: cut|caption|graphic|bgm|transition, signals: [names from the profile's decisionPolicy], note?}. A plan with a voiceover and no signalLog is not creativeReady.",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "at": {
+                "minimum": 0,
+                "type": "number"
+              },
+              "decision": {
+                "enum": [
+                  "cut",
+                  "caption",
+                  "graphic",
+                  "bgm",
+                  "transition"
+                ],
+                "type": "string"
+              },
+              "note": {
+                "type": "string"
+              },
+              "signals": {
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "at",
+              "decision",
+              "signals"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "aspect",
+        "mode",
+        "sections",
+        "segments",
+        "audio",
+        "grade"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "plan"
+  ],
+  "type": "object"
+}

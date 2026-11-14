@@ -1842,171 +1842,21 @@ fn sense_schema(name: &str) -> Option<Value> {
     }))
 }
 
-/// The full director schema used at runtime to validate a plan.
+/// The full director schema used at runtime to validate a plan:
+/// generated - the template plus the plan types' own slots schema -
+/// and committed, with the drift test in [`crate::plan_schema`] refusing
+/// a hand edit the types do not back.
 fn canonical_plan_schema() -> Option<Value> {
-    serde_json::from_str(include_str!(
-        "../../../../.claude/skills/funcut-director/templates/edit_plan.schema.json"
-    ))
-    .ok()
+    serde_json::from_str(crate::plan_schema::CANONICAL).ok()
 }
 
-/// The motion storyboard schema is kept outside the parent json! macro
-/// so the tool schema stays below serde_json's macro recursion limit.
-fn motion_storyboard_schema() -> Value {
-    json!({
-        "type": "object",
-        "required": ["scenes"],
-        "description": "Complete motion_reel storyboard for text/title segments.",
-        "properties": {
-            "width": { "type": "integer", "minimum": 1 },
-            "height": { "type": "integer", "minimum": 1 },
-            "fps": { "type": "number", "minimum": 1 },
-            "scenes": { "type": "array", "minItems": 1, "items": { "type": "object" } },
-            "assets": { "type": "object" },
-            "audio": { "type": "array" },
-            "curtain": { "type": "object" }
-        }
-    })
-}
-
-/// The canonical visual segment contract, shared by plan validation and the
-/// segment executor.
-fn director_visual_schema() -> Value {
-    json!({
-        "type": "object",
-        "required": ["type"],
-        "properties": {
-            "type": { "type": "string", "enum": ["broll", "textCard", "titleCard", "existing"] },
-            "query": { "type": "string" },
-            "description": { "type": "string", "minLength": 40 },
-            "queries": { "type": "array", "items": { "type": "string" } },
-            "hero": { "type": "boolean" },
-            "motionMin": { "type": "number", "minimum": 0 },
-            "shotScale": { "type": "string", "enum": ["wide", "medium", "close_up"] },
-            "category": { "type": "string", "description": "Semantic category (e.g. people, landscape, machinery, data)." },
-            "storyboard": motion_storyboard_schema(),
-            "clipId": { "type": ["integer", "string", "null"] },
-            "mediaId": { "type": "string" },
-            "file": { "type": "string" }
-        }
-    })
-}
-
-/// The compact MCP input schema. The full canonical schema is also checked
-/// at runtime; this keeps a 7 KB plan template out of every client's tool list.
+/// The compact MCP input schema, projected from the canonical the
+/// same generator builds (SCH-02): the sections a client does not need
+/// to hold dropped, the constraints kept, so a 7 KB plan template stays
+/// out of every client's tool list while still being the canonical's
+/// own shape. The full canonical schema is also checked at runtime.
 fn plan_validate_schema() -> Option<Value> {
-    Some(json!({
-        "type": "object",
-        "properties": {
-            "plan": {
-                "type": "object",
-                "description": "Canonical edit plan; validated at runtime.",
-                "required": ["aspect", "mode", "sections", "segments", "audio", "grade"],
-                "properties": {
-                    "aspect": { "type": "string", "enum": ["16:9", "9:16", "1:1", "4:5"] },
-                    "mode": { "type": "string", "enum": ["reel", "longform"] },
-                    "sections": {
-                        "type": "array",
-                        "minItems": 1,
-                        "items": {
-                            "type": "object",
-                            "required": ["role", "start", "end"],
-                            "properties": {
-                                "role": { "type": "string", "enum": ["hook", "intro", "body", "chapter", "rehook", "cta", "outro"] }
-                            }
-                        }
-                    },
-                    "grade": {
-                        "type": "object",
-                        "required": ["filter", "intensityKey", "intensity"]
-                    },
-                    "segments": {
-                        "type": "array",
-                        "minItems": 1,
-                        "maxItems": 500,
-                        "items": {
-                            "type": "object",
-                            "required": ["start", "end", "visual"],
-                            "properties": {
-                                "start": { "type": "number", "minimum": 0 },
-                                "end": { "type": "number", "minimum": 0 },
-                                "visual": director_visual_schema()
-                            }
-                        }
-                    },
-                    "audio": {
-                        "type": "object",
-                        "description": "Voiceover and bed. Defaults: whisperModel base.en, TTS model kokoro-int8, bgm.duckDb -12; the bed shops with query, falling back to mood.",
-                        "properties": {
-                            "voiceover": {
-                                "type": "object",
-                                "properties": {
-                                    "source": { "type": ["string", "null"], "description": "file or tts." },
-                                    "speed": { "type": ["number", "null"], "minimum": 0.5, "maximum": 2.0 },
-                                    "glossary": { "type": ["string", "null"], "maxLength": 200 },
-                                    "model": { "type": ["string", "null"] },
-                                    "voice": { "type": ["integer", "null"], "minimum": 0, "maximum": 52 },
-                                    "whisperModel": { "type": ["string", "null"] }
-                                }
-                            },
-                            "bgm": {
-                                "type": "object",
-                                "properties": {
-                                    "query": { "type": ["string", "null"] },
-                                    "mood": { "type": ["string", "null"] },
-                                    "trackId": { "type": ["string", "null"] },
-                                    "duckDb": { "type": ["number", "null"] }
-                                }
-                            }
-                        }
-                    },
-                    "audioClipId": {
-                        "type": "string",
-                        "description": "Existing audio clip id to reuse; its timing must match the plan."
-                    },
-                    "creativeBrief": {
-                        "type": "object",
-                        "description": "Brief: audience, platform, goal, thesis, curiosity gap, payoff, emotional arc, style, tone, brand kit, constraints, avoidances. Missing brief returns blockers.",
-                        "properties": {
-                            "audience": { "type": "string" },
-                            "platform": { "type": "string" },
-                            "goal": { "type": "string" },
-                            "thesis": { "type": "string" },
-                            "curiosityGap": { "type": "string" },
-                            "payoff": { "type": "string" },
-                            "emotionalArc": { "oneOf": [
-                                { "type": "array", "minItems": 3, "items": { "type": "string" } },
-                                { "type": "string" }
-                            ] },
-                            "referenceStyle": { "type": "string" },
-                            "tone": { "type": "string" },
-                            "durationSeconds": { "type": "number" },
-                            "brandKit": {},
-                            "constraints": {},
-                            "avoid": {}
-                        }
-                    },
-                    "signalLog": {
-                        "type": "array",
-                        "description": "The decision log: for each cut, caption, graphic, BGM and transition choice, which voice_signals signals drove it. An entry is {at: seconds, decision: cut|caption|graphic|bgm|transition, signals: [names from the profile's decisionPolicy], note?}. A plan with a voiceover and no signalLog is not creativeReady.",
-                        "items": {
-                            "type": "object",
-                            "required": ["at", "decision", "signals"],
-                            "properties": {
-                                "at": { "type": "number", "minimum": 0 },
-                                "decision": { "type": "string", "enum": ["cut", "caption", "graphic", "bgm", "transition"] },
-                                "signals": { "type": "array", "minItems": 1, "items": { "type": "string" } },
-                                "note": { "type": "string" }
-                            },
-                            "additionalProperties": false
-                        }
-                    }
-                }
-            }
-        },
-        "required": ["plan"],
-        "additionalProperties": false,
-    }))
+    serde_json::from_str(crate::plan_schema::COMPACT).ok()
 }
 
 /// The motion tools' inputs, written by hand: they wrap `concat-motion`
@@ -3455,7 +3305,10 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
             ));
         }
     }
-    // Footage slots are validated individually. There is deliberately no
+    // Footage slots are validated individually, through the very types
+    // the canonical schema's slots section is generated from (SCH-02),
+    // so the wire contract cannot drift between what the schema promises
+    // and what the validator deserializes. There is deliberately no
     // plan-wide B-roll percentage: the right balance depends on the story,
     // source material, evidence density, and the visual language of this
     // film. But slots[] is the shopping list for segments[].visual - the
@@ -3463,53 +3316,24 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
     // B-roll segments the two must agree: as many b-roll slots as b-roll
     // segments, and a segment that names its slot by slotId must find it.
     if let Some(slots) = object.get("slots").and_then(Value::as_array) {
-        let mut broll_slot_ids: Vec<&str> = Vec::new();
-        for (index, slot) in slots.iter().enumerate() {
-            let slot = slot
-                .as_object()
-                .ok_or_else(|| format!("slots[{index}] must be an object"))?;
-            let description = slot
-                .get("description")
-                .and_then(Value::as_str)
-                .ok_or_else(|| format!("slots[{index}].description is required"))?;
-            if description.chars().count() < 40 {
-                return Err(format!(
-                    "slots[{index}].description is {} characters; it is what CLIP ranks against and must be at least 40",
-                    description.chars().count()
-                ));
-            }
-            let treatment = slot
-                .get("treatment")
-                .and_then(Value::as_str)
-                .ok_or_else(|| format!("slots[{index}].treatment is required"))?;
-            let queries: Vec<&str> = slot
-                .get("queries")
-                .and_then(Value::as_array)
-                .map(|list| list.iter().filter_map(Value::as_str).collect())
-                .unwrap_or_default();
-            match treatment {
-                "broll" => {
-                    if queries.iter().all(|query| query.trim().is_empty()) {
-                        return Err(format!(
-                            "slots[{index}] is b-roll; it takes at least one non-empty query"
-                        ));
-                    }
-                    if let Some(slot_id) = slot.get("slotId").and_then(Value::as_str) {
-                        broll_slot_ids.push(slot_id);
-                    }
-                }
-                "hold" | "graphic" | "black" => {
-                    if queries.iter().any(|query| !query.trim().is_empty()) {
-                        return Err(format!(
-                            "slots[{index}] is a {treatment} treatment; the edit draws it itself and takes no search queries"
-                        ));
-                    }
-                }
-                other => {
-                    return Err(format!("slots[{index}].treatment `{other}` is unsupported"));
-                }
-            }
+        use concat_motion::plan::{Slot, Treatment};
+        let typed: Vec<Slot> = slots
+            .iter()
+            .enumerate()
+            .map(|(index, slot)| {
+                serde_json::from_value(slot.clone())
+                    .map_err(|error| format!("slots[{index}]: {error}"))
+            })
+            .collect::<Result<_, String>>()?;
+        for (index, slot) in typed.iter().enumerate() {
+            slot.validate()
+                .map_err(|error| format!("slots[{index}]: {error}"))?;
         }
+        let broll_slot_ids: Vec<&str> = typed
+            .iter()
+            .filter(|slot| slot.treatment == Treatment::Broll)
+            .map(|slot| slot.slot_id.as_str())
+            .collect();
         // The cross-check the standalone loop cannot make: the segments are
         // what the executor actually places, and a slots[] they never meet
         // is a list the director wrote for a cut that does not happen -

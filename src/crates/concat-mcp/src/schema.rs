@@ -532,7 +532,15 @@ mod tests {
         // -12 duck, every knob a plan names when it wants another
         // answer - the block bone-dry, its one hint a maxLength the
         // runtime already enforced; schema the catalogue carries for
-        // the agent that plans, function not prose. The
+        // the agent that plans, function not prose. And once more,
+        // 248,000 -> 249,000, still at 110: the compact plan_validate
+        // input schema is now projected from the canonical the plan
+        // types generate (SCH-02) instead of hand-summarized beside it,
+        // so it carries what the old summary left out - the audio
+        // knobs the runner names (whisperModel, mood), the voice and
+        // speed ranges and the segment ceiling the validator enforces,
+        // the grade's own fields - 248,477 measured, the truth of the
+        // contract, not prose. The
         // director's default surface - what `concat --mcp` serves an
         // agent that names no list, and the budget that matters by
         // default - keeps its own, tighter cap below.
@@ -547,7 +555,7 @@ mod tests {
             "CONTEXT whole catalogue: {total} over {} tools",
             sizes.len()
         );
-        assert!(total < 248_000, "{total}: {sizes:?}");
+        assert!(total < 249_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }

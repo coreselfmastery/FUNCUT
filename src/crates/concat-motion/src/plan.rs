@@ -23,6 +23,9 @@
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "schema")]
+use schemars::JsonSchema;
+
 use crate::route::BeatType;
 
 /// The dramaturgical role the slot plays: the same seven acts the edit's
@@ -38,6 +41,8 @@ pub type SlotRole = BeatType;
 /// goes dark on purpose. None of them search for stock. Only `broll`
 /// shops.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "schema", schemars(inline))]
 #[serde(rename_all = "snake_case")]
 pub enum Treatment {
     /// The A-roll holds: the picture stays where it is.
@@ -64,6 +69,8 @@ impl Treatment {
 
 /// The work the slot's picture does for the edit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "schema", schemars(inline))]
 #[serde(rename_all = "snake_case")]
 pub enum SlotJob {
     /// Show what the words describe.
@@ -81,6 +88,8 @@ pub enum SlotJob {
 /// When the slot's picture enters, relative to the words and the beat
 /// grid.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "schema", schemars(inline))]
 #[serde(rename_all = "snake_case")]
 pub enum Entry {
     /// On the emphasis the words carry.
@@ -95,6 +104,8 @@ pub enum Entry {
 
 /// How the slot's screen time ends.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "schema", schemars(inline))]
 #[serde(rename_all = "snake_case")]
 pub enum Exit {
     /// Before the next emphasis the words carry, so the picture leaves
@@ -109,6 +120,61 @@ pub enum Exit {
     Early,
 }
 
+/// A concise, film-specific reason for a slot's visual choice: what
+/// this beat must communicate, the medium that carries it, and why that
+/// medium is stronger than the plausible alternatives. Required in
+/// practice for major beats; it must explain intent rather than repeat
+/// a template.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "schema", schemars(inline))]
+#[serde(rename_all = "camelCase")]
+pub struct VisualRationale {
+    /// What this beat must communicate or make the viewer feel.
+    #[cfg_attr(feature = "schema", schemars(length(min = 1)))]
+    pub job: String,
+    /// The selected visual medium.
+    pub medium: Medium,
+    /// Why this medium is stronger than the plausible alternatives for
+    /// this beat.
+    #[cfg_attr(feature = "schema", schemars(length(min = 1)))]
+    pub reason: String,
+    /// The film-specific visual treatment: composition, palette, type,
+    /// movement, texture, or camera language.
+    #[cfg_attr(feature = "schema", schemars(length(min = 1)))]
+    pub style: String,
+    /// Why and how the visual enters or leaves in relation to story,
+    /// speech, and rhythm.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transition: Option<String>,
+    /// A meaningful alternative if the selected asset, model, or renderer
+    /// is unavailable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
+}
+
+/// The medium a slot's visual rationale selects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "schema", schemars(inline))]
+#[serde(rename_all = "snake_case")]
+pub enum Medium {
+    /// Stock or imported footage.
+    Footage,
+    /// A motion comp.
+    Motion,
+    /// A chart.
+    Chart,
+    /// Type on screen.
+    Typography,
+    /// Generated imagery.
+    Generated,
+    /// The A-roll holds.
+    Hold,
+    /// More than one medium together.
+    Hybrid,
+}
+
 /// One opening the edit promises a picture for.
 ///
 /// The `description` is the contract with the search: a rich
@@ -117,36 +183,53 @@ pub enum Exit {
 /// phrases only - what BM25 gets when the description's shortlist comes
 /// back thin. A treatment the edit draws itself takes no queries at all.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+#[cfg_attr(feature = "schema", schemars(inline))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Slot {
     /// The slot's own id, unique in the plan: `"hook.1"`, `"reveal.hero"`.
+    /// The per-slot notes the critic sends back name it.
+    #[cfg_attr(feature = "schema", schemars(length(min = 1)))]
     pub slot_id: String,
-    /// The role the slot plays in the piece.
+    /// The dramaturgical role the slot plays - the same seven acts a
+    /// segment's `act` names, because a slot spends a beat.
     pub role: SlotRole,
-    /// What fills the slot's screen time.
+    /// What fills the slot's screen time. Only `broll` shops for stock;
+    /// `hold`, `graphic` and `black` are treatments the edit draws itself
+    /// and take no queries.
     pub treatment: Treatment,
-    /// The work the slot's picture does.
+    /// The work the slot's picture does for the edit.
     pub job: SlotJob,
-    /// When the picture enters against the words and the beat grid.
+    /// When the picture enters, against the words and the beat grid.
     pub entry: Entry,
     /// How the picture leaves.
     pub exit: Exit,
-    /// The rich description the stock search ranks against, twelve to
-    /// twenty-five words of nouns and adjectives - what is in frame,
-    /// what it is doing, what it feels like.
+    /// The rich noun+adjective string the stock search ranks against,
+    /// twelve to twenty-five words: what is in frame, what it is doing,
+    /// what it feels like. The validator refuses anything under 40
+    /// characters - it is what CLIP ranks against.
+    #[cfg_attr(feature = "schema", schemars(length(min = 1)))]
     pub description: String,
-    /// The fallback keyword phrases, and only that: the description is
-    /// the ranked contract, the queries are what BM25 gets.
+    /// The fallback keyword phrases only, for the BM25 pass. A treatment
+    /// the edit draws itself (hold, graphic, black) takes none; broll
+    /// takes at least one.
+    #[cfg_attr(feature = "schema", schemars(inner(length(min = 1))))]
     pub queries: Vec<String>,
     /// Whether this slot is the shot the thumbnail and the first glance
-    /// live on. A hero slot searches wider and ranks longer.
+    /// live on; a hero slot searches wider and ranks longer.
     pub hero: bool,
     /// The least motion the slot's clip may carry, on the library's own
     /// motion scale: a `breathe` slot wants stillness, a `punctuate`
     /// slot wants the opposite.
+    #[cfg_attr(feature = "schema", schemars(range(min = 0)))]
     pub motion_min: f32,
     /// How long the slot's screen time runs, in seconds.
     pub duration_s: f32,
+    /// A concise, film-specific reason for this visual choice. Required
+    /// in practice for major beats; it must explain intent rather than
+    /// repeat a template.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visual_rationale: Option<VisualRationale>,
 }
 
 impl Slot {
@@ -194,6 +277,28 @@ impl Slot {
     }
 }
 
+// The plan's `slots` array as a schema root: what the canonical
+// edit-plan schema splices in for `slots`, generated from `PlanSlots`
+// so the wire contract cannot drift from the types the validator
+// deserializes (SCH-02). The rustdoc below is the schema's own
+// description - the words an agent reads - so it stays the canonical
+// text and nothing else.
+///
+/// The footage slots the edit spends: one opening at a time, with the
+/// role it plays, the treatment that fills it, and the rich description
+/// a stock search ranks against. Optional - a plan without slots is a
+/// plan the segments alone describe. The b-roll slots must match the
+/// b-roll segments one for one, and a segment that names its slot by
+/// slotId must find it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(JsonSchema))]
+pub struct PlanSlots(
+    /// At most sixty openings: the plan is a shopping list, not a
+    /// catalogue.
+    #[cfg_attr(feature = "schema", schemars(length(max = 60)))]
+    pub Vec<Slot>,
+);
+
 /// The share of the slots that go shopping for stock, 0.0 to 1.0.
 ///
 /// This is an informational measurement only. There is intentionally no
@@ -208,6 +313,28 @@ pub fn broll_share(slots: &[Slot]) -> f32 {
         .filter(|slot| slot.treatment == Treatment::Broll)
         .count() as f32
         / slots.len() as f32
+}
+
+/// The plan's `slots` array as a schema root: what the canonical
+/// edit-plan schema splices in for `slots`, generated from
+/// [`PlanSlots`] so the wire contract cannot drift from the types the
+/// validator deserializes (SCH-02).
+///
+/// The returned value is the *property* schema - `{"type": "array", ...}`
+/// with the `$schema` dialect marker stripped, ready to drop in as the
+/// value of `properties.slots`.
+#[cfg(feature = "schema")]
+pub fn slots_json_schema() -> serde_json::Value {
+    let schema = schemars::schema_for!(PlanSlots);
+    let mut value = serde_json::to_value(&schema).expect("a schema is JSON");
+    if let Some(object) = value.as_object_mut() {
+        // The dialect marker and the newtype's own name stay on the
+        // root: the canonical carries its own header, and the property
+        // is `slots`, not `PlanSlots`.
+        object.remove("$schema");
+        object.remove("title");
+    }
+    value
 }
 
 #[cfg(test)]
@@ -235,6 +362,7 @@ mod tests {
             hero: false,
             motion_min: 1.0,
             duration_s: 2.5,
+            visual_rationale: None,
         }
     }
 
@@ -328,5 +456,93 @@ mod tests {
         assert_eq!(json["exit"], "before_next_emphasis");
         assert_eq!(json["job"], "breathe");
         assert_eq!(json["entry"], "after_line");
+        // The rationale rides its own camelCase keys, absent when None.
+        let mut slot = broll_slot();
+        slot.visual_rationale = Some(VisualRationale {
+            job: "Land the reveal".into(),
+            medium: Medium::Footage,
+            reason: "The real machine says what no card could".into(),
+            style: "Slow push, cool key light, shallow depth".into(),
+            transition: Some("enters on the turn's emphasis".into()),
+            fallback: None,
+        });
+        let json = serde_json::to_value(&slot).expect("serializes");
+        assert_eq!(json["visualRationale"]["medium"], "footage");
+        assert!(json["visualRationale"].get("fallback").is_none());
+        let back: Slot = serde_json::from_value(json).expect("deserializes");
+        assert_eq!(back, slot);
+    }
+
+    /// The wire shape the schema generator answers with is the types'
+    /// own: the treatment enum, the 40-character floor's field, and the
+    /// slot count ceiling the plan's schema carries.
+    #[cfg(all(test, feature = "schema"))]
+    #[test]
+    fn the_slots_schema_is_generated_from_the_types() {
+        let schema = slots_json_schema();
+        assert_eq!(
+            schema["type"], "array",
+            "the property is an array: {schema}"
+        );
+        assert_eq!(
+            schema["maxItems"], 60,
+            "the plan carries at most sixty slots: {schema}"
+        );
+        let items = &schema["items"];
+        assert_eq!(items["type"], "object");
+        assert_eq!(
+            items["additionalProperties"], false,
+            "a slot takes no unknown fields: {items}"
+        );
+        let properties = items["properties"].as_object().expect("slot properties");
+        for field in [
+            "slotId",
+            "role",
+            "treatment",
+            "job",
+            "entry",
+            "exit",
+            "description",
+            "queries",
+            "hero",
+            "motionMin",
+            "durationS",
+            "visualRationale",
+        ] {
+            assert!(properties.contains_key(field), "`{field}` is in the schema");
+        }
+        // The generated schema spells an enum as one const per variant
+        // (each carrying its own doc), not as a bare `enum` array: the
+        // values are the same words the wire carries.
+        let treatment_words = |schema: &serde_json::Value| -> Vec<String> {
+            schema["oneOf"]
+                .as_array()
+                .expect("the treatments are a oneOf of consts")
+                .iter()
+                .map(|variant| variant["const"].as_str().expect("a const").to_owned())
+                .collect()
+        };
+        assert_eq!(
+            treatment_words(&items["properties"]["treatment"]),
+            ["hold", "broll", "graphic", "black"],
+            "the treatments are the plan's own words"
+        );
+        assert_eq!(
+            treatment_words(&items["properties"]["role"]),
+            ["hook", "setup", "tension", "turn", "reveal", "proof", "cta"],
+            "the roles are the seven acts"
+        );
+        // The schema's own floor is the wire's, not the validator's:
+        // minLength 1 here, the 40-character refusal in `validate`.
+        assert_eq!(items["properties"]["description"]["minLength"], 1);
+        // A slot the schema accepts round-trips through the types.
+        let slot = broll_slot();
+        let wire = serde_json::to_value(&slot).expect("serializes");
+        let back: Slot = serde_json::from_value(wire).expect("deserializes");
+        assert_eq!(back, slot);
+        // And the schema the plan carries accepts the same wire shape:
+        // the array wraps the slot, the slot fits its items schema.
+        let plan_wire = serde_json::to_value(PlanSlots(vec![slot])).expect("serializes");
+        assert_eq!(plan_wire.as_array().map(Vec::len), Some(1));
     }
 }

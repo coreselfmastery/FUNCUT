@@ -1936,26 +1936,26 @@ fn plan_validate_schema() -> Option<Value> {
                     },
                     "audio": {
                         "type": "object",
-                        "description": "The plan's audio: the voiceover take and the music bed. The runner's defaults are named here so a plan knows what it gets when it says nothing: the transcriber runs base.en (fast, English-only) unless whisperModel names another; the voice model is the server's kokoro-int8 default unless model names another (the int8 quantisation hiss is why the repair chain runs); the bed is shopped with the query, falling back to the mood when the query is absent.",
+                        "description": "Voiceover and bed. Defaults: transcriber base.en unless whisperModel; voice model kokoro-int8 unless model; the bed shops with query, falling back to mood.",
                         "properties": {
                             "voiceover": {
                                 "type": "object",
                                 "properties": {
-                                    "source": { "type": "string", "description": "file or tts: where the take comes from." },
-                                    "speed": { "type": "number", "minimum": 0.5, "maximum": 2.0, "description": "The voiceover clip's playback speed; the plan's timings are unaffected." },
-                                    "glossary": { "type": "string", "description": "The proper nouns and jargon the recogniser starts its run knowing, at most 200 characters." },
-                                    "model": { "type": "string", "description": "The TTS model the take was or will be synthesized with, e.g. kokoro-int8-multi-lang-v1_0 (the server's default). An int8 model's quantisation hiss is what the repair chain answers for." },
-                                    "voice": { "type": "integer", "minimum": 0, "maximum": 52, "description": "The Kokoro voice number the synthesis reads with; the tts_generate tool serves the same numbering." },
-                                    "whisperModel": { "type": "string", "description": "The transcriber model, e.g. base.en (the default: fast, English-only) or small (multilingual). FUNCUT_WHISPER_MODEL pins the operator's own default." }
+                                    "source": { "type": ["string", "null"], "description": "file or tts." },
+                                    "speed": { "type": ["number", "null"], "minimum": 0.5, "maximum": 2.0 },
+                                    "glossary": { "type": ["string", "null"], "description": "Proper nouns the recogniser starts knowing, at most 200 chars." },
+                                    "model": { "type": ["string", "null"], "description": "TTS model; kokoro-int8 is the default." },
+                                    "voice": { "type": ["integer", "null"], "minimum": 0, "maximum": 52, "description": "Kokoro voice number." },
+                                    "whisperModel": { "type": ["string", "null"], "description": "Transcriber model; base.en is the default." }
                                 }
                             },
                             "bgm": {
                                 "type": "object",
                                 "properties": {
-                                    "query": { "type": "string", "description": "What the bed is shopped with; the mood stands in when this is absent." },
-                                    "mood": { "type": "string", "description": "The bed's mood - the search query when query is absent, said aloud when it stands in." },
-                                    "trackId": { "type": "string", "description": "A specific track from bgm_search, shopped directly." },
-                                    "duckDb": { "type": "number", "description": "How deep the bed ducks under the words; -12 when the plan says nothing." }
+                                    "query": { "type": ["string", "null"], "description": "What the bed is shopped with." },
+                                    "mood": { "type": ["string", "null"], "description": "The query's stand-in when query is absent." },
+                                    "trackId": { "type": ["string", "null"], "description": "A specific track, shopped directly." },
+                                    "duckDb": { "type": ["number", "null"], "description": "Duck depth under words; -12 default." }
                                 }
                             }
                         }

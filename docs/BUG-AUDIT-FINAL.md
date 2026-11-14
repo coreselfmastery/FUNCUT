@@ -4,6 +4,22 @@ Audited: 2026-11-14. `main` = `21d136c3972ad87033992968b987b3b0c6ebb5c7`
 (merge of PR #129), fresh clone. Last release confirmed still
 `v0.2.8-funcut.12` (tags read live; no `.13` exists).
 
+## Current-main recheck — 2026-11-14 17:50 UTC
+
+The audit snapshot below was prepared against `21d136c3972ad87033992968b987b3b0c6ebb5c7`. It is historical, not the current release state. The current `main` head is `dd109b8d056c0b33c1fcf78fb5021078d71f89c7` (merge of PR #131).
+
+Current corrections to the snapshot:
+
+- **RES-03:** PR #131 is merged and the startup gate is present on main. A second-order race remains: a proxy can be queued before a warm starts and dequeued during the warm. PR #132 adds a worker-start recheck and a regression test; it is open and not yet CI-verified.
+- **SCH-02:** PR #130 remains open at `e93ccf5f4e8db045aa6966ca7975b9da7753ced5`. Its format and real-fixture jobs passed; engine tests, Geneva render inspection and Nix are still running. The schema-check timeout was raised from five to fifteen minutes after the earlier run expired while compiling the checker.
+- **RISK-01/02:** PR #133 now carries the monetized OpenVid/BGM gates. Its current head is `55e3449d95d01495c25be136a04578257b6c18b1`; CI, Geneva and Nix are running. A fail-closed allow-list regression was added for unknown licence strings and unknown shelf IDs; it is not yet validated.
+- **VERIFY-16:** PR #134 adds the audio-stream probe. Its first CI attempt failed because the Director self-test ran in the no-FFmpeg format job, so the synthetic silent render could not be probed. The self-test has been moved to the FFmpeg-equipped real-fixture job; the new run is pending.
+- **P3-008:** PR #136 records archive.org as an environmental dependency of the FreePD shelf and remains open.
+- **Current-main CI:** formatting/locales/models and real-fixture analysis passed; engine tests are still running. Geneva passed both jobs. Build app passed both Linux x86_64 and ARM64 lanes, including clean-distribution smoke tests, and uploaded artifacts. Nix remains in progress. No current-main release tag has been cut.
+- **Review and protection:** the open PRs have no submitted approvals in the current review lists. The repository rulesets endpoint returned an empty list; the classic branch-protection endpoint returned HTTP 403 to the connected GitHub integration, so classic protection cannot be confirmed here.
+
+Do not use the historical rows below as evidence that the current `main` is still at the earlier SHA. The current release gate remains open until the exact-head checks finish and the hardware/real-project acceptance evidence is recorded.
+
 Method: grep of the working tree **and** the full ref history
 (`git log -S` across all refs, all branches), GitHub issue/PR search
 (bodies and comments), and the landed commits' own messages as the

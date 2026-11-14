@@ -1616,6 +1616,23 @@ def _flag_adjustments(flags, base_scores):
     return adjusted, reasons
 
 
+def _model_scores(parsed):
+    """The six axes from a model's parsed reply, or the refusal that stops
+    a hallucination wearing the schema's shape (FALL-03): a score that is
+    not a number, a tiny model repeating one value across every axis, or
+    all-zero/all-ten flattery. Each is degenerate - the critique falls
+    back to the next tier rather than blending invention with the
+    measurements."""
+    raw = {axis: parsed.get(axis) for axis in AXES}
+    if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in raw.values()):
+        raise ValueError("not every axis got a numeric score")
+    scores = {axis: _clamp(raw[axis]) for axis in AXES}
+    distinct = len(set(round(v, 1) for v in scores.values()))
+    if distinct < 3 or all(v == 0 for v in scores.values()) or all(v == 10 for v in scores.values()):
+        raise ValueError("degenerate scores (a tiny model repeating one value)")
+    return scores
+
+
 def critique(spec):
     brief = spec.get("brief") or {}
     sheet = spec.get("sheet") or {}
@@ -1634,6 +1651,12 @@ def critique(spec):
         "notes": sheet.get("notes", []),
     }
     base = heuristic(brief, sheet)
+    # FALL-01: the chain of critics this pass tried, in order, with how
+    # each ended - the reply's tier says who answered; this says who was
+    # asked and could not. The pixel measurements always underlie the
+    # answer, so the heuristic engine is the chain's first rung, not a
+    # failure.
+    tried = ["heuristic:measured"]
     png_b64 = spec.get("pngB64") or sheet.get("pngB64")
     if not png_b64:
         # An agent cannot hand image bytes back in a tool call; the sheet's
@@ -1652,11 +1675,11 @@ def critique(spec):
                 base["notes"].append(f"The sheet's image at {image_path} is gone; call watch_render again before critiquing.")
     if not png_b64:
         base["notes"].append("No contact sheet image was supplied; semantic review skipped.")
-        return {**base, "ok": True}
+        return {**base, "ok": True, "tried": list(tried)}
 
     if local_vlm is None:
         base["notes"].append("Local VLM helper unavailable; using measured-pixel critique.")
-        return {**base, "ok": True}
+        return {**base, "ok": True, "tried": list(tried)}
 
     ep = local_vlm.detect()
     if not ep and spec.get("autoSetup"):
@@ -1667,7 +1690,7 @@ def critique(spec):
             base["notes"].append(f"Auto VLM setup failed ({type(exc).__name__}: {exc}); using measured-pixel critique.")
     if not ep:
         base["notes"].append("No local vision model running. Run local_vlm setup once for semantic review; using measured-pixel critique.")
-        return {**base, "ok": True}
+        return {**base, "ok": True, "tried": list(tried)}
 
     # An explicitly configured endpoint is assumed capable; the bundled
     # 0.5B model is not. FUNCUT_VLM_STRONG=1 overrides for experimentation,
@@ -1688,19 +1711,15 @@ def critique(spec):
         try:
             text = local_vlm.ask(prompt, [png_b64], endpoint=ep, json_schema=SCORE_SCHEMA, max_tokens=500)
             parsed = _parse_model_json(text, "score")
-            raw = {axis: parsed.get(axis) for axis in AXES}
-            if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in raw.values()):
-                raise ValueError("not every axis got a numeric score")
-            scores = {axis: _clamp(raw[axis]) for axis in AXES}
-            distinct = len(set(round(v, 1) for v in scores.values()))
-            if distinct < 3 or all(v == 0 for v in scores.values()) or all(v == 10 for v in scores.values()):
-                raise ValueError("degenerate scores (a tiny model repeating one value)")
+            scores = _model_scores(parsed)
+            tried.append(f"vlm(strong):answered ({ep.get('model', 'local-vlm')})")
             blended = {a: round(0.7 * scores[a] + 0.3 * base["scores"][a], 1) for a in AXES}
             return {
                 "ok": True,
                 "engine": "local-vlm",
                 "tier": "vlm",
                 "model": ep.get("model", "local-vlm"),
+                "tried": list(tried),
                 "scores": blended,
                 "rawScores": {k: round(v, 1) for k, v in scores.items()},
                 "overall": round(sum(blended.values()) / len(blended), 1),
@@ -1712,6 +1731,7 @@ def critique(spec):
                 "measured": base["scores"],
             }
         except Exception as exc:
+            tried.append(f"vlm(strong):failed ({type(exc).__name__})")
             base["notes"].append(
                 f"Full VLM critique failed ({type(exc).__name__}: {exc}); "
                 "falling back to the bounded flag detector."
@@ -1723,6 +1743,7 @@ def critique(spec):
         flags = _parse_model_json(text, "flag")
         if not all(isinstance(flags.get(k), bool) for k in ("blackFrames", "bars", "readableText")):
             raise ValueError("flag response is missing boolean fields")
+        tried.append(f"vlm-flags:answered ({ep.get('model', 'local-vlm')})")
         adjusted, reasons = _flag_adjustments(flags, base["scores"])
         revisions = list(base["revisions"])
         if flags.get("blackFrames"):
@@ -1734,6 +1755,7 @@ def critique(spec):
             "engine": "local-vlm-flags",
             "tier": "vlm-flags",
             "model": ep.get("model", "local-vlm"),
+            "tried": list(tried),
             "scores": {k: round(v, 1) for k, v in adjusted.items()},
             "overall": round(sum(adjusted.values()) / len(adjusted), 1),
             "confidence": 0.58,
@@ -1754,8 +1776,9 @@ def critique(spec):
             "measured": base["scores"],
         }
     except Exception as exc:
+        tried.append(f"vlm-flags:failed ({type(exc).__name__})")
         base["notes"].append(f"Local VLM flag check failed ({type(exc).__name__}: {exc}); using measured-pixel critique.")
-        return {**base, "ok": True}
+        return {**base, "ok": True, "tried": list(tried)}
 
 
 RANK_PROMPT = """This contact sheet has {count} candidate video frames, numbered on each tile. Pick the best ones for a short video.
@@ -2475,6 +2498,27 @@ def main():
             assert entered["keyframes"][0]["x"] == 0.0, entered["keyframes"]
             assert entered["keyframes"][-1]["x"] > 0.2, entered["keyframes"]
             out["trackTest"] = "ok"
+            # FALL-03: a hallucination wearing the schema's shape is
+            # refused, not blended - non-numeric axes, one value repeated
+            # across every axis, and all-zero/all-ten flattery each raise,
+            # while a real spread passes.
+            for degenerate in (
+                {"hook": "8", "story": 7, "rhythm": 6, "shotChoice": 5, "design": 6, "sound": 7},
+                {"hook": 7, "story": 7, "rhythm": 7, "shotChoice": 7, "design": 7, "sound": 7},
+                {"hook": 0, "story": 0, "rhythm": 0, "shotChoice": 0, "design": 0, "sound": 0},
+                {"hook": 10, "story": 10, "rhythm": 10, "shotChoice": 10, "design": 10, "sound": 10},
+            ):
+                try:
+                    _model_scores(degenerate)
+                except ValueError:
+                    pass
+                else:
+                    raise AssertionError(f"degenerate scores accepted: {degenerate}")
+            honest = _model_scores(
+                {"hook": 8, "story": 6, "rhythm": 7, "shotChoice": 5, "design": 6, "sound": 9}
+            )
+            assert honest["hook"] == 8 and honest["sound"] == 9, honest
+            out["degenerateScores"] = "ok"
             # The emotion proxy is the seam between the MCP tool and the
             # reader: prove the wiring here too, not just in emotion.py's
             # own selftest (both run in CI, but only this one proves the

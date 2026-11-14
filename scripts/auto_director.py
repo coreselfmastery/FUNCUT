@@ -170,6 +170,16 @@ _RETRYABLE_MARKERS = (
     "temporarily", "broken pipe", "502", "504", "try again",
 )
 
+# FALL-07/08/09, the defaults this runner stands on and the knobs that
+# turn them. The transcriber is base.en (the fast English one) unless the
+# plan names audio.voiceover.whisperModel or the operator pins
+# FUNCUT_WHISPER_MODEL - a multilingual take on the default is exactly the
+# wrong-language transcript the reply's languageMismatch flag names. The
+# voice model is the server's kokoro-int8 default unless the plan names
+# audio.voiceover.model (the int8 quantisation hiss is why the repair
+# chain runs and is recorded, DEG-10). The bed is shopped with the plan's
+# own query, falling back to its mood when the query is absent.
+
 
 class PipelineError(RuntimeError):
     """A phase failed: the run stops here, later phases never start."""
@@ -1592,6 +1602,19 @@ def run_pipeline(
 
     # ---- 3-5. The readings, on the repaired take.
     transcribe_args: dict[str, Any] = {"path": audio}
+    # FALL-07: the recogniser is a knob, not a constant - the plan names a
+    # model, the operator pins one, and only when neither speaks does the
+    # server's base.en default answer (fast, English-only; the wrong
+    # choice for any other language, which DEG-09's flag will name).
+    whisper_model = None
+    if isinstance(voiceover_plan, dict):
+        named_model = voiceover_plan.get("whisperModel")
+        if isinstance(named_model, str) and named_model.strip():
+            whisper_model = named_model.strip()
+    whisper_model = whisper_model or os.environ.get("FUNCUT_WHISPER_MODEL") or None
+    if whisper_model:
+        transcribe_args["model"] = whisper_model
+        log(f"transcriber: {whisper_model} (named; base.en is the server's default)")
     glossary = ((plan.get("audio") or {}).get("voiceover") or {}).get("glossary")
     if isinstance(glossary, str) and glossary.strip():
         # The spelling the whole run keeps: the proper nouns and jargon
@@ -1661,6 +1684,17 @@ def run_pipeline(
     )
     if isinstance(emotion, dict) and emotion.get("arc") is not None:
         log(f"voice emotion arc: {json.dumps(emotion['arc'], ensure_ascii=False)}")
+        # FALL-06: the emotion read on the English-only stem lexicon is a
+        # recorded fallback - the hosted multilingual model is absent, and
+        # an arc over another language's words reads as neutral line after
+        # line. The reply's own note carries the remedy (a free key).
+        if emotion.get("engine") == "lexicon":
+            record_fallback(
+                "emotion", "arc", "emotion.model",
+                "the emotion read ran on the English-only stem lexicon (the "
+                "hosted multilingual model is absent; FUNCUT_EMOTION_API_KEY "
+                "is the free key that unlocks it)",
+            )
 
     # ---- 6. The footage planner's own read: the gaps and monotony runs
     # the plan's B-roll should answer, cross-checked against its coverage
@@ -1776,9 +1810,11 @@ def run_pipeline(
 
     # ---- 7. The BGM gate, before any bed is shopped: a take that already
     # carries music gets no bed stacked under it. detect_music_segments is
-    # the authoritative answer; where it cannot speak, the gate stays open
-    # and says so - as a recorded fallback, never as a quiet negative
-    # (DEG-05).
+    # the segment map; identify_music is the authority (FALL-10) - where
+    # both readings exist, the identifier's own pulse measurement settles
+    # the disagreement, and BOTH readings are recorded. Where an ear cannot
+    # speak, the gate says so as a recorded fallback, never as a quiet
+    # negative (DEG-05).
     bgm_allowed = True
     if "detect_music_segments" not in served:
         record_fallback(
@@ -1789,29 +1825,7 @@ def run_pipeline(
     else:
         music = advance("detect_music_segments", {"audio": audio})
         present = music.get("musicPresent") if isinstance(music, dict) else None
-        if present is True:
-            bgm_allowed = False
-            log("music gate: the take already carries music - no bed will be stacked")
-            # DEG-05: an identification that fails is not a "no music"
-            # reading - it is a missing identification, recorded as one,
-            # and the run continues with the gate's own answer standing.
-            if "identify_music" in served:
-                try:
-                    identified = advance("identify_music", {"audio": audio})
-                except PipelineError as error:
-                    record_fallback(
-                        "music-gate", "identify", "identify_music",
-                        f"identify_music failed: {error} - the take still "
-                        "carries music (the gate's own reading); this is a "
-                        "missing identification, not a negative one",
-                    )
-                else:
-                    if isinstance(identified, dict):
-                        log(
-                            "identify_music: "
-                            + json.dumps(identified, ensure_ascii=False)[:300]
-                        )
-        elif present is None:
+        if present is None:
             # The tool answered without a verdict: a degradation with the
             # reply's own words, not a silent "must be speech".
             record_fallback(
@@ -1822,6 +1836,57 @@ def run_pipeline(
                 + "; the take is treated as speech on that absence of "
                 "evidence, and the bed decision stands unmeasured",
             )
+        identified: Any = None
+        identified_present: bool | None = None
+        if "identify_music" in served:
+            # DEG-05 + FALL-10: the identification runs whenever it can,
+            # not only when the gate already said music - its pulse
+            # measurement is the authority the gate's verdict is settled
+            # by, and a failure is a recorded absence, never a "no music"
+            # reading and never a dead run.
+            try:
+                identified = advance("identify_music", {"audio": audio})
+            except PipelineError as error:
+                record_fallback(
+                    "music-gate", "identify", "identify_music",
+                    f"identify_music failed: {error} - this is a missing "
+                    "identification, not a negative one; the gate's own "
+                    "reading stands alone",
+                )
+            else:
+                if isinstance(identified, dict) and identified.get("ok") is not False:
+                    log(
+                        "identify_music: "
+                        + json.dumps(identified, ensure_ascii=False)[:300]
+                    )
+                    strength = (identified.get("tempo") or {}).get("strength")
+                    if isinstance(strength, (int, float)) and not isinstance(strength, bool):
+                        # The same pulse line detect_music_segments itself
+                        # uses: music holds a beat the autocorrelation can
+                        # find (>= 0.1); dense speech does not.
+                        identified_present = float(strength) >= 0.1
+        if identified_present is not None:
+            # FALL-10: both readings recorded; the identifier decides.
+            _signal(0.0, "bgm", provenance="measured",
+                    detectMusic=present is True, identifyMusic=identified_present,
+                    note="both music readings recorded; identify_music is authoritative")
+            if identified_present != (present is True):
+                bgm_allowed = not identified_present
+                record_fallback(
+                    "music-gate", "bgm", "identify_music",
+                    "the readings disagree - detect_music_segments said "
+                    f"{'music' if present is True else 'no music'}, "
+                    "identify_music's pulse said "
+                    f"{'music' if identified_present else 'no music'} - "
+                    "identify_music is authoritative",
+                )
+                log("music gate: the readings disagree; identify_music's pulse decides")
+            elif present is True:
+                bgm_allowed = False
+                log("music gate: the take already carries music - no bed will be stacked")
+        elif present is True:
+            bgm_allowed = False
+            log("music gate: the take already carries music - no bed will be stacked")
 
     # ---- 8. Gate all plan and voice-signal readiness before changing the
     # timeline - and prove the log's citations against the measurement.
@@ -2833,7 +2898,9 @@ def run_pipeline(
     # named, and only when the library is actually present - a missing
     # library is a logged absence, never a silent one.
     bgm_plan = (plan.get("audio") or {}).get("bgm")
-    if isinstance(bgm_plan, dict) and str(bgm_plan.get("query") or bgm_plan.get("trackId") or "").strip():
+    if isinstance(bgm_plan, dict) and str(
+        bgm_plan.get("query") or bgm_plan.get("trackId") or bgm_plan.get("mood") or ""
+    ).strip():
         if not bgm_allowed:
             log("BGM skipped: the take already carries music (detect_music_segments said so)")
             _audit("audio.bgm", "rejected",
@@ -2887,7 +2954,13 @@ def run_pipeline(
             if state == "ready":
                 track_id = bgm_plan.get("trackId")
                 if not isinstance(track_id, str) or not track_id.strip():
-                    search = advance("bgm_search", {"query": str(bgm_plan.get("query") or ""), "limit": 5})
+                    # FALL-09: the bed is shopped with the plan's own
+                    # query, and a plan that named only a mood shops with
+                    # that - said, not silently defaulted.
+                    bed_query = str(bgm_plan.get("query") or bgm_plan.get("mood") or "")
+                    if not bgm_plan.get("query") and bgm_plan.get("mood"):
+                        log(f"BGM: shopping by mood ({bgm_plan.get('mood')}) - the plan named no query")
+                    search = advance("bgm_search", {"query": bed_query, "limit": 5})
                     tracks = search.get("tracks", []) if isinstance(search, dict) else []
                     if not tracks:
                         log(f"BGM skipped: no track answered {bgm_plan.get('query')!r}")
@@ -4177,7 +4250,8 @@ def self_test() -> int:
         "concat_version", "local_vlm",
         "enhance_speech", "remove_hiss_hum_rumble",
         "transcribe", "analysis_wait", "voice_signals", "emotion",
-        "footage_plan_suggest", "detect_music_segments", "plan_validate",
+        "footage_plan_suggest", "detect_music_segments", "identify_music",
+        "plan_validate",
         "project_get", "media_import", "track_add", "clip_add", "clip_speed",
         "openvid_rank_for_slot", "stock_contact_sheet", "footage_continuity",
         "openvid_import", "clip_trim",
@@ -5039,6 +5113,72 @@ def self_test() -> int:
         print(f"FAIL: an int8 take's denoise chain was not recorded: {entries}")
         return 1
     print("DEG-10 ok: the int8 hiss cure is recorded with provenance=fallback")
+
+    # FALL-06: the emotion read on the English-only lexicon is recorded.
+    fall06_world = selftest_world()
+    fall06_world["emotion"] = lambda args: (
+        {"verdict": "pass", "matchRate": 1.0, "maxDriftMs": 0.0}
+        if args.get("action") == "verify"
+        else {"engine": "lexicon",
+              "lines": [{"text": "one", "emotion": "curious"}],
+              "arc": ["curiosity", "clarity"]}
+    )
+    fall06 = deg_project("fall-06")
+    run_pipeline(MockMcp(fall06_world), fall06, audio, SELF_TEST_PLAN)
+    entries = recorded_fallbacks(fall06)
+    if not has_entry(entries, stage="emotion", decision="arc", signalName="emotion.model"):
+        print(f"FAIL: the lexicon emotion read was not recorded: {entries}")
+        return 1
+    print("FALL-06 ok: the English-lexicon emotion read is a recorded fallback")
+
+    # FALL-07: a plan that names a whisper model hands it to the server.
+    fall07_plan = copy.deepcopy(SELF_TEST_PLAN)
+    fall07_plan.setdefault("audio", {}).setdefault("voiceover", {})[
+        "whisperModel"
+    ] = "small"
+    fall07 = deg_project("fall-07")
+    fall07_calls = run_pipeline(MockMcp(selftest_world()), fall07, audio, fall07_plan)
+    asked = next(args for tool, args in fall07_calls if tool == "transcribe")
+    if asked.get("model") != "small":
+        print(f"FAIL: the plan's whisperModel did not reach the transcriber: {asked}")
+        return 1
+    print("FALL-07 ok: the plan's whisper model is the transcriber's ask")
+
+    # FALL-09: a plan that names only a mood shops its bed with the mood.
+    fall09_plan = copy.deepcopy(SELF_TEST_PLAN)
+    fall09_plan["audio"]["bgm"] = {"mood": "warm lofi", "duckDb": -12.0}
+    fall09 = deg_project("fall-09")
+    fall09_calls = run_pipeline(MockMcp(selftest_world()), fall09, audio, fall09_plan)
+    shopped = next(args for tool, args in fall09_calls if tool == "bgm_search")
+    if shopped.get("query") != "warm lofi":
+        print(f"FAIL: the mood did not stand in for the query: {shopped}")
+        return 1
+    print("FALL-09 ok: a mood-only bed is shopped with the mood, said aloud")
+
+    # FALL-10: where the two music readings disagree, identify_music decides
+    # and both readings are recorded.
+    fall10_world = selftest_world()
+    fall10_world["detect_music_segments"] = {"musicPresent": False, "segments": []}
+    fall10_world["identify_music"] = {"ok": True, "tempo": {"bpm": 124.0, "strength": 0.42}}
+    fall10 = deg_project("fall-10")
+    fall10_calls = run_pipeline(MockMcp(fall10_world), fall10, audio, SELF_TEST_PLAN)
+    if any(tool == "bgm_import" for tool, _ in fall10_calls):
+        print("FAIL: a bed was stacked although identify_music heard the pulse")
+        return 1
+    entries = recorded_fallbacks(fall10)
+    if not has_entry(entries, stage="music-gate", decision="bgm", signalName="identify_music"):
+        print(f"FAIL: the music disagreement was not recorded: {entries}")
+        return 1
+    with open(os.path.join(fall10, ".auto-director-runs.jsonl"), encoding="utf-8") as handle:
+        record = json.loads([line for line in handle if line.strip()][-1])
+    both = [
+        entry for entry in record.get("signalLog", [])
+        if entry.get("decision") == "bgm" and entry.get("provenance") == "measured"
+    ]
+    if not both or both[0].get("detectMusic") is not False or both[0].get("identifyMusic") is not True:
+        print(f"FAIL: both music readings were not recorded as measured: {both}")
+        return 1
+    print("FALL-10 ok: the identifier decides the disagreement, both readings recorded")
 
     print("SELF-TEST PASS")
     return 0

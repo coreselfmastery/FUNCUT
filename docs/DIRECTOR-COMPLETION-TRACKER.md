@@ -1,6 +1,69 @@
-# DIRECTOR-COMPLETION-TRACKER
+## Session 5 — 2026-11-14 (current status)
 
-## Session 4 — 2026-11-14 (current status)
+Verified against the live API at session close:
+
+- `main` = `34a2a87bc0e624f6d2ed402b22da70e5cc543168` (merge of PR #122),
+  built on `621420fb` (PR #118) and `c8eeac78` (PR #120), which built on
+  `1cbaac2b` (PR #117) and `2eb5ff54` (PR #119).
+- Landed this session, by merge SHA:
+  - PR #118 → `621420fb` — the AUTO EDIT button (P4-001/002): the runner
+    wired to the window, progress/cancel/rollback, the terminal states.
+    User-facing completion jumps from ~5% to ~60%.
+  - PR #119 → `2eb5ff54` — verification expansion (VERIFY-01..05, 08..14):
+    twelve structured checks + verification-report.json.
+  - PR #120 → `c8eeac78` — the P1 leftovers (P1-004/005/009/010): per-slot
+    planner evidence in the run signalLog, the nineteen-field plan audit,
+    the driftless RationalTime second, kinetic captions.
+  - PR #122 → `34a2a87b` — the tracker synced to the Session 4 state.
+  - PR #121 closed as the older duplicate of #122, with a comment.
+- In flight at close (heads verified, all based on current main lineage):
+  - PR #124 (`fix/silent-degradation`, head `65804780`) — DEG-01,
+    DEG-03..10: every degradation named in the run's own signalLog with
+    `provenance: fallback`; entitiesAvailable on voice_signals; ranking
+    tiers on every rerank reply; the critic tier/confidence line
+    (CRAFT_TIER_CONFIDENCE); identify_music failure ≠ "no music";
+    bgm_prepare retry + bounded poll; the MP4 head check on fetched clips
+    (openvid_fetch/import); the transcribe languageMismatch flag; the
+    int8 hiss cure recorded; SpeakResult names model + cpuFallback.
+    First CI run was red (4 rustfmt diffs + two tool descriptions over
+    the 200-character catalogue ceiling); fixed on-branch at `65804780`.
+  - PR #125 (`fix/provider-fallbacks`, head `7103e2cd`) — FALL-01..03,
+    06..10: the critic `tried` chain in every craft_critique reply;
+    per-provider JSON adapters (groq/gemini/zai/openrouter → json_object,
+    ollama → format, local/custom → grammar hybrid); the degenerate-score
+    refusal extracted and self-tested; the lexicon emotion read recorded;
+    whisperModel/mood/voice documented in the plan schema and consumed;
+    identify_music authoritative over detect_music_segments, both
+    readings recorded. Stacked on #124.
+  - PR #126 (`fix/data-resource-schema`) — DATA-01/04, RES-02 (verified
+    safe: no sqlite3_interrupt call exists), SRC-08/09/11/12 (verified
+    already enforced: numeric-string exclude_ids, validate-before-get,
+    computed maxDriftMs, the clip id type guard), SRC-10 (exact clip
+    matching, the abs-min fallback removed), FAIL-02 (an unreadable
+    render is re-exported once before the critique gives up), FAIL-03
+    (VERIFY-15 ai-voice-disclosure in the Verify record, a disclosure
+    reading that never proves), RUN_RECORD_SCHEMA on the run record.
+    The plan schema's audio object is documented (voiceover:
+    source/speed/glossary/model/voice/whisperModel; bgm:
+    query/mood/trackId/duckDb).
+- Deliberately deferred, with the next exact tasks:
+  - SCH-02 — edit_plan.schema.json is still hand-maintained (the plan
+    schema is written as `json!` in `src/crates/concat-mcp/src/tools.rs`
+    around the `plan_validate` schema function, not generated from Rust
+    types). Next task: scaffold a generator (or schemars-style pass) over
+    the plan's Rust-side validation surface, plus a CI drift test that
+    refuses a hand edit the types do not back.
+  - RES-03 — startup I/O serialization: `Api::with_dirs` spawns nothing
+    (verified); the openvid index warms lazily on first use and proxy
+    generation happens on import. The interleaving to serialize lives in
+    the server/app layer, not the API constructor. Next task: map the
+    proxy.rs callers against the index warm path and order them.
+- Untouched this session, still owed: IDEM-01..10 (runner idempotency),
+  CONTRA-01..07 (docs contradiction cleanup), the real brief-to-export
+  acceptance run, target-machine proxy/VAAPI acceptance.
+
+
+## Session 4 — 2026-11-14 (superseded by the Session 5 header above)
 
 Session 4 of the completion work, run against the live API under the session
 brief's rules (Rule 0 token check passed; no force-push; one task = one
@@ -74,10 +137,6 @@ Next exact task:
    `identify_music` failure to stop meaning "no music". Every
    degradation writes provenance=fallback in the signalLog.
 5. Steps 5-7 and 9 as ordered in the Session 3 list, unchanged.
-
-## Session 3 record (2026-11-14) — superseded by Session 4 above, preserved verbatim below
-
-## Session 3 — 2026-11-14 (status at that writing)
 
 Fresh repository state for this reconciliation, verified against the API and
 a fresh clone:

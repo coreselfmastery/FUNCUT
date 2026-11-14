@@ -353,6 +353,7 @@ pub fn semantic_rerank(arguments: &Value, mut found: Value, backend: &mut dyn Ba
                 "rerank".into(),
                 json!({
                     "applied": false,
+                    "ranking": "keyword-tier",
                     "reason": "the vision rerank model is not installed - openvid_status names \
                                where its two files go; the BM25 order stands, and \
                                stock_contact_sheet is the way to look at the page",
@@ -434,7 +435,11 @@ pub fn semantic_rerank(arguments: &Value, mut found: Value, backend: &mut dyn Ba
         if let Some(slot) = found.as_object_mut() {
             slot.insert(
                 "rerank".into(),
-                json!({ "applied": false, "reason": "no candidate frames were reachable" }),
+                json!({
+                    "applied": false,
+                    "ranking": "keyword-tier",
+                    "reason": "no candidate frames were reachable",
+                }),
             );
         }
         return found;
@@ -446,7 +451,11 @@ pub fn semantic_rerank(arguments: &Value, mut found: Value, backend: &mut dyn Ba
             if let Some(slot) = found.as_object_mut() {
                 slot.insert(
                     "rerank".into(),
-                    json!({ "applied": false, "reason": error.to_string() }),
+                    json!({
+                        "applied": false,
+                        "ranking": "keyword-tier",
+                        "reason": error.to_string(),
+                    }),
                 );
             }
             return found;
@@ -498,6 +507,7 @@ pub fn semantic_rerank(arguments: &Value, mut found: Value, backend: &mut dyn Ba
                     "rerank".into(),
                     json!({
                         "applied": true,
+                        "ranking": "vision-tier",
                         "engine": "mobileclip2-s0",
                         "scored": scored,
                         "fetched": fetched,
@@ -510,7 +520,11 @@ pub fn semantic_rerank(arguments: &Value, mut found: Value, backend: &mut dyn Ba
             if let Some(slot) = found.as_object_mut() {
                 slot.insert(
                     "rerank".into(),
-                    json!({ "applied": false, "reason": error.to_string() }),
+                    json!({
+                        "applied": false,
+                        "ranking": "keyword-tier",
+                        "reason": error.to_string(),
+                    }),
                 );
             }
         }
@@ -2397,6 +2411,10 @@ mod tests {
             "no candidate video is fetched when the model is missing"
         );
         assert_eq!(ranked["rerank"]["applied"], false);
+        assert_eq!(
+            ranked["rerank"]["ranking"], "keyword-tier",
+            "a rerank that did not run names the tier the page stands on: {ranked}"
+        );
         assert!(
             ranked["rerank"]["reason"]
                 .as_str()

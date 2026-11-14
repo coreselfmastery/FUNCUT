@@ -108,6 +108,7 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
+import itertools
 import json
 import os
 import re
@@ -142,7 +143,7 @@ ENRICHMENT_TOOLS = frozenset({
     "concat_version", "local_vlm", "footage_plan_suggest",
     "stock_contact_sheet", "detect_music_segments", "identify_music",
     "enhance_speech", "remove_hiss_hum_rumble", "sounds_search",
-    "sounds_add", "bgm_status", "bgm_search", "bgm_import",
+    "sounds_add", "bgm_status", "bgm_search", "bgm_import", "bgm_prepare",
     "clip_speed", "clip_update", "keyframe_set", "captions_add",
     "clip_audio_levels_db", "collision_check", "timeline_read",
     "normalize_loudness", "effect_layer_add",
@@ -169,6 +170,16 @@ _RETRYABLE_MARKERS = (
     "timeout", "timed out", "unreachable", "connection", "reset",
     "temporarily", "broken pipe", "502", "504", "try again",
 )
+
+# FALL-07/08/09, the defaults this runner stands on and the knobs that
+# turn them. The transcriber is base.en (the fast English one) unless the
+# plan names audio.voiceover.whisperModel or the operator pins
+# FUNCUT_WHISPER_MODEL - a multilingual take on the default is exactly the
+# wrong-language transcript the reply's languageMismatch flag names. The
+# voice model is the server's kokoro-int8 default unless the plan names
+# audio.voiceover.model (the int8 quantisation hiss is why the repair
+# chain runs and is recorded, DEG-10). The bed is shopped with the plan's
+# own query, falling back to its mood when the query is absent.
 
 
 class PipelineError(RuntimeError):
@@ -483,15 +494,18 @@ def _clip_for_media(view: Any, media_id: str, start: float) -> dict[str, Any] | 
     ]
     if not candidates:
         return None
+    # SRC-10: exact placement, not the nearest - a clip found by proximity
+    # is a guess about which import landed where, and a wrong guess
+    # places somebody else's media on the beat. Only a clip whose start
+    # IS the ask (to the millisecond) answers; none answering is the
+    # caller's to handle, loudly.
     exact = [
         item for item in candidates
         if abs(float(item["start"]) - start) <= 0.001
     ]
-    pool = exact or candidates
-    return min(
-        pool,
-        key=lambda item: (abs(float(item["start"]) - start), str(item.get("id", ""))),
-    )
+    if not exact:
+        return None
+    return min(exact, key=lambda item: str(item.get("id", "")))
 
 
 def _direction(camera: Any) -> str:
@@ -785,6 +799,9 @@ def phase_plan(plan: dict[str, Any]) -> list[tuple[str, str]]:
 
 #: The report's own name for its shape, the way auto-edit-report names its.
 VERIFICATION_REPORT_SCHEMA = "funcut.verification-report/1"
+#: The run record's own name for its shape (DATA-04): the handoff a later
+#: session or a resume reads knows which record it is holding.
+RUN_RECORD_SCHEMA = "funcut.auto-director-run/1"
 #: How many frames the black-frame and visual-quality scans sample.
 VERIFICATION_SAMPLES = 10
 #: A sampled frame whose pixels move less than this (variance, 0-255
@@ -1424,6 +1441,104 @@ def _verification_failed(entries: list[dict[str, Any]]) -> None:
     raise PipelineError(f"the export failed verification: {sentences}")
 
 
+# ------------------------------------------------------------- run identity
+#
+# The idempotency contract (IDEM): a run is resumable and non-duplicating.
+# Its durable half is <project>/.auto-director-state.json - the stages a
+# run completed, with the evidence each one's reuse must re-verify - and
+# its per-run product lives under <project>/runs/<run-id>/ (the export
+# and report.json, never over a prior run's). A stage is skipped only on
+# its own evidence: the prior record exists, its input hashes still
+# match, and what it claims to have placed is still on the timeline.
+
+RUN_STATE_SCHEMA = "funcut.auto-director-state/1"
+RUN_STATE_NAME = ".auto-director-state.json"
+RUNS_DIR_NAME = "runs"
+
+
+_RUN_SEQUENCE = itertools.count(1)
+
+
+def _new_run_id() -> str:
+    """A run's own name, one per run: the second it began and its number
+    within that second - two runs in one second never share a
+    directory."""
+    return f"{time.strftime('%Y%m%dT%H%M%SZ')}-{next(_RUN_SEQUENCE):03d}"
+
+
+def _file_sha256(path: str) -> str | None:
+    """A file's own digest, or None when it cannot be read."""
+    try:
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            for block in iter(lambda: handle.read(1 << 16), b""):
+                digest.update(block)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+def _json_sha256(value: Any) -> str:
+    """A JSON value's digest over its canonical form."""
+    canonical = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _run_state_path(project: str) -> str:
+    return os.path.join(project, RUN_STATE_NAME)
+
+
+def _load_run_state(project: str) -> dict[str, Any]:
+    """The last run's stage record, or an empty record. A state that
+    cannot be parsed is a fresh start, never a crash (IDEM)."""
+    try:
+        with open(_run_state_path(project), encoding="utf-8") as handle:
+            state = json.load(handle)
+        return state if isinstance(state, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_run_state(project: str, state: dict[str, Any]) -> None:
+    """The stage record, written whole each time a stage completes: a
+    failed run leaves exactly the stages it finished, which is what the
+    next run resumes from."""
+    try:
+        os.makedirs(project, exist_ok=True)
+        path = _run_state_path(project)
+        temporary = path + ".tmp"
+        with open(temporary, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(state, ensure_ascii=False, indent=2) + "\n")
+        os.replace(temporary, path)
+    except OSError as error:
+        log(f"run state not written ({error}); the run continues, resume will not")
+
+
+def _run_report_dir(project: str, run_id: str) -> str:
+    return os.path.join(project, RUNS_DIR_NAME, run_id)
+
+
+def _stage_failure_note(project: str) -> dict[str, Any]:
+    """What a failure record can say about resume: the run id and the
+    stages the state file says completed before the stop."""
+    state = _load_run_state(project)
+    stages = state.get("stages") if isinstance(state.get("stages"), dict) else {}
+    return {
+        "runId": state.get("runId"),
+        "stagesDone": sorted(stages) if stages else [],
+    }
+
+
+def _scenario_state_clear(project: str) -> None:
+    """Stand the run state down for the self-test's scenarios: each is
+    its own world, not a resume of the one before it. The resume itself
+    is tested where a resume is the point (IDEM)."""
+    try:
+        os.remove(os.path.join(project, RUN_STATE_NAME))
+    except OSError:
+        pass
+
+
 def run_pipeline(
     transport: Any,
     project: str,
@@ -1467,6 +1582,73 @@ def run_pipeline(
         record.update(entry)
         run_signals.append(record)
 
+    def record_fallback(
+        stage: str, decision: str, signal_name: str, note: str,
+        confidence: float | None = None,
+    ) -> None:
+        """One degradation in the same run signalLog the planner evidence
+        rides (DEG): which stage fell back, which signal it fell back
+        from, when both halves happened, and provenance=fallback - the
+        shape the plan's signalLog entries will be held to. The console
+        hears it as it happens; the run record carries it with the rest."""
+        run_signals.append({
+            "decision": decision,
+            "stage": stage,
+            "signalName": signal_name,
+            "signalTs": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "decisionTs": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "confidence": confidence,
+            "provenance": "fallback",
+            "note": note,
+        })
+        log(f"degraded: {stage}/{decision} <- {signal_name}: {note}")
+
+    # ---- The run's own identity and resume record (IDEM). The run id
+    # names the run-scoped directory its export and report land under;
+    # the state is the durable half of idempotency - what a prior run
+    # completed, reused only when its own evidence still stands. A
+    # different take or a different plan is a different edit: the stage
+    # record starts over rather than resuming half of the wrong run.
+    run_id = _new_run_id()
+    source_audio_sha = _file_sha256(audio) or ""
+    plan_sha = _json_sha256(plan)
+    _prior_state = _load_run_state(project)
+    _prior_stages: dict[str, Any] = {}
+    if (
+        isinstance(_prior_state, dict)
+        and _prior_state.get("audioSha256") == source_audio_sha
+        and _prior_state.get("planSha256") == plan_sha
+    ):
+        stages_read = _prior_state.get("stages")
+        if isinstance(stages_read, dict):
+            _prior_stages = stages_read
+    state_stages: dict[str, Any] = {}
+    skipped_stages: list[str] = []
+
+    def _state_write() -> None:
+        _write_run_state(project, {
+            "schemaVersion": RUN_STATE_SCHEMA,
+            "runId": run_id,
+            "audioSha256": source_audio_sha,
+            "planSha256": plan_sha,
+            "stages": state_stages,
+        })
+
+    def _stage_mark(stage: str, **record: Any) -> None:
+        """A stage completed: its evidence recorded, the state written
+        before the run goes on - a crash one stage later still resumes
+        from here."""
+        state_stages[stage] = record
+        _state_write()
+
+    def _stage_prior(stage: str) -> dict[str, Any] | None:
+        record = _prior_stages.get(stage)
+        return record if isinstance(record, dict) else None
+
+    def _stage_skip(stage: str, why: str) -> None:
+        skipped_stages.append(stage)
+        log(f"skip {stage}: {why} (reused from a prior run)")
+
     # ---- 0. The handshake: the server says what it is and what it serves.
     served = transport.available_tools()
     missing = REQUIRED_TOOLS - served
@@ -1489,77 +1671,262 @@ def run_pipeline(
 
     # ---- 2. The take is repaired before anything reads it: every later
     # reading, and the timeline's own voiceover, run on the repaired file.
+    # The original path is remembered: a take the project's own audio/
+    # folder produced is a synthesized one, and the default voice model
+    # is the int8 Kokoro (DEG-10).
+    source_audio = audio
     repaired = audio
-    if "enhance_speech" in served:
-        enhanced_out = os.path.join(project, "voiceover-enhanced.wav")
-        reply = advance("enhance_speech", {
-            "audio": audio, "out": enhanced_out, "overwrite": True,
-        })
-        enhanced_file = _reply_file(reply)
-        if enhanced_file:
-            repaired = enhanced_file
-            if isinstance(reply, dict):
-                measured = {
-                    key: reply[key] for key in
-                    ("noiseFloorDbfs", "snrDb", "integratedLufs", "before", "after")
-                    if reply.get(key) is not None
-                }
-                if measured:
-                    log(f"enhance_speech: {json.dumps(measured, ensure_ascii=False)}")
-        else:
-            log("enhance_speech returned no file; analysis continues on the take as recorded")
-    if "remove_hiss_hum_rumble" in served and repaired:
-        cleaned_out = os.path.join(project, "voiceover-cleaned.wav")
-        reply = advance("remove_hiss_hum_rumble", {
-            "audio": repaired, "out": cleaned_out, "overwrite": True,
-        })
-        cleaned_file = _reply_file(reply)
-        if cleaned_file:
-            repaired = cleaned_file
-        else:
-            log("remove_hiss_hum_rumble returned no file; the enhanced take ships as cleaned")
+    hiss_cleaned = False
+    # IDEM: a repair this same take already received is reused when the
+    # repaired file still stands on disk - the repair is a function of
+    # the take, and the same take needs the same repair, not a second
+    # one layered over the first.
+    _repair_prior = _stage_prior("audio-repair")
+    if (
+        isinstance(_repair_prior, dict)
+        and _repair_prior.get("sourceSha256") == source_audio_sha
+        and isinstance(_repair_prior.get("file"), str)
+        and os.path.isfile(_repair_prior["file"])
+    ):
+        repaired = _repair_prior["file"]
+        hiss_cleaned = bool(_repair_prior.get("hissCleaned"))
+        _stage_mark(
+            "audio-repair", sourceSha256=source_audio_sha,
+            file=repaired, hissCleaned=hiss_cleaned,
+        )
+        _stage_skip(
+            "audio-repair",
+            f"the repaired take {_repair_prior['file']} is still on disk",
+        )
+    else:
+        if "enhance_speech" in served:
+            enhanced_out = os.path.join(project, "voiceover-enhanced.wav")
+            reply = advance("enhance_speech", {
+                "audio": audio, "out": enhanced_out, "overwrite": True,
+            })
+            enhanced_file = _reply_file(reply)
+            if enhanced_file:
+                repaired = enhanced_file
+                if isinstance(reply, dict):
+                    measured = {
+                        key: reply[key] for key in
+                        ("noiseFloorDbfs", "snrDb", "integratedLufs", "before", "after")
+                        if reply.get(key) is not None
+                    }
+                    if measured:
+                        log(f"enhance_speech: {json.dumps(measured, ensure_ascii=False)}")
+            else:
+                log("enhance_speech returned no file; analysis continues on the take as recorded")
+        if "remove_hiss_hum_rumble" in served and repaired:
+            cleaned_out = os.path.join(project, "voiceover-cleaned.wav")
+            reply = advance("remove_hiss_hum_rumble", {
+                "audio": repaired, "out": cleaned_out, "overwrite": True,
+            })
+            cleaned_file = _reply_file(reply)
+            if cleaned_file:
+                repaired = cleaned_file
+                hiss_cleaned = True
+            else:
+                log("remove_hiss_hum_rumble returned no file; the enhanced take ships as cleaned")
+        _stage_mark(
+            "audio-repair", sourceSha256=source_audio_sha,
+            file=repaired, hissCleaned=hiss_cleaned,
+        )
     if repaired != audio:
         log(f"voiceover repaired: {repaired} (the bin's original stays untouched)")
     audio = repaired
 
+    # DEG-10: the int8 Kokoro is the server's default voice, and its
+    # quantisation adds a hiss that sits above the noise floor #111's
+    # window fix stopped the classifier flagging - the cure is still owed,
+    # and its use must be recorded, not implied. A take the project's own
+    # audio/ folder produced is synthesized; a plan that names a model says
+    # which; a plan that names none got the int8 default.
+    voiceover_plan = (plan.get("audio") or {}).get("voiceover") or {}
+    voiceover_model = ""
+    if isinstance(voiceover_plan, dict):
+        named = voiceover_plan.get("model")
+        if isinstance(named, str) and named.strip():
+            voiceover_model = named.strip()
+    synthesized = os.path.normpath(source_audio).startswith(
+        os.path.join(os.path.normpath(project), "audio") + os.sep
+    )
+    int8_take = "int8" in voiceover_model.lower() or (
+        not voiceover_model and synthesized
+    )
+    if int8_take:
+        if hiss_cleaned:
+            record_fallback(
+                "voiceover-repair", "denoise", "remove_hiss_hum_rumble",
+                "Kokoro int8 take"
+                + (f" ({voiceover_model})" if voiceover_model else " (the server's default model)")
+                + ": quantisation hiss expected above the floor; "
+                "remove_hiss_hum_rumble ran on the take",
+            )
+        elif "remove_hiss_hum_rumble" in served:
+            record_fallback(
+                "voiceover-repair", "denoise", "remove_hiss_hum_rumble",
+                "Kokoro int8 take, but remove_hiss_hum_rumble returned no "
+                "file: the take ships with whatever hiss it carries",
+            )
+        else:
+            record_fallback(
+                "voiceover-repair", "denoise", "remove_hiss_hum_rumble",
+                "Kokoro int8 take and the server does not serve "
+                "remove_hiss_hum_rumble: the take ships with its "
+                "quantisation hiss, uncleaned",
+            )
+
     # ---- 3-5. The readings, on the repaired take.
     transcribe_args: dict[str, Any] = {"path": audio}
-    glossary = ((plan.get("audio") or {}).get("voiceover") or {}).get("glossary")
-    if isinstance(glossary, str) and glossary.strip():
-        # The spelling the whole run keeps: the proper nouns and jargon
-        # the recogniser mishears, named before the first window.
-        transcribe_args["initialPrompt"] = glossary.strip()[:200]
-    source_job = advance("transcribe", transcribe_args)
-    source_job_id = source_job.get("job") if isinstance(source_job, dict) else None
-    if not source_job_id:
-        raise PipelineError(f"transcribe did not start a source job: {source_job}")
-    source_status: Any = None
-    for _ in range(4):
-        source_status = advance(
-            "analysis_wait", {"job": source_job_id, "timeoutSeconds": 590}
+    # IDEM: the transcript is a function of the take's bytes AND the
+    # recogniser's ask - the same repaired file under the same ask needs
+    # its words read once, not again per run; a different ask (model,
+    # glossary) is a different reading. The reply is recorded whole, and
+    # reuse re-derives every check the fresh path makes (DEG-09's
+    # mismatch flag included) from the recorded reply.
+    _transcribe_prior = _stage_prior("transcribe")
+    _transcribe_sha = _file_sha256(audio) or ""
+    _transcribe_ask: dict[str, Any] = {}
+    if isinstance(voiceover_plan, dict):
+        _named_model = voiceover_plan.get("whisperModel")
+        if isinstance(_named_model, str) and _named_model.strip():
+            _transcribe_ask["model"] = _named_model.strip()
+    _env_model = os.environ.get("FUNCUT_WHISPER_MODEL")
+    if _env_model:
+        _transcribe_ask["envModel"] = _env_model
+    _glossary_ask = ((plan.get("audio") or {}).get("voiceover") or {}).get("glossary")
+    if isinstance(_glossary_ask, str) and _glossary_ask.strip():
+        _transcribe_ask["glossary"] = _glossary_ask.strip()[:200]
+    if (
+        isinstance(_transcribe_prior, dict)
+        and _transcribe_prior.get("audioSha256") == _transcribe_sha
+        and _transcribe_prior.get("ask") == _transcribe_ask
+        and isinstance(_transcribe_prior.get("transcript"), dict)
+        and isinstance(_transcribe_prior["transcript"].get("segments"), list)
+    ):
+        transcript = _transcribe_prior["transcript"]
+        _stage_mark(
+            "transcribe", audioSha256=_transcribe_sha,
+            ask=_transcribe_ask, transcript=transcript,
         )
-        if not isinstance(source_status, dict) or source_status.get("state") != "running":
-            break
-    if not isinstance(source_status, dict) or source_status.get("state") != "done":
-        raise PipelineError(f"source transcription did not finish: {source_status}")
-    try:
-        transcript = json.loads(source_status.get("output", ""))
-    except (TypeError, json.JSONDecodeError) as error:
-        raise PipelineError(f"source transcription returned invalid JSON: {error}") from error
-    if not isinstance(transcript, dict) or not isinstance(transcript.get("segments"), list):
-        raise PipelineError("source transcription returned no timed segments")
-    voice = advance("voice_signals", {"audio": audio, "transcript": transcript})
+        _stage_skip("transcribe", "the recorded transcript is this take's words")
+    else:
+        # FALL-07: the recogniser is a knob, not a constant - the plan names a
+        # model, the operator pins one, and only when neither speaks does the
+        # server's base.en default answer (fast, English-only; the wrong
+        # choice for any other language, which DEG-09's flag will name).
+        whisper_model = None
+        if isinstance(voiceover_plan, dict):
+            named_model = voiceover_plan.get("whisperModel")
+            if isinstance(named_model, str) and named_model.strip():
+                whisper_model = named_model.strip()
+        whisper_model = whisper_model or os.environ.get("FUNCUT_WHISPER_MODEL") or None
+        if whisper_model:
+            transcribe_args["model"] = whisper_model
+            log(f"transcriber: {whisper_model} (named; base.en is the server's default)")
+        glossary = ((plan.get("audio") or {}).get("voiceover") or {}).get("glossary")
+        if isinstance(glossary, str) and glossary.strip():
+            # The spelling the whole run keeps: the proper nouns and jargon
+            # the recogniser mishears, named before the first window.
+            transcribe_args["initialPrompt"] = glossary.strip()[:200]
+        source_job = advance("transcribe", transcribe_args)
+        source_job_id = source_job.get("job") if isinstance(source_job, dict) else None
+        if not source_job_id:
+            raise PipelineError(f"transcribe did not start a source job: {source_job}")
+        source_status: Any = None
+        for _ in range(4):
+            source_status = advance(
+                "analysis_wait", {"job": source_job_id, "timeoutSeconds": 590}
+            )
+            if not isinstance(source_status, dict) or source_status.get("state") != "running":
+                break
+        if not isinstance(source_status, dict) or source_status.get("state") != "done":
+            raise PipelineError(f"source transcription did not finish: {source_status}")
+        try:
+            transcript = json.loads(source_status.get("output", ""))
+        except (TypeError, json.JSONDecodeError) as error:
+            raise PipelineError(f"source transcription returned invalid JSON: {error}") from error
+        if not isinstance(transcript, dict) or not isinstance(transcript.get("segments"), list):
+            raise PipelineError("source transcription returned no timed segments")
+        _stage_mark(
+            "transcribe", audioSha256=_transcribe_sha,
+            ask=_transcribe_ask, transcript=transcript,
+        )
+    # DEG-09: the transcribe reply carries what ran and what script the
+    # words came back in; a wrong-language transcript is flagged here, at
+    # the reading, not discovered three phases later in the captions.
+    if transcript.get("languageMismatch") is True:
+        record_fallback(
+            "transcribe", "transcript", "transcribe.language",
+            "the transcription's script disagrees with the ask: model "
+            f"{transcript.get('model') or 'unknown'}, script "
+            f"{transcript.get('scriptDetected') or 'unknown'}, hint "
+            f"{transcript.get('language') or 'none'} - the words may not "
+            "be the take's words",
+        )
+    # IDEM: the voice reading is a function of the same take's bytes -
+    # its record is reused whole, and the degradation checks below the
+    # call re-run on the recorded reply (DEG-01's flags included).
+    _signals_prior = _stage_prior("voice-signals")
+    if (
+        isinstance(_signals_prior, dict)
+        and _signals_prior.get("audioSha256") == _transcribe_sha
+        and isinstance(_signals_prior.get("signals"), dict)
+    ):
+        voice = _signals_prior["signals"]
+        _stage_mark(
+            "voice-signals", audioSha256=_transcribe_sha, signals=voice,
+        )
+        _stage_skip("voice-signals", "the recorded reading is this take's reading")
+    else:
+        voice = advance("voice_signals", {"audio": audio, "transcript": transcript})
+        _stage_mark(
+            "voice-signals", audioSha256=_transcribe_sha, signals=voice,
+        )
     if isinstance(voice, dict):
         if voice.get("status") == "degraded":
             for note in voice.get("degradations") or []:
                 log(f"voice_signals degraded: {note}")
+                record_fallback("sense", "reading", "voice_signals", str(note))
         elif voice.get("status"):
             log("voice_signals: every ear that could run did")
+        # DEG-01: "no entities found" and "the NER missing" are different
+        # facts; the reply's flag says which, and a missing NER is a
+        # recorded fallback, never a quiet empty list.
+        if voice.get("entitiesAvailable") is False:
+            record_fallback(
+                "sense", "entities", "entities",
+                "voice_signals NER absent: entity-driven decisions stand "
+                "on the regex complement alone",
+            )
+        language_read = voice.get("language")
+        if (
+            isinstance(language_read, dict)
+            and language_read.get("matchesHint") is False
+        ):
+            record_fallback(
+                "sense", "language", "voice_signals.language",
+                "the voice reading's script "
+                f"({language_read.get('script')}) disagrees with the hint "
+                f"({language_read.get('hint')})",
+            )
     emotion = advance(
         "emotion", {"action": "extract", "transcript": transcript, "project": project}
     )
     if isinstance(emotion, dict) and emotion.get("arc") is not None:
         log(f"voice emotion arc: {json.dumps(emotion['arc'], ensure_ascii=False)}")
+        # FALL-06: the emotion read on the English-only stem lexicon is a
+        # recorded fallback - the hosted multilingual model is absent, and
+        # an arc over another language's words reads as neutral line after
+        # line. The reply's own note carries the remedy (a free key).
+        if emotion.get("engine") == "lexicon":
+            record_fallback(
+                "emotion", "arc", "emotion.model",
+                "the emotion read ran on the English-only stem lexicon (the "
+                "hosted multilingual model is absent; FUNCUT_EMOTION_API_KEY "
+                "is the free key that unlocks it)",
+            )
 
     # ---- 6. The footage planner's own read: the gaps and monotony runs
     # the plan's B-roll should answer, cross-checked against its coverage
@@ -1675,28 +2042,108 @@ def run_pipeline(
 
     # ---- 7. The BGM gate, before any bed is shopped: a take that already
     # carries music gets no bed stacked under it. detect_music_segments is
-    # the authoritative answer; where it cannot speak, the gate stays open
-    # and says so.
+    # the segment map; identify_music is the authority (FALL-10) - where
+    # both readings exist, the identifier's own pulse measurement settles
+    # the disagreement, and BOTH readings are recorded. Where an ear cannot
+    # speak, the gate says so as a recorded fallback, never as a quiet
+    # negative (DEG-05).
     bgm_allowed = True
-    if "detect_music_segments" in served:
+    if "detect_music_segments" not in served:
+        record_fallback(
+            "music-gate", "bgm", "detect_music_segments",
+            "detect_music_segments is not served: the music gate stands "
+            "unmeasured, and a bed may stack under take music",
+        )
+    else:
         music = advance("detect_music_segments", {"audio": audio})
         present = music.get("musicPresent") if isinstance(music, dict) else None
-        if present is True:
-            bgm_allowed = False
-            log("music gate: the take already carries music - no bed will be stacked")
-            if "identify_music" in served:
+        if present is None:
+            # The tool answered without a verdict: a degradation with the
+            # reply's own words, not a silent "must be speech".
+            record_fallback(
+                "music-gate", "bgm", "detect_music_segments",
+                "detect_music_segments answered without a verdict"
+                + (f" ({json.dumps(music, ensure_ascii=False)[:160]})"
+                   if isinstance(music, dict) else "")
+                + "; the take is treated as speech on that absence of "
+                "evidence, and the bed decision stands unmeasured",
+            )
+        identified: Any = None
+        identified_present: bool | None = None
+        if "identify_music" in served:
+            # DEG-05 + FALL-10: the identification runs whenever it can,
+            # not only when the gate already said music - its pulse
+            # measurement is the authority the gate's verdict is settled
+            # by, and a failure is a recorded absence, never a "no music"
+            # reading and never a dead run.
+            try:
                 identified = advance("identify_music", {"audio": audio})
-                if isinstance(identified, dict):
+            except PipelineError as error:
+                record_fallback(
+                    "music-gate", "identify", "identify_music",
+                    f"identify_music failed: {error} - this is a missing "
+                    "identification, not a negative one; the gate's own "
+                    "reading stands alone",
+                )
+            else:
+                if isinstance(identified, dict) and identified.get("ok") is not False:
                     log(
                         "identify_music: "
                         + json.dumps(identified, ensure_ascii=False)[:300]
                     )
-        elif present is None:
-            log("music gate: detect_music_segments answered nothing; treating the take as speech")
+                    strength = (identified.get("tempo") or {}).get("strength")
+                    if isinstance(strength, (int, float)) and not isinstance(strength, bool):
+                        # The same pulse line detect_music_segments itself
+                        # uses: music holds a beat the autocorrelation can
+                        # find (>= 0.1); dense speech does not.
+                        identified_present = float(strength) >= 0.1
+        if identified_present is not None:
+            # FALL-10: both readings recorded; the identifier decides.
+            _signal(0.0, "bgm", provenance="measured",
+                    detectMusic=present is True, identifyMusic=identified_present,
+                    note="both music readings recorded; identify_music is authoritative")
+            if identified_present != (present is True):
+                bgm_allowed = not identified_present
+                record_fallback(
+                    "music-gate", "bgm", "identify_music",
+                    "the readings disagree - detect_music_segments said "
+                    f"{'music' if present is True else 'no music'}, "
+                    "identify_music's pulse said "
+                    f"{'music' if identified_present else 'no music'} - "
+                    "identify_music is authoritative",
+                )
+                log("music gate: the readings disagree; identify_music's pulse decides")
+            elif present is True:
+                bgm_allowed = False
+                log("music gate: the take already carries music - no bed will be stacked")
+        elif present is True:
+            bgm_allowed = False
+            log("music gate: the take already carries music - no bed will be stacked")
 
     # ---- 8. Gate all plan and voice-signal readiness before changing the
     # timeline - and prove the log's citations against the measurement.
-    validation = advance("plan_validate", {"plan": plan})
+    # IDEM: the gate is a function of the plan and the measured voice -
+    # both reused unchanged, the gate's answer is reused with them.
+    _plan_prior = _stage_prior("plan")
+    if (
+        isinstance(_plan_prior, dict)
+        and _plan_prior.get("planSha256") == plan_sha
+        and _plan_prior.get("signalsSha256") == _json_sha256(voice)
+        and isinstance(_plan_prior.get("validation"), dict)
+    ):
+        validation = _plan_prior["validation"]
+        _stage_mark(
+            "plan", planSha256=plan_sha,
+            signalsSha256=_json_sha256(voice), validation=validation,
+        )
+        _stage_skip("plan", "the plan's gate answer is this plan's, on this voice")
+    else:
+        validation = advance("plan_validate", {"plan": plan})
+        _stage_mark(
+            "plan", planSha256=plan_sha,
+            signalsSha256=_json_sha256(voice), validation=validation
+            if isinstance(validation, dict) else {},
+        )
     if not isinstance(validation, dict) or validation.get("valid") is not True:
         raise PipelineError(
             "plan_validate rejected the plan: "
@@ -1905,12 +2352,35 @@ def run_pipeline(
     # The plan's voiceover speed, applied to the placed clip: the plan's
     # segment times are the final (sped) timebase, so the placements that
     # follow are unaffected - only the voiceover's own length changes.
+    # IDEM: a second run must not compound the speed - the clip the plan
+    # already sped is left at its speed, and the handoff's record says
+    # which clip and which speed so the reuse is a fact, not a guess.
     voiceover = (plan.get("audio") or {}).get("voiceover") or {}
+    _handoff_prior = _stage_prior("handoff")
+    _handoff_speed = None
+    if isinstance(voiceover, dict):
+        _asked_speed = voiceover.get("speed")
+        if isinstance(_asked_speed, (int, float)) and not isinstance(_asked_speed, bool):
+            _handoff_speed = float(_asked_speed)
+    _speed_reusable = (
+        isinstance(_handoff_prior, dict)
+        and _handoff_prior.get("planSha256") == plan_sha
+        and _handoff_prior.get("clipId") == str(audio_clip_id)
+        and _handoff_prior.get("speed") == _handoff_speed
+    )
     if isinstance(voiceover, dict) and "clip_speed" in served:
         speed = voiceover.get("speed")
         if isinstance(speed, (int, float)) and not isinstance(speed, bool) and float(speed) != 1.0:
-            advance("clip_speed", {"path": project, "clipId": audio_clip_id, "speed": float(speed)})
-            log(f"voiceover speed {float(speed):g}x applied to clip {audio_clip_id}")
+            if _speed_reusable:
+                _stage_skip("handoff", f"clip {audio_clip_id} already at {float(speed):g}x")
+            else:
+                advance("clip_speed", {"path": project, "clipId": audio_clip_id, "speed": float(speed)})
+                log(f"voiceover speed {float(speed):g}x applied to clip {audio_clip_id}")
+    _stage_mark(
+        "handoff", planSha256=plan_sha,
+        mediaId=str(audio_media_id), clipId=str(audio_clip_id),
+        speed=_handoff_speed,
+    )
 
     log(f"voiceover ready on timeline: clip {audio_clip_id}; timing remains unchanged by the runner")
     _audit(
@@ -1925,12 +2395,60 @@ def run_pipeline(
     )
 
     # Rank one unique candidate per actual timed B-roll segment.
+    # IDEM: a slot this plan already filled is reused when its clip is
+    # still on the timeline - the slot is not re-shopped, re-imported or
+    # re-trimmed, so a resumed run places no duplicate B-roll. A slot
+    # continuity downgraded to its storyboard in a prior run is
+    # downgraded again here, so the graphics pass owns it as before.
+    _gather_prior = _stage_prior("gather")
+    _reusable_slots: dict[str, str] = {}
+    _live_clip_ids = {
+        str(clip.get("id")) for clip in clips if isinstance(clip, dict)
+    }
+    if (
+        isinstance(_gather_prior, dict)
+        and _gather_prior.get("planSha256") == plan_sha
+        and isinstance(_gather_prior.get("slots"), dict)
+    ):
+        for _slot_id, _entry in _gather_prior["slots"].items():
+            if (
+                isinstance(_entry, dict)
+                and isinstance(_entry.get("clipId"), str)
+                and _entry["clipId"] in _live_clip_ids
+            ):
+                _reusable_slots[_slot_id] = _entry["clipId"]
+        for _slot_id in _gather_prior.get("downgraded") or []:
+            if not isinstance(_slot_id, str):
+                continue
+            for _index, _segment in broll_segments(plan):
+                if str(_segment.get("slotId") or f"segment-{_index + 1}") == _slot_id:
+                    if isinstance(_segment["visual"].get("storyboard"), dict):
+                        _segment["visual"]["type"] = "textCard"
+                    break
     excluded: list[int] = []
     chosen: dict[str, dict[str, Any]] = {}
     slot_segments: dict[str, tuple[int, dict[str, Any]]] = {}
+    # DEG-03: a keyword-tier ranking is recorded once per run, not once
+    # per slot - the first reply that says the vision rerank did not run
+    # speaks for every search after it.
+    rerank_fallback_recorded = False
+    # IDEM: the B-roll slots as they stand entering the ranking - a slot
+    # continuity later downgrades to its storyboard leaves this list's
+    # `chosen` without ever being re-shopped, and the gather record must
+    # name it so the resume downgrades it the same way.
+    _broll_slots_at_ranking = [
+        str(segment.get("slotId") or f"segment-{index + 1}")
+        for index, segment in broll_segments(plan)
+    ]
     for index, segment in broll_segments(plan):
         visual = segment["visual"]
         slot_id = str(segment.get("slotId") or f"segment-{index + 1}")
+        if slot_id in _reusable_slots:
+            _stage_skip(
+                "gather",
+                f"{slot_id}'s clip {_reusable_slots[slot_id]} is still on the timeline",
+            )
+            continue
         query = str(visual.get("query") or "").strip()
         if not query:
             raise PipelineError(f"{slot_id}: B-roll segment has no real visual.query")
@@ -1956,6 +2474,20 @@ def run_pipeline(
                     "exclude_ids": list(excluded),
                 },
             )
+            rerank = reply.get("rerank") if isinstance(reply, dict) else None
+            if (
+                not rerank_fallback_recorded
+                and isinstance(rerank, dict)
+                and rerank.get("applied") is False
+            ):
+                rerank_fallback_recorded = True
+                record_fallback(
+                    "broll", "ranking", "openvid_search.rerank",
+                    "stock ranking fell back to keyword-tier (BM25 order "
+                    "stands): "
+                    + str(rerank.get("reason") or "the vision rerank did not run")
+                    + " - stock_contact_sheet is the way to look at the page",
+                )
             clips_found = reply.get("clips", []) if isinstance(reply, dict) else []
             if not clips_found:
                 break
@@ -2107,9 +2639,23 @@ def run_pipeline(
 
     # Import and place each chosen source at its segment's real timeline
     # start, with the plan's own trim honoured beside the segment's length.
+    # IDEM: the walk is the plan's own B-roll order, so a reused slot's
+    # recorded clip rides the same order the fresh placements do - the
+    # transition and keyframe passes below index by position, and the
+    # order must not shift between a first run and its resume.
     placed_clip_ids: list[str] = []
-    for slot_id, clip in chosen.items():
-        index, segment = slot_segments[slot_id]
+    _gather_slots: dict[str, dict[str, Any]] = {
+        slot_id: {"clipId": clip_id} for slot_id, clip_id in _reusable_slots.items()
+    }
+    for index, segment in broll_segments(plan):
+        slot_id = str(segment.get("slotId") or f"segment-{index + 1}")
+        if slot_id in _reusable_slots:
+            placed_clip_ids.append(_reusable_slots[slot_id])
+            slot_segments[slot_id] = (index, segment)
+            continue
+        if slot_id not in chosen:
+            continue
+        clip = chosen[slot_id]
         start_at = float(segment["start"])
         target_duration = float(segment["end"]) - start_at
         imported = advance(
@@ -2146,13 +2692,33 @@ def run_pipeline(
                 },
             )
         placed_clip_ids.append(str(placed["id"]))
+        _gather_slots[slot_id] = {"clipId": str(placed["id"])}
         log(
             f"{slot_id}: imported {clip.get('name', clip['id'])} at {start_at:.2f}s "
             f"for {min(actual_duration, target_duration):.2f}s"
         )
+    # IDEM: the gather's own record - the clip each slot owns, and the
+    # slots continuity turned into graphics (a resume downgrades them
+    # the same way instead of re-shopping what was replaced).
+    _prior_downgraded = (
+        [slot for slot in (_gather_prior.get("downgraded") or []) if isinstance(slot, str)]
+        if isinstance(_gather_prior, dict) else []
+    )
+    _downgraded_this_run = [
+        slot_id for slot_id in _broll_slots_at_ranking
+        if slot_id not in chosen and slot_id not in _reusable_slots
+    ]
+    _stage_mark(
+        "gather", planSha256=plan_sha, slots=_gather_slots,
+        downgraded=list(dict.fromkeys(_prior_downgraded + _downgraded_this_run)),
+    )
 
     # Motion reels and imported existing media share one dedicated top
     # video lane; already-placed existing clips are verified in place.
+    # IDEM: a graphic this plan already rendered and placed is reused
+    # when its clip still stands on the timeline - and the lane is only
+    # added when something is actually left to place, so a resumed run
+    # opens no second lane beside the first.
     graphics = motion_segments(plan)
     # The placed clip each graphic segment owns, for the revision loop's
     # re-render to swap in place.
@@ -2161,8 +2727,49 @@ def run_pipeline(
         (index, segment) for index, segment in existing_segments(plan)
         if not segment["visual"].get("clipId")
     ]
+    _graphics_prior = _stage_prior("graphics")
+    _reusable_graphics: dict[int, str] = {}
+    if (
+        isinstance(_graphics_prior, dict)
+        and _graphics_prior.get("planSha256") == plan_sha
+        and isinstance(_graphics_prior.get("segments"), dict)
+    ):
+        for _index_text, _clip_id in _graphics_prior["segments"].items():
+            try:
+                _index = int(_index_text)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(_clip_id, str) and _clip_id in _live_clip_ids:
+                _reusable_graphics[_index] = _clip_id
+    _graphics_slots: dict[str, str] = {
+        str(index): clip_id for index, clip_id in _reusable_graphics.items()
+    }
+    _reusable_existing: dict[int, str] = {}
+    if (
+        isinstance(_graphics_prior, dict)
+        and _graphics_prior.get("planSha256") == plan_sha
+        and isinstance(_graphics_prior.get("existing"), dict)
+    ):
+        for _index_text, _clip_id in _graphics_prior["existing"].items():
+            try:
+                _index = int(_index_text)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(_clip_id, str) and _clip_id in _live_clip_ids:
+                _reusable_existing[_index] = _clip_id
+    _existing_slots: dict[str, str] = {
+        str(index): clip_id for index, clip_id in _reusable_existing.items()
+    }
     track_id = None
-    if graphics or existing_to_place:
+    _graphics_to_place = [
+        (index, segment) for index, segment in graphics
+        if index not in _reusable_graphics
+    ]
+    _existing_to_place = [
+        (index, segment) for index, segment in existing_to_place
+        if index not in _reusable_existing
+    ]
+    if _graphics_to_place or _existing_to_place:
         track_reply = advance("track_add", {"path": project, "bottom": False})
         track_id = track_reply.get("createdId") if isinstance(track_reply, dict) else None
         if not isinstance(track_id, str) or not track_id:
@@ -2183,6 +2790,15 @@ def run_pipeline(
                 },
             )
     for index, segment in graphics:
+        # IDEM: the graphic this segment already owns is reused in place.
+        if index in _reusable_graphics:
+            graphic_clip_ids[index] = _reusable_graphics[index]
+            placed_clip_ids.append(_reusable_graphics[index])
+            _stage_skip(
+                "graphics",
+                f"segment-{index + 1}'s clip {_reusable_graphics[index]} still stands",
+            )
+            continue
         visual = segment["visual"]
         storyboard = visual.get("storyboard")
         if not isinstance(storyboard, dict) or not isinstance(storyboard.get("scenes"), list):
@@ -2239,11 +2855,24 @@ def run_pipeline(
             )
         graphic_clip_ids[index] = clip_id
         placed_clip_ids.append(clip_id)
+        _graphics_slots[str(index)] = clip_id
         log(f"segment-{index + 1}: rendered and placed motion at {start_at:.2f}s")
+    _stage_mark(
+        "graphics", planSha256=plan_sha, segments=_graphics_slots,
+    )
 
     # Place imported existing media on the same overlay lane. A supplied
     # clipId was already verified to exist at the correct time above.
     for index, segment in existing_to_place:
+        # IDEM: an existing-media placement this plan already made rides
+        # its recorded clip, not a second copy beside it.
+        if index in _reusable_existing:
+            placed_clip_ids.append(_reusable_existing[index])
+            _stage_skip(
+                "graphics",
+                f"segment-{index + 1}'s existing clip {_reusable_existing[index]} still stands",
+            )
+            continue
         visual = segment["visual"]
         start_at = float(segment["start"])
         target_duration = float(segment["end"]) - start_at
@@ -2303,7 +2932,12 @@ def run_pipeline(
                 },
             )
         placed_clip_ids.append(clip_id)
+        _existing_slots[str(index)] = clip_id
         log(f"segment-{index + 1}: existing media placed at {start_at:.2f}s")
+    _stage_mark(
+        "graphics", planSha256=plan_sha,
+        segments=_graphics_slots, existing=_existing_slots,
+    )
     if existing_to_place or any(existing_segments(plan)):
         _audit(
             "segments.visual.existing", "executed",
@@ -2389,80 +3023,106 @@ def run_pipeline(
                 key("opacity", 1.0 - fraction, 1.0, seconds); key("opacity", 1.0, 0.0, seconds)
         return keys
 
-    if "clip_update" in served:
-        applied_transitions = 0
-        for index, segment in broll_segments(plan):
-            arguments = transition_arguments(segment)
-            if arguments is None:
-                continue
-            clip_id = segment_clip_ids.get(index)
-            if clip_id is None:
-                continue
-            arguments["clipId"] = clip_id
-            advance("clip_update", arguments)
-            applied_transitions += 1
-            log(f"segment-{index + 1}: transition into the cut applied to clip {clip_id}")
-        _audit(
-            "segments.transitionIn", "executed" if applied_transitions else "skipped",
-            f"{applied_transitions} transition(s) applied on the cut"
-            if applied_transitions else "the plan does not carry it",
+    # IDEM: the timeline passes - transitions, entrance keys, the grade -
+    # are a function of the plan over the placed clips. When every clip
+    # the record names still stands, the passes already ran over exactly
+    # these clips, and a resume re-keys nothing (a second keyframe set on
+    # the same clip would compound; a second grade layer would stack).
+    _timeline_prior = _stage_prior("timeline")
+    _timeline_reusable = (
+        isinstance(_timeline_prior, dict)
+        and _timeline_prior.get("planSha256") == plan_sha
+        and isinstance(_timeline_prior.get("clipIds"), list)
+        and bool(_timeline_prior["clipIds"]) is bool(placed_clip_ids)
+        and all(
+            isinstance(clip_id, str) and clip_id in _live_clip_ids
+            for clip_id in _timeline_prior["clipIds"]
         )
-    if "keyframe_set" in served:
-        for index, segment in broll_segments(plan):
-            clip_id = segment_clip_ids.get(index)
-            if clip_id is None:
-                continue
-            duration = float(segment["end"]) - float(segment["start"])
-            for arguments in entrance_arguments(clip_id, segment, duration):
-                advance("keyframe_set", arguments)
-        keyed = sum(
-            1
-            for segment in plan_segments(plan)
-            for side in ("in", "out")
-            if isinstance(segment.get(side), dict)
-            and segment[side].get("anim") not in (None, "static")
+    )
+    if _timeline_reusable:
+        _stage_skip(
+            "timeline",
+            "the transitions, keys and grade already ran over these clips",
         )
-        _audit(
-            "segments.in/out", "executed" if keyed else "skipped",
-            f"{keyed} entrance/exit animation(s) keyed on the placed clips"
-            if keyed else "the plan does not carry it",
-        )
+    else:
+        if "clip_update" in served:
+            applied_transitions = 0
+            for index, segment in broll_segments(plan):
+                arguments = transition_arguments(segment)
+                if arguments is None:
+                    continue
+                clip_id = segment_clip_ids.get(index)
+                if clip_id is None:
+                    continue
+                arguments["clipId"] = clip_id
+                advance("clip_update", arguments)
+                applied_transitions += 1
+                log(f"segment-{index + 1}: transition into the cut applied to clip {clip_id}")
+            _audit(
+                "segments.transitionIn", "executed" if applied_transitions else "skipped",
+                f"{applied_transitions} transition(s) applied on the cut"
+                if applied_transitions else "the plan does not carry it",
+            )
+        if "keyframe_set" in served:
+            for index, segment in broll_segments(plan):
+                clip_id = segment_clip_ids.get(index)
+                if clip_id is None:
+                    continue
+                duration = float(segment["end"]) - float(segment["start"])
+                for arguments in entrance_arguments(clip_id, segment, duration):
+                    advance("keyframe_set", arguments)
+            keyed = sum(
+                1
+                for segment in plan_segments(plan)
+                for side in ("in", "out")
+                if isinstance(segment.get(side), dict)
+                and segment[side].get("anim") not in (None, "static")
+            )
+            _audit(
+                "segments.in/out", "executed" if keyed else "skipped",
+                f"{keyed} entrance/exit animation(s) keyed on the placed clips"
+                if keyed else "the plan does not carry it",
+            )
 
-    # The plan's grade. `layer` is one effect layer over the whole runtime
-    # - with the duration written, because absent means five seconds and
-    # five seconds is the trap. `perClip` is the same chain on every
-    # placed clip. Either way the grade is applied, not admired.
-    grade = plan.get("grade") if isinstance(plan.get("grade"), dict) else None
-    if grade and grade.get("filter"):
-        apply_mode = str(grade.get("apply") or "layer")
-        if apply_mode == "layer" and "effect_layer_add" in served:
-            advance("effect_layer_add", {
-                "path": project,
-                "start": 0.0,
-                "duration": max(runtime, 0.1),
-                "effectId": str(grade["filter"]),
-                "name": "director-grade",
-                "trackId": None,
-            })
-            log(f"grade {grade['filter']} applied as one layer over {runtime:.2f}s")
-            _audit("grade", "executed",
-                   f"{grade['filter']} applied as one layer over {runtime:.2f}s")
-        elif "clip_update" in served and placed_clip_ids:
-            params = {}
-            if grade.get("intensity") is not None and grade.get("intensityKey"):
-                params[str(grade["intensityKey"])] = grade["intensity"]
-            patch = {"videoEffects": [{"id": str(grade["filter"]), "params": params}]}
-            for clip_id in placed_clip_ids:
-                advance("clip_update", {"path": project, "clipId": clip_id, "patch": patch})
-            log(f"grade {grade['filter']} applied to {len(placed_clip_ids)} placed clip(s)")
-            _audit("grade", "executed",
-                   f"{grade['filter']} applied per clip over {len(placed_clip_ids)} placed clip(s)")
-        else:
-            log("the plan's grade cannot be applied: the server serves neither effect layers nor clip patches")
-            _audit("grade", "rejected",
-                   "the server serves neither effect layers nor clip patches")
-    elif isinstance(plan.get("grade"), dict):
-        _audit("grade", "rejected", "the plan's grade names no filter")
+        # The plan's grade. `layer` is one effect layer over the whole runtime
+        # - with the duration written, because absent means five seconds and
+        # five seconds is the trap. `perClip` is the same chain on every
+        # placed clip. Either way the grade is applied, not admired.
+        grade = plan.get("grade") if isinstance(plan.get("grade"), dict) else None
+        if grade and grade.get("filter"):
+            apply_mode = str(grade.get("apply") or "layer")
+            if apply_mode == "layer" and "effect_layer_add" in served:
+                advance("effect_layer_add", {
+                    "path": project,
+                    "start": 0.0,
+                    "duration": max(runtime, 0.1),
+                    "effectId": str(grade["filter"]),
+                    "name": "director-grade",
+                    "trackId": None,
+                })
+                log(f"grade {grade['filter']} applied as one layer over {runtime:.2f}s")
+                _audit("grade", "executed",
+                       f"{grade['filter']} applied as one layer over {runtime:.2f}s")
+            elif "clip_update" in served and placed_clip_ids:
+                params = {}
+                if grade.get("intensity") is not None and grade.get("intensityKey"):
+                    params[str(grade["intensityKey"])] = grade["intensity"]
+                patch = {"videoEffects": [{"id": str(grade["filter"]), "params": params}]}
+                for clip_id in placed_clip_ids:
+                    advance("clip_update", {"path": project, "clipId": clip_id, "patch": patch})
+                log(f"grade {grade['filter']} applied to {len(placed_clip_ids)} placed clip(s)")
+                _audit("grade", "executed",
+                       f"{grade['filter']} applied per clip over {len(placed_clip_ids)} placed clip(s)")
+            else:
+                log("the plan's grade cannot be applied: the server serves neither effect layers nor clip patches")
+                _audit("grade", "rejected",
+                       "the server serves neither effect layers nor clip patches")
+        elif isinstance(plan.get("grade"), dict):
+            _audit("grade", "rejected", "the plan's grade names no filter")
+    _stage_mark(
+        "timeline", planSha256=plan_sha,
+        clipIds=[str(clip_id) for clip_id in placed_clip_ids],
+    )
 
     # The plan's captions, segment-timed from the transcript the runner
     # measured: one caption a transcript segment, inside the plan's
@@ -2489,7 +3149,31 @@ def run_pipeline(
     # own record: a plan that asks for captions is measured for having
     # them, not assumed (VERIFY-02, 12).
     placed_captions: list[dict[str, Any]] = []
-    if captions_wanted:
+    # IDEM: the captions are a function of the plan's ask and the
+    # measured transcript - when both are the prior run's own, the
+    # captions already on the timeline are the ones this plan asked for,
+    # and the placement (kinetic bake or segment-timed) is not doubled.
+    _captions_prior = _stage_prior("captions")
+    _captions_sha = _json_sha256(transcript)
+    # IDEM: only a placement stands as a placement - a record that placed
+    # nothing is a refusal the run owes again, not a fact to reuse.
+    _captions_reusable = (
+        isinstance(_captions_prior, dict)
+        and _captions_prior.get("planSha256") == plan_sha
+        and _captions_prior.get("transcriptSha256") == _captions_sha
+        and isinstance(_captions_prior.get("placed"), list)
+        and bool(_captions_prior["placed"])
+    )
+    if captions_wanted and _captions_reusable:
+        placed_captions = [
+            entry for entry in _captions_prior["placed"] if isinstance(entry, dict)
+        ]
+        _stage_mark(
+            "captions", planSha256=plan_sha,
+            transcriptSha256=_captions_sha, placed=placed_captions,
+        )
+        _stage_skip("captions", "this transcript's captions are already placed")
+    if captions_wanted and not _captions_reusable:
         if kinetic_setting is not None:
             # The word-timed path: the recogniser's own word times, the
             # plan's kinetic hand, one baked reel.
@@ -2634,11 +3318,34 @@ def run_pipeline(
                     "captions", "rejected",
                     "captions wanted and the transcript carried no timed segments to caption",
                 )
+        _stage_mark(
+            "captions", planSha256=plan_sha,
+            transcriptSha256=_captions_sha, placed=placed_captions,
+        )
 
     # The plan's SFX: shopped from the CC0 shelf, placed so the sound's
     # own peak lands on the planned beat (syncAt says where inside the
     # file the peak is), and gained to the plan's dB.
+    # IDEM: the SFX beats are the plan's, placed once - their clips
+    # recorded, and reused only while every one still stands.
+    _sfx_prior = _stage_prior("sfx")
+    _sfx_reusable = (
+        isinstance(_sfx_prior, dict)
+        and _sfx_prior.get("planSha256") == plan_sha
+        and isinstance(_sfx_prior.get("clipIds"), list)
+        and all(
+            isinstance(clip_id, str) and clip_id in _live_clip_ids
+            for clip_id in _sfx_prior["clipIds"]
+        )
+    )
+    _sfx_clips: list[str] = []
+    if _sfx_reusable:
+        _sfx_clips = [str(clip_id) for clip_id in _sfx_prior["clipIds"]]
+        if _sfx_clips:
+            _stage_skip("sfx", "every beat's sound is still on the timeline")
     for index, segment in enumerate(plan_segments(plan)):
+        if _sfx_reusable:
+            break
         sfx = segment.get("sfx")
         if not isinstance(sfx, dict) or not str(sfx.get("query") or "").strip():
             continue
@@ -2670,7 +3377,9 @@ def run_pipeline(
             advance("clip_audio_levels_db", {
                 "path": project, "clipId": sfx_clip, "baseDb": float(gain),
             })
+        _sfx_clips.append(str(sfx_clip))
         log(f"segment-{index + 1}: SFX {sound.get('name', sound.get('id'))} placed at {start:.2f}s")
+    _stage_mark("sfx", planSha256=plan_sha, clipIds=_sfx_clips)
 
     sfx_asked = sum(
         1 for segment in plan_segments(plan) if isinstance(segment.get("sfx"), dict)
@@ -2685,8 +3394,23 @@ def run_pipeline(
     # the take itself carries no music, only from the libraries the plan
     # named, and only when the library is actually present - a missing
     # library is a logged absence, never a silent one.
+    # IDEM: the bed is placed once - its clip recorded, reused while it
+    # still plays under the words. A bed that was refused or warned
+    # absent stays unmarked, so a resume re-attempts it.
     bgm_plan = (plan.get("audio") or {}).get("bgm")
-    if isinstance(bgm_plan, dict) and str(bgm_plan.get("query") or bgm_plan.get("trackId") or "").strip():
+    _bgm_prior = _stage_prior("bgm")
+    _bgm_reusable = (
+        isinstance(_bgm_prior, dict)
+        and _bgm_prior.get("planSha256") == plan_sha
+        and isinstance(_bgm_prior.get("clipId"), str)
+        and _bgm_prior["clipId"] in _live_clip_ids
+    )
+    if _bgm_reusable:
+        _stage_mark("bgm", planSha256=plan_sha, clipId=_bgm_prior["clipId"])
+        _stage_skip("bgm", f"the bed {_bgm_prior['clipId']} still plays under the words")
+    elif isinstance(bgm_plan, dict) and str(
+        bgm_plan.get("query") or bgm_plan.get("trackId") or bgm_plan.get("mood") or ""
+    ).strip():
         if not bgm_allowed:
             log("BGM skipped: the take already carries music (detect_music_segments said so)")
             _audit("audio.bgm", "rejected",
@@ -2701,16 +3425,52 @@ def run_pipeline(
         else:
             status = advance("bgm_status", {})
             state = status.get("state") if isinstance(status, dict) else None
+            if state != "ready" and "bgm_prepare" in served:
+                # DEG-07: a library that is not ready is usually "nobody
+                # started it" or "the last server died mid-prepare" (the
+                # prepare runs on a thread that goes with its process), so
+                # this session starts it - the call is idempotent, a no-op
+                # while it already runs - and gives it a bounded minute to
+                # come ready before the bed is given up on.
+                try:
+                    advance("bgm_prepare", {})
+                except PipelineError as error:
+                    raise PipelineError(
+                        "the music library could not be prepared for the "
+                        f"bed the plan promised: {error}"
+                    ) from error
+                deadline = time.monotonic() + 60.0
+                while time.monotonic() < deadline:
+                    time.sleep(5.0)
+                    status = advance("bgm_status", {})
+                    state = status.get("state") if isinstance(status, dict) else None
+                    if state in ("ready", "failed"):
+                        break
+                if state == "ready":
+                    log("BGM: the music library came ready after bgm_prepare started it this session")
             if state != "ready":
-                log(f"BGM skipped: the music library is {state or 'unavailable'} (bgm_prepare was not run)")
+                # DEG-06: a missing library is a warned, recorded absence -
+                # never a silent one - and the export ships loudly without
+                # the bed the plan promised.
                 _audit("audio.bgm", "rejected",
                        f"the music library is {state or 'unavailable'}; no bed was shopped")
-                _signal(0.0, "bgm", provenance="fallback",
-                        note=f"the music library is {state or 'unavailable'}; the plan's bed did not land")
-            else:
+                record_fallback(
+                    "bgm", "bed", "bgm_status",
+                    "the music library is "
+                    f"{state or 'unavailable'} after a prepare attempt this "
+                    "session: the bed the plan promised is missing from the "
+                    "export",
+                )
+            if state == "ready":
                 track_id = bgm_plan.get("trackId")
                 if not isinstance(track_id, str) or not track_id.strip():
-                    search = advance("bgm_search", {"query": str(bgm_plan.get("query") or ""), "limit": 5})
+                    # FALL-09: the bed is shopped with the plan's own
+                    # query, and a plan that named only a mood shops with
+                    # that - said, not silently defaulted.
+                    bed_query = str(bgm_plan.get("query") or bgm_plan.get("mood") or "")
+                    if not bgm_plan.get("query") and bgm_plan.get("mood"):
+                        log(f"BGM: shopping by mood ({bgm_plan.get('mood')}) - the plan named no query")
+                    search = advance("bgm_search", {"query": bed_query, "limit": 5})
                     tracks = search.get("tracks", []) if isinstance(search, dict) else []
                     if not tracks:
                         log(f"BGM skipped: no track answered {bgm_plan.get('query')!r}")
@@ -2769,6 +3529,9 @@ def run_pipeline(
                             log(f"BGM ducked {duck_db:g} dB under {len(spans)} speech span(s)")
                             _audit("audio.bgm", "executed",
                                    "the bed imported, placed and ducked under the measured speech spans")
+                    _stage_mark(
+                        "bgm", planSha256=plan_sha, clipId=str(bed_clip["id"]),
+                    )
 
     # The timeline as it stands, before the render pays for it: no two
     # clips may share a lane's same seconds, and the read-back is the
@@ -2818,9 +3581,18 @@ def run_pipeline(
             arguments["rateDen"] = rate.denominator
         return arguments
 
+    # IDEM: the export lands under the run's own directory - a prior
+    # run's render is never overwritten, because no two runs share a
+    # path. A plan that names its own output still gets it (the plan is
+    # the promise); the run's own default is run-scoped.
+    run_dir = _run_report_dir(project, run_id)
     output = export.get("output")
     if not isinstance(output, str) or not output.strip():
-        output = os.path.join(project, f"funcut-final-{time.strftime('%Y%m%d-%H%M%S')}.mp4")
+        try:
+            os.makedirs(run_dir, exist_ok=True)
+            output = os.path.join(run_dir, "output.mp4")
+        except OSError:
+            output = os.path.join(project, f"funcut-final-{time.strftime('%Y%m%d-%H%M%S')}.mp4")
     if os.path.exists(output):
         backup = f"{output}.bak-{time.strftime('%Y%m%d-%H%M%S')}"
         try:
@@ -2976,6 +3748,61 @@ def run_pipeline(
     # (the -1 dBTP inside loudness_ok) asserts beside it, unchanged.
     verify_entries.append(_true_peak_entry(true_peak))
 
+    # VERIFY-15 (FAIL-03): the export's own speech, read for synthetic-
+    # voice artifacts - a disclosure reading, never a proof (the tool's
+    # own words). A synthetic band on a take the plan promised as a file
+    # is a possible swapped voice, recorded as such; on a tts take it is
+    # the expected answer, recorded for the disclosure duty.
+    if "detect_ai_voice" not in served:
+        verify_entries.append(_verification_entry(
+            "VERIFY-15", "ai-voice-disclosure", "skipped",
+            "detect_ai_voice is not served; the synthetic-voice read did not run",
+        ))
+    else:
+        try:
+            ai_voice = advance("detect_ai_voice", {
+                "audio": rendered, "transcript": transcript,
+            })
+        except PipelineError as error:
+            verify_entries.append(_verification_entry(
+                "VERIFY-15", "ai-voice-disclosure", "skipped",
+                f"detect_ai_voice failed: {error}",
+            ))
+        else:
+            likeness = (
+                ai_voice.get("aiLikeness") if isinstance(ai_voice, dict) else None
+            )
+            band = likeness.get("band") if isinstance(likeness, dict) else None
+            score = likeness.get("score") if isinstance(likeness, dict) else None
+            voiceover_source = str(
+                ((plan.get("audio") or {}).get("voiceover") or {}).get("source") or ""
+            ).lower()
+            if band is None:
+                verify_entries.append(_verification_entry(
+                    "VERIFY-15", "ai-voice-disclosure", "skipped",
+                    "detect_ai_voice answered without an aiLikeness band",
+                ))
+            else:
+                note = (
+                    "the take reads likely synthetic while the plan promised a "
+                    "file recording - a swapped voice is worth a human look"
+                    if band == "likely synthetic" and voiceover_source == "file"
+                    else "recorded for the disclosure duty"
+                )
+                verify_entries.append(_verification_entry(
+                    "VERIFY-15", "ai-voice-disclosure", "pass",
+                    note,
+                    band=band, likenessScore=score,
+                    voiceoverSource=voiceover_source or None,
+                ))
+                if band == "likely synthetic" and voiceover_source == "file":
+                    record_fallback(
+                        "verify", "voice", "detect_ai_voice",
+                        "the export's speech reads likely synthetic although the "
+                        "plan's voiceover source is a file recording; the reading "
+                        "informs a look, it never proves a swap",
+                    )
+
     # The whole record, written beside the export before anything may
     # refuse: an acceptance read reads the file, not the log. Then the
     # per-check lines cross, and a failed entry stops the run naming
@@ -3019,16 +3846,54 @@ def run_pipeline(
         the planning decision log; what a run MEASURED belongs to the
         run, and the craft journal the server keeps carries the rest)."""
         sheet_path = os.path.join(project, f"director-review-v{attempt}.png")
-        inspection = advance(
-            "watch_render",
-            {
-                "path": path,
-                "samples": 12,
-                "audio": True,
-                "targetLufs": target_lufs,
-                "out": sheet_path,
-            },
-        )
+        def inspect(path: str) -> Any:
+            return advance(
+                "watch_render",
+                {
+                    "path": path,
+                    "samples": 12,
+                    "audio": True,
+                    "targetLufs": target_lufs,
+                    "out": sheet_path,
+                },
+            )
+        try:
+            inspection = inspect(path)
+        except PipelineError as error:
+            # FAIL-02: an empty or corrupt render is a retryable Watch
+            # failure, not a low craft score and not a dead critique -
+            # the export is re-made once, to the same profile, before
+            # anything gives up on it. A render that probed healthy is
+            # the tool's own refusal, and stops the run with its words.
+            healthy = (
+                os.path.isfile(path) and os.path.getsize(path) > 0
+                and _ffprobe(path) is not None
+            )
+            if not healthy:
+                log(
+                    f"watch_render failed on an unreadable render ({error}); "
+                    "re-exporting once before the critique gives up (FAIL-02)"
+                )
+                started = advance("export_start", export_arguments(path))
+                job = started.get("job") if isinstance(started, dict) else None
+                if not job:
+                    raise PipelineError(
+                        f"the render was unreadable and the re-export did not "
+                        f"start: {error}"
+                    ) from error
+                status: Any = None
+                for _ in range(4):
+                    status = advance("export_wait", {"job": job, "timeoutSeconds": 590})
+                    if not isinstance(status, dict) or status.get("state") != "running":
+                        break
+                if not isinstance(status, dict) or status.get("state") not in {"done", "completed", "succeeded"}:
+                    raise PipelineError(
+                        f"the render was unreadable and the re-export did not "
+                        f"finish: {status}"
+                    ) from error
+                inspection = inspect(path)
+            else:
+                raise
         if not isinstance(inspection, dict) or not inspection.get("pngPath"):
             raise PipelineError(
                 f"render inspection did not produce a contact sheet: {inspection}"
@@ -3056,6 +3921,38 @@ def run_pipeline(
                 + (f" ({tier}, confidence {confidence})" if tier else "")
                 + f" [pass {attempt}]"
             )
+            # DEG-04: the tier names who scored the cut; this is what the
+            # pairing of tier and confidence MEANS. Below its tier's line
+            # the critique is a recorded fallback, not a certificate - the
+            # ship line does not move, but the run record says the pass
+            # stands on a critic that was not sure of itself.
+            if not tier:
+                record_fallback(
+                    "craft", "critique", "craft_critique",
+                    "the critic named no tier: the score has no provenance "
+                    "to interpret",
+                )
+            else:
+                threshold = CRAFT_TIER_CONFIDENCE.get(
+                    str(tier).strip().lower(), CRAFT_TIER_DEFAULT
+                )
+                if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+                    if float(confidence) < threshold:
+                        record_fallback(
+                            "craft", "critique", "craft_critique",
+                            f"critic tier {tier} scored {score}/10 at "
+                            f"confidence {float(confidence):.2f}, under "
+                            f"the {threshold:g} its tier needs: the pass "
+                            "stands, but it is not a certificate",
+                            confidence=float(confidence),
+                        )
+                else:
+                    record_fallback(
+                        "craft", "critique", "craft_critique",
+                        f"critic tier {tier} scored {score}/10 with no "
+                        "confidence: the pairing cannot be interpreted, "
+                        "only recorded",
+                    )
         return inspection, critique, float(score)
 
     def render_attempt(attempt: int) -> str:
@@ -3063,8 +3960,13 @@ def run_pipeline(
         an attempt nobody can diff against the one before it is an attempt
         nobody learns from (revision.rs: attempt_path). It renders with
         the plan's own export profile, the same arguments the first
-        export carried."""
-        output = os.path.join(project, f"edit_v{attempt}.mp4")
+        export carried. IDEM: the attempt files live under the run's own
+        directory, so no prior run's revisions are overwritten either."""
+        try:
+            os.makedirs(run_dir, exist_ok=True)
+            output = os.path.join(run_dir, f"edit_v{attempt}.mp4")
+        except OSError:
+            output = os.path.join(project, f"edit_v{attempt}.mp4")
         started = advance("export_start", export_arguments(output))
         job = started.get("job") if isinstance(started, dict) else None
         if not job:
@@ -3300,11 +4202,29 @@ def run_pipeline(
     status = "completed" if score >= CRAFT_SHIP_SCORE else "completed-with-warnings"
     for note in unaddressed:
         log(f"craft warning: {note}")
+    degraded_entries = [
+        entry for entry in run_signals if entry.get("provenance") == "fallback"
+    ]
     log(
         f"pipeline complete: {len(done)} call(s); rendered {rendered}; "
         f"craft score {score}"
         + ("" if status == "completed" else f" ({status})")
+        + (f"; {len(degraded_entries)} recorded degradation(s)" if degraded_entries else "")
     )
+    # DATA-01: the run's own signalLog is held to its schema before it is
+    # written - every entry carries a decision and a provenance, and the
+    # provenance is one of the two words it may be. An entry that cannot
+    # say what decided or on what footing it stands is not a record.
+    for entry in run_signals:
+        if not isinstance(entry, dict) or not entry.get("decision"):
+            raise PipelineError(
+                f"a run signalLog entry carries no decision: {entry!r}"
+            )
+        if entry.get("provenance") not in ("measured", "fallback"):
+            raise PipelineError(
+                f"a run signalLog entry's provenance is neither measured nor "
+                f"fallback: {entry!r}"
+            )
     # The audit's own last word: every plan field accounted for, and the
     # one the runner did not consume named as one (P1-005). The run's
     # signalLog rides the record with it (P1-004).
@@ -3328,11 +4248,22 @@ def run_pipeline(
         + (f"; {len(audit['unrecognized'])} unrecognized" if audit["unrecognized"] else "")
         + "; nothing dropped silently"
     )
-    _record_run(project, {
+    # IDEM: the run's own record carries its identity - which run, what
+    # it skipped, what its state says stands - and lands whole as
+    # runs/<run-id>/report.json, the per-run record two runs can be
+    # diffed against each other by.
+    run_record = {
+        # DATA-04: the run record's own name for its shape, the way the
+        # verification report names its - a handoff a later session (or a
+        # resume) reads knows which record it is holding.
+        "schemaVersion": RUN_RECORD_SCHEMA,
+        "runId": run_id,
         "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "status": status,
         "calls": len(done),
         "output": rendered,
+        "skippedStages": list(skipped_stages),
+        "stagesDone": sorted(state_stages),
         "signalLog": run_signals,
         "planAudit": audit,
         "verification": {
@@ -3351,7 +4282,16 @@ def run_pipeline(
         "craftNotes": _critic_slot_map(critique, plan) if score < CRAFT_SHIP_SCORE else {},
         "unaddressed": unaddressed,
         "lufs": integrated,
-    })
+    }
+    _record_run(project, run_record)
+    _stage_mark("export", planSha256=plan_sha, output=rendered)
+    try:
+        os.makedirs(run_dir, exist_ok=True)
+        report_path = os.path.join(run_dir, "report.json")
+        with open(report_path, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(run_record, ensure_ascii=False, indent=2) + "\n")
+    except OSError as error:
+        log(f"run report not written ({error}); the run history line is the record")
     return done
 
 
@@ -3365,6 +4305,21 @@ CRAFT_SHIP_SCORE = 7.0
 # (concat-motion/src/revision.rs: MAX_RETRIES), mirrored here so the
 # runner and the reel loop mean the same thing by "one more pass".
 CRAFT_MAX_REVISIONS = 2
+
+# The least confidence a critique needs before its score decides the run
+# (DEG-04): #116 records the critic's tier and confidence, and this table
+# is the interpretation - the weaker the critic, the more sure it must be
+# before a pass on its word ships. Below the line the critique is a
+# recorded fallback, not a certificate; the ship line itself never moves,
+# because a weak critic that said 8 is still an 8 that was said.
+CRAFT_TIER_CONFIDENCE = {
+    "hosted": 0.5,
+    "local_vlm": 0.6,
+    "local": 0.6,
+    "heuristic": 0.75,
+}
+#: The line for a tier the table does not name: the local tier's own.
+CRAFT_TIER_DEFAULT = 0.6
 
 # A time with a unit in a critic's sentence: "the hook at 0.4s", "the
 # beat at 12 s", "by 1.5 seconds" - the seconds a note carries are the
@@ -3556,6 +4511,7 @@ def watch(transport: Any, project: str, plan: dict[str, Any], poll: float) -> No
                         "status": "failed",
                         "audio": audio,
                         "stop": str(error),
+                        **_stage_failure_note(project),
                     })
     except KeyboardInterrupt:
         # A cancelled run leaves its partial state named, not guessed at:
@@ -3783,6 +4739,7 @@ SELF_TEST_REPLIES = {
     },
     "export_start": {"job": "j1"},
     "export_wait": {"state": "done", "output": "/tmp/funcut-selftest/final.mp4"},
+    "detect_ai_voice": {"ok": True, "aiLikeness": {"score": 12, "band": "likely human"}},
     "measure_loudness": {
         "integratedLufs": -14.2, "truePeakDbtp": -1.4, "loudnessRangeLu": 6.0,
         "targetLufs": -14.0, "lufsError": -0.2, "platformTargetMet": True,
@@ -3941,6 +4898,9 @@ def self_test() -> int:
     have_media = selftest_media()
     project = "/tmp/funcut-selftest/project"
     audio = "/tmp/funcut-selftest/voiceover.wav"
+    # A self-test starts as a first run, not a resume of whatever the
+    # last invocation's final scenario left in the shared project dir.
+    _scenario_state_clear(project)
     transport = MockMcp(selftest_world())
     calls = run_pipeline(transport, project, audio, SELF_TEST_PLAN)
     by_tool = [(tool, args) for tool, args in calls]
@@ -3949,7 +4909,8 @@ def self_test() -> int:
         "concat_version", "local_vlm",
         "enhance_speech", "remove_hiss_hum_rumble",
         "transcribe", "analysis_wait", "voice_signals", "emotion",
-        "footage_plan_suggest", "detect_music_segments", "plan_validate",
+        "footage_plan_suggest", "detect_music_segments", "identify_music",
+        "plan_validate",
         "project_get", "media_import", "track_add", "clip_add", "clip_speed",
         "openvid_rank_for_slot", "stock_contact_sheet", "footage_continuity",
         "openvid_import", "clip_trim",
@@ -3962,7 +4923,7 @@ def self_test() -> int:
         "collision_check", "timeline_read",
         "export_start", "export_wait", "transcribe", "analysis_wait", "emotion",
         "timeline_read", "project_get",
-        "measure_loudness", "watch_render", "craft_critique",
+        "measure_loudness", "detect_ai_voice", "watch_render", "craft_critique",
     ]
     if order != expected:
         print(f"FAIL: phase order\n  want: {expected}\n  got:  {order}")
@@ -4159,10 +5120,156 @@ def self_test() -> int:
         f"{sum(1 for e in audited.values() if e.get('status') == 'skipped')} skipped)"
     )
 
+    # ---- IDEM: the run twice, and the resume after a failed stage
+    # (IDEM-01..10). The plan's export is unpinned so each run's render
+    # is run-scoped; the second run's world is the project as the first
+    # run left it - the placements the first run made are on the
+    # timeline, exactly what a real resume reads back.
+    twice_plan = copy.deepcopy(SELF_TEST_PLAN)
+    twice_plan.pop("export", None)
+    # The repaired take the first run's repair step claims to have
+    # written: the mock replies with the path without writing the file,
+    # so the test writes it - the resumed run's bin, the repair's reuse
+    # check and VERIFY-05 all read the disk, and the world must not name
+    # a file it never made. The path is the mock's own claimed one.
+    cleaned_path = "/tmp/funcut-selftest/voiceover-cleaned.wav"
+    try:
+        os.makedirs(os.path.dirname(cleaned_path), exist_ok=True)
+        shutil.copyfile(audio, cleaned_path)
+    except OSError:
+        pass
+    _scenario_state_clear(project)
+    first_world = selftest_world()
+    first_calls = run_pipeline(MockMcp(first_world), project, audio, twice_plan)
+    first_record = None
+    with open(os.path.join(project, ".auto-director-runs.jsonl"), encoding="utf-8") as handle:
+        first_record = [json.loads(line) for line in handle if line.strip()][-1]
+    first_output = first_record.get("output") or ""
+    if os.sep + RUNS_DIR_NAME + os.sep not in first_output:
+        print(f"FAIL: the unpinned export is not run-scoped: {first_output}")
+        return 1
+    first_report = os.path.join(
+        _run_report_dir(project, str(first_record.get("runId"))), "report.json"
+    )
+    if not os.path.isfile(first_report):
+        print(f"FAIL: the run wrote no runs/<id>/report.json: {first_report}")
+        return 1
+
+    resumed_media = [dict(item) for item in SELF_TEST_GROWN_BIN["media"]]
+    for item in resumed_media:
+        if item["id"] == "m-voice-cleaned":
+            item["path"] = cleaned_path
+    # The clip ids are the ones the mock's own placements answered with:
+    # the resume re-reads a project the first run actually built.
+    resumed_view = {
+        "media": resumed_media,
+        "timeline": {"clips": [
+            {"id": "c-voice", "kind": "audio", "media": "m-voice-cleaned",
+             "start": 0.0, "duration": 10.0},
+            {"id": "c-stock-7", "kind": "video", "media": "m-stock-7",
+             "start": 0.0, "duration": 8.0},
+            {"id": "c-motion", "kind": "video", "media": "m-motion",
+             "start": 8.0, "duration": 4.0},
+            {"id": "c-existing", "kind": "video", "media": "m-existing",
+             "start": 4.0, "duration": 4.0},
+            {"id": "c-sfx", "kind": "audio", "media": "m-sfx",
+             "start": 1.0, "duration": 1.4},
+            {"id": "c-bgm", "kind": "audio", "media": "m-bgm",
+             "start": 0.0, "duration": 180.0},
+        ]},
+    }
+    resumed_world = selftest_world()
+    resumed_world["project_get"] = lambda _args: resumed_view
+    second_calls = run_pipeline(MockMcp(resumed_world), project, audio, twice_plan)
+    second_tools = [tool for tool, _ in second_calls]
+    duplicated = {
+        "openvid_import": "the B-roll re-imported",
+        "track_add": "a second lane opened",
+        "motion_reel": "the graphic re-rendered",
+        "captions_add": "the captions doubled",
+        "sounds_add": "the SFX re-placed",
+        "bgm_import": "the bed re-imported",
+        "clip_speed": "the speed compounded",
+        "keyframe_set": "the keys re-set",
+        "clip_update": "the transition re-patched",
+        "effect_layer_add": "the grade stacked a second layer",
+    }
+    for tool, complaint in duplicated.items():
+        if tool in second_tools:
+            print(f"FAIL: the resumed run duplicated work - {complaint} ({tool})")
+            return 1
+    with open(os.path.join(project, ".auto-director-runs.jsonl"), encoding="utf-8") as handle:
+        second_record = [json.loads(line) for line in handle if line.strip()][-1]
+    if not second_record.get("skippedStages"):
+        print(f"FAIL: the resumed run recorded no skipped stages: {second_record}")
+        return 1
+    second_output = second_record.get("output") or ""
+    if second_output == first_output:
+        print(f"FAIL: the second run overwrote the first's export: {second_output}")
+        return 1
+    second_report = os.path.join(
+        _run_report_dir(project, str(second_record.get("runId"))), "report.json"
+    )
+    if not os.path.isfile(second_report):
+        print(f"FAIL: the resumed run wrote no report: {second_report}")
+        return 1
+    print(
+        f"run twice ok: {len(first_calls)} calls then {len(second_calls)}, "
+        f"{len(second_record['skippedStages'])} stage(s) reused, two exports, two reports"
+    )
+
+    # The resume after a failed stage: the captions tool fails once, the
+    # run stops with its completed stages recorded, and the next run
+    # skips exactly those and places what failed.
+    _scenario_state_clear(project)
+    caption_fails = {"count": 0}
+
+    def failing_captions(_args: dict[str, Any]) -> dict[str, Any]:
+        caption_fails["count"] += 1
+        if caption_fails["count"] == 1:
+            raise PipelineError("captions_add: the tool failed (as arranged)")
+        return {"ok": True, "count": 1}
+
+    failed_world = selftest_world()
+    failed_world["captions_add"] = failing_captions
+    try:
+        run_pipeline(MockMcp(failed_world), project, audio, twice_plan)
+        print("FAIL: the arranged captions failure did not stop the run")
+        return 1
+    except PipelineError as error:
+        if "as arranged" not in str(error):
+            print(f"FAIL: the run stopped for the wrong reason: {error}")
+            return 1
+    failed_state = _load_run_state(project)
+    failed_stages = set(failed_state.get("stages") or {})
+    for wanted in ("transcribe", "voice-signals", "gather", "timeline"):
+        if wanted not in failed_stages:
+            print(f"FAIL: the failed run's state lacks the completed {wanted}: {sorted(failed_stages)}")
+            return 1
+    if "captions" in failed_stages:
+        print("FAIL: the failed stage was recorded as complete")
+        return 1
+    resume_calls = run_pipeline(MockMcp(resumed_world), project, audio, twice_plan)
+    resume_tools = [tool for tool, _ in resume_calls]
+    for tool in ("openvid_import", "track_add", "motion_reel", "keyframe_set"):
+        if tool in resume_tools:
+            print(f"FAIL: the resume re-ran a completed stage's work ({tool})")
+            return 1
+    if "captions_add" not in resume_tools:
+        print("FAIL: the resume did not place the captions the failure ate")
+        return 1
+    with open(os.path.join(project, ".auto-director-runs.jsonl"), encoding="utf-8") as handle:
+        resume_record = [json.loads(line) for line in handle if line.strip()][-1]
+    if resume_record.get("status") != "completed":
+        print(f"FAIL: the resumed run did not complete: {resume_record.get('status')}")
+        return 1
+    print("resume ok: the failed stage's work was placed, the completed stages were not re-run")
+
     # A planner the server does not serve: every slot carries the
     # degradation, provenance fallback, in the run's signalLog (P1-004).
     unplanned = selftest_world()
     unplanned.pop("footage_plan_suggest", None)
+    _scenario_state_clear(project)
     unplanned_run = run_pipeline(MockMcp(unplanned), project, audio, SELF_TEST_PLAN)
     if not unplanned_run:
         print("FAIL: the run without a planner did not complete")
@@ -4195,6 +5302,7 @@ def self_test() -> int:
     kinetic_plan["captions"]["wordTimed"] = True
     kinetic_world = selftest_world()
     kinetic_transport = MockMcp(kinetic_world)
+    _scenario_state_clear(project)
     kinetic_calls = run_pipeline(kinetic_transport, project, audio, kinetic_plan)
     animate_call = next(
         (args for tool, args in kinetic_calls if tool == "captions_animate"), None,
@@ -4236,9 +5344,13 @@ def self_test() -> int:
 
     # Kinetic captions asked for, word timings absent: the honest
     # fallback - segment-timed captions placed, the degradation recorded
-    # in the run's signalLog with provenance fallback (P1-010).
+    # in the run's signalLog with provenance fallback (P1-010). The
+    # scenario's take is the same plan over the same audio as the bake
+    # above, so the state that bake wrote is stood down first: this
+    # scenario tests the wordless transcript itself, not the resume.
     wordless = copy.deepcopy(SELF_TEST_PLAN)
     wordless["captions"]["wordTimed"] = True
+    _scenario_state_clear(project)
     wordless_world = selftest_world()
     wordless_world["analysis_wait"] = {
         "state": "done",
@@ -4273,9 +5385,9 @@ def self_test() -> int:
         return 1
     entries = report.get("checks", [])
     by_check = {entry.get("id"): entry for entry in entries}
-    wanted_ids = [f"VERIFY-{number:02d}" for number in (1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13, 14)]
+    wanted_ids = [f"VERIFY-{number:02d}" for number in (1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13, 14, 15)]
     if sorted(entry.get("id") for entry in entries) != wanted_ids:
-        print(f"FAIL: the report's checks are not the twelve the stage owes: "
+        print(f"FAIL: the report's checks are not the thirteen the stage owes: "
               f"{[entry.get('id') for entry in entries]}")
         return 1
     probe_ids = ("VERIFY-01", "VERIFY-04", "VERIFY-09", "VERIFY-10", "VERIFY-11")
@@ -4287,11 +5399,11 @@ def self_test() -> int:
                   f"{by_check[check_id]}")
             return 1
     summary = report.get("summary", {})
-    if summary.get("total") != 12 or summary.get("failed") != 0:
+    if summary.get("total") != 13 or summary.get("failed") != 0:
         print(f"FAIL: the report's summary is wrong: {summary}")
         return 1
     print(
-        "verify record ok: 12 entries, report written, "
+        "verify record ok: 13 entries, report written, "
         + f"{summary.get('passed')} passed / {summary.get('skipped')} skipped "
         + "(probe checks skipped: no ffmpeg)" * (not have_media)
     )
@@ -4301,6 +5413,7 @@ def self_test() -> int:
     # craft gate scores anything.
     off_frame_plan = copy.deepcopy(SELF_TEST_PLAN)
     off_frame_plan["captions"]["offsetY"] = 1.2
+    _scenario_state_clear(project)
     try:
         run_pipeline(MockMcp(selftest_world()), project, audio, off_frame_plan)
         print("FAIL: an off-frame caption shipped without a refusal")
@@ -4313,6 +5426,7 @@ def self_test() -> int:
 
     # A plan that asks for captions but has none to place: the entry says
     # so, and the refusal names it.
+    _scenario_state_clear(project)
     no_caption_transcript = selftest_world()
     no_caption_transcript["analysis_wait"] = {
         "state": "done",
@@ -4330,6 +5444,7 @@ def self_test() -> int:
 
     # A drifted timeline: something edited the project after the export's
     # edit was final; the hash names it, the run refuses.
+    _scenario_state_clear(project)
     drifted_world = selftest_world()
     timeline_reads = {"count": 0}
 
@@ -4353,6 +5468,7 @@ def self_test() -> int:
 
     # The same source twice on one lane's same seconds: the entry names
     # the pair and the lane, the run refuses.
+    _scenario_state_clear(project)
     duplicated_world = selftest_world()
     duplicated_world["timeline_read"] = {
         "clips": SELF_TEST_REPLIES["timeline_read"]["clips"] + [
@@ -4372,6 +5488,7 @@ def self_test() -> int:
 
     # Media the bin no longer holds: the clip references an id the re-read
     # does not answer, and the entry names the id.
+    _scenario_state_clear(project)
     vanished_world = selftest_world()
     vanished_world["project_get"] = lambda _args: {
         "media": [
@@ -4392,6 +5509,7 @@ def self_test() -> int:
 
     # A sync refusal that is the entry's, not a crash's: the verdict fails,
     # the entry carries the tool's own numbers, the refusal names VERIFY-03.
+    _scenario_state_clear(project)
     unsynced_world = selftest_world()
     unsynced_world["emotion"] = lambda args: (
         {"verdict": "fail", "matchRate": 0.62, "maxDriftMs": 340.0}
@@ -4410,6 +5528,7 @@ def self_test() -> int:
 
     # A clipping export: the true peak over the 0 dBFS ceiling, measured
     # and named, even with the loudness target itself met.
+    _scenario_state_clear(project)
     clipping_world = selftest_world()
     clipping_world["measure_loudness"] = {
         "integratedLufs": -14.0, "truePeakDbtp": 0.8,
@@ -4547,6 +5666,7 @@ def self_test() -> int:
         }],
     }
     remedy = MockMcp(remedy_replies)
+    _scenario_state_clear(project)
     try:
         run_pipeline(remedy, project, audio, SELF_TEST_PLAN)
     except PipelineError as error:
@@ -4559,6 +5679,7 @@ def self_test() -> int:
     stacked_replies = selftest_world()
     stacked_replies["detect_music_segments"] = {"musicPresent": True, "segments": [{"start": 0.0, "end": 12.0}]}
     stacked = MockMcp(stacked_replies)
+    _scenario_state_clear(project)
     stacked_calls = run_pipeline(stacked, project, audio, SELF_TEST_PLAN)
     if any(tool == "bgm_import" for tool, _ in stacked_calls):
         print("FAIL: a bed was stacked under a take that already carries music")
@@ -4578,6 +5699,7 @@ def self_test() -> int:
         ]},
     }
     forged = MockMcp(forged_replies)
+    _scenario_state_clear(project)
     try:
         run_pipeline(forged, project, audio, SELF_TEST_PLAN)
         print("FAIL: a signalLog citing unmeasured signals was executed")
@@ -4590,6 +5712,7 @@ def self_test() -> int:
 
     # A failure stops the run: no timeline or export work follows it.
     broken = MockMcp(selftest_world(), fail_on="emotion")
+    _scenario_state_clear(project)
     try:
         run_pipeline(broken, project, audio, SELF_TEST_PLAN)
         print("FAIL: a failing phase did not stop the pipeline")
@@ -4606,6 +5729,7 @@ def self_test() -> int:
 
     # A server that cannot serve the core tools is refused at the handshake.
     thin = MockMcp({"project_get": lambda _args: SELF_TEST_BASELINE_BIN})
+    _scenario_state_clear(project)
     try:
         run_pipeline(thin, project, audio, SELF_TEST_PLAN)
         print("FAIL: a server without the core tools was run against")
@@ -4624,6 +5748,7 @@ def self_test() -> int:
         "signalLog": {"driven": False, "coverage": 0.0, "blockers": ["missing signal log"]},
     }
     unready = MockMcp(unready_replies)
+    _scenario_state_clear(project)
     try:
         run_pipeline(unready, project, audio, SELF_TEST_PLAN)
         print("FAIL: a creatively unready plan was executed")
@@ -4637,6 +5762,248 @@ def self_test() -> int:
             print(f"FAIL: timeline mutation preceded readiness: {mutated}")
             return 1
     print("readiness gate ok: no edit or export before creativeReady")
+
+    # ---- the degradation record (DEG): every fallback the run survived
+    # lands in its own signalLog with provenance=fallback - one entry per
+    # degradation, the shape the plan's signalLog entries will be held to.
+
+    def deg_project(name: str) -> str:
+        folder = os.path.join("/tmp/funcut-selftest", name)
+        os.makedirs(folder, exist_ok=True)
+        runs = os.path.join(folder, ".auto-director-runs.jsonl")
+        if os.path.exists(runs):
+            os.remove(runs)
+        _scenario_state_clear(folder)
+        return folder
+
+    def recorded_fallbacks(folder: str) -> list[dict[str, Any]]:
+        with open(os.path.join(folder, ".auto-director-runs.jsonl"), encoding="utf-8") as handle:
+            lines = [line for line in handle if line.strip()]
+        return (json.loads(lines[-1]) if lines else {}).get("signalLog") or []
+
+    def has_entry(entries: list[dict[str, Any]], **wanted: str) -> bool:
+        return any(
+            all(entry.get(key) == value for key, value in wanted.items())
+            and entry.get("provenance") == "fallback"
+            for entry in entries
+        )
+
+    # DEG-01: the NER ear missing is a recorded fallback, not an empty list.
+    deg01_world = selftest_world()
+    deg01_world["voice_signals"] = dict(SELF_TEST_REPLIES["voice_signals"]) | {
+        "entitiesAvailable": False,
+    }
+    deg01 = deg_project("deg-01")
+    run_pipeline(MockMcp(deg01_world), deg01, audio, SELF_TEST_PLAN)
+    entries = recorded_fallbacks(deg01)
+    if not has_entry(entries, stage="sense", decision="entities", signalName="entities"):
+        print(f"FAIL: a missing NER was not recorded as a fallback: {entries}")
+        return 1
+    print("DEG-01 ok: entitiesAvailable=false is recorded with provenance=fallback")
+
+    # DEG-03: a keyword-tier ranking is named in the run's own log.
+    deg03_world = selftest_world()
+    deg03_world["openvid_rank_for_slot"] = lambda args: dict(
+        SELF_TEST_REPLIES["openvid_rank_for_slot"]
+    ) | {
+        "rerank": {
+            "applied": False,
+            "ranking": "keyword-tier",
+            "reason": "the vision rerank model is not installed",
+        },
+    }
+    deg03 = deg_project("deg-03")
+    run_pipeline(MockMcp(deg03_world), deg03, audio, SELF_TEST_PLAN)
+    entries = recorded_fallbacks(deg03)
+    if not has_entry(entries, stage="broll", decision="ranking", signalName="openvid_search.rerank"):
+        print(f"FAIL: a keyword-tier ranking was not recorded: {entries}")
+        return 1
+    print("DEG-03 ok: keyword-tier stock ranking is recorded with provenance=fallback")
+
+    # DEG-04: a critique under its tier's confidence line is a recorded
+    # fallback; a confident hosted critique is not.
+    deg04 = deg_project("deg-04")
+    run_pipeline(MockMcp(selftest_world()), deg04, audio, SELF_TEST_PLAN)
+    entries = recorded_fallbacks(deg04)
+    if not has_entry(entries, stage="craft", decision="critique", signalName="craft_critique"):
+        print(f"FAIL: a heuristic 0.5-confidence critique was not recorded: {entries}")
+        return 1
+    deg04b_world = selftest_world()
+    deg04b_world["craft_critique"] = {
+        "overall": 8.5, "scores": {}, "notes": [], "tier": "hosted", "confidence": 0.9,
+    }
+    deg04b = deg_project("deg-04b")
+    run_pipeline(MockMcp(deg04b_world), deg04b, audio, SELF_TEST_PLAN)
+    if has_entry(recorded_fallbacks(deg04b), stage="craft"):
+        print("FAIL: a confident hosted critique was recorded as a fallback")
+        return 1
+    print("DEG-04 ok: the tier/confidence line is interpreted, not just recorded")
+
+    # DEG-05: a failing identification is a missing identification, not a
+    # "no music" reading and not a dead run.
+    deg05_world = selftest_world()
+    deg05_world["detect_music_segments"] = {
+        "musicPresent": True, "segments": [{"start": 0.0, "end": 12.0}],
+    }
+    deg05 = deg_project("deg-05")
+    deg05_calls = run_pipeline(
+        MockMcp(deg05_world, fail_on="identify_music"), deg05, audio, SELF_TEST_PLAN
+    )
+    entries = recorded_fallbacks(deg05)
+    if not has_entry(entries, stage="music-gate", decision="identify", signalName="identify_music"):
+        print(f"FAIL: a failing identify_music was not recorded as missing: {entries}")
+        return 1
+    if any(tool == "bgm_import" for tool, _ in deg05_calls):
+        print("FAIL: a bed was stacked under a take whose music was identified as present")
+        return 1
+    print("DEG-05 ok: identify_music failure is a recorded absence, not 'no music'")
+
+    # DEG-06: a library that cannot be made ready is a warned, recorded
+    # absence - the export ships loudly without the bed.
+    deg06_world = selftest_world()
+    deg06_world["bgm_status"] = {"state": "unavailable"}
+    deg06 = deg_project("deg-06")
+    deg06_calls = run_pipeline(MockMcp(deg06_world), deg06, audio, SELF_TEST_PLAN)
+    entries = recorded_fallbacks(deg06)
+    if not has_entry(entries, stage="bgm", decision="bed", signalName="bgm_status"):
+        print(f"FAIL: a missing music library was not recorded: {entries}")
+        return 1
+    if any(tool == "bgm_import" for tool, _ in deg06_calls):
+        print("FAIL: a bed was placed against a library that was never ready")
+        return 1
+    print("DEG-06 ok: the missing library is a recorded absence, never a silent skip")
+
+    # DEG-07: a prepare that dies with the server fails with a clear error;
+    # a prepare that comes ready places the bed.
+    deg07_world = selftest_world()
+    deg07_world["bgm_status"] = {"state": "loading"}
+    deg07_world["bgm_prepare"] = {"ok": True}
+    deg07 = deg_project("deg-07")
+    try:
+        run_pipeline(MockMcp(deg07_world, fail_on="bgm_prepare"), deg07, audio, SELF_TEST_PLAN)
+        print("FAIL: a bgm_prepare that died did not stop the run with a clear error")
+        return 1
+    except PipelineError as error:
+        if "could not be prepared" not in str(error):
+            print(f"FAIL: the dead bgm_prepare failed for the wrong reason: {error}")
+            return 1
+    bgm_reads = {"count": 0}
+
+    def warming_library(_args: dict[str, Any]) -> dict[str, Any]:
+        bgm_reads["count"] += 1
+        return {"state": "ready"} if bgm_reads["count"] > 1 else {"state": "missing"}
+
+    deg07b_world = selftest_world()
+    deg07b_world["bgm_status"] = warming_library
+    deg07b_world["bgm_prepare"] = {"ok": True}
+    deg07b = deg_project("deg-07b")
+    deg07b_calls = run_pipeline(MockMcp(deg07b_world), deg07b, audio, SELF_TEST_PLAN)
+    if not any(tool == "bgm_import" for tool, _ in deg07b_calls):
+        print("FAIL: a library that came ready after bgm_prepare still placed no bed")
+        return 1
+    if has_entry(recorded_fallbacks(deg07b), stage="bgm"):
+        print("FAIL: a library that came ready was still recorded as a fallback")
+        return 1
+    print("DEG-07 ok: the dead prepare fails clearly; the live one recovers the bed")
+
+    # DEG-09: a wrong-language transcript is flagged at the reading.
+    deg09_world = selftest_world()
+    deg09_world["analysis_wait"] = {
+        "state": "done",
+        "output": '{"segments":[{"text":"one","start":0.0,"end":1.0}],'
+                  '"model":"base.en","scriptDetected":"cyrillic",'
+                  '"language":null,"languageMismatch":true}',
+    }
+    deg09 = deg_project("deg-09")
+    run_pipeline(MockMcp(deg09_world), deg09, audio, SELF_TEST_PLAN)
+    entries = recorded_fallbacks(deg09)
+    if not has_entry(entries, stage="transcribe", decision="transcript", signalName="transcribe.language"):
+        print(f"FAIL: a wrong-language transcript was not recorded: {entries}")
+        return 1
+    print("DEG-09 ok: the script mismatch is flagged in the run's own log")
+
+    # DEG-10: an int8 Kokoro take has its hiss cure recorded, chained or not.
+    deg10_plan = copy.deepcopy(SELF_TEST_PLAN)
+    deg10_plan.setdefault("audio", {}).setdefault("voiceover", {})[
+        "model"
+    ] = "kokoro-int8-multi-lang-v1_0"
+    deg10 = deg_project("deg-10")
+    run_pipeline(MockMcp(selftest_world()), deg10, audio, deg10_plan)
+    entries = recorded_fallbacks(deg10)
+    if not has_entry(
+        entries, stage="voiceover-repair", decision="denoise",
+        signalName="remove_hiss_hum_rumble",
+    ):
+        print(f"FAIL: an int8 take's denoise chain was not recorded: {entries}")
+        return 1
+    print("DEG-10 ok: the int8 hiss cure is recorded with provenance=fallback")
+
+    # FALL-06: the emotion read on the English-only lexicon is recorded.
+    fall06_world = selftest_world()
+    fall06_world["emotion"] = lambda args: (
+        {"verdict": "pass", "matchRate": 1.0, "maxDriftMs": 0.0}
+        if args.get("action") == "verify"
+        else {"engine": "lexicon",
+              "lines": [{"text": "one", "emotion": "curious"}],
+              "arc": ["curiosity", "clarity"]}
+    )
+    fall06 = deg_project("fall-06")
+    run_pipeline(MockMcp(fall06_world), fall06, audio, SELF_TEST_PLAN)
+    entries = recorded_fallbacks(fall06)
+    if not has_entry(entries, stage="emotion", decision="arc", signalName="emotion.model"):
+        print(f"FAIL: the lexicon emotion read was not recorded: {entries}")
+        return 1
+    print("FALL-06 ok: the English-lexicon emotion read is a recorded fallback")
+
+    # FALL-07: a plan that names a whisper model hands it to the server.
+    fall07_plan = copy.deepcopy(SELF_TEST_PLAN)
+    fall07_plan.setdefault("audio", {}).setdefault("voiceover", {})[
+        "whisperModel"
+    ] = "small"
+    fall07 = deg_project("fall-07")
+    fall07_calls = run_pipeline(MockMcp(selftest_world()), fall07, audio, fall07_plan)
+    asked = next(args for tool, args in fall07_calls if tool == "transcribe")
+    if asked.get("model") != "small":
+        print(f"FAIL: the plan's whisperModel did not reach the transcriber: {asked}")
+        return 1
+    print("FALL-07 ok: the plan's whisper model is the transcriber's ask")
+
+    # FALL-09: a plan that names only a mood shops its bed with the mood.
+    fall09_plan = copy.deepcopy(SELF_TEST_PLAN)
+    fall09_plan["audio"]["bgm"] = {"mood": "warm lofi", "duckDb": -12.0}
+    fall09 = deg_project("fall-09")
+    fall09_calls = run_pipeline(MockMcp(selftest_world()), fall09, audio, fall09_plan)
+    shopped = next(args for tool, args in fall09_calls if tool == "bgm_search")
+    if shopped.get("query") != "warm lofi":
+        print(f"FAIL: the mood did not stand in for the query: {shopped}")
+        return 1
+    print("FALL-09 ok: a mood-only bed is shopped with the mood, said aloud")
+
+    # FALL-10: where the two music readings disagree, identify_music decides
+    # and both readings are recorded.
+    fall10_world = selftest_world()
+    fall10_world["detect_music_segments"] = {"musicPresent": False, "segments": []}
+    fall10_world["identify_music"] = {"ok": True, "tempo": {"bpm": 124.0, "strength": 0.42}}
+    fall10 = deg_project("fall-10")
+    fall10_calls = run_pipeline(MockMcp(fall10_world), fall10, audio, SELF_TEST_PLAN)
+    if any(tool == "bgm_import" for tool, _ in fall10_calls):
+        print("FAIL: a bed was stacked although identify_music heard the pulse")
+        return 1
+    entries = recorded_fallbacks(fall10)
+    if not has_entry(entries, stage="music-gate", decision="bgm", signalName="identify_music"):
+        print(f"FAIL: the music disagreement was not recorded: {entries}")
+        return 1
+    with open(os.path.join(fall10, ".auto-director-runs.jsonl"), encoding="utf-8") as handle:
+        record = json.loads([line for line in handle if line.strip()][-1])
+    both = [
+        entry for entry in record.get("signalLog", [])
+        if entry.get("decision") == "bgm" and entry.get("provenance") == "measured"
+    ]
+    if not both or both[0].get("detectMusic") is not False or both[0].get("identifyMusic") is not True:
+        print(f"FAIL: both music readings were not recorded as measured: {both}")
+        return 1
+    print("FALL-10 ok: the identifier decides the disagreement, both readings recorded")
+
     print("SELF-TEST PASS")
     return 0
 
@@ -4704,6 +6071,7 @@ def revision_self_test() -> int:
         return world
 
     # One revision, then the score clears the line and the edit ships.
+    _scenario_state_clear(project)
     transport = MockMcp(replies_always_low([5.5, 7.5]))
     calls = run_pipeline(transport, project, audio, SELF_TEST_PLAN)
     by_tool = [(tool, args) for tool, args in calls]
@@ -4733,6 +6101,7 @@ def revision_self_test() -> int:
 
     # A critic that never clears the line: two passes, then the edit
     # ships with the failures recorded - never a crash.
+    _scenario_state_clear(project)
     transport = MockMcp(replies_always_low([5.5, 5.5, 5.5, 5.5]))
     calls = run_pipeline(transport, project, audio, SELF_TEST_PLAN)
     by_tool = [(tool, args) for tool, args in calls]
@@ -4768,6 +6137,7 @@ def revision_self_test() -> int:
         return reply
 
     world["craft_critique"] = critique_with_fix
+    _scenario_state_clear(project)
     transport = MockMcp(world)
     calls = run_pipeline(transport, project, audio, SELF_TEST_PLAN)
     by_tool = [(tool, args) for tool, args in calls]
@@ -4832,6 +6202,7 @@ def main() -> int:
                     "status": "failed",
                     "audio": args.audio,
                     "stop": str(error),
+                    **_stage_failure_note(args.project),
                 })
                 return 1
             return 0

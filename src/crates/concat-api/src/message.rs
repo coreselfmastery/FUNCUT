@@ -128,6 +128,16 @@ pub enum Request {
         /// The edit. Boxed because a command is the largest thing a
         /// request carries; the JSON is the command as it is.
         command: Box<Command>,
+        /// The caller's own name for this exact batch (IDEM): a second
+        /// apply carrying a key this project already answered returns the
+        /// recorded view without applying again - the net for a run that
+        /// died between the apply and its reply, or pressed on through
+        /// without hearing one. Absent, the apply is a fresh edit exactly
+        /// as before. The remembered answers live with the API's own
+        /// life; an undo does not evict them, because a re-sent key after
+        /// an undo is a caller asking for what it already got - and gets.
+        #[serde(default)]
+        idempotency_key: Option<String>,
     },
     /// Steps the history back one edit.
     #[serde(rename = "edit.undo")]

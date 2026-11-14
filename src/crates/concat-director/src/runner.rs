@@ -5,6 +5,8 @@
 //! walk owes the caller around it - progress events, cancellation with
 //! rollback, retries, and the terminal state.
 
+use std::collections::BTreeSet;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -33,6 +35,20 @@ const ATTEMPTS: u32 = 3;
 /// The pause before the first retry. It doubles with each attempt - two
 /// seconds, then four - the watcher's own cadence.
 const FIRST_PAUSE: Duration = Duration::from_secs(2);
+
+/// The idempotency key an [`EDIT_APPLY`] call carries (IDEM): derived
+/// from the stage and the call's own arguments - the same edit, in a
+/// re-run of the same program, asks under the same key, and the server
+/// answers with the batch it already applied instead of a second copy.
+/// A caller that named its own key is left alone: its name is the
+/// contract, not the runner's.
+fn idempotency_key(stage: Stage, call: &ToolCall) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    stage.label().hash(&mut hasher);
+    call.tool.hash(&mut hasher);
+    call.arguments.to_string().hash(&mut hasher);
+    format!("{}-{:016x}", stage.label(), hasher.finish())
+}
 
 /// What the runner drives: one tool call at a time, answered as the JSON
 /// the tool replies with.
@@ -63,7 +79,8 @@ pub struct Runner {
 
 /// What the clones share: the project, the cancel flag, the state, the
 /// event channel, the last event (the one source of truth
-/// [`progress`](Runner::progress) reads), the one-run latch, and the
+/// [`progress`](Runner::progress) reads), the one-run latch, the stages
+/// a prior run on this runner completed (IDEM's resume record), and the
 /// pause before a retry.
 struct Shared {
     project: PathBuf,
@@ -72,6 +89,7 @@ struct Shared {
     events: Mutex<mpsc::Sender<AutoEditEvent>>,
     last: Mutex<Option<AutoEditEvent>>,
     running: AtomicBool,
+    completed: Mutex<BTreeSet<Stage>>,
     pause: Mutex<Duration>,
 }
 
@@ -105,6 +123,7 @@ impl Runner {
                     events: Mutex::new(sender),
                     last: Mutex::new(None),
                     running: AtomicBool::new(false),
+                    completed: Mutex::new(BTreeSet::new()),
                     pause: Mutex::new(FIRST_PAUSE),
                 }),
             },
@@ -163,6 +182,49 @@ impl Runner {
             .pause
             .lock()
             .expect("the runner's pause is not poisoned") = pause;
+    }
+
+    /// The stages a run on this runner completed, in the register's own
+    /// order (IDEM): what a caller can hand back to [`Runner::resume`]
+    /// after a restart, and what a re-run on the same runner will skip.
+    /// The set lives with the runner, so a failed run's finished stages
+    /// are exactly where the next run picks up.
+    pub fn completed(&self) -> Vec<Stage> {
+        let completed = self
+            .shared
+            .completed
+            .lock()
+            .expect("the runner's stage record is not poisoned");
+        Stage::ALL
+            .iter()
+            .copied()
+            .filter(|stage| completed.contains(stage))
+            .collect()
+    }
+
+    /// Seeds the resume record: the stages a prior run already
+    /// completed are skipped by the next [`run`](Runner::run) on this
+    /// runner. A caller that read a run's own record - the watcher's
+    /// state file, a report - resumes where that run stopped.
+    pub fn resume(&self, completed: impl IntoIterator<Item = Stage>) {
+        let mut set = self
+            .shared
+            .completed
+            .lock()
+            .expect("the runner's stage record is not poisoned");
+        for stage in completed {
+            set.insert(stage);
+        }
+    }
+
+    /// A genuinely new edit: the resume record stands down, and the
+    /// next [`run`](Runner::run) walks the whole program again.
+    pub fn fresh(&self) {
+        self.shared
+            .completed
+            .lock()
+            .expect("the runner's stage record is not poisoned")
+            .clear();
     }
 
     /// The pause before the attempt after the one that just failed -
@@ -260,6 +322,34 @@ impl Runner {
                     ),
                 );
             }
+            // IDEM: a stage a prior run on this runner completed is
+            // skipped whole - its work is already on the timeline, and
+            // re-running it would duplicate every placement. The set is
+            // the resume record: a failed run leaves exactly the stages
+            // it finished, and the next run picks up after them.
+            if self
+                .shared
+                .completed
+                .lock()
+                .expect("the runner's stage record is not poisoned")
+                .contains(&step.stage)
+            {
+                self.emit(
+                    AutoEditState::Running {
+                        stage: step.stage,
+                        started: started.clone(),
+                    },
+                    AutoEditProgress::new(
+                        step.stage,
+                        index,
+                        total,
+                        run_started.elapsed(),
+                        Duration::ZERO,
+                        "skipped: the stage completed in a prior run",
+                    ),
+                );
+                continue;
+            }
             let stage_started = Instant::now();
             let running = AutoEditState::Running {
                 stage: step.stage,
@@ -279,7 +369,26 @@ impl Runner {
 
             let mut failure: Option<AutoEditError> = None;
             let mut failed_attempt = 1;
-            'calls: for call in &step.calls {
+            // IDEM: every edit this run applies carries an idempotency
+            // key derived from the stage and the call itself, so the
+            // same edit re-made by a run that never heard the reply
+            // asks under the same key - and the server answers with the
+            // batch it already applied, not a second copy.
+            let calls: Vec<ToolCall> = step
+                .calls
+                .iter()
+                .cloned()
+                .map(|mut call| {
+                    if call.tool == EDIT_APPLY && call.arguments.get("idempotencyKey").is_none() {
+                        let key = idempotency_key(step.stage, &call);
+                        if let Some(fields) = call.arguments.as_object_mut() {
+                            fields.insert("idempotencyKey".to_owned(), json!(key));
+                        }
+                    }
+                    call
+                })
+                .collect();
+            'calls: for call in &calls {
                 self.emit(
                     running.clone(),
                     AutoEditProgress::new(
@@ -369,7 +478,16 @@ impl Runner {
             }
 
             match failure {
-                None => {}
+                None => {
+                    // The stage's calls all landed: it joins the resume
+                    // record, so a later run on this runner skips it
+                    // (IDEM).
+                    self.shared
+                        .completed
+                        .lock()
+                        .expect("the runner's stage record is not poisoned")
+                        .insert(step.stage);
+                }
                 // A stop asked for while the failing call was in flight:
                 // the run lands cancelled, with its rollback, whatever
                 // policy the stage carried - a cancel is not a warning to
@@ -965,6 +1083,121 @@ mod tests {
                 &mut Scripted::new(vec![Ok(json!({ "valid": true }))])
             ),
             RunOutcome::Completed
+        );
+    }
+
+    #[test]
+    fn a_completed_stage_is_skipped_by_the_next_run_on_the_same_runner() {
+        // IDEM: the second run over the same program makes no calls -
+        // every stage completed in the first - and a fresh() runner
+        // walks the program again.
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let program = program(vec![
+            StageStep::run(Stage::Plan, vec![call("plan_validate")]),
+            StageStep::run(Stage::Export, vec![call("export_start")]),
+        ]);
+        let mut first = Scripted::new(vec![
+            Ok(json!({ "valid": true })),
+            Ok(json!({ "job": "e1" })),
+        ]);
+        assert_eq!(runner.run(&program, &mut first), RunOutcome::Completed);
+        assert_eq!(first.calls.len(), 2);
+        assert_eq!(runner.completed(), vec![Stage::Plan, Stage::Export]);
+
+        // The re-run: no calls at all, still completed.
+        let mut second = Scripted::new(Vec::new());
+        assert_eq!(runner.run(&program, &mut second), RunOutcome::Completed);
+        assert!(
+            second.calls.is_empty(),
+            "a completed stage re-ran: {:?}",
+            second.calls
+        );
+
+        // A genuinely new edit walks the program again.
+        runner.fresh();
+        assert!(runner.completed().is_empty());
+        let mut third = Scripted::new(vec![
+            Ok(json!({ "valid": true })),
+            Ok(json!({ "job": "e2" })),
+        ]);
+        assert_eq!(runner.run(&program, &mut third), RunOutcome::Completed);
+        assert_eq!(third.calls.len(), 2);
+    }
+
+    #[test]
+    fn a_failed_run_resumes_after_its_completed_stages() {
+        // IDEM: the run that fails at its second stage leaves the first
+        // in the resume record; the next run takes only the failed
+        // stage's calls. A caller that read the record elsewhere seeds
+        // it with resume() to the same effect.
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let program = program(vec![
+            StageStep::run(Stage::Plan, vec![call("plan_validate")]),
+            StageStep::run(Stage::Timeline, vec![call("edit_apply")]),
+        ]);
+        let mut first = Scripted::new(vec![
+            Ok(json!({ "valid": true })),
+            refused("the lane is missing"),
+        ]);
+        let RunOutcome::Failed(error) = runner.run(&program, &mut first) else {
+            panic!("the run failed");
+        };
+        assert_eq!(error.stage, Stage::Timeline);
+        assert_eq!(runner.completed(), vec![Stage::Plan]);
+
+        let mut second = Scripted::new(vec![Ok(json!({ "applied": 3 }))]);
+        assert_eq!(runner.run(&program, &mut second), RunOutcome::Completed);
+        assert_eq!(second.calls.len(), 1, "the completed stage re-ran");
+        assert_eq!(second.calls[0].tool, "edit_apply");
+        assert_eq!(runner.completed(), vec![Stage::Plan, Stage::Timeline]);
+
+        // A fresh runner seeded by resume() skips the same way.
+        let (other, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        other.resume([Stage::Plan]);
+        let mut seeded = Scripted::new(vec![Ok(json!({ "applied": 3 }))]);
+        assert_eq!(other.run(&program, &mut seeded), RunOutcome::Completed);
+        assert_eq!(seeded.calls.len(), 1);
+        assert_eq!(seeded.calls[0].tool, "edit_apply");
+    }
+
+    #[test]
+    fn every_edit_apply_carries_an_idempotency_key_the_caller_did_not_name() {
+        // IDEM: the runner names each edit for the server's dedupe - a
+        // deterministic key over the stage and the call - and leaves a
+        // caller's own name alone.
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let named = ToolCall {
+            tool: EDIT_APPLY.to_owned(),
+            arguments: json!({ "path": "/edits/Reel", "idempotencyKey": "mine" }),
+        };
+        let program = program(vec![StageStep::run(
+            Stage::Timeline,
+            vec![call(EDIT_APPLY), named],
+        )]);
+        let mut caller = Scripted::new(vec![Ok(json!({})), Ok(json!({}))]);
+        assert_eq!(runner.run(&program, &mut caller), RunOutcome::Completed);
+        assert_eq!(caller.calls.len(), 2);
+        let stamped = caller.calls[0]
+            .arguments
+            .get("idempotencyKey")
+            .and_then(Value::as_str)
+            .expect("the runner named the edit");
+        assert!(
+            stamped.starts_with("timeline-"),
+            "the key names its stage: {stamped}"
+        );
+        let again = idempotency_key(
+            Stage::Timeline,
+            &ToolCall {
+                tool: EDIT_APPLY.to_owned(),
+                arguments: json!({ "path": "/edits/Reel" }),
+            },
+        );
+        assert_eq!(stamped, again, "the key is derived, not minted");
+        assert_eq!(
+            caller.calls[1].arguments.get("idempotencyKey"),
+            Some(&json!("mine")),
+            "a caller's own key is the contract, not the runner's"
         );
     }
 }

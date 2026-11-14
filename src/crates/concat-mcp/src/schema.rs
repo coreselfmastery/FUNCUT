@@ -525,8 +525,14 @@ mod tests {
         // 110: export.status learned to be asked by what a job was
         // started on (`path`, beside the job's own id) - the ask an
         // unattended run makes, its program written before the job was
-        // minted - and both waits carry the field; function, the last of
-        // the growth this comment knows. The
+        // minted - and both waits carry the field; function. And once
+        // more, 247,000 -> 248,000, still at 110: the plan schema's
+        // audio block says the runner's defaults aloud - the
+        // transcriber's base.en, the voice's kokoro-int8, the bed's
+        // -12 duck, every knob a plan names when it wants another
+        // answer - the block bone-dry, its one hint a maxLength the
+        // runtime already enforced; schema the catalogue carries for
+        // the agent that plans, function not prose. The
         // director's default surface - what `concat --mcp` serves an
         // agent that names no list, and the budget that matters by
         // default - keeps its own, tighter cap below.
@@ -541,7 +547,7 @@ mod tests {
             "CONTEXT whole catalogue: {total} over {} tools",
             sizes.len()
         );
-        assert!(total < 247_000, "{total}: {sizes:?}");
+        assert!(total < 248_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }
@@ -577,9 +583,15 @@ mod tests {
         // surface, and the surface's budget carries its schema. And
         // 232,000 -> 233,000 with export.status's `path`: the director
         // waits on its exports and analyses, and the waits take the ask
-        // by what the job was started on.
+        // by what the job was started on. And 233,000 -> 234,000 with
+        // the plan schema's audio defaults: the director plans the take
+        // and the bed, and the block that names their knobs rides
+        // plan_validate onto the surface. And 234,000 -> 235,000 with
+        // edit.apply's `idempotencyKey`: the director's placements name
+        // themselves, so a resumed run cannot double what a finished one
+        // already placed (IDEM) - one field on the one edit tool.
         assert!(
-            director < 233_000,
+            director < 235_000,
             "the director's default surface is {director} characters - too much for an agent to hold"
         );
     }

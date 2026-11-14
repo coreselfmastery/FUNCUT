@@ -57,6 +57,171 @@ const DEFAULT_TRANSCRIBER: &str = "base.en";
 /// that fits a 4 GB laptop.
 const DEFAULT_SPEECH: &str = "kokoro-int8-multi-lang-v1_0";
 
+/// The writing system a stretch of transcribed text is dominated by
+/// (DEG-09). Script, not language: Latin cannot tell English from French,
+/// so the mismatch flag below is raised only for what a script scan can
+/// honestly catch - the cross-script cases, and an English-only model
+/// handed non-Latin audio, which whisper reads as transliterated garbage
+/// either way. Same-script mismatches stay out of scope, on purpose.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Script {
+    Latin,
+    Cyrillic,
+    Greek,
+    Han,
+    Japanese,
+    Hangul,
+    Arabic,
+    Hebrew,
+    Devanagari,
+    Bengali,
+    Thai,
+}
+
+impl Script {
+    /// The script one character is written in, when it is a letter.
+    fn of(character: char) -> Option<Self> {
+        Some(match character {
+            '\u{0400}'..='\u{04FF}' => Script::Cyrillic,
+            '\u{0370}'..='\u{03FF}' => Script::Greek,
+            '\u{3400}'..='\u{4DBF}' | '\u{4E00}'..='\u{9FFF}' | '\u{F900}'..='\u{FAFF}' => {
+                Script::Han
+            }
+            '\u{3040}'..='\u{309F}' | '\u{30A0}'..='\u{30FF}' => Script::Japanese,
+            '\u{1100}'..='\u{11FF}' | '\u{3130}'..='\u{318F}' | '\u{AC00}'..='\u{D7A3}' => {
+                Script::Hangul
+            }
+            '\u{0600}'..='\u{06FF}'
+            | '\u{0750}'..='\u{077F}'
+            | '\u{FB50}'..='\u{FDFF}'
+            | '\u{FE70}'..='\u{FEFF}' => Script::Arabic,
+            '\u{0590}'..='\u{05FF}' => Script::Hebrew,
+            '\u{0900}'..='\u{097F}' => Script::Devanagari,
+            '\u{0980}'..='\u{09FF}' => Script::Bengali,
+            '\u{0E00}'..='\u{0E7F}' => Script::Thai,
+            'a'..='z' | 'A'..='Z' | '\u{00C0}'..='\u{024F}' | '\u{1E00}'..='\u{1EFF}' => {
+                Script::Latin
+            }
+            _ => return None,
+        })
+    }
+
+    /// The name the reply carries.
+    fn name(self) -> &'static str {
+        match self {
+            Script::Latin => "latin",
+            Script::Cyrillic => "cyrillic",
+            Script::Greek => "greek",
+            Script::Han => "han",
+            Script::Japanese => "japanese",
+            Script::Hangul => "hangul",
+            Script::Arabic => "arabic",
+            Script::Hebrew => "hebrew",
+            Script::Devanagari => "devanagari",
+            Script::Bengali => "bengali",
+            Script::Thai => "thai",
+        }
+    }
+
+    /// Where this script sits in the count table.
+    fn slot(self) -> usize {
+        match self {
+            Script::Latin => 0,
+            Script::Cyrillic => 1,
+            Script::Greek => 2,
+            Script::Han => 3,
+            Script::Japanese => 4,
+            Script::Hangul => 5,
+            Script::Arabic => 6,
+            Script::Hebrew => 7,
+            Script::Devanagari => 8,
+            Script::Bengali => 9,
+            Script::Thai => 10,
+        }
+    }
+}
+
+/// The script that outnumbers the rest in the text. Latin is the default
+/// when nothing readable is there at all: an empty or punctuation-only
+/// transcript is not a script disagreement. A tie keeps the earlier
+/// slot - Latin first - so `max_by_key`'s own last-of-equals answer
+/// (Thai, the table's end) cannot sneak in as the "dominant" script of
+/// a text that carried no letters at all.
+fn dominant_script(text: &str) -> Script {
+    let mut counts = [0_usize; 11];
+    for character in text.chars() {
+        if let Some(script) = Script::of(character) {
+            counts[script.slot()] += 1;
+        }
+    }
+    counts
+        .iter()
+        .enumerate()
+        .max_by_key(|&(slot, count)| (*count, std::cmp::Reverse(slot)))
+        .map(|(slot, _)| match slot {
+            1 => Script::Cyrillic,
+            2 => Script::Greek,
+            3 => Script::Han,
+            4 => Script::Japanese,
+            5 => Script::Hangul,
+            6 => Script::Arabic,
+            7 => Script::Hebrew,
+            8 => Script::Devanagari,
+            9 => Script::Bengali,
+            10 => Script::Thai,
+            _ => Script::Latin,
+        })
+        .unwrap_or(Script::Latin)
+}
+
+/// The script an ISO language code is written in, for the ones whose
+/// script is not Latin. Anything unmapped is assumed Latin-script: the
+/// check is a cross-script net, not a language identifier.
+fn script_of_code(code: &str) -> Script {
+    match code {
+        "ru" | "uk" | "bg" | "be" | "sr" | "mk" | "kk" | "ky" | "tg" | "mn" => Script::Cyrillic,
+        "el" => Script::Greek,
+        "zh" => Script::Han,
+        "ja" => Script::Japanese,
+        "ko" => Script::Hangul,
+        "ar" | "fa" | "ur" => Script::Arabic,
+        "he" | "yi" => Script::Hebrew,
+        "hi" | "mr" | "sa" | "ne" => Script::Devanagari,
+        "bn" | "as" => Script::Bengali,
+        "th" => Script::Thai,
+        _ => Script::Latin,
+    }
+}
+
+/// Whether the transcription's own script disagrees with what was asked
+/// for: a language hint written in another script, or an English-only
+/// model handed non-Latin audio (it cannot refuse; it transliterates).
+/// Japanese answers for Han - Japanese text is Han-dominant whenever
+/// the kanji outnumber the kana, so a ja hint over Han is agreement, not
+/// error - but Han does not answer for Japanese: kana under a Chinese
+/// hint is writing the Chinese hint never asked for.
+fn language_mismatch(hint: Option<&str>, english_only_model: bool, script: Script) -> bool {
+    if english_only_model && script != Script::Latin {
+        return true;
+    }
+    let Some(hint) = hint else {
+        return false;
+    };
+    let primary = hint
+        .trim()
+        .split(&['-', '_'][..])
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if primary.is_empty() || primary == "auto" {
+        return false;
+    }
+    match (script_of_code(&primary), script) {
+        (Script::Japanese, Script::Han) => false,
+        (expected, detected) => expected != detected,
+    }
+}
+
 impl Api {
     /// [`crate::Request::SpeechTranscribe`]: the words of a recording with
     /// their times, on a job of its own.
@@ -346,9 +511,27 @@ impl SpeechJob {
                     |_| {},
                 )
                 .map(|segments| {
+                    // DEG-09: the reply says what ran, what script the
+                    // words came back in, and whether that disagrees with
+                    // the ask - a wrong-language transcript discovered at
+                    // the captions is three phases too late.
+                    let words: String = segments
+                        .iter()
+                        .map(|segment| segment.text.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    let script = dominant_script(&words);
+                    let mismatch = language_mismatch(
+                        language.as_deref(),
+                        request.model_id.ends_with(".en"),
+                        script,
+                    );
                     serde_json::json!({
                         "segments": rounded(segments),
                         "language": language,
+                        "model": request.model_id,
+                        "scriptDetected": script.name(),
+                        "languageMismatch": mismatch,
                     })
                     .to_string()
                 }),
@@ -423,7 +606,7 @@ fn delivery_preset(name: &str) -> Option<(f32, Option<f32>)> {
 
 #[cfg(test)]
 mod tests {
-    use super::delivery_preset;
+    use super::{Script, delivery_preset, dominant_script, language_mismatch};
 
     #[test]
     fn delivery_names_a_pacing_not_a_fake_emotion() {
@@ -453,5 +636,37 @@ mod tests {
                 assert!((0.0..=1.0).contains(&p), "{name} breath {p}");
             }
         }
+    }
+
+    #[test]
+    fn the_script_scan_names_the_writing_system() {
+        assert_eq!(dominant_script("hello, brave new world"), Script::Latin);
+        assert_eq!(dominant_script("Привет, новый мир"), Script::Cyrillic);
+        assert_eq!(dominant_script("こんにちは世界"), Script::Japanese);
+        assert_eq!(dominant_script("안녕하세요 세계"), Script::Hangul);
+        assert_eq!(dominant_script("مرحبا بالعالم"), Script::Arabic);
+        // Punctuation and digits alone are not a disagreement.
+        assert_eq!(dominant_script("123 ... !?"), Script::Latin);
+    }
+
+    #[test]
+    fn a_wrong_language_transcript_is_flagged_not_swallowed() {
+        // An English-only model handed non-Latin audio.
+        assert!(language_mismatch(None, true, Script::Cyrillic));
+        assert!(!language_mismatch(None, true, Script::Latin));
+        // A hint the transcript's own script contradicts.
+        assert!(language_mismatch(Some("ru"), false, Script::Latin));
+        assert!(language_mismatch(Some("en"), false, Script::Hangul));
+        assert!(!language_mismatch(Some("fr"), false, Script::Latin));
+        // Japanese answers for Han and back: kanji-heavy text is still
+        // Japanese, and a zh hint over kana-less Han is agreed.
+        assert!(!language_mismatch(Some("ja"), false, Script::Han));
+        assert!(!language_mismatch(Some("zh"), false, Script::Han));
+        assert!(language_mismatch(Some("zh"), false, Script::Japanese));
+        // No hint, multilingual model, any script: whisper's own choice.
+        assert!(!language_mismatch(None, false, Script::Cyrillic));
+        assert!(!language_mismatch(Some("auto"), false, Script::Greek));
+        // A BCP-47 tag reads by its primary subtag.
+        assert!(language_mismatch(Some("en-US"), false, Script::Thai));
     }
 }

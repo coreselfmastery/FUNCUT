@@ -409,6 +409,17 @@ pub struct SpeakResult {
     pub path: String,
     /// Seconds of audio, so the caller can say something useful.
     pub duration: f64,
+    /// The model that actually read the words (DEG-10): the caller's
+    /// choice, or the server's own default when none was named - the
+    /// default is the int8 Kokoro, whose quantisation hiss the repair
+    /// chain downstream is expected to answer for.
+    pub model: String,
+    /// Whether this read went through the CPU fallback: an accelerator
+    /// existed, refused the model mid-read or at load, and the CPU read it
+    /// instead. True means slower-but-done, and a caller recording
+    /// provenance should write the fallback down, not just the log line
+    /// that already does (DEG-10).
+    pub cpu_fallback: bool,
 }
 
 /// A loaded model: sherpa's engine for the families it runs, or
@@ -742,6 +753,9 @@ impl Speech {
         let job = self.gate.begin("speech generation")?;
         let cancel = job.cancel_handle();
         let started = std::time::Instant::now();
+        // DEG-10: whether this read survived an accelerator refusal on the
+        // CPU - a fallback the reply must carry, not only the log.
+        let mut cpu_fallback = false;
 
         let text = request.text.trim();
         if text.is_empty() {
@@ -857,6 +871,7 @@ impl Speech {
                         "tts: {} would not load on the accelerator ({error}); loading it for the CPU",
                         request.model_id
                     );
+                    cpu_fallback = true;
                     (load(false)?, false)
                 }
                 Err(error) => return Err(error),
@@ -918,6 +933,7 @@ impl Speech {
                 // The CPU engine stays for the session, and the model is
                 // loaded for the CPU from now on.
                 if let Some(cpu) = on_cpu {
+                    cpu_fallback = true;
                     if let Ok(mut models) = self.on_cpu.lock() {
                         models.insert(request.model_id.clone());
                     }
@@ -943,6 +959,8 @@ impl Speech {
                 return Ok(SpeakResult {
                     path: file.to_string_lossy().into_owned(),
                     duration,
+                    model: request.model_id.clone(),
+                    cpu_fallback,
                 });
             }
             Engine::Sherpa(tts) => tts,
@@ -1039,6 +1057,8 @@ impl Speech {
         Ok(SpeakResult {
             path: file.to_string_lossy().into_owned(),
             duration,
+            model: request.model_id.clone(),
+            cpu_fallback,
         })
     }
 

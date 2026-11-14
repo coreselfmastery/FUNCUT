@@ -990,7 +990,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "craft_critique",
             title: "Score the cut",
-            description: "Score the cut on six craft axes from a contact sheet, with concrete revisions named.",
+            description: "Score the cut on six craft axes from a contact sheet, with concrete revisions named; the reply's tier and confidence say who scored it and how surely.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -1062,7 +1062,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "voice_signals",
             title: "Read the voiceover as a score",
-            description: "The voiceover read as a score: loudness, pauses, rate, emphasis, speakers, entities - with per-signal confidence, the decision policy and the cut decisions they drive.",
+            description: "The voiceover read as a score: loudness, pauses, rate, emphasis, speakers, entities, per-signal confidence; entitiesAvailable says whether the NER ear answered.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -1934,7 +1934,32 @@ fn plan_validate_schema() -> Option<Value> {
                             }
                         }
                     },
-                    "audio": { "type": "object" },
+                    "audio": {
+                        "type": "object",
+                        "description": "Voiceover and bed. Defaults: whisperModel base.en, TTS model kokoro-int8, bgm.duckDb -12; the bed shops with query, falling back to mood.",
+                        "properties": {
+                            "voiceover": {
+                                "type": "object",
+                                "properties": {
+                                    "source": { "type": ["string", "null"], "description": "file or tts." },
+                                    "speed": { "type": ["number", "null"], "minimum": 0.5, "maximum": 2.0 },
+                                    "glossary": { "type": ["string", "null"], "maxLength": 200 },
+                                    "model": { "type": ["string", "null"] },
+                                    "voice": { "type": ["integer", "null"], "minimum": 0, "maximum": 52 },
+                                    "whisperModel": { "type": ["string", "null"] }
+                                }
+                            },
+                            "bgm": {
+                                "type": "object",
+                                "properties": {
+                                    "query": { "type": ["string", "null"] },
+                                    "mood": { "type": ["string", "null"] },
+                                    "trackId": { "type": ["string", "null"] },
+                                    "duckDb": { "type": ["number", "null"] }
+                                }
+                            }
+                        }
+                    },
                     "audioClipId": {
                         "type": "string",
                         "description": "Existing audio clip id to reuse; its timing must match the plan."

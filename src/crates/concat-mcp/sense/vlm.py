@@ -729,6 +729,33 @@ def health(base: str = None):
         return False
 
 
+def _shape_json_constraint(endpoint, payload, json_schema):
+    """FALL-02: shape the JSON ask the way THIS endpoint's dialect takes
+    it. The OpenAI chat-completions surface looks uniform and is not.
+    llama.cpp's own server reads the schema as a top-level `json_schema`
+    grammar; LM Studio and the other local shims accept the same. The
+    free-tier hosted providers read `response_format` - groq, gemini's
+    OpenAI surface, z.ai and openrouter all honour {"type":
+    "json_object"}, while a foreign top-level field is at best ignored
+    and at worst a 400 that costs the critique a round trip it did not
+    need. The prompts already spell the object's shape out in words, so
+    json_object mode constrains the form and the prompt constrains the
+    fields. A custom endpoint keeps the permissive hybrid both dialects
+    read, because "custom" means "not one of the four we know"."""
+    if endpoint.get("type") == "ollama":
+        # Ollama's JSON mode without a schema, its schema form with one.
+        payload["format"] = json_schema if json_schema else "json"
+        return
+    if not json_schema:
+        return
+    provider = (endpoint or {}).get("provider")
+    if provider in PROVIDERS:
+        payload["response_format"] = {"type": "json_object"}
+    else:
+        payload["json_schema"] = json_schema
+        payload["response_format"] = {"type": "json_object", "schema": json_schema}
+
+
 def ask(prompt: str, images=None, endpoint=None, model=None, timeout=90.0,
         max_tokens=600, json_schema=None, temperature=0.2):
     """Send images + prompt to a local or hosted OpenAI-compatible vision
@@ -771,11 +798,9 @@ def ask(prompt: str, images=None, endpoint=None, model=None, timeout=90.0,
         payload = {
             "model": chosen, "stream": False,
             "messages": [{"role": "user", "content": prompt, "images": list(images or [])}],
-            "format": "json",
         }
         url = base + "/api/chat"
-        if json_schema:
-            payload["format"] = json_schema
+        _shape_json_constraint(ep, payload, json_schema)
     else:
         payload = {
             "model": chosen, "stream": False, "max_tokens": max_tokens,
@@ -783,9 +808,7 @@ def ask(prompt: str, images=None, endpoint=None, model=None, timeout=90.0,
             "messages": [{"role": "user", "content": content}],
         }
         url = base + "/v1/chat/completions"
-        if json_schema:
-            payload["json_schema"] = json_schema
-            payload["response_format"] = {"type": "json_object", "schema": json_schema}
+        _shape_json_constraint(ep, payload, json_schema)
 
     def send(body):
         headers = {"Content-Type": "application/json", "User-Agent": "concat-editor-vlm/1.0"}
@@ -945,6 +968,32 @@ def selftest():
                 else:
                     os.environ[var] = value
         out["endpointGuard"] = "ok"
+        # FALL-02: the per-provider JSON adapters. The four hosted
+        # providers get response_format json_object and nothing foreign;
+        # ollama keeps its format field (a schema when one was given,
+        # json mode when not); a local/custom OpenAI-shape endpoint keeps
+        # the grammar hybrid both dialects read.
+        schema = {"type": "object", "properties": {"score": {"type": "integer"}}}
+        for name in PROVIDERS:
+            hosted_payload = {}
+            _shape_json_constraint({"type": "openai", "provider": name}, hosted_payload, schema)
+            assert hosted_payload == {"response_format": {"type": "json_object"}}, (name, hosted_payload)
+        ollama_payload = {}
+        _shape_json_constraint({"type": "ollama"}, ollama_payload, schema)
+        assert ollama_payload == {"format": schema}, ollama_payload
+        ollama_plain = {}
+        _shape_json_constraint({"type": "ollama"}, ollama_plain, None)
+        assert ollama_plain == {"format": "json"}, ollama_plain
+        local_payload = {}
+        _shape_json_constraint({"type": "openai", "base": "http://127.0.0.1:8099"}, local_payload, schema)
+        assert local_payload == {
+            "json_schema": schema,
+            "response_format": {"type": "json_object", "schema": schema},
+        }, local_payload
+        no_schema = {}
+        _shape_json_constraint({"type": "openai", "provider": "groq"}, no_schema, None)
+        assert no_schema == {}, no_schema
+        out["jsonAdapters"] = "ok"
         # The saved config is written private: 0600 on the file, 0700 on
         # its directory - a key the operator saved is not world-readable.
         entry = configure(provider="groq", api_key="sk-test-123456789")

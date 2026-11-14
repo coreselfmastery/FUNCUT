@@ -1124,6 +1124,18 @@ def extract(spec):
     if not sources.get("pauses"):
         degradations.append("silencedetect absent: pauses unclassified")
 
+    # DEG-01: "no entities found" and "the NER ear missing" are different
+    # facts, and an empty list could not tell them apart. The flag says
+    # which: entitiesAvailable is True only when the NER ear actually
+    # answered - then an empty entities list is a real negative. False
+    # means whatever entities are present came from the regex complement
+    # alone, and a caller driving decisions off them should record the
+    # fallback rather than trust the reading as measured.
+    entities_available = bool(sources.get("entities"))
+    if not entities_available:
+        degradations.append(
+            "NER absent: entities answered by the regex complement alone")
+
     out = {
         "ok": True,
         "schema": SCHEMA,
@@ -1135,6 +1147,7 @@ def extract(spec):
         "pauses": pauses,
         "motifs": _motifs(lines),
         "entities": entities,
+        "entitiesAvailable": entities_available,
         "arc": arc,
         "speaker": (rust or {}).get("speaker"),
         "wholeTake": {
@@ -1300,6 +1313,21 @@ def selftest():
         money = [e for e in result["entities"] if e["entityType"] == "MONEY"]
         if not money:
             failures.append("no MONEY entity from either ear")
+        # DEG-01: without the Rust ears the NER is missing, and the reply
+        # must say so - entities present from the complement alone do not
+        # make the NER "run and found these".
+        if result.get("speaker") is None:
+            if result.get("entitiesAvailable") is not False:
+                failures.append(
+                    "entitiesAvailable must be False when the NER ear is absent: "
+                    f"{result.get('entitiesAvailable')}")
+            if not any("NER absent" in d for d in result.get("degradations") or []):
+                failures.append("the NER-absent degradation was not named")
+        else:
+            if result.get("entitiesAvailable") is not True:
+                failures.append(
+                    "entitiesAvailable must be True when the NER ear answered: "
+                    f"{result.get('entitiesAvailable')}")
         # Language detection and hints.
         if result["language"]["detected"] != "en" or not result["language"]["matchesHint"]:
             failures.append(f"language read {result['language']}")

@@ -269,6 +269,11 @@ pub struct Api {
     dirs: AppDirs,
     /// Open projects by canonical folder path.
     sessions: BTreeMap<String, Session>,
+    /// The answers [`Request::EditApply`] already gave, by the caller's
+    /// own idempotency key and the project it named (IDEM): a re-sent
+    /// key returns its recorded view instead of a second edit. Keyed by
+    /// `"{path}\n{key}"` so two projects' keys never collide.
+    applied: BTreeMap<String, EditorView>,
     /// Where this API may write: a created project, an instantiated
     /// template, an export or a preview file lands under one of these.
     /// Empty means anywhere, for the process's own owner at a terminal.
@@ -347,6 +352,7 @@ impl Api {
         };
         Api {
             book,
+            applied: BTreeMap::new(),
             titles: Titles::new(&dirs),
             cutouts: Arc::new(Cutouts::new(&dirs.data)),
             stabilizers: Arc::new(Stabilizers::new()),
@@ -543,7 +549,11 @@ impl Api {
                 self.autosave(&path);
                 set
             }
-            Request::EditApply { path, command } => view(self.apply(&path, *command)?),
+            Request::EditApply {
+                path,
+                command,
+                idempotency_key,
+            } => view(self.apply_keyed(&path, *command, idempotency_key)?),
             Request::EditUndo { path } => {
                 let undone = view(self.session_mut(&path)?.undo());
                 self.autosave(&path);
@@ -969,6 +979,35 @@ impl Api {
         Ok(view)
     }
 
+    /// [`Request::EditApply`] with the caller's idempotency key (IDEM):
+    /// a key this project already answered returns the recorded view
+    /// without a second edit - the same batch, asked twice, lands once.
+    /// A key never seen (or absent) applies and is remembered under the
+    /// key, so the reply a caller re-asks for is the reply it got. The
+    /// caller's own key names the batch; two different batches under one
+    /// key is a caller bug the API answers by design - the first batch's
+    /// view, not a merge.
+    pub fn apply_keyed(
+        &mut self,
+        path: &str,
+        command: Command,
+        key: Option<String>,
+    ) -> Result<EditorView, ApiError> {
+        let Some(key) = key else {
+            return self.apply(path, command);
+        };
+        if key.is_empty() {
+            return self.apply(path, command);
+        }
+        let id = format!("{path}\n{key}");
+        if let Some(view) = self.applied.get(&id) {
+            return Ok(view.clone());
+        }
+        let view = self.apply(path, command)?;
+        self.applied.insert(id, view.clone());
+        Ok(view)
+    }
+
     /// The window autosaves; a caller through the API had to remember
     /// `project.save`, and a crash - or an agent that never called it -
     /// orphaned every edit and imported file since the last one: the
@@ -1233,12 +1272,49 @@ impl Api {
         Ok(clips)
     }
 
+    /// Whether a fetched clip's head reads like an MP4 (DEG-08): the
+    /// download refuses a short body already, but a file whose head is not
+    /// a box structure - a proxy's error page padded to size, a cache
+    /// entry a crash truncated at the front - is not a clip however many
+    /// bytes long it is. The check is the container's own signature, read
+    /// in one small syscall: the dataset's clips are faststart MP4s and
+    /// carry their `ftyp` in the first bytes. A digest would be stronger,
+    /// but the index rows carry no per-clip hash to check against - name,
+    /// offset and size are all they say - so the honest validation is
+    /// size (already refused short) plus the container's shape, here.
+    fn mp4_head_ok(path: &Path) -> bool {
+        use std::io::Read;
+        let Ok(mut file) = std::fs::File::open(path) else {
+            return false;
+        };
+        let mut head = [0_u8; 512];
+        let Ok(read) = file.read(&mut head) else {
+            return false;
+        };
+        head[..read].windows(4).any(|window| window == b"ftyp")
+    }
+
+    /// A fetched clip, proven before use (DEG-08): fetch, then the head
+    /// check, and a file that fails it leaves the cache so the next ask
+    /// re-downloads instead of serving the corruption forever.
+    fn fetched_clip_checked(library: &openvid::Library, id: i64) -> Result<PathBuf, ApiError> {
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let path = library.fetch(id, &cancel).map_err(ApiError::failed)?;
+        if !Self::mp4_head_ok(&path) {
+            let _ = std::fs::remove_file(&path);
+            return Err(ApiError::failed(format!(
+                "clip {id} arrived but does not read as MP4 media; the bad copy was dropped \
+                 from the cache - ask again to re-download it"
+            )));
+        }
+        Ok(path)
+    }
+
     /// [`Request::OpenvidFetch`].
     pub fn openvid_fetch(&self, id: i64) -> Result<Vec<OpenvidClip>, ApiError> {
         self.openvid_ready()?;
         let library = self.library();
-        let cancel = std::sync::atomic::AtomicBool::new(false);
-        let path = library.fetch(id, &cancel).map_err(ApiError::failed)?;
+        let path = Self::fetched_clip_checked(library, id)?;
         let Some(clip) = library.clip(id).map_err(ApiError::failed)? else {
             return Err(ApiError::failed(format!("there is no clip {id}")));
         };
@@ -1274,13 +1350,12 @@ impl Api {
             folder
         };
         let library = self.library();
-        let cancel = std::sync::atomic::AtomicBool::new(false);
-        // Everything is fetched and copied before anything is added, so a
-        // clip that will not arrive refuses the whole request rather than
-        // leaving half a set behind.
+        // Everything is fetched and checked before anything is added, so a
+        // clip that will not arrive - or arrives unreadable - refuses the
+        // whole request rather than leaving half a set behind.
         let mut copies = Vec::new();
         for id in ids {
-            let cached = library.fetch(*id, &cancel).map_err(ApiError::failed)?;
+            let cached = Self::fetched_clip_checked(library, *id)?;
             let Some(clip) = library.clip(*id).map_err(ApiError::failed)? else {
                 return Err(ApiError::failed(format!("there is no clip {id}")));
             };
@@ -2757,6 +2832,30 @@ mod tests {
         (api, scratch, events)
     }
 
+    #[test]
+    fn a_corrupt_cache_entry_is_dropped_not_served() {
+        // The head check: a real faststart MP4 head passes, a proxy error
+        // page with the size padded right does not (DEG-08).
+        let scratch = tempfile::tempdir().expect("scratch");
+        let good = scratch.path().join("good.mp4");
+        let mut mp4 = b"\0\0\0\x18ftypmp42\0\0\0\0mp42isom".to_vec();
+        mp4.extend_from_slice(&[0_u8; 64]);
+        std::fs::write(&good, mp4).expect("writes");
+        assert!(
+            Api::mp4_head_ok(&good),
+            "an ftyp box at the front is an MP4"
+        );
+        let bad = scratch.path().join("bad.mp4");
+        std::fs::write(&bad, b"<html><body>502 Bad Gateway</body></html>").expect("writes");
+        assert!(
+            !Api::mp4_head_ok(&bad),
+            "an error page is not a clip however many bytes it claims"
+        );
+        let empty = scratch.path().join("empty.mp4");
+        std::fs::write(&empty, b"").expect("writes");
+        assert!(!Api::mp4_head_ok(&empty), "nothing is not a clip");
+    }
+
     fn ok(response: Response) -> Reply {
         match response {
             Response::Result(reply) => reply,
@@ -2882,6 +2981,7 @@ mod tests {
             command: Box::new(Command::AddMedia {
                 item: still("/nowhere/still.png"),
             }),
+            idempotency_key: None,
         })));
         let media_id = added.created_id.expect("minted");
         ok(api.dispatch(Request::EditApply {
@@ -2891,6 +2991,7 @@ mod tests {
                 start: 2.0,
                 above: false,
             }),
+            idempotency_key: None,
         }));
         ok(api.dispatch(Request::ProjectClose {
             path: path.clone(),
@@ -3023,6 +3124,7 @@ mod tests {
                     duration: None,
                     offset_y: None,
                 }),
+                idempotency_key: None,
             }
         );
     }
@@ -3069,6 +3171,7 @@ mod tests {
             command: Box::new(Command::AddMedia {
                 item: still("/nowhere/still.png"),
             }),
+            idempotency_key: None,
         })));
         let media_id = added.created_id.expect("minted");
         let placed = view(ok(api.dispatch(Request::EditApply {
@@ -3078,6 +3181,7 @@ mod tests {
                 start: 2.0,
                 above: false,
             }),
+            idempotency_key: None,
         })));
         assert!(placed.can_undo);
         assert_eq!(placed.project.active().clips.len(), 1);
@@ -3116,6 +3220,7 @@ mod tests {
             command: Box::new(Command::AddMedia {
                 item: still("/nowhere/still.png"),
             }),
+            idempotency_key: None,
         })));
         let placed = view(ok(api.dispatch(Request::EditApply {
             path: path.clone(),
@@ -3124,6 +3229,7 @@ mod tests {
                 start: 0.0,
                 above: false,
             }),
+            idempotency_key: None,
         })));
         let clip_id = placed.project.active().clips[0].id.clone();
         for command in [
@@ -3163,9 +3269,65 @@ mod tests {
                 start: 0.0,
                 ripple: false,
             }),
+            idempotency_key: None,
         }));
         assert_eq!(refused.code, ErrorCode::Refused);
         assert_eq!(refused.message, "That media is no longer in the bin.");
+    }
+
+    #[test]
+    fn a_keyed_apply_lands_once_no_matter_how_often_it_is_re_sent() {
+        // IDEM: the same idempotency key, re-sent after the reply was
+        // lost or the run restarted, returns the recorded view and adds
+        // no second edit - the history holds one step, the undo steps
+        // back over one, and a second key (or none) edits as usual.
+        let (mut api, scratch, _) = api();
+        let path = project(&mut api, &scratch, "Keyed");
+        let created = view(ok(api.dispatch(Request::ProjectGet { path: path.clone() })));
+        let track_id = created.project.active().tracks[0].id.clone();
+        let media = view(ok(api.dispatch(Request::EditApply {
+            path: path.clone(),
+            command: Box::new(Command::AddMedia {
+                item: still("/nowhere/still.png"),
+            }),
+            idempotency_key: None,
+        })));
+        let media_id = media.created_id.expect("minted");
+        let place = |key: Option<&str>| Request::EditApply {
+            path: path.clone(),
+            command: Box::new(Command::AddClip {
+                media_id: media_id.clone(),
+                track_id: track_id.clone(),
+                start: 0.0,
+                ripple: false,
+            }),
+            idempotency_key: key.map(str::to_owned),
+        };
+        let first = view(ok(api.dispatch(place(Some("run-1:timeline")))));
+        let before = first.project.active().clips.len();
+        let again = view(ok(api.dispatch(place(Some("run-1:timeline")))));
+        assert_eq!(
+            again.project.active().clips.len(),
+            before,
+            "a re-sent key adds no second clip"
+        );
+        assert_eq!(
+            again.project.active().clips[0].id,
+            first.project.active().clips[0].id,
+            "a re-sent key answers with the recorded view"
+        );
+        let other = view(ok(api.dispatch(place(Some("run-2:timeline")))));
+        assert_eq!(
+            other.project.active().clips.len(),
+            before + 1,
+            "a different key is a different edit"
+        );
+        let plain = view(ok(api.dispatch(place(None))));
+        assert_eq!(
+            plain.project.active().clips.len(),
+            before + 2,
+            "an unkeyed apply edits as it always did"
+        );
     }
 
     #[test]
@@ -3270,6 +3432,7 @@ mod tests {
                 duration: Some(3.0),
                 offset_y: None,
             }),
+            idempotency_key: None,
         }));
         let undone = view(ok(api.dispatch(Request::EditUndo { path: path.clone() })));
         assert!(undone.project.active().clips.is_empty());
@@ -3332,6 +3495,7 @@ mod tests {
             command: Box::new(Command::AddMedia {
                 item: still("/nowhere/still.png"),
             }),
+            idempotency_key: None,
         })));
         ok(api.dispatch(Request::EditApply {
             path: path.clone(),
@@ -3340,6 +3504,7 @@ mod tests {
                 start: 0.0,
                 above: false,
             }),
+            idempotency_key: None,
         }));
         let started = match ok(api.dispatch(Request::ExportRun {
             path: path.clone(),

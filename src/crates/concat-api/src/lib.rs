@@ -1233,12 +1233,52 @@ impl Api {
         Ok(clips)
     }
 
+    /// Whether a fetched clip's head reads like an MP4 (DEG-08): the
+    /// download refuses a short body already, but a file whose head is not
+    /// a box structure - a proxy's error page padded to size, a cache
+    /// entry a crash truncated at the front - is not a clip however many
+    /// bytes long it is. The check is the container's own signature, read
+    /// in one small syscall: the dataset's clips are faststart MP4s and
+    /// carry their `ftyp` in the first bytes. A digest would be stronger,
+    /// but the index rows carry no per-clip hash to check against - name,
+    /// offset and size are all they say - so the honest validation is
+    /// size (already refused short) plus the container's shape, here.
+    fn mp4_head_ok(path: &Path) -> bool {
+        use std::io::Read;
+        let Ok(mut file) = std::fs::File::open(path) else {
+            return false;
+        };
+        let mut head = [0_u8; 512];
+        let Ok(read) = file.read(&mut head) else {
+            return false;
+        };
+        head[..read].windows(4).any(|window| window == b"ftyp")
+    }
+
+    /// A fetched clip, proven before use (DEG-08): fetch, then the head
+    /// check, and a file that fails it leaves the cache so the next ask
+    /// re-downloads instead of serving the corruption forever.
+    fn fetched_clip_checked(
+        library: &openvid::Library,
+        id: i64,
+    ) -> Result<PathBuf, ApiError> {
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let path = library.fetch(id, &cancel).map_err(ApiError::failed)?;
+        if !Self::mp4_head_ok(&path) {
+            let _ = std::fs::remove_file(&path);
+            return Err(ApiError::failed(format!(
+                "clip {id} arrived but does not read as MP4 media; the bad copy was dropped \
+                 from the cache - ask again to re-download it"
+            )));
+        }
+        Ok(path)
+    }
+
     /// [`Request::OpenvidFetch`].
     pub fn openvid_fetch(&self, id: i64) -> Result<Vec<OpenvidClip>, ApiError> {
         self.openvid_ready()?;
         let library = self.library();
-        let cancel = std::sync::atomic::AtomicBool::new(false);
-        let path = library.fetch(id, &cancel).map_err(ApiError::failed)?;
+        let path = Self::fetched_clip_checked(library, id)?;
         let Some(clip) = library.clip(id).map_err(ApiError::failed)? else {
             return Err(ApiError::failed(format!("there is no clip {id}")));
         };
@@ -1274,13 +1314,12 @@ impl Api {
             folder
         };
         let library = self.library();
-        let cancel = std::sync::atomic::AtomicBool::new(false);
-        // Everything is fetched and copied before anything is added, so a
-        // clip that will not arrive refuses the whole request rather than
-        // leaving half a set behind.
+        // Everything is fetched and checked before anything is added, so a
+        // clip that will not arrive - or arrives unreadable - refuses the
+        // whole request rather than leaving half a set behind.
         let mut copies = Vec::new();
         for id in ids {
-            let cached = library.fetch(*id, &cancel).map_err(ApiError::failed)?;
+            let cached = Self::fetched_clip_checked(library, *id)?;
             let Some(clip) = library.clip(*id).map_err(ApiError::failed)? else {
                 return Err(ApiError::failed(format!("there is no clip {id}")));
             };
@@ -2755,6 +2794,27 @@ mod tests {
             Arc::new(move |event| sink.lock().expect("events").push(event)),
         );
         (api, scratch, events)
+    }
+
+    #[test]
+    fn a_corrupt_cache_entry_is_dropped_not_served() {
+        // The head check: a real faststart MP4 head passes, a proxy error
+        // page with the size padded right does not (DEG-08).
+        let scratch = tempfile::tempdir().expect("scratch");
+        let good = scratch.path().join("good.mp4");
+        let mut mp4 = b"\0\0\0\x18ftypmp42\0\0\0\0mp42isom".to_vec();
+        mp4.extend_from_slice(&[0_u8; 64]);
+        std::fs::write(&good, mp4).expect("writes");
+        assert!(Api::mp4_head_ok(&good), "an ftyp box at the front is an MP4");
+        let bad = scratch.path().join("bad.mp4");
+        std::fs::write(&bad, b"<html><body>502 Bad Gateway</body></html>").expect("writes");
+        assert!(
+            !Api::mp4_head_ok(&bad),
+            "an error page is not a clip however many bytes it claims"
+        );
+        let empty = scratch.path().join("empty.mp4");
+        std::fs::write(&empty, b"").expect("writes");
+        assert!(!Api::mp4_head_ok(&empty), "nothing is not a clip");
     }
 
     fn ok(response: Response) -> Reply {

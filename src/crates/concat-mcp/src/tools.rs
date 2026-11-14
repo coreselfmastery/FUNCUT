@@ -990,7 +990,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "craft_critique",
             title: "Score the cut",
-            description: "Score the cut on six craft axes from a contact sheet, with concrete revisions named.",
+            description: "Score the cut on six craft axes from a contact sheet, with concrete revisions named. The reply carries the tier that scored it (hosted, local_vlm or heuristic) and its confidence; the weaker the tier, the more confidence its verdict needs before a run ships on it.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -1062,7 +1062,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "voice_signals",
             title: "Read the voiceover as a score",
-            description: "The voiceover read as a score: loudness, pauses, rate, emphasis, speakers, entities - with per-signal confidence, the decision policy and the cut decisions they drive.",
+            description: "The voiceover read as a score: loudness, pauses, rate, emphasis, speakers, entities - with per-signal confidence, the decision policy and the cut decisions they drive. entitiesAvailable says whether the NER ear answered (a true negative when it did) or the regex complement stood in for it (a fallback a caller should record).",
             read_only: true,
             destructive: false,
             idempotent: true,

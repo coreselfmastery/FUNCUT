@@ -142,7 +142,7 @@ ENRICHMENT_TOOLS = frozenset({
     "concat_version", "local_vlm", "footage_plan_suggest",
     "stock_contact_sheet", "detect_music_segments", "identify_music",
     "enhance_speech", "remove_hiss_hum_rumble", "sounds_search",
-    "sounds_add", "bgm_status", "bgm_search", "bgm_import",
+    "sounds_add", "bgm_status", "bgm_search", "bgm_import", "bgm_prepare",
     "clip_speed", "clip_update", "keyframe_set", "captions_add",
     "clip_audio_levels_db", "collision_check", "timeline_read",
     "normalize_loudness", "effect_layer_add",
@@ -1467,6 +1467,27 @@ def run_pipeline(
         record.update(entry)
         run_signals.append(record)
 
+    def record_fallback(
+        stage: str, decision: str, signal_name: str, note: str,
+        confidence: float | None = None,
+    ) -> None:
+        """One degradation in the same run signalLog the planner evidence
+        rides (DEG): which stage fell back, which signal it fell back
+        from, when both halves happened, and provenance=fallback - the
+        shape the plan's signalLog entries will be held to. The console
+        hears it as it happens; the run record carries it with the rest."""
+        run_signals.append({
+            "decision": decision,
+            "stage": stage,
+            "signalName": signal_name,
+            "signalTs": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "decisionTs": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "confidence": confidence,
+            "provenance": "fallback",
+            "note": note,
+        })
+        log(f"degraded: {stage}/{decision} <- {signal_name}: {note}")
+
     # ---- 0. The handshake: the server says what it is and what it serves.
     served = transport.available_tools()
     missing = REQUIRED_TOOLS - served
@@ -1489,7 +1510,12 @@ def run_pipeline(
 
     # ---- 2. The take is repaired before anything reads it: every later
     # reading, and the timeline's own voiceover, run on the repaired file.
+    # The original path is remembered: a take the project's own audio/
+    # folder produced is a synthesized one, and the default voice model
+    # is the int8 Kokoro (DEG-10).
+    source_audio = audio
     repaired = audio
+    hiss_cleaned = False
     if "enhance_speech" in served:
         enhanced_out = os.path.join(project, "voiceover-enhanced.wav")
         reply = advance("enhance_speech", {
@@ -1516,11 +1542,53 @@ def run_pipeline(
         cleaned_file = _reply_file(reply)
         if cleaned_file:
             repaired = cleaned_file
+            hiss_cleaned = True
         else:
             log("remove_hiss_hum_rumble returned no file; the enhanced take ships as cleaned")
     if repaired != audio:
         log(f"voiceover repaired: {repaired} (the bin's original stays untouched)")
     audio = repaired
+
+    # DEG-10: the int8 Kokoro is the server's default voice, and its
+    # quantisation adds a hiss that sits above the noise floor #111's
+    # window fix stopped the classifier flagging - the cure is still owed,
+    # and its use must be recorded, not implied. A take the project's own
+    # audio/ folder produced is synthesized; a plan that names a model says
+    # which; a plan that names none got the int8 default.
+    voiceover_plan = (plan.get("audio") or {}).get("voiceover") or {}
+    voiceover_model = ""
+    if isinstance(voiceover_plan, dict):
+        named = voiceover_plan.get("model")
+        if isinstance(named, str) and named.strip():
+            voiceover_model = named.strip()
+    synthesized = os.path.normpath(source_audio).startswith(
+        os.path.join(os.path.normpath(project), "audio") + os.sep
+    )
+    int8_take = "int8" in voiceover_model.lower() or (
+        not voiceover_model and synthesized
+    )
+    if int8_take:
+        if hiss_cleaned:
+            record_fallback(
+                "voiceover-repair", "denoise", "remove_hiss_hum_rumble",
+                "Kokoro int8 take"
+                + (f" ({voiceover_model})" if voiceover_model else " (the server's default model)")
+                + ": quantisation hiss expected above the floor; "
+                "remove_hiss_hum_rumble ran on the take",
+            )
+        elif "remove_hiss_hum_rumble" in served:
+            record_fallback(
+                "voiceover-repair", "denoise", "remove_hiss_hum_rumble",
+                "Kokoro int8 take, but remove_hiss_hum_rumble returned no "
+                "file: the take ships with whatever hiss it carries",
+            )
+        else:
+            record_fallback(
+                "voiceover-repair", "denoise", "remove_hiss_hum_rumble",
+                "Kokoro int8 take and the server does not serve "
+                "remove_hiss_hum_rumble: the take ships with its "
+                "quantisation hiss, uncleaned",
+            )
 
     # ---- 3-5. The readings, on the repaired take.
     transcribe_args: dict[str, Any] = {"path": audio}
@@ -1548,13 +1616,46 @@ def run_pipeline(
         raise PipelineError(f"source transcription returned invalid JSON: {error}") from error
     if not isinstance(transcript, dict) or not isinstance(transcript.get("segments"), list):
         raise PipelineError("source transcription returned no timed segments")
+    # DEG-09: the transcribe reply carries what ran and what script the
+    # words came back in; a wrong-language transcript is flagged here, at
+    # the reading, not discovered three phases later in the captions.
+    if transcript.get("languageMismatch") is True:
+        record_fallback(
+            "transcribe", "transcript", "transcribe.language",
+            "the transcription's script disagrees with the ask: model "
+            f"{transcript.get('model') or 'unknown'}, script "
+            f"{transcript.get('scriptDetected') or 'unknown'}, hint "
+            f"{transcript.get('language') or 'none'} - the words may not "
+            "be the take's words",
+        )
     voice = advance("voice_signals", {"audio": audio, "transcript": transcript})
     if isinstance(voice, dict):
         if voice.get("status") == "degraded":
             for note in voice.get("degradations") or []:
                 log(f"voice_signals degraded: {note}")
+                record_fallback("sense", "reading", "voice_signals", str(note))
         elif voice.get("status"):
             log("voice_signals: every ear that could run did")
+        # DEG-01: "no entities found" and "the NER missing" are different
+        # facts; the reply's flag says which, and a missing NER is a
+        # recorded fallback, never a quiet empty list.
+        if voice.get("entitiesAvailable") is False:
+            record_fallback(
+                "sense", "entities", "entities",
+                "voice_signals NER absent: entity-driven decisions stand "
+                "on the regex complement alone",
+            )
+        language_read = voice.get("language")
+        if (
+            isinstance(language_read, dict)
+            and language_read.get("matchesHint") is False
+        ):
+            record_fallback(
+                "sense", "language", "voice_signals.language",
+                "the voice reading's script "
+                f"({language_read.get('script')}) disagrees with the hint "
+                f"({language_read.get('hint')})",
+            )
     emotion = advance(
         "emotion", {"action": "extract", "transcript": transcript, "project": project}
     )
@@ -1676,23 +1777,51 @@ def run_pipeline(
     # ---- 7. The BGM gate, before any bed is shopped: a take that already
     # carries music gets no bed stacked under it. detect_music_segments is
     # the authoritative answer; where it cannot speak, the gate stays open
-    # and says so.
+    # and says so - as a recorded fallback, never as a quiet negative
+    # (DEG-05).
     bgm_allowed = True
-    if "detect_music_segments" in served:
+    if "detect_music_segments" not in served:
+        record_fallback(
+            "music-gate", "bgm", "detect_music_segments",
+            "detect_music_segments is not served: the music gate stands "
+            "unmeasured, and a bed may stack under take music",
+        )
+    else:
         music = advance("detect_music_segments", {"audio": audio})
         present = music.get("musicPresent") if isinstance(music, dict) else None
         if present is True:
             bgm_allowed = False
             log("music gate: the take already carries music - no bed will be stacked")
+            # DEG-05: an identification that fails is not a "no music"
+            # reading - it is a missing identification, recorded as one,
+            # and the run continues with the gate's own answer standing.
             if "identify_music" in served:
-                identified = advance("identify_music", {"audio": audio})
-                if isinstance(identified, dict):
-                    log(
-                        "identify_music: "
-                        + json.dumps(identified, ensure_ascii=False)[:300]
+                try:
+                    identified = advance("identify_music", {"audio": audio})
+                except PipelineError as error:
+                    record_fallback(
+                        "music-gate", "identify", "identify_music",
+                        f"identify_music failed: {error} - the take still "
+                        "carries music (the gate's own reading); this is a "
+                        "missing identification, not a negative one",
                     )
+                else:
+                    if isinstance(identified, dict):
+                        log(
+                            "identify_music: "
+                            + json.dumps(identified, ensure_ascii=False)[:300]
+                        )
         elif present is None:
-            log("music gate: detect_music_segments answered nothing; treating the take as speech")
+            # The tool answered without a verdict: a degradation with the
+            # reply's own words, not a silent "must be speech".
+            record_fallback(
+                "music-gate", "bgm", "detect_music_segments",
+                "detect_music_segments answered without a verdict"
+                + (f" ({json.dumps(music, ensure_ascii=False)[:160]})"
+                   if isinstance(music, dict) else "")
+                + "; the take is treated as speech on that absence of "
+                "evidence, and the bed decision stands unmeasured",
+            )
 
     # ---- 8. Gate all plan and voice-signal readiness before changing the
     # timeline - and prove the log's citations against the measurement.
@@ -1928,6 +2057,10 @@ def run_pipeline(
     excluded: list[int] = []
     chosen: dict[str, dict[str, Any]] = {}
     slot_segments: dict[str, tuple[int, dict[str, Any]]] = {}
+    # DEG-03: a keyword-tier ranking is recorded once per run, not once
+    # per slot - the first reply that says the vision rerank did not run
+    # speaks for every search after it.
+    rerank_fallback_recorded = False
     for index, segment in broll_segments(plan):
         visual = segment["visual"]
         slot_id = str(segment.get("slotId") or f"segment-{index + 1}")
@@ -1956,6 +2089,20 @@ def run_pipeline(
                     "exclude_ids": list(excluded),
                 },
             )
+            rerank = reply.get("rerank") if isinstance(reply, dict) else None
+            if (
+                not rerank_fallback_recorded
+                and isinstance(rerank, dict)
+                and rerank.get("applied") is False
+            ):
+                rerank_fallback_recorded = True
+                record_fallback(
+                    "broll", "ranking", "openvid_search.rerank",
+                    "stock ranking fell back to keyword-tier (BM25 order "
+                    "stands): "
+                    + str(rerank.get("reason") or "the vision rerank did not run")
+                    + " - stock_contact_sheet is the way to look at the page",
+                )
             clips_found = reply.get("clips", []) if isinstance(reply, dict) else []
             if not clips_found:
                 break
@@ -2701,13 +2848,43 @@ def run_pipeline(
         else:
             status = advance("bgm_status", {})
             state = status.get("state") if isinstance(status, dict) else None
+            if state != "ready" and "bgm_prepare" in served:
+                # DEG-07: a library that is not ready is usually "nobody
+                # started it" or "the last server died mid-prepare" (the
+                # prepare runs on a thread that goes with its process), so
+                # this session starts it - the call is idempotent, a no-op
+                # while it already runs - and gives it a bounded minute to
+                # come ready before the bed is given up on.
+                try:
+                    advance("bgm_prepare", {})
+                except PipelineError as error:
+                    raise PipelineError(
+                        "the music library could not be prepared for the "
+                        f"bed the plan promised: {error}"
+                    ) from error
+                deadline = time.monotonic() + 60.0
+                while time.monotonic() < deadline:
+                    time.sleep(5.0)
+                    status = advance("bgm_status", {})
+                    state = status.get("state") if isinstance(status, dict) else None
+                    if state in ("ready", "failed"):
+                        break
+                if state == "ready":
+                    log("BGM: the music library came ready after bgm_prepare started it this session")
             if state != "ready":
-                log(f"BGM skipped: the music library is {state or 'unavailable'} (bgm_prepare was not run)")
+                # DEG-06: a missing library is a warned, recorded absence -
+                # never a silent one - and the export ships loudly without
+                # the bed the plan promised.
                 _audit("audio.bgm", "rejected",
                        f"the music library is {state or 'unavailable'}; no bed was shopped")
-                _signal(0.0, "bgm", provenance="fallback",
-                        note=f"the music library is {state or 'unavailable'}; the plan's bed did not land")
-            else:
+                record_fallback(
+                    "bgm", "bed", "bgm_status",
+                    "the music library is "
+                    f"{state or 'unavailable'} after a prepare attempt this "
+                    "session: the bed the plan promised is missing from the "
+                    "export",
+                )
+            if state == "ready":
                 track_id = bgm_plan.get("trackId")
                 if not isinstance(track_id, str) or not track_id.strip():
                     search = advance("bgm_search", {"query": str(bgm_plan.get("query") or ""), "limit": 5})
@@ -3056,6 +3233,38 @@ def run_pipeline(
                 + (f" ({tier}, confidence {confidence})" if tier else "")
                 + f" [pass {attempt}]"
             )
+            # DEG-04: the tier names who scored the cut; this is what the
+            # pairing of tier and confidence MEANS. Below its tier's line
+            # the critique is a recorded fallback, not a certificate - the
+            # ship line does not move, but the run record says the pass
+            # stands on a critic that was not sure of itself.
+            if not tier:
+                record_fallback(
+                    "craft", "critique", "craft_critique",
+                    "the critic named no tier: the score has no provenance "
+                    "to interpret",
+                )
+            else:
+                threshold = CRAFT_TIER_CONFIDENCE.get(
+                    str(tier).strip().lower(), CRAFT_TIER_DEFAULT
+                )
+                if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+                    if float(confidence) < threshold:
+                        record_fallback(
+                            "craft", "critique", "craft_critique",
+                            f"critic tier {tier} scored {score}/10 at "
+                            f"confidence {float(confidence):.2f}, under "
+                            f"the {threshold:g} its tier needs: the pass "
+                            "stands, but it is not a certificate",
+                            confidence=float(confidence),
+                        )
+                else:
+                    record_fallback(
+                        "craft", "critique", "craft_critique",
+                        f"critic tier {tier} scored {score}/10 with no "
+                        "confidence: the pairing cannot be interpreted, "
+                        "only recorded",
+                    )
         return inspection, critique, float(score)
 
     def render_attempt(attempt: int) -> str:
@@ -3300,10 +3509,14 @@ def run_pipeline(
     status = "completed" if score >= CRAFT_SHIP_SCORE else "completed-with-warnings"
     for note in unaddressed:
         log(f"craft warning: {note}")
+    degraded_entries = [
+        entry for entry in run_signals if entry.get("provenance") == "fallback"
+    ]
     log(
         f"pipeline complete: {len(done)} call(s); rendered {rendered}; "
         f"craft score {score}"
         + ("" if status == "completed" else f" ({status})")
+        + (f"; {len(degraded_entries)} recorded degradation(s)" if degraded_entries else "")
     )
     # The audit's own last word: every plan field accounted for, and the
     # one the runner did not consume named as one (P1-005). The run's
@@ -3365,6 +3578,21 @@ CRAFT_SHIP_SCORE = 7.0
 # (concat-motion/src/revision.rs: MAX_RETRIES), mirrored here so the
 # runner and the reel loop mean the same thing by "one more pass".
 CRAFT_MAX_REVISIONS = 2
+
+# The least confidence a critique needs before its score decides the run
+# (DEG-04): #116 records the critic's tier and confidence, and this table
+# is the interpretation - the weaker the critic, the more sure it must be
+# before a pass on its word ships. Below the line the critique is a
+# recorded fallback, not a certificate; the ship line itself never moves,
+# because a weak critic that said 8 is still an 8 that was said.
+CRAFT_TIER_CONFIDENCE = {
+    "hosted": 0.5,
+    "local_vlm": 0.6,
+    "local": 0.6,
+    "heuristic": 0.75,
+}
+#: The line for a tier the table does not name: the local tier's own.
+CRAFT_TIER_DEFAULT = 0.6
 
 # A time with a unit in a critic's sentence: "the hook at 0.4s", "the
 # beat at 12 s", "by 1.5 seconds" - the seconds a note carries are the
@@ -4637,6 +4865,181 @@ def self_test() -> int:
             print(f"FAIL: timeline mutation preceded readiness: {mutated}")
             return 1
     print("readiness gate ok: no edit or export before creativeReady")
+
+    # ---- the degradation record (DEG): every fallback the run survived
+    # lands in its own signalLog with provenance=fallback - one entry per
+    # degradation, the shape the plan's signalLog entries will be held to.
+
+    def deg_project(name: str) -> str:
+        folder = os.path.join("/tmp/funcut-selftest", name)
+        os.makedirs(folder, exist_ok=True)
+        runs = os.path.join(folder, ".auto-director-runs.jsonl")
+        if os.path.exists(runs):
+            os.remove(runs)
+        return folder
+
+    def recorded_fallbacks(folder: str) -> list[dict[str, Any]]:
+        with open(os.path.join(folder, ".auto-director-runs.jsonl"), encoding="utf-8") as handle:
+            lines = [line for line in handle if line.strip()]
+        return (json.loads(lines[-1]) if lines else {}).get("signalLog") or []
+
+    def has_entry(entries: list[dict[str, Any]], **wanted: str) -> bool:
+        return any(
+            all(entry.get(key) == value for key, value in wanted.items())
+            and entry.get("provenance") == "fallback"
+            for entry in entries
+        )
+
+    # DEG-01: the NER ear missing is a recorded fallback, not an empty list.
+    deg01_world = selftest_world()
+    deg01_world["voice_signals"] = dict(SELF_TEST_REPLIES["voice_signals"]) | {
+        "entitiesAvailable": False,
+    }
+    deg01 = deg_project("deg-01")
+    run_pipeline(MockMcp(deg01_world), deg01, audio, SELF_TEST_PLAN)
+    entries = recorded_fallbacks(deg01)
+    if not has_entry(entries, stage="sense", decision="entities", signalName="entities"):
+        print(f"FAIL: a missing NER was not recorded as a fallback: {entries}")
+        return 1
+    print("DEG-01 ok: entitiesAvailable=false is recorded with provenance=fallback")
+
+    # DEG-03: a keyword-tier ranking is named in the run's own log.
+    deg03_world = selftest_world()
+    deg03_world["openvid_rank_for_slot"] = lambda args: dict(
+        SELF_TEST_REPLIES["openvid_rank_for_slot"]
+    ) | {
+        "rerank": {
+            "applied": False,
+            "ranking": "keyword-tier",
+            "reason": "the vision rerank model is not installed",
+        },
+    }
+    deg03 = deg_project("deg-03")
+    run_pipeline(MockMcp(deg03_world), deg03, audio, SELF_TEST_PLAN)
+    entries = recorded_fallbacks(deg03)
+    if not has_entry(entries, stage="broll", decision="ranking", signalName="openvid_search.rerank"):
+        print(f"FAIL: a keyword-tier ranking was not recorded: {entries}")
+        return 1
+    print("DEG-03 ok: keyword-tier stock ranking is recorded with provenance=fallback")
+
+    # DEG-04: a critique under its tier's confidence line is a recorded
+    # fallback; a confident hosted critique is not.
+    deg04 = deg_project("deg-04")
+    run_pipeline(MockMcp(selftest_world()), deg04, audio, SELF_TEST_PLAN)
+    entries = recorded_fallbacks(deg04)
+    if not has_entry(entries, stage="craft", decision="critique", signalName="craft_critique"):
+        print(f"FAIL: a heuristic 0.5-confidence critique was not recorded: {entries}")
+        return 1
+    deg04b_world = selftest_world()
+    deg04b_world["craft_critique"] = {
+        "overall": 8.5, "scores": {}, "notes": [], "tier": "hosted", "confidence": 0.9,
+    }
+    deg04b = deg_project("deg-04b")
+    run_pipeline(MockMcp(deg04b_world), deg04b, audio, SELF_TEST_PLAN)
+    if has_entry(recorded_fallbacks(deg04b), stage="craft"):
+        print("FAIL: a confident hosted critique was recorded as a fallback")
+        return 1
+    print("DEG-04 ok: the tier/confidence line is interpreted, not just recorded")
+
+    # DEG-05: a failing identification is a missing identification, not a
+    # "no music" reading and not a dead run.
+    deg05_world = selftest_world()
+    deg05_world["detect_music_segments"] = {
+        "musicPresent": True, "segments": [{"start": 0.0, "end": 12.0}],
+    }
+    deg05 = deg_project("deg-05")
+    deg05_calls = run_pipeline(
+        MockMcp(deg05_world, fail_on="identify_music"), deg05, audio, SELF_TEST_PLAN
+    )
+    entries = recorded_fallbacks(deg05)
+    if not has_entry(entries, stage="music-gate", decision="identify", signalName="identify_music"):
+        print(f"FAIL: a failing identify_music was not recorded as missing: {entries}")
+        return 1
+    if any(tool == "bgm_import" for tool, _ in deg05_calls):
+        print("FAIL: a bed was stacked under a take whose music was identified as present")
+        return 1
+    print("DEG-05 ok: identify_music failure is a recorded absence, not 'no music'")
+
+    # DEG-06: a library that cannot be made ready is a warned, recorded
+    # absence - the export ships loudly without the bed.
+    deg06_world = selftest_world()
+    deg06_world["bgm_status"] = {"state": "unavailable"}
+    deg06 = deg_project("deg-06")
+    deg06_calls = run_pipeline(MockMcp(deg06_world), deg06, audio, SELF_TEST_PLAN)
+    entries = recorded_fallbacks(deg06)
+    if not has_entry(entries, stage="bgm", decision="bed", signalName="bgm_status"):
+        print(f"FAIL: a missing music library was not recorded: {entries}")
+        return 1
+    if any(tool == "bgm_import" for tool, _ in deg06_calls):
+        print("FAIL: a bed was placed against a library that was never ready")
+        return 1
+    print("DEG-06 ok: the missing library is a recorded absence, never a silent skip")
+
+    # DEG-07: a prepare that dies with the server fails with a clear error;
+    # a prepare that comes ready places the bed.
+    deg07_world = selftest_world()
+    deg07_world["bgm_status"] = {"state": "loading"}
+    deg07_world["bgm_prepare"] = {"ok": True}
+    deg07 = deg_project("deg-07")
+    try:
+        run_pipeline(MockMcp(deg07_world, fail_on="bgm_prepare"), deg07, audio, SELF_TEST_PLAN)
+        print("FAIL: a bgm_prepare that died did not stop the run with a clear error")
+        return 1
+    except PipelineError as error:
+        if "could not be prepared" not in str(error):
+            print(f"FAIL: the dead bgm_prepare failed for the wrong reason: {error}")
+            return 1
+    bgm_reads = {"count": 0}
+
+    def warming_library(_args: dict[str, Any]) -> dict[str, Any]:
+        bgm_reads["count"] += 1
+        return {"state": "ready"} if bgm_reads["count"] > 1 else {"state": "missing"}
+
+    deg07b_world = selftest_world()
+    deg07b_world["bgm_status"] = warming_library
+    deg07b_world["bgm_prepare"] = {"ok": True}
+    deg07b = deg_project("deg-07b")
+    deg07b_calls = run_pipeline(MockMcp(deg07b_world), deg07b, audio, SELF_TEST_PLAN)
+    if not any(tool == "bgm_import" for tool, _ in deg07b_calls):
+        print("FAIL: a library that came ready after bgm_prepare still placed no bed")
+        return 1
+    if has_entry(recorded_fallbacks(deg07b), stage="bgm"):
+        print("FAIL: a library that came ready was still recorded as a fallback")
+        return 1
+    print("DEG-07 ok: the dead prepare fails clearly; the live one recovers the bed")
+
+    # DEG-09: a wrong-language transcript is flagged at the reading.
+    deg09_world = selftest_world()
+    deg09_world["analysis_wait"] = {
+        "state": "done",
+        "output": '{"segments":[{"text":"one","start":0.0,"end":1.0}],'
+                  '"model":"base.en","scriptDetected":"cyrillic",'
+                  '"language":null,"languageMismatch":true}',
+    }
+    deg09 = deg_project("deg-09")
+    run_pipeline(MockMcp(deg09_world), deg09, audio, SELF_TEST_PLAN)
+    entries = recorded_fallbacks(deg09)
+    if not has_entry(entries, stage="transcribe", decision="transcript", signalName="transcribe.language"):
+        print(f"FAIL: a wrong-language transcript was not recorded: {entries}")
+        return 1
+    print("DEG-09 ok: the script mismatch is flagged in the run's own log")
+
+    # DEG-10: an int8 Kokoro take has its hiss cure recorded, chained or not.
+    deg10_plan = copy.deepcopy(SELF_TEST_PLAN)
+    deg10_plan.setdefault("audio", {}).setdefault("voiceover", {})[
+        "model"
+    ] = "kokoro-int8-multi-lang-v1_0"
+    deg10 = deg_project("deg-10")
+    run_pipeline(MockMcp(selftest_world()), deg10, audio, deg10_plan)
+    entries = recorded_fallbacks(deg10)
+    if not has_entry(
+        entries, stage="voiceover-repair", decision="denoise",
+        signalName="remove_hiss_hum_rumble",
+    ):
+        print(f"FAIL: an int8 take's denoise chain was not recorded: {entries}")
+        return 1
+    print("DEG-10 ok: the int8 hiss cure is recorded with provenance=fallback")
+
     print("SELF-TEST PASS")
     return 0
 

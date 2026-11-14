@@ -108,6 +108,7 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
+import itertools
 import json
 import os
 import re
@@ -1455,9 +1456,14 @@ RUN_STATE_NAME = ".auto-director-state.json"
 RUNS_DIR_NAME = "runs"
 
 
+_RUN_SEQUENCE = itertools.count(1)
+
+
 def _new_run_id() -> str:
-    """A run's own name, one per run, down to the second."""
-    return time.strftime("%Y%m%dT%H%M%SZ")
+    """A run's own name, one per run: the second it began and its number
+    within that second - two runs in one second never share a
+    directory."""
+    return f"{time.strftime('%Y%m%dT%H%M%SZ')}-{next(_RUN_SEQUENCE):03d}"
 
 
 def _file_sha256(path: str) -> str | None:

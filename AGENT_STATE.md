@@ -23,7 +23,7 @@ and an honest feature ledger. No fake green, no doc-only features.
   on the unmodified tree; CI's lavapipe passes them), `concat-mcp` builds
   and its context-budget test passes (241,881 / 242,000 tokens, 119
   tokens of headroom).
-- Build env script: `/home/z/my-project/scripts/funcut-env.sh` (FFmpeg 8.1
+- Historical local build env (original `/home/z/my-project` machine only; `funcut-env.sh` is not checked in and is not available in a clean clone): `/home/z/my-project/scripts/funcut-env.sh` (FFmpeg 8.1
   dev digest-pinned, ONNX Runtime 1.28.0, sherpa-onnx 1.13.7, libclang 19
   from extracted debs + `/home/z/my-project/clang-lib`, portable cmake
   3.31.6, dev sysroot incl. libasound2t64 runtime, `CARGO_PROFILE_DEV_DEBUG=0`,

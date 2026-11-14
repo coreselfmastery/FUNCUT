@@ -61,7 +61,7 @@ surface. Do NOT claim area A complete until paths actually render.
 - Background processes are killed when a Bash call returns: run long
   builds in the foreground with `timeout 600000`; cargo resumes
   incrementally across calls.
-- `source /home/z/my-project/scripts/funcut-env.sh` before any cargo
+- Historical local environment only: `source /home/z/my-project/scripts/funcut-env.sh` existed on the original machine; the script is not checked in and must not be assumed in a clean clone. Use `.github/workflows/build-app.yml` as the reproducible dependency reference.
   command in `src/`.
 - Disk fills at ~5.8 GB of target/ artifacts: run
   `/home/z/my-project/scripts/prune-dupes.sh` (reclaims duplicate

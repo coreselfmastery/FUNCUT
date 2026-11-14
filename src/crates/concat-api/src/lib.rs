@@ -2465,14 +2465,15 @@ impl Api {
             }
         };
         let brief: serde_json::Value = serde_json::from_str(&contents).map_err(|error| {
-            ApiError::failed(format!("the project's creative brief is invalid JSON: {error}"))
+            ApiError::failed(format!(
+                "the project's creative brief is invalid JSON: {error}"
+            ))
         })?;
         match brief.get("monetized") {
             None => Ok(false),
             Some(serde_json::Value::Bool(value)) => Ok(*value),
             Some(_) => Err(ApiError::failed(
-                "the project's creative brief monetized field must be a boolean"
-                    .to_owned(),
+                "the project's creative brief monetized field must be a boolean".to_owned(),
             )),
         }
     }
@@ -3927,8 +3928,7 @@ mod tests {
             monetized: false,
         }));
         assert!(
-            openvid.message.contains("monetized")
-                && openvid.message.contains("verified licence"),
+            openvid.message.contains("monetized") && openvid.message.contains("verified licence"),
             "the persisted brief must arm the OpenVid gate: {openvid}"
         );
 

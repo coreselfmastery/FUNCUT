@@ -384,8 +384,7 @@ pub fn beat_at(seconds: f64, strength: f64) -> Beat {
 /// must not carry (P1-009: a second and a half stays a second and a
 /// half, and every other second stays itself).
 pub fn plan_seconds(timestamp: &Timestamp) -> f64 {
-    (timestamp.pts as f64 * timestamp.timebase.num as f64)
-        / timestamp.timebase.den as f64
+    (timestamp.pts as f64 * timestamp.timebase.num as f64) / timestamp.timebase.den as f64
 }
 
 /// A timestamp on the planning timebase: one millisecond a tick, so a

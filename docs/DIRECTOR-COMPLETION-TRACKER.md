@@ -1,5 +1,61 @@
 # DIRECTOR-COMPLETION-TRACKER
 
+## Session 5 close - 2026-11-14 (the landing half)
+
+The third stretch of Session 5 settled the brief's merge-state question,
+landed the whole in-flight stack on green, closed the release-readiness
+audit, and posted the final set to issue #82. Live API throughout; no
+page HTML trusted; no push to main.
+
+- The brief's Step 0 question, settled by API before any landing: #118
+  `621420fb`, #119 `2eb5ff54`, #120 `c8eeac78`, #122 `34a2a87b`, #123
+  `242f763e` - all five MERGED, so the session's opening total stood at
+  the brief's ~105 of 216 (the "~87" reading presumed #118/#120 unmerged
+  and is wrong).
+- The stack landed as a chain, not five independent merges: the branches
+  were stacked (fix/silent-degradation into fix/provider-fallbacks into
+  fix/data-resource-schema into feat/runner-idempotency into
+  docs/contradiction-cleanup), so the merge of #127 as `5b4ee420`
+  (parents `242f763e` + `d1f46af9`) carried #124-126's changes to main
+  with it; GitHub auto-marked the stacked PRs merged at 10:51:53-55Z
+  (#124's recorded merge commit `07c87f85`, #125/#126's `d5abac5b`).
+  #128, all five checks green at head `fd0f61cb`, merged after it as
+  `fb841d11` (parents `5b4ee420` + `fd0f61cb`). `main` at this writing =
+  `fb841d11`; this PR lands on top of it.
+- Bug IDs closed with the stack: #124 - DEG-01, DEG-03..10; #125 -
+  FALL-01..03, FALL-06..10; #126 - DATA-01, DATA-04, SRC-10, FAIL-02,
+  FAIL-03 (RES-02 verified safe - no sqlite3_interrupt call exists - and
+  SRC-08/09/11/12 verified already enforced, so not new closures);
+  #127 - IDEM-01..10; #128 - CONTRA-01..07 (three of the seven verified
+  already-resolved on the branch). Still deferred, with next tasks in the
+  first-half record below: SCH-02, RES-03. Arithmetic: the ~105 baseline
+  plus the stack's 39 IDs (9 DEG + 8 FALL + 5 DATA/SRC/FAIL + 10 IDEM +
+  7 CONTRA) is about 144 of 216 - reconcile against the issue #82
+  checklist in Session 6.
+- Release readiness, the brief's Step 6 (read-only; no release cut):
+  `build-app.yml` builds and stages voice-signals for both x86_64 and
+  aarch64; the Forge page's AUTO EDIT button and its 18 toast keys are
+  present in all 26 locales (verified by grep this session, beside the
+  continuation half's `locales.py --check`); the last published release
+  is still `v0.2.8-funcut.12` (2026-11-12). The one gap KNOWN_ISSUES
+  items 9 and 10 do not carry: the repo's own evidence docs point at
+  `scripts/funcut-env.sh` (and `scripts/setup-build-env.sh`) by absolute
+  machine-local path, and neither file exists in the tree - filed as
+  KNOWN_ISSUES item 11 with this PR.
+- Issue #82: the final landed set and the Session 6 task posted.
+
+Session 6 starts with (the continuation section's list, minus the stack
+that has now landed):
+
+1. The hardware work no CI can do: UNVER-01..05 - a real
+   brief-to-export run on the target laptop (the AUTO EDIT button on the
+   window's own server, real provider calls, the export's real
+   measurements, cancel/rollback observed), plus the target-machine
+   proxy/VAAPI acceptance this tracker has carried.
+2. The release cut only after that verification: KNOWN_ISSUES items 9
+   and 10 name exactly what a cut still owes; the release channel is a
+   `v*` tag push.
+
 ## Session 5, continued — 2026-11-14 (the session's second half)
 
 The continuation session verified the first half's merges, landed the CI
@@ -55,10 +111,9 @@ owed. Live API throughout; no page HTML trusted.
 
 Next exact task (Session 6):
 
-1. Merge the stack in order the moment each is all-green: #124 → #125 →
-   #126 → #127 → #128 (heads at this writing: `319f4705`, `07c87f85`,
-   `d5abac5b`, `3c20eeab`, and #128's own head). Nothing else rides those
-   branches; do not push to them.
+1. The stack this item listed has landed, on green - #124 through #128
+   all merged (see the close section above; `main` `fb841d11` at the close
+   record's writing). Nothing further rides those branches.
 2. Then the hardware work, which no CI can do: UNVER-01..05 — a real
    brief-to-export run on the target laptop (the AUTO EDIT button on the
    window's own server, real provider calls, the export's real

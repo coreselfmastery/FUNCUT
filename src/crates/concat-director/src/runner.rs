@@ -890,12 +890,7 @@ mod tests {
         assert_eq!(runner.run(&program, &mut caller), RunOutcome::Cancelled);
         assert!(matches!(runner.state(), AutoEditState::Cancelled { .. }));
         // The run never reached the stage after the one it stopped in.
-        assert!(
-            !caller
-                .calls
-                .iter()
-                .any(|call| call.tool == "timeline_read")
-        );
+        assert!(!caller.calls.iter().any(|call| call.tool == "timeline_read"));
     }
 
     #[test]

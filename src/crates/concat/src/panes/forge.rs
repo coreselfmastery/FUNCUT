@@ -556,8 +556,12 @@ impl ForgePane {
         self.auto.tool_cancel = None;
         self.auto.started = None;
         match &state {
-            AutoEditState::Completed { export, duration, .. }
-            | AutoEditState::CompletedWithWarnings { export, duration, .. } => {
+            AutoEditState::Completed {
+                export, duration, ..
+            }
+            | AutoEditState::CompletedWithWarnings {
+                export, duration, ..
+            } => {
                 self.auto.fraction = 1.0;
                 self.auto.elapsed = elapsed_text(*duration);
                 self.auto.outcome = 0;
@@ -1496,31 +1500,33 @@ fn auto_edit_program(source: &AutoEditSource) -> EditProgram {
     //    written beside the export, then read and scored. A score under
     //    the bar is a flaw the edit ships with - recorded, yellow - not a
     //    run thrown away after the render already landed.
-    steps.push(StageStep::run(
-        Stage::Watch,
-        vec![
-            call(
-                "watch_render",
-                json!({
-                    "path": source.export,
-                    "project": project,
-                    "out": source.sheet,
-                    "audio": true,
-                }),
-            ),
-            call(
-                "craft_critique",
-                json!({
-                    "pngPath": std::path::Path::new(&source.project)
-                        .join(&source.sheet)
-                        .display()
-                        .to_string(),
-                    "project": project,
-                }),
-            ),
-        ],
-    )
-    .warn());
+    steps.push(
+        StageStep::run(
+            Stage::Watch,
+            vec![
+                call(
+                    "watch_render",
+                    json!({
+                        "path": source.export,
+                        "project": project,
+                        "out": source.sheet,
+                        "audio": true,
+                    }),
+                ),
+                call(
+                    "craft_critique",
+                    json!({
+                        "pngPath": std::path::Path::new(&source.project)
+                            .join(&source.sheet)
+                            .display()
+                            .to_string(),
+                        "project": project,
+                    }),
+                ),
+            ],
+        )
+        .warn(),
+    );
     EditProgram::new(PathBuf::from(&source.export), steps)
 }
 
@@ -1589,11 +1595,8 @@ fn run_auto_edit(
         };
         let mut backend = backend;
         let cancelled = tool_cancel;
-        let mut caller = concat_mcp::director::BackendToolCaller::new(
-            &toolbox,
-            backend.as_mut(),
-            &cancelled,
-        );
+        let mut caller =
+            concat_mcp::director::BackendToolCaller::new(&toolbox, backend.as_mut(), &cancelled);
         let _ = runner.run(&program, &mut caller);
         still.store(false, Ordering::Relaxed);
         let state = runner.state();
@@ -1724,8 +1727,7 @@ mod tests {
         }
 
         // The handoff.
-        let (built, auto) =
-            super::build_voiceover_sibling(&source, &source_root, false).unwrap();
+        let (built, auto) = super::build_voiceover_sibling(&source, &source_root, false).unwrap();
         assert_eq!(built.segments.len(), 2);
         // The forge run's handoff carries no AUTO EDIT paths.
         assert!(auto.is_none());
@@ -1825,8 +1827,7 @@ mod tests {
         clip.media_id = "m1".to_owned();
         source.active_mut().clips.push(std::sync::Arc::new(clip));
 
-        let (_, auto) =
-            super::build_voiceover_sibling(&source, &source_root, true).unwrap();
+        let (_, auto) = super::build_voiceover_sibling(&source, &source_root, true).unwrap();
         let auto = auto.expect("the AUTO EDIT's paths");
         assert_eq!(auto.takes.len(), 1);
         let row = &auto.takes[0];
@@ -1836,13 +1837,10 @@ mod tests {
         assert!(Path::new(&row.take).is_file(), "the pristine copy exists");
         assert!(row.take.contains("take-000"));
         assert!(row.enhanced.contains("enhanced-000"));
-        assert!(row.enhanced.starts_with(
-            Path::new(&row.take)
-                .parent()
-                .unwrap()
-                .to_str()
-                .unwrap()
-        ));
+        assert!(
+            row.enhanced
+                .starts_with(Path::new(&row.take).parent().unwrap().to_str().unwrap())
+        );
         // The export folder is made, and both fixed outputs live in it.
         assert!(Path::new(&auto.project).join("export").is_dir());
         assert!(auto.export.ends_with("export/auto-edit.mp4"));
@@ -1918,9 +1916,15 @@ mod tests {
         let repair = &program.steps[1].calls;
         assert_eq!(repair[0].tool, "sense_audio_repair");
         assert_eq!(repair[0].arguments["action"], "enhance_speech");
-        assert_eq!(repair[0].arguments["out"], source.takes[0].enhanced.as_str());
+        assert_eq!(
+            repair[0].arguments["out"],
+            source.takes[0].enhanced.as_str()
+        );
         assert_eq!(repair[1].arguments["action"], "remove_hiss_hum_rumble");
-        assert_eq!(repair[1].arguments["audio"], source.takes[0].enhanced.as_str());
+        assert_eq!(
+            repair[1].arguments["audio"],
+            source.takes[0].enhanced.as_str()
+        );
         // The clean pass lands on the take: the export ships the repaired
         // sound, the watcher's own promise.
         assert_eq!(repair[1].arguments["out"], source.takes[0].take.as_str());
@@ -1968,12 +1972,18 @@ mod tests {
         });
         let mut clip = Clip::blank("c1", "T1", ClipKind::Audio, "c1", 0.0, 2.0);
         clip.media_id = "m1".to_owned();
-        with_voice.active_mut().clips.push(std::sync::Arc::new(clip));
+        with_voice
+            .active_mut()
+            .clips
+            .push(std::sync::Arc::new(clip));
 
         let mut without = Project::with_video(VideoSettings::default());
         let mut video_clip = Clip::blank("v1", "T1", ClipKind::Video, "v1", 0.0, 2.0);
         video_clip.media_id = "m1".to_owned();
-        without.active_mut().clips.push(std::sync::Arc::new(video_clip));
+        without
+            .active_mut()
+            .clips
+            .push(std::sync::Arc::new(video_clip));
 
         let has_audio = |project: &concat_project::model::Project| {
             project

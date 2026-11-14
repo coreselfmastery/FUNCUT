@@ -412,9 +412,7 @@ impl Api {
         self.book.status_for_path(path).ok_or_else(|| {
             ApiError::new(
                 ErrorCode::NotFound,
-                format!(
-                    "no job was started on {path}: it never ran, or ended long ago"
-                ),
+                format!("no job was started on {path}: it never ran, or ended long ago"),
             )
         })
     }
@@ -726,7 +724,7 @@ impl Api {
                     (None, None) => {
                         return Err(ApiError::invalid(
                             "export.status names a job or a path: one of the two",
-                        ))
+                        ));
                     }
                 };
                 Ok(Reply::Job(status))

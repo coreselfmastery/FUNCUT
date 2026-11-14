@@ -4006,9 +4006,7 @@ fn export_wait(
                     .pointer("/error/message")
                     .and_then(Value::as_str)
                     .unwrap_or("without a reason the job recorded");
-                return Err(ApiError::failed(format!(
-                    "the export ended {state}: {why}"
-                )));
+                return Err(ApiError::failed(format!("the export ended {state}: {why}")));
             }
             return Ok(Outcome::json(current));
         }

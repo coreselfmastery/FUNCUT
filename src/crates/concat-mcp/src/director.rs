@@ -66,8 +66,8 @@ use crate::backend::Backend;
 use crate::tools::{Context, Outcome, Toolbox};
 
 pub use concat_director::{
-    AutoEditError, AutoEditEvent, AutoEditProgress, AutoEditState, EditProgram, ErrorPolicy,
-    RunOutcome, Runner, Stage, StageStep, ToolCall, ToolError, EDIT_APPLY, EDIT_UNDO,
+    AutoEditError, AutoEditEvent, AutoEditProgress, AutoEditState, EDIT_APPLY, EDIT_UNDO,
+    EditProgram, ErrorPolicy, RunOutcome, Runner, Stage, StageStep, ToolCall, ToolError,
 };
 
 /// The runner's port, stood on this crate's own ground: the toolbox a
@@ -111,7 +111,10 @@ impl ToolCaller for BackendToolCaller<'_> {
             cancelled: self.cancelled,
             progress: None,
         };
-        match self.toolbox.call(&call.tool, call.arguments.clone(), context) {
+        match self
+            .toolbox
+            .call(&call.tool, call.arguments.clone(), context)
+        {
             None => Err(ToolError {
                 message: format!("there is no {} tool on this server", call.tool),
                 // A tool this server does not serve will not be served by
@@ -203,11 +206,7 @@ mod tests {
 
     /// The one call every test makes, against a fresh adapter over
     /// `backend`'s remaining replies.
-    fn answered(
-        tool: &str,
-        arguments: Value,
-        backend: &mut Scripted,
-    ) -> Result<Value, ToolError> {
+    fn answered(tool: &str, arguments: Value, backend: &mut Scripted) -> Result<Value, ToolError> {
         let toolbox = Toolbox::new();
         let cancelled = AtomicBool::new(false);
         let mut caller = BackendToolCaller::new(&toolbox, backend, &cancelled);
@@ -243,9 +242,12 @@ mod tests {
             replies: Vec::new(),
             taken: Vec::new(),
         };
-        let error = answered("no_such_tool", json!({}), &mut backend)
-            .expect_err("the tool is not served");
-        assert_eq!(error.message, "there is no no_such_tool tool on this server");
+        let error =
+            answered("no_such_tool", json!({}), &mut backend).expect_err("the tool is not served");
+        assert_eq!(
+            error.message,
+            "there is no no_such_tool tool on this server"
+        );
         // The adapter's own word: trying again cannot serve a tool this
         // server does not have.
         assert_eq!(error.retryable, Some(false));
@@ -270,8 +272,12 @@ mod tests {
             replies: vec![Err(ApiError::failed("the render queue is busy"))],
             taken: Vec::new(),
         };
-        let error = answered("export_start", json!({ "path": "/edits/Reel" }), &mut backend)
-            .expect_err("the export was refused");
+        let error = answered(
+            "export_start",
+            json!({ "path": "/edits/Reel" }),
+            &mut backend,
+        )
+        .expect_err("the export was refused");
         assert_eq!(error.message, "the render queue is busy");
         // No opinion of the adapter's own: the runner reads the tool and
         // the message, and a busy queue is not the network's side.
@@ -284,8 +290,12 @@ mod tests {
             replies: vec![Err(ApiError::failed("the connection was reset"))],
             taken: Vec::new(),
         };
-        let error = answered("transcribe", json!({ "path": "/vo/take.wav" }), &mut backend)
-            .expect_err("the transcription was refused");
+        let error = answered(
+            "transcribe",
+            json!({ "path": "/vo/take.wav" }),
+            &mut backend,
+        )
+        .expect_err("the transcription was refused");
         assert_eq!(error.retryable, None);
         // The runner's reading of that same refusal: a tool whose retries
         // land, and a failure that sounds like the network's side.

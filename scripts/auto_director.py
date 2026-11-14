@@ -564,10 +564,16 @@ def _bgm_commercial_ok(track: Any) -> bool:
     MobyGratis, free for non-commercial use only)."""
     if not isinstance(track, dict):
         return False
+    track_id = str(track.get("id") or "").strip()
+    if not track_id.startswith("freepd-"):
+        return False
     licence = track.get("license")
     if isinstance(licence, str) and licence.strip():
-        return licence.strip() != "MobyGratis-NonCommercial"
-    return not str(track.get("id") or "").startswith("lofi-")
+        return licence.strip() == "CC0-1.0"
+    # Older servers did not send a license field; only the known FreePD
+    # shelf prefix is a safe fallback. Unknown ids and license values fail
+    # closed rather than being treated as commercial by default.
+    return True
 
 
 def _measured_families(voice: Any) -> set[str]:
@@ -5140,6 +5146,26 @@ def self_test() -> int:
     if "monetized" in bed_import or bed_import.get("ids") != ["lofi-0123456789ab"]:
         print(f"FAIL: the non-monetized bed import was not the plain call: {bed_import}")
         return 1
+    # RISK-02: the commercial shelf is allow-listed, not deny-listed.
+    # Unknown licenses, mismatched shelf metadata and unknown ids fail closed;
+    # older servers may omit license only for the known FreePD id prefix.
+    if not _bgm_commercial_ok({"id": "freepd-0123456789ab", "license": "CC0-1.0"}):
+        print("FAIL: a known CC0 FreePD track was rejected")
+        return 1
+    if _bgm_commercial_ok({"id": "freepd-0123456789ab", "license": "Commercial"}):
+        print("FAIL: an unknown license was accepted for monetized use")
+        return 1
+    if _bgm_commercial_ok({"id": "lofi-0123456789ab", "license": "CC0-1.0"}):
+        print("FAIL: a MobyGratis id overrode its non-commercial shelf")
+        return 1
+    if _bgm_commercial_ok({"id": "unknown-0123456789ab"}):
+        print("FAIL: an unknown shelf id was treated as CC0")
+        return 1
+    if not _bgm_commercial_ok({"id": "freepd-0123456789ab"}):
+        print("FAIL: the legacy FreePD id fallback was rejected")
+        return 1
+    print("licence filter ok: only known FreePD CC0 tracks pass; unknowns fail closed")
+
     print("licence gates ok: the non-monetized default is unchanged")
 
     collisions = next(args for tool, args in by_tool if tool == "collision_check")

@@ -527,7 +527,14 @@ impl Library {
             return Ok(()); // One is already running; its progress is the
             // one to watch.
         }
+        // RES-03: the download is 435 MB of writes - the disk's whole
+        // business for a while - so it holds the startup I/O gate for
+        // its duration: proxy generation parks behind it (see
+        // `startup_io`), and the first open below takes the gate again
+        // on its own, for the 435 MB of reads.
+        let warm = crate::startup_io::begin_index_warm();
         let outcome = self.download_index(cancel);
+        drop(warm);
         self.running.store(false, Ordering::SeqCst);
         self.progress.store(0, Ordering::Relaxed);
         outcome
@@ -621,6 +628,13 @@ impl Library {
         if self.db.get().is_some() {
             return Ok(());
         }
+        // RES-03: the first open is the index's own warm - 435 MB of
+        // SQLite, its pragmas and its caption dictionary, read off the
+        // disk in one sustained pass - so it holds the startup I/O gate
+        // for its duration and proxy generation parks behind it. The
+        // guard is RAII: a warm that fails or panics still releases,
+        // and every warm path funnels through here, lazy or asked-for.
+        let _warm = crate::startup_io::begin_index_warm();
         let open = |what: &str| format!("the OpenVid index would not open: {what}");
         let connection =
             Connection::open(index_path(&self.dirs)).map_err(|error| open(&error.to_string()))?;

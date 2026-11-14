@@ -1042,6 +1042,15 @@ impl Api {
     /// has none. Asking is idempotent - a file that has its copy, or is
     /// writing one, is a stat away - so `apply` may ask after every
     /// command, the way the window's art pass asks after every message.
+    ///
+    /// RES-03, the startup ordering: while the OpenVid index warms -
+    /// this server's own start warmed it on its own thread - the host's
+    /// startup I/O gate parks these asks instead of starting them, so
+    /// an agent's first `project.open` never competes with the warm's
+    /// 435 MB for the disk; the parked copies are submitted the moment
+    /// the warm finishes, in arrival order, and a proxy already encoding
+    /// when a warm begins is never interrupted. Nothing here asks,
+    /// waits or knows: `proxy::ensure` answers the gate on its own.
     fn ensure_proxies(&self, path: &str) {
         let Ok(session) = self.session(path) else {
             return;
@@ -1157,6 +1166,13 @@ impl Api {
     /// say, and a race with the first real asker is settled by the
     /// library's own `OnceLock` - one connection wins, the loser is
     /// dropped - so the thread is best-effort the whole way down.
+    ///
+    /// RES-03, the startup ordering: this warm and the proxy generation
+    /// an import starts are serialized by the host's startup I/O gate -
+    /// the warm holds it for its whole duration, and `proxy::ensure`
+    /// parks behind it - so the two never compete for the disk. The
+    /// window's OpenVid page and its download hold the same gate, so the
+    /// ordering holds wherever the warm starts from.
     pub fn warm_openvid(&self) {
         let library = self.library();
         std::thread::spawn(move || {

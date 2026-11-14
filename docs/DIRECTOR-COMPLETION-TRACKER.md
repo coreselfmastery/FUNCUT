@@ -1,55 +1,33 @@
 # DIRECTOR-COMPLETION-TRACKER
 
-## Session 2 — 2026-11-14 (in progress)
+## Session 2 — 2026-11-13 (current status)
 
-Preconditions checked at session start (per the Session 2 handoff):
+Fresh repository state for this reconciliation:
 
-- `main` = `ca7142e9`. **CI GREEN** — all 7 check-runs success (Format,
-  locales and models; analysis senses; Engine tests and lints; multi-layer
-  example; linux-aarch64; dependency dance; linux-x86_64), verified via the
-  authenticated check-runs API. Session 1's open question (run #751 in
-  progress) is resolved: it concluded green.
-- concat-director crate NOT on main (local branch only) — precondition 1
-  failed at start; this session lands it (below).
-- Revise loop NOT on main (`auto_director.py:69` stub still present) —
-  precondition 2 failed at start; this session lands it (Task C).
-- PR #105 (fix/openvid-cold-load): **MERGED**, merge SHA `ef8a4c64`
-  (2026-11-13T10:25:43Z).
-- PR #108 (fix/recording-quality-floor-window): **OPEN**, untouched, per
-  the rules. Branch head `fe15de9e` on origin.
-- Credential: valid token supplied by the user mid-session (login
-  `coreselfmastery`, admin/push on the repo). Stored OUTSIDE the repo
-  (`/home/z/my-project/.git-credentials-funcut`, mode 600); never
-  committed. **Rotate it after the session** — it transited the chat.
+- `main` = `77392956859352c18924e728b1ccdaa286ac60f7`, merge of PR #110.
+- PR #110 added the `concat-director` runner crate. Its Geneva workflow passed both jobs; CI format/locales/models and real-fixture analysis passed while engine tests/lints were still running; Nix was still building at this snapshot. The push-triggered Build app run for this exact main commit was not discoverable through the connected workflow-run interface.
+- The runner crate is **not wired** into `concat-mcp` or the editor UI. No AUTO EDIT button or integrated progress/cancel surface is present.
+- The revise loop is **not implemented**: `scripts/auto_director.py` still stops when the craft score is below 7 instead of revising and re-watching.
+- PR #108 remains open on an old base. PR #111 is its replacement based on current main; close #108 only after #111 passes.
+- PR #112 aligns `plan_validate` with executor requirements. Current head: `d682198cafbf3380c78773f1951e6997e5f4b862`; its previous CI attempt exposed a missing storyboard in the canonical example and rustfmt differences, which were fixed in follow-up commits. The new exact-head CI/Geneva runs are pending.
+- PR #113 reconciles the Geneva master list to current main. Current head: `bf481d1d7302895230340f001907b966a3b797fd`; CI/Geneva are pending.
+- No credential material or credential-store paths belong in this repository or tracker. Use the connected GitHub integration or an approved secret manager; never paste tokens into repository files.
 
-User directive for this session: land everything on main, keep working,
-do not stop. Execution order (Session 1 leftovers first, they block):
+## Current execution order
 
-1. **S1 Task B landing** — push `feat/concat-director` (commit `4584370d`
-   + this tracker as `docs/DIRECTOR-COMPLETION-TRACKER.md`), open PR,
-   wait CI green, merge. Closes P0-015..021, P2-001..010, RUN-01..17,
-   CONC-01/02 (the types, stages, API contract and state machine).
-2. **P0-001/002 unification** — tighten `plan_validate` to the executor's
-   requirements (broll: real query required; textCard/titleCard:
-   storyboard.scenes required), per Session 1's evidence (tools.rs:3141+
-   vs auto_director.py:1029+). Branch `fix/slot-contract`.
-3. **S1 Task C revise loop** — replace the score<7 stop
-   (auto_director.py:1879+) with WATCH→revise-per-slot (max 2)→re-WATCH,
-   ship CompletedWithWarnings. Closes P1-006/007, INT-04/06, PLAN-05,
-   FALL-04/05. Branch `feat/revise-loop`.
-4. **S2 Task A** — AUTO EDIT button + toasts (P4-001/002), needs the
-   merged crate. Branch `feat/auto-edit-button`.
-5. **S2 Task B** — verification expansion VERIFY-01..14.
-6. **S2 Tasks C..I** as context allows; Task H = #105 verification
-   report + #108 noted.
-7. Tracker updated after every landing; final report per the handoff
-   format.
+1. Finish and validate PR #112; fix every exact-head CI/Geneva failure.
+2. Finish PR #111; close stale PR #108 only after the replacement is green.
+3. Implement the WATCH → per-slot revise (maximum two attempts) → re-WATCH loop, with explicit warning outcomes and regression tests.
+4. Wire `concat-director` into the MCP backend and editor UI, including progress, cancellation, rollback and terminal states.
+5. Complete the real brief-to-export AI Director acceptance run and inspect the resulting media.
+6. Complete target-machine 1080p proxy and real Intel/AMD VAAPI acceptance.
+7. Publish only after all required checks, reviews, packaging and release evidence are green.
 
-Progress log (appended as tasks land):
+Progress log:
 
-- [2026-11-14] Local gates re-verified on `feat/concat-director` before
-  push: fmt clean, clippy -D warnings clean, 26/26 tests pass (Rust
-  1.93.1, workspace at `src/`).
+- [2026-11-13] PR #110 merged as `77392956859352c18924e728b1ccdaa286ac60f7`; its full CI and Nix validation were still running at the latest poll.
+- [2026-11-13] PR #112 opened for the plan/executor contract mismatch; first CI run found and exposed a canonical example that was not executable, plus rustfmt differences. Both were corrected in follow-up commits; fresh checks pending.
+- [2026-11-13] PR #113 opened to update Geneva's current-main validation evidence.
 
 ---
 
@@ -82,108 +60,17 @@ as `docs/DIRECTOR-COMPLETION-TRACKER.md` with the concat-director PR.
   when merged. Do not touch its files.
 - PR #109: merged = main's HEAD. Confirmed.
 
-## BLOCKER that defined this session
+## Historical access limitation
 
-The GitHub token pasted into the session prompt is DEAD: `GET /user`
-returns 401 "Bad credentials" (tested with both `Bearer` and `token`
-schemes). The prior agent's credential store
-(`/home/z/.git-credentials-funcut`, documented in AGENT_STATE.md) no longer
-exists - the sandbox was recycled on 2026-11-13 15:45 and everything
-outside /home/z/my-project was lost. The repository is public, so all work
-below is READ-ONLY plus LOCAL branch preparation. NOTHING was pushed;
-no PRs were opened; main was not touched.
+The previous automation sandbox did not have a usable authenticated GitHub write path. That limitation is historical and superseded by the current connected GitHub integration. No tokens, credential-store paths, account permissions or local credential locations are recorded in this repository.
 
-**Next session needs: a valid GitHub credential with write access to
-coreselfmastery/FUNCUT before anything can land.**
+## Task B - concat-director crate: MERGED, NOT INTEGRATED
 
-## Task B - concat-director crate: PREPARED, LOCAL BRANCH, NOT PUSHED
-
-- Branch: `feat/concat-director` (in the sandbox clone at
-  `/home/z/my-project/funcut`), commit `4584370d`, 8 files, +1859 lines.
-- Files: `src/crates/concat-director/{Cargo.toml,
-  src/{lib,error,stage,state,runner}.rs}` + workspace manifest entry
-  (`src/Cargo.toml` [workspace.dependencies]) + `src/Cargo.lock`.
-- Local gates ALL GREEN with the pinned toolchain (1.93.1, installed at
-  /home/z/my-project/.rustup, CARGO_HOME=/home/z/my-project/.cargo):
-  - `cargo fmt --check` (workspace-wide): CLEAN
-  - `cargo clippy -p concat-director --all-targets -- -D warnings`: CLEAN
-  - `cargo test -p concat-director`: 26/26 PASS
-- CI-equivalent gates from ci.yml were replicated for the new crate only;
-  the workspace-wide clippy and the multi-platform builds still need the
-  real CI run after push.
-- Design (per the handoff spec):
-  - `AutoEditError {stage, tool_call, message, retryable, retry_after,
-    context}`, `AutoEditProgress {stage, stage_index, total_stages,
-    elapsed_total, elapsed_stage, detail}`, `AutoEditEvent {state,
-    progress}`, `AutoEditState {Idle | Running{stage,started} |
-    Failed{stage,error,attempt} | Completed{export,duration,verification}
-    | CompletedWithWarnings{export,duration,warnings,verification} |
-    Cancelled{at,rolled_back,undone_to}}`, `Stage` with the 15 specified
-    variants, `Runner` holding `project: PathBuf`, `cancel:
-    Arc<AtomicBool>`, `state: Arc<Mutex<AutoEditState>>`, `events:
-    Sender<AutoEditEvent>` (behind a Mutex so the cloneable runner is
-    Sync).
-  - `progress()` reads the last emitted event (single source of truth).
-  - `cancel()` stops at the next stage boundary; rollback is one
-    `edit_undo` per applied `edit_apply` (the API's own per-edit history,
-    message.rs:125-139); terminal `Cancelled{rolled_back, undone_to}` says
-    whether the rollback reached all the way back.
-  - Retries mirror the watcher exactly: 3 attempts when the tool is in
-    RETRYABLE_TOOLS and the message matches the markers, pauses 2s/4s
-    (settable for tests).
-  - `ErrorPolicy::Warn` stages record per-slot failures and the run ships
-    `CompletedWithWarnings` - the seam Task C's revise loop needs.
-  - THE SEAM: the runner drives a `ToolCaller` (one MCP-shaped
-    `ToolCall{tool, arguments}` at a time) because `Backend` lives in
-    concat-mcp and concat-mcp is the crate that will depend on
-    concat-director (dependency direction forbids naming Backend here).
-    The Backend->ToolCaller adapter lands with the AUTO EDIT wiring
-    (P4-001). This is not an invented backend: backend.rs
-    (src/crates/concat-mcp/src/backend.rs:38-57) has the real trait:
-    `pub trait Backend: Send { fn call(&mut self, request: Request) ->
-    Result<Value, ApiError>; fn describe(&self) -> Value; fn roots(&self)
-    -> Vec<PathBuf> {..} fn finish(&mut self) {} }` with `Window` and
-    `Headless` implementations.
-- Unblocks (once landed + wired): P0-015..P0-021, P2-001..P2-010,
-  RUN-01..RUN-17, CONC-01, CONC-02, P4-001 (button), P4-002 (toast),
-  TIME-01..13 and XSTAGE-01..10 and IDEM-01..10 (which need the state
-  machine).
-- NOT DONE: push, PR, CI, merge. Rule 7 applies: no green CI, no "done".
-
-## Step 3 - P0-001/002 slot contract: ANALYSIS COMPLETE, FIX NOT LANDED
-
-The core contract IS unified and matches the docs: "slots[] is the
-shopping list for segments[].visual - the executor runs the segments, not
-the slots" (tools.rs:3386-3460) and the executor (auto_director.py:1029+
-`broll_segments()`) indeed iterates segments and never reads `slots[]`.
-BUT plan_validate accepts two plan shapes the executor cannot run - the
-derivation is NOT the same on two fields:
-
-1. **broll + clipId, no query** - validator passes ("B-roll needs a search
-   query or a non-empty clipId", tools.rs:3141-3152; both schemas leave
-   `query` optional) but the executor REQUIRES a real `visual.query` for
-   EVERY broll segment (auto_director.py:1032-1034, PipelineError) and
-   never honors `clipId` on broll (clipId is read only for `existing`
-   segments: lines 585, 876, 931-938, 1257).
-2. **textCard/titleCard without storyboard** - validator only checks
-   non-empty `text` (tools.rs:3170-3177; `storyboard` optional in both
-   schemas) but the executor requires a complete `visual.storyboard` with
-   `scenes` (auto_director.py:870-873 pre-flight and 1282-1286: "needs an
-   authored storyboard; refusing to export an empty graphic beat").
-
-Unification PR needed (next session). Recommended direction: tighten
-plan_validate to require exactly what the executor requires (broll: real
-query; textCard/titleCard: storyboard.scenes) - the executor is the ground
-truth of what can run. Honoring broll clipId in the executor would be a
-feature ADDITION, not a unification; decide deliberately, do not do both
-silently.
-
-Also recorded while here (SCH-02): the canonical plan schema is a
-hand-maintained skill template include_str!'d from
-`.claude/skills/funcut-director/templates/edit_plan.schema.json`
-(tools.rs:1846-1851), NOT generated from Rust types - SCH-02's suspicion
-is confirmed; the compact tool-input schema in Rust is separately
-hand-written (tools.rs:1897+).
+- PR #110 merged as `77392956859352c18924e728b1ccdaa286ac60f7`; head `91c5754f1cd7102a6206541af7b8cc0e24ea8c0b`.
+- The crate adds the runner's stage program, retry classification, progress events, cancellation and rollback state. It is a foundation, not a working product entry point.
+- `concat-mcp/Cargo.toml` and `concat/Cargo.toml` do not depend on `concat-director`; the MCP backend and Forge/editor UI do not call `Runner`. There is no AUTO EDIT button yet.
+- PR #110 validation snapshot: Geneva passed 2/2; CI format/locales/models and real-fixture analysis passed, engine tests/lints were in progress; Nix build was in progress. Build app for the merge commit was not independently verified through the connected workflow-run interface.
+- Do not describe the AI Director as integrated or end-to-end ready until the runner is wired, the revise loop is implemented, and a real project is accepted through final export.
 
 ## Task C - revise loop: NOT STARTED (deferred)
 
@@ -219,36 +106,18 @@ credential for any follow-up commits (KNOWN_ISSUES entries for failures).
 - SCH-02: the canonical edit-plan schema is hand-maintained (see Step 3
   above) - not generated from Rust. Confirmed open.
 
-## Environment notes for the next session
+## Environment notes
 
-- Sandbox was recycled 2026-11-13 15:45: prior agent's home files are
-  GONE (credential store, funcut-env.sh build environment, FFmpeg 8.1 dev
-  digest setup, ONNX, sherpa). ffmpeg 7.1.5 runtime exists but NO dev
-  headers (pkg-config finds no libavcodec) - concat-media
-  (ffmpeg-the-third) cannot build locally without reinstalling the dev
-  environment; concat-director deliberately depends on nothing but
-  serde/serde_json/thiserror so it builds standalone (verified).
-- Rust 1.93.1 (rustc/cargo/clippy/rustfmt) is installed at
-  /home/z/my-project/.rustup + /home/z/my-project/.cargo. Export:
-  RUSTUP_HOME=/home/z/my-project/.rustup CARGO_HOME=/home/z/my-project/.cargo
-  PATH=/home/z/my-project/.cargo/bin:$PATH
-- Background processes are KILLED when a Bash call returns: run long
-  builds in the foreground with a long timeout.
-- GitHub anonymous API quota is tiny and shared by the egress IP: use
-  workflow badges (https://github.com/coreselfmastery/FUNCUT/actions/workflows/<wf>.yml/badge.svg?branch=main)
-  or the Actions page JSON, or bring a token.
-- Repo: https://github.com/coreselfmastery/FUNCUT (public). Clone lives at
-  /home/z/my-project/funcut with branch feat/concat-director ready.
+- Local Rust builds were not run in the current automation sandbox; use exact-head GitHub CI for source validation.
+- Target-laptop proxy measurements and real Intel/AMD VAAPI tests require the actual hardware; hosted CI is not a substitute.
+- Keep all credentials outside the repository and do not include private paths or account details in handoff notes.
 
-## Next exact task (in order)
+## Next exact task
 
-1. Obtain a valid GitHub credential (the pasted one is dead).
-2. Confirm main's merge-commit CI (#751 on ca7142e9) concluded green; if
-   red, read the failing job's log FIRST (revert-only mode per the rules).
-3. Push `feat/concat-director` (commit 4584370d), open PR, wait CI green,
-   merge. Report SHA. Commit this tracker file with that PR or the next.
-4. P0-001/002 unification PR per the evidence above (one decision: tighten
-   the validator to the executor's requirements).
-5. Task C PR (revise loop) per the evidence above.
-6. Task D real E2E run + runs/<timestamp>/report.json.
-7. Update this tracker; prune the pending list.
+1. Complete PR #112's current CI and Geneva runs; fix any failures on the exact head.
+2. Complete PR #111's current CI and Geneva runs; then close PR #108 as superseded.
+3. Implement and test the revise loop.
+4. Wire the runner into MCP and the editor UI, including progress and cancellation.
+5. Run a real AI Director project from brief through final export and inspect the output.
+6. Measure 1080p long-GOP proxy behavior on the target antiX machine and test VAAPI on real hardware.
+7. Reconcile the release tracker, require review/check evidence, validate both Linux packages, and publish only a fully verified release.

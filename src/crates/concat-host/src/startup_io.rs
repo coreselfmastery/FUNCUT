@@ -212,7 +212,10 @@ pub(crate) mod tests {
         // before the warm began.
         queued();
         assert_eq!(parked(), 1, "the worker parked the queued proxy");
-        assert!(!ran.load(Ordering::SeqCst), "no disk work starts under the warm");
+        assert!(
+            !ran.load(Ordering::SeqCst),
+            "no disk work starts under the warm"
+        );
 
         drop(warm);
         crate::scheduler().drain();

@@ -151,3 +151,57 @@ Geneva is ready for a release candidate when all of the following are true on th
 - [ ] Target-machine timing/memory evidence is attached, or the release notes clearly state that only hosted correctness—not target performance—has been validated.
 
 **Status rule:** never mark the whole FUNCUT product “ready” from this Geneva checklist alone. This page certifies only the Geneva motion-rendering subsystem and its stated boundaries.
+
+
+## 10. Current-main reconciliation — 14 November 2026
+
+This section supersedes the older “current main” snapshots in sections 6, 7 and 9. Those earlier run IDs remain historical evidence for their own commits.
+
+**Exact main commit checked:** `dd109b8d056c0b33c1fcf78fb5021078d71f89c7` (merge of PR #131).
+
+### Same-commit validation evidence
+
+| Workflow | Run | Current result on this SHA |
+| --- | --- | --- |
+| Geneva | [43620426113](https://github.com/coreselfmastery/FUNCUT/actions/runs/43620426113) | **Passed 2/2** — dependency dance and multi-layer render/inspection, including scene-quality and golden-frame checks |
+| Build app | [43620426059](https://github.com/coreselfmastery/FUNCUT/actions/runs/43620426059) | **Passed 2/2** — Linux x86_64 and aarch64 package, smoke and clean-distribution smoke tests; x86_64 instruction-set scan passed |
+| CI | [43620426031](https://github.com/coreselfmastery/FUNCUT/actions/runs/43620426031) | Format/locales/models and real-fixture analysis passed; workspace Clippy passed; test-binary build was still running at this recheck. Unit tests, documentation examples and gRPC checks are not yet verified on this SHA |
+| Nix | [43620426050](https://github.com/coreselfmastery/FUNCUT/actions/runs/43620426050) | Build still running; no success claim |
+
+Build app uploaded two Actions artifacts from this exact SHA:
+- `Concat-linux-x86_64`, artifact `14125135735`, 754,623,931 bytes.
+- `Concat-linux-aarch64`, artifact `14124981112`, 708,953,154 bytes.
+
+These artifacts passed their workflow smoke tests. They are Actions artifacts, not a published release and not a manual installation test on the target antiX laptop.
+
+### Geneva scope — current disposition
+
+- The four Geneva pillars and original ten findings remain implemented/recorded closed. The exact-main Geneva run above passed both jobs.
+- The safe refusal for mixed markup/native-only feature combinations remains the supported boundary; do not describe it as full browser/CSS parity.
+- Static ancestor translations and animated child position offsets are supported. Animated parent transforms and inherited scale/rotation still require native fallback or future hierarchy-aware Geneva work.
+- The sidecar-version query remains part of cache identity and lookup. Do not remove it without a deliberate compatibility design and tests.
+- The hosted benchmark tool is exercised by Geneva CI, but **no target antiX low-memory performance result is recorded**. A real target-device run with representative 1080p motion projects, wall time, memory and output measurements remains required.
+
+### Broader FUNCUT release blockers — not Geneva defects
+
+- PR #130 (SCH-02) is still open: generated plan schemas are not on main. Its current head is `e93ccf5f4e8db045aa6966ca7975b9da7753ced5`; format and real-fixture checks passed, while engine/Geneva/Nix checks were still running. Its schema-check step timeout was raised to 15 minutes after the prior run expired while compiling the checker.
+- PR #132 (RES-03 follow-up) is open: PR #131's startup gate is on main, but a queued proxy can be dequeued after a warm starts. The follow-up adds a worker-start recheck and regression coverage; not yet validated.
+- PR #133 (RISK-01/02) is open: monetized stock/BGM gates are proposed, including a fail-closed FreePD CC0 allow-list. Not yet validated.
+- PR #134 (VERIFY-16) is open: the render's audio stream is probed. Its self-test was moved from the no-FFmpeg fast job to the FFmpeg-equipped analysis job after the first run could not probe the synthetic silent render; the revised run is pending.
+- PR #135 is the residual bug-audit report; PR #136 records archive.org as a FreePD environmental dependency. Both remain open.
+
+### Workflow and release coverage
+
+The current workflow directory contains six files:
+- `ci.yml`: push to main, pull requests, manual dispatch and reusable workflow; includes formatting, locale/model consistency, real-fixture analysis and engine tests/lints.
+- `geneva.yml`: push to main, pull requests and manual dispatch; two Geneva jobs.
+- `build-app.yml`: push to main and reusable workflow; it is not a pull-request package build. The two main-commit architecture artifacts above are the current package evidence.
+- `nix.yml`: push/PR only when the flake, Cargo lock/manifest or workflow paths change, plus manual dispatch. It is still running for the current main SHA.
+- `models.yml`: manual-dispatch only; the normal model-manifest consistency check passed in CI, but the model-mirror publication workflow was not run.
+- `release.yml`: tag push matching `v*` or manual dispatch; it runs CI and Build app for the tag before publishing.
+
+The latest published app release remains `v0.2.8-funcut.12`, tag commit `6f9ab45fb0916f44675f10769351d911e0e7f75b`, published 12 November 2026. Current main is **88 commits ahead** of that tag. The .12 release has x86_64 and aarch64 AppImage, deb, rpm and Arch packages plus manifest and SHA256SUMS; those assets do not certify current main. No .13 release tag was found.
+
+No dedicated `cargo audit`, OSV or equivalent dependency-vulnerability workflow appears in the six workflow files. Dependabot is configured for weekly Cargo and GitHub Actions updates, which is not the same as a vulnerability scan. The repository rulesets endpoint returned no rulesets; the classic branch-protection endpoint returned HTTP 403 to the connected integration, so classic protection remains unverified.
+
+**Geneva status:** CI-verified on `dd109b8...` for the two Geneva jobs. **Whole-product release status:** not ready; main CI and Nix were still incomplete, target-hardware and real-project acceptance remain open, and no release has been built from this exact main commit.

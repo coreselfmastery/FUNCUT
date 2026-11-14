@@ -1635,9 +1635,47 @@ fn run_auto_edit(
         let cancelled = tool_cancel;
         let mut caller =
             concat_mcp::director::BackendToolCaller::new(&toolbox, backend.as_mut(), &cancelled);
-        let _ = runner.run(&program, &mut caller);
+        // The run itself, under the same guard the toolbox was built
+        // under: a panic in the runner's own frame - between the calls
+        // its per-call guard already catches - must not leave the
+        // button saying "running" forever. The runner's own RunGuard
+        // clears its one-run latch on unwind; this guard is the pane's
+        // half: the ticker stops and the end still posts.
+        let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            runner.run(&program, &mut caller)
+        }));
         still.store(false, Ordering::Relaxed);
-        let state = runner.state();
+        let state = match made {
+            Ok(_) => runner.state(),
+            Err(panic) => {
+                let what = if let Some(text) = panic.downcast_ref::<&str>() {
+                    (*text).to_owned()
+                } else if let Some(text) = panic.downcast_ref::<String>() {
+                    text.clone()
+                } else {
+                    "without a message".to_owned()
+                };
+                // The state is built here, not read back from the
+                // runner: a panic mid-emit can leave the runner's own
+                // locks poisoned, and reading them would only panic
+                // again. The stage is the run's own, the way the
+                // toolbox guard names it.
+                AutoEditState::Failed {
+                    stage: Stage::Plan,
+                    error: AutoEditError::new(
+                        Stage::Plan,
+                        None,
+                        ToolError {
+                            message: format!("the run panicked: {what}"),
+                            retryable: Some(false),
+                            retry_after: None,
+                            code: None,
+                        },
+                    ),
+                    attempt: 1,
+                }
+            }
+        };
         crate::host::on_ui(move |studio, _, _| {
             studio.handle(Msg::Forge(ForgeMsg::AutoEditEnded(Box::new(state))));
         });

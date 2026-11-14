@@ -3,9 +3,9 @@
 
 //! Decoding on the platform's own video hardware.
 //!
-//! Every platform the app ships on has a fixed-function video decoder that
-//! turns H.264 and HEVC into pictures at a fraction of what the CPU spends,
-//! and libavcodec drives each of them through one door: a device context
+//! The app ships on Linux, where the fixed-function video decoder VAAPI
+//! drives turns H.264 and HEVC into pictures at a fraction of what the CPU
+//! spends, and libavcodec drives it through one door: a device context
 //! from `av_hwdevice_ctx_create`, handed to the codec before it opens, and
 //! a `get_format` callback that picks the device's pixel format when the
 //! codec offers it. The frames then come out of the codec in the device's
@@ -25,17 +25,9 @@
 //! the chip's rate or better. A reader can insist on software or on a named
 //! device instead, which is what the tests do.
 //!
-//! The device is the platform's own: VideoToolbox on macOS and iOS, D3D11VA
-//! on Windows, MediaCodec on Android. VAAPI on Linux is never chosen by
-//! default and only ever by name, because on an Intel i915 it has hung the
-//! GPU for every process on the machine until a reboot (issue #70).
-//!
-//! MediaCodec goes through a different door. It is no hwaccel: FFmpeg
-//! reaches it only through its own decoders, `h264_mediacodec` and the
-//! rest, opened by name in place of the built-in one, which hand frames
-//! back in memory with no copy to make ([`mediacodec_decoder`]). A phone
-//! has few decoder sessions to give, so at most [`MEDIACODEC_READERS`]
-//! readers hold one at a time and the rest decode in software.
+//! VAAPI is never chosen by default and only ever by name, because on an
+//! Intel i915 it has hung the GPU for every process on the machine until a
+//! reboot (issue #70).
 //!
 //! ## What happens when it does not work
 //!
@@ -46,20 +38,11 @@
 //! not open with it, or a frame that will not copy back is a real failure,
 //! logged once per process, and the reader carries on in software from the
 //! frame it was at.
-//!
-//! ## What this is not, yet
-//!
-//! The frame is copied back to the CPU. On macOS the decoded picture lives
-//! in an IOSurface the GPU could sample directly, and the compositor's wgpu
-//! device could take it without the copy; that zero-copy path is the
-//! follow-up to this module, and needs the frame to stay a hardware frame
-//! all the way to the render.
 
 use std::collections::HashMap;
 use std::ptr;
-use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Mutex, Once};
-use std::time::Duration;
 
 use ffmpeg_the_third as ffmpeg;
 use ffmpeg_the_third::codec::decoder;
@@ -70,12 +53,6 @@ use ffmpeg_the_third::util::frame::video::Video;
 /// A platform's video decode hardware, as libavcodec names it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum HwDevice {
-    /// Apple's, on macOS and iOS.
-    VideoToolbox,
-    /// Direct3D 11 video acceleration, on Windows.
-    D3d11va,
-    /// Android's.
-    MediaCodec,
     /// The Linux video acceleration API. Never the default; see the module
     /// doc and issue #70.
     Vaapi,
@@ -83,12 +60,7 @@ pub enum HwDevice {
 
 impl HwDevice {
     /// Every device, in the order a menu would list them.
-    pub const ALL: [HwDevice; 4] = [
-        HwDevice::VideoToolbox,
-        HwDevice::D3d11va,
-        HwDevice::MediaCodec,
-        HwDevice::Vaapi,
-    ];
+    pub const ALL: [HwDevice; 1] = [HwDevice::Vaapi];
 
     /// The device this binary's platform has, or `None` where there is no
     /// device worth choosing unasked: Linux, whose VAAPI is opt-in only.
@@ -99,9 +71,6 @@ impl HwDevice {
     /// What the device is called on a label.
     pub fn label(self) -> &'static str {
         match self {
-            HwDevice::VideoToolbox => "VideoToolbox",
-            HwDevice::D3d11va => "Direct3D 11",
-            HwDevice::MediaCodec => "MediaCodec",
             HwDevice::Vaapi => "VAAPI",
         }
     }
@@ -109,9 +78,6 @@ impl HwDevice {
     /// What libavcodec calls the device: the name `-hwaccel` takes.
     pub fn name(self) -> &'static str {
         match self {
-            HwDevice::VideoToolbox => "videotoolbox",
-            HwDevice::D3d11va => "d3d11va",
-            HwDevice::MediaCodec => "mediacodec",
             HwDevice::Vaapi => "vaapi",
         }
     }
@@ -136,9 +102,6 @@ impl HwDevice {
 
     fn av_type(self) -> sys::AVHWDeviceType {
         match self {
-            HwDevice::VideoToolbox => sys::AVHWDeviceType::VIDEOTOOLBOX,
-            HwDevice::D3d11va => sys::AVHWDeviceType::D3D11VA,
-            HwDevice::MediaCodec => sys::AVHWDeviceType::MEDIACODEC,
             HwDevice::Vaapi => sys::AVHWDeviceType::VAAPI,
         }
     }
@@ -173,256 +136,34 @@ impl HwPolicy {
     /// device is asked for whatever the stream.
     pub fn device_for(self, codec: ffmpeg::codec::Id, format: Pixel) -> Option<HwDevice> {
         match self {
-            HwPolicy::Preference => {
-                hardware_device().filter(|device| hardware_wins(*device, codec, format))
-            }
+            HwPolicy::Preference => hardware_device().filter(|_| hardware_wins(codec, format)),
             HwPolicy::Software | HwPolicy::Device(_) => self.device(),
         }
     }
 }
 
-/// Whether `device` decodes a stream of `codec` in `format` faster than
-/// the CPU does, counting the copy back to memory every hardware frame
-/// still pays (see the module's last section).
+/// Whether the hardware decodes a stream of `codec` in `format` faster
+/// than the CPU does, counting the copy back to memory every hardware
+/// frame still pays (see the module doc). The one device the app ships
+/// with, VAAPI, is named by whoever asks; the rule itself is the same
+/// for any device of this shape.
 ///
-/// Measured on an M5, 4K frames a second, software on every core against
-/// VideoToolbox: H.264 114 against 56, 8-bit HEVC 164 against 132, 10-bit
-/// HEVC 58 against 117, ProRes 422 78 against 108. H.264 is so cheap in
-/// software that the chip, plus the copy, loses by half, and 1080p the same
-/// (493 against 144). Everything heavier wins on the hardware, and even at
-/// parity the hardware leaves the cores to the rest of the app: 8-bit HEVC
-/// took 0.9 of a core on the chip and 6.8 on the CPU. So the chip takes
-/// everything but 8-bit H.264; a codec it has no decoder for goes to
-/// software regardless, as before.
-///
-/// A phone's cores are no match for its decoder, and MediaCodec takes
-/// everything [`mediacodec_decoder`] has a decoder for.
-pub fn hardware_wins(device: HwDevice, codec: ffmpeg::codec::Id, format: Pixel) -> bool {
-    if device == HwDevice::MediaCodec {
-        return mediacodec_decoder(codec, format).is_some();
-    }
+/// The measurements that shaped the rule were VideoToolbox's, on an M5,
+/// 4K frames a second, software on every core: H.264 114 against 56,
+/// 8-bit HEVC 164 against 132, 10-bit HEVC 58 against 117, ProRes 422 78
+/// against 108. H.264 is so cheap in software that the chip, plus the
+/// copy, loses by half, and 1080p the same (493 against 144). Everything
+/// heavier wins on the hardware, and even at parity the hardware leaves
+/// the cores to the rest of the app: 8-bit HEVC took 0.9 of a core on the
+/// chip and 6.8 on the CPU. So the chip takes everything but 8-bit H.264;
+/// a codec it has no decoder for goes to software regardless, as before.
+pub fn hardware_wins(codec: ffmpeg::codec::Id, format: Pixel) -> bool {
     // SAFETY: a descriptor points into libavutil's static table, and every
     // pixel format has at least one component.
     let deep = format
         .descriptor()
         .is_some_and(|descriptor| unsafe { (*descriptor.as_ptr()).comp[0].depth } > 8);
     codec != ffmpeg::codec::Id::H264 || deep
-}
-
-/// The libavcodec decoder that drives MediaCodec for a stream of `codec`
-/// in `format`, or `None` where the stream stays in software.
-///
-/// MediaCodec is not a hwaccel the way the desktop devices are: FFmpeg's
-/// own H.264 and HEVC decoders know nothing of it, and a device context
-/// handed to them changes nothing. It is a set of separate decoders, one
-/// per codec, opened by name, which feed the packets to the phone's chip
-/// and, with no output surface, hand back each picture in memory as NV12
-/// or planar 4:2:0 with the chip's stride and crop already undone -
-/// frames the filtergraph takes as it takes a software decoder's.
-///
-/// Eight-bit 4:2:0 only. Ten-bit HEVC comes back from the chip as P010,
-/// which FFmpeg's wrapper has no mapping for (it fails), or squeezed to
-/// eight bits by some vendors (which would quietly lose the HDR the deep
-/// path keeps); it stays in software until that is settled on a phone.
-/// VP8, MPEG-4 Part 2 and MPEG-2 have wrappers too, but are rare on a
-/// phone and cheap in software. AV1 goes to the chip, or to the
-/// platform's own software decoder where the chip has none: this FFmpeg
-/// has no AV1 decoder of its own.
-pub fn mediacodec_decoder(codec: ffmpeg::codec::Id, format: Pixel) -> Option<&'static str> {
-    use ffmpeg::codec::Id;
-    if !matches!(format, Pixel::YUV420P | Pixel::YUVJ420P) {
-        return None;
-    }
-    match codec {
-        Id::H264 => Some("h264_mediacodec"),
-        Id::HEVC => Some("hevc_mediacodec"),
-        Id::VP9 => Some("vp9_mediacodec"),
-        Id::AV1 => Some("av1_mediacodec"),
-        _ => None,
-    }
-}
-
-/// Readers decoding on MediaCodec at once, at most; the rest decode in
-/// software.
-///
-/// A phone has a fixed budget of decoder sessions - a count, and under it
-/// a ceiling on pixels a second across all of them, which a mid-range
-/// chip spends on two or three 4K streams. Past it, `configure` fails and
-/// the reader falls back anyway, but only after the attempt; and every
-/// session spent on a reader sitting idle in the pool is one the camera,
-/// the export's MediaCodec encoder or another app cannot have. Concat
-/// keeps up to eight warm readers plus the filmstrip's and the export's,
-/// while what a person watches needs few at once: the clip under the
-/// playhead, the next one ready at a cut, and one more for a layer over
-/// them or a scrub elsewhere. So three; the fourth reader on decodes on
-/// the CPU as before, and a seat comes free when its reader closes or
-/// falls back.
-pub const MEDIACODEC_READERS: usize = 3;
-
-/// A bounded count of readers holding something scarce.
-pub(crate) struct Seats {
-    taken: AtomicUsize,
-    limit: usize,
-}
-
-impl Seats {
-    pub(crate) const fn new(limit: usize) -> Self {
-        Self {
-            taken: AtomicUsize::new(0),
-            limit,
-        }
-    }
-
-    /// A seat, or `None` when all of them are taken. The seat is given
-    /// back when it drops.
-    pub(crate) fn take(&'static self) -> Option<Seat> {
-        self.taken
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |taken| {
-                (taken < self.limit).then_some(taken + 1)
-            })
-            .ok()
-            .map(|_| Seat { seats: self })
-    }
-
-    /// How many seats are taken right now.
-    #[cfg(test)]
-    pub(crate) fn taken(&self) -> usize {
-        self.taken.load(Ordering::Acquire)
-    }
-}
-
-/// One taken seat; see [`Seats`].
-pub(crate) struct Seat {
-    seats: &'static Seats,
-}
-
-impl Drop for Seat {
-    fn drop(&mut self) {
-        self.seats.taken.fetch_sub(1, Ordering::AcqRel);
-    }
-}
-
-impl std::fmt::Debug for Seat {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Seat")
-    }
-}
-
-/// The readers on MediaCodec; see [`MEDIACODEC_READERS`].
-static MEDIACODEC_SEATS: Seats = Seats::new(MEDIACODEC_READERS);
-
-/// A seat on MediaCodec for a reader about to open one of its decoders,
-/// or `None` when [`MEDIACODEC_READERS`] already have one - said once a
-/// process, since a busy timeline says it all the time.
-pub(crate) fn mediacodec_seat() -> Option<Seat> {
-    let seat = MEDIACODEC_SEATS.take();
-    if seat.is_none() {
-        static ONCE: Once = Once::new();
-        ONCE.call_once(|| {
-            log::info!(
-                "{MEDIACODEC_READERS} readers already decode on MediaCodec; more decode in software"
-            );
-        });
-    }
-    seat
-}
-
-/// How long a MediaCodec decoder has to give its first picture the first
-/// time it is tried. A phone's chip gives it in tens of milliseconds and
-/// the platform's software decoders in a few hundred; the wait is only
-/// ever spent in full on a decoder that is never going to answer.
-pub const MEDIACODEC_FIRST_PICTURE: Duration = Duration::from_secs(2);
-
-/// What each MediaCodec decoder did the first time this process tried
-/// it: gave a picture, or did not.
-///
-/// The first try matters because a platform decoder that wedges does not
-/// fail, it hangs: FFmpeg's wrapper waits for an input or an output
-/// buffer that never comes, in a loop inside `avcodec_send_packet` that
-/// nothing outside it can break. The emulator's own goldfish H.264
-/// decoder does exactly that with no host GPU, and a reader that met it
-/// froze the preview for good. So each decoder is tried once, off to the
-/// side with a deadline (see [`MEDIACODEC_FIRST_PICTURE`]), before any
-/// reader trusts it.
-pub(crate) struct Verdicts {
-    said: Mutex<Vec<(&'static str, bool)>>,
-}
-
-impl Verdicts {
-    pub(crate) const fn new() -> Self {
-        Self {
-            said: Mutex::new(Vec::new()),
-        }
-    }
-
-    /// Whether `name` works: what it did when first tried, or, the first
-    /// time, what `try_it` finds - once, with every other reader asking
-    /// meanwhile waiting for the answer rather than trying it again.
-    pub(crate) fn works(&self, name: &'static str, try_it: impl FnOnce() -> bool) -> bool {
-        let mut said = self
-            .said
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(&(_, works)) = said.iter().find(|(said, _)| *said == name) {
-            return works;
-        }
-        let works = try_it();
-        said.push((name, works));
-        works
-    }
-
-    /// Records what a try found after its deadline had passed: a decoder
-    /// that was only slow the first time - a phone just woken, a codec
-    /// service starting cold - is trusted from here on. Waits for the
-    /// first verdict to be written, so the late one is the one that stays.
-    pub(crate) fn amend(&self, name: &'static str, works: bool) {
-        let mut said = self
-            .said
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        match said.iter_mut().find(|(said, _)| *said == name) {
-            Some(verdict) => verdict.1 = works,
-            None => said.push((name, works)),
-        }
-    }
-}
-
-/// Every MediaCodec decoder's first try; see [`Verdicts`].
-static MEDIACODEC_VERDICTS: Verdicts = Verdicts::new();
-
-/// Whether MediaCodec's `name` can be trusted with a reader: what it did
-/// the first time `try_it` tried it in this process. A decoder that did
-/// not give a picture in time is said once and not tried again, unless
-/// that first try answers late; see [`mediacodec_answered`].
-pub(crate) fn mediacodec_works(name: &'static str, try_it: impl FnOnce() -> bool) -> bool {
-    MEDIACODEC_VERDICTS.works(name, || {
-        let works = try_it();
-        if !works {
-            log::warn!(
-                "MediaCodec's {name} gave no picture within {:?}; that codec decodes in software",
-                MEDIACODEC_FIRST_PICTURE
-            );
-        }
-        works
-    })
-}
-
-/// What a first try of `name` found once it finished, deadline or not;
-/// see [`Verdicts::amend`].
-pub(crate) fn mediacodec_answered(name: &'static str, works: bool) {
-    MEDIACODEC_VERDICTS.amend(name, works);
-}
-
-/// Writes down, once per decoder, that a reader really is decoding on the
-/// platform's decoder through `name`: the chip is said to be in use only
-/// once a codec has opened on it.
-pub(crate) fn note_wrapped(device: HwDevice, name: &'static str) {
-    static SAID: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
-    let mut said = SAID.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if !said.contains(&name) {
-        said.push(name);
-        log::info!("video decode on {} through {name}", device.label());
-    }
 }
 
 /// The process-wide preference: `0` for software, else one past the
@@ -705,126 +446,15 @@ mod tests {
     use super::*;
 
     /// The CPU keeps 8-bit H.264, which it decodes faster than the chip
-    /// can hand frames back; everything heavier goes to the chip, and a
-    /// phone sends it everything.
+    /// can hand frames back; everything heavier goes to the chip.
     #[test]
     fn the_hardware_takes_what_it_decodes_faster() {
         use ffmpeg::codec::Id;
-        let vt = HwDevice::VideoToolbox;
-        assert!(!hardware_wins(vt, Id::H264, Pixel::YUV420P));
-        assert!(!hardware_wins(HwDevice::D3d11va, Id::H264, Pixel::YUV420P));
-        assert!(hardware_wins(vt, Id::H264, Pixel::YUV420P10LE));
-        assert!(hardware_wins(vt, Id::HEVC, Pixel::YUV420P));
-        assert!(hardware_wins(vt, Id::HEVC, Pixel::YUV420P10LE));
-        assert!(hardware_wins(vt, Id::PRORES, Pixel::YUV422P10LE));
-        let phone = HwDevice::MediaCodec;
-        assert!(hardware_wins(phone, Id::H264, Pixel::YUV420P));
-        assert!(hardware_wins(phone, Id::HEVC, Pixel::YUVJ420P));
-        assert!(hardware_wins(phone, Id::AV1, Pixel::YUV420P));
-        // Ten bits and 4:2:2 stay on the CPU, and so do codecs it has no
-        // decoder for here.
-        assert!(!hardware_wins(phone, Id::HEVC, Pixel::YUV420P10LE));
-        assert!(!hardware_wins(phone, Id::H264, Pixel::YUV422P));
-        assert!(!hardware_wins(phone, Id::PRORES, Pixel::YUV422P10LE));
-        assert!(!hardware_wins(phone, Id::MPEG4, Pixel::YUV420P));
-    }
-
-    /// MediaCodec's decoders are opened by name, never found by codec id:
-    /// the built-in H.264 decoder has no MediaCodec entry at all, which is
-    /// how every phone decoded on its CPU while the log said otherwise.
-    #[test]
-    fn mediacodec_decoders_are_the_named_wrappers() {
-        use ffmpeg::codec::Id;
-        assert_eq!(
-            mediacodec_decoder(Id::H264, Pixel::YUV420P),
-            Some("h264_mediacodec")
-        );
-        assert_eq!(
-            mediacodec_decoder(Id::HEVC, Pixel::YUV420P),
-            Some("hevc_mediacodec")
-        );
-        assert_eq!(mediacodec_decoder(Id::HEVC, Pixel::YUV420P10LE), None);
-        crate::ffi::init();
-        let h264 = decoder::find(Id::H264).expect("an H.264 decoder");
-        assert_eq!(
-            hardware_format(h264.as_ptr(), sys::AVHWDeviceType::MEDIACODEC),
-            None,
-            "the built-in decoder has grown a MediaCodec hwaccel; revisit"
-        );
-    }
-
-    #[test]
-    fn seats_run_out_and_come_back() {
-        static SEATS: Seats = Seats::new(2);
-        let first = SEATS.take().expect("a seat");
-        let second = SEATS.take().expect("a second seat");
-        assert!(SEATS.take().is_none(), "two is the limit");
-        assert_eq!(SEATS.taken(), 2);
-        drop(first);
-        assert_eq!(SEATS.taken(), 1);
-        let third = SEATS.take().expect("the freed seat");
-        assert!(SEATS.take().is_none());
-        drop((second, third));
-        assert_eq!(SEATS.taken(), 0);
-    }
-
-    /// A decoder is tried once; its verdict stands, good or bad, and the
-    /// readers asking at the same time wait for it rather than each
-    /// trying it again.
-    #[test]
-    fn a_decoder_is_tried_once_and_the_verdict_stands() {
-        static VERDICTS: Verdicts = Verdicts::new();
-        let tries = AtomicUsize::new(0);
-        let try_it = |answer: bool| {
-            let tries = &tries;
-            move || {
-                tries.fetch_add(1, Ordering::SeqCst);
-                std::thread::sleep(Duration::from_millis(20));
-                answer
-            }
-        };
-        std::thread::scope(|scope| {
-            for _ in 0..4 {
-                scope.spawn(|| assert!(!VERDICTS.works("wedged", try_it(false))));
-            }
-        });
-        assert_eq!(tries.load(Ordering::SeqCst), 1);
-        assert!(VERDICTS.works("fine", try_it(true)));
-        assert!(
-            VERDICTS.works("fine", try_it(false)),
-            "the first verdict stands"
-        );
-        assert!(!VERDICTS.works("wedged", try_it(true)));
-        assert_eq!(tries.load(Ordering::SeqCst), 2);
-
-        // A try that answers after its deadline is believed from then on.
-        VERDICTS.amend("wedged", true);
-        assert!(VERDICTS.works("wedged", try_it(false)));
-        assert_eq!(tries.load(Ordering::SeqCst), 2);
-    }
-
-    #[test]
-    fn seats_hold_under_contention() {
-        static SEATS: Seats = Seats::new(3);
-        let peak = std::sync::Arc::new(AtomicUsize::new(0));
-        let threads: Vec<_> = (0..8)
-            .map(|_| {
-                let peak = std::sync::Arc::clone(&peak);
-                std::thread::spawn(move || {
-                    for _ in 0..2000 {
-                        if let Some(seat) = SEATS.take() {
-                            peak.fetch_max(SEATS.taken(), Ordering::AcqRel);
-                            drop(seat);
-                        }
-                    }
-                })
-            })
-            .collect();
-        for thread in threads {
-            thread.join().expect("joins");
-        }
-        assert!(peak.load(Ordering::Acquire) <= 3);
-        assert_eq!(SEATS.taken(), 0);
+        assert!(!hardware_wins(Id::H264, Pixel::YUV420P));
+        assert!(hardware_wins(Id::H264, Pixel::YUV420P10LE));
+        assert!(hardware_wins(Id::HEVC, Pixel::YUV420P));
+        assert!(hardware_wins(Id::HEVC, Pixel::YUV420P10LE));
+        assert!(hardware_wins(Id::PRORES, Pixel::YUV422P10LE));
     }
 
     #[test]
@@ -842,8 +472,8 @@ mod tests {
         assert_eq!(HwPolicy::Preference.device(), Some(HwDevice::Vaapi));
         assert_eq!(HwPolicy::Software.device(), None);
         assert_eq!(
-            HwPolicy::Device(HwDevice::D3d11va).device(),
-            Some(HwDevice::D3d11va)
+            HwPolicy::Device(HwDevice::Vaapi).device(),
+            Some(HwDevice::Vaapi)
         );
         set_hardware_device(before);
         assert_eq!(hardware_device(), before);
@@ -858,8 +488,8 @@ mod tests {
 
     #[test]
     fn a_device_the_library_lacks_is_not_created() {
-        // The linked FFmpeg on a Mac has VideoToolbox and nothing else;
-        // asking for a device it lacks is a clean None, once.
+        // The linked FFmpeg may carry VAAPI or not; asking for a device it
+        // lacks is a clean None, once.
         let absent = HwDevice::ALL.into_iter().find(|device| !device.linked());
         if let Some(absent) = absent {
             assert!(device(absent).is_none());

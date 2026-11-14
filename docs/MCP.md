@@ -97,7 +97,13 @@ Eight tools give an agent what a director has before touching a timeline: the
 shot list, the beat grid, the dead air, the words - and a voice. Each runs
 as a job (returns `job` at once) and is waited on with `analysis_wait`, the
 same loop as `export_wait`, which returns the status; a finished analysis
-carries its JSON result in the status's `output`:
+carries its JSON result in the status's `output`. Both waits take the job's
+id (`job`) **or** its `path` - the project folder for an export, the file
+for an analysis - and answer for the newest job started on it, so a caller
+whose program was written before the job was minted (an unattended run, a
+script) can ask for the work by what it was started on. A wait that ends in
+a state other than `done` is the tool's error, with the sentence the job
+died with:
 
 - `analyze_scenes` - PySceneDetect's shot changes of a video, `{start,
   end}` seconds. Optional threshold/detector/minSceneLen.

@@ -151,6 +151,9 @@ export enum Glyph {
     text-mark,
     // the start screen
     info,
+    /// a warning notice: the triangle with the exclamation, the toast
+    /// that ships a finished-but-flawed run
+    warning,
     help,
     folder,
     /// the launch screen's learn-and-community cards: the guides, the
@@ -232,6 +235,13 @@ export component Icon inherits Rectangle {
     if root.glyph == Glyph.info: Stroked {
         size: root.size; tint: root.tint; weight: root.weight;
         commands: "M2 12a10 10 0 1 0 20 0a10 10 0 1 0 -20 0 M12 16v-4 M12 8h.01";
+    }
+
+    // lucide/triangle-alert
+    if root.glyph == Glyph.warning: Stroked {
+        size: root.size; tint: root.tint; weight: root.weight;
+        commands: "M21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0"
+            + " 1.73-3Z M12 9v4 M12 17h.01";
     }
 
     // lucide/circle-help

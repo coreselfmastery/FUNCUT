@@ -19,10 +19,16 @@
 //! playbooks, not here.
 
 use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
+use concat_mcp::director::{
+    AutoEditError, AutoEditState, EditProgram, Runner, Stage, StageStep, ToolCall, ToolError,
+};
+use serde_json::json;
 use slint::SharedString;
 
 use crate::i18n::{t, tf};
@@ -111,6 +117,21 @@ pub enum ForgeMsg {
     /// A provider's key was edited: kept in the settings file, injected
     /// into the harness's environment when a run starts.
     KeyEdited { provider: String, key: String },
+    /// AUTO EDIT: run the unattended edit - the open project's voiceover
+    /// to a measured, verified export, deterministically, with no agent.
+    /// The runner (`concat-director`, through the
+    /// `concat_mcp::director` seam) owns the stages, the progress, the
+    /// cancellation with rollback and the retries.
+    AutoEditStart,
+    /// AUTO EDIT: stop at the next stage boundary; the edits the run
+    /// applied are rolled back, one `edit_undo` each.
+    AutoEditCancel,
+    /// The auto-edit's clock moved, or its stage did: reread the
+    /// runner's last event into the page's fields.
+    AutoEditTick,
+    /// The auto-edit ended. The state says which of the four ends the
+    /// run met.
+    AutoEditEnded(Box<AutoEditState>),
 }
 
 /// The page's state.
@@ -136,6 +157,40 @@ pub struct ForgePane {
     /// reader thread owns it, and a Cancel only raises the flag it is
     /// checked against, one line away.
     kill: Arc<AtomicBool>,
+    /// The AUTO EDIT's standing: what the progress pane shows, and the
+    /// handles a cancel or a tick needs.
+    pub auto: AutoEditPane,
+}
+
+/// The AUTO EDIT's standing on the page: the fields the progress pane
+/// is filled from, and the handles that reach the run.
+#[derive(Default)]
+pub struct AutoEditPane {
+    /// A run is going.
+    pub running: bool,
+    /// The stage's own word, localized - or the terminal state's.
+    pub stage: String,
+    /// The elapsed clock, as the pane spells it.
+    pub elapsed: String,
+    /// How far through the program's own stages the run is, 0 to 1. The
+    /// stages the program does not carry are not counted: the fraction
+    /// is of the work this run actually runs.
+    pub fraction: f32,
+    /// Whether the progress pane is shown: from the first run on, so the
+    /// last outcome stays readable beside the button that offers to try
+    /// again.
+    pub visible: bool,
+    /// 0 while idle or running; 1 when the run failed retryably (the
+    /// button offers Retry); 2 when it failed hard (Fix and restart).
+    pub outcome: i32,
+    /// The run's handles: the runner (its state and its stop), the flag
+    /// its tools poll, and the clock the elapsed line reads.
+    runner: Option<Runner>,
+    tool_cancel: Option<Arc<AtomicBool>>,
+    started: Option<Instant>,
+    /// The sibling this run edits: where the report is written, and the
+    /// project that opens when the run ships.
+    project: Option<String>,
 }
 
 impl ForgePane {
@@ -249,6 +304,23 @@ impl ForgePane {
                 }
                 studio.prefs.save(&studio.host.dirs);
             }
+            ForgeMsg::AutoEditStart => self.auto_edit_start(studio),
+            ForgeMsg::AutoEditCancel => {
+                if self.auto.running {
+                    if let Some(runner) = &self.auto.runner {
+                        runner.cancel();
+                    }
+                    // The flag the tools themselves poll: a wait in
+                    // flight gives up at its next look instead of
+                    // running out its clock.
+                    if let Some(flag) = &self.auto.tool_cancel {
+                        flag.store(true, Ordering::Relaxed);
+                    }
+                    self.set_status(t("forge.autoEditStopping"));
+                }
+            }
+            ForgeMsg::AutoEditTick => self.auto_edit_tick(),
+            ForgeMsg::AutoEditEnded(state) => self.auto_edit_ended(*state, studio),
         }
     }
 
@@ -299,8 +371,8 @@ impl ForgePane {
         }
         let mut voiceover = None;
         if from_timeline {
-            match voiceover_project(studio) {
-                Ok(made) => voiceover = Some(made),
+            match voiceover_project(studio, false) {
+                Ok((made, _)) => voiceover = Some(made),
                 Err(error) => {
                     studio.notify(&error, true);
                     return;
@@ -383,6 +455,198 @@ impl ForgePane {
 
     fn set_status(&mut self, line: String) {
         self.status = line;
+    }
+
+    /// Whether AUTO EDIT can run at all: a project is open and its
+    /// timeline carries audio - the voiceover the whole edit is built
+    /// around. The button is greyed until it is, and the take itself is
+    /// the same test the sibling build makes.
+    pub fn auto_edit_available(&self, studio: &Studio) -> bool {
+        studio.session.is_some()
+            && studio
+                .project()
+                .active()
+                .clips
+                .iter()
+                .any(|clip| clip.kind == concat_project::model::ClipKind::Audio)
+    }
+
+    /// Starts an AUTO EDIT: the sibling is built exactly as a forge run's
+    /// is - the same handoff, the same voiceover lane reconstruction -
+    /// and then the deterministic spine of the pipeline is run by the
+    /// concat-director runner over the window's own server: the repair,
+    /// the readings, the sanity reads, the export, the verify, the
+    /// watch. The creative layer - B-roll, captions, the grade - stays
+    /// the Director agent's; this is the unattended ship of the
+    /// voiceover edit itself, measured and verified.
+    fn auto_edit_start(&mut self, studio: &mut Studio) {
+        if self.auto.running || self.running {
+            return;
+        }
+        let Some(session) = studio.session.as_ref() else {
+            studio.notify(&t("forge.needProject"), true);
+            return;
+        };
+        let built =
+            build_voiceover_sibling(studio.project(), std::path::Path::new(session.path()), true);
+        let (_, auto) = match built {
+            Ok(built) => built,
+            Err(error) => {
+                studio.notify(&error, true);
+                return;
+            }
+        };
+        let Some(auto) = auto else {
+            return;
+        };
+        // The window's own server is the backend: the pane is inside the
+        // window, and the server serves the sibling the way it serves any
+        // agent's - the same surface a forge run drives.
+        let backend = match concat_mcp::backend::open(concat_mcp::backend::Mode::Window) {
+            Ok(backend) => backend,
+            Err(error) => {
+                studio.notify(&tf("forge.autoEditNeedServer", &[&error]), true);
+                return;
+            }
+        };
+        let program = auto_edit_program(&auto);
+        let (runner, _events) = Runner::new(PathBuf::from(&auto.project));
+        let tool_cancel = Arc::new(AtomicBool::new(false));
+        self.auto = AutoEditPane {
+            running: true,
+            stage: t("forge.autoEditStarting"),
+            elapsed: elapsed_text(Duration::ZERO),
+            fraction: 0.0,
+            visible: true,
+            outcome: 0,
+            runner: Some(runner.clone()),
+            tool_cancel: Some(Arc::clone(&tool_cancel)),
+            started: Some(Instant::now()),
+            project: Some(auto.project.clone()),
+        };
+        self.set_status(t("forge.autoEditRunning"));
+        run_auto_edit(runner, program, backend, tool_cancel);
+    }
+
+    /// Rereads the runner's last event into the page's own fields: the
+    /// stage's word, the fraction of the program's stages, and the clock.
+    fn auto_edit_tick(&mut self) {
+        if !self.auto.running {
+            return;
+        }
+        if let Some(runner) = &self.auto.runner
+            && let Some(progress) = runner.progress()
+        {
+            self.auto.stage = stage_label(&progress.stage);
+            let total = progress.total_stages.max(1) as f32;
+            self.auto.fraction = (progress.stage_index as f32 + 1.0) / total;
+        }
+        if let Some(started) = self.auto.started {
+            self.auto.elapsed = elapsed_text(started.elapsed());
+        }
+    }
+
+    /// The run's terminal state: the toast it earned, the button it
+    /// leaves behind, the report it writes beside the edit - and, when it
+    /// shipped, the edit opened here on the timeline, which is the point
+    /// of the run.
+    fn auto_edit_ended(&mut self, state: AutoEditState, studio: &mut Studio) {
+        self.auto.running = false;
+        self.auto.runner = None;
+        self.auto.tool_cancel = None;
+        self.auto.started = None;
+        match &state {
+            AutoEditState::Completed {
+                export, duration, ..
+            }
+            | AutoEditState::CompletedWithWarnings {
+                export, duration, ..
+            } => {
+                self.auto.fraction = 1.0;
+                self.auto.elapsed = elapsed_text(*duration);
+                self.auto.outcome = 0;
+                let warnings = match &state {
+                    AutoEditState::CompletedWithWarnings { warnings, .. } => warnings.len(),
+                    _ => 0,
+                };
+                let exported = export.display().to_string();
+                if warnings == 0 {
+                    self.auto.stage = t("forge.autoEditDoneStage");
+                    self.set_status(t("forge.autoEditDoneStage"));
+                    studio.notify(&tf("forge.autoEditDone", &[&exported]), false);
+                } else {
+                    self.auto.stage = t("forge.autoEditWarnedStage");
+                    self.set_status(t("forge.autoEditWarnedStage"));
+                    studio.notify_warning(&tf("forge.autoEditWarned", &[&warnings.to_string()]));
+                }
+                // The finished edit opens here, in the window, now - the
+                // same landing a forge run's edit has. The voiceover
+                // source project itself stays untouched on disk.
+                if let Some(path) = self.auto.project.clone() {
+                    match concat_host::projects::open(&path)
+                        .and_then(|info| studio.open_project(info))
+                    {
+                        Ok(()) => studio.notify(&tf("forge.editReady", &[&path]), false),
+                        Err(error) => studio.notify(&tf("forge.openFailed", &[&error]), true),
+                    }
+                }
+            }
+            AutoEditState::Failed { error, .. } => {
+                self.auto.stage = t("forge.autoEditFailedStage");
+                self.auto.outcome = if error.retryable { 1 } else { 2 };
+                self.set_status(tf("forge.autoEditFailedStatus", &[&error.message]));
+                studio.notify(&tf("forge.autoEditFailed", &[&error.message]), true);
+            }
+            AutoEditState::Cancelled { rolled_back, .. } => {
+                self.auto.stage = t("forge.autoEditCancelledStage");
+                self.auto.outcome = 0;
+                self.set_status(t("forge.autoEditCancelledStage"));
+                // The two endings a cancelled run has: everything the run
+                // applied was stepped back, or the rollback stopped
+                // partway and says so.
+                let note = if *rolled_back {
+                    t("forge.autoEditCancelled")
+                } else {
+                    t("forge.autoEditCancelledPartial")
+                };
+                studio.notify(&note, false);
+            }
+            // The run is still going, or never left idle: nothing ended.
+            AutoEditState::Idle | AutoEditState::Running { .. } => return,
+        }
+        // The run's record, beside the edit it made: the terminal state
+        // exactly as the runner wrote it, for the acceptance read - the
+        // same shape the voiceover mapping beside it is written in.
+        if let Some(project) = &self.auto.project {
+            let mut report = serde_json::Map::new();
+            report.insert(
+                "schema".to_owned(),
+                serde_json::json!("funcut.auto-edit-report/1"),
+            );
+            match serde_json::to_value(&state) {
+                Ok(value) => {
+                    report.insert("state".to_owned(), value);
+                }
+                Err(error) => {
+                    log::warn!("the auto-edit report cannot be written: {error}");
+                    return;
+                }
+            }
+            let path = std::path::Path::new(project).join("auto-edit-report.json");
+            let bytes = match serde_json::to_vec_pretty(&report) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    log::warn!("the auto-edit report cannot be written: {error}");
+                    return;
+                }
+            };
+            if let Err(error) = std::fs::write(&path, bytes) {
+                log::warn!(
+                    "could not write the auto-edit report {}: {error}",
+                    path.display()
+                );
+            }
+        }
     }
 }
 
@@ -495,6 +759,72 @@ fn voiceover_copy_name(index: usize, source: &std::path::Path) -> String {
     format!("voiceover-{index:03}-{name}")
 }
 
+/// The same, in the AUTO EDIT's own spelling: the file the timeline's
+/// clips play is the TAKE, and the repair stage's clean pass lands on
+/// it, overwriting this pristine copy with the repaired chain, exactly
+/// as the watcher's "the timeline carries the repaired take" promises.
+fn take_copy_name(index: usize, source: &std::path::Path) -> String {
+    let name = source
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("voiceover.wav");
+    format!("take-{index:03}-{name}")
+}
+
+/// The enhanced intermediate's name, from the take's own spelling, so
+/// the repair chain's two files sit beside each other in the folder.
+fn enhanced_copy_name(index: usize, source: &std::path::Path) -> String {
+    let name = source
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("voiceover.wav");
+    format!("enhanced-{index:03}-{name}")
+}
+
+/// One voiceover file's fixed paths inside the sibling, as the AUTO
+/// EDIT's program is written from them: the take the timeline plays, and
+/// the enhanced stepping stone the repair writes before the clean.
+/// Every path is known before the run starts - that is what makes the
+/// program static.
+struct TakePaths {
+    /// The file the sibling's voiceover clips play: the pristine copy
+    /// until the repair's clean pass overwrites it with the enhanced,
+    /// cleaned chain.
+    take: String,
+    /// The enhanced intermediate: the repair's first pass writes it, its
+    /// second reads it. A repair that fails leaves the take as recorded.
+    enhanced: String,
+}
+
+/// What an AUTO EDIT run needs beside the forge run's handoff: the
+/// fixed paths its program is written from, all inside the sibling it
+/// edits.
+struct AutoEditSource {
+    /// The sibling project the run edits.
+    project: String,
+    /// One row per distinct voiceover file, in first-play order.
+    takes: Vec<TakePaths>,
+    /// Where the export lands, inside the sibling's own export folder.
+    export: String,
+    /// The contact sheet's name, relative to the project: the window's
+    /// server refuses absolute write paths, and the sheet is written
+    /// through it.
+    sheet: String,
+}
+
+/// What the sibling build collected, as one unit: a copy that fails or
+/// a document that cannot be written removes the half-populated sibling
+/// rather than leaving any of it behind.
+struct BuiltSibling {
+    /// The voiceover files, absolute paths, in the order they play.
+    files: Vec<String>,
+    /// One record per voiceover clip: source clip to sibling clip.
+    segments: Vec<VoiceoverSegment>,
+    /// The AUTO EDIT's take rows, one per distinct file - empty for a
+    /// forge run's sibling, which names its copies its own way.
+    takes: Vec<TakePaths>,
+}
+
 /// Makes the sibling project a voiceover run edits: the open project's
 /// audio clips are found on the timeline, copied into a fresh `<name>
 /// edit` folder beside it (the window holds the source, and an agent
@@ -505,20 +835,31 @@ fn voiceover_copy_name(index: usize, source: &std::path::Path) -> String {
 /// source - gaps and overlaps included - and `voiceover-mapping.json`
 /// in the sibling's root records the clip-to-clip mapping. The source
 /// project is never touched.
-fn voiceover_project(studio: &Studio) -> Result<VoiceoverSource, String> {
+fn voiceover_project(
+    studio: &Studio,
+    for_auto_edit: bool,
+) -> Result<(VoiceoverSource, Option<AutoEditSource>), String> {
     let Some(session) = studio.session.as_ref() else {
         return Err(t("forge.needProject"));
     };
-    build_voiceover_sibling(studio.project(), std::path::Path::new(session.path()))
+    build_voiceover_sibling(
+        studio.project(),
+        std::path::Path::new(session.path()),
+        for_auto_edit,
+    )
 }
 
 /// The handoff itself, apart from the studio so a test can drive it with
 /// a plain project model: [`voiceover_project`] supplies the window's
-/// two arguments and nothing else.
+/// two arguments and nothing else. With `for_auto_edit`, the copied
+/// files take the AUTO EDIT's own names and the sibling's fixed paths -
+/// the takes, the export, the sheet - come back beside the handoff, for
+/// the program that run is written from.
 fn build_voiceover_sibling(
     source: &concat_project::model::Project,
     source_root: &std::path::Path,
-) -> Result<VoiceoverSource, String> {
+    for_auto_edit: bool,
+) -> Result<(VoiceoverSource, Option<AutoEditSource>), String> {
     use concat_project::model::ClipKind;
 
     let timeline = source.active();
@@ -608,25 +949,40 @@ fn build_voiceover_sibling(
     // Copy the files in and rebuild the narration's clips, as one unit:
     // a copy that fails or a document that cannot be written removes the
     // half-populated sibling rather than leaving it behind.
-    let built = (|| -> Result<(Vec<String>, Vec<VoiceoverSegment>), String> {
+    let built = (|| -> Result<BuiltSibling, String> {
         // The voiceover files are copied in, so the edit stands on its own
         // and the source project can be moved or deleted without breaking
-        // it.
+        // it. The AUTO EDIT's copies take the take- spelling: the repair
+        // stage's clean pass lands on them, overwriting the pristine copy
+        // with the repaired chain the timeline then plays.
         let into = std::path::Path::new(&info.path).join("voiceover");
         std::fs::create_dir_all(&into).map_err(|error| error.to_string())?;
         let mut mint = concat_project::commands::IdMint::default();
         let mut copied: Vec<String> = Vec::with_capacity(files.len());
+        let mut takes: Vec<TakePaths> = Vec::with_capacity(files.len());
         let mut media_id_of: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
         let mut sibling_media: Vec<concat_project::model::MediaItem> = Vec::new();
         for item in &files {
-            let target = into.join(voiceover_copy_name(
-                copied.len(),
-                std::path::Path::new(&item.path),
-            ));
+            let source_file = std::path::Path::new(&item.path);
+            let name = if for_auto_edit {
+                take_copy_name(copied.len(), source_file)
+            } else {
+                voiceover_copy_name(copied.len(), source_file)
+            };
+            let target = into.join(&name);
             std::fs::copy(&item.path, &target)
                 .map_err(|error| format!("could not copy voiceover {}: {error}", item.path))?;
             let path = target.to_string_lossy().into_owned();
+            if for_auto_edit {
+                takes.push(TakePaths {
+                    take: path.clone(),
+                    enhanced: into
+                        .join(enhanced_copy_name(copied.len(), source_file))
+                        .to_string_lossy()
+                        .into_owned(),
+                });
+            }
             // The bin item carries the source's own probe metadata - the
             // duration and kind its clips were cut against - with the
             // copied file's path and a fresh id of its own.
@@ -736,14 +1092,47 @@ fn build_voiceover_sibling(
             bytes,
         )
         .map_err(|error| format!("could not write the voiceover mapping: {error}"))?;
-        Ok((copied, segments))
-    })();
-    match built {
-        Ok((copied, segments)) => Ok(VoiceoverSource {
-            project: info.path,
+        Ok(BuiltSibling {
             files: copied,
             segments,
-        }),
+            takes,
+        })
+    })();
+    match built {
+        Ok(BuiltSibling {
+            files: copied,
+            segments,
+            takes,
+        }) => {
+            // The AUTO EDIT's fixed paths: the export folder is made now,
+            // so the run's first write into it is the export itself.
+            let auto = for_auto_edit.then(|| {
+                let export_dir = std::path::Path::new(&info.path).join("export");
+                if let Err(error) = std::fs::create_dir_all(&export_dir) {
+                    log::warn!(
+                        "could not make the export folder {}: {error}",
+                        export_dir.display()
+                    );
+                }
+                AutoEditSource {
+                    project: info.path.clone(),
+                    takes,
+                    export: export_dir
+                        .join("auto-edit.mp4")
+                        .to_string_lossy()
+                        .into_owned(),
+                    sheet: "auto-edit-sheet.png".to_owned(),
+                }
+            });
+            Ok((
+                VoiceoverSource {
+                    project: info.path,
+                    files: copied,
+                    segments,
+                },
+                auto,
+            ))
+        }
         Err(error) => {
             // This sibling project was created solely for this run; do not
             // leave a half-populated project behind after a failed build.
@@ -982,10 +1371,300 @@ fn first_line(words: &str) -> Option<String> {
         .find(|line| !line.is_empty())
         .map(str::to_owned)
 }
+
+/// The AUTO EDIT's program: the deterministic spine of the watcher's
+/// pipeline, written from paths the pane fixed before the run began -
+/// which is what makes the program static, and the runner's the right
+/// shape for it. The stages are the runner's own register, in the
+/// watcher's order:
+///
+/// - the handoff the pane itself made, opened and read back;
+/// - the repair, warn-policy: a take that cannot be repaired ships as
+///   recorded, the watcher's own degradation, and the clean pass lands
+///   on the take the timeline plays;
+/// - the readings: the words, the delivery, the music gate;
+/// - the sanity reads before any render;
+/// - the export, waited on by its project (the job's name is minted at
+///   run time, so the wait asks by what it was started on);
+/// - the verify: the words re-read from the render, the loudness
+///   measured against the short-form target;
+/// - the watch, warn-policy: the cut seen as a contact sheet and scored,
+///   and a low score is a flaw recorded - the yellow toast - not a run
+///   thrown away.
+///
+/// The creative layer - B-roll, captions, the grade - is the Director
+/// agent's; those stages are simply not in the program, and the progress
+/// fraction counts only the stages that are.
+fn auto_edit_program(source: &AutoEditSource) -> EditProgram {
+    let project = source.project.clone();
+    let mut steps = Vec::new();
+    let call = |tool: &str, arguments: serde_json::Value| ToolCall {
+        tool: tool.to_owned(),
+        arguments,
+    };
+    // 1. The handoff, read back: the sibling is opened on the window's
+    //    server - the same register a forge run's edit sits in - and the
+    //    voiceover lane is read as the run's own ground truth.
+    steps.push(StageStep::run(
+        Stage::HandoffVoiceover,
+        vec![
+            call("project_open", json!({ "path": project })),
+            call("timeline_read", json!({ "path": project })),
+        ],
+    ));
+    // 2. The repair, per distinct take: the enhanced chain lands on the
+    //    take the timeline plays, so the export ships the sound the
+    //    repair made. One file's failure warns and skips the rest - the
+    //    take ships as recorded.
+    let mut repair = Vec::new();
+    for take in &source.takes {
+        repair.push(call(
+            "sense_audio_repair",
+            json!({
+                "action": "enhance_speech",
+                "audio": take.take,
+                "out": take.enhanced,
+                "overwrite": true,
+            }),
+        ));
+        repair.push(call(
+            "sense_audio_repair",
+            json!({
+                "action": "remove_hiss_hum_rumble",
+                "audio": take.enhanced,
+                "out": take.take,
+                "overwrite": true,
+            }),
+        ));
+    }
+    steps.push(StageStep::run(Stage::AudioRepair, repair).warn());
+    // 3. The words: each take transcribed and waited on, by its own file.
+    //    Two waits cover the transcriber's own 900-second budget, which
+    //    one 590-second wait does not.
+    let mut words = Vec::new();
+    for take in &source.takes {
+        words.push(call("transcribe", json!({ "path": take.take })));
+        words.push(call(
+            "analysis_wait",
+            json!({ "path": take.take, "timeoutSeconds": 590 }),
+        ));
+        words.push(call(
+            "analysis_wait",
+            json!({ "path": take.take, "timeoutSeconds": 590 }),
+        ));
+    }
+    steps.push(StageStep::run(Stage::Transcribe, words));
+    // 4. The delivery: pauses, emphasis, the read itself.
+    let mut signals = Vec::new();
+    for take in &source.takes {
+        signals.push(call("voice_signals", json!({ "audio": take.take })));
+    }
+    steps.push(StageStep::run(Stage::VoiceSignals, signals));
+    // 5. The music gate: a take that already carries music gets no bed
+    //    stacked under it - the record the gate leaves behind.
+    let mut gate = Vec::new();
+    for take in &source.takes {
+        gate.push(call(
+            "sense_audio_repair",
+            json!({ "action": "detect_music_segments", "audio": take.take }),
+        ));
+    }
+    steps.push(StageStep::run(Stage::Understand, gate));
+    // 6. The sanity reads before any render: collisions, and the timeline
+    //    as it stands.
+    steps.push(StageStep::run(
+        Stage::Timeline,
+        vec![
+            call("collision_check", json!({ "path": project })),
+            call("timeline_read", json!({ "path": project })),
+        ],
+    ));
+    // 7. The render, waited on by its project folder: the job's name is
+    //    minted when the export starts, and a program written before that
+    //    moment asks for the work by what it was started on.
+    steps.push(StageStep::run(
+        Stage::Export,
+        vec![
+            call(
+                "export_start",
+                json!({ "path": project, "output": source.export, "crf": 20, "codec": "h264" }),
+            ),
+            call(
+                "export_wait",
+                json!({ "path": project, "timeoutSeconds": 590 }),
+            ),
+            call(
+                "export_wait",
+                json!({ "path": project, "timeoutSeconds": 590 }),
+            ),
+        ],
+    ));
+    // 8. The verify: the words re-read from the render, and the loudness
+    //    measured against the short-form target. This reply is the
+    //    verification the run's terminal states carry.
+    steps.push(StageStep::run(
+        Stage::Verify,
+        vec![
+            call("transcribe", json!({ "path": source.export })),
+            call(
+                "analysis_wait",
+                json!({ "path": source.export, "timeoutSeconds": 590 }),
+            ),
+            call(
+                "analysis_wait",
+                json!({ "path": source.export, "timeoutSeconds": 590 }),
+            ),
+            call("measure_loudness", json!({ "path": source.export })),
+        ],
+    ));
+    // 9. The watch, warn-policy: the whole cut as one contact sheet,
+    //    written beside the export, then read and scored. A score under
+    //    the bar is a flaw the edit ships with - recorded, yellow - not a
+    //    run thrown away after the render already landed.
+    steps.push(
+        StageStep::run(
+            Stage::Watch,
+            vec![
+                call(
+                    "watch_render",
+                    json!({
+                        "path": source.export,
+                        "project": project,
+                        "out": source.sheet,
+                        "audio": true,
+                    }),
+                ),
+                call(
+                    "craft_critique",
+                    json!({
+                        "pngPath": std::path::Path::new(&source.project)
+                            .join(&source.sheet)
+                            .display()
+                            .to_string(),
+                        "project": project,
+                    }),
+                ),
+            ],
+        )
+        .warn(),
+    );
+    EditProgram::new(PathBuf::from(&source.export), steps)
+}
+
+/// Runs the auto-edit on its own thread: the toolbox and the backend are
+/// the adapter's ground, the runner drives them, and the pane hears every
+/// move through the messages the threads post. A ticker beside the run
+/// posts the clock and the stage when either moves; the run's own end
+/// posts the terminal state.
+fn run_auto_edit(
+    runner: Runner,
+    program: EditProgram,
+    backend: Box<dyn concat_mcp::Backend>,
+    tool_cancel: Arc<AtomicBool>,
+) {
+    let still = Arc::new(AtomicBool::new(true));
+    // The ticker: the pane's fields reread the runner's last event, so
+    // the tick is only ever "look again" - a quarter-second eye on the
+    // stage, a one-second eye on the clock.
+    let tick_runner = runner.clone();
+    let tick_still = Arc::clone(&still);
+    std::thread::spawn(move || {
+        let mut last = None;
+        let mut since = Instant::now();
+        while tick_still.load(Ordering::Relaxed) {
+            let reading = tick_runner.progress();
+            if reading != last || since.elapsed() >= Duration::from_secs(1) {
+                last = reading;
+                since = Instant::now();
+                crate::host::on_ui(|studio, _, _| {
+                    studio.handle(Msg::Forge(ForgeMsg::AutoEditTick));
+                });
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    });
+    std::thread::spawn(move || {
+        // The same toolbox the protocol serves, so a call the runner makes
+        // means exactly what the same call from an agent would. Built
+        // under catch_unwind so a build-time inconsistency is a failed run
+        // with a sentence, not a thread that dies quietly and leaves the
+        // button saying "running" forever.
+        let toolbox = match std::panic::catch_unwind(concat_mcp::tools::Toolbox::new) {
+            Ok(toolbox) => toolbox,
+            Err(_) => {
+                still.store(false, Ordering::Relaxed);
+                crate::host::on_ui(|studio, _, _| {
+                    studio.handle(Msg::Forge(ForgeMsg::AutoEditEnded(Box::new(
+                        AutoEditState::Failed {
+                            stage: Stage::Plan,
+                            error: AutoEditError::new(
+                                Stage::Plan,
+                                None,
+                                ToolError {
+                                    message: "the tool box could not be built".to_owned(),
+                                    retryable: Some(false),
+                                    retry_after: None,
+                                    code: None,
+                                },
+                            ),
+                            attempt: 1,
+                        },
+                    ))));
+                });
+                return;
+            }
+        };
+        let mut backend = backend;
+        let cancelled = tool_cancel;
+        let mut caller =
+            concat_mcp::director::BackendToolCaller::new(&toolbox, backend.as_mut(), &cancelled);
+        let _ = runner.run(&program, &mut caller);
+        still.store(false, Ordering::Relaxed);
+        let state = runner.state();
+        crate::host::on_ui(move |studio, _, _| {
+            studio.handle(Msg::Forge(ForgeMsg::AutoEditEnded(Box::new(state))));
+        });
+    });
+}
+
+/// The stage's own word, localized: the register is the runner's, the
+/// word is the page's. Each call spells its key out loud, the way the
+/// locale inventory reads them.
+fn stage_label(stage: &Stage) -> String {
+    match stage {
+        Stage::HandoffVoiceover => t("forge.stageHandoffVoiceover"),
+        Stage::Transcribe => t("forge.stageTranscribe"),
+        Stage::AudioRepair => t("forge.stageAudioRepair"),
+        Stage::VoiceSignals => t("forge.stageVoiceSignals"),
+        Stage::Understand => t("forge.stageUnderstand"),
+        Stage::Plan => t("forge.stagePlan"),
+        Stage::Gather => t("forge.stageGather"),
+        Stage::Motion => t("forge.stageMotion"),
+        Stage::Timeline => t("forge.stageTimeline"),
+        Stage::Captions => t("forge.stageCaptions"),
+        Stage::Preview => t("forge.stagePreview"),
+        Stage::Export => t("forge.stageExport"),
+        Stage::Watch => t("forge.stageWatch"),
+        Stage::Revise => t("forge.stageRevise"),
+        Stage::Verify => t("forge.stageVerify"),
+    }
+}
+
+/// How long a run has taken, as a person reads it: "42s", then "1m 04s".
+fn elapsed_text(duration: Duration) -> String {
+    let seconds = duration.as_secs();
+    if seconds < 60 {
+        format!("{seconds}s")
+    } else {
+        format!("{}m {:02}s", seconds / 60, seconds % 60)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::voiceover_copy_name;
     use std::path::Path;
+    use std::time::Duration;
 
     #[test]
     fn voiceover_copies_with_the_same_basename_keep_distinct_names() {
@@ -1070,8 +1749,10 @@ mod tests {
         }
 
         // The handoff.
-        let built = super::build_voiceover_sibling(&source, &source_root).unwrap();
+        let (built, auto) = super::build_voiceover_sibling(&source, &source_root, false).unwrap();
         assert_eq!(built.segments.len(), 2);
+        // The forge run's handoff carries no AUTO EDIT paths.
+        assert!(auto.is_none());
 
         // The sibling reopens as a real project, and its voiceover clips
         // carry the source's timing: same starts, same gap, same speed.
@@ -1131,5 +1812,218 @@ mod tests {
         assert_eq!(segments[1]["track"], second.track_id);
 
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The AUTO EDIT's own sibling: the takes carry the spelling the
+    /// repair chain lands on, the export folder is made, and the fixed
+    /// paths all sit inside the sibling.
+    #[test]
+    fn an_auto_edit_sibling_names_its_takes_and_makes_its_export_folder() {
+        use concat_project::model::{Clip, ClipKind, MediaItem, MediaKind, Project, VideoSettings};
+
+        let dir = std::env::temp_dir().join(format!("funcut-auto-edit-{}", std::process::id()));
+        let source_root = dir.join("Narration");
+        let takes = dir.join("takes");
+        std::fs::create_dir_all(&source_root).unwrap();
+        std::fs::create_dir_all(&takes).unwrap();
+        let take = takes.join("take-1.wav");
+        std::fs::write(&take, b"take one").unwrap();
+
+        let mut source = Project::with_video(VideoSettings {
+            width: 1080,
+            height: 1920,
+            rate_num: 30,
+            rate_den: 1,
+            ..Default::default()
+        });
+        source.media.push(MediaItem {
+            id: "m1".to_owned(),
+            path: take.to_string_lossy().into_owned(),
+            name: "take-1.wav".to_owned(),
+            duration: Some(6.0),
+            kind: MediaKind::Audio,
+            has_audio: true,
+            ..Default::default()
+        });
+        let mut clip = Clip::blank("c1", "T1", ClipKind::Audio, "c1", 0.0, 6.0);
+        clip.media_id = "m1".to_owned();
+        source.active_mut().clips.push(std::sync::Arc::new(clip));
+
+        let (_, auto) = super::build_voiceover_sibling(&source, &source_root, true).unwrap();
+        let auto = auto.expect("the AUTO EDIT's paths");
+        assert_eq!(auto.takes.len(), 1);
+        let row = &auto.takes[0];
+        // The take is inside the sibling's voiceover folder, under the
+        // take- spelling, and the enhanced stepping stone sits beside it.
+        assert!(row.take.contains("voiceover"));
+        assert!(Path::new(&row.take).is_file(), "the pristine copy exists");
+        assert!(row.take.contains("take-000"));
+        assert!(row.enhanced.contains("enhanced-000"));
+        assert!(
+            row.enhanced
+                .starts_with(Path::new(&row.take).parent().unwrap().to_str().unwrap())
+        );
+        // The export folder is made, and both fixed outputs live in it.
+        assert!(Path::new(&auto.project).join("export").is_dir());
+        assert!(auto.export.ends_with("export/auto-edit.mp4"));
+        assert!(auto.export.starts_with(&auto.project));
+        assert_eq!(auto.sheet, "auto-edit-sheet.png");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The program the button runs: the watcher's own spine, in the
+    /// runner's register, with the two warn-policy stages exactly where
+    /// the design puts them - the repair (a take that cannot be repaired
+    /// ships as recorded) and the watch (a low craft score is a flaw, not
+    /// a failure). Every path is the sibling's own, fixed before the run.
+    #[test]
+    fn the_auto_edit_program_is_the_watchers_spine_over_fixed_paths() {
+        use concat_mcp::director::ErrorPolicy;
+
+        let source = super::AutoEditSource {
+            project: "/edits/Reel edit".to_owned(),
+            takes: vec![
+                super::TakePaths {
+                    take: "/edits/Reel edit/voiceover/take-000-a.wav".to_owned(),
+                    enhanced: "/edits/Reel edit/voiceover/enhanced-000-a.wav".to_owned(),
+                },
+                super::TakePaths {
+                    take: "/edits/Reel edit/voiceover/take-001-b.wav".to_owned(),
+                    enhanced: "/edits/Reel edit/voiceover/enhanced-001-b.wav".to_owned(),
+                },
+            ],
+            export: "/edits/Reel edit/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+        };
+        let program = super::auto_edit_program(&source);
+
+        // The register, in the watcher's order - and the creative layer's
+        // stages (Plan, Gather, Motion, Captions, Preview, Revise) simply
+        // absent: the fraction the page shows counts only these.
+        let order: Vec<&str> = program
+            .steps
+            .iter()
+            .map(|step| step.stage.label())
+            .collect();
+        assert_eq!(
+            order,
+            vec![
+                "handoff-voiceover",
+                "audio-repair",
+                "transcribe",
+                "voice-signals",
+                "understand",
+                "timeline",
+                "export",
+                "verify",
+                "watch",
+            ]
+        );
+        // The two warn-policy stages, and only them.
+        let warn: Vec<&str> = program
+            .steps
+            .iter()
+            .filter(|step| step.policy == ErrorPolicy::Warn)
+            .map(|step| step.stage.label())
+            .collect();
+        assert_eq!(warn, vec!["audio-repair", "watch"]);
+
+        // The export is promised where the program says it lands, and the
+        // repair chain lands on the take the timeline plays.
+        assert_eq!(
+            program.export,
+            Path::new("/edits/Reel edit/export/auto-edit.mp4")
+        );
+        let repair = &program.steps[1].calls;
+        assert_eq!(repair[0].tool, "sense_audio_repair");
+        assert_eq!(repair[0].arguments["action"], "enhance_speech");
+        assert_eq!(
+            repair[0].arguments["out"],
+            source.takes[0].enhanced.as_str()
+        );
+        assert_eq!(repair[1].arguments["action"], "remove_hiss_hum_rumble");
+        assert_eq!(
+            repair[1].arguments["audio"],
+            source.takes[0].enhanced.as_str()
+        );
+        // The clean pass lands on the take: the export ships the repaired
+        // sound, the watcher's own promise.
+        assert_eq!(repair[1].arguments["out"], source.takes[0].take.as_str());
+
+        // The export is waited on by its project folder - the job's name
+        // is minted at run time - and the watch's sheet is a project-
+        // relative name, because the window's server refuses absolute
+        // write paths.
+        let export = &program.steps[6].calls;
+        assert_eq!(export[0].tool, "export_start");
+        assert_eq!(export[0].arguments["output"], source.export.as_str());
+        assert_eq!(export[1].tool, "export_wait");
+        assert_eq!(export[1].arguments["path"], source.project.as_str());
+        let watch = &program.steps[8].calls;
+        assert_eq!(watch[0].arguments["out"], "auto-edit-sheet.png");
+        assert_eq!(
+            watch[1].arguments["pngPath"],
+            "/edits/Reel edit/auto-edit-sheet.png"
+        );
+        // Both takes get their own transcription, and the verify re-reads
+        // the render's own words beside its loudness.
+        assert_eq!(program.steps[2].calls.len(), 6);
+        assert_eq!(
+            program.steps[7].calls[0].arguments["path"],
+            source.export.as_str()
+        );
+        assert_eq!(program.steps[7].calls[3].tool, "measure_loudness");
+    }
+
+    /// The button's own gate: audio on the timeline is what AUTO EDIT
+    /// stands on, and nothing else is.
+    #[test]
+    fn the_auto_edit_button_needs_voiceover_clips() {
+        use concat_project::model::{Clip, ClipKind, MediaItem, MediaKind, Project, VideoSettings};
+
+        let mut with_voice = Project::with_video(VideoSettings::default());
+        with_voice.media.push(MediaItem {
+            id: "m1".to_owned(),
+            path: "/takes/a.wav".to_owned(),
+            name: "a.wav".to_owned(),
+            duration: Some(2.0),
+            kind: MediaKind::Audio,
+            has_audio: true,
+            ..Default::default()
+        });
+        let mut clip = Clip::blank("c1", "T1", ClipKind::Audio, "c1", 0.0, 2.0);
+        clip.media_id = "m1".to_owned();
+        with_voice
+            .active_mut()
+            .clips
+            .push(std::sync::Arc::new(clip));
+
+        let mut without = Project::with_video(VideoSettings::default());
+        let mut video_clip = Clip::blank("v1", "T1", ClipKind::Video, "v1", 0.0, 2.0);
+        video_clip.media_id = "m1".to_owned();
+        without
+            .active_mut()
+            .clips
+            .push(std::sync::Arc::new(video_clip));
+
+        let has_audio = |project: &concat_project::model::Project| {
+            project
+                .active()
+                .clips
+                .iter()
+                .any(|clip| clip.kind == ClipKind::Audio)
+        };
+        assert!(has_audio(&with_voice));
+        assert!(!has_audio(&without));
+    }
+
+    /// The clock, as the page spells it.
+    #[test]
+    fn the_elapsed_line_reads_as_a_person_does() {
+        assert_eq!(super::elapsed_text(Duration::from_secs(0)), "0s");
+        assert_eq!(super::elapsed_text(Duration::from_secs(42)), "42s");
+        assert_eq!(super::elapsed_text(Duration::from_secs(64)), "1m 04s");
+        assert_eq!(super::elapsed_text(Duration::from_secs(601)), "10m 01s");
     }
 }

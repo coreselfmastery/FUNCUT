@@ -339,6 +339,16 @@ impl Runner {
                         Err(error) => {
                             let mut error =
                                 AutoEditError::new(step.stage, Some(call.clone()), error);
+                            // A stop asked for while the call was being
+                            // made or waited on is the stop arriving: no
+                            // more retries, and the run lands cancelled
+                            // below rather than failed - the refusal is the
+                            // stop's own work, not the tool's.
+                            if self.cancelled() {
+                                failed_attempt = attempt;
+                                failure = Some(error);
+                                break 'calls;
+                            }
                             if error.retryable && attempt < ATTEMPTS {
                                 let pause =
                                     error.retry_after.unwrap_or_else(|| self.pause_for(attempt));
@@ -360,6 +370,24 @@ impl Runner {
 
             match failure {
                 None => {}
+                // A stop asked for while the failing call was in flight:
+                // the run lands cancelled, with its rollback, whatever
+                // policy the stage carried - a cancel is not a warning to
+                // be shipped past.
+                Some(_) if self.cancelled() => {
+                    return self.cancel_run(
+                        caller,
+                        &applied,
+                        AutoEditProgress::new(
+                            step.stage,
+                            index,
+                            total,
+                            run_started.elapsed(),
+                            stage_started.elapsed(),
+                            "the stage stopped: a cancel was asked for",
+                        ),
+                    );
+                }
                 Some(error) if step.policy == ErrorPolicy::Warn => {
                     warnings.push(error.line());
                 }
@@ -837,6 +865,32 @@ mod tests {
         };
         assert!(!rolled_back);
         assert_eq!(undone_to, None);
+    }
+
+    /// A stop asked for while a call is in flight - the wait a cancel
+    /// aborts mid-call, `export_wait` giving up on the stop flag - lands
+    /// the run cancelled, not failed: the refusal is the stop's own work,
+    /// and it wins over the warn policy too, because a cancel is not a
+    /// warning to be shipped past.
+    #[test]
+    fn a_stop_asked_mid_call_lands_cancelled_not_failed() {
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let mut caller = Cancelling {
+            runner: runner.clone(),
+            when: "export_wait",
+            replies: vec![refused("stopped waiting; the export goes on")]
+                .into_iter()
+                .collect(),
+            calls: Vec::new(),
+        };
+        let program = program(vec![
+            StageStep::run(Stage::Export, vec![call("export_wait")]).warn(),
+            StageStep::run(Stage::Verify, vec![call("timeline_read")]),
+        ]);
+        assert_eq!(runner.run(&program, &mut caller), RunOutcome::Cancelled);
+        assert!(matches!(runner.state(), AutoEditState::Cancelled { .. }));
+        // The run never reached the stage after the one it stopped in.
+        assert!(!caller.calls.iter().any(|call| call.tool == "timeline_read"));
     }
 
     #[test]

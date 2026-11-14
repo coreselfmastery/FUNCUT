@@ -16,9 +16,12 @@ use crate::stage::Stage;
 /// repair writes (which overwrite a fixed `out` path). Mutating timeline
 /// calls are never here - an ambiguous `clip_add` must stop, not
 /// double-place. This is the watcher's own list
-/// (`scripts/auto_director.py`), word for word, so a retry means the same
-/// thing on both sides of the seam.
-const RETRYABLE_TOOLS: [&str; 30] = [
+/// (`scripts/auto_director.py`), word for word, beside the five family
+/// doors the server now serves those same readings through
+/// (`sense_audio_repair {action: "enhance_speech", ...}` and its
+/// siblings): a door and the member it opens are the same work, and a
+/// retry means the same thing through either.
+const RETRYABLE_TOOLS: [&str; 35] = [
     "transcribe",
     "analysis_wait",
     "project_get",
@@ -49,6 +52,11 @@ const RETRYABLE_TOOLS: [&str; 30] = [
     "enhance_speech",
     "remove_hiss_hum_rumble",
     "normalize_loudness",
+    "sense_discourse",
+    "sense_voice_quality",
+    "sense_prosody_style",
+    "sense_audio_repair",
+    "sense_captions",
 ];
 
 /// What a failure sounds like when it is the network's side of the

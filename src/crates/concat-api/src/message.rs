@@ -632,10 +632,22 @@ pub enum Request {
     /// How a job stands: running and how far along, or how it ended. The
     /// same news the events carry, for a caller that was not listening
     /// when it came; the last few finished jobs are remembered.
+    ///
+    /// The job is named, or what it was started on is: a caller that never
+    /// held a name - an unattended run whose program was written before the
+    /// job was minted - asks for the newest job on `path` instead. The path
+    /// is the project folder for an export, the file for an analysis.
     #[serde(rename = "export.status")]
     ExportStatus {
-        /// The job [`Started`] named.
-        job: String,
+        /// The job [`Started`] named. The precise ask; `path` is ignored
+        /// when this is given.
+        #[serde(default)]
+        job: Option<String>,
+        /// What the job was started on: the project folder for an export,
+        /// the file for an analysis. The newest job for it answers - a
+        /// running one first, else the last one that finished.
+        #[serde(default)]
+        path: Option<String>,
     },
 
     /// Composites the true frame at one instant. Written as a PNG to

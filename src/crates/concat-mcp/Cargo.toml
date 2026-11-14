@@ -22,6 +22,10 @@ concat-motion.workspace = true
 # The Lottie and GSAP adapters motion_import exposes: motion made
 # elsewhere, read here.
 geneva-adapter.workspace = true
+# The auto-edit runner the AUTO EDIT seam stands on: its state machine,
+# progress events and retry contract, driven through this crate's
+# BackendToolCaller adapter (see `director`).
+concat-director.workspace = true
 serde_json.workspace = true
 # The reel contact sheet decodes and encodes PNG frames: the same crate
 # the API's frame method hands back through.

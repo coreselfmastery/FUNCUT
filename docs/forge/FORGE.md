@@ -131,6 +131,35 @@ script → tts_generate → transcribe → analyze_silence → clip_cut_spans
   → edit_apply batches → captions_add → preview_frame checks → export_start
 ```
 
+### AUTO EDIT: the same page's unattended run
+
+Beside **Start Forge** sits **Auto edit** — the deterministic half of the
+page, with no agent and no model keys. It is enabled the moment the open
+timeline carries a voiceover (audio clips): one click builds the same
+sibling project a voiceover forge run edits — the narration reconstructed
+clip for clip beside the source — and runs the measured spine of the
+pipeline over the window's own server, unattended:
+
+```
+open the sibling → repair the take (enhance + clean, landing on the
+  file the timeline plays) → transcribe → voice signals → the music gate
+  → collision + timeline reads → export → re-transcribe the render +
+  measure its loudness → watch the cut as a contact sheet and score it
+```
+
+Progress is its own pane — the stage, the clock, the fraction of the
+program's stages — with a stop that lands at the next stage boundary and
+rolls back any edit the run applied. A green toast and the finished edit
+opens on the timeline; a **yellow** toast means the run shipped with
+warnings written down (a take that could not be repaired, a craft score
+under the bar) — `auto-edit-report.json`, beside the edit, carries each
+one; a red toast names the failure and the button answers with **Retry**
+(a transient, network-sounding refusal, already tried three times) or
+**Fix and restart** (the plan's to fix). The creative layer — B-roll,
+captions, the grade — stays the Director agent's: Auto edit ships the
+voiceover edit itself, measured and verified, and the forge run can stand
+on the same sibling afterwards.
+
 ## 6. Overnight
 
 Queue episodes and let it drain while you sleep:

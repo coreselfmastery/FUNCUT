@@ -2740,7 +2740,13 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
             Ok(Outcome::json(summary::view(&result)))
         }
         Action::PlanValidate => Ok(Outcome::json(validate_plan_tool(arguments)?)),
-        Action::ExportWait => export_wait(arguments, backend, context.cancelled, context.progress),
+        Action::ExportWait => export_wait(
+            tool.name,
+            arguments,
+            backend,
+            context.cancelled,
+            context.progress,
+        ),
         Action::PreviewFrame => preview(arguments, backend),
         Action::MotionPresets => crate::motion::presets_list(),
         Action::MotionInspect => crate::motion::inspect(arguments),
@@ -3942,6 +3948,7 @@ fn creative_gate(object: &Value, segments: &[Value], runtime: f64, warnings: &[S
 /// `export_wait`: the job's status once it has ended, or when the time is
 /// up, with progress reported on the way.
 fn export_wait(
+    tool: &str,
     mut arguments: Value,
     backend: &mut dyn Backend,
     cancelled: &AtomicBool,
@@ -3992,6 +3999,24 @@ fn export_wait(
             }
         }
         if !running {
+            // A terminal state is the run's own answer, and only "done" is
+            // a success. A render that failed or was cancelled is the
+            // tool's error - the sentence the job died with - because a
+            // caller that only reads isError (an unattended run driving
+            // the wait from a program it wrote before the job was named)
+            // must not read a dead render as a landed one. The full
+            // status still travels in the message's context: an agent
+            // that wants the fields reads them from the refusal.
+            let state = current["state"].as_str().unwrap_or_default();
+            if state != "done" {
+                let why = current
+                    .pointer("/error/message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("without a reason the job recorded");
+                return Err(ApiError::failed(format!(
+                    "the job {tool} waited on ended {state}: {why}"
+                )));
+            }
             return Ok(Outcome::json(current));
         }
         if cancelled.load(Ordering::Relaxed) {
@@ -6042,6 +6067,36 @@ mod tests {
         assert!(backend.0.is_empty(), "nothing reached the backend");
     }
 
+    /// A render that ends failed is the wait's error, not its result: a
+    /// caller reading only isError must not read a dead render as a
+    /// landed one - an unattended run's program is written before the
+    /// job is named, so the wait's own outcome is all it has to read.
+    #[test]
+    fn a_failed_export_is_the_waits_error_not_its_result() {
+        let mut backend = Statuses(
+            vec![
+                json!({ "state": "running", "stage": "rendering", "frame": 10, "total": 100,
+                        "fraction": 0.1 }),
+                json!({ "state": "failed", "stage": "rendering",
+                        "error": { "code": "failed", "message": "the encoder refused the profile" } }),
+            ]
+            .into(),
+        );
+        let cancelled = AtomicBool::new(false);
+        let error = export_wait(
+            "export_wait",
+            json!({ "job": "j1" }),
+            &mut backend,
+            &cancelled,
+            None,
+        )
+        .expect_err("the export died");
+        assert_eq!(
+            error.message,
+            "the job export_wait waited on ended failed: the encoder refused the profile"
+        );
+    }
+
     /// An export that mixes sound and muxes it reports the stages the
     /// exporter names - "rendering", "mixing audio", "muxing" - and the
     /// wait's progress climbs through them to the end.
@@ -6065,6 +6120,7 @@ mod tests {
             |progress: f64, total: f64, _: String| seen.borrow_mut().push((progress, total));
         let cancelled = AtomicBool::new(false);
         let outcome = export_wait(
+            "export_wait",
             json!({ "job": "j1" }),
             &mut backend,
             &cancelled,

@@ -586,9 +586,12 @@ mod tests {
         // by what the job was started on. And 233,000 -> 234,000 with
         // the plan schema's audio defaults: the director plans the take
         // and the bed, and the block that names their knobs rides
-        // plan_validate onto the surface.
+        // plan_validate onto the surface. And 234,000 -> 235,000 with
+        // edit.apply's `idempotencyKey`: the director's placements name
+        // themselves, so a resumed run cannot double what a finished one
+        // already placed (IDEM) - one field on the one edit tool.
         assert!(
-            director < 234_000,
+            director < 235_000,
             "the director's default surface is {director} characters - too much for an agent to hold"
         );
     }

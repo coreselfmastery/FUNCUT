@@ -2740,7 +2740,9 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
             Ok(Outcome::json(summary::view(&result)))
         }
         Action::PlanValidate => Ok(Outcome::json(validate_plan_tool(arguments)?)),
-        Action::ExportWait => export_wait(arguments, backend, context.cancelled, context.progress),
+        Action::ExportWait => {
+            export_wait(tool.name, arguments, backend, context.cancelled, context.progress)
+        }
         Action::PreviewFrame => preview(arguments, backend),
         Action::MotionPresets => crate::motion::presets_list(),
         Action::MotionInspect => crate::motion::inspect(arguments),
@@ -3942,6 +3944,7 @@ fn creative_gate(object: &Value, segments: &[Value], runtime: f64, warnings: &[S
 /// `export_wait`: the job's status once it has ended, or when the time is
 /// up, with progress reported on the way.
 fn export_wait(
+    tool: &str,
     mut arguments: Value,
     backend: &mut dyn Backend,
     cancelled: &AtomicBool,
@@ -4006,7 +4009,9 @@ fn export_wait(
                     .pointer("/error/message")
                     .and_then(Value::as_str)
                     .unwrap_or("without a reason the job recorded");
-                return Err(ApiError::failed(format!("the export ended {state}: {why}")));
+                return Err(ApiError::failed(format!(
+                    "the job {tool} waited on ended {state}: {why}"
+                )));
             }
             return Ok(Outcome::json(current));
         }
@@ -6074,11 +6079,12 @@ mod tests {
             .into(),
         );
         let cancelled = AtomicBool::new(false);
-        let error = export_wait(json!({ "job": "j1" }), &mut backend, &cancelled, None)
-            .expect_err("the export died");
+        let error =
+            export_wait("export_wait", json!({ "job": "j1" }), &mut backend, &cancelled, None)
+                .expect_err("the export died");
         assert_eq!(
             error.message,
-            "the export ended failed: the encoder refused the profile"
+            "the job export_wait waited on ended failed: the encoder refused the profile"
         );
     }
 
@@ -6105,6 +6111,7 @@ mod tests {
             |progress: f64, total: f64, _: String| seen.borrow_mut().push((progress, total));
         let cancelled = AtomicBool::new(false);
         let outcome = export_wait(
+            "export_wait",
             json!({ "job": "j1" }),
             &mut backend,
             &cancelled,

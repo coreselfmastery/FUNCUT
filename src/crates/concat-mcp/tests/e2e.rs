@@ -532,8 +532,19 @@ fn an_agent_measures_media_and_is_refused_honestly() {
         json!({ "path": voice.to_string_lossy(), "model": "tiny.en" }),
     );
     let job = heard["structuredContent"]["job"].as_str().expect("a job");
-    let waited = agent.tool("analysis_wait", json!({ "job": job, "timeoutSeconds": 30 }));
-    assert_eq!(waited["structuredContent"]["state"], "failed", "{waited}");
+    // A job that ended failed is the wait's own refusal - the same
+    // sentence the status carried, in the one place every caller reads.
+    // The status used to travel as an Ok result only an agent that
+    // parsed `state` could refuse; a caller reading nothing but isError
+    // - an unattended run, driving the wait from a program written
+    // before the job was named - would have taken the dead job for a
+    // landed one.
+    let (_, reply) = agent.ask(
+        "tools/call",
+        json!({ "name": "analysis_wait", "arguments": { "job": job, "timeoutSeconds": 30 } }),
+    );
+    let waited = reply.get("result").cloned().expect("a result");
+    assert_eq!(waited["isError"], true, "{waited}");
     let said = waited["structuredContent"]["error"]["message"]
         .as_str()
         .expect("the refusal");

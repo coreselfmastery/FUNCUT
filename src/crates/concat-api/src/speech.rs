@@ -143,7 +143,10 @@ impl Script {
 
 /// The script that outnumbers the rest in the text. Latin is the default
 /// when nothing readable is there at all: an empty or punctuation-only
-/// transcript is not a script disagreement.
+/// transcript is not a script disagreement. A tie keeps the earlier
+/// slot - Latin first - so `max_by_key`'s own last-of-equals answer
+/// (Thai, the table's end) cannot sneak in as the "dominant" script of
+/// a text that carried no letters at all.
 fn dominant_script(text: &str) -> Script {
     let mut counts = [0_usize; 11];
     for character in text.chars() {
@@ -154,7 +157,7 @@ fn dominant_script(text: &str) -> Script {
     counts
         .iter()
         .enumerate()
-        .max_by_key(|(_, count)| **count)
+        .max_by_key(|&(slot, count)| (*count, std::cmp::Reverse(slot)))
         .map(|(slot, _)| match slot {
             1 => Script::Cyrillic,
             2 => Script::Greek,
@@ -193,8 +196,10 @@ fn script_of_code(code: &str) -> Script {
 /// Whether the transcription's own script disagrees with what was asked
 /// for: a language hint written in another script, or an English-only
 /// model handed non-Latin audio (it cannot refuse; it transliterates).
-/// Japanese and Han answer for each other - Japanese text is Han-dominant
-/// whenever the kanji outnumber the kana.
+/// Japanese answers for Han - Japanese text is Han-dominant whenever
+/// the kanji outnumber the kana, so a ja hint over Han is agreement, not
+/// error - but Han does not answer for Japanese: kana under a Chinese
+/// hint is writing the Chinese hint never asked for.
 fn language_mismatch(hint: Option<&str>, english_only_model: bool, script: Script) -> bool {
     if english_only_model && script != Script::Latin {
         return true;
@@ -212,7 +217,7 @@ fn language_mismatch(hint: Option<&str>, english_only_model: bool, script: Scrip
         return false;
     }
     match (script_of_code(&primary), script) {
-        (Script::Japanese, Script::Han) | (Script::Han, Script::Japanese) => false,
+        (Script::Japanese, Script::Han) => false,
         (expected, detected) => expected != detected,
     }
 }

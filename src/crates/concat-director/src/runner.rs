@@ -1107,7 +1107,11 @@ mod tests {
         // The re-run: no calls at all, still completed.
         let mut second = Scripted::new(Vec::new());
         assert_eq!(runner.run(&program, &mut second), RunOutcome::Completed);
-        assert!(second.calls.is_empty(), "a completed stage re-ran: {:?}", second.calls);
+        assert!(
+            second.calls.is_empty(),
+            "a completed stage re-ran: {:?}",
+            second.calls
+        );
 
         // A genuinely new edit walks the program again.
         runner.fresh();
@@ -1168,18 +1172,20 @@ mod tests {
         };
         let program = program(vec![StageStep::run(
             Stage::Timeline,
-            vec![
-                call(EDIT_APPLY),
-                named,
-            ],
+            vec![call(EDIT_APPLY), named],
         )]);
         let mut caller = Scripted::new(vec![Ok(json!({})), Ok(json!({}))]);
         assert_eq!(runner.run(&program, &mut caller), RunOutcome::Completed);
         assert_eq!(caller.calls.len(), 2);
-        let stamped = caller.calls[0].arguments.get("idempotencyKey")
+        let stamped = caller.calls[0]
+            .arguments
+            .get("idempotencyKey")
             .and_then(Value::as_str)
             .expect("the runner named the edit");
-        assert!(stamped.starts_with("timeline-"), "the key names its stage: {stamped}");
+        assert!(
+            stamped.starts_with("timeline-"),
+            "the key names its stage: {stamped}"
+        );
         let again = idempotency_key(
             Stage::Timeline,
             &ToolCall {

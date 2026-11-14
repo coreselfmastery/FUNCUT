@@ -19,7 +19,7 @@ use crate::error::ToolCall;
 /// [`Captions`](Stage::Captions) step), and the stage indices a progress
 /// report carries are the program's own order, not this list's: the list
 /// is the register the names come from, not a schedule.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Stage {
     /// The voiceover lands in the project: found in the bin or imported,

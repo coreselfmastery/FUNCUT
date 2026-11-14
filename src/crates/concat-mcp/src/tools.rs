@@ -2740,9 +2740,13 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
             Ok(Outcome::json(summary::view(&result)))
         }
         Action::PlanValidate => Ok(Outcome::json(validate_plan_tool(arguments)?)),
-        Action::ExportWait => {
-            export_wait(tool.name, arguments, backend, context.cancelled, context.progress)
-        }
+        Action::ExportWait => export_wait(
+            &tool.name,
+            arguments,
+            backend,
+            context.cancelled,
+            context.progress,
+        ),
         Action::PreviewFrame => preview(arguments, backend),
         Action::MotionPresets => crate::motion::presets_list(),
         Action::MotionInspect => crate::motion::inspect(arguments),
@@ -6079,9 +6083,14 @@ mod tests {
             .into(),
         );
         let cancelled = AtomicBool::new(false);
-        let error =
-            export_wait("export_wait", json!({ "job": "j1" }), &mut backend, &cancelled, None)
-                .expect_err("the export died");
+        let error = export_wait(
+            "export_wait",
+            json!({ "job": "j1" }),
+            &mut backend,
+            &cancelled,
+            None,
+        )
+        .expect_err("the export died");
         assert_eq!(
             error.message,
             "the job export_wait waited on ended failed: the encoder refused the profile"

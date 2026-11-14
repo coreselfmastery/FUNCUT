@@ -1349,7 +1349,8 @@ impl Api {
                 "at most 20 clips a call; page through them".to_owned(),
             ));
         }
-        if monetized {
+        let effective_monetized = monetized || self.project_is_monetized(path)?;
+        if effective_monetized {
             return Err(ApiError::failed(
                 "the edit is monetized and OpenVid clips carry no verified licence \
                  record: the index holds no licence column, no author and no release \
@@ -1787,7 +1788,8 @@ impl Api {
                 "at most 20 tracks a call; page through them".to_owned(),
             ));
         }
-        if monetized {
+        let effective_monetized = monetized || self.project_is_monetized(path)?;
+        if effective_monetized {
             // The catalogue's own word when it is loaded; the id's shelf
             // prefix - the source's prefix and twelve hex, a contract
             // that never changed (concat-host/src/bgm.rs) - when it is
@@ -2442,6 +2444,37 @@ impl Api {
             )
             .map_err(ApiError::failed)?;
         Ok((width, height, pixels))
+    }
+
+    /// Read the monetized flag from the opened project's persisted creative
+    /// brief. Import request flags are additional caller assertions, not
+    /// authority: a direct MCP/API caller must not bypass a monetized
+    /// project's licence gate by omitting or setting monetized to false.
+    /// A legacy project without a brief remains non-monetized; a malformed
+    /// brief is refused rather than treated as permission.
+    fn project_is_monetized(&self, path: &str) -> Result<bool, ApiError> {
+        let session = self.session(path)?;
+        let brief_path = std::path::PathBuf::from(session.path()).join("creative-brief.json");
+        let contents = match std::fs::read_to_string(&brief_path) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => {
+                return Err(ApiError::failed(format!(
+                    "could not read the project's creative brief: {error}"
+                )));
+            }
+        };
+        let brief: serde_json::Value = serde_json::from_str(&contents).map_err(|error| {
+            ApiError::failed(format!("the project's creative brief is invalid JSON: {error}"))
+        })?;
+        match brief.get("monetized") {
+            None => Ok(false),
+            Some(serde_json::Value::Bool(value)) => Ok(*value),
+            Some(_) => Err(ApiError::failed(
+                "the project's creative brief monetized field must be a boolean"
+                    .to_owned(),
+            )),
+        }
     }
 
     fn session(&self, path: &str) -> Result<&Session, ApiError> {
@@ -3864,6 +3897,51 @@ mod tests {
         assert!(
             !other.message.contains("no verified licence"),
             "without the flag the refusal is the index's own: {other}"
+        );
+    }
+
+    /// The persisted project brief is authoritative: a direct import
+    /// cannot turn a monetized project into a non-monetized one by sending
+    /// monetized=false or omitting the request field.
+    #[test]
+    fn persisted_monetized_brief_cannot_be_overridden_by_import_flags() {
+        let (mut api, scratch, _events) = api();
+        let location = scratch.path().join("projects");
+        std::fs::create_dir_all(&location).expect("projects folder");
+        let name = "monetized-edit";
+        let path = location.join(name);
+        let path_text = path.to_string_lossy().into_owned();
+        ok(api.dispatch(Request::ProjectCreate {
+            location: location.to_string_lossy().into_owned(),
+            name: name.to_owned(),
+            video: None,
+        }));
+        std::fs::write(path.join("creative-brief.json"), r#"{"monetized":true}"#)
+            .expect("persisted brief");
+
+        let openvid = err(api.dispatch(Request::OpenvidImport {
+            path: path_text.clone(),
+            ids: vec![7],
+            start: None,
+            track: None,
+            monetized: false,
+        }));
+        assert!(
+            openvid.message.contains("monetized")
+                && openvid.message.contains("verified licence"),
+            "the persisted brief must arm the OpenVid gate: {openvid}"
+        );
+
+        let bgm = err(api.dispatch(Request::BgmImport {
+            path: path_text,
+            ids: vec!["lofi-0123456789ab".to_owned()],
+            start: None,
+            track: None,
+            monetized: false,
+        }));
+        assert!(
+            bgm.message.contains("MobyGratis"),
+            "the persisted brief must arm the MobyGratis gate: {bgm}"
         );
     }
 

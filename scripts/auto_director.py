@@ -493,15 +493,18 @@ def _clip_for_media(view: Any, media_id: str, start: float) -> dict[str, Any] | 
     ]
     if not candidates:
         return None
+    # SRC-10: exact placement, not the nearest - a clip found by proximity
+    # is a guess about which import landed where, and a wrong guess
+    # places somebody else's media on the beat. Only a clip whose start
+    # IS the ask (to the millisecond) answers; none answering is the
+    # caller's to handle, loudly.
     exact = [
         item for item in candidates
         if abs(float(item["start"]) - start) <= 0.001
     ]
-    pool = exact or candidates
-    return min(
-        pool,
-        key=lambda item: (abs(float(item["start"]) - start), str(item.get("id", ""))),
-    )
+    if not exact:
+        return None
+    return min(exact, key=lambda item: str(item.get("id", "")))
 
 
 def _direction(camera: Any) -> str:
@@ -795,6 +798,9 @@ def phase_plan(plan: dict[str, Any]) -> list[tuple[str, str]]:
 
 #: The report's own name for its shape, the way auto-edit-report names its.
 VERIFICATION_REPORT_SCHEMA = "funcut.verification-report/1"
+#: The run record's own name for its shape (DATA-04): the handoff a later
+#: session or a resume reads knows which record it is holding.
+RUN_RECORD_SCHEMA = "funcut.auto-director-run/1"
 #: How many frames the black-frame and visual-quality scans sample.
 VERIFICATION_SAMPLES = 10
 #: A sampled frame whose pixels move less than this (variance, 0-255
@@ -3226,6 +3232,61 @@ def run_pipeline(
     # (the -1 dBTP inside loudness_ok) asserts beside it, unchanged.
     verify_entries.append(_true_peak_entry(true_peak))
 
+    # VERIFY-15 (FAIL-03): the export's own speech, read for synthetic-
+    # voice artifacts - a disclosure reading, never a proof (the tool's
+    # own words). A synthetic band on a take the plan promised as a file
+    # is a possible swapped voice, recorded as such; on a tts take it is
+    # the expected answer, recorded for the disclosure duty.
+    if "detect_ai_voice" not in served:
+        verify_entries.append(_verification_entry(
+            "VERIFY-15", "ai-voice-disclosure", "skipped",
+            "detect_ai_voice is not served; the synthetic-voice read did not run",
+        ))
+    else:
+        try:
+            ai_voice = advance("detect_ai_voice", {
+                "audio": rendered, "transcript": transcript,
+            })
+        except PipelineError as error:
+            verify_entries.append(_verification_entry(
+                "VERIFY-15", "ai-voice-disclosure", "skipped",
+                f"detect_ai_voice failed: {error}",
+            ))
+        else:
+            likeness = (
+                ai_voice.get("aiLikeness") if isinstance(ai_voice, dict) else None
+            )
+            band = likeness.get("band") if isinstance(likeness, dict) else None
+            score = likeness.get("score") if isinstance(likeness, dict) else None
+            voiceover_source = str(
+                ((plan.get("audio") or {}).get("voiceover") or {}).get("source") or ""
+            ).lower()
+            if band is None:
+                verify_entries.append(_verification_entry(
+                    "VERIFY-15", "ai-voice-disclosure", "skipped",
+                    "detect_ai_voice answered without an aiLikeness band",
+                ))
+            else:
+                note = (
+                    "the take reads likely synthetic while the plan promised a "
+                    "file recording - a swapped voice is worth a human look"
+                    if band == "likely synthetic" and voiceover_source == "file"
+                    else "recorded for the disclosure duty"
+                )
+                verify_entries.append(_verification_entry(
+                    "VERIFY-15", "ai-voice-disclosure", "pass",
+                    note,
+                    band=band, likenessScore=score,
+                    voiceoverSource=voiceover_source or None,
+                ))
+                if band == "likely synthetic" and voiceover_source == "file":
+                    record_fallback(
+                        "verify", "voice", "detect_ai_voice",
+                        "the export's speech reads likely synthetic although the "
+                        "plan's voiceover source is a file recording; the reading "
+                        "informs a look, it never proves a swap",
+                    )
+
     # The whole record, written beside the export before anything may
     # refuse: an acceptance read reads the file, not the log. Then the
     # per-check lines cross, and a failed entry stops the run naming
@@ -3269,16 +3330,54 @@ def run_pipeline(
         the planning decision log; what a run MEASURED belongs to the
         run, and the craft journal the server keeps carries the rest)."""
         sheet_path = os.path.join(project, f"director-review-v{attempt}.png")
-        inspection = advance(
-            "watch_render",
-            {
-                "path": path,
-                "samples": 12,
-                "audio": True,
-                "targetLufs": target_lufs,
-                "out": sheet_path,
-            },
-        )
+        def inspect(path: str) -> Any:
+            return advance(
+                "watch_render",
+                {
+                    "path": path,
+                    "samples": 12,
+                    "audio": True,
+                    "targetLufs": target_lufs,
+                    "out": sheet_path,
+                },
+            )
+        try:
+            inspection = inspect(path)
+        except PipelineError as error:
+            # FAIL-02: an empty or corrupt render is a retryable Watch
+            # failure, not a low craft score and not a dead critique -
+            # the export is re-made once, to the same profile, before
+            # anything gives up on it. A render that probed healthy is
+            # the tool's own refusal, and stops the run with its words.
+            healthy = (
+                os.path.isfile(path) and os.path.getsize(path) > 0
+                and _ffprobe(path) is not None
+            )
+            if not healthy:
+                log(
+                    f"watch_render failed on an unreadable render ({error}); "
+                    "re-exporting once before the critique gives up (FAIL-02)"
+                )
+                started = advance("export_start", export_arguments(path))
+                job = started.get("job") if isinstance(started, dict) else None
+                if not job:
+                    raise PipelineError(
+                        f"the render was unreadable and the re-export did not "
+                        f"start: {error}"
+                    ) from error
+                status: Any = None
+                for _ in range(4):
+                    status = advance("export_wait", {"job": job, "timeoutSeconds": 590})
+                    if not isinstance(status, dict) or status.get("state") != "running":
+                        break
+                if not isinstance(status, dict) or status.get("state") not in {"done", "completed", "succeeded"}:
+                    raise PipelineError(
+                        f"the render was unreadable and the re-export did not "
+                        f"finish: {status}"
+                    ) from error
+                inspection = inspect(path)
+            else:
+                raise
         if not isinstance(inspection, dict) or not inspection.get("pngPath"):
             raise PipelineError(
                 f"render inspection did not produce a contact sheet: {inspection}"
@@ -3591,6 +3690,20 @@ def run_pipeline(
         + ("" if status == "completed" else f" ({status})")
         + (f"; {len(degraded_entries)} recorded degradation(s)" if degraded_entries else "")
     )
+    # DATA-01: the run's own signalLog is held to its schema before it is
+    # written - every entry carries a decision and a provenance, and the
+    # provenance is one of the two words it may be. An entry that cannot
+    # say what decided or on what footing it stands is not a record.
+    for entry in run_signals:
+        if not isinstance(entry, dict) or not entry.get("decision"):
+            raise PipelineError(
+                f"a run signalLog entry carries no decision: {entry!r}"
+            )
+        if entry.get("provenance") not in ("measured", "fallback"):
+            raise PipelineError(
+                f"a run signalLog entry's provenance is neither measured nor "
+                f"fallback: {entry!r}"
+            )
     # The audit's own last word: every plan field accounted for, and the
     # one the runner did not consume named as one (P1-005). The run's
     # signalLog rides the record with it (P1-004).
@@ -3615,6 +3728,10 @@ def run_pipeline(
         + "; nothing dropped silently"
     )
     _record_run(project, {
+        # DATA-04: the run record's own name for its shape, the way the
+        # verification report names its - a handoff a later session (or a
+        # resume) reads knows which record it is holding.
+        "schemaVersion": RUN_RECORD_SCHEMA,
         "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "status": status,
         "calls": len(done),
@@ -4084,6 +4201,7 @@ SELF_TEST_REPLIES = {
     },
     "export_start": {"job": "j1"},
     "export_wait": {"state": "done", "output": "/tmp/funcut-selftest/final.mp4"},
+    "detect_ai_voice": {"ok": True, "aiLikeness": {"score": 12, "band": "likely human"}},
     "measure_loudness": {
         "integratedLufs": -14.2, "truePeakDbtp": -1.4, "loudnessRangeLu": 6.0,
         "targetLufs": -14.0, "lufsError": -0.2, "platformTargetMet": True,
@@ -4264,7 +4382,7 @@ def self_test() -> int:
         "collision_check", "timeline_read",
         "export_start", "export_wait", "transcribe", "analysis_wait", "emotion",
         "timeline_read", "project_get",
-        "measure_loudness", "watch_render", "craft_critique",
+        "measure_loudness", "detect_ai_voice", "watch_render", "craft_critique",
     ]
     if order != expected:
         print(f"FAIL: phase order\n  want: {expected}\n  got:  {order}")
@@ -4575,9 +4693,9 @@ def self_test() -> int:
         return 1
     entries = report.get("checks", [])
     by_check = {entry.get("id"): entry for entry in entries}
-    wanted_ids = [f"VERIFY-{number:02d}" for number in (1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13, 14)]
+    wanted_ids = [f"VERIFY-{number:02d}" for number in (1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13, 14, 15)]
     if sorted(entry.get("id") for entry in entries) != wanted_ids:
-        print(f"FAIL: the report's checks are not the twelve the stage owes: "
+        print(f"FAIL: the report's checks are not the thirteen the stage owes: "
               f"{[entry.get('id') for entry in entries]}")
         return 1
     probe_ids = ("VERIFY-01", "VERIFY-04", "VERIFY-09", "VERIFY-10", "VERIFY-11")
@@ -4589,11 +4707,11 @@ def self_test() -> int:
                   f"{by_check[check_id]}")
             return 1
     summary = report.get("summary", {})
-    if summary.get("total") != 12 or summary.get("failed") != 0:
+    if summary.get("total") != 13 or summary.get("failed") != 0:
         print(f"FAIL: the report's summary is wrong: {summary}")
         return 1
     print(
-        "verify record ok: 12 entries, report written, "
+        "verify record ok: 13 entries, report written, "
         + f"{summary.get('passed')} passed / {summary.get('skipped')} skipped "
         + "(probe checks skipped: no ffmpeg)" * (not have_media)
     )

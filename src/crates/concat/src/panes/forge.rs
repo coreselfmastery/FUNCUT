@@ -1664,6 +1664,7 @@ fn elapsed_text(duration: Duration) -> String {
 mod tests {
     use super::voiceover_copy_name;
     use std::path::Path;
+    use std::time::Duration;
 
     #[test]
     fn voiceover_copies_with_the_same_basename_keep_distinct_names() {

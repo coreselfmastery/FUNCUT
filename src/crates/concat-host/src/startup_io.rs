@@ -17,14 +17,15 @@
 //! comes first. [`openvid`](crate::openvid) holds the gate for the
 //! whole of a download and the whole of a first open - an RAII
 //! [`IndexWarm`] token, so a warm that panics still releases - and
-//! while any warm is held, [`proxy`](crate::proxy) parks the copies it
-//! is asked to ensure instead of submitting them. The moment the last
-//! warm finishes, everything parked is submitted on the scheduler's
-//! proxy lane in the order it arrived, and proxy generation runs as it
-//! always did. Nothing is ever interrupted: a warm never waits (the
-//! gate is not a lock the warm takes; it is a flag it raises), and a
-//! proxy already encoding when a warm begins is left to finish - the
-//! disk is only ever told which of the two starts next.
+//! every proxy checks the gate when a scheduler worker is ready to
+//! start it. This matters because a proxy can already be queued when
+//! a warm begins: checking only when the caller enqueues it would let
+//! that queued job start under the warm. Such a worker parks the job;
+//! the outermost warm release resubmits parked jobs through the same
+//! worker-start check, so a new warm cannot slip into that gap either.
+//! Nothing is ever interrupted: a warm never waits (the gate is not a
+//! lock the warm takes; it is a flag it raises), and a proxy that has
+//! passed the worker-start check is left to finish if a warm begins.
 //!
 //! The gate is process-local and best-effort by design: it orders the
 //! work this one process starts, which is the interleaving this app
@@ -88,41 +89,44 @@ impl Drop for IndexWarm {
                 Vec::new()
             }
         };
-        // Submitted outside the lock: a job that itself asks about the
-        // gate - none does today, and none may, or the release would
-        // wait on itself - must never be able to hold the lock the
-        // release holds.
+        // Submit outside the gate lock. A worker may start immediately
+        // and must be able to take this lock for its own start-time check.
         for job in released {
-            crate::scheduler().submit(concat_media::Priority::Proxy, job);
+            submit_proxy(job);
         }
     }
 }
 
-/// Whether an index warm is in flight and proxy generation should
-/// park. The tests' read of the gate; the park itself answers its own
-/// question atomically (see [`park_until_index_warm`]).
-#[cfg(test)]
-pub(crate) fn index_warming() -> bool {
-    lock().depth > 0
+/// Decide whether a proxy may begin at the instant a scheduler worker
+/// is ready to run it. Checking at enqueue time is not enough: the
+/// scheduler queues jobs, so a warm can begin after an ask is submitted
+/// but before a worker dequeues it.
+fn take_or_park(job: Job) -> Option<Job> {
+    let mut gate = lock();
+    if gate.depth > 0 {
+        gate.pending.push_back(job);
+        None
+    } else {
+        Some(job)
+    }
 }
 
-/// Park a proxy job until every in-flight index warm has finished,
-/// answered as one move under the gate's lock: `None` when the job is
-/// parked, `Some(job)` when no warm is in flight and the job is handed
-/// back for the caller to submit as it always did. The check and the
-/// park are one acquisition because they must not come apart - a warm
-/// that released between a separate `index_warming` read and the park
-/// would drain a queue the job had not joined yet, and the job would
-/// sit parked with no warm left to ever free it. The caller has
-/// already recorded the job's target in its own writing set, so a
-/// second ask for the same target parks nothing.
-pub(crate) fn park_until_index_warm(job: Job) -> Option<Job> {
-    let mut gate = lock();
-    if gate.depth == 0 {
-        return Some(job);
-    }
-    gate.pending.push_back(job);
-    None
+/// The scheduler's proxy-lane wrapper. Every proxy checks the gate when
+/// its worker actually starts it, including jobs released by a previous
+/// warm. If another warm began while the job was queued, it is parked
+/// again instead of competing with the index's disk I/O.
+fn guarded(job: Job) -> Job {
+    Box::new(move || {
+        if let Some(job) = take_or_park(job) {
+            job();
+        }
+    })
+}
+
+/// Submit a proxy through the worker-start gate. A job that was queued
+/// before a warm began is checked again when a worker dequeues it.
+pub(crate) fn submit_proxy(job: Job) {
+    crate::scheduler().submit(concat_media::Priority::Proxy, guarded(job));
 }
 
 #[cfg(test)]
@@ -142,14 +146,17 @@ pub(crate) mod tests {
         let ran = Arc::new(AtomicBool::new(false));
         let probe = ran.clone();
         let warm = begin_index_warm();
-        assert!(index_warming(), "the warm holds the gate");
-        park_until_index_warm(Box::new(move || {
+        assert!(warming(), "the warm holds the gate");
+        submit_proxy(Box::new(move || {
             probe.store(true, Ordering::SeqCst);
         }));
+        // Drain the scheduler while the warm is held: the queued wrapper
+        // must re-check the gate and park the actual work.
+        crate::scheduler().drain();
         assert_eq!(parked(), 1, "the job is parked, not running");
         assert!(!ran.load(Ordering::SeqCst), "nothing starts under the warm");
         drop(warm);
-        assert!(!index_warming(), "the warm released the gate");
+        assert!(!warming(), "the warm released the gate");
         assert_eq!(parked(), 0, "the parked job was submitted");
         // The scheduler's own drain waits for the submitted job; the
         // probe runs on the worker, so drain first, then read it.
@@ -169,11 +176,12 @@ pub(crate) mod tests {
         let probe = ran.clone();
         let download = begin_index_warm();
         let open = begin_index_warm();
-        park_until_index_warm(Box::new(move || {
+        submit_proxy(Box::new(move || {
             probe.store(true, Ordering::SeqCst);
         }));
+        crate::scheduler().drain();
         drop(open); // the inner warm ends; the download still holds
-        assert!(index_warming());
+        assert!(warming());
         assert_eq!(parked(), 1, "still parked: the download is the outer warm");
         assert!(!ran.load(Ordering::SeqCst));
         drop(download); // the outermost warm ends; the gate opens
@@ -185,24 +193,38 @@ pub(crate) mod tests {
         );
     }
 
-    /// A park with no warm in flight is refused rather than stranded:
-    /// the check and the park are one move under the gate's lock, so a
-    /// warm that released between the two can never leave a job parked
-    /// with no warm left to free it. The job a refused park hands back
-    /// is dropped unrun here - which is also what it wants: the caller
-    /// goes on to submit it on the scheduler's own lane.
+    /// A proxy may already be queued when a warm begins. Its worker
+    /// must check the gate at dequeue time, not trust the state observed
+    /// by the caller when it enqueued the job.
     #[test]
-    fn a_park_with_no_warm_in_flight_is_refused_rather_than_stranded() {
+    fn a_queued_proxy_rechecks_the_gate_when_its_worker_starts() {
         let _alone = for_this_test_only()
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        assert!(!index_warming(), "no warm is in flight");
-        let refused = park_until_index_warm(Box::new(|| {
-            panic!("a refused park must not run its job");
-        }))
-        .expect("the park was refused: no warm holds the gate");
-        drop(refused);
-        assert_eq!(parked(), 0, "nothing is left stranded in the queue");
+        let ran = Arc::new(AtomicBool::new(false));
+        let probe = ran.clone();
+        let queued = guarded(Box::new(move || {
+            probe.store(true, Ordering::SeqCst);
+        }));
+
+        let warm = begin_index_warm();
+        // Simulate the scheduler dequeuing a job that was submitted
+        // before the warm began.
+        queued();
+        assert_eq!(parked(), 1, "the worker parked the queued proxy");
+        assert!(
+            !ran.load(Ordering::SeqCst),
+            "no disk work starts under the warm"
+        );
+
+        drop(warm);
+        crate::scheduler().drain();
+        assert!(ran.load(Ordering::SeqCst), "the proxy ran after the warm");
+    }
+
+    /// Whether a warm currently owns the gate; test-only observation.
+    fn warming() -> bool {
+        lock().depth > 0
     }
 
     /// How many jobs are parked, for the tests and for nothing else:
@@ -214,7 +236,7 @@ pub(crate) mod tests {
     /// The gate is process-global, so every test that holds it - these,
     /// and the proxy test that proves the ordering end to end - takes
     /// this lock first and runs alone. A parallel runner would otherwise
-    /// answer `index_warming` with another test's warm.
+    /// answer `warming` with another test's warm.
     pub(crate) fn for_this_test_only() -> &'static std::sync::Mutex<()> {
         static SERIAL: OnceLock<Mutex<()>> = OnceLock::new();
         SERIAL.get_or_init(|| Mutex::new(()))

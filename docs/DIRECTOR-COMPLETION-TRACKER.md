@@ -1,8 +1,77 @@
 # DIRECTOR-COMPLETION-TRACKER
 
-## Session 2 — 2026-11-13 (current status)
+## Session 3 — 2026-11-14 (current status)
 
-Fresh repository state for this reconciliation:
+Fresh repository state for this reconciliation, verified against the API and
+a fresh clone:
+
+- `main` = `80d98b6985c17e045d061bd4568ef3698b2cf7f6`, the merge of PR #111
+  (Kokoro classifier floor window, P3-004).
+- Merged into main, in order, all verified by merge-commit SHA:
+  - PR #110 → `77392956859352c18924e728b1ccdaa286ac60f7` — the
+    `concat-director` runner crate (P0-015..021, P2-001..010, RUN-01..17,
+    CONC-01/02).
+  - PR #115 → `e14cb278…` — slot contract unified (P0-001/002), closing the
+    plan/executor mismatch that PR #112 had been opened for.
+  - PR #116 → `a5971920…` — the revise loop (P1-006/007, INT-04/06,
+    PLAN-05, FALL-04).
+  - PR #111 → `80d98b69…` — the recording noise floor measured across
+    short pauses (P3-004).
+  - PR #113 and #114 (Geneva and tracker doc reconciliation) also merged.
+- Session 1's ~30 Python fixes are intact on main.
+- PR #112 is **closed** (duplicate of the merged #115). PR #108 is
+  **closed** (superseded by the merged #111). Both closures were posted
+  with comments naming their replacements.
+- `funcut-env.sh` is **NOT FOUND** on main (verified by `git ls-files` on a
+  fresh clone); no environment script of that name exists in the tree.
+- The runner crate is still **not wired** into `concat-mcp` or the editor
+  UI: no AUTO EDIT button, no integrated progress/cancel surface. That
+  wiring is this session's Task A (branch `feat/auto-edit-button`).
+- No credential material or credential-store paths belong in this
+  repository or tracker. Use the connected GitHub integration or an
+  approved secret manager; never paste tokens into repository files.
+
+## Current execution order
+
+1. Wire `concat-director` into the MCP backend and editor UI: the Backend →
+   ToolCaller adapter, the AUTO EDIT button, progress/cancel and the
+   terminal states (Task A, branch `feat/auto-edit-button`).
+2. Verification expansion: the 11 missing Verify-stage checks (VERIFY-01..05,
+   08..14), branch `fix/verification-contract`.
+3. P1 leftovers (P1-004, 005, 009, 010), branch `fix/p1-leftovers`.
+4. Silent degradation (DEG-01, 03..10), branch `fix/silent-degradation`.
+5. Provider fallbacks (FALL-01..03, 06..10), branch `fix/provider-fallbacks`.
+6. Data/resource/schema (DATA, RES-02/03, SCH-02, FAIL-02/03, SRC-08..12),
+   branch `fix/data-resource-schema`.
+7. Runner idempotency (IDEM-01..10), branch `feat/runner-idempotency`.
+8. Verify PR #105 (OpenVid cold load) and #111 (Kokoro classifier) on a
+   real run.
+9. CONTRA-01..07 contradiction cleanup, branch `docs/contradiction-cleanup`.
+10. Complete the real brief-to-export AI Director acceptance run and inspect
+    the resulting media.
+11. Complete target-machine 1080p proxy and real Intel/AMD VAAPI acceptance.
+12. Publish only after all required checks, reviews, packaging and release
+    evidence are green.
+
+Progress log:
+
+- [2026-11-14] Session 3 opened: preconditions verified (token, main SHA,
+  merge CI), PR #112 and #108 closed with comments, this tracker brought up
+  to the real state.
+- [2026-11-13] PR #110 merged; PR #112 opened for the plan/executor
+  contract mismatch (later made redundant by #115); PR #113 opened for
+  Geneva evidence.
+- [2026-11-13] Session 2 reconciliation recorded below.
+
+---
+
+# Session 2 record (2026-11-13) — superseded, preserved verbatim below
+
+The state this record describes was true at its writing; every open item it
+lists was since resolved (see the Session 3 header above for what actually
+landed).
+
+## Session 2 — 2026-11-13 (status at that writing)
 
 - `main` = `77392956859352c18924e728b1ccdaa286ac60f7`, merge of PR #110.
 - PR #110 added the `concat-director` runner crate. Its Geneva workflow passed both jobs; CI format/locales/models and real-fixture analysis passed while engine tests/lints were still running; Nix was still building at this snapshot. The push-triggered Build app run for this exact main commit was not discoverable through the connected workflow-run interface.
@@ -13,7 +82,7 @@ Fresh repository state for this reconciliation:
 - PR #113 reconciles the Geneva master list to current main. Current head: `bf481d1d7302895230340f001907b966a3b797fd`; CI/Geneva are pending.
 - No credential material or credential-store paths belong in this repository or tracker. Use the connected GitHub integration or an approved secret manager; never paste tokens into repository files.
 
-## Current execution order
+## Session 2 execution order (all since done or closed)
 
 1. Finish and validate PR #112; fix every exact-head CI/Geneva failure.
 2. Finish PR #111; close stale PR #108 only after the replacement is green.
@@ -23,7 +92,7 @@ Fresh repository state for this reconciliation:
 6. Complete target-machine 1080p proxy and real Intel/AMD VAAPI acceptance.
 7. Publish only after all required checks, reviews, packaging and release evidence are green.
 
-Progress log:
+Session 2 progress log:
 
 - [2026-11-13] PR #110 merged as `77392956859352c18924e728b1ccdaa286ac60f7`; its full CI and Nix validation were still running at the latest poll.
 - [2026-11-13] PR #112 opened for the plan/executor contract mismatch; first CI run found and exposed a canonical example that was not executable, plus rustfmt differences. Both were corrected in follow-up commits; fresh checks pending.

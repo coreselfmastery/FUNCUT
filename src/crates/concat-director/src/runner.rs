@@ -369,6 +369,10 @@ impl Runner {
 
             let mut failure: Option<AutoEditError> = None;
             let mut failed_attempt = 1;
+            // The gate evidence: every reply this stage's calls drew, kept
+            // for the gates below and dropped with them - only the Verify
+            // stage's last answer travels on in `verification`.
+            let mut replies: Vec<Value> = Vec::new();
             // IDEM: every edit this run applies carries an idempotency
             // key derived from the stage and the call itself, so the
             // same edit re-made by a run that never heard the reply
@@ -440,6 +444,7 @@ impl Runner {
                             } else if call.tool == EDIT_UNDO {
                                 applied.pop();
                             }
+                            replies.push(reply.clone());
                             if step.stage == Stage::Verify {
                                 verification = reply;
                             }
@@ -473,6 +478,49 @@ impl Runner {
                             failure = Some(error);
                             break 'calls;
                         }
+                    }
+                }
+            }
+
+            // The silent-success gates: a stage whose calls all landed
+            // has still not finished until its replies said what the
+            // program demands of them. A gate no reply answered is the
+            // stage's own failure - a verify nobody ran is not a verify -
+            // and a reply that failed it names the value it saw. The
+            // failure lands under the stage's own policy, like any call's.
+            if failure.is_none() && !step.gates.is_empty() {
+                for gate in &step.gates {
+                    let mut answered = false;
+                    let mut failed = None;
+                    for reply in &replies {
+                        if let Some(answer) = gate.checked_by(reply) {
+                            answered = true;
+                            if let Err(sentence) = answer {
+                                failed.get_or_insert(sentence);
+                                break;
+                            }
+                        }
+                    }
+                    if !answered {
+                        failed.get_or_insert(format!(
+                            "the stage's replies never answered the {} gate: \
+                             the call that proves it did not run or did not say",
+                            gate.field()
+                        ));
+                    }
+                    if let Some(sentence) = failed {
+                        failure = Some(AutoEditError::new(
+                            step.stage,
+                            calls.last().cloned(),
+                            ToolError {
+                                message: sentence,
+                                retryable: Some(false),
+                                retry_after: None,
+                                code: None,
+                            },
+                        ));
+                        failed_attempt = 1;
+                        break;
                     }
                 }
             }
@@ -882,6 +930,141 @@ mod tests {
         );
         // No Verify stage ran: the verification record stays empty.
         assert_eq!(verification, Value::Null);
+    }
+
+    #[test]
+    fn a_failed_gate_fails_the_stage_that_answered_it() {
+        // The silent-success shape: every call landed, and the reply the
+        // stage drew said the edit failed its own measurement - a
+        // loudness reading that missed the platform target.
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let mut caller = Scripted::new(vec![Ok(json!({
+            "integratedLufs": -19.4, "lufsError": -5.4,
+            "platformTargetMet": false,
+        }))]);
+        let program = program(vec![
+            StageStep::run(Stage::Verify, vec![call("measure_loudness")]).gate(
+                crate::stage::ReplyGate::True {
+                    field: "platformTargetMet",
+                    what: "the mix missed the platform loudness target",
+                },
+            ),
+        ]);
+        let RunOutcome::Failed(error) = runner.run(&program, &mut caller) else {
+            panic!("the run failed");
+        };
+        assert_eq!(error.stage, Stage::Verify);
+        assert_eq!(
+            error.tool_call.as_ref().map(|call| call.tool.as_str()),
+            Some("measure_loudness")
+        );
+        assert!(!error.retryable);
+        assert_eq!(
+            error.message,
+            "the mix missed the platform loudness target: the reply said \
+             platformTargetMet=false, not true"
+        );
+        // The call was made once; a gate reads a landed answer, it does
+        // not re-ask for a better one.
+        assert_eq!(caller.calls.len(), 1);
+        let AutoEditState::Failed { stage, attempt, .. } = runner.state() else {
+            panic!("the run failed");
+        };
+        assert_eq!(stage, Stage::Verify);
+        assert_eq!(attempt, 1);
+    }
+
+    #[test]
+    fn a_gate_no_reply_answered_fails_the_stage() {
+        // A verify nobody ran is not a verify: the call that would prove
+        // the gate either did not run or did not say.
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let mut caller = Scripted::new(vec![Ok(json!({ "job": "e1" }))]);
+        let program = program(vec![
+            StageStep::run(Stage::Verify, vec![call("measure_loudness")]).gate(
+                crate::stage::ReplyGate::True {
+                    field: "platformTargetMet",
+                    what: "the mix missed the platform loudness target",
+                },
+            ),
+        ]);
+        let RunOutcome::Failed(error) = runner.run(&program, &mut caller) else {
+            panic!("the run failed");
+        };
+        assert_eq!(error.stage, Stage::Verify);
+        assert!(
+            error
+                .message
+                .contains("never answered the platformTargetMet gate")
+        );
+    }
+
+    #[test]
+    fn a_gate_under_the_warn_policy_ships_warned() {
+        // The craft bar: a low score is a flaw the edit ships with,
+        // recorded - the yellow toast - not a run thrown away.
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let mut caller = Scripted::new(vec![
+            Ok(json!({ "job": "e1" })),
+            Ok(json!({ "path": "/edits/Reel/export.mp4" })),
+            Ok(json!({ "pngPath": "/tmp/sheet.png" })),
+            Ok(json!({ "engine": "heuristic", "overall": 6.0 })),
+        ]);
+        let program = program(vec![
+            StageStep::run(
+                Stage::Export,
+                vec![call("export_start"), call("export_wait")],
+            ),
+            StageStep::run(
+                Stage::Watch,
+                vec![call("watch_render"), call("craft_critique")],
+            )
+            .warn()
+            .gate(crate::stage::ReplyGate::AtLeast {
+                field: "overall",
+                minimum: 7.0,
+                what: "the cut scored under the craft bar",
+            }),
+        ]);
+        assert_eq!(
+            runner.run(&program, &mut caller),
+            RunOutcome::CompletedWithWarnings
+        );
+        let AutoEditState::CompletedWithWarnings { warnings, .. } = runner.state() else {
+            panic!("the run completed with warnings");
+        };
+        assert_eq!(
+            warnings,
+            vec![
+                "watch craft_critique: the cut scored under the craft bar: the \
+                 reply said overall=6, under the 7 bar"
+                    .to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn a_satisfied_gate_stays_silent() {
+        // The same program, a score over the bar: the gate is not a
+        // flavour the reply must carry, it is a demand it must meet.
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let mut caller = Scripted::new(vec![
+            Ok(json!({ "pngPath": "/tmp/sheet.png" })),
+            Ok(json!({ "engine": "local-vlm", "overall": 8.5 })),
+        ]);
+        let program = program(vec![
+            StageStep::run(
+                Stage::Watch,
+                vec![call("watch_render"), call("craft_critique")],
+            )
+            .warn()
+            .gate(crate::stage::ReplyGate::AtLeast {
+                field: "overall",
+                minimum: 7.0,
+                what: "the cut scored under the craft bar",
+            }),
+        ]);
+        assert_eq!(runner.run(&program, &mut caller), RunOutcome::Completed);
     }
 
     #[test]

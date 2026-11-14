@@ -26,7 +26,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use concat_mcp::director::{
-    AutoEditError, AutoEditState, EditProgram, Runner, Stage, StageStep, ToolCall, ToolError,
+    AutoEditError, AutoEditState, EditProgram, ReplyGate, Runner, Stage, StageStep, ToolCall,
+    ToolError,
 };
 use serde_json::json;
 use slint::SharedString;
@@ -1501,26 +1502,37 @@ fn auto_edit_program(source: &AutoEditSource) -> EditProgram {
     ));
     // 8. The verify: the words re-read from the render, and the loudness
     //    measured against the short-form target. This reply is the
-    //    verification the run's terminal states carry.
-    steps.push(StageStep::run(
-        Stage::Verify,
-        vec![
-            call("transcribe", json!({ "path": source.export })),
-            call(
-                "analysis_wait",
-                json!({ "path": source.export, "timeoutSeconds": 590 }),
-            ),
-            call(
-                "analysis_wait",
-                json!({ "path": source.export, "timeoutSeconds": 590 }),
-            ),
-            call("measure_loudness", json!({ "path": source.export })),
-        ],
-    ));
+    //    verification the run's terminal states carry. The gate is the
+    //    measurement's own word: a loudness reading that missed the
+    //    platform target is a verify that failed, not a run that
+    //    completed - the headless runner refuses the same answer.
+    steps.push(
+        StageStep::run(
+            Stage::Verify,
+            vec![
+                call("transcribe", json!({ "path": source.export })),
+                call(
+                    "analysis_wait",
+                    json!({ "path": source.export, "timeoutSeconds": 590 }),
+                ),
+                call(
+                    "analysis_wait",
+                    json!({ "path": source.export, "timeoutSeconds": 590 }),
+                ),
+                call("measure_loudness", json!({ "path": source.export })),
+            ],
+        )
+        .gate(ReplyGate::True {
+            field: "platformTargetMet",
+            what: "the mix missed the platform loudness target",
+        }),
+    );
     // 9. The watch, warn-policy: the whole cut as one contact sheet,
     //    written beside the export, then read and scored. A score under
     //    the bar is a flaw the edit ships with - recorded, yellow - not a
-    //    run thrown away after the render already landed.
+    //    run thrown away after the render already landed. The gate is
+    //    the craft bar the headless runner ships on (7.0), so the flaw
+    //    the comment always promised is one the record actually carries.
     steps.push(
         StageStep::run(
             Stage::Watch,
@@ -1546,7 +1558,12 @@ fn auto_edit_program(source: &AutoEditSource) -> EditProgram {
                 ),
             ],
         )
-        .warn(),
+        .warn()
+        .gate(ReplyGate::AtLeast {
+            field: "overall",
+            minimum: 7.0,
+            what: "the cut scored under the craft bar",
+        }),
     );
     EditProgram::new(PathBuf::from(&source.export), steps)
 }
@@ -1974,6 +1991,33 @@ mod tests {
             source.export.as_str()
         );
         assert_eq!(program.steps[7].calls[3].tool, "measure_loudness");
+
+        // The silent-success gates, exactly where the spine's own words
+        // always put them: the verify fails a loudness reading that
+        // missed the platform target, and the watch warns a craft score
+        // under the bar the headless runner ships on.
+        use concat_mcp::director::ReplyGate;
+        assert_eq!(
+            program.steps[7].gates,
+            vec![ReplyGate::True {
+                field: "platformTargetMet",
+                what: "the mix missed the platform loudness target",
+            }]
+        );
+        assert_eq!(
+            program.steps[8].gates,
+            vec![ReplyGate::AtLeast {
+                field: "overall",
+                minimum: 7.0,
+                what: "the cut scored under the craft bar",
+            }]
+        );
+        // No other stage gates its replies.
+        for (at, step) in program.steps.iter().enumerate() {
+            if at != 7 && at != 8 {
+                assert!(step.gates.is_empty(), "step {at} gates its replies");
+            }
+        }
     }
 
     /// The button's own gate: audio on the timeline is what AUTO EDIT

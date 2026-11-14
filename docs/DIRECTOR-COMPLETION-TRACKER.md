@@ -1,6 +1,83 @@
 # DIRECTOR-COMPLETION-TRACKER
 
-## Session 3 — 2026-11-14 (current status)
+## Session 4 — 2026-11-14 (current status)
+
+Session 4 of the completion work, run against the live API under the session
+brief's rules (Rule 0 token check passed; no force-push; one task = one
+branch = one PR; merge only on green).
+
+- `main` = `80d98b6985c17e045d061bd4568ef3698b2cf7f6` at session start
+  (re-confirmed, the merge of PR #111), and `1cbaac2b3d7b34a9bd59515e96481d5246414608`
+  after PR #117 merged below.
+- PR #117 (docs/tracker-session3-2026-11-14) — CI green (Geneva + all five
+  CI jobs), merged 2026-11-14T06:44:31Z as `1cbaac2b3d7b34a9bd59515e96481d5246414608`.
+  The Session 3 reconciliation this file carried is now on main.
+- PR #118 (feat/auto-edit-button, the AUTO EDIT button - Session 3's Task A,
+  P4-001/002) — shepherded, not written: three CI-fix commits landed on its
+  branch during the session (clippy `doc_lazy_continuation` +
+  `type_complexity` in `src/crates/concat/src/panes/forge.rs`, fixed by the
+  branch's own author as `e4d298f5`, then head `9f710c2d`); the session's
+  CI status comments are on the PR. At session close its CI was still
+  running with **no failed steps** (Geneva green, 2 of 5 CI jobs green,
+  clippy mid-run on a queue-delayed runner); merging it on green is the
+  next session's first action, and the branch stays untouched until then.
+- Step 2 (VERIFY-01..05, 08..14): a duplicate implementation was stood
+  down WITHOUT pushing when PR #119 (fix/verification-contract, head
+  `00fc26ba`, written by the parallel session) proved the same twelve
+  checks (all five checks green at last read). Findings from the duplicate
+  are posted on the PR: codec/fps live only in the raw `project.get`
+  media entries and `media.probe` (never in the summary view), the checks
+  belong in the 600 s timeout tier, the watcher's phase-order assertion
+  and `SELF_TEST_REPLIES` must carry a new verify-phase call, and an
+  environment that cannot run a check answers an explicit skip with its
+  reason - never a silent pass.
+- Step 3 (P1 leftovers): PR #120 (fix/p1-leftovers, head `ee05c4ae`,
+  parallel session) - two check-runs red at last read (`The dependency
+  dance, pinned and green`, `The multi-layer example, rendered and
+  inspected`); left to its owner per the no-touch rule.
+- Step 8 (PR #105, read-only): verified merged (2026-11-13, merge
+  `ef8a4c64`); the rerank capability ask is on main and unit-tested
+  (`openvid_rank_for_slot` asks `openvid.status` before fetching any
+  frame - tools.rs, the two-call test); the PR body records cold
+  `openvid_search` at 0.2 s on an evicted page cache, inside the 10 s
+  line. This session's sandbox has no Rust toolchain or app binary, so
+  the cold load was not re-measured here; nothing failed, so no
+  KNOWN_ISSUES entry was filed.
+- Issue #82: status posted twice (session start, then the correction
+  naming #119/#120 as the owners of Steps 2-3).
+
+Progress log:
+
+- [2026-11-14] Session 4: preconditions re-verified; #117 merged on green;
+  #118 shepherded through three CI fixes and left on green-then-merge;
+  Step 2 duplicate stood down in favour of #119 with findings posted;
+  Step 3's red checks reported; PR #105 verified read-only.
+
+Next exact task:
+
+1. Merge PR #118 the moment its five checks are green (first action of
+   the next session; branch untouched until then).
+2. Merge PR #119 on its green (its owner, or this session's successor).
+3. Fix PR #120's two red check-runs on its own branch (`The dependency
+   dance, pinned and green`, `The multi-layer example, rendered and
+   inspected`), then merge on green.
+4. Step 4 - silent degradation (DEG-01, 03..10), branch
+   `fix/silent-degradation`. Code paths located: the reading profile's
+   `entities` slot (voice_signals.py, the `"entities": None` profile
+   row) gets an `entitiesAvailable` flag distinguishing "no entities
+   found" from "NER missing"; the openvid rank's rerank block already
+   records `applied: false` with a reason (tools.rs, the
+   `semantic_rerank` fallback) and needs the explicit `keyword-tier`
+   ranking name; `bgm_prepare` (tools.rs) needs the dying-server case;
+   `openvid_fetch` partial-download validation; the watcher's BGM gate
+   (auto_director.py, the `detect_music_segments` phase) needs
+   `identify_music` failure to stop meaning "no music". Every
+   degradation writes provenance=fallback in the signalLog.
+5. Steps 5-7 and 9 as ordered in the Session 3 list, unchanged.
+
+## Session 3 record (2026-11-14) — superseded by Session 4 above, preserved verbatim below
+
+## Session 3 — 2026-11-14 (status at that writing)
 
 Fresh repository state for this reconciliation, verified against the API and
 a fresh clone:

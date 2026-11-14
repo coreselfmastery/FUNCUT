@@ -59,7 +59,7 @@
 
 use std::sync::atomic::AtomicBool;
 
-use concat_director::ToolError;
+use concat_director::ToolCaller;
 use serde_json::{Value, json};
 
 use crate::backend::Backend;

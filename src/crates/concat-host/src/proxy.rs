@@ -256,7 +256,7 @@ pub fn ensure(
     }
     let source = media.to_owned();
     let size = size_for(width, height);
-    crate::scheduler().submit(Priority::Proxy, move || {
+    let job = move || {
         match write(&source, &target, size, range, codec) {
             Ok(()) => {
                 crate::scheduler()
@@ -270,7 +270,19 @@ pub fn ensure(
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(&target);
-    });
+    };
+    // RES-03: while the OpenVid index warms - its download, or its first
+    // 435 MB open - proxy generation does not start; the warm owns the
+    // disk. The ask is already answered (the target is in the writing
+    // set, so a second ask parks nothing), and the job is submitted the
+    // moment the warm releases the gate, in arrival order. A proxy
+    // already encoding when a warm begins is never interrupted: the
+    // gate orders what starts next, not what is running.
+    if crate::startup_io::index_warming() {
+        crate::startup_io::park_until_index_warm(Box::new(job));
+    } else {
+        crate::scheduler().submit(Priority::Proxy, job);
+    }
     true
 }
 
@@ -494,6 +506,76 @@ pub fn write(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// RES-03: while the OpenVid index warms, proxy generation does not
+    /// start - the warm's download or first 435 MB open owns the disk -
+    /// and the copies an import asks for are parked, in their writing
+    /// set so a second ask queues nothing, until the warm releases the
+    /// gate; then they are submitted and run as they always did. The
+    /// media file need not exist: the parked job's own write refuses
+    /// politely when it runs, which is the proof it only ran after.
+    #[test]
+    fn proxy_generation_waits_for_the_index_warm() {
+        // The gate is process-global: run alone against the other tests
+        // that hold it (see `startup_io::tests::for_this_test_only`).
+        let _alone = crate::startup_io::tests::for_this_test_only()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let dir = std::env::temp_dir().join(format!("concat-proxy-warm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let media = dir.join("hd.mp4");
+        // The source exists - `path_for` hashes its bytes for the proxy's
+        // name - but is no video: the parked job's own write refuses it
+        // politely when it runs, which is the proof it only ran after.
+        std::fs::write(&media, b"not really a video, only bytes to hash")
+            .expect("the source exists");
+        let source = media.to_string_lossy().into_owned();
+        let project = dir.join("project");
+        let target = path_for(&project, &source, None, false, ProxyCodec::H264).expect("a path");
+        assert!(wanted(1920, 1080), "the fixture is HD");
+
+        let warm = crate::startup_io::begin_index_warm();
+        assert!(
+            ensure(&project, &source, 1920, 1080, None, false, ProxyCodec::H264),
+            "the ask is granted: a copy is coming"
+        );
+        assert!(
+            writing()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .contains(&target),
+            "the target is taken, so a second ask parks nothing"
+        );
+        assert!(
+            !target.is_file(),
+            "no proxy was written under the warm: {target:?}"
+        );
+        // A second ask for the same media is idempotent while parked.
+        assert!(ensure(
+            &project,
+            &source,
+            1920,
+            1080,
+            None,
+            false,
+            ProxyCodec::H264
+        ));
+        drop(warm);
+
+        // The warm released: the parked copy was submitted, ran, and -
+        // with no source to read - refused politely, leaving the writing
+        // set clear for the next ask.
+        crate::scheduler().drain();
+        assert!(
+            !writing()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .contains(&target),
+            "the released job ran and gave the target back"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// An HDR file's proxy keeps its signal: HEVC, HLG as the file is,
     /// its grey coming back as the same signal - under a name of its own,

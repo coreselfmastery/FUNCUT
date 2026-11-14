@@ -48,6 +48,10 @@ mod route;
 pub mod session;
 pub mod sounds;
 pub mod stabilize;
+// The startup I/O ordering gate (RES-03): the OpenVid index's warm and
+// proxy generation serialize behind it. Private - it is this crate's
+// own openvid and proxy that hold and honour it.
+mod startup_io;
 pub mod templates;
 pub mod titles;
 pub mod updates;

@@ -67,7 +67,7 @@ use crate::tools::{Context, Outcome, Toolbox};
 
 pub use concat_director::{
     AutoEditError, AutoEditEvent, AutoEditProgress, AutoEditState, EDIT_APPLY, EDIT_UNDO,
-    EditProgram, ErrorPolicy, RunOutcome, Runner, Stage, StageStep, ToolCall, ToolError,
+    EditProgram, ErrorPolicy, ReplyGate, RunOutcome, Runner, Stage, StageStep, ToolCall, ToolError,
 };
 
 /// The runner's port, stood on this crate's own ground: the toolbox a

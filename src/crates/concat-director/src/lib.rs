@@ -32,6 +32,12 @@
 //!   [`CompletedWithWarnings`](AutoEditState::CompletedWithWarnings),
 //!   the way the revise loop will ship an edit whose critic notes could
 //!   not all be answered.
+//! - **Gates** - a stage can also demand its replies prove something: a
+//!   [`ReplyGate`](stage::ReplyGate) is checked after the stage's calls
+//!   all landed, and a reply that says the wrong thing - a loudness
+//!   reading that missed the platform target, a craft score under the
+//!   bar - fails the stage under its own policy instead of sailing the
+//!   run to `Completed`.
 //!
 //! The stages themselves are not written here, and no tool call is made
 //! here. The runner is the loop; a [`ToolCaller`] - one MCP-shaped call
@@ -50,5 +56,5 @@ pub mod state;
 
 pub use error::{AutoEditError, ToolCall, ToolError, is_retryable};
 pub use runner::{EDIT_APPLY, EDIT_UNDO, Runner, ToolCaller};
-pub use stage::{EditProgram, ErrorPolicy, Stage, StageStep};
+pub use stage::{EditProgram, ErrorPolicy, ReplyGate, Stage, StageStep};
 pub use state::{AutoEditEvent, AutoEditProgress, AutoEditState, RunOutcome};

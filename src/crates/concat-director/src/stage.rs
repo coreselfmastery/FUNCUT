@@ -7,6 +7,7 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::error::ToolCall;
 
@@ -138,8 +139,108 @@ pub enum ErrorPolicy {
     Warn,
 }
 
-/// One stage of a program: the calls it makes, in order, and what a
-/// failure means.
+/// What a stage's replies must say for the stage to count as done: the
+/// gate the silent-success bugs closed. A tool that answers `Ok` with a
+/// measurement that fails the edit - a loudness reading that misses the
+/// platform target, a craft score under the bar, a transcript that does
+/// not match the edit - used to sail a run straight to
+/// [`Completed`](crate::state::AutoEditState::Completed); a gate is the
+/// program's own word for what the replies must prove.
+///
+/// A gate is checked against every reply the stage's successful calls
+/// drew that carries its field - a reply without the field is not asked,
+/// the gate speaks to the calls that answer it - and a gate no reply
+/// answered is the stage's own failure: a verify nobody ran is not a
+/// verify. A failed gate is the stage's failure under the stage's own
+/// [`ErrorPolicy`]: on the fail policy the run stops; on the warn policy
+/// the flaw is recorded and the run ships warned.
+#[derive(Clone, PartialEq, Debug)]
+pub enum ReplyGate {
+    /// A boolean field that must be `true` in every reply carrying it.
+    True {
+        /// The reply's field: `platformTargetMet` on a loudness reading.
+        field: &'static str,
+        /// What the gate proves, said as the failure's own sentence.
+        what: &'static str,
+    },
+    /// A string field that must equal `equals` in every reply carrying
+    /// it.
+    Word {
+        /// The reply's field: `verdict` on an export comparison.
+        field: &'static str,
+        /// The only word that passes: `"pass"`.
+        equals: &'static str,
+        /// What the gate proves, said as the failure's own sentence.
+        what: &'static str,
+    },
+    /// A numeric field that must be at least `minimum` in every reply
+    /// carrying it.
+    AtLeast {
+        /// The reply's field: `overall` on a craft score.
+        field: &'static str,
+        /// The smallest number that passes: `7.0` on the craft bar.
+        minimum: f64,
+        /// What the gate proves, said as the failure's own sentence.
+        what: &'static str,
+    },
+}
+
+impl ReplyGate {
+    /// The reply's field this gate reads - the word a "nobody answered"
+    /// failure names.
+    pub fn field(&self) -> &'static str {
+        match self {
+            ReplyGate::True { field, .. }
+            | ReplyGate::Word { field, .. }
+            | ReplyGate::AtLeast { field, .. } => field,
+        }
+    }
+
+    /// The reply's answer to this gate: `None` when the reply does not
+    /// carry the field (not asked), `Some(Ok(()))` when it satisfies the
+    /// gate, `Some(Err(seen))` with the value that failed it.
+    pub fn checked_by(&self, reply: &serde_json::Value) -> Option<Result<(), String>> {
+        match self {
+            ReplyGate::True { field, what } => match reply.get(*field)? {
+                Value::Bool(true) => Some(Ok(())),
+                seen => Some(Err(format!(
+                    "{what}: the reply said {field}={seen}, not true"
+                ))),
+            },
+            ReplyGate::Word {
+                field,
+                equals,
+                what,
+            } => match reply.get(*field)? {
+                Value::String(word) if word == equals => Some(Ok(())),
+                seen => Some(Err(format!(
+                    "{what}: the reply said {field}={seen}, not \"{equals}\""
+                ))),
+            },
+            ReplyGate::AtLeast {
+                field,
+                minimum,
+                what,
+            } => match reply.get(*field)? {
+                Value::Number(number) => match number.as_f64() {
+                    Some(seen) if seen >= *minimum => Some(Ok(())),
+                    Some(seen) => Some(Err(format!(
+                        "{what}: the reply said {field}={seen}, under the {minimum} bar"
+                    ))),
+                    None => Some(Err(format!(
+                        "{what}: the reply said {field}={number}, not a finite number"
+                    ))),
+                },
+                seen => Some(Err(format!(
+                    "{what}: the reply said {field}={seen}, not a number"
+                ))),
+            },
+        }
+    }
+}
+
+/// One stage of a program: the calls it makes, in order, what a
+/// failure means, and what its replies must prove.
 #[derive(Clone, PartialEq, Debug)]
 pub struct StageStep {
     /// The stage this step runs.
@@ -148,6 +249,9 @@ pub struct StageStep {
     pub policy: ErrorPolicy,
     /// The calls the stage makes, in the order it makes them.
     pub calls: Vec<ToolCall>,
+    /// What the stage's replies must say for the stage to count as done:
+    /// the silent-success gates, checked after every call landed.
+    pub gates: Vec<ReplyGate>,
 }
 
 impl StageStep {
@@ -157,6 +261,7 @@ impl StageStep {
             stage,
             policy: ErrorPolicy::Fail,
             calls,
+            gates: Vec::new(),
         }
     }
 
@@ -164,6 +269,14 @@ impl StageStep {
     /// recorded and the run goes on.
     pub fn warn(mut self) -> StageStep {
         self.policy = ErrorPolicy::Warn;
+        self
+    }
+
+    /// The same step, asking one more thing of the stage's replies: a
+    /// gate is checked after every call landed, and a failed gate is the
+    /// stage's own failure under the step's policy.
+    pub fn gate(mut self, gate: ReplyGate) -> StageStep {
+        self.gates.push(gate);
         self
     }
 }
@@ -230,5 +343,113 @@ mod tests {
         assert_eq!(fail.policy, ErrorPolicy::Fail);
         let warn = StageStep::run(Stage::Watch, calls).warn();
         assert_eq!(warn.policy, ErrorPolicy::Warn);
+    }
+
+    #[test]
+    fn a_true_gate_reads_the_replys_own_word() {
+        let gate = ReplyGate::True {
+            field: "platformTargetMet",
+            what: "the mix missed the platform loudness target",
+        };
+        assert_eq!(gate.field(), "platformTargetMet");
+        // A reply that carries the word, said truly.
+        assert_eq!(
+            gate.checked_by(&serde_json::json!({ "platformTargetMet": true })),
+            Some(Ok(()))
+        );
+        // The word, said falsely: the failure names the value it saw.
+        assert_eq!(
+            gate.checked_by(&serde_json::json!({ "platformTargetMet": false })),
+            Some(Err(
+                "the mix missed the platform loudness target: the reply \
+                 said platformTargetMet=false, not true"
+                    .to_owned()
+            ))
+        );
+        // A reply that carries nothing: not asked.
+        assert_eq!(gate.checked_by(&serde_json::json!({ "job": "e1" })), None);
+        // The wrong shape is the word said wrongly, not a pass.
+        assert_eq!(
+            gate.checked_by(&serde_json::json!({ "platformTargetMet": "yes" })),
+            Some(Err(
+                "the mix missed the platform loudness target: the reply \
+                 said platformTargetMet=\"yes\", not true"
+                    .to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn a_word_gate_wants_one_word() {
+        let gate = ReplyGate::Word {
+            field: "verdict",
+            equals: "pass",
+            what: "the export comparison did not pass",
+        };
+        assert_eq!(gate.field(), "verdict");
+        assert_eq!(
+            gate.checked_by(&serde_json::json!({ "verdict": "pass" })),
+            Some(Ok(()))
+        );
+        assert_eq!(
+            gate.checked_by(&serde_json::json!({ "verdict": "fail" })),
+            Some(Err("the export comparison did not pass: the reply said \
+                 verdict=\"fail\", not \"pass\""
+                .to_owned()))
+        );
+        assert_eq!(gate.checked_by(&serde_json::json!({})), None);
+    }
+
+    #[test]
+    fn an_at_least_gate_reads_the_bar() {
+        let gate = ReplyGate::AtLeast {
+            field: "overall",
+            minimum: 7.0,
+            what: "the cut scored under the craft bar",
+        };
+        assert_eq!(gate.field(), "overall");
+        assert_eq!(
+            gate.checked_by(&serde_json::json!({ "overall": 7.0 })),
+            Some(Ok(()))
+        );
+        assert_eq!(
+            gate.checked_by(&serde_json::json!({ "overall": 8.5 })),
+            Some(Ok(()))
+        );
+        // Under the bar: the failure names the number it saw.
+        assert_eq!(
+            gate.checked_by(&serde_json::json!({ "overall": 6 })),
+            Some(Err("the cut scored under the craft bar: the reply said \
+                 overall=6, under the 7 bar"
+                .to_owned()))
+        );
+        // Not a number at all.
+        assert_eq!(
+            gate.checked_by(&serde_json::json!({ "overall": "8.5" })),
+            Some(Err("the cut scored under the craft bar: the reply said \
+                 overall=\"8.5\", not a number"
+                .to_owned()))
+        );
+        assert_eq!(
+            gate.checked_by(&serde_json::json!({ "engine": "heuristic" })),
+            None
+        );
+    }
+
+    #[test]
+    fn a_step_collects_its_gates() {
+        let step = StageStep::run(Stage::Verify, vec![])
+            .gate(ReplyGate::True {
+                field: "platformTargetMet",
+                what: "the mix missed the platform loudness target",
+            })
+            .gate(ReplyGate::AtLeast {
+                field: "overall",
+                minimum: 7.0,
+                what: "the cut scored under the craft bar",
+            });
+        assert_eq!(step.gates.len(), 2);
+        assert_eq!(step.gates[0].field(), "platformTargetMet");
+        assert_eq!(step.gates[1].field(), "overall");
     }
 }

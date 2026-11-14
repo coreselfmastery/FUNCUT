@@ -429,6 +429,7 @@ pub struct ToastState {
     pub token: i32,
     pub message: String,
     pub failed: bool,
+    pub warning: bool,
 }
 
 /// Which edge of a clip a trim has hold of.
@@ -9776,6 +9777,17 @@ impl Studio {
         self.toast.token += 1;
         self.toast.message = message.into();
         self.toast.failed = failed;
+        self.toast.warning = false;
+    }
+
+    /// [`Studio::notify`], amber: the thing finished, with flaws written
+    /// down - a run that shipped with warnings. It holds as long as a
+    /// failure does, because it is read the same way.
+    pub fn notify_warning(&mut self, message: &str) {
+        self.toast.token += 1;
+        self.toast.message = message.into();
+        self.toast.failed = false;
+        self.toast.warning = true;
     }
 
     // ── publishing ──
@@ -11919,6 +11931,7 @@ impl Studio {
             token: self.toast.token,
             message: self.toast.message.as_str().into(),
             failed: self.toast.failed,
+            warning: self.toast.warning,
         });
         app.set_start(self.start.data());
         app.set_recents_total(self.recents.len() as i32);
@@ -12144,6 +12157,17 @@ impl Studio {
             page.set_sambanova_key(keys.sambanova.clone().into());
             page.set_nim_key(keys.nim.clone().into());
             page.set_hf_key(keys.hf.clone().into());
+            // The AUTO EDIT's own standing: the run, the stage, the clock,
+            // the fraction - and whether the button has a voiceover to
+            // stand on at all.
+            let available = self.forge.auto_edit_available(self);
+            page.set_auto_edit_running(self.forge.auto.running);
+            page.set_auto_edit_stage(self.forge.auto.stage.clone().into());
+            page.set_auto_edit_elapsed(self.forge.auto.elapsed.clone().into());
+            page.set_auto_edit_progress(self.forge.auto.fraction);
+            page.set_auto_edit_visible(self.forge.auto.visible);
+            page.set_auto_edit_available(available);
+            page.set_auto_edit_outcome(self.forge.auto.outcome);
         }
         // The Motion page.
         sync(

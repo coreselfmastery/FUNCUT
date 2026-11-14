@@ -401,6 +401,24 @@ impl Api {
         })
     }
 
+    /// [`Request::ExportStatus`] by what the job was started on: the
+    /// project folder for an export, the file for an analysis. The newest
+    /// job for `path` answers - a running one first, else the last one
+    /// that finished. For the caller that never held a name: an
+    /// unattended run whose program was written before the job was
+    /// minted.
+    pub fn job_status_for_path(&mut self, path: &str) -> Result<JobStatus, ApiError> {
+        self.jobs.reap(&self.book);
+        self.book.status_for_path(path).ok_or_else(|| {
+            ApiError::new(
+                ErrorCode::NotFound,
+                format!(
+                    "no job was started on {path}: it never ran, or ended long ago"
+                ),
+            )
+        })
+    }
+
     /// The export slot, for an embedder that shares it with a window.
     pub fn exporter(&self) -> Exporter {
         self.exporter.clone()
@@ -701,7 +719,18 @@ impl Api {
                 self.cancel(&job)?;
                 Ok(Reply::Done(Done {}))
             }
-            Request::ExportStatus { job } => Ok(Reply::Job(self.job_status(&job)?)),
+            Request::ExportStatus { job, path } => {
+                let status = match (&job, &path) {
+                    (Some(job), _) => self.job_status(job)?,
+                    (None, Some(path)) => self.job_status_for_path(path)?,
+                    (None, None) => {
+                        return Err(ApiError::invalid(
+                            "export.status names a job or a path: one of the two",
+                        ))
+                    }
+                };
+                Ok(Reply::Job(status))
+            }
             Request::PreviewFrame {
                 path,
                 time,
@@ -3347,7 +3376,8 @@ mod tests {
         // Asked afterwards, by a caller who was not listening, the job
         // says the same.
         let status = match ok(api.dispatch(Request::ExportStatus {
-            job: "j1".to_owned(),
+            job: Some("j1".to_owned()),
+            path: None,
         })) {
             Reply::Job(status) => status,
             _ => panic!("not a job's status"),
@@ -3359,9 +3389,31 @@ mod tests {
             Some(ErrorCode::Failed)
         );
         let unknown = err(api.dispatch(Request::ExportStatus {
-            job: "j9".to_owned(),
+            job: Some("j9".to_owned()),
+            path: None,
         }));
         assert_eq!(unknown.code, ErrorCode::NotFound);
+        // Asked by what it was started on - the project folder - the same
+        // job answers, for a caller that never held the name.
+        let by_path = match ok(api.dispatch(Request::ExportStatus {
+            job: None,
+            path: Some(path.clone()),
+        })) {
+            Reply::Job(status) => status,
+            _ => panic!("not a job's status"),
+        };
+        assert_eq!(by_path.job, status.job);
+        assert_eq!(by_path.state, JobState::Failed);
+        let no_path = err(api.dispatch(Request::ExportStatus {
+            job: None,
+            path: Some("/nowhere/at/all".to_owned()),
+        }));
+        assert_eq!(no_path.code, ErrorCode::NotFound);
+        let nameless = err(api.dispatch(Request::ExportStatus {
+            job: None,
+            path: None,
+        }));
+        assert_eq!(nameless.code, ErrorCode::Invalid);
         assert_eq!(api.stopper().cancel_all(), 0, "nothing left to stop");
     }
 

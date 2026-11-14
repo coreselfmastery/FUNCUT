@@ -1620,6 +1620,15 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
                 }));
             }
         ));
+        // The AUTO EDIT: the unattended edit of the timeline's own
+        // voiceover, driven by the concat-director runner through the
+        // concat-mcp seam - no harness, no agent, the deterministic spine.
+        forge.on_auto_edit_start(on_window!(|state| {
+            state.handle(Msg::Forge(crate::panes::forge::ForgeMsg::AutoEditStart));
+        }));
+        forge.on_auto_edit_cancel(on_window!(|state| {
+            state.handle(Msg::Forge(crate::panes::forge::ForgeMsg::AutoEditCancel));
+        }));
     }
 
     // ── the library's Motion page ──

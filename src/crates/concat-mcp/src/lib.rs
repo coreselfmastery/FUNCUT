@@ -13,11 +13,14 @@
 //! written for it here. What this crate owns is the protocol
 //! ([`protocol`]), the choice of tools and what an agent is told about
 //! them ([`tools`]), a compact reading of a project for an agent's context
-//! ([`summary`]), and where requests go ([`backend`]): the window's own
+//! ([`summary`]), where requests go ([`backend`]): the window's own
 //! server when the Automation page has it on, or an API in this process
-//! when it does not.
+//! when it does not, and the AUTO EDIT seam ([`director`]): the runner's
+//! port stood on this crate's own toolbox and backend, for the window's
+//! button and an agent's tool alike.
 
 pub mod backend;
+pub mod director;
 pub mod motion;
 pub mod protocol;
 pub mod schema;

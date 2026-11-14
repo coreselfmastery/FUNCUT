@@ -191,6 +191,30 @@ impl Book {
         })
     }
 
+    /// The newest job started on `path`, running or last finished: a
+    /// caller that never held a job's name - an unattended run whose
+    /// program was written before the job was minted - asks for the
+    /// work by what it was started on. A running job always answers
+    /// before a finished one: work still going is never shadowed by
+    /// work that already ended.
+    pub(crate) fn status_for_path(&self, path: &str) -> Option<JobStatus> {
+        let inner = self.inner();
+        inner
+            .states
+            .values()
+            .filter(|status| status.path == path)
+            .max_by(|a, b| minted(&a.job).cmp(&minted(&b.job)))
+            .cloned()
+            .or_else(|| {
+                inner
+                    .finished
+                    .iter()
+                    .rev()
+                    .find(|status| status.path == path)
+                    .cloned()
+            })
+    }
+
     /// Raises one running job's stop flag: how `export.cancel` stops an
     /// analysis or a voice at its next frame. False when the job is not
     /// running.
@@ -213,6 +237,16 @@ impl Book {
         }
         inner.running.len()
     }
+}
+
+/// A job name's minted number - `j12` is 12 - so "the newest" is the
+/// number the mint counted, not the lexicographic order that would
+/// sort `j10` before `j2`. A name that is not the mint's own shape
+/// counts as zero.
+fn minted(job: &str) -> u64 {
+    job.strip_prefix('j')
+        .and_then(|rest| rest.parse().ok())
+        .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -285,5 +319,59 @@ mod tests {
         }
         assert!(book.status("j0").is_none(), "the oldest is forgotten");
         assert!(book.status(&format!("j{FINISHED_KEPT}")).is_some());
+    }
+
+    /// The ask an unattended run makes: the work, by what it was started
+    /// on. A running job answers before a finished one, and of two
+    /// running jobs on the same path the newer one does - by the number
+    /// the mint counted, not the string order that sorts j10 before j2.
+    #[test]
+    fn the_newest_job_for_a_path_answers_running_first() {
+        let started = |book: &Book, job: &str, path: &str| {
+            book.start(
+                JobStatus::running(job, path, "/o.mp4"),
+                Arc::new(AtomicBool::new(false)),
+                Side::Export,
+            );
+        };
+        let book = Book::default();
+        started(&book, "j1", "/edits/Reel");
+        book.record(&Event::ExportDone {
+            job: "j1".to_owned(),
+            path: "/edits/Reel".to_owned(),
+            output: "/o.mp4".to_owned(),
+            width: 16,
+            height: 9,
+        });
+        // Two running jobs on the same path: an export and an analysis,
+        // the shape an unattended run and a window share. The finished j1
+        // does not shadow them.
+        started(&book, "j2", "/edits/Reel");
+        started(&book, "j3", "/edits/Reel");
+        let running = book.status_for_path("/edits/Reel").expect("a running job");
+        assert_eq!(running.job, "j3");
+        assert_eq!(running.state, JobState::Running);
+        // A path no job was started on says so.
+        assert!(book.status_for_path("/edits/Other").is_none());
+        // Once both end, the newest finished one answers.
+        book.record(&Event::ExportFailed {
+            job: "j2".to_owned(),
+            path: String::new(),
+            error: ApiError::failed("the job ended without a result"),
+        });
+        book.record(&Event::ExportFailed {
+            job: "j3".to_owned(),
+            path: String::new(),
+            error: ApiError::failed("the job ended without a result"),
+        });
+        let finished = book.status_for_path("/edits/Reel").expect("a finished job");
+        assert_eq!(finished.job, "j3");
+        assert_eq!(finished.state, JobState::Failed);
+        // The mint's own order, not the string's: the pair string order
+        // would get backwards proves the point.
+        started(&book, "j9", "/edits/Reel");
+        started(&book, "j10", "/edits/Reel");
+        let newest = book.status_for_path("/edits/Reel").expect("a running job");
+        assert_eq!(newest.job, "j10");
     }
 }

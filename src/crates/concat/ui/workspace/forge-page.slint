@@ -46,6 +46,28 @@ export global Forge {
     /// with the multilingual model rather than the English-only lexicon.
     in-out property <string> hf-key;
 
+    /// The AUTO EDIT: a run is going, so the button is a Cancel and the
+    /// fields are held.
+    in property <bool> auto-edit-running;
+    /// The stage the auto-edit is in - the runner's own register,
+    /// localized - or the terminal state's own word.
+    in property <string> auto-edit-stage;
+    /// The auto-edit's elapsed clock, spelled "42s" or "1m 04s".
+    in property <string> auto-edit-elapsed;
+    /// How far through its program the auto-edit is, 0 to 1: the stages
+    /// the program does not carry are not counted, so the bar is of the
+    /// work this run actually runs.
+    in property <float> auto-edit-progress;
+    /// Whether the auto-edit's progress pane is shown: from the first
+    /// run, so the last outcome stays readable.
+    in property <bool> auto-edit-visible;
+    /// Whether the AUTO EDIT button can run at all: the open timeline
+    /// carries the voiceover the whole edit stands on.
+    in property <bool> auto-edit-available;
+    /// 0 while idle or running; 1 when the run failed retryably (the
+    /// button offers Retry); 2 when it failed hard (Fix and restart).
+    in property <int> auto-edit-outcome;
+
     /// The script and the three choices went to the harness.
     callback forge-start(script: string, source: int, voice: int, niche: int, mood: int);
     /// Cancel stops the run; the agent's next line is its last.
@@ -56,6 +78,12 @@ export global Forge {
     callback install-skill();
     /// A key field was edited: the provider, and what it says now.
     callback key-edited(provider: string, key: string);
+    /// The AUTO EDIT button: run the unattended edit of the timeline's
+    /// voiceover - or stop the run that is going.
+    callback auto-edit-start();
+    /// Stop the auto-edit at its next stage boundary; the edits it
+    /// applied are rolled back.
+    callback auto-edit-cancel();
     /// Open Settings on the Forge page, where the keys live.
     callback open-settings();
     /// A library pane turned to the page or away from it.
@@ -278,6 +306,81 @@ export component ForgePage inherits VerticalLayout {
                 font-size: Theme.fs-xs;
                 overflow: elide;
                 horizontal-alignment: right;
+            }
+        }
+    }
+
+    // The AUTO EDIT: one click, the unattended edit - the repair, the
+    // readings, the export, the verify, the watch - beside the forge
+    // run's directed one. No agent, no model: the deterministic spine of
+    // the pipeline, with its own progress and its own stop.
+    HorizontalLayout {
+        spacing: 8px;
+
+        PageButton {
+            label: Forge.auto-edit-running ? I18n.t("forge.autoEditCancel")
+                : Forge.auto-edit-outcome == 1 ? I18n.t("forge.autoEditRetry")
+                : Forge.auto-edit-outcome == 2 ? I18n.t("forge.autoEditFix")
+                : I18n.t("forge.autoEdit");
+            primary: !Forge.auto-edit-running && Forge.auto-edit-available
+                && Forge.auto-edit-outcome == 0;
+            danger: Forge.auto-edit-running;
+            enabled: Forge.auto-edit-running || Forge.auto-edit-available;
+            clicked => {
+                if (Forge.auto-edit-running) {
+                    Forge.auto-edit-cancel();
+                } else {
+                    Forge.auto-edit-start();
+                }
+            }
+        }
+
+        // The run's own pane: the stage, the fraction of its program as a
+        // bar, the clock - and all of it only once a run has happened, so
+        // the last outcome stays readable beside the button that offers
+        // to try again.
+        if Forge.auto-edit-visible: Rectangle {
+            border-radius: Theme.r;
+            background: Theme.panel;
+
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: 6px;
+                padding-bottom: 6px;
+                spacing: 10px;
+                alignment: center;
+
+                Text {
+                    text: Forge.auto-edit-stage;
+                    color: Theme.fg-muted;
+                    font-size: Theme.fs-xs;
+                    vertical-alignment: center;
+                }
+
+                Rectangle {
+                    width: 120px;
+                    height: 6px;
+                    border-radius: 3px;
+                    background: Theme.field;
+                    clip: true;
+
+                    Rectangle {
+                        width: parent.width
+                            * Math.min(Math.max(Forge.auto-edit-progress, 0), 1);
+                        height: parent.height;
+                        border-radius: 3px;
+                        background: Theme.accent;
+                    }
+                }
+
+                Text {
+                    text: Forge.auto-edit-elapsed;
+                    color: Theme.fg-dim;
+                    font-size: Theme.fs-xs;
+                    font-family: Theme.font-technical;
+                    vertical-alignment: center;
+                }
             }
         }
     }

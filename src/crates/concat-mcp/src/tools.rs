@@ -1936,26 +1936,26 @@ fn plan_validate_schema() -> Option<Value> {
                     },
                     "audio": {
                         "type": "object",
-                        "description": "Voiceover and bed. Defaults: transcriber base.en unless whisperModel; voice model kokoro-int8 unless model; the bed shops with query, falling back to mood.",
+                        "description": "Voiceover and bed. Defaults: whisperModel base.en, TTS model kokoro-int8, bgm.duckDb -12; the bed shops with query, falling back to mood.",
                         "properties": {
                             "voiceover": {
                                 "type": "object",
                                 "properties": {
                                     "source": { "type": ["string", "null"], "description": "file or tts." },
                                     "speed": { "type": ["number", "null"], "minimum": 0.5, "maximum": 2.0 },
-                                    "glossary": { "type": ["string", "null"], "description": "Proper nouns the recogniser starts knowing, at most 200 chars." },
-                                    "model": { "type": ["string", "null"], "description": "TTS model; kokoro-int8 is the default." },
-                                    "voice": { "type": ["integer", "null"], "minimum": 0, "maximum": 52, "description": "Kokoro voice number." },
-                                    "whisperModel": { "type": ["string", "null"], "description": "Transcriber model; base.en is the default." }
+                                    "glossary": { "type": ["string", "null"], "maxLength": 200 },
+                                    "model": { "type": ["string", "null"] },
+                                    "voice": { "type": ["integer", "null"], "minimum": 0, "maximum": 52 },
+                                    "whisperModel": { "type": ["string", "null"] }
                                 }
                             },
                             "bgm": {
                                 "type": "object",
                                 "properties": {
-                                    "query": { "type": ["string", "null"], "description": "What the bed is shopped with." },
-                                    "mood": { "type": ["string", "null"], "description": "The query's stand-in when query is absent." },
-                                    "trackId": { "type": ["string", "null"], "description": "A specific track, shopped directly." },
-                                    "duckDb": { "type": ["number", "null"], "description": "Duck depth under words; -12 default." }
+                                    "query": { "type": ["string", "null"] },
+                                    "mood": { "type": ["string", "null"] },
+                                    "trackId": { "type": ["string", "null"] },
+                                    "duckDb": { "type": ["number", "null"] }
                                 }
                             }
                         }

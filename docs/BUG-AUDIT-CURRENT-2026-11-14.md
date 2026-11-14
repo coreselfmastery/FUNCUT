@@ -16,7 +16,7 @@ This pass found **4 confirmed defects / engineering gaps** on the audited main S
 | FUNCUT-001 | P2 | Confirmed on main; fix PR open | Startup I/O gate has a queued-proxy race |
 | FUNCUT-002 | P1 | Confirmed verification gap on main; fix PR open | Export verification does not explicitly prove an audio stream exists |
 | FUNCUT-003 | P2 | Confirmed on main; fix PR open | Edit-plan schema is duplicated and can drift |
-| FUNCUT-004 | P3 | Confirmed documentation defect | Build reproduction instructions call scripts absent from the repository |
+| FUNCUT-004 | P3 | Corrected in PR #135; portable script still absent | Historical build notes previously read as clean-clone instructions |
 | FUNCUT-005 | P2 conditional | Code hazard; reachability unproven | Slint Skia image conversion contains a `todo!` panic arm for StaticTextures |
 
 ## Confirmed findings
@@ -52,9 +52,9 @@ This pass found **4 confirmed defects / engineering gaps** on the audited main S
 
 - **Area:** developer documentation / reproducible builds.
 - **Severity:** P3.
-- **Evidence:** `TEST_EVIDENCE.md` instructs users to run `/home/z/my-project/scripts/setup-build-env.sh` and source `/home/z/my-project/scripts/funcut-env.sh`. `AGENT_STATE.md` and `SESSION_HANDOFF.md` repeat the latter path. Neither script exists in the current repository tree, and the instructions use an absolute machine-local path.
-- **Impact:** a clean clone cannot reproduce the documented local build setup from those instructions. This does not establish that the packaged CI build is broken; CI has its own dependency-fetch procedure.
-- **Fix:** commit portable, repository-relative scripts or rewrite the evidence docs to point to the actual checked-in CI setup steps. Verify every command from a clean clone.
+- **Evidence:** `TEST_EVIDENCE.md` previously presented `/home/z/my-project/scripts/setup-build-env.sh` and `funcut-env.sh` as a clean-clone reproduction recipe. `AGENT_STATE.md` and `SESSION_HANDOFF.md` also referenced the latter absolute path. Both scripts return 404 in the repository tree.
+- **Impact:** the original instructions were not reproducible from a clean clone. This did not establish that the packaged CI build was broken; CI has its own dependency-fetch procedure.
+- **Fix status:** PR #135 now labels those paths as historical machine-local notes and directs clean-clone readers to `.github/workflows/build-app.yml`, `scripts/ci/deps.lock` and `scripts/ci/fetch.sh`. The misleading clean-clone instructions are corrected in that PR. A turnkey portable local setup script remains a separate developer-experience task.
 
 ## Conditional code hazard — do not count as a proven user-facing bug yet
 
@@ -63,8 +63,9 @@ This pass found **4 confirmed defects / engineering gaps** on the audited main S
 - **Area:** patched Slint Skia renderer.
 - **Evidence:** `src/patches/i-slint-renderer-skia/cached_image.rs` contains `ImageInner::StaticTextures(_) => todo!()`.
 - **Impact if reached:** this arm panics instead of returning a supported image, a graceful refusal or a structured error.
-- **Confidence:** the unimplemented branch is confirmed; whether the FUNCUT application can produce this ImageInner variant on the selected Skia backend is not established by this source review. Treat as a conditional crash hazard, not a confirmed production crash.
-- **Fix:** establish whether the variant is reachable in the app's renderer configuration. If reachable, implement conversion or return a non-panicking unsupported result and add a regression test. If unreachable by invariant, document and test that invariant.
+- **Reachability evidence:** repository search on the audited main finds one `@image-url`, in `src/crates/concat/ui/app.slint` for the window icon. No visible `Image` element uses a static `@image-url`; media and thumbnails use runtime image sources. The Skia `as_skia_image` path is called for rendered image items, while the window icon is a window/platform property. This makes the arm appear unreachable in the current UI, but no built-app runtime test established that invariant.
+- **Confidence:** the unimplemented branch is confirmed; current UI reachability is unlikely but not proven. Treat as a conditional crash hazard, not a confirmed production crash.
+- **Fix:** add a regression test proving the current window-icon path does not call `as_skia_image`, or implement conversion/non-panicking refusal for StaticTextures before introducing any visible static texture image.
 
 ## Dead-code / fake-implementation checks
 

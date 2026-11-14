@@ -30,7 +30,7 @@ use std::sync::{Mutex, OnceLock};
 
 use concat_core::frame::Signal;
 use concat_media::decode::{DecodeOptions, Decoder, FrameSource};
-use concat_media::{ColorRange, EncodeOptions, Encoder, FrameSink, Priority, RateMode, VideoCodec};
+use concat_media::{ColorRange, EncodeOptions, Encoder, FrameSink, RateMode, VideoCodec};
 
 /// A file with at least this many pixels gets a proxy: full HD and
 /// anything larger. Full HD included - the most common frame there is
@@ -271,18 +271,10 @@ pub fn ensure(
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .remove(&target);
     };
-    // RES-03: while the OpenVid index warms - its download, or its first
-    // 435 MB open - proxy generation does not start; the warm owns the
-    // disk. The ask is already answered (the target is in the writing
-    // set, so a second ask parks nothing), and the job is submitted the
-    // moment the warm releases the gate, in arrival order. A proxy
-    // already encoding when a warm begins is never interrupted: the
-    // gate orders what starts next, not what is running.
-    if crate::startup_io::index_warming() {
-        crate::startup_io::park_until_index_warm(Box::new(job));
-    } else {
-        crate::scheduler().submit(Priority::Proxy, job);
-    }
+    // RES-03: submit through the startup I/O gate. The check happens
+    // when a scheduler worker dequeues the job, not here: a warm may
+    // begin after this ask but before the queued proxy starts.
+    crate::startup_io::submit_proxy(Box::new(job));
     true
 }
 

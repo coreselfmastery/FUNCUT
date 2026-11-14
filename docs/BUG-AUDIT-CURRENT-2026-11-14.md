@@ -27,7 +27,7 @@ This pass found **4 confirmed defects / engineering gaps** on the audited main S
 - **Severity:** P2 (resource-contention and startup reliability defect; not a data-corruption claim).
 - **Main evidence:** `src/crates/concat-host/src/proxy.rs` checks `startup_io::index_warming()` before it submits a job to the scheduler. The false branch queues the job directly. A warm can begin after that check but before a scheduler worker dequeues the proxy job, so the proxy starts during the index warm despite the documented ordering guarantee.
 - **Independent corroboration:** PR #132 explains this exact interleaving and adds `a_queued_proxy_rechecks_the_gate_when_its_worker_starts`. Its fix moves the gate check into the worker-start wrapper and re-submits parked work through the same guard.
-- **Fix status:** PR #131 added the first gate and is merged; PR #132 is still open against the audited main SHA. Its description says CI has not yet run on that branch. Do not mark closed until PR #132 is merged with green exact-head CI.
+- **Fix status:** PR #131 added the first gate and is merged; PR #132 is still open. On its latest head, format/locales/models and real-fixture analysis passed, Geneva dependency setup passed, and engine tests plus Geneva render inspection remain in progress. Do not mark closed until PR #132 is merged with green exact-head CI.
 - **Fix:** merge/review PR #132; retain the scheduler-dequeue race regression test and test nested warms plus queued jobs.
 
 ### FUNCUT-002 — Director Verify does not explicitly verify audio-stream presence
@@ -36,7 +36,7 @@ This pass found **4 confirmed defects / engineering gaps** on the audited main S
 - **Severity:** P1 for a narration/music workflow because an export can be visually valid but lack its required audio stream.
 - **Main evidence:** `scripts/auto_director.py`'s `_ffprobe()` invokes ffprobe with `-select_streams v:0` and records video codec, dimensions, frame rate and duration only. It does not enumerate all stream types or return an audio-presence field. The render-level `_probe_checks()` therefore has no independent both-streams assertion.
 - **Independent corroboration:** PR #134 identifies the missing-audio-stream gap and adds VERIFY-16, probes all stream kinds, records `has_audio` and `audio_codec`, and self-tests a silent MP4 refusal.
-- **Fix status:** PR #134 is open, not merged at this audit snapshot. Its self-test is reported as 14 passed / 0 skipped in the PR description; exact-head CI and merge are still required.
+- **Fix status:** PR #134 is open, not merged. On its latest head, format/locales/models and real-fixture analysis passed; the analysis job's `Auto Director end-to-end safety self-test` passed after being moved to the FFmpeg-equipped job; engine tests and Geneva render inspection remain in progress. The app package stages FFmpeg libraries but not the `ffprobe` CLI; the Director's probe uses `shutil.which`, so target antiX acceptance must verify `ffprobe` is available or add a supported fallback, otherwise the check can be skipped.
 - **Fix:** review and merge PR #134 only after CI proves the real synthetic silent-export refusal. Keep the export's video read-back check and the Director's explicit audio check separate.
 
 ### FUNCUT-003 — edit-plan schemas are duplicated and drifted
@@ -45,7 +45,7 @@ This pass found **4 confirmed defects / engineering gaps** on the audited main S
 - **Severity:** P2 because agents can be told a different input contract from the one the runtime deserializer actually accepts.
 - **Main evidence:** `src/crates/concat-mcp/src/tools.rs` contains a hand-written `canonical_plan_schema()` include of the skill JSON and a separate hand-written `plan_validate_schema()` JSON object. These are independent representations of the same contract.
 - **Independent corroboration:** PR #130 documents concrete drift: the compact schema carried `bgm.mood` and `voiceover.whisperModel` while the canonical schema did not, and neither was generated from the Rust slot types. The PR adds schemars-derived plan types, a canonical template assembly, a projected compact schema, a drift test and a CI check.
-- **Fix status:** PR #130 is open and unmerged at this snapshot. The report in the earlier audit that described SCH-02 as partial remains correct; do not mark it closed because a branch exists.
+- **Fix status:** PR #130 is open and unmerged at head `e93ccf5f4e8db045aa6966ca7975b9da7753ced5`. Format and real-fixture analysis passed, Geneva dependency/render passed, while engine tests and Nix remain in progress. The explicit schema-check timeout was raised from five to fifteen minutes after the earlier run expired during compilation. Do not mark closed because a branch exists.
 - **Fix:** review/merge PR #130 after its generator, committed artifacts, negative drift test and CI check all pass on the exact PR head.
 
 ### FUNCUT-004 — clean-clone build reproduction instructions point to missing local scripts
@@ -128,9 +128,11 @@ The earlier audit's PR status snapshot is stale. At the current-main snapshot:
 - PR #131 (initial RES-03 gate): merged as the audited main commit.
 - PR #132 (RES-03 worker-start race fix): open, unmerged.
 - PR #134 (VERIFY-16 audio stream presence): open, unmerged.
-- PR #135 (audit documentation): this report is being added to that audit PR.
-- PR #133 is licensing-specific and intentionally outside this audit's scope.
-- PR #136 records an external archive.org dependency; it is not counted as a code defect here.
+- PR #133 (RISK-01/02 monetized licensing): open, licensing-specific and outside the code-defect count in this audit.
+- PR #135 (audit documentation): this report, current-main addendum and clean-clone documentation correction are in this PR.
+- PR #136 (P3-008 archive.org dependency): open; records an external environmental dependency, not a code defect.
+- PR #137 (Geneva master-list reconciliation): open; adds current-main Geneva and workflow evidence.
+- PR #138 (Director tracker reconciliation): open; corrects stale integration/revise-loop status.
 
 ## Next audit passes needed to finish the full repository audit
 

@@ -189,6 +189,7 @@ These artifacts passed their workflow smoke tests. They are Actions artifacts, n
 - PR #133 (RISK-01/02) is open: monetized stock/BGM gates are proposed, including a fail-closed FreePD CC0 allow-list. Not yet validated.
 - PR #134 (VERIFY-16) is open: the render's audio stream is probed. Its self-test was moved from the no-FFmpeg fast job to the FFmpeg-equipped analysis job after the first run could not probe the synthetic silent render; the revised run is pending.
 - PR #135 is the residual bug-audit report; PR #136 records archive.org as a FreePD environmental dependency. Both remain open.
+- PR #138's source audit found the Forge AUTO EDIT program is a bounded post-production workflow for an existing voiceover; it omits topic/research/script/plan, B-roll, motion, captions, preview and revision stages. The separate Python helper requires a Director-authored plan, and its revise loop is not wired into the UI Runner. A true one-button brief-to-video Director remains a major product gap.
 
 ### Workflow and release coverage
 

@@ -144,9 +144,10 @@ commands and failures. Verify audio, video, timing, captions and final
 export; do not treat a phase log or a populated timeline as acceptance.
 This chapter is a demonstration, one happy path — the acceptance itself
 is the recorded run the tracker names: the real brief-to-export run with
-its thirteen-check Verify record (speech re-read to the 60 ms line,
+its fourteen-check Verify record (speech re-read to the 60 ms line,
 loudness measured on the render, timeline hash, media availability,
-caption presence and frame fit, the AI-voice disclosure), the critic
+caption presence and frame fit, the AI-voice disclosure, both streams -
+the audio stream named beside the video one), the critic
 loop's scores, and the target-machine run — none of which a screen
 recording substitutes for.
 

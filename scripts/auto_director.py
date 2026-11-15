@@ -788,8 +788,9 @@ def phase_plan(plan: dict[str, Any]) -> list[tuple[str, str]]:
 #
 # The Verify stage's own record: the checks the finished export must
 # answer before the run may call itself complete (VERIFY-01..05,
-# 08..14; 06 and 07 are the transcript-similarity and loudness gates the
-# stage has always run, now folded into the same record). Every check
+# 08..14, 16; 06 and 07 are the transcript-similarity and loudness gates
+# the stage has always run, now folded into the same record; 15's
+# disclosure reading joins from the Phase-8 ask). Every check
 # emits one structured entry - id, check, status, reason, evidence -
 # and the entries are written beside the export as
 # verification-report.json, so an acceptance read does not have to
@@ -830,17 +831,22 @@ def _verification_entry(
 
 
 def _ffprobe(path: str) -> dict[str, Any] | None:
-    """The render's own video stream as ffprobe reads it: codec, size,
-    frame rate, duration. None when ffprobe is absent, the file is not
-    there, or it does not answer - the caller decides what that means,
-    because a probe that never ran must not be read as a pass."""
+    """The render's own streams as ffprobe reads them: the video
+    stream's codec, size, frame rate, duration - and whether an audio
+    stream is there at all, the both-streams question (VERIFY-16; the
+    export read-back proves the picture, this answers for the sound).
+    None when ffprobe is absent, the file is not there, it does not
+    answer, or it carries no video stream - the caller decides what
+    that means, because a probe that never ran must not be read as a
+    pass."""
     if not shutil.which("ffprobe") or not os.path.isfile(path):
         return None
     try:
         result = subprocess.run(
             [
-                "ffprobe", "-v", "error", "-select_streams", "v:0",
-                "-show_entries", "stream=codec_name,width,height,avg_frame_rate",
+                "ffprobe", "-v", "error",
+                "-show_entries",
+                "stream=codec_type,codec_name,width,height,avg_frame_rate",
                 "-show_entries", "format=duration", "-of", "json", path,
             ],
             capture_output=True, text=True, timeout=60, check=True,
@@ -851,8 +857,21 @@ def _ffprobe(path: str) -> dict[str, Any] | None:
     streams = probe.get("streams") if isinstance(probe, dict) else None
     if not isinstance(streams, list) or not streams:
         return None
-    stream = streams[0] if isinstance(streams[0], dict) else {}
-    rate = stream.get("avg_frame_rate") or "0/1"
+    dicts = [entry for entry in streams if isinstance(entry, dict)]
+    kinds_known = any(entry.get("codec_type") for entry in dicts)
+    video = next(
+        (entry for entry in dicts if entry.get("codec_type") == "video"), None
+    )
+    audio = next(
+        (entry for entry in dicts if entry.get("codec_type") == "audio"), None
+    )
+    if video is None and not kinds_known:
+        # An ffprobe that names no stream kinds: read the first stream
+        # the way the old probe did, and claim nothing about audio.
+        video = dicts[0] if dicts else None
+    if video is None:
+        return None
+    rate = video.get("avg_frame_rate") or "0/1"
     try:
         fps = float(Fraction(str(rate)))
     except (ValueError, ZeroDivisionError):
@@ -862,11 +881,13 @@ def _ffprobe(path: str) -> dict[str, Any] | None:
     except (TypeError, ValueError):
         duration = None
     return {
-        "codec": stream.get("codec_name"),
-        "width": stream.get("width"),
-        "height": stream.get("height"),
+        "codec": video.get("codec_name"),
+        "width": video.get("width"),
+        "height": video.get("height"),
         "fps": fps,
         "duration": duration,
+        "has_audio": audio is not None,
+        "audio_codec": audio.get("codec_name") if audio else None,
     }
 
 
@@ -930,10 +951,11 @@ def _probe_checks(
     frames: list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]]:
     """The checks that read the render itself (VERIFY-01, 04, 09, 10,
-    11): what the file actually carries, against what the plan promised
-    and what a finished cut must look like. A render that cannot be
-    probed is skipped with the reason - the export tools already proved
-    the file exists; what could not be measured is said, not guessed."""
+    11, 16): what the file actually carries, against what the plan
+    promised and what a finished cut must look like. A render that
+    cannot be probed is skipped with the reason - the export tools
+    already proved the file exists; what could not be measured is
+    said, not guessed."""
     entries: list[dict[str, Any]] = []
     if probe is None:
         skipped = _verification_entry(
@@ -958,6 +980,12 @@ def _probe_checks(
             _verification_entry(
                 "VERIFY-11", "frame-rate-match", "skipped",
                 "the render's frame rate was not measured",
+            ),
+            _verification_entry(
+                "VERIFY-16", "audio-stream-present", "fail",
+                "the render's audio stream could not be verified because "
+                "ffprobe was absent or did not answer; refusing to accept "
+                "an unverified export",
             ),
         ])
         return entries
@@ -1057,6 +1085,23 @@ def _probe_checks(
         entries.append(_verification_entry(
             "VERIFY-11", "frame-rate-match", "pass",
             evidence={"fps": actual_fps},
+        ))
+
+    # VERIFY-16: both streams. The export read-back proved the picture
+    # (concat-export's verify_output asserts a video stream); this
+    # proves the sound, so a silent export of an edit that speaks is
+    # named here, never shipped.
+    if probe.get("has_audio"):
+        entries.append(_verification_entry(
+            "VERIFY-16", "audio-stream-present", "pass",
+            audioCodec=probe.get("audio_codec"), probed=rendered,
+        ))
+    else:
+        entries.append(_verification_entry(
+            "VERIFY-16", "audio-stream-present", "fail",
+            "the render carries no audio stream; an edit that speaks "
+            "must be heard",
+            probed=rendered,
         ))
 
     # VERIFY-01 and VERIFY-04: the ten sampled frames, read twice.
@@ -4866,6 +4911,9 @@ def selftest_media() -> bool:
         ["ffmpeg", "-y", "-v", "error",
          "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=4",
          "-c:v", "libx264", "-pix_fmt", "yuv420p", f"{root}/existing.mp4"],
+        ["ffmpeg", "-y", "-v", "error",
+         "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=2",
+         "-c:v", "libx264", "-pix_fmt", "yuv420p", f"{root}/silent.mp4"],
     ]
     rendered = bool(shutil.which("ffmpeg"))
     if rendered:
@@ -4879,7 +4927,7 @@ def selftest_media() -> bool:
             except (OSError, subprocess.SubprocessError):
                 rendered = False
                 break
-    for name in ("master.mp4", "final-black.mp4", "voiceover.wav", "existing.mp4"):
+    for name in ("master.mp4", "final-black.mp4", "voiceover.wav", "existing.mp4", "silent.mp4"):
         path = os.path.join(root, name)
         if not rendered and os.path.exists(path):
             os.remove(path)
@@ -4896,6 +4944,12 @@ def selftest_media() -> bool:
 def self_test() -> int:
     """A synthetic canonical plan exercises the real execution contract."""
     have_media = selftest_media()
+    if not have_media or not shutil.which("ffprobe"):
+        print(
+            "FAIL: the Director safety self-test requires working ffmpeg "
+            "and ffprobe; skipped media checks cannot prove export integrity"
+        )
+        return 1
     project = "/tmp/funcut-selftest/project"
     audio = "/tmp/funcut-selftest/voiceover.wav"
     # A self-test starts as a first run, not a resume of whatever the
@@ -5371,9 +5425,10 @@ def self_test() -> int:
         return 1
     print("kinetic fallback ok: no word timings, segment-timed captions placed, the degradation recorded")
 
-    # The Verify stage's own record: twelve structured entries, the report
-    # written beside the export, every entry's status the truth the
-    # environment could measure (VERIFY-01..05, 08..14).
+    # The Verify stage's own record: fourteen structured entries, the
+    # report written beside the export, every entry's status the truth
+    # the environment could measure (VERIFY-01..05, 08..16; 15's
+    # disclosure reading and 16's both-streams answer ride the record).
     try:
         with open(os.path.join(project, "verification-report.json"), encoding="utf-8") as handle:
             report = json.load(handle)
@@ -5385,25 +5440,53 @@ def self_test() -> int:
         return 1
     entries = report.get("checks", [])
     by_check = {entry.get("id"): entry for entry in entries}
-    wanted_ids = [f"VERIFY-{number:02d}" for number in (1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13, 14, 15)]
+    wanted_ids = [f"VERIFY-{number:02d}" for number in (1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13, 14, 15, 16)]
     if sorted(entry.get("id") for entry in entries) != wanted_ids:
-        print(f"FAIL: the report's checks are not the thirteen the stage owes: "
+        print(f"FAIL: the report's checks are not the fourteen the stage owes: "
               f"{[entry.get('id') for entry in entries]}")
         return 1
-    probe_ids = ("VERIFY-01", "VERIFY-04", "VERIFY-09", "VERIFY-10", "VERIFY-11")
+    probe_ids = ("VERIFY-01", "VERIFY-04", "VERIFY-09", "VERIFY-10", "VERIFY-11", "VERIFY-16")
     for check_id in wanted_ids:
         status = by_check[check_id].get("status")
-        expected_status = "pass" if have_media or check_id not in probe_ids else "skipped"
+        expected_status = "pass"
         if status != expected_status:
             print(f"FAIL: {check_id} answered {status!r}, not {expected_status!r}: "
                   f"{by_check[check_id]}")
             return 1
     summary = report.get("summary", {})
-    if summary.get("total") != 13 or summary.get("failed") != 0:
+    if summary.get("total") != 14 or summary.get("failed") != 0:
         print(f"FAIL: the report's summary is wrong: {summary}")
         return 1
+
+    # A missing or unresponsive ffprobe is not evidence that the render
+    # has audio. The Director must refuse an unmeasured export rather than
+    # treating VERIFY-16 as a harmless skip.
+    unprobed = _probe_checks(
+        "/tmp/funcut-selftest/unprobed.mp4",
+        SELF_TEST_PLAN,
+        SELF_TEST_PLAN["export"],
+        None,
+        None,
+    )
+    missing_audio = next(
+        (entry for entry in unprobed if entry.get("id") == "VERIFY-16"), None
+    )
+    if not isinstance(missing_audio, dict) or missing_audio.get("status") != "fail":
+        print(f"FAIL: an unprobed export did not fail VERIFY-16: {missing_audio}")
+        return 1
+    try:
+        _verification_failed(unprobed)
+    except PipelineError as error:
+        if "VERIFY-16" not in str(error):
+            print(f"FAIL: an unprobed export was refused for the wrong reason: {error}")
+            return 1
+    else:
+        print("FAIL: an unprobed export was accepted without an audio-stream check")
+        return 1
+    print("probe availability ok: missing ffprobe refuses the export as VERIFY-16")
+
     print(
-        "verify record ok: 13 entries, report written, "
+        "verify record ok: 14 entries, report written, "
         + f"{summary.get('passed')} passed / {summary.get('skipped')} skipped "
         + "(probe checks skipped: no ffmpeg)" * (not have_media)
     )
@@ -5441,6 +5524,36 @@ def self_test() -> int:
             print(f"FAIL: the missing captions were refused for the wrong reason: {error}")
             return 1
     print("caption presence ok: captions wanted and none placed is refused as VERIFY-02")
+
+    # A silent render: the picture arrived, the sound did not. VERIFY-16
+    # names the missing audio stream before the run may call itself done
+    # (the mock's measure_loudness still answers, so the probe is the
+    # only witness - exactly the both-streams gap the check closes).
+    _scenario_state_clear(project)
+    silent_world = selftest_world()
+    base_export_wait = silent_world["export_wait"]
+
+    def silent_export_wait(args: dict[str, Any]) -> dict[str, Any]:
+        reply = base_export_wait(args)
+        output = reply.get("output") if isinstance(reply, dict) else None
+        silent = "/tmp/funcut-selftest/silent.mp4"
+        if output and os.path.isfile(silent):
+            try:
+                shutil.copyfile(silent, output)
+            except OSError:
+                pass
+        return reply
+
+    silent_world["export_wait"] = silent_export_wait
+    try:
+        run_pipeline(MockMcp(silent_world), project, audio, SELF_TEST_PLAN)
+        print("FAIL: a silent render shipped without a refusal")
+        return 1
+    except PipelineError as error:
+        if "VERIFY-16" not in str(error):
+            print(f"FAIL: the silent render was refused for the wrong reason: {error}")
+            return 1
+    print("both streams ok: a render with no audio stream is refused as VERIFY-16")
 
     # A drifted timeline: something edited the project after the export's
     # edit was final; the hash names it, the run refuses.

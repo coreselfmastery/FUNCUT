@@ -134,9 +134,10 @@ pub fn serves_frame(width: u32, height: u32) -> bool {
 /// edit, and it is the one the API's per-edit proxy validation asked
 /// for: the bytes are read once per file per change, never once per
 /// edit.
-fn content_hashes() -> &'static Mutex<std::collections::HashMap<String, (u64, u128, u64)>> {
-    static CONTENT_HASHES: OnceLock<Mutex<std::collections::HashMap<String, (u64, u128, u64)>>> =
-        OnceLock::new();
+type ContentHashes = Mutex<std::collections::HashMap<String, (u64, u128, u64)>>;
+
+fn content_hashes() -> &'static ContentHashes {
+    static CONTENT_HASHES: OnceLock<ContentHashes> = OnceLock::new();
     CONTENT_HASHES.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
 }
 

@@ -1936,10 +1936,9 @@ fn motion_schema(name: &str) -> Option<Value> {
                     "description": "lottie: import bodymovin JSON. gsap: apply a GSAP-style timeline."
                 }),
             );
-            properties.insert(
-                "project".to_owned(),
-                shared.get("project").cloned().unwrap(),
-            );
+            if let Some(project) = shared.get("project") {
+                properties.insert("project".to_owned(), project.clone());
+            }
             properties.insert(
                 "file".to_owned(),
                 json!({
@@ -2881,8 +2880,8 @@ fn audio_levels_db(mut arguments: Value) -> Result<Request, ApiError> {
         commands.push(command);
     }
 
-    let command = if commands.len() == 1 {
-        commands.pop().expect("one command")
+    let command = if let [only] = commands.as_slice() {
+        only.clone()
     } else {
         json!({ "op": "batch", "commands": commands })
     };
@@ -3498,10 +3497,9 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
             .pointer("/audio/voiceover")
             .is_some_and(|voiceover| !voiceover.is_null())
     {
-        let blockers = result["creativeBlockers"]
-            .as_array_mut()
-            .expect("the creative gate answers blockers");
-        blockers.push(json!("the plan has a voiceover but no signalLog: read the take with voice_signals and record which signals drove each cut, caption, graphic, BGM and transition"));
+        if let Some(blockers) = result["creativeBlockers"].as_array_mut() {
+            blockers.push(json!("the plan has a voiceover but no signalLog: read the take with voice_signals and record which signals drove each cut, caption, graphic, BGM and transition"));
+        }
         result["creativeReady"] = json!(false);
     }
     Ok(result)

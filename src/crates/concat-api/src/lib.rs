@@ -271,9 +271,15 @@ pub struct Api {
     sessions: BTreeMap<String, Session>,
     /// The answers [`Request::EditApply`] already gave, by the caller's
     /// own idempotency key and the project it named (IDEM): a re-sent
-    /// key returns its recorded view instead of a second edit. Keyed by
-    /// `"{path}\n{key}"` so two projects' keys never collide.
-    applied: BTreeMap<String, EditorView>,
+    /// key is answered without a second edit. Keyed by
+    /// `"{path}\n{key}"` so two projects' keys never collide. The
+    /// answers are bounded (F-05): every key keeps the hash of the view
+    /// its edit produced, only the most recent keep the view itself,
+    /// and the whole ring is capped - a long-running API's memory no
+    /// longer grows with every keyed edit. The keys themselves ride in
+    /// `<project>/.idempotency-ledger.json` (F-06), so a restart's
+    /// re-sent keys land once too.
+    applied: Idempotency,
     /// Where this API may write: a created project, an instantiated
     /// template, an export or a preview file lands under one of these.
     /// Empty means anywhere, for the process's own owner at a terminal.
@@ -314,6 +320,110 @@ pub struct Stopper {
     cutouts: Arc<Cutouts>,
 }
 
+/// How many of the most recent idempotency keys keep the recorded view
+/// for the re-send answer (F-05). A resumed run re-asks the placements
+/// it just made; a run from long before re-asks keys whose view the
+/// ring no longer owes - the edit still lands once, answered with the
+/// project as it stands.
+const KEYED_VIEWS_KEPT: usize = 64;
+
+/// How many idempotency keys are remembered at all, in memory and in the
+/// project's ledger file (F-05, F-06). A key past the cap is forgotten
+/// - its re-send applies again - which is the documented degradation a
+/// bounded ledger owes, against the OOM an unbounded one promised.
+const LEDGER_KEYS_KEPT: usize = 4096;
+
+/// The durable ledger's name, inside the project it belongs to (F-06):
+/// `<project>/.idempotency-ledger.json`, read when the project opens,
+/// pruned when it is written.
+const IDEMPOTENCY_LEDGER: &str = ".idempotency-ledger.json";
+
+/// One answered idempotency key (F-05): the hash of the view the key's
+/// edit produced - small, and all the durable ledger owes - and, for
+/// the most recent keys, the recorded view itself, so a re-sent batch
+/// is answered with the reply it got.
+struct AppliedKey {
+    /// The applied view's own hash, of its serialized whole.
+    hash: u64,
+    /// The recorded view, while the ring still keeps it: `None` for
+    /// keys adopted from the durable ledger (a restart answered from
+    /// the project's current state) and for keys past the view cap.
+    view: Option<EditorView>,
+}
+
+/// The idempotency answers, bounded on both of its floors (F-05): a
+/// hash per key forever-ish, a view per key for the recent window, and
+/// a hard cap on the ring as a whole.
+#[derive(Default)]
+struct Idempotency {
+    /// The answers, by `"{path}\n{key}"`.
+    answers: std::collections::HashMap<String, AppliedKey>,
+    /// The same keys in record order, oldest first: the eviction order.
+    order: std::collections::VecDeque<String>,
+}
+
+impl Idempotency {
+    /// The answer a key already has, if any.
+    fn answer(&self, id: &str) -> Option<&AppliedKey> {
+        self.answers.get(id)
+    }
+
+    /// Records a key's answer: the hash always, the view while the ring
+    /// still keeps it.
+    fn record(&mut self, id: String, hash: u64, view: EditorView) {
+        if self.answers.remove(&id).is_some() {
+            self.order.retain(|seen| seen != &id);
+        }
+        self.order.push_back(id.clone());
+        self.answers.insert(id, AppliedKey { hash, view: Some(view) });
+        self.trim();
+    }
+
+    /// Adopts a key the durable ledger carried (F-06): the hash, and no
+    /// view - a restarted API answers from the project's current state,
+    /// which already carries the applied edit.
+    fn adopt(&mut self, id: String, hash: u64) {
+        if self.answers.contains_key(&id) {
+            return;
+        }
+        self.order.push_back(id.clone());
+        self.answers.insert(id, AppliedKey { hash, view: None });
+        self.trim();
+    }
+
+    /// Keeps both floors: the ring no longer than [`LEDGER_KEYS_KEPT`],
+    /// and a view only on the most recent [`KEYED_VIEWS_KEPT`] of them.
+    fn trim(&mut self) {
+        while self.order.len() > LEDGER_KEYS_KEPT {
+            if let Some(oldest) = self.order.pop_front() {
+                self.answers.remove(&oldest);
+            }
+        }
+        let without_view = self.order.len().saturating_sub(KEYED_VIEWS_KEPT);
+        for id in self.order.iter().take(without_view) {
+            if let Some(answer) = self.answers.get_mut(id) {
+                answer.view = None;
+            }
+        }
+    }
+
+    /// One project's rows for its ledger file, most recent first: the
+    /// caller's own key and the hash of the view its edit produced.
+    fn rows_for(&self, path: &str) -> Vec<(String, u64)> {
+        let prefix = format!("{path}\n");
+        self.order
+            .iter()
+            .rev()
+            .filter_map(|id| {
+                let key = id.strip_prefix(&prefix)?;
+                let hash = self.answers.get(id)?.hash;
+                Some((key.to_owned(), hash))
+            })
+            .take(LEDGER_KEYS_KEPT)
+            .collect()
+    }
+}
+
 impl Stopper {
     /// Asks every job this API started to stop at its next frame - its
     /// own and no other, even where the export slot is shared with a
@@ -352,7 +462,7 @@ impl Api {
         };
         Api {
             book,
-            applied: BTreeMap::new(),
+            applied: Idempotency::default(),
             titles: Titles::new(&dirs),
             cutouts: Arc::new(Cutouts::new(&dirs.data)),
             stabilizers: Arc::new(Stabilizers::new()),
@@ -545,9 +655,8 @@ impl Api {
                 Ok(Reply::Done(Done {}))
             }
             Request::ProjectSetVideo { path, video } => {
-                let set = view(self.session_mut(&path)?.set_video(video).map_err(refused)?);
-                self.autosave(&path);
-                set
+                let set = self.session_mut(&path)?.set_video(video).map_err(refused)?;
+                view(self.told_unsaved(&path, set))
             }
             Request::EditApply {
                 path,
@@ -555,14 +664,12 @@ impl Api {
                 idempotency_key,
             } => view(self.apply_keyed(&path, *command, idempotency_key)?),
             Request::EditUndo { path } => {
-                let undone = view(self.session_mut(&path)?.undo());
-                self.autosave(&path);
-                undone
+                let undone = self.session_mut(&path)?.undo();
+                view(self.told_unsaved(&path, undone))
             }
             Request::EditRedo { path } => {
-                let redone = view(self.session_mut(&path)?.redo());
-                self.autosave(&path);
-                redone
+                let redone = self.session_mut(&path)?.redo();
+                view(self.told_unsaved(&path, redone))
             }
             Request::MediaProbe { path } => {
                 Ok(Reply::Media(media::probe(&path).map_err(ApiError::failed)?))
@@ -934,6 +1041,10 @@ impl Api {
         let _ = projects::remember(&self.dirs.config, &info);
         let view = session.view();
         self.sessions.insert(key_of(&info.path), session);
+        // The project's durable idempotency answers, adopted on open
+        // (F-06): a key a prior API answered, re-sent after the restart,
+        // lands once here too.
+        self.load_idempotency_ledger(&info.path);
         // The project's media is seen to at once, the way a window's
         // open sees to it: the copies already written are adopted into
         // the pool, the videos as large as HD without one get theirs
@@ -972,8 +1083,13 @@ impl Api {
 
     /// [`Request::EditApply`].
     pub fn apply(&mut self, path: &str, command: Command) -> Result<EditorView, ApiError> {
-        let view = self.session_mut(path)?.apply(command).map_err(refused)?;
-        self.autosave(path);
+        let applied = self.session_mut(path)?.apply(command).map_err(refused)?;
+        // F-07: the reply never says a success the disk did not see. The
+        // autosave still cannot un-apply an edit that already happened,
+        // so the call stays Ok - but its failure rides the view, and a
+        // caller that ignores it is ignoring it on the record, not
+        // discovering it three edits later as data loss.
+        let view = self.told_unsaved(path, applied);
         // The edit may have brought media in - an import, an overlay, a
         // template's fills - and media is the one thing whose working
         // copy is worth having before anything reads it.
@@ -981,14 +1097,29 @@ impl Api {
         Ok(view)
     }
 
+    /// The view with the autosave's own failure marked on it, when there
+    /// was one (F-07): the dispatch paths that save as a side effect of
+    /// another call - `set_video`, `undo`, `redo`, `apply` - all answer
+    /// the same way, never reporting a success the disk did not see.
+    fn told_unsaved(&mut self, path: &str, mut view: EditorView) -> EditorView {
+        if let Err(error) = self.autosave(path) {
+            log::warn!("could not autosave {path}: {error}");
+            view.unsaved = Some(error);
+        }
+        view
+    }
+
     /// [`Request::EditApply`] with the caller's idempotency key (IDEM):
-    /// a key this project already answered returns the recorded view
-    /// without a second edit - the same batch, asked twice, lands once.
-    /// A key never seen (or absent) applies and is remembered under the
-    /// key, so the reply a caller re-asks for is the reply it got. The
+    /// a key this project already answered is answered again without a
+    /// second edit - the same batch, asked twice, lands once. A key
+    /// never seen (or absent) applies and is remembered under the key,
+    /// so the reply a caller re-asks for is the reply it got. The
     /// caller's own key names the batch; two different batches under one
     /// key is a caller bug the API answers by design - the first batch's
-    /// view, not a merge.
+    /// landing, not a merge. The answers are bounded (F-05) and durable
+    /// (F-06): the most recent keys answer with their recorded view,
+    /// older ones - a restart's, a long run's - with the project as it
+    /// stands, which already carries the applied edit.
     pub fn apply_keyed(
         &mut self,
         path: &str,
@@ -1002,11 +1133,21 @@ impl Api {
             return self.apply(path, command);
         }
         let id = format!("{path}\n{key}");
-        if let Some(view) = self.applied.get(&id) {
-            return Ok(view.clone());
+        if let Some(answered) = self.applied.answer(&id) {
+            if let Some(view) = &answered.view {
+                return Ok(view.clone());
+            }
+            // The ring no longer holds this key's view - a restart's
+            // ledger key, or one pushed past the recent window (F-05 /
+            // F-06): the edit stands, it applied once, and the honest
+            // answer is the project as it is now - never a second
+            // application of the batch.
+            return Ok(self.session_mut(path)?.view());
         }
         let view = self.apply(path, command)?;
-        self.applied.insert(id, view.clone());
+        let hash = view_hash(&view);
+        self.applied.record(id, hash, view.clone());
+        self.write_idempotency_ledger(path);
         Ok(view)
     }
 
@@ -1016,13 +1157,71 @@ impl Api {
     /// media sat in the folder with no document naming it. A save after
     /// every applied batch is cheap (the writer is ticketed and skips
     /// superseded snapshots) and is the honest state for a reopen.
-    /// Best-effort by design: the edit already happened, so a save that
-    /// cannot write is a log line, not a failure handed back.
-    fn autosave(&mut self, path: &str) {
-        if let Ok(session) = self.session_mut(path)
-            && let Err(error) = session.save(None)
-        {
-            log::warn!("could not autosave {path}: {error}");
+    /// The edit already happened, so a save that cannot write cannot
+    /// fail the call - but it is no longer silent either (F-07): the
+    /// failure travels back to `apply`, which puts it on the view the
+    /// caller holds.
+    fn autosave(&mut self, path: &str) -> Result<(), String> {
+        let session = self
+            .session_mut(path)
+            .map_err(|error| error.to_string())?;
+        session.save(None)
+    }
+
+    /// Writes the project's durable idempotency ledger (F-06):
+    /// `<project>/.idempotency-ledger.json`, this project's keys with
+    /// the hashes of the views their edits produced, the most recent
+    /// first and pruned to the ring's own cap. Best-effort: a ledger
+    /// that cannot be written costs the restart its re-send answer, not
+    /// the edit its landing.
+    fn write_idempotency_ledger(&self, path: &str) {
+        let rows = self.applied.rows_for(path);
+        let ledger = serde_json::json!({
+            "schema": "funcut.idempotency-ledger/1",
+            "schemaVersion": 1,
+            "entries": rows.iter().map(|(key, hash)| serde_json::json!({
+                "key": key, "hash": hash,
+            })).collect::<Vec<_>>(),
+        });
+        let file = std::path::Path::new(path).join(IDEMPOTENCY_LEDGER);
+        let staged = file.with_extension("json.saving");
+        let write = || -> Result<(), String> {
+            let bytes = serde_json::to_vec_pretty(&ledger).map_err(|error| error.to_string())?;
+            std::fs::write(&staged, bytes).map_err(|error| error.to_string())?;
+            std::fs::rename(&staged, &file).map_err(|error| error.to_string())
+        };
+        if let Err(error) = write() {
+            log::warn!("could not write {}: {error}", file.display());
+            let _ = std::fs::remove_file(&staged);
+        }
+    }
+
+    /// Reads the project's durable idempotency ledger (F-06), adopting
+    /// its keys: a restart's re-sent keys land once. A ledger that
+    /// cannot be read or parsed is a fresh start, never a refusal to
+    /// open the project.
+    fn load_idempotency_ledger(&mut self, path: &str) {
+        let file = std::path::Path::new(path).join(IDEMPOTENCY_LEDGER);
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            return;
+        };
+        let parsed: Result<serde_json::Value, _> = serde_json::from_str(&text);
+        let entries = match parsed {
+            Ok(ledger) => ledger.get("entries").and_then(|entries| entries.as_array()).cloned(),
+            Err(error) => {
+                log::warn!("could not read {}: {error}", file.display());
+                None
+            }
+        };
+        let Some(entries) = entries else {
+            return;
+        };
+        for entry in entries {
+            let Some(key) = entry.get("key").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            let hash = entry.get("hash").and_then(serde_json::Value::as_u64).unwrap_or(0);
+            self.applied.adopt(format!("{path}\n{key}"), hash);
         }
     }
 
@@ -2815,6 +3014,19 @@ fn key_of(path: &str) -> String {
         .unwrap_or_else(|_| path.to_owned())
 }
 
+/// The hash of an applied view's serialized whole (F-05): what the
+/// idempotency ledger keeps per key, small enough that remembering
+/// thousands of them costs nothing against the full `EditorView` each
+/// one used to hold.
+fn view_hash(view: &EditorView) -> u64 {
+    use std::hash::Hasher;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    if let Ok(whole) = serde_json::to_string(view) {
+        hasher.write(whole.as_bytes());
+    }
+    hasher.finish()
+}
+
 /// A sticker's placement on the timeline, as `magick.add` was asked for
 /// it: every field optional, `start` being the one that puts the picture
 /// on a lane at all.
@@ -3426,6 +3638,176 @@ mod tests {
             before + 2,
             "an unkeyed apply edits as it always did"
         );
+    }
+
+    #[test]
+    fn a_keyed_apply_survives_a_restart_of_the_api() {
+        // F-06: the keys land in <project>/.idempotency-ledger.json, are
+        // read when the project opens again, and a re-sent key after the
+        // restart adds no second edit - the ledger is the durable half of
+        // idempotency, not just the memory's.
+        let (mut api, scratch, _) = api();
+        let path = project(&mut api, &scratch, "Ledgered");
+        let created = view(ok(api.dispatch(Request::ProjectGet { path: path.clone() })));
+        let track_id = created.project.active().tracks[0].id.clone();
+        let media = view(ok(api.dispatch(Request::EditApply {
+            path: path.clone(),
+            command: Box::new(Command::AddMedia {
+                item: still("/nowhere/still.png"),
+            }),
+            idempotency_key: None,
+        })));
+        let media_id = media.created_id.expect("minted");
+        let place = || Request::EditApply {
+            path: path.clone(),
+            command: Box::new(Command::AddClip {
+                media_id: media_id.clone(),
+                track_id: track_id.clone(),
+                start: 0.0,
+                ripple: false,
+            }),
+            idempotency_key: Some("run-1:timeline".to_owned()),
+        };
+        let first = view(ok(api.dispatch(place())));
+        let once = first.project.active().clips.len();
+        drop(api); // the restart: a whole new API over the same dirs.
+
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&events);
+        let mut api = Api::with_dirs(
+            AppDirs {
+                config: scratch.path().join("config"),
+                data: scratch.path().join("data"),
+            },
+            Arc::new(move |event| sink.lock().expect("events").push(event)),
+        );
+        ok(api.dispatch(Request::ProjectOpen { path: path.clone() }));
+        let again = view(ok(api.dispatch(place())));
+        assert_eq!(
+            again.project.active().clips.len(),
+            once,
+            "a re-sent key after the restart adds no second clip"
+        );
+        let other = view(ok(api.dispatch(Request::EditApply {
+            path: path.clone(),
+            command: Box::new(Command::AddClip {
+                media_id: media_id.clone(),
+                track_id: track_id.clone(),
+                start: 9.0,
+                ripple: false,
+            }),
+            idempotency_key: Some("run-2:timeline".to_owned()),
+        })));
+        assert_eq!(
+            other.project.active().clips.len(),
+            once + 1,
+            "a different key is still a different edit after the restart"
+        );
+        // The ledger itself, on the disk it promised: this project's key
+        // with a hash beside it.
+        let ledger = std::fs::read_to_string(
+            std::path::Path::new(&path).join(".idempotency-ledger.json"),
+        )
+        .expect("the ledger was written");
+        let ledger: serde_json::Value = serde_json::from_str(&ledger).unwrap();
+        assert_eq!(ledger["schema"], "funcut.idempotency-ledger/1");
+        let entries = ledger["entries"].as_array().unwrap();
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry["key"] == "run-1:timeline" && entry["hash"].as_u64().unwrap() > 0),
+            "the ledger carries the key with its hash: {entries:?}"
+        );
+    }
+
+    #[test]
+    fn the_recorded_views_are_bounded_not_the_keys() {
+        // F-05: the ring keeps a view only for the most recent keys; an
+        // older key still answers - from the project as it stands, never
+        // a second edit - and its hash stays in the ledger. A long
+        // running API's memory no longer grows with every keyed edit.
+        let (mut api, scratch, _) = api();
+        let path = project(&mut api, &scratch, "Bounded");
+        let created = view(ok(api.dispatch(Request::ProjectGet { path: path.clone() })));
+        let track_id = created.project.active().tracks[0].id.clone();
+        let media = view(ok(api.dispatch(Request::EditApply {
+            path: path.clone(),
+            command: Box::new(Command::AddMedia {
+                item: still("/nowhere/still.png"),
+            }),
+            idempotency_key: None,
+        })));
+        let media_id = media.created_id.expect("minted");
+        for number in 0..(super::KEYED_VIEWS_KEPT + 4) {
+            ok(api.dispatch(Request::EditApply {
+                path: path.clone(),
+                command: Box::new(Command::AddClip {
+                    media_id: media_id.clone(),
+                    track_id: track_id.clone(),
+                    start: number as f64 * 10.0,
+                    ripple: false,
+                }),
+                idempotency_key: Some(format!("run-1:cut-{number}")),
+            }));
+        }
+        let total = view(ok(api.dispatch(Request::ProjectGet { path: path.clone() })));
+        let total = total.project.active().clips.len();
+        // The oldest key is past the view window: its re-send is answered
+        // from the project as it stands - the edit lands once, and no
+        // view is held for it any more.
+        let replay = ok(api.dispatch(Request::EditApply {
+            path: path.clone(),
+            command: Box::new(Command::AddClip {
+                media_id: media_id.clone(),
+                track_id: track_id.clone(),
+                start: 0.0,
+                ripple: false,
+            }),
+            idempotency_key: Some("run-1:cut-0".to_owned()),
+        }));
+        let replay = view(replay);
+        assert_eq!(
+            replay.project.active().clips.len(),
+            total,
+            "a key past the view window still lands once"
+        );
+        assert!(
+            api.applied.answer(&format!("{path}\nrun-1:cut-0")).is_some_and(|answer| answer.view.is_none()),
+            "the oldest key's view is dropped, its hash kept"
+        );
+    }
+
+    #[test]
+    fn an_edit_whose_autosave_failed_says_so_in_the_reply() {
+        // F-07: the call still lands - the edit already happened, and
+        // refusing it would only invite a retry that doubles it - but the
+        // reply carries the save's own failure on `unsaved`, so no caller
+        // believes a success the disk never saw.
+        let (mut api, scratch, _) = api();
+        let path = project(&mut api, &scratch, "Unsaved");
+        // Block the manifest the save renames onto, the way the close
+        // test does: a directory where the file must land.
+        let manifest =
+            concat_host::projects::manifest_path(std::path::Path::new(&path));
+        let _ = std::fs::remove_file(&manifest);
+        std::fs::create_dir_all(&manifest).expect("a blocking directory");
+        let applied = view(ok(api.dispatch(Request::EditApply {
+            path: path.clone(),
+            command: Box::new(Command::AddMedia {
+                item: still("/nowhere/still.png"),
+            }),
+            idempotency_key: None,
+        })));
+        assert!(
+            applied.can_undo,
+            "the edit itself landed"
+        );
+        let unsaved = applied.unsaved.expect("the reply says the save failed");
+        assert!(
+            unsaved.contains("could not") || unsaved.contains(&manifest.to_string_lossy().to_string()),
+            "the unsaved note names the failure: {unsaved}"
+        );
+        let _ = std::fs::remove_dir_all(&manifest);
     }
 
     #[test]

@@ -47,6 +47,14 @@ pub struct EditorView {
     /// The id a creating command minted, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_id: Option<String>,
+    /// Set by the API layer when the edit this view answers applied but
+    /// its autosave did not land (F-07): the sentence is the save's own
+    /// failure, and the caller is told in the reply - never left
+    /// believing a success the disk never saw. Absent on every view the
+    /// session itself makes: the session's saves are the caller's to
+    /// ask about.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unsaved: Option<String>,
 }
 
 /// The session's settings, as the window shows them.
@@ -245,6 +253,7 @@ impl Session {
                 rate_den: settings.rate_den,
             },
             created_id,
+            unsaved: None,
         }
     }
 

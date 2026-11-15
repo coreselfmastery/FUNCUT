@@ -2980,6 +2980,12 @@ impl Studio {
         // A knob's gesture, folded into one step; said at Debug, since a
         // dial turned is many of these.
         log::debug!("edit: {} ({gesture})", command_name(&command));
+        // An edit still waiting to land on the inspector's own deferred
+        // commit lands first, exactly as `apply` lands it: this gesture
+        // takes over the echo and its targets, and without the flush the
+        // pending edit went with them - a knob released and a paste
+        // landed within the commit window used to lose the knob.
+        self.flush_commit();
         self.echo = None;
         let session = self.session.as_mut()?;
         let before = session.video().color_space;
@@ -4088,6 +4094,16 @@ impl Studio {
         if duration <= 0.0 {
             return Default::default();
         }
+        // The peaks are read in the media's own seconds, which a sped clip
+        // covers `speed` times faster than it plays on the timeline - the
+        // same conversion `cut_of` and the playhead's source position make.
+        // Without it, a 2x clip showed the first half of its audio over
+        // the whole lane, a slowed one drew past its out-point.
+        let speed = if clip.speed.is_finite() && clip.speed > 0.0 {
+            clip.speed as f32
+        } else {
+            1.0
+        };
         let seconds_per_pixel = self.lanes.seconds_per_pixel;
         let stride = (WAVE_PITCH * seconds_per_pixel * 64.0).max(1.0 / WAVE_STEPS);
         let (from, to) = match self.lanes.published_span() {
@@ -4108,14 +4124,14 @@ impl Studio {
         let window = to - from;
         let columns = wave_columns(window, seconds_per_pixel);
         let placed = (from / duration, window / duration);
-        let key = format!("{art}|{source_start:.3}|{from:.3}|{window:.3}|{columns}");
+        let key = format!("{art}|{source_start:.3}|{from:.3}|{window:.3}|{columns}|{speed:.3}");
         if let Some(cached) = self.waves.borrow().get(&key) {
             return (cached.clone(), placed.0, placed.1);
         }
         let built = SharedString::from(wave_path(
             peaks,
-            source_start + from,
-            window,
+            source_start + from * speed,
+            window * speed,
             columns,
             WAVE_BAR,
         ));
@@ -13321,11 +13337,17 @@ impl Studio {
                 });
             }
             "mute" => {
-                let volume = if clip.volume <= 0.0 { 1.0 } else { 0.0 };
+                // The lane's own mute, not a volume of zero: a keyed
+                // volume clip ignores its constant - the ride is what
+                // plays - so a zero constant would leave the sound
+                // riding at its keys while the lane drew flat. `muted`
+                // silences the clip whole, the way DetachAudio silences
+                // the video's own audio, and the export honours it too.
+                let mute = clip.muted != Some(true);
                 self.apply(Command::UpdateClip {
                     clip_id: id.to_owned(),
                     patch: ClipPatch {
-                        volume: Some(volume),
+                        muted: Some(mute),
                         ..Default::default()
                     },
                 });

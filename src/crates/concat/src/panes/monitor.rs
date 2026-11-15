@@ -225,7 +225,15 @@ impl MonitorPane {
                 self.quality.insert(id, (index.max(0) as usize).min(2));
                 self.request(studio);
             }
-            MonitorMsg::Opened => self.failed = false,
+            MonitorMsg::Opened => {
+                self.failed = false;
+                // A new project's timelines are not the old one's, even
+                // where their ids agree (every project's founding timeline
+                // is "TL1"): the quality the last project chose on its own
+                // frame must not follow the new one in, the way the
+                // per-timeline view-state is cleared on the same open.
+                self.quality.clear();
+            }
             MonitorMsg::Closed => self.close(),
         }
     }

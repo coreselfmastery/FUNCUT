@@ -1092,7 +1092,12 @@ impl CompEngine for Geneva {
         let frames = dir.join("frames");
         // A bake counts what the render wrote, so a stale `frames/` left by
         // an interrupted run must not survive into the count: it is emptied
-        // first.
+        // first - and the manifest of the bake before it must not survive
+        // into this one either, or a cache hit would answer from a manifest
+        // whose frames are being rewritten under it. The manifest comes
+        // back last, whole, as the bake's own sentinel (the sidecar writes
+        // the frames itself, in place and unwatched).
+        let _ = std::fs::remove_file(dir.join("manifest.json"));
         let _ = std::fs::remove_dir_all(&frames);
         std::fs::create_dir_all(&frames).map_err(|source| MotionError::Io {
             doing: "creating".into(),

@@ -146,7 +146,10 @@ fn blend_straight(blend: Blend, backdrop: f32, source: f32) -> f32 {
                 backdrop.sqrt()
             };
             if source <= 0.5 {
-                backdrop - 2.0 * d * backdrop * (0.5 - source)
+                // Cb - (1 - 2*Cs)*Cb*(1 - Cb): the light branch's D(Cb)
+                // belongs to the other arm, where the spec's own factor
+                // is the one this dark branch was built from.
+                backdrop - 2.0 * (1.0 - backdrop) * backdrop * (0.5 - source)
             } else {
                 backdrop + (d - backdrop) * 2.0 * (source - 0.5)
             }
@@ -436,7 +439,15 @@ pub(crate) fn aberrate(pixmap: &mut Pixmap, amount: f64, centre: (f64, f64)) {
     }
     let (width, height) = (pixmap.width() as f64, pixmap.height() as f64);
     let (columns, rows) = (pixmap.width(), pixmap.height());
-    let corner = (width - centre.0).hypot(height - centre.1).max(1.0);
+    // The widest corner, whichever it is: the drift is `amount` pixels at
+    // the farthest corner from `centre`, not only at the bottom-right one
+    // (a centre toward that corner would otherwise blow the drift up by
+    // the distance to the far side it never measured).
+    let corner = centre
+        .0
+        .max(width - centre.0)
+        .hypot(centre.1.max(height - centre.1))
+        .max(1.0);
     let strength = amount / corner;
     let original = pixmap.clone();
     let from = original.data();
@@ -550,6 +561,24 @@ mod tests {
         // which encodes back to ~245 - brighter than a screen, short of
         // the 255 a gamma-space add would clamp to.
         assert!(add.pixel(1, 1).unwrap().red() >= 240);
+    }
+
+    #[test]
+    fn soft_light_follows_the_w3c_table_it_cites() {
+        // The dark arm is Cb - (1 - 2*Cs)*Cb*(1 - Cb): the D(Cb) factor
+        // belongs to the light arm alone, and borrowing it here blackened
+        // a light source where the table says it barely darkens.
+        let darkened = blend_straight(Blend::SoftLight, 0.75, 0.25);
+        assert!(
+            (darkened - 0.656_25).abs() < 1e-4,
+            "a quarter-grey source over three-quarters grey: {darkened}"
+        );
+        // A black source squares the backdrop, not near-blacks it.
+        let blackened = blend_straight(Blend::SoftLight, 0.75, 0.0);
+        assert!((blackened - 0.5625).abs() < 1e-4, "{blackened}");
+        // A white source takes the light arm to D(Cb).
+        let whitened = blend_straight(Blend::SoftLight, 0.75, 1.0);
+        assert!((whitened - 0.75_f32.sqrt()).abs() < 1e-4, "{whitened}");
     }
 
     #[test]

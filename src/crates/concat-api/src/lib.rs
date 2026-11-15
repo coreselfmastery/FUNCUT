@@ -968,7 +968,13 @@ impl Api {
     pub fn version(&self) -> VersionInfo {
         VersionInfo {
             api_version: API_VERSION.to_owned(),
-            concat: env!("CARGO_PKG_VERSION").to_owned(),
+            // The running build's own number, not the workspace's bare
+            // one: a release built from one of the fork's tags -
+            // v0.2.8-funcut.12 - carries its iteration through
+            // `FUNCUT_ITERATION`, and a `concat_version` that answered
+            // `0.2.8` would name upstream's release, not this fork's -
+            // an agent could not tell the two installs apart.
+            concat: concat_host::updates::Version::current().to_string(),
             dirs: Dirs::from(&self.dirs),
             capabilities: {
                 let mut capabilities = self.capabilities.clone();
@@ -1239,10 +1245,13 @@ impl Api {
     /// written once, on the scheduler's proxy lane, while the edit goes
     /// on - and the frames small enough for a copy to serve whole come
     /// back from it; see [`Api::pixels`]. The codec is the default,
-    /// H.264: the choice in Settings is the window's, and a caller here
-    /// has none. Asking is idempotent - a file that has its copy, or is
-    /// writing one, is a stat away - so `apply` may ask after every
-    /// command, the way the window's art pass asks after every message.
+    /// MJPEG - every frame a keyframe, the scrubbiest there is (F-14:
+    /// this comment said H.264, the default before the codec was a
+    /// choice): the choice in Settings is the window's, and a caller
+    /// here has none. Asking is idempotent - a file that has its copy,
+    /// or is writing one, is a stat away - so `apply` may ask after
+    /// every command, the way the window's art pass asks after every
+    /// message.
     ///
     /// RES-03, the startup ordering: while the OpenVid index warms -
     /// this server's own start warmed it on its own thread - the host's
@@ -3400,6 +3409,14 @@ mod tests {
         let (mut api, _scratch, _events) = api();
         let base = api.version();
         assert_eq!(base.api_version, API_VERSION);
+        // The build's own number: bare outside a release tag, the tag's
+        // own iteration inside one - never upstream's bare number alone,
+        // which no agent could tell from an upstream install.
+        let expected = match option_env!("FUNCUT_ITERATION") {
+            Some(iteration) => format!("{}-funcut.{iteration}", env!("CARGO_PKG_VERSION")),
+            None => env!("CARGO_PKG_VERSION").to_owned(),
+        };
+        assert_eq!(base.concat, expected);
         assert_eq!(base.capabilities, vec!["events".to_owned()]);
         assert!(!base.capabilities.iter().any(|name| name == "gpu"));
 

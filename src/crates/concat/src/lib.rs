@@ -125,8 +125,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
 pub fn open_launch_project(
     path: &std::path::Path,
 ) -> Result<concat_host::projects::ProjectInfo, String> {
-    let absolute = std::path::absolute(path)
-        .map_err(|error| format!("{}: {error}", path.display()))?;
+    let absolute =
+        std::path::absolute(path).map_err(|error| format!("{}: {error}", path.display()))?;
     let path = absolute
         .to_str()
         .ok_or_else(|| "project directory is not valid Unicode".to_string())?;

@@ -375,7 +375,13 @@ impl Idempotency {
             self.order.retain(|seen| seen != &id);
         }
         self.order.push_back(id.clone());
-        self.answers.insert(id, AppliedKey { hash, view: Some(view) });
+        self.answers.insert(
+            id,
+            AppliedKey {
+                hash,
+                view: Some(view),
+            },
+        );
         self.trim();
     }
 
@@ -1168,9 +1174,7 @@ impl Api {
     /// failure travels back to `apply`, which puts it on the view the
     /// caller holds.
     fn autosave(&mut self, path: &str) -> Result<(), String> {
-        let session = self
-            .session_mut(path)
-            .map_err(|error| error.to_string())?;
+        let session = self.session_mut(path).map_err(|error| error.to_string())?;
         session.save(None)
     }
 
@@ -1213,7 +1217,10 @@ impl Api {
         };
         let parsed: Result<serde_json::Value, _> = serde_json::from_str(&text);
         let entries = match parsed {
-            Ok(ledger) => ledger.get("entries").and_then(|entries| entries.as_array()).cloned(),
+            Ok(ledger) => ledger
+                .get("entries")
+                .and_then(|entries| entries.as_array())
+                .cloned(),
             Err(error) => {
                 log::warn!("could not read {}: {error}", file.display());
                 None
@@ -1226,7 +1233,10 @@ impl Api {
             let Some(key) = entry.get("key").and_then(serde_json::Value::as_str) else {
                 continue;
             };
-            let hash = entry.get("hash").and_then(serde_json::Value::as_u64).unwrap_or(0);
+            let hash = entry
+                .get("hash")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
             self.applied.adopt(format!("{path}\n{key}"), hash);
         }
     }
@@ -3722,17 +3732,16 @@ mod tests {
         );
         // The ledger itself, on the disk it promised: this project's key
         // with a hash beside it.
-        let ledger = std::fs::read_to_string(
-            std::path::Path::new(&path).join(".idempotency-ledger.json"),
-        )
-        .expect("the ledger was written");
+        let ledger =
+            std::fs::read_to_string(std::path::Path::new(&path).join(".idempotency-ledger.json"))
+                .expect("the ledger was written");
         let ledger: serde_json::Value = serde_json::from_str(&ledger).unwrap();
         assert_eq!(ledger["schema"], "funcut.idempotency-ledger/1");
         let entries = ledger["entries"].as_array().unwrap();
         assert!(
-            entries
-                .iter()
-                .any(|entry| entry["key"] == "run-1:timeline" && entry["hash"].as_u64().unwrap() > 0),
+            entries.iter().any(
+                |entry| entry["key"] == "run-1:timeline" && entry["hash"].as_u64().unwrap() > 0
+            ),
             "the ledger carries the key with its hash: {entries:?}"
         );
     }
@@ -3789,7 +3798,9 @@ mod tests {
             "a key past the view window still lands once"
         );
         assert!(
-            api.applied.answer(&format!("{path}\nrun-1:cut-0")).is_some_and(|answer| answer.view.is_none()),
+            api.applied
+                .answer(&format!("{path}\nrun-1:cut-0"))
+                .is_some_and(|answer| answer.view.is_none()),
             "the oldest key's view is dropped, its hash kept"
         );
     }
@@ -3804,8 +3815,7 @@ mod tests {
         let path = project(&mut api, &scratch, "Unsaved");
         // Block the manifest the save renames onto, the way the close
         // test does: a directory where the file must land.
-        let manifest =
-            concat_host::projects::manifest_path(std::path::Path::new(&path));
+        let manifest = concat_host::projects::manifest_path(std::path::Path::new(&path));
         let _ = std::fs::remove_file(&manifest);
         std::fs::create_dir_all(&manifest).expect("a blocking directory");
         let applied = view(ok(api.dispatch(Request::EditApply {
@@ -3815,13 +3825,11 @@ mod tests {
             }),
             idempotency_key: None,
         })));
-        assert!(
-            applied.can_undo,
-            "the edit itself landed"
-        );
+        assert!(applied.can_undo, "the edit itself landed");
         let unsaved = applied.unsaved.expect("the reply says the save failed");
         assert!(
-            unsaved.contains("could not") || unsaved.contains(&manifest.to_string_lossy().to_string()),
+            unsaved.contains("could not")
+                || unsaved.contains(&manifest.to_string_lossy().to_string()),
             "the unsaved note names the failure: {unsaved}"
         );
         let _ = std::fs::remove_dir_all(&manifest);

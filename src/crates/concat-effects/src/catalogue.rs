@@ -928,10 +928,15 @@ impl Catalogue {
     /// folder. Built on first use; a built-in that fails to load is a
     /// build defect, and the tests catch it.
     pub fn builtin() -> &'static Catalogue {
-        if let Some(current) = *CURRENT.read().unwrap_or_else(|poisoned| poisoned.into_inner()) {
+        if let Some(current) = *CURRENT
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        {
             return current;
         }
-        let mut slot = CURRENT.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut slot = CURRENT
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(current) = *slot {
             return current;
         }
@@ -976,7 +981,9 @@ impl Catalogue {
             errors.push(Error::Invalid { id, message });
         }
         let built: &'static Catalogue = Box::leak(Box::new(catalogue));
-        *CURRENT.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(built);
+        *CURRENT
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(built);
         errors
     }
 

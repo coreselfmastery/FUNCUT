@@ -1578,11 +1578,16 @@ fn resolve_verify_streams(
         let mut expected: Vec<Value> = Vec::new();
         for row in takes {
             let take = row.get("path").and_then(Value::as_str).ok_or_else(|| {
-                invalid("expectedTakes rows carry `path`, `start`, `sourceIn`, `sourceOut` and `speed`")
+                invalid(
+                    "expectedTakes rows carry `path`, `start`, `sourceIn`, `sourceOut` and `speed`",
+                )
             })?;
             let start = row.get("start").and_then(Value::as_f64).unwrap_or(0.0);
             let source_in = row.get("sourceIn").and_then(Value::as_f64).unwrap_or(0.0);
-            let source_out = row.get("sourceOut").and_then(Value::as_f64).unwrap_or(f64::INFINITY);
+            let source_out = row
+                .get("sourceOut")
+                .and_then(Value::as_f64)
+                .unwrap_or(f64::INFINITY);
             let speed = row.get("speed").and_then(Value::as_f64).unwrap_or(1.0);
             let rate = if speed > 0.0 { speed } else { 1.0 };
             let words = transcript_words(take, backend)?;
@@ -1625,12 +1630,12 @@ fn transcript_words(path: &str, backend: &mut dyn Backend) -> Result<Vec<Value>,
         Some(state) => {
             return Err(ApiError::failed(format!(
                 "the transcript of {path} is {state}, not done: a verify needs both sides' words"
-            )))
+            )));
         }
         None => {
             return Err(ApiError::failed(format!(
                 "{path} has no analysis to verify with: transcribe it first"
-            )))
+            )));
         }
     }
     let Some(output) = status.get("output").and_then(Value::as_str) else {

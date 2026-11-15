@@ -2158,7 +2158,11 @@ mod tests {
         assert_eq!(gates.len(), 2);
         assert!(matches!(
             gates[1],
-            concat_mcp::director::ReplyGate::Word { field: "verdict", equals: "pass", .. }
+            concat_mcp::director::ReplyGate::Word {
+                field: "verdict",
+                equals: "pass",
+                ..
+            }
         ));
 
         // The silent-success gates, exactly where the spine's own words
@@ -2235,7 +2239,10 @@ mod tests {
         std::fs::write(root.join("takes/a.wav"), b"take").unwrap();
         std::fs::write(root.join("bgm/lofi-track.mp3"), b"music").unwrap();
         let take_path = root.join("takes/a.wav").to_string_lossy().into_owned();
-        let bed_path = root.join("bgm/lofi-track.mp3").to_string_lossy().into_owned();
+        let bed_path = root
+            .join("bgm/lofi-track.mp3")
+            .to_string_lossy()
+            .into_owned();
 
         let mut bed_only = Project::with_video(VideoSettings::default());
         bed_only.media.push(MediaItem {
@@ -2261,10 +2268,7 @@ mod tests {
         mixed.media.push(bed_only.media[0].clone());
         let mut bed_clip = Clip::blank("g1", "T1", ClipKind::Audio, "g1", 0.0, 90.0);
         bed_clip.media_id = "b1".to_owned();
-        mixed
-            .active_mut()
-            .clips
-            .push(std::sync::Arc::new(bed_clip));
+        mixed.active_mut().clips.push(std::sync::Arc::new(bed_clip));
 
         let narrated = |project: &concat_project::model::Project| {
             project

@@ -105,6 +105,7 @@ def _ids_for(tokenizer, kind, text, length):
 
 
 def _sessions(vision_path, text_path):
+    import onnxruntime as ort
 
     options = ort.SessionOptions()
     options.intra_op_num_threads = max(1, (os.cpu_count() or 2) // 2)
@@ -248,6 +249,7 @@ def rerank(spec):
                 best[identifier] = score
     except Exception as error:  # a broken half is a fallback, not a failure
         return {"ok": False, "error": f"{type(error).__name__}: {error}", "pip": PIP_LINE}
+        return {"ok": False, "error": why, "pip": PIP_LINE}
 
     scored = [candidate for candidate in candidates if _cid(candidate) in best]
     kept = [candidate for candidate in candidates if _cid(candidate) not in best]

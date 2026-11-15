@@ -89,7 +89,7 @@ compositor's work off the CPU entirely, so these numbers are the
 floor, not the ceiling.
 
 A number from your own machine belongs beside these: run
-[`scripts/benchmark.py`](benchmark.py) and paste what it prints under
+[`scripts/benchmark.py`](../scripts/benchmark.py) and paste what it prints under
 the row above, labelled with what it ran on.
 
 ## The farm: parallel motion renders, `--parts N`

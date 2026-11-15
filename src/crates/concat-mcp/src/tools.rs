@@ -1806,7 +1806,9 @@ fn sense_schema(name: &str) -> Option<Value> {
             "segment": { "type": "object", "description": "With action 'gate': the beat a candidate is up for, {emotion: one of the 7, act: one of the 7}." },
             "candidates": { "type": "array", "description": "With action 'gate': openvid_search / stock_contact_sheet results carrying caption, keywords or query.", "items": { "type": "object" } },
             "expected": { "type": ["object", "array"], "description": "With action 'verify': the edit's words - a transcribe job's output or a [{text,start,end}] word list." },
+            "expectedTakes": { "type": "array", "description": "With action 'verify', the AUTO EDIT's way when the words are not known yet: one row per voiceover clip - {path: the take file, start: where the timeline places it, sourceIn, sourceOut: the span of the file it plays, speed: its rate}. Each take's transcript is fetched from the analysis registry and its words placed on the timeline, so the comparison is against the export's own coordinates.", "items": { "type": "object", "required": ["path"], "properties": { "path": { "type": "string" }, "start": { "type": "number" }, "sourceIn": { "type": "number" }, "sourceOut": { "type": "number" }, "speed": { "type": "number" } } } },
             "actual": { "type": ["object", "array"], "description": "With action 'verify': the exported file's re-transcribed words." },
+            "actualPath": { "type": "string", "description": "With action 'verify': the exported file, whose own transcript the analysis registry holds - fetched and compared, so a render that speaks the wrong words fails the verify." },
             "toleranceMs": { "type": "number", "default": 150, "minimum": 0, "description": "With action 'verify': how far a word may start from where the edit placed it." },
         }),
         "voice_signals" => json!({
@@ -2640,7 +2642,7 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         Action::StockSheet => crate::sense::stock_contact_sheet(arguments, backend),
         Action::CraftCritique => crate::sense::craft_critique(arguments, backend),
         Action::LocalVlm => crate::sense::local_vlm(arguments),
-        Action::Emotion => crate::sense::emotion(arguments),
+        Action::Emotion => crate::sense::emotion(arguments, backend),
         Action::VoiceSignals => crate::sense::voice_signals(arguments),
         Action::Sense(name) => crate::sense::sense_family(name, arguments),
         Action::SenseFamily(family) => crate::sense::sense_family_action(family, arguments),

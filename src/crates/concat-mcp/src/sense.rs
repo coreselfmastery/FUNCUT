@@ -1458,7 +1458,14 @@ pub fn local_vlm(arguments: Value) -> Result<Outcome, ApiError> {
 /// `emotion`: the emotional read of the voiceover - per line: the emotion,
 /// its act, the easing curve it demands, colour temperature, duck depth and
 /// stock vocabulary - plus the brand gate and the export verify.
-pub fn emotion(arguments: Value) -> Result<Outcome, ApiError> {
+///
+/// The verify action can take its two word streams as data (`expected`,
+/// `actual` - the agent's way) or by path (`expectedTakes`, `actualPath` -
+/// the AUTO EDIT's way: the program is written before the words exist,
+/// so the comparison names the files whose transcripts the run already
+/// made, and this side fetches them from the backend's own analysis
+/// registry and places each take's words where the timeline put them).
+pub fn emotion(arguments: Value, backend: &mut dyn Backend) -> Result<Outcome, ApiError> {
     let fields = arguments
         .as_object()
         .cloned()
@@ -1511,6 +1518,14 @@ pub fn emotion(arguments: Value) -> Result<Outcome, ApiError> {
             spec[*key] = value.clone();
         }
     }
+    // The by-path spelling of verify (F-04): the takes' words, fetched
+    // from the analysis registry and placed on the timeline, and the
+    // export's own re-read words - resolved here so the Python side sees
+    // the same `expected`/`actual` word lists the agent's data spelling
+    // carries.
+    if action == "verify" {
+        resolve_verify_streams(&mut spec, &fields, backend)?;
+    }
     // `extract` is the only action that may wait on a hosted model: the
     // lines travel in batches of 64 with per-endpoint retries inside the
     // budget. A fixed 90 s covered a short script; a real one - hundreds of
@@ -1544,6 +1559,105 @@ pub fn emotion(arguments: Value) -> Result<Outcome, ApiError> {
     };
     let result = run("emotion", &spec, Duration::from_secs(budget.min(480)))?;
     Ok(Outcome::json(result))
+}
+
+/// The verify action's by-path spelling, resolved into the word lists the
+/// Python side compares (F-04). `expectedTakes` is one row per voiceover
+/// clip - the take file, where the timeline starts it, the span of the
+/// file it plays and the rate it plays at - and `actualPath` is the
+/// exported file whose own transcript the run re-read. Both fetch from
+/// the backend's analysis registry, the same place `analysis_wait`
+/// reads, so a transcript that never finished is an error naming it, not
+/// an empty comparison that passes.
+fn resolve_verify_streams(
+    spec: &mut Value,
+    fields: &Map<String, Value>,
+    backend: &mut dyn Backend,
+) -> Result<(), ApiError> {
+    if let Some(takes) = fields.get("expectedTakes").and_then(Value::as_array) {
+        let mut expected: Vec<Value> = Vec::new();
+        for row in takes {
+            let take = row.get("path").and_then(Value::as_str).ok_or_else(|| {
+                invalid("expectedTakes rows carry `path`, `start`, `sourceIn`, `sourceOut` and `speed`")
+            })?;
+            let start = row.get("start").and_then(Value::as_f64).unwrap_or(0.0);
+            let source_in = row.get("sourceIn").and_then(Value::as_f64).unwrap_or(0.0);
+            let source_out = row.get("sourceOut").and_then(Value::as_f64).unwrap_or(f64::INFINITY);
+            let speed = row.get("speed").and_then(Value::as_f64).unwrap_or(1.0);
+            let rate = if speed > 0.0 { speed } else { 1.0 };
+            let words = transcript_words(take, backend)?;
+            for word in words {
+                // Only the span the clip plays: a word outside [in, out)
+                // never reaches the render, and leaving it in would count
+                // it missing for no reason.
+                let at = word.get("start").and_then(Value::as_f64).unwrap_or(0.0);
+                if !(source_in..source_out).contains(&at) {
+                    continue;
+                }
+                let placed = |moment: f64| start + (moment - source_in) / rate;
+                let mut word = word.clone();
+                if let Some(from) = word.get("start").and_then(Value::as_f64) {
+                    word["start"] = json!(placed(from));
+                }
+                if let Some(to) = word.get("end").and_then(Value::as_f64) {
+                    word["end"] = json!(placed(to));
+                }
+                expected.push(word);
+            }
+        }
+        spec["expected"] = Value::Array(expected);
+    }
+    if let Some(actual) = fields.get("actualPath").and_then(Value::as_str) {
+        let words = transcript_words(actual, backend)?;
+        spec["actual"] = Value::Array(words);
+    }
+    Ok(())
+}
+
+/// A file's transcribed words, from the backend's analysis registry: the
+/// status `analysis_wait` serves by path, its `output` the transcript the
+/// job left there. A job that is not done is an error naming the file -
+/// a comparison that never saw one side is not a comparison.
+fn transcript_words(path: &str, backend: &mut dyn Backend) -> Result<Vec<Value>, ApiError> {
+    let status = backend.call(request("export.status", json!({ "path": path }))?)?;
+    match status.get("state").and_then(Value::as_str) {
+        Some("done") => {}
+        Some(state) => {
+            return Err(ApiError::failed(format!(
+                "the transcript of {path} is {state}, not done: a verify needs both sides' words"
+            )))
+        }
+        None => {
+            return Err(ApiError::failed(format!(
+                "{path} has no analysis to verify with: transcribe it first"
+            )))
+        }
+    }
+    let Some(output) = status.get("output").and_then(Value::as_str) else {
+        return Err(ApiError::failed(format!(
+            "the transcript of {path} ended with no output"
+        )));
+    };
+    let transcript: Value = serde_json::from_str(output).map_err(|error| {
+        ApiError::failed(format!("the transcript of {path} is not JSON: {error}"))
+    })?;
+    let words = match &transcript {
+        Value::Object(map) => map
+            .get("segments")
+            .and_then(Value::as_array)
+            .map(|segments| {
+                segments
+                    .iter()
+                    .filter_map(|segment| segment.get("words").and_then(Value::as_array))
+                    .flatten()
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
+        Value::Array(list) => list.clone(),
+        _ => Vec::new(),
+    };
+    Ok(words)
 }
 
 /// The voiceover read as a score: the `voice` tool's extract. One spec in

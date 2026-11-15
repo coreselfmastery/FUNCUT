@@ -348,7 +348,10 @@ fn validate_dotlottie_archive(archive: &mut ZipArchive<Cursor<&[u8]>>) -> Result
         let file = archive
             .by_index(index)
             .map_err(|error| format!("cannot inspect dotLottie entry: {error}"))?;
-        if safe_relative_path(file.name()).is_none() {
+        let name = file
+            .name()
+            .map_err(|error| format!("cannot inspect dotLottie entry: {error}"))?;
+        if safe_relative_path(&name).is_none() {
             return Err("dotLottie archive contains an unsafe entry path".into());
         }
         let size = file.size();

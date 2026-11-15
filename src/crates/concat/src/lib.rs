@@ -3193,7 +3193,7 @@ mod tests {
         let error =
             super::open_launch_project(&scratch.0).expect_err("refuses a non-project folder");
         assert!(
-            error.contains("project.json") || error.contains("is not a Concat project"),
+            error.contains("concat.json") || error.contains("is not a Concat project"),
             "the error names what it could not read: {error}"
         );
 

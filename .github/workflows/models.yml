@@ -73,8 +73,12 @@ jobs:
 
       # What the fetch recorded, if anything: the digests are now in the
       # table and in the engine, and that diff is what wants committing.
+      # Runs even when a later model's fetch failed: the digests recorded
+      # before it are real, and losing them with the runner would leave
+      # those downloads accepted unverified after all.
       - name: Digests recorded
         id: recorded
+        if: ${{ !cancelled() }}
         run: |
           set -euo pipefail
           if git diff --quiet; then

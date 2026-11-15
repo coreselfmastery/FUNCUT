@@ -33,7 +33,7 @@ This file records limitations that remain on `main`. It is not a list of histori
 - **Native Lottie and dotLottie playback: implemented.** PR #91: `NodeKind::Lottie` renders through rasterlottie with bounded v1/v2 dotLottie loading, image resolution and support diagnostics; CI/Geneva/Nix green on the merge.
 - **VAAPI hardware encode: implemented (opt-in).** PR #95: the export sheet's GPU-by-name choice, `vaapi_first`, and the `vaapi_possible` render-node gate; CI green with the encoder lists never reaching a stub dlopen on hardwareless runners.
 - **The export queue and timeline picker: implemented.** PR #96 (carrying PR #93): timeline picker, multiple jobs, per-job progress and cancel.
-- **The MCP context cap: re-measured.** The export surface's growth (VAAPI choice, the queue's timeline picker) read 242,070 over 109 tools; the cap moved to 243,000 (`d13a4eec`), function, not prose.
+- **The MCP context cap: re-measured.** The export surface's growth (VAAPI choice, the queue's timeline picker) read 242,070 over 110 tools; the cap moved to 243,000 (`d13a4eec`), function, not prose.
 - **Native `CompEngine`: implemented.** PR #79 merged the in-process tiny-skia compositor, including paths, shapes, text, still images, nested comps, masks, mattes, and supported effects. Lottie and shader packages remain outside its supported render set.
 - **E303 timeline collision: fixed with regression coverage.** PR #78 handles sub-millisecond key collisions.
 - **Export output verification: implemented.** PR #78 reads back the exported file and checks that it opens, contains video, and is close to the requested timeline duration.

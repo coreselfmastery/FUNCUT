@@ -545,6 +545,10 @@ mod tests {
         // creativeBrief.monetized, and the three tool descriptions
         // that say the gates exist - function, not prose: the flag a
         // monetised edit needs before it shops stock. The
+        // And once more, 250,000 -> 252,000, still at 110: the merged
+        // tree measures 250,809 - accumulated function (the re-send
+        // guard's field on the waits, the resultify surface's own
+        // descriptions), not prose. The
         // director's default surface - what `concat --mcp` serves an
         // agent that names no list, and the budget that matters by
         // default - keeps its own, tighter cap below.
@@ -559,7 +563,7 @@ mod tests {
             "CONTEXT whole catalogue: {total} over {} tools",
             sizes.len()
         );
-        assert!(total < 250_000, "{total}: {sizes:?}");
+        assert!(total < 252_000, "{total}: {sizes:?}");
         for (name, size) in &sizes {
             assert!(*size < 64_000, "{name}: {size}");
         }

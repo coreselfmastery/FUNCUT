@@ -330,7 +330,7 @@ const KEYED_VIEWS_KEPT: usize = 64;
 /// How many idempotency keys are remembered at all, in memory and in the
 /// project's ledger file (F-05, F-06). A key past the cap is forgotten
 /// - its re-send applies again - which is the documented degradation a
-/// bounded ledger owes, against the OOM an unbounded one promised.
+///   bounded ledger owes, against the OOM an unbounded one promised.
 const LEDGER_KEYS_KEPT: usize = 4096;
 
 /// The durable ledger's name, inside the project it belongs to (F-06):

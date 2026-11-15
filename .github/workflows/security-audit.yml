@@ -1,5 +1,8 @@
 name: Dependency security audit
 
+# This PR is stacked on the dependency-upgrade branch: audit its merged lockfile
+# before deciding whether any remaining advisory needs a narrowly justified exception.
+
 on:
   push:
     branches: [main]

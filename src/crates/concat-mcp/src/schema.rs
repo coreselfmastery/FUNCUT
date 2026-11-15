@@ -611,9 +611,13 @@ mod tests {
         // and bgm_import take, creativeBrief.monetized in the plan
         // schema, and the three descriptions that say the gates exist -
         // 249,336 measured; function, not prose: the flag a monetised
-        // edit needs before it shops stock.
+        // edit needs before it shops stock. And 236,000 -> 238,000,
+        // still at 110 on the surface: the catalogue's own two
+        // growths since (the compact plan_validate projection and the
+        // licence gates) ride the director's tools too - 237,161
+        // measured; function, not prose, again.
         assert!(
-            director < 236_000,
+            director < 238_000,
             "the director's default surface is {director} characters - too much for an agent to hold"
         );
     }

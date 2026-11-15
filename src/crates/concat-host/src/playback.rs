@@ -669,7 +669,7 @@ fn decode_worker(playback: &Arc<Playback>) {
                 // Newest first: pop from the back where set_clips pushes.
                 match jobs.pop_back() {
                     Some(job) => break job,
-                    None => jobs = playback.queue.available.wait(jobs).unwrap(),
+                    None => jobs = playback.queue.available.wait(jobs).unwrap_or_else(|poisoned| poisoned.into_inner()),
                 }
             }
         };

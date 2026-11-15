@@ -1,5 +1,91 @@
 # DIRECTOR-COMPLETION-TRACKER
 
+## The 2026-11-15 fix session — the bug list, worked through
+
+The session brief was the complete bug audit (12 tiers). What landed on
+`main`, in the order it landed; the engine crates were compiled and their
+tests run locally against the pinned dependencies (`cargo check` and the
+`concat-api`, `concat-host` proxy and catalogue tests green on this
+machine; the GUI `concat` crate is CI's to build — TEST_EVIDENCE.md's
+small-machine rule), and the Python senses ran their selftests green
+after every change.
+
+**Pull requests merged (the landing stack the release owed):**
+- #134 — VERIFY-16, the export's missing audio stream named, not shipped.
+- #133 — RISK-01/RISK-02/CONTRA, the licence gates enforced (resolved
+  against the SCH-02 schema generator: the canonical template carries
+  `creativeBrief.monetized`, both committed schemas regenerated and
+  byte-checked, the catalogue budgets widened to 250,000/236,000).
+- #138, #140, #142 — the director-tracker reconciliation, the proxy
+  startup I/O gate recheck, the Geneva master-list reconciliation.
+- #135 — the final bug audit and the UNVER-03 evidence (resolved against
+  main: its "the build-env scripts are local-only" claims predate their
+  being committed to the tree).
+- #141 (cargo-audit workflow) left open on purpose: it fails on the 17
+  RustSec advisories it exists to surface, and merging it adds a
+  permanently red check until the lockfile is updated — its findings
+  should drive a dependency-update session, not this release.
+
+**P0 — ship blockers (one commit each):**
+- The .deb/.rpm recommend `mesa-vulkan-drivers` (lavapipe): a GPU-less
+  4-6 GB machine gets a working `preview_frame` out of the box — the
+  whole AUTO EDIT loop depends on it. `52c37fa5`.
+- The AppImage survives a machine without libfuse2: the installer checks
+  FUSE and, where it is missing, installs a wrapper running the AppImage
+  with `--appimage-extract-and-run`, with the notes saying how to get the
+  direct start back. `4de52118`.
+- A bad `--project` path is an error dialog naming the path and a
+  non-zero exit, never an empty editor that reads as data loss.
+  `67498955`.
+
+**P1 — the pipeline's truths:**
+- F-01: the bed is not the voiceover — `<project>/bgm/` is BGM however
+  the timeline is drawn; a BGM-only project does not arm AUTO EDIT, and
+  a bed beside a real take stays out of the voiceover lane. `5c716d4e`.
+- F-04: the AUTO EDIT verify compares the export's re-transcribed words
+  with the takes' own, placed on the timeline (`expectedTakes`/
+  `actualPath`, fetched from the analysis registry), and gates on
+  `verdict=pass` beside the loudness gate. `63eb9ce1` + `5c716d4e`.
+- F-05/F-06/F-07: the idempotency answers are bounded (hash per key,
+  view for the recent 64, ring capped at 4096) and durable
+  (`<project>/.idempotency-ledger.json`, adopted on open), and an edit
+  whose autosave cannot write says so on the reply's new `unsaved`
+  field — for apply, setVideo, undo and redo alike. `f03be5f7`.
+
+**P2 — the rest of the list:**
+- `--help`/`-h` print and exit 0; a headless `--smoke` runs the checks
+  that need no window; the `--mcp window` fresh-install refusal names
+  the default; the three-day update check is opt-in, matching
+  CODE_SIGNING.md's privacy policy; `concat_version` answers the fork's
+  own `0.2.8-funcut.13`, not upstream's bare number. `017ad223`,
+  `632bea77`.
+- F-08/F-09: the proxy's name is the hash of the file's whole content,
+  cached by size and mtime — the per-edit proxy validation is a stat per
+  file instead of three 64 KiB reads per file per edit, and a change
+  anywhere in the file names a new copy. F-14's stale H.264 comment fixed
+  on the way. `8f5ee2d1`.
+- F-10: `BeatGrid` deleted (no consumers); `BakeRequest.crf` left as it
+  stands — the motion agent's `--encode` reads it as its fallback.
+  `6952b617`.
+- B2: the vowel-dispersion note is emitted when the formant ear is built
+  (`if False` removed). B1: both caption paths skip the spans a plan
+  flags `captions: false`. `9d7ca3fe`.
+- The dead-code sweep: ~22 verified sites (pyflakes + context read),
+  every sense selftest green after. `3d869461`.
+- B5 (two broken doc links), README's 109/99 tool count. `932591b2`.
+- The installer's wget fallback: the quoted wgetrc header was verified
+  against a local echo server to send literal quotes — the token never
+  authorized at all on the wget path; the file is now written unquoted
+  for wget, quoted for curl. Beside P0-2 in `4de52118`.
+
+**Still owed (unchanged by this session):** UNVER-01..05 and the real E2E
+acceptance need the target laptop; the 30 undefined audit IDs and
+DATA-01's second half need the owner's definitions; #141's RustSec
+advisories need a dependency-update session; the CI engine job's 2-core
+4 GB runner remains the fragile one (a swap or a split heavy-test job
+would harden it — not attempted this session, to keep the release
+diff reviewable).
+
 ## Current-main reconciliation — 2026-11-14
 
 This recheck supersedes older Session 5/Session 6 statements below wherever they say the AUTO EDIT button is not integrated or the revise loop has not started. Those statements were accurate at their historical snapshot but are no longer true on current main.
@@ -15,7 +101,7 @@ The current Forge AUTO EDIT button is real and wired, but its program stages are
 - **Runner foundation — implemented:** PR #110 merged at `77392956859352c18924e728b1ccdaa286ac60f7`.
 - **Window/MCP integration — implemented:** PR #118 merged at `621420fb696fe7c9f79b61c8ad963db820c79ffe`. Current source has `concat-mcp::director::BackendToolCaller`, `concat-mcp/Cargo.toml` depends on `concat-director`, and the Forge pane constructs `Runner` against the window's own toolbox/backend.
 - **AUTO EDIT UI — integrated, limited scope:** `src/crates/concat/ui/workspace/forge-page.slint` contains the start/cancel control and progress pane; `src/crates/concat/src/panes/forge.rs` wires start, cancel, progress ticks, completion, failure and rollback state. However, the current `auto_edit_program` is a post-production workflow for an existing voiceover, not a brief-to-video creator.
-- **Verify record — implemented:** PR #119 merged at `2eb5ff54492a7659469aecc2eafebecd410ee4d4` added the twelve original structured checks. PR #120 merged at `c8eeac7884235e2928fdedea504e71c1cee72cb9` added the later disclosure check and per-slot evidence; current main has VERIFY-01..05 and VERIFY-08..15 (13 checks). PR #134 proposes VERIFY-16 for an audio-stream presence check; it is still open and not part of main.
+- **Verify record — implemented:** PR #119 merged at `2eb5ff54492a7659469aecc2eafebecd410ee4d4` added the twelve original structured checks. PR #120 merged at `c8eeac7884235e2928fdedea504e71c1cee72cb9` added the later disclosure check and per-slot evidence; current main has VERIFY-01..05 and VERIFY-08..15 (13 checks). PR #134's VERIFY-16, the export's missing audio stream named rather than shipped, merged 2026-11-15 (`b96850ac`).
 - **Python revision loop — implemented and self-tested, but not wired into the UI Runner:** `scripts/auto_director.py` runs up to two per-slot revision passes, gives B-roll and graphic slots separate revision renders, and records exhausted attempts. `--self-test` runs both `self_test()` and `revision_self_test()`; the exact-main Format/locales/models job ran that self-test successfully on main SHA `dd109b8...` (CI run [43620426031](https://github.com/coreselfmastery/FUNCUT/actions/runs/43620426031), job [132524671919](https://github.com/coreselfmastery/FUNCUT/actions/runs/43620426031/job/132524671919)). This is a separate Python path: the Forge `auto_edit_program` does not include `Stage::Plan`, `Gather`, `Motion`, `Captions`, `Preview` or `Revise`; its source comment assigns the creative layer to an external Director agent. The Python skill also says it consumes a Director-authored plan and does not invent the topic, script or edit plan.
 - **Not accepted end-to-end:** no real brief-to-export project with real provider credentials, actual footage/voice, inspected final media, and observed cancel/rollback on the target antiX laptop has been recorded. The runner/UI being wired and mock/self-tests passing does not close UNVER-01..05.
 

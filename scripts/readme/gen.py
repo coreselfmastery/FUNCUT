@@ -11,7 +11,7 @@ words here, then render again, rather than editing twenty files by hand.
 The English README stays the one kept current; every translation says so
 at its top, with the date it was made.
 """
-import glob, importlib.util, os, sys, re
+import glob, importlib.util, os, re
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 LANGS = {}

@@ -769,7 +769,6 @@ def _score_script_quality(spec):
 
     # 3. Clarity (0-15): from the readability read.
     mean_wps = total / len(texts)
-    latin = _script_kind(" ".join(texts)) in ("latin",) or True
     spw = sum(_vs._syllables(t) for t in _tokens(" ".join(texts))) / total
     flesch = 206.835 - 1.015 * mean_wps - 84.6 * spw
     clarity = {
@@ -1224,7 +1223,7 @@ def selftest(only=None):
             checks.append({"tool": name, "ok": False, "error": f"{type(exc).__name__}: {exc}"})
     # the Bengali path: code switching + cross-lingual emotion
     try:
-        mixed = handler_spec = {"script": _SELFTEST_SCRIPT + "\n" + _SELFTEST_BENGALI}
+        mixed = {"script": _SELFTEST_SCRIPT + "\n" + _SELFTEST_BENGALI}
         out = _detect_code_switching(mixed)
         checks.append({"tool": "detect_code_switching (bengali mix)",
                        "ok": bool(out.get("ok")) and out.get("mixedTake") is True,

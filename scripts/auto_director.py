@@ -1612,8 +1612,6 @@ def run_pipeline(
     audio_media_id: str | None = None,
 ) -> list[tuple[str, dict[str, Any]]]:
     """Validate, source, repair, place, export and inspect a real segment plan."""
-    phases = phase_plan(plan)
-    total = len(phases)
     done: list[tuple[str, dict[str, Any]]] = []
     step = 0
 
@@ -5589,7 +5587,6 @@ def self_test() -> int:
         print(f"FAIL: the report's checks are not the fourteen the stage owes: "
               f"{[entry.get('id') for entry in entries]}")
         return 1
-    probe_ids = ("VERIFY-01", "VERIFY-04", "VERIFY-09", "VERIFY-10", "VERIFY-11", "VERIFY-16")
     for check_id in wanted_ids:
         status = by_check[check_id].get("status")
         expected_status = "pass"

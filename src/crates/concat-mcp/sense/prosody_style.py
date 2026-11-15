@@ -121,7 +121,6 @@ def _score_emphasis_type(spec):
         emphasis_source = ("python (emphasis grammar: contrastive markers, "
                            "intensifiers, list heads, new-information deicts)")
         for idx, line in enumerate(lines):
-            text = str(line.get("text") or "")
             words = _vs._words_of(line)
             toks = [re.sub(r"[^\w']", "", str(w.get("text") or "").lower()) for w in words]
             emph = []
@@ -188,11 +187,7 @@ def _detect_speaking_style(spec):
     err, samples, env = _vq._need_audio(spec)
     if err:
         return {"ok": False, "error": err}
-    lines = _vs._collect_lines(spec)
     _, words = _words_with_times(spec)
-
-    duration = len(samples) / RATE if (samples := samples) is not None else 0.0
-    rate = _vq.RATE
     # Speech rate: words inside voiced spans, per minute.
     if words:
         span = max(0.05, (words[-1]["end"] - words[0]["start"]))
@@ -287,7 +282,6 @@ def _measure_rhythm_meter(spec):
     err, samples, env = _vq._need_audio(spec)
     if err:
         return {"ok": False, "error": err}
-    lines = _vs._collect_lines(spec)
     _, words = _words_with_times(spec)
     if not words:
         return {"ok": False, "error": "no word timings: rhythm needs the transcript's words"}

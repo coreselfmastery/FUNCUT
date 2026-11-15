@@ -93,8 +93,6 @@ def _evaluate_tts_quality(spec):
     f0s = [t[1] for t in track]
     if len(f0s) >= 5:
         f0_mean = sum(f0s) / len(f0s)
-        semis = 12 * math.log2(max(f0s) / min(min(f0s), f0_mean))
-        semis_down = 12 * math.log2(f0_mean / max(min(f0s), 1e-3))
         range_semis = 12 * math.log2(max(f0s) / max(min(f0s), 1e-3))
         f0_cv = (math.sqrt(sum((f - f0_mean) ** 2 for f in f0s) / len(f0s)) / f0_mean)
     else:

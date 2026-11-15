@@ -77,7 +77,7 @@ def measure(frames: list[Path]):
         m = sense.tile_metrics(rgb, w, h)
         m.update({"index": i, "at": i, "label": str(i + 1)})
         metas.append(m)
-    dup_groups, seen = [], {}
+    seen = {}
     for m in metas:
         match = None
         for hsh, members in seen.items():

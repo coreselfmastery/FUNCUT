@@ -40,9 +40,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import os
 import re
-import shutil
 import sys
 from pathlib import Path
 
@@ -160,7 +158,6 @@ def _enhance_speech(spec):
         windows.append(max(env[i:i + win_frames]))
     windows.sort()
     floor_db = _vq._db(windows[int(0.15 * len(windows))]) if windows else -60.0
-    peak_db = _vq._db(max(abs(s) for s in samples) / 32768.0)
     integrated, lra, tp = _vs._integrated(ff, audio)
 
     target_lufs = float(spec.get("targetLufs") or -16.0)
@@ -963,7 +960,7 @@ def selftest(only=None):
         # what the selftest proves on a machine with no ffmpeg, beside
         # the music reads, which decode WAV natively and prove fully.
         writers = ("enhance_speech", "remove_hiss_hum_rumble", "normalize_loudness")
-        no_ffmpeg = (refusal := _needs_ffmpeg({})) is not None
+        no_ffmpeg = _needs_ffmpeg({}) is not None
         for name, handler in TOOLS.items():
             if only and name != only:
                 continue

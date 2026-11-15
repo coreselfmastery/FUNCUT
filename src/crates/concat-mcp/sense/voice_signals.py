@@ -317,7 +317,6 @@ def _classify_pauses(spans, lines):
                 before = (i, str(line.get("text") or ""))
             if line.get("start") >= end - 0.05 and after is None:
                 after = (i, str(line.get("text") or ""))
-        ends_sentence = bool(before and re.search(r"[.!?][\"')\]]*$", before[1].rstrip()))
         next_lower = bool(after and after[1][:1].islower())
         if dur < 0.25:
             kind, keep = "breath", True
@@ -788,7 +787,6 @@ def _signal_confidence(sources, audio, rust, wx_words, series, notes):
     single-channel envelope, emphasis without word timings: each is
     honest about what it is."""
     rust_up = bool(rust)
-    has_audio = bool(audio)
     band = None
     forensic = (rust or {}).get("forensic", {}).get("whole") or {}
     sample_rate = forensic.get("sampleRateHz") or forensic.get("sampleRate")
@@ -803,7 +801,7 @@ def _signal_confidence(sources, audio, rust, wx_words, series, notes):
     # Loudness: ebur128 measured on the real take, or nothing.
     if sources.get("loudness"):
         entry("loudness", 0.9,
-              f"ffmpeg ebur128 momentary series over the take"
+              "ffmpeg ebur128 momentary series over the take"
               + (f"; bandwidth {band/1000:.1f} kHz" if band else ""))
     else:
         entry("loudness", 0.0, "no audio: the loudness signals are absent")

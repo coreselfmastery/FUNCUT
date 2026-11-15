@@ -836,9 +836,6 @@ def cmd_selftest(_spec: dict) -> dict:
         (staged / "assets").mkdir()
         (staged / "assets" / "plate.png").write_bytes(b"pngpngpng")
 
-        client = S3("bucket", "farms/selftest/", MockS3Handler.region,
-                    MockS3Handler.access_key, MockS3Handler.secret_key,
-                    f"http://127.0.0.1:{port}")
         # The environment the client normally reads, set here so _trees
         # walks the same door the tool does.
         os.environ["FUNCUT_FARM_BUCKET"] = "bucket"

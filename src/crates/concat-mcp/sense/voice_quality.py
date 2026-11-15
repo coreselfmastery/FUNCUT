@@ -39,7 +39,6 @@ import io
 import json
 import math
 import re
-import struct
 import sys
 import wave
 from array import array
@@ -709,7 +708,6 @@ def _measure_reverb(spec):
     rt60s = []
     early_ratios = []
     for onset in onsets:
-        start = onset * HOP
         seg = []
         for i in range(onset, min(len(env), onset + 100)):  # 1 s of tail
             acc = 0.0

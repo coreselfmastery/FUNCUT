@@ -35,7 +35,7 @@ region_stats = frames.region_stats
 
 def card_region(pixels):
     """The stat cards' own span, minus the frame's border."""
-    width, height = pixels[0], pixels[1]
+    width = pixels[0]
     return (180, 300, width - 180, 760)
 
 

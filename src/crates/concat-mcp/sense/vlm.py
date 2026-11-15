@@ -40,7 +40,6 @@ import ipaddress
 import json
 import os
 import platform
-import shutil
 import stat
 import subprocess
 import sys

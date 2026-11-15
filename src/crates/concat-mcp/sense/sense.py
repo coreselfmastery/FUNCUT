@@ -905,7 +905,7 @@ def build_sheet(spec):
             errors.append(f"write png: {exc}")
 
     # Cross-frame analysis: duplicates, static runs, cut energy.
-    dup_groups, seen = [], {}
+    seen = {}
     for m in metas:
         match = None
         for h, members in seen.items():

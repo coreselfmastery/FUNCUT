@@ -107,3 +107,14 @@ free for **non-commercial use only**: MobyGratis's own licence governs
 what Moby granted, so never put one of its 166 tracks in monetized or
 client work; the pack's tracks are credited to Moby (MobyGratis) in the
 same place. See `THIRD_PARTY_NOTICES.md` for the full notice.
+
+Every track every `bgm` method hands back says which of the two it
+carries, in its `license` field: `CC0-1.0` or `MobyGratis-NonCommercial`.
+Since `v0.2.8-funcut.13` the non-commercial rule is enforced, not
+advised: `bgm_import` takes a `monetized` flag (true when the edit's
+`creativeBrief.monetized` is `true`) and refuses MobyGratis tracks when
+it is set; the AUTO EDIT runner shops a monetized bed on the FreePD
+shelf only and refuses a plan that names a `lofi-` track as its bed; and
+`plan_validate` blocks a monetized plan whose bed names one. A
+non-monetized edit is unchanged - the shelves answer as they always
+did.

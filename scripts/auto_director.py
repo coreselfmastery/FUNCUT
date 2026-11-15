@@ -556,6 +556,26 @@ _SIGNAL_ALIASES = {
 }
 
 
+def _bgm_commercial_ok(track: Any) -> bool:
+    """RISK-02: whether a bgm_search candidate may serve a monetized
+    edit. The track's own `license` field is the record; a server that
+    predates it is answered by the id's shelf prefix - the one part of
+    the contract that never changed (`freepd-` is CC0, `lofi-` is
+    MobyGratis, free for non-commercial use only)."""
+    if not isinstance(track, dict):
+        return False
+    track_id = str(track.get("id") or "").strip()
+    if not track_id.startswith("freepd-"):
+        return False
+    licence = track.get("license")
+    if isinstance(licence, str) and licence.strip():
+        return licence.strip() == "CC0-1.0"
+    # Older servers did not send a license field; only the known FreePD
+    # shelf prefix is a safe fallback. Unknown ids and license values fail
+    # closed rather than being treated as commercial by default.
+    return True
+
+
 def _measured_families(voice: Any) -> set[str]:
     """The signal families the take actually measured, from the
     voice_signals reply's own confidence map: a family the reading
@@ -2227,8 +2247,14 @@ def run_pipeline(
         )
     _audit("signalLog", "executed",
            "validated: driven, covered, and every citation answered by the measured take")
+    # RISK-01/RISK-02: the brief's own monetized flag arms the licence
+    # gates - OpenVid stock and MobyGratis beds are refused from here on,
+    # at the plan's own contract first and again at each import call.
+    brief = plan.get("creativeBrief")
+    monetized = bool(brief.get("monetized")) if isinstance(brief, dict) else False
     _audit("creativeBrief", "executed",
-           "validated: the creative gate answered ready against it")
+           "validated: the creative gate answered ready against it"
+           + ("; monetized: the stock and BGM licence gates are armed" if monetized else ""))
     _audit("aspect", "executed", "validated: the frame the plan promises")
     _audit("mode", "executed", "validated: the shape the plan is cut to")
     _audit("sections", "executed", "validated: the acts and their spans")
@@ -2242,6 +2268,18 @@ def run_pipeline(
             raise PipelineError(f"segment-{index + 1}: visual must be an object")
         kind = visual.get("type")
         if kind == "broll":
+            if monetized:
+                # RISK-01: the OpenVid index carries no per-clip licence
+                # record (docs/STOCK_LICENSING.md), so a monetized edit
+                # cannot import its stock at all. Refused before anything
+                # is shopped or fetched.
+                raise PipelineError(
+                    f"segment-{index + 1}: the brief is monetized and this B-roll is "
+                    "OpenVid stock, whose index carries no per-clip licence record "
+                    "(docs/STOCK_LICENSING.md) - a monetized edit cannot import it. "
+                    "Clear the clip yourself and pass it as existing media "
+                    "(visual.type existing), or plan the edit non-monetized."
+                )
             query = str(visual.get("query") or "").strip()
             description = str(
                 visual.get("description") or segment.get("spoken") or ""
@@ -2705,7 +2743,8 @@ def run_pipeline(
         target_duration = float(segment["end"]) - start_at
         imported = advance(
             "openvid_import",
-            {"path": project, "ids": [_clip_int_id(clip["id"], slot_id)], "start": start_at},
+            {"path": project, "ids": [_clip_int_id(clip["id"], slot_id)], "start": start_at,
+             **({"monetized": True} if monetized else {})},
         )
         media_ids = imported.get("mediaIds", []) if isinstance(imported, dict) else []
         if not media_ids:
@@ -3508,6 +3547,19 @@ def run_pipeline(
                 )
             if state == "ready":
                 track_id = bgm_plan.get("trackId")
+                if (
+                    monetized
+                    and isinstance(track_id, str)
+                    and track_id.strip().startswith("lofi-")
+                ):
+                    # RISK-02: the plan named a track the licence forbids
+                    # for a monetized edit - refused, not swapped.
+                    raise PipelineError(
+                        f"the plan names MobyGratis track {track_id.strip()} for the "
+                        "bed and the brief is monetized: the MobyGratis shelf is free "
+                        "for non-commercial use only (docs/STOCK_LICENSING.md). Name a "
+                        "FreePD (CC0-1.0) track or plan the edit non-monetized."
+                    )
                 if not isinstance(track_id, str) or not track_id.strip():
                     # FALL-09: the bed is shopped with the plan's own
                     # query, and a plan that named only a mood shops with
@@ -3515,20 +3567,56 @@ def run_pipeline(
                     bed_query = str(bgm_plan.get("query") or bgm_plan.get("mood") or "")
                     if not bgm_plan.get("query") and bgm_plan.get("mood"):
                         log(f"BGM: shopping by mood ({bgm_plan.get('mood')}) - the plan named no query")
-                    search = advance("bgm_search", {"query": bed_query, "limit": 5})
+                    search_args: dict[str, Any] = {"query": bed_query, "limit": 5}
+                    if monetized:
+                        # RISK-02: the commercial shelf only - MobyGratis
+                        # is free for non-commercial use, so a monetized
+                        # edit never shops it.
+                        search_args["source"] = "freepd"
+                    try:
+                        search = advance("bgm_search", search_args)
+                    except PipelineError as error:
+                        if not monetized:
+                            raise
+                        log(f"BGM skipped: the FreePD shelf did not answer the monetized bed ({error})")
+                        search = {}
                     tracks = search.get("tracks", []) if isinstance(search, dict) else []
+                    if monetized:
+                        # RISK-02: the licence field is the record; the
+                        # shelf prefix is the stable fallback. The import
+                        # gate enforces this again server-side.
+                        tracks = [t for t in tracks if _bgm_commercial_ok(t)]
                     if not tracks:
-                        log(f"BGM skipped: no track answered {bgm_plan.get('query')!r}")
-                        _audit("audio.bgm", "rejected",
-                               f"no track answered {bgm_plan.get('query')!r}")
-                        _signal(0.0, "bgm", provenance="fallback",
-                                note=f"no track answered {bgm_plan.get('query')!r}")
+                        if monetized:
+                            reason = (
+                                "no commercially-licensed (FreePD, CC0-1.0) track "
+                                "answered the query; the MobyGratis shelf is "
+                                "non-commercial only, so the bed the plan promised "
+                                "is missing from the export"
+                            )
+                            record_fallback(
+                                "bgm", "bed", "bgm_search",
+                                "no commercially-licensed (FreePD, CC0-1.0) track "
+                                "answered the query; the MobyGratis shelf is "
+                                "non-commercial only, so the bed the plan promised "
+                                "is missing from the export",
+                            )
+                        else:
+                            reason = f"no track answered {bgm_plan.get('query')!r}"
+                        log(f"BGM skipped: {reason}")
+                        _audit("audio.bgm", "rejected", reason)
+                        _signal(0.0, "bgm", provenance="fallback", note=reason)
                         tracks = []
                     if tracks:
                         track_id = str(tracks[0].get("id") or "")
                         log(f"BGM: {tracks[0].get('title', track_id)}")
                 if track_id:
-                    imported = advance("bgm_import", {"path": project, "ids": [track_id], "start": 0.0})
+                    import_args: dict[str, Any] = {"path": project, "ids": [track_id], "start": 0.0}
+                    if monetized:
+                        # RISK-02: the server enforces the licence again,
+                        # at the import itself.
+                        import_args["monetized"] = True
+                    imported = advance("bgm_import", import_args)
                     media_ids = imported.get("mediaIds", []) if isinstance(imported, dict) else []
                     if not media_ids:
                         raise PipelineError("bgm_import returned no media id for the bed")
@@ -4040,7 +4128,8 @@ def run_pipeline(
         clip = chosen[slot_id]
         imported = advance(
             "openvid_import",
-            {"path": project, "ids": [_clip_int_id(clip["id"], slot_id)], "start": start_at},
+            {"path": project, "ids": [_clip_int_id(clip["id"], slot_id)], "start": start_at,
+             **({"monetized": True} if monetized else {})},
         )
         media_ids = imported.get("mediaIds", []) if isinstance(imported, dict) else []
         if not media_ids:
@@ -5105,6 +5194,34 @@ def self_test() -> int:
         return 1
     print("enrichment ok: grade layered, captions placed, SFX peaked on beat, bed ducked")
 
+    # RISK-02: the default (non-monetized) bed import is the plain call -
+    # no monetized key, the lofi track the mock serves imported as ever.
+    bed_import = next(args for tool, args in by_tool if tool == "bgm_import")
+    if "monetized" in bed_import or bed_import.get("ids") != ["lofi-0123456789ab"]:
+        print(f"FAIL: the non-monetized bed import was not the plain call: {bed_import}")
+        return 1
+    # RISK-02: the commercial shelf is allow-listed, not deny-listed.
+    # Unknown licenses, mismatched shelf metadata and unknown ids fail closed;
+    # older servers may omit license only for the known FreePD id prefix.
+    if not _bgm_commercial_ok({"id": "freepd-0123456789ab", "license": "CC0-1.0"}):
+        print("FAIL: a known CC0 FreePD track was rejected")
+        return 1
+    if _bgm_commercial_ok({"id": "freepd-0123456789ab", "license": "Commercial"}):
+        print("FAIL: an unknown license was accepted for monetized use")
+        return 1
+    if _bgm_commercial_ok({"id": "lofi-0123456789ab", "license": "CC0-1.0"}):
+        print("FAIL: a MobyGratis id overrode its non-commercial shelf")
+        return 1
+    if _bgm_commercial_ok({"id": "unknown-0123456789ab"}):
+        print("FAIL: an unknown shelf id was treated as CC0")
+        return 1
+    if not _bgm_commercial_ok({"id": "freepd-0123456789ab"}):
+        print("FAIL: the legacy FreePD id fallback was rejected")
+        return 1
+    print("licence filter ok: only known FreePD CC0 tracks pass; unknowns fail closed")
+
+    print("licence gates ok: the non-monetized default is unchanged")
+
     collisions = next(args for tool, args in by_tool if tool == "collision_check")
     if collisions.get("path") != project:
         print(f"FAIL: the timeline was not collision-checked: {collisions}")
@@ -6116,6 +6233,78 @@ def self_test() -> int:
         print(f"FAIL: both music readings were not recorded as measured: {both}")
         return 1
     print("FALL-10 ok: the identifier decides the disagreement, both readings recorded")
+
+    # RISK-01: a monetized brief refuses OpenVid B-roll at the plan's own
+    # contract, before anything is shopped or fetched.
+    risk01_plan = copy.deepcopy(SELF_TEST_PLAN)
+    risk01_plan["creativeBrief"]["monetized"] = True
+    risk01 = deg_project("risk-01")
+    try:
+        run_pipeline(MockMcp(selftest_world()), risk01, audio, risk01_plan)
+        print("FAIL: a monetized plan imported OpenVid stock anyway")
+        return 1
+    except PipelineError as error:
+        if "monetized" not in str(error) or "OpenVid" not in str(error):
+            print(f"FAIL: the monetized B-roll refusal named the wrong reason: {error}")
+            return 1
+    print("RISK-01 ok: a monetized brief refuses OpenVid B-roll, before any fetch")
+
+    # RISK-02: a monetized plan that names a MobyGratis bed is refused,
+    # not silently swapped for another track.
+    risk02_plan = copy.deepcopy(SELF_TEST_PLAN)
+    risk02_plan["creativeBrief"]["monetized"] = True
+    risk02_plan["segments"][0]["visual"] = {"type": "existing", "mediaId": "m-existing"}
+    risk02_plan["audio"]["bgm"] = {"trackId": "lofi-0123456789ab", "duckDb": -14.0}
+    risk02 = deg_project("risk-02")
+    try:
+        run_pipeline(MockMcp(selftest_world()), risk02, audio, risk02_plan)
+        print("FAIL: a monetized plan imported the named MobyGratis bed anyway")
+        return 1
+    except PipelineError as error:
+        if "MobyGratis" not in str(error) or "monetized" not in str(error):
+            print(f"FAIL: the MobyGratis bed refusal named the wrong reason: {error}")
+            return 1
+    print("RISK-02 ok: a monetized plan refuses a named MobyGratis bed")
+
+    # RISK-02: a monetized bed is shopped on the commercial shelf only;
+    # when only a non-commercial track answers, the bed is a recorded
+    # absence, never an import.
+    risk02b_plan = copy.deepcopy(SELF_TEST_PLAN)
+    risk02b_plan["creativeBrief"]["monetized"] = True
+    risk02b_plan["segments"][0]["visual"] = {"type": "existing", "mediaId": "m-existing"}
+    risk02b = deg_project("risk-02b")
+    risk02b_calls = run_pipeline(MockMcp(selftest_world()), risk02b, audio, risk02b_plan)
+    shopped = next(args for tool, args in risk02b_calls if tool == "bgm_search")
+    if shopped.get("source") != "freepd":
+        print(f"FAIL: the monetized bed did not shop the commercial shelf: {shopped}")
+        return 1
+    if any(tool == "bgm_import" for tool, _ in risk02b_calls):
+        print("FAIL: a monetized bed imported a track the licence forbids")
+        return 1
+    if not has_entry(recorded_fallbacks(risk02b), stage="bgm", decision="bed"):
+        print(f"FAIL: the licence-blocked bed was not a recorded absence: "
+              f"{recorded_fallbacks(risk02b)}")
+        return 1
+    print("RISK-02 ok: the monetized bed shops FreePD only, and records the absence when nothing commercial answers")
+
+    # RISK-02: a monetized bed that finds a CC0 track imports it with the
+    # monetized flag said aloud, so the server enforces the licence too.
+    risk02c_world = selftest_world()
+    risk02c_world["bgm_search"] = {
+        "tracks": [{"id": "freepd-0123456789ab", "title": "Daylight",
+                    "duration": 180.0, "license": "CC0-1.0"}],
+        "total": 1,
+    }
+    risk02c_plan = copy.deepcopy(SELF_TEST_PLAN)
+    risk02c_plan["creativeBrief"]["monetized"] = True
+    risk02c_plan["segments"][0]["visual"] = {"type": "existing", "mediaId": "m-existing"}
+    risk02c = deg_project("risk-02c")
+    risk02c_calls = run_pipeline(MockMcp(risk02c_world), risk02c, audio, risk02c_plan)
+    bed = next(args for tool, args in risk02c_calls if tool == "bgm_import")
+    if bed.get("ids") != ["freepd-0123456789ab"] or bed.get("monetized") is not True:
+        print(f"FAIL: the monetized CC0 bed import did not carry the flag: {bed}")
+        return 1
+    print("RISK-02 ok: a monetized bed may import a CC0 track, the flag said aloud")
 
     print("SELF-TEST PASS")
     return 0

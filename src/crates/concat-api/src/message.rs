@@ -288,7 +288,10 @@ pub enum Request {
     /// project owns its files. With `start` they are also laid on one
     /// lane in the order given, as one undoable step; without it they
     /// wait in the bin for `clips_add_sequence` or `clip_add`. Returns
-    /// the media ids they were given.
+    /// the media ids they were given. Refuses outright when `monetized`
+    /// is true: OpenVid is a research dataset whose index carries no
+    /// per-clip licence record, so no clip has a verified licence a
+    /// monetised edit could import against.
     #[serde(rename = "openvid.import")]
     OpenvidImport {
         /// The project folder.
@@ -301,6 +304,14 @@ pub enum Request {
         /// The lane to lay them on; the first lane with room when absent.
         #[serde(default)]
         track: Option<String>,
+        /// True when the edit's creativeBrief says `monetized` - the
+        /// import is then refused: the OpenVid index carries no licence
+        /// column, author or release information
+        /// (docs/STOCK_LICENSING.md), so no clip has a verified licence
+        /// record. Clear the clip yourself and import it with
+        /// `media.import`, or plan the edit non-monetized. Default false.
+        #[serde(default)]
+        monetized: bool,
     },
 
     /// Searches the built-in sound library - 530 CC0 sounds: whooshes,
@@ -451,7 +462,9 @@ pub enum Request {
     /// files. With `start` they are also laid on one lane in the order
     /// given, as one undoable step; without it they wait in the bin for
     /// `clips_add_sequence` or `clip_add`. Returns the media ids they were
-    /// given. At most 20 tracks a call.
+    /// given. At most 20 tracks a call. MobyGratis (lofi) tracks are
+    /// refused when `monetized` is true: the shelf is free for
+    /// non-commercial use only; FreePD's CC0 passes.
     #[serde(rename = "bgm.import")]
     BgmImport {
         /// The project folder.
@@ -464,6 +477,12 @@ pub enum Request {
         /// The lane to lay them on; the first lane with room when absent.
         #[serde(default)]
         track: Option<String>,
+        /// True when the edit's creativeBrief says `monetized` -
+        /// MobyGratis (lofi) tracks are then refused, the shelf being
+        /// free for non-commercial use only; FreePD's CC0-1.0 passes.
+        /// Default false.
+        #[serde(default)]
+        monetized: bool,
     },
 
     /// The sticker shelf's state: whether its index is on this
@@ -1209,6 +1228,37 @@ pub struct BgmFound {
     pub total: u64,
 }
 
+/// The licence a music shelf's tracks carry, as every `bgm` method
+/// states it: the one fact a monetised edit needs before it shops
+/// here. FreePD is Kevin MacLeod's CC0 library; the Lo-Fi shelf is
+/// Moby's MobyGratis instrumentals, free for non-commercial use only
+/// (docs/STOCK_LICENSING.md).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub enum BgmLicense {
+    /// CC0 1.0: no attribution required, commercial use permitted.
+    #[serde(rename = "CC0-1.0")]
+    Cc0,
+    /// MobyGratis: free for non-commercial use only - never in a
+    /// monetised or client edit.
+    #[serde(rename = "MobyGratis-NonCommercial")]
+    MobyGratisNonCommercial,
+}
+
+impl BgmLicense {
+    /// Which shelf's terms a track carries.
+    pub fn of(source: concat_host::bgm::Source) -> BgmLicense {
+        match source {
+            concat_host::bgm::Source::FreePd => BgmLicense::Cc0,
+            concat_host::bgm::Source::Lofi => BgmLicense::MobyGratisNonCommercial,
+        }
+    }
+
+    /// Whether a monetised edit may use a track under these terms.
+    pub fn permits_commercial_use(self) -> bool {
+        matches!(self, BgmLicense::Cc0)
+    }
+}
+
 /// One track of the background-music library, as every `bgm` method hands
 /// it back. Everything but `localPath` comes from the shelf's catalog; the
 /// bytes arrive only when the track is fetched.
@@ -1232,6 +1282,11 @@ pub struct BgmTrack {
     pub seconds: f64,
     /// The track's size in bytes: what fetching it costs.
     pub bytes: u64,
+    /// The licence the track's shelf carries: `CC0-1.0` (FreePD) or
+    /// `MobyGratis-NonCommercial` (the Lo-Fi shelf) - the one fact a
+    /// monetised edit needs before it shops here, and what
+    /// `bgm.import`'s `monetized` gate refuses on.
+    pub license: BgmLicense,
     /// Where the track's file is on this machine, once fetched.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub local_path: Option<String>,
@@ -1254,6 +1309,7 @@ impl BgmTrack {
             category: track.category.clone(),
             seconds: track.duration,
             bytes: track.bytes,
+            license: BgmLicense::of(track.source),
             local_path: local.map(|path| path.to_string_lossy().into_owned()),
         }
     }

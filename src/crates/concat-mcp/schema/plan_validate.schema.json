@@ -107,7 +107,7 @@
           "type": "string"
         },
         "creativeBrief": {
-          "description": "Brief: audience, platform, goal, thesis, curiosity gap, payoff, emotional arc, style, tone, brand kit, constraints, avoidances. Missing brief returns blockers.",
+          "description": "Brief: audience, platform, goal, thesis, curiosity gap, payoff, emotional arc, style, tone, brand kit, constraints, avoidances, monetized flag. Missing brief returns blockers. Monetized true arms the licence gates: OpenVid stock and MobyGratis beds are refused.",
           "minProperties": 7,
           "properties": {
             "audience": {
@@ -172,6 +172,10 @@
             "goal": {
               "minLength": 1,
               "type": "string"
+            },
+            "monetized": {
+              "default": false,
+              "type": "boolean"
             },
             "payoff": {
               "minLength": 1,

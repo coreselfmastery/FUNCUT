@@ -61,11 +61,11 @@ use concat_project::commands::TrimEdge;
 use concat_project::model::{MediaKind, VideoSettings};
 
 pub use message::{
-    API_VERSION, ApiError, BgmFound, BgmImport, BgmState, BgmTrack, Dirs, Done, ErrorCode, Event,
-    ExportSpec, Fill, JobState, JobStatus, MagickAdd, MagickEntry, MagickFound, MagickState,
-    OpenvidClip, OpenvidFound, OpenvidImport, OpenvidRerank, OpenvidState, PackageInfo, ParamInfo,
-    Picture, Reply, Request, Response, SoundEntry, SoundsAdded, SoundsFound, Started, VersionInfo,
-    WindowSought, Written,
+    API_VERSION, ApiError, BgmFound, BgmImport, BgmLicense, BgmState, BgmTrack, Dirs, Done,
+    ErrorCode, Event, ExportSpec, Fill, JobState, JobStatus, MagickAdd, MagickEntry, MagickFound,
+    MagickState, OpenvidClip, OpenvidFound, OpenvidImport, OpenvidRerank, OpenvidState,
+    PackageInfo, ParamInfo, Picture, Reply, Request, Response, SoundEntry, SoundsAdded,
+    SoundsFound, Started, VersionInfo, WindowSought, Written,
 };
 
 /// The export sheet's middle quality, and what an export gets when the
@@ -612,8 +612,9 @@ impl Api {
                 ids,
                 start,
                 track,
+                monetized,
             } => Ok(Reply::OpenvidImported(
-                self.openvid_import(&path, &ids, start, track)?,
+                self.openvid_import(&path, &ids, start, track, monetized)?,
             )),
             Request::SoundsSearch {
                 query,
@@ -664,8 +665,9 @@ impl Api {
                 ids,
                 start,
                 track,
+                monetized,
             } => Ok(Reply::BgmImported(
-                self.bgm_import(&path, &ids, start, track)?,
+                self.bgm_import(&path, &ids, start, track, monetized)?,
             )),
             Request::MagickStatus => Ok(Reply::Magick(self.magick_state())),
             Request::MagickPrepare => {
@@ -1340,12 +1342,20 @@ impl Api {
     /// [`Request::OpenvidImport`]: fetch, copy into the project's own
     /// folder, and add to the bin - one undoable step, or two when the
     /// clips are also laid on a lane.
+    ///
+    /// RISK-01: a monetised edit cannot stand on OpenVid stock. The
+    /// index stores no licence field, no author and no release
+    /// information (docs/STOCK_LICENSING.md) - no clip has a verified
+    /// licence record to import against - so the `monetized` path
+    /// refuses outright, before any fetch. The day the index grows a
+    /// licence column, this is the gate that consults it.
     pub fn openvid_import(
         &mut self,
         path: &str,
         ids: &[i64],
         start: Option<f64>,
         track: Option<String>,
+        monetized: bool,
     ) -> Result<OpenvidImport, ApiError> {
         if ids.is_empty() {
             return Err(ApiError::failed("no clip ids given".to_owned()));
@@ -1353,6 +1363,16 @@ impl Api {
         if ids.len() > 20 {
             return Err(ApiError::failed(
                 "at most 20 clips a call; page through them".to_owned(),
+            ));
+        }
+        let effective_monetized = monetized || self.project_is_monetized(path)?;
+        if effective_monetized {
+            return Err(ApiError::failed(
+                "the edit is monetized and OpenVid clips carry no verified licence \
+                 record: the index holds no licence column, no author and no release \
+                 information (docs/STOCK_LICENSING.md). Clear the clip yourself and \
+                 import it with media.import, or plan the edit non-monetized"
+                    .to_owned(),
             ));
         }
         self.openvid_ready()?;
@@ -1763,12 +1783,18 @@ impl Api {
     /// [`Request::BgmImport`]: fetch, copy into the project's own
     /// `bgm` folder, and add to the bin - one undoable step, or two when
     /// the tracks are also laid on a lane.
+    ///
+    /// RISK-02: the Lo-Fi shelf is Moby's MobyGratis - free for
+    /// non-commercial use only (docs/STOCK_LICENSING.md) - so a
+    /// monetised import refuses its tracks before any byte is fetched.
+    /// FreePD's CC0 passes.
     pub fn bgm_import(
         &mut self,
         path: &str,
         ids: &[String],
         start: Option<f64>,
         track: Option<String>,
+        monetized: bool,
     ) -> Result<BgmImport, ApiError> {
         if ids.is_empty() {
             return Err(ApiError::failed("no track ids given".to_owned()));
@@ -1777,6 +1803,30 @@ impl Api {
             return Err(ApiError::failed(
                 "at most 20 tracks a call; page through them".to_owned(),
             ));
+        }
+        let effective_monetized = monetized || self.project_is_monetized(path)?;
+        if effective_monetized {
+            // The catalogue's own word when it is loaded; the id's shelf
+            // prefix - the source's prefix and twelve hex, a contract
+            // that never changed (concat-host/src/bgm.rs) - when it is
+            // not. The fetch below remains the existence check either
+            // way.
+            let library = self.music();
+            for id in ids {
+                let license = match library.track(id) {
+                    Ok(Some(track)) => BgmLicense::of(track.source),
+                    _ if id.starts_with("lofi-") => BgmLicense::MobyGratisNonCommercial,
+                    _ => BgmLicense::Cc0,
+                };
+                if !license.permits_commercial_use() {
+                    return Err(ApiError::failed(format!(
+                        "the edit is monetized and track {id} is MobyGratis \
+                         (MobyGratis-NonCommercial): the shelf is free for non-commercial \
+                         use only. Shop the FreePD shelf instead - bgm.search with source \
+                         freepd - or import the cleared file with media.import"
+                    )));
+                }
+            }
         }
         self.writable(path)?;
         let folder = {
@@ -2410,6 +2460,38 @@ impl Api {
             )
             .map_err(ApiError::failed)?;
         Ok((width, height, pixels))
+    }
+
+    /// Read the monetized flag from the opened project's persisted creative
+    /// brief. Import request flags are additional caller assertions, not
+    /// authority: a direct MCP/API caller must not bypass a monetized
+    /// project's licence gate by omitting or setting monetized to false.
+    /// A legacy project without a brief remains non-monetized; a malformed
+    /// brief is refused rather than treated as permission.
+    fn project_is_monetized(&self, path: &str) -> Result<bool, ApiError> {
+        let session = self.session(path)?;
+        let brief_path = std::path::PathBuf::from(session.path()).join("creative-brief.json");
+        let contents = match std::fs::read_to_string(&brief_path) {
+            Ok(contents) => contents,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => {
+                return Err(ApiError::failed(format!(
+                    "could not read the project's creative brief: {error}"
+                )));
+            }
+        };
+        let brief: serde_json::Value = serde_json::from_str(&contents).map_err(|error| {
+            ApiError::failed(format!(
+                "the project's creative brief is invalid JSON: {error}"
+            ))
+        })?;
+        match brief.get("monetized") {
+            None => Ok(false),
+            Some(serde_json::Value::Bool(value)) => Ok(*value),
+            Some(_) => Err(ApiError::failed(
+                "the project's creative brief monetized field must be a boolean".to_owned(),
+            )),
+        }
     }
 
     fn session(&self, path: &str) -> Result<&Session, ApiError> {
@@ -3763,6 +3845,169 @@ mod tests {
             refused.message.contains("another Concat process"),
             "{}",
             refused.message
+        );
+    }
+
+    /// RISK-02: every track the `bgm` methods hand back carries its
+    /// shelf's licence - FreePD as CC0-1.0, MobyGratis as
+    /// non-commercial-only - so a caller can decline a track before it
+    /// is ever fetched.
+    #[test]
+    fn bgm_tracks_carry_their_shelfs_licence() {
+        let shelf = |source: concat_host::bgm::Source| concat_host::bgm::Track {
+            id: format!(
+                "{}-0123456789ab",
+                match source {
+                    concat_host::bgm::Source::FreePd => "freepd",
+                    concat_host::bgm::Source::Lofi => "lofi",
+                }
+            ),
+            source,
+            title: "Night Pulse".to_owned(),
+            artist: "the artist".to_owned(),
+            category: "late-night".to_owned(),
+            duration: 180.0,
+            bytes: 4_000_000,
+            file: "120 Monster.mp3".to_owned(),
+        };
+        let freepd = BgmTrack::of(&shelf(concat_host::bgm::Source::FreePd), None);
+        assert_eq!(freepd.license, BgmLicense::Cc0);
+        assert!(freepd.license.permits_commercial_use());
+        let lofi = BgmTrack::of(&shelf(concat_host::bgm::Source::Lofi), None);
+        assert_eq!(lofi.license, BgmLicense::MobyGratisNonCommercial);
+        assert!(!lofi.license.permits_commercial_use());
+        let served = serde_json::to_value(&lofi).expect("JSON");
+        assert_eq!(served["license"], json!("MobyGratis-NonCommercial"));
+        let served = serde_json::to_value(&freepd).expect("JSON");
+        assert_eq!(served["license"], json!("CC0-1.0"));
+    }
+
+    /// RISK-01: a monetized import of OpenVid stock is refused before
+    /// anything is fetched - the index carries no per-clip licence
+    /// record - while the same call un-monetized fails for the index's
+    /// own reason instead, proving the gate is the flag's.
+    #[test]
+    fn a_monetized_openvid_import_is_refused() {
+        let (mut api, _scratch, _events) = api();
+        let refused = err(api.dispatch(Request::OpenvidImport {
+            path: "/nowhere".to_owned(),
+            ids: vec![7],
+            start: None,
+            track: None,
+            monetized: true,
+        }));
+        assert!(
+            refused.message.contains("no verified licence"),
+            "the refusal names the missing licence record: {refused}"
+        );
+        assert!(
+            refused.message.contains("monetized"),
+            "the refusal names the monetized flag: {refused}"
+        );
+        let other = err(api.dispatch(Request::OpenvidImport {
+            path: "/nowhere".to_owned(),
+            ids: vec![7],
+            start: None,
+            track: None,
+            monetized: false,
+        }));
+        assert!(
+            !other.message.contains("no verified licence"),
+            "without the flag the refusal is the index's own: {other}"
+        );
+    }
+
+    /// The persisted project brief is authoritative: a direct import
+    /// cannot turn a monetized project into a non-monetized one by sending
+    /// monetized=false or omitting the request field.
+    #[test]
+    fn persisted_monetized_brief_cannot_be_overridden_by_import_flags() {
+        let (mut api, scratch, _events) = api();
+        let location = scratch.path().join("projects");
+        std::fs::create_dir_all(&location).expect("projects folder");
+        let name = "monetized-edit";
+        let path = location.join(name);
+        let path_text = path.to_string_lossy().into_owned();
+        ok(api.dispatch(Request::ProjectCreate {
+            location: location.to_string_lossy().into_owned(),
+            name: name.to_owned(),
+            video: None,
+        }));
+        std::fs::write(path.join("creative-brief.json"), r#"{"monetized":true}"#)
+            .expect("persisted brief");
+
+        let openvid = err(api.dispatch(Request::OpenvidImport {
+            path: path_text.clone(),
+            ids: vec![7],
+            start: None,
+            track: None,
+            monetized: false,
+        }));
+        assert!(
+            openvid.message.contains("monetized") && openvid.message.contains("verified licence"),
+            "the persisted brief must arm the OpenVid gate: {openvid}"
+        );
+
+        let bgm = err(api.dispatch(Request::BgmImport {
+            path: path_text,
+            ids: vec!["lofi-0123456789ab".to_owned()],
+            start: None,
+            track: None,
+            monetized: false,
+        }));
+        assert!(
+            bgm.message.contains("MobyGratis"),
+            "the persisted brief must arm the MobyGratis gate: {bgm}"
+        );
+    }
+
+    /// RISK-02: a monetized import refuses MobyGratis (lofi) tracks
+    /// before any byte is fetched; FreePD passes the licence gate and
+    /// fails for the project's own reason instead.
+    #[test]
+    fn a_monetized_bgm_import_refuses_mobygratis() {
+        let (mut api, _scratch, _events) = api();
+        let refused = err(api.dispatch(Request::BgmImport {
+            path: "/nowhere".to_owned(),
+            ids: vec!["lofi-0123456789ab".to_owned()],
+            start: None,
+            track: None,
+            monetized: true,
+        }));
+        assert!(
+            refused.message.contains("MobyGratis"),
+            "the refusal names the shelf's terms: {refused}"
+        );
+        assert!(
+            refused.message.contains("non-commercial"),
+            "the refusal says what the licence forbids: {refused}"
+        );
+        // The same lofi track, un-monetized, is not stopped by the
+        // licence gate: it proceeds to fail for the project's own
+        // reason, proving the gate is the flag's.
+        let unmonetized = err(api.dispatch(Request::BgmImport {
+            path: "/nowhere".to_owned(),
+            ids: vec!["lofi-0123456789ab".to_owned()],
+            start: None,
+            track: None,
+            monetized: false,
+        }));
+        assert!(
+            !unmonetized.message.contains("MobyGratis"),
+            "without the flag the licence gate stays out of the way: {unmonetized}"
+        );
+        // FreePD is CC0: the monetized import passes the licence gate
+        // and proceeds towards the project, whatever it says about it.
+        let freepd = err(api.dispatch(Request::BgmImport {
+            path: "/nowhere".to_owned(),
+            ids: vec!["freepd-0123456789ab".to_owned()],
+            start: None,
+            track: None,
+            monetized: true,
+        }));
+        assert!(
+            !freepd.message.contains("MobyGratis"),
+            "the CC0 shelf is not refused by the monetized gate: {freepd}"
         );
     }
 }

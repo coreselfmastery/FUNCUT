@@ -58,11 +58,16 @@ Additional facts from the code, not guesses:
    paid library, or a generated B-roll asset whose licence you hold.
 
 `stock_contact_sheet` returns each candidate's `id`, `name`, `caption`,
-`source`, `aesthetic` and `localPath`. Save that list with the project: it
-is the closest thing this build has to a provenance log. A future version
-should add a `licence` column to the index and refuse to import
-unlicensed shelves in a commercial export profile; **that is not
-implemented here**.
+`source`, `aesthetic` and `localPath`. Save that list with the project: it is
+the closest thing this build has to a provenance log. Since
+`v0.2.8-funcut.13` the gate is enforced, not advised: a plan whose
+`creativeBrief.monetized` is `true` is refused at `plan_validate` when
+its B-roll is OpenVid stock, the runner refuses before anything is
+shopped, and `openvid_import` itself takes a `monetized` flag and
+refuses the import outright - the index carries no per-clip licence
+record, so no clip has a verified licence a monetised edit could
+import against. The day the index grows a `licence` column, the
+import gate is the place that consults it.
 
 ## The other shelves
 
@@ -71,7 +76,7 @@ implemented here**.
   metadata if you redistribute the raw files. `bgm_search` serves two
   music shelves under two licences: FreePD (1,025 whole-track CC0, no
   attribution required) and MobyGratis/OpenLo-Fi (166 tracks, **free for
-  non-commercial use only** — never in monetized or client work).
+  non-commercial use only** — never in monetized or client work). Every `bgm` result carries its track's licence in `license` (`CC0-1.0` or `MobyGratis-NonCommercial`), and since `v0.2.8-funcut.13` the rule is enforced, not advised: `bgm_import` takes a `monetized` flag and refuses MobyGratis tracks when it is `true`, the runner shops a monetized bed on the FreePD shelf only, and `plan_validate` blocks a monetized plan that names a `lofi-` track as its bed.
 - `magick_search` overlays are Microsoft's Fluent Emoji, **MIT licence**
   — free for commercial and personal use, no attribution required, and
   every search result carries the licence in its `license` field. The

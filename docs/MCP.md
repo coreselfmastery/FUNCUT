@@ -263,7 +263,9 @@ return MCP `type: image` content blocks, so the model can actually look:
 
 - `creative_brief` - read/write `creative-brief.json` in the project:
   audience, platform, goal, thesis, curiosityGap, payoff, emotionalArc,
-  referenceStyle, tone, brandKit, constraints, avoid. Returns a
+  referenceStyle, tone, brandKit, constraints, avoid, monetized (true
+  arms the licence gates: OpenVid stock and MobyGratis beds are then
+  refused at validation and at the imports). Returns a
   `directorPrompt` and the list of missing core fields. `plan_validate`
   now reports `creativeReady`, `creativeBlockers`, `craftScore` and
   `creativeNotes` in addition to `valid`; a plan with no brief, a hook over

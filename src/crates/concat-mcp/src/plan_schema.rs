@@ -223,7 +223,7 @@ pub fn compact() -> Value {
         {
             brief.insert(
                 "description".to_owned(),
-                json!("Brief: audience, platform, goal, thesis, curiosity gap, payoff, emotional arc, style, tone, brand kit, constraints, avoidances. Missing brief returns blockers."),
+                json!("Brief: audience, platform, goal, thesis, curiosity gap, payoff, emotional arc, style, tone, brand kit, constraints, avoidances, monetized flag. Missing brief returns blockers. Monetized true arms the licence gates: OpenVid stock and MobyGratis beds are refused."),
             );
         }
         if let Some(signal_log) = properties

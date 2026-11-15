@@ -1605,6 +1605,38 @@ mod tests {
         }
     }
 
+    /// A poisoned shelf lock keeps its valid state available to later callers.
+    #[test]
+    fn a_poisoned_shelf_lock_remains_usable() {
+        let dir = scratch("poisoned-lock");
+        let shelf = Shelf::new();
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _state = shelf.state.lock().expect("initial lock");
+            panic!("poison the shelf lock");
+        }));
+        assert!(panic.is_err(), "the caught panic poisons the lock");
+        assert!(matches!(shelf.status(), Status::Missing));
+        assert!(shelf.catalog().is_none());
+
+        shelf.lands(Held::Ready(Arc::new(Vec::new())));
+        assert!(matches!(shelf.status(), Status::Ready));
+        assert!(shelf.catalog().is_some());
+
+        let library = Library {
+            dirs: dirs_at(&dir),
+            freepd: shelf,
+            lofi: Shelf::new(),
+            turns: Mutex::new(HashMap::new()),
+        };
+        assert!(
+            library
+                .prepare(Source::FreePd, &AtomicBool::new(false))
+                .is_ok(),
+            "prepare reuses the ready shelf without fetching"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// One shelf down must not make the whole library unusable: a search
     /// that names neither shelf searches whichever are ready, and refuses
     /// only when none are. A search that names a shelf still needs it.

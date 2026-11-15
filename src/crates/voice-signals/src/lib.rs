@@ -270,6 +270,17 @@ pub fn decode_wav(path: &Path) -> Result<Take, Error> {
             })
         }
         hound::SampleFormat::Int => {
+            // A header's own say-so, validated before it reaches the
+            // shift: a fmt chunk claiming 0 (or 64-and-up) bits would
+            // underflow the shift - a panic in a debug build, a wrapped
+            // garbage scale in a release one.
+            if !(1..=32).contains(&spec.bits_per_sample) {
+                return Err(Error::Wav(format!(
+                    "{}: {} bits per sample is not a WAV this reads",
+                    path.display(),
+                    spec.bits_per_sample
+                )));
+            }
             let max = (1_i64 << (spec.bits_per_sample - 1)) as f32;
             let raw: Vec<f32> = reader
                 .samples::<i32>()

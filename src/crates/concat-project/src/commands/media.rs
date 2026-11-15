@@ -129,6 +129,14 @@ pub(super) fn apply(
                 }
                 let timeline = Arc::make_mut(timeline);
                 for clip in timeline.clips_where(|clip| clip.media_id == media_id) {
+                    // A detached sound is the old footage's audio on its
+                    // own lane, not the slot the new file fills: its kind
+                    // stays a sound, or a video fill would double the
+                    // picture on its lane and an audio fill would take the
+                    // slot's own picture away with it.
+                    if clip.detached_from.is_some() {
+                        continue;
+                    }
                     {
                         clip.source_start = 0.0;
                         clip.kind = kind;

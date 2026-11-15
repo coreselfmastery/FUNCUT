@@ -925,6 +925,24 @@ mod tests {
         assert!(replies[1]["result"].is_object());
     }
 
+    #[test]
+    fn an_over_long_line_is_answered_once_and_the_session_resynchronises() {
+        // One line past the cap, its newline, and a well-formed line behind
+        // it: the over-long line is answered exactly once (not once per
+        // chunk), the discard eats through its own newline only, and the
+        // ping behind it is answered.
+        let mut input = vec![b'x'; usize::try_from(MAX_LINE).expect("usize") + 8];
+        input.push(b'\n');
+        input.extend_from_slice(br#"{"jsonrpc":"2.0","id":7,"method":"ping"}"#);
+        input.push(b'\n');
+        let replies = serve_bytes(&input);
+        assert_eq!(replies.len(), 2, "{replies:?}");
+        assert_eq!(replies[0]["error"]["code"], code::PARSE);
+        assert_eq!(replies[0]["id"], Value::Null);
+        assert_eq!(replies[1]["id"], 7);
+        assert!(replies[1]["result"].is_object());
+    }
+
     /// The safety net, driven through the protocol itself: read-only
     /// refusals, one per blocked tool; the allowlist; and the per-tool
     /// deadline, scaled down through CONCAT_MCP_TIMEOUT_SCALE so the

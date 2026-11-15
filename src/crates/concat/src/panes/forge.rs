@@ -2167,15 +2167,23 @@ mod tests {
 
         // The silent-success gates, exactly where the spine's own words
         // always put them: the verify fails a loudness reading that
-        // missed the platform target, and the watch warns a craft score
-        // under the bar the headless runner ships on.
+        // missed the platform target and a render whose words are not
+        // the ones the edit placed (F-04), and the watch warns a craft
+        // score under the bar the headless runner ships on.
         use concat_mcp::director::ReplyGate;
         assert_eq!(
             program.steps[7].gates,
-            vec![ReplyGate::True {
-                field: "platformTargetMet",
-                what: "the mix missed the platform loudness target",
-            }]
+            vec![
+                ReplyGate::True {
+                    field: "platformTargetMet",
+                    what: "the mix missed the platform loudness target",
+                },
+                ReplyGate::Word {
+                    field: "verdict",
+                    equals: "pass",
+                    what: "the export's words are not the words the edit placed",
+                },
+            ]
         );
         assert_eq!(
             program.steps[8].gates,

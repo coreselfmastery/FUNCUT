@@ -2016,6 +2016,7 @@ fn render_picture(
     let BuiltTimeline {
         timeline,
         stills,
+        alpha_clips,
         decode_sizes,
         tracks,
         treatments,
@@ -2206,7 +2207,15 @@ fn render_picture(
             layers: with_backdrops(
                 layers,
                 &backdrops,
-                |clip| !stills.contains(&clip) && !cutouts.contains_key(&clip),
+                // The `opaque` word the frame plan asks for: a still, a
+                // cutout and a clip marked `preserve_alpha` (a motion
+                // comp's RGBA sequence) all have holes a background
+                // shows through.
+                |clip| {
+                    !stills.contains(&clip)
+                        && !cutouts.contains_key(&clip)
+                        && !alpha_clips.contains(&clip)
+                },
                 &sought,
                 (request.width, request.height),
             ),
@@ -2643,6 +2652,7 @@ pub fn preview_sources_of(
     let BuiltTimeline {
         timeline,
         stills,
+        alpha_clips,
         decode_sizes,
         tracks,
         treatments,
@@ -2721,7 +2731,15 @@ pub fn preview_sources_of(
         layers: with_backdrops(
             layers,
             backdrops,
-            |clip| !stills.contains(&clip) && !cutouts.contains_key(&clip),
+            // The same `opaque` word the export's own plan builds: a
+            // still, a cutout and a `preserve_alpha` clip all have
+            // holes, so the monitor draws the same background the
+            // export does - the one place both put backgrounds in.
+            |clip| {
+                !stills.contains(&clip)
+                    && !cutouts.contains_key(&clip)
+                    && !alpha_clips.contains(&clip)
+            },
             pool,
             (plan.width, plan.height),
         ),
@@ -3220,6 +3238,73 @@ mod tests {
         }
         let _ = std::fs::remove_file(&red);
         let _ = std::fs::remove_file(&blue);
+    }
+
+    /// A clip the flattener marked `preserve_alpha` - a motion comp's RGBA
+    /// PNG sequence, translucent where the comp was - keeps the background
+    /// the timeline chose for it: the mark is the word `with_backdrops`
+    /// reads to draw the backdrop layer beneath the clip, and before it was
+    /// wired in, a full-frame comp answered "opaque" and composited its
+    /// clear pixels over black instead.
+    #[test]
+    fn a_clip_marked_preserve_alpha_keeps_its_background_layer() {
+        use concat_core::frame::Frame;
+        use concat_media::{EncodeOptions, Encoder, FrameSink};
+
+        let (width, height) = (64_u32, 36_u32);
+        let path =
+            std::env::temp_dir().join(format!("concat-alpha-mark-{}.mp4", std::process::id()));
+        let Ok(mut encoder) = Encoder::create(
+            &path,
+            width,
+            height,
+            FrameRate::THIRTY,
+            &EncodeOptions {
+                crf: 12,
+                ..EncodeOptions::default()
+            },
+        ) else {
+            return; // no ffmpeg here
+        };
+        let mut frame = Frame::black(width, height);
+        frame.fill([30, 220, 30, 255]);
+        for _ in 0..30 {
+            encoder.write_frame(&frame).expect("writes");
+        }
+        encoder.finish().expect("finishes");
+        let file = path.to_string_lossy().into_owned();
+        let pool = concat_media::ReaderPool::new(16 * 1024 * 1024, 2);
+        let layers_of = |marked: bool| -> usize {
+            let mut comp = clip("video", 0, 0.0, 1.0, 0.0);
+            comp.path = file.clone();
+            comp.media_width = Some(width);
+            comp.media_height = Some(height);
+            comp.preserve_alpha = marked;
+            comp.backdrop = Some(ExportBackdrop::Colour { rgb: [255, 0, 0] });
+            let plan = preview_plan(
+                &[comp],
+                width,
+                height,
+                30,
+                1,
+                concat_project::model::ColorSpace::Sdr,
+            );
+            let sources = preview_sources_of(&pool, &plan, 0.5, false).expect("the sources");
+            sources.plan().layers.len()
+        };
+        // The colour backdrop rides beneath the marked clip; an unmarked
+        // full-frame clip covers the frame and hides it.
+        assert_eq!(
+            layers_of(true),
+            2,
+            "the backdrop draws beneath a clip marked preserve_alpha"
+        );
+        assert_eq!(
+            layers_of(false),
+            1,
+            "an unmarked full-frame clip covers the frame and needs none"
+        );
+        let _ = std::fs::remove_file(&path);
     }
 
     /// The chain as it was met in an edit: three clips with a transition at

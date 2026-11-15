@@ -587,9 +587,22 @@ impl Upscaler {
         slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = sent.send(result);
         });
+        // Bounded, like every other wait on a device in this crate: an
+        // unbounded wait is the one hang an 8 GB card that ran out of
+        // memory already taught this codebase about (#297) - a wedged
+        // device here would hold the whole Enhance job forever, window
+        // after window, with no error and no cancellation.
         self.device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .map_err(|error| format!("upscaler: the device did not finish: {error}"))?;
+            .poll(wgpu::PollType::Wait {
+                submission_index: None,
+                timeout: Some(crate::gpu::DEVICE_WAIT),
+            })
+            .map_err(|error| {
+                format!(
+                    "upscaler: the device did not finish within {:?}: {error}",
+                    crate::gpu::DEVICE_WAIT
+                )
+            })?;
         mapped
             .recv()
             .map_err(|_| "upscaler: the device never answered".to_owned())?

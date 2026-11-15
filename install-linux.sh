@@ -196,6 +196,18 @@ fi
 # through the config file, never through argv.
 fetch() {
     local conf=""
+    # The token rides a download when the file belongs to this fork - a
+    # private one refuses the anonymous download too - and never when it
+    # does not: a third party's URL must not carry it. Said here, once,
+    # for every fetch of the fork's own releases and raw files: the app
+    # asset, the models, the manifests, the indexes and the fonts alike.
+    case "$1" in
+        "https://github.com/$FORK_REPO/"*|"https://raw.githubusercontent.com/$FORK_REPO/"*)
+            if [ -n "$AUTH_CONF" ]; then
+                conf="$AUTH_CONF"
+            fi
+            ;;
+    esac
     if [ "${3:-}" = "auth" ] && [ -n "$AUTH_CONF" ]; then
         conf="$AUTH_CONF"
     fi
@@ -757,22 +769,35 @@ install_model() {
         whisper) MTARGET="$DATA_DIR/whisper-models/$MFILE" ;;
         cutout)  MTARGET="$DATA_DIR/cutout-models/$MFILE" ;;
         tts)
-            # The archive unpacks to tts-models/<id>/, which is what
-            # counts as downloaded once its .onnx is in place.
-            MTARGET="$DATA_DIR/tts-models/${MID%%.tar.bz2}/model.onnx"
+            # The bundle's folder is the archive's own stem - kokoro-... as
+            # the row id already is, sherpa-onnx-pocket-... keeping the prefix
+            # the row id drops, which is the engine's own id for the bundle
+            # (tts.rs's POCKET_ID) - and the bundle counts as downloaded once
+            # any .onnx is inside it, the quantised archives naming theirs
+            # model.int8.onnx rather than model.onnx.
+            MSTEM="${MFILE%%.tar.bz2}"
+            MTARGET="$DATA_DIR/tts-models/$MSTEM"
             ;;
         chatterbox)
             # Nine files that land under tts-models/chatterbox-turbo-q8/,
-            # each under the name its graph expects (the engine's own
-            # FILES table: tokenizer.json at the root, the graphs in
-            # onnx/, the prefix dropped).
+            # each under the name its graph expects (the engine's own FILES
+            # table: tokenizer.json at the root, the graphs in onnx/, the
+            # prefix dropped).
             MLOCAL="${MFILE#chatterbox-turbo-}"
+            case "$MLOCAL" in
+                *.onnx|*.onnx_data) MLOCAL="onnx/$MLOCAL" ;;
+            esac
             MTARGET="$DATA_DIR/tts-models/chatterbox-turbo-q8/$MLOCAL"
             ;;
         *) say "  $MID: unknown family $MFAMILY - left for the editor"; return 0 ;;
     esac
     [ -n "$MTARGET" ] || return 0
-    if [ -e "$MTARGET" ]; then
+    if [ "$MFAMILY" = tts ]; then
+        if ls "$MTARGET"/*.onnx >/dev/null 2>&1; then
+            say "  $MID: already there"
+            return 0
+        fi
+    elif [ -e "$MTARGET" ]; then
         say "  $MID: already there"
         return 0
     fi
@@ -802,7 +827,9 @@ install_model() {
         tts)
             # Unpack beside the target and move the id folder in whole,
             # the same two steps the app's own download takes, so a
-            # half-unpacked bundle is never what the engine finds.
+            # half-unpacked bundle is never what the engine finds. The
+            # archive's own top folder is the FILE's stem, not the row
+            # id's - the same stem the engine reads the bundle by.
             rm -rf "$TMP/model-unpack"
             mkdir -p "$TMP/model-unpack"
             if ! tar -xjf "$TMP/model-file" -C "$TMP/model-unpack"; then
@@ -810,8 +837,8 @@ install_model() {
                 rm -rf "$TMP/model-unpack"; rm -f "$TMP/model-file"
                 return 0
             fi
-            rm -rf "$DATA_DIR/tts-models/${MID%%.tar.bz2}"
-            mv "$TMP/model-unpack/${MID%%.tar.bz2}" "$DATA_DIR/tts-models/${MID%%.tar.bz2}" \
+            rm -rf "$DATA_DIR/tts-models/$MSTEM"
+            mv "$TMP/model-unpack/$MSTEM" "$DATA_DIR/tts-models/$MSTEM" \
                 || say "  $MID: could not place it - the editor will offer it again"
             ;;
         *)

@@ -120,7 +120,9 @@ fn locate() -> Result<(SocketAddr, String), String> {
     match discovery::read(&path)? {
         Some(listing) => Ok((listing.address, listing.token)),
         None => Err(
-            "the Concat window is not serving the API: open Concat, then Settings > Automation, and turn on Scripts and apps"
+            "the Concat window is not serving the API: automation is off by \
+             default on a fresh install - open Concat, then Settings > \
+             Automation, and turn on Scripts and apps"
                 .to_owned(),
         ),
     }

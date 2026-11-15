@@ -8,6 +8,25 @@ use std::path::PathBuf;
 
 const USAGE: &str = "usage: concat [--project <PROJECT_DIRECTORY> | --software | --mcp [auto|window|headless] | --version | --smoke | --whisper-cpu]";
 
+/// What `--help` prints: the usage line, then one line per option in
+/// the order the parser knows them - the same words the source's own
+/// doc comments carry, so a flag cannot appear here without appearing
+/// there. `main` prints it and exits 0.
+pub const HELP: &str = "\
+Concat - the video editor.
+
+usage: concat [--project <PROJECT_DIRECTORY> | --software | --mcp [auto|window|headless] | --version | --smoke | --whisper-cpu]
+
+  (no arguments)     the editor window, on its launch screen
+  --project DIR      the editor window, on the project in DIR
+  --software         the window drawn in software (safe graphics)
+  --mcp [MODE]       serve the API to an AI agent instead of a window;
+                     auto, window or headless (CONCAT_MCP_MODE, auto)
+  --version          print the version and exit
+  --smoke            start the way a launch does, exit at the first
+                     frame - for CI
+  --whisper-cpu      load whisper's CPU kernels, print the CPU, exit";
+
 /// What one run of the binary was asked to do.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Launch {
@@ -28,6 +47,11 @@ pub enum Launch {
     /// run that gets this far has proved the executable and every library
     /// it links were found and loaded, which on Windows fails before `main`.
     Version,
+    /// Print the help and exit: `--help` and `-h`, the way every CLI
+    /// answers, before logging, the GPU or a window. A run that starts the
+    /// app instead of answering the flag was a run that swallowed the
+    /// question.
+    Help,
     /// Start the way a desktop launch does, through the first publish of
     /// the window's models, and exit instead of entering the event loop.
     /// For CI, which has no one to close a window.
@@ -50,6 +74,8 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Launch, String>
     };
     let launch = if option == "--version" {
         Launch::Version
+    } else if option == "--help" || option == "-h" {
+        Launch::Help
     } else if option == "--smoke" {
         Launch::Smoke
     } else if option == "--software" {
@@ -114,6 +140,15 @@ mod tests {
             vec!["--version", "extra"],
             vec!["--project", "one", "--smoke"],
         ] {
+            assert!(parse_strs(&args).is_err(), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn help_answers_both_spellings_and_takes_no_arguments() {
+        assert_eq!(parse_strs(&["--help"]).unwrap(), Launch::Help);
+        assert_eq!(parse_strs(&["-h"]).unwrap(), Launch::Help);
+        for args in [vec!["--help", "extra"], vec!["-h", "--version"]] {
             assert!(parse_strs(&args).is_err(), "{args:?}");
         }
     }

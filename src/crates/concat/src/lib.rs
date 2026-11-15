@@ -155,8 +155,59 @@ pub fn run_with_project(
 /// the way a launch would, with the reason in the log and an `Err` here.
 /// No project is opened, so the recents list is not touched; the
 /// preferences are read, and a log file written, as on any launch.
+///
+/// A machine without a display at all cannot prove the window, and used
+/// to die of the raw winit error instead - see [`smoke_headless`], the
+/// path [`headless`] smoke runs take.
 pub fn smoke() -> Result<(), slint::PlatformError> {
     start(None, true)
+}
+
+/// Whether this machine names a display for a window at all: the X or
+/// Wayland connection a desktop puts in the environment. Windows and
+/// macOS need no environment to have one, so there the answer is always
+/// no - the full smoke runs.
+pub fn headless() -> bool {
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd"
+    ))]
+    {
+        std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none()
+    }
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "openbsd",
+        target_os = "netbsd"
+    )))]
+    {
+        false
+    }
+}
+
+/// The smoke a machine without a display can run: no GPU, no window, no
+/// event loop - the log it writes on any launch, and whisper's CPU
+/// kernels, which the Linux bundles carry as modules beside the program
+/// and a bundle without them starts and dies at its first
+/// transcription (#388). Everything else a launch proves needs the
+/// window, and a CI box without a virtual display was failing the raw
+/// winit error instead of running any check at all.
+pub fn smoke_headless() -> Result<(), slint::PlatformError> {
+    #[cfg(target_arch = "x86_64")]
+    match concat_speech::transcribe::cpu_backend() {
+        Ok(cpu) => log::info!("smoke: whisper runs on {cpu}"),
+        Err(error) => {
+            log::error!("smoke: {error}");
+            return Err(slint::PlatformError::Other(error));
+        }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    log::info!("smoke: whisper's CPU kernels are this architecture's own");
+    log::info!("smoke: ok (headless: no display, so no window to prove)");
+    Ok(())
 }
 
 /// Runs one way out of the open project, in the order that keeps the work
@@ -366,10 +417,19 @@ fn start(
 
     // The automatic update check, every three days, in a thread of its
     // own so it never holds a worker the probes and frames are waiting
-    // on. Not for a smoke run: it exits at the first frame, and a thread
-    // it started would be a thread nobody asked for. See
-    // `watch_updates` for what the check will and will not do.
-    if !smoke {
+    // on. Opt-in, the way CODE_SIGNING.md's privacy policy promises the
+    // network is reached only when asked: a fresh install checks nothing
+    // on its own - `checkUpdatesAutomatically: true` in settings.json
+    // turns the three-day clock on, and the Version page's own check
+    // works either way. Not for a smoke run: it exits at the first
+    // frame, and a thread it started would be a thread nobody asked
+    // for. See `watch_updates` for what the check will and will not do.
+    if !smoke
+        && concat_host::AppDirs::locate()
+            .ok()
+            .and_then(|dirs| prefs::Preferences::load(&dirs).check_updates_automatically)
+            == Some(true)
+    {
         std::thread::spawn(move || watch_updates(dirs_for_updates()));
     }
 

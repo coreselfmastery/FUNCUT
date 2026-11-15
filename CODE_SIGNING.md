@@ -35,7 +35,10 @@ it. Concat reaches the network only when you ask it to:
 
 - **Settings › Version** asks GitHub for the list of releases when you open
   it or press **Check for updates**, and installing one downloads it from
-  GitHub.
+  GitHub. The three-day automatic check is opt-in (off by default): set
+  `"checkUpdatesAutomatically": true` in the app's `settings.json` and the
+  background clock runs - a fresh install never asks about releases on its
+  own.
 - **Downloading a model** (transcription, speech, cutout) fetches it from the
   source picked under **Downloads** in Settings › General, and tries the other
   sources listed there if that one fails.

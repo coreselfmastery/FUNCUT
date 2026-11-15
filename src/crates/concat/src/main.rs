@@ -41,6 +41,15 @@ fn main() -> Result<(), slint::PlatformError> {
         let _ = writeln!(std::io::stdout(), "whisper runs on {cpu}");
         return Ok(());
     }
+    // `--help` answered the way every CLI answers it: printed, exit 0,
+    // before the log, the GPU or a window - before this, the flag started
+    // the app and failed as an unknown option, printing the usage as an
+    // error nobody had asked a question to get.
+    if launch == Ok(Launch::Help) {
+        use std::io::Write;
+        let _ = writeln!(std::io::stdout(), "{}", launch::HELP);
+        return Ok(());
+    }
     // An agent's MCP server: no window, no GPU, and standard output kept
     // for the protocol alone. The engine's log goes to standard error,
     // which the agent's client shows; not to a file, where every agent
@@ -89,10 +98,23 @@ fn main() -> Result<(), slint::PlatformError> {
         // Logged and returned, never put up in a dialog: a smoke run is a
         // machine's, and a modal box with nobody to press OK would hang it
         // rather than fail it. Returning the error exits non-zero.
-        Launch::Smoke => concat::smoke().inspect_err(|error| {
-            log::error!("smoke: could not start: {error}");
-        }),
+        //
+        // A machine without a display at all cannot prove the window, and
+        // the full smoke died of the raw winit error there - exit 1, no
+        // check run. The headless path runs every check that needs no
+        // window instead, and the log names which smoke ran.
+        Launch::Smoke => {
+            if concat::headless() {
+                concat::smoke_headless().inspect_err(|error| {
+                    log::error!("smoke: could not start: {error}");
+                })
+            } else {
+                concat::smoke().inspect_err(|error| {
+                    log::error!("smoke: could not start: {error}");
+                })
+            }
+        }
         // Answered above, before the log was opened.
-        Launch::Version | Launch::WhisperCpu | Launch::Mcp(_) => Ok(()),
+        Launch::Version | Launch::WhisperCpu | Launch::Help | Launch::Mcp(_) => Ok(()),
     }
 }

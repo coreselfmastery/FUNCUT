@@ -61,6 +61,14 @@ pub struct Preferences {
     /// it is put. Off by default: a click past the last clip lands there, so
     /// a clip can be dropped at the playhead beyond everything else.
     pub playhead_stops_at_end: bool,
+    /// The automatic update check, every three days in the background.
+    /// `None` - the default - is OFF: the privacy policy (CODE_SIGNING.md)
+    /// promises the network is reached only when asked, and a fresh
+    /// install asking GitHub about releases on its own broke that promise.
+    /// Turned on (`settings.json`: `"checkUpdatesAutomatically": true`),
+    /// the Version page's own three-day clock runs in the background; the
+    /// Version page's manual check works either way.
+    pub check_updates_automatically: Option<bool>,
     /// Proxies: a file as large as HD gets a smaller copy written in the
     /// background, and playback at Half and Quarter reads that copy.
     /// `None` is on - the working copy is what keeps a big edit following

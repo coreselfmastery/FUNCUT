@@ -495,7 +495,10 @@ impl Temporary {
     /// Atomic replacement and durability are distinct: flushing the file
     /// reduces power-loss risk, but does not also sync the parent directory.
     fn write(&mut self, encoded: &[u8]) -> Result<(), String> {
-        let file = self.file.as_mut().expect("a fresh temporary");
+        let file = self
+            .file
+            .as_mut()
+            .ok_or_else(|| format!("{} has already been finished", self.path.display()))?;
         std::io::Write::write_all(file, encoded)
             .map_err(|error| format!("could not write {}: {error}", self.path.display()))?;
         file.sync_all()
@@ -905,6 +908,32 @@ mod tests {
                     .starts_with(&format!("{MANIFEST}.saving"))
             })
             .count()
+    }
+
+    #[test]
+    fn a_finished_temporary_refuses_another_write_without_changing_the_manifest() {
+        let root = scratch("finished-temporary");
+        let manifest = Path::new(&root).join(MANIFEST);
+        let mut temporary = Temporary::open(Path::new(&root)).expect("opens a fresh temporary");
+        temporary
+            .write(b"first snapshot")
+            .expect("writes the first snapshot");
+        temporary.commit(&manifest).expect("publishes the manifest");
+
+        let error = temporary
+            .write(b"late snapshot")
+            .expect_err("a committed temporary cannot be written again");
+        assert!(
+            error.contains("already been finished"),
+            "the refusal names the finished temporary: {error}"
+        );
+        assert_eq!(
+            std::fs::read(&manifest).expect("reads the committed manifest"),
+            b"first snapshot",
+            "the late write cannot change the published manifest"
+        );
+        assert_eq!(temporaries(&root), 0, "no temporary remains");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

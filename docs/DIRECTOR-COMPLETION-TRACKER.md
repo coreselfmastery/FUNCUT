@@ -1,5 +1,57 @@
 # DIRECTOR-COMPLETION-TRACKER
 
+## Current-main reconciliation — 2026-11-14
+
+This recheck supersedes older Session 5/Session 6 statements below wherever they say the AUTO EDIT button is not integrated or the revise loop has not started. Those statements were accurate at their historical snapshot but are no longer true on current main.
+
+**Current main:** `dd109b8d056c0b33c1fcf78fb5021078d71f89c7`.
+
+### AI Director implementation state
+### Remaining one-button workflow gap
+
+The current Forge AUTO EDIT button is real and wired, but its program stages are `HandoffVoiceover`, `AudioRepair`, `Transcribe`, `VoiceSignals`, `Understand`, `Timeline`, `Export`, `Verify` and `Watch`. It does not run research/topic selection, script/plan generation, B-roll gathering, motion, captions, preview or the Python revision loop. The external Python helper requires a pre-authored plan. Therefore the product still lacks a single integrated brief-to-publishable-video path in the UI. Treat the runner/UI integration as implemented, but the requested end-to-end creative Director as **not implemented/accepted** until those stages are connected and a real project is completed.
+
+
+- **Runner foundation — implemented:** PR #110 merged at `77392956859352c18924e728b1ccdaa286ac60f7`.
+- **Window/MCP integration — implemented:** PR #118 merged at `621420fb696fe7c9f79b61c8ad963db820c79ffe`. Current source has `concat-mcp::director::BackendToolCaller`, `concat-mcp/Cargo.toml` depends on `concat-director`, and the Forge pane constructs `Runner` against the window's own toolbox/backend.
+- **AUTO EDIT UI — integrated, limited scope:** `src/crates/concat/ui/workspace/forge-page.slint` contains the start/cancel control and progress pane; `src/crates/concat/src/panes/forge.rs` wires start, cancel, progress ticks, completion, failure and rollback state. However, the current `auto_edit_program` is a post-production workflow for an existing voiceover, not a brief-to-video creator.
+- **Verify record — implemented:** PR #119 merged at `2eb5ff54492a7659469aecc2eafebecd410ee4d4` added the twelve original structured checks. PR #120 merged at `c8eeac7884235e2928fdedea504e71c1cee72cb9` added the later disclosure check and per-slot evidence; current main has VERIFY-01..05 and VERIFY-08..15 (13 checks). PR #134 proposes VERIFY-16 for an audio-stream presence check; it is still open and not part of main.
+- **Python revision loop — implemented and self-tested, but not wired into the UI Runner:** `scripts/auto_director.py` runs up to two per-slot revision passes, gives B-roll and graphic slots separate revision renders, and records exhausted attempts. `--self-test` runs both `self_test()` and `revision_self_test()`; the exact-main Format/locales/models job ran that self-test successfully on main SHA `dd109b8...` (CI run [43620426031](https://github.com/coreselfmastery/FUNCUT/actions/runs/43620426031), job [132524671919](https://github.com/coreselfmastery/FUNCUT/actions/runs/43620426031/job/132524671919)). This is a separate Python path: the Forge `auto_edit_program` does not include `Stage::Plan`, `Gather`, `Motion`, `Captions`, `Preview` or `Revise`; its source comment assigns the creative layer to an external Director agent. The Python skill also says it consumes a Director-authored plan and does not invent the topic, script or edit plan.
+- **Not accepted end-to-end:** no real brief-to-export project with real provider credentials, actual footage/voice, inspected final media, and observed cancel/rollback on the target antiX laptop has been recorded. The runner/UI being wired and mock/self-tests passing does not close UNVER-01..05.
+
+### Current release checks
+
+| Check | Evidence on `dd109b8...` |
+| --- | --- |
+| Geneva | Passed 2/2, run [43620426113](https://github.com/coreselfmastery/FUNCUT/actions/runs/43620426113) |
+| Linux x86_64 + aarch64 packages and clean-distribution smoke | Passed 2/2, run [43620426059](https://github.com/coreselfmastery/FUNCUT/actions/runs/43620426059); artifacts uploaded, not a published release |
+| Format/locales/models | Passed, run [43620426031](https://github.com/coreselfmastery/FUNCUT/actions/runs/43620426031) |
+| Real-fixture analysis | Passed, same CI run |
+| Engine tests/lints | Still running at this recheck |
+| Nix build | Still running at this recheck |
+
+The latest published release remains `v0.2.8-funcut.12` at `6f9ab45fb0916f44675f10769351d911e0e7f75b`; current main is 88 commits ahead. No release tag has been cut for current main.
+
+### Current open PRs
+
+- #130 SCH-02 generated plan schemas — open; timeout raised after an earlier schema-check compile exceeded five minutes; current CI/Geneva/Nix still running.
+- #132 RES-03 queued-proxy gate recheck — open; format and real fixtures passed; engine and Geneva rendering still running.
+- #133 RISK-01/02 monetized stock/BGM licensing gates — open; fail-closed license allow-list added; engine/Geneva/Nix still running.
+- #134 VERIFY-16 audio-stream check — open; the self-test was moved to the FFmpeg-equipped analysis job after its first run failed without ffprobe; the new analysis self-test passed, engine/Geneva still running.
+- #135 final bug-audit document — open; now has a current-main addendum.
+- #136 P3-008 archive.org FreePD dependency note — open; format and real-fixture checks passed; engine/Geneva still running.
+- #137 Geneva master-list current-main reconciliation — open; queued for CI.
+
+None of these open PRs had a submitted approval in the latest review lists. All reported mergeable, but mergeability is not validation.
+
+### Governance and reproducibility
+
+- GitHub reports `main.protected = false`, required-status-check enforcement `off`, and no repository rulesets. The connected integration has no branch-protection write operation. An administrator must enable required checks and review protection.
+- Dependabot updates Cargo and GitHub Actions weekly, but the six workflow files contain no dedicated `cargo audit`, OSV or equivalent vulnerability scan.
+- `scripts/setup-build-env.sh` and `scripts/funcut-env.sh` return 404 on current main, while `TEST_EVIDENCE.md`, `AGENT_STATE.md` and `SESSION_HANDOFF.md` still point at absolute `/home/z/my-project/` paths. This is a reproducibility-documentation defect; the packaged CI build uses its own pinned dependency setup.
+
+**Next exact tasks:** finish the current-main engine and Nix checks; finish PR #130/#132/#133/#134 exact-head validation; resolve the missing build-reproduction instructions; add an explicit vulnerability scan or document its approved alternative; obtain real antiX proxy/VAAPI measurements and a real AUTO EDIT acceptance run; only then cut a release from a fully green, protected main SHA.
+
 ## Session 5 close - 2026-11-14 (the landing half)
 
 The third stretch of Session 5 settled the brief's merge-state question,

@@ -508,6 +508,19 @@ def _clip_for_media(view: Any, media_id: str, start: float) -> dict[str, Any] | 
     return min(exact, key=lambda item: str(item.get("id", "")))
 
 
+def _clip_track(view: Any, clip_id: str) -> Any:
+    """One clip's own lane, read from a project view: the lane a revision
+    replaces its old graphic on, when the run itself placed nothing new.
+    `None` when the clip is not on the timeline the view shows."""
+    for item in _walk_dicts(view):
+        if (
+            item.get("id") == clip_id
+            and isinstance(item.get("trackId"), str)
+        ):
+            return item["trackId"]
+    return None
+
+
 def _direction(camera: Any) -> str:
     value = str(camera or "").lower()
     for needle, direction in (
@@ -589,14 +602,63 @@ def _measured_families(voice: Any) -> set[str]:
         for entry in per_signal:
             if not isinstance(entry, dict):
                 continue
-            if float(entry.get("confidence") or 0.0) > 0.0 and entry.get("name"):
-                family = _signal_family(str(entry["name"])).lower()
+            # The reply's own key is `signal` (voice_signals' perSignal
+            # rows), not `name`: reading `name` here answered nothing for
+            # every row, and the forged-citation gate below never fired.
+            if float(entry.get("confidence") or 0.0) > 0.0 and entry.get("signal"):
+                family = _signal_family(str(entry["signal"])).lower()
                 families.add(_SIGNAL_ALIASES.get(family, family))
     return families
 
 
+def _retimed(transcript: Any, speed: float) -> Any:
+    """The transcript with its measured times re-read onto the sped clip's
+    timeline: a word `t` seconds into the take lands at `t / speed`, so the
+    readers downstream - the footage planner's gaps, the captions, the
+    bed's duck, the verify's expected words - all sit in the export's own
+    timebase instead of the take's. The transcript is passed through
+    untouched for a speed it does not carry."""
+    if (
+        not isinstance(transcript, dict)
+        or not isinstance(speed, (int, float))
+        or isinstance(speed, bool)
+        or speed <= 0.0
+        or speed == 1.0
+    ):
+        return transcript
+
+    def onto(t: Any) -> Any:
+        if isinstance(t, (int, float)) and not isinstance(t, bool):
+            return float(t) / float(speed)
+        return t
+
+    out = dict(transcript)
+    if isinstance(transcript.get("segments"), list):
+        retimed_segments = []
+        for segment in transcript["segments"]:
+            if not isinstance(segment, dict):
+                retimed_segments.append(segment)
+                continue
+            moved = dict(segment)
+            moved["start"] = onto(segment.get("start"))
+            moved["end"] = onto(segment.get("end"))
+            if isinstance(segment.get("words"), list):
+                moved["words"] = [
+                    {
+                        **word,
+                        "start": onto(word.get("start")),
+                        "end": onto(word.get("end")),
+                    }
+                    if isinstance(word, dict)
+                    else word
+                    for word in segment["words"]
+                ]
+            retimed_segments.append(moved)
+        out["segments"] = retimed_segments
+    return out
+
+
 # ------------------------------------------------------- the plan field audit
-#
 # The plan's own vocabulary, the nineteen fields this runner knows how to
 # read (P1-005): the audit answers for every one of them - executed,
 # rejected with its reason, or skipped because the plan does not carry it
@@ -1916,6 +1978,25 @@ def run_pipeline(
             "transcribe", audioSha256=_transcribe_sha,
             ask=_transcribe_ask, transcript=transcript,
         )
+    # The transcript's own times are the take's; the placed clip is sped by
+    # the plan's voiceover speed below, so a word `t` seconds into the take
+    # lands at `t / speed` on the timeline. Every later reader - the footage
+    # planner's gaps, the captions, the bed's duck, the verify's expected
+    # words - works in the timeline's timebase, so the transcript is re-read
+    # onto it here, once: the stage record above keeps the take's own words,
+    # so a resumed run retimes once, never twice.
+    _voiceover_speed = None
+    if isinstance(voiceover_plan, dict):
+        _asked_speed = voiceover_plan.get("speed")
+        if (
+            isinstance(_asked_speed, (int, float))
+            and not isinstance(_asked_speed, bool)
+            and float(_asked_speed) > 0.0
+        ):
+            _voiceover_speed = float(_asked_speed)
+    if _voiceover_speed and _voiceover_speed != 1.0:
+        transcript = _retimed(transcript, _voiceover_speed)
+        log(f"transcript re-read onto the sped timeline: 1/{_voiceover_speed:g}x")
     # DEG-09: the transcribe reply carries what ran and what script the
     # words came back in; a wrong-language transcript is flagged here, at
     # the reading, not discovered three phases later in the captions.
@@ -2061,8 +2142,18 @@ def run_pipeline(
     # answered is a degradation every slot carries.
     for index, segment in broll_segments(plan):
         slot_id = str(segment.get("slotId") or f"segment-{index + 1}")
-        slot_start = float(segment["start"])
-        slot_end = float(segment["end"])
+        # Read before the plan's own validate gate runs below: a B-roll
+        # segment without numeric start/end is refused here, named, as the
+        # refusal the gate would have given it - not a KeyError out of the
+        # watcher.
+        try:
+            slot_start = float(segment["start"])
+            slot_end = float(segment["end"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise PipelineError(
+                f"{slot_id}: a B-roll segment's start and end must be numbers "
+                f"(got start={segment.get('start')!r}, end={segment.get('end')!r})"
+            ) from error
         evidence = sorted({
             kind for start, end, kind in planner_spans
             if start < slot_end + 0.25 and end > slot_start - 0.25
@@ -2237,11 +2328,16 @@ def run_pipeline(
                 if isinstance(name, str):
                     cited.add(_signal_family(name).lower())
     measured = _measured_families(voice)
-    if cited and measured and not (cited & measured):
+    if cited and not (cited & measured):
+        # A citation the measured take did not answer is a fabrication,
+        # including the case where the take answered nothing at all: the
+        # old gate required a non-empty reading to refuse, so a reply
+        # with no confidence map waved every citation through.
         raise PipelineError(
             "the plan's signalLog cites " + ", ".join(sorted(cited))
-            + ", but the measured take answered none of them: "
-            "the log was written against a reading that never happened"
+            + ", but the measured take answered "
+            + (", ".join(sorted(measured)) if measured else "none of them")
+            + ": the log was written against a reading that never happened"
         )
     _audit("signalLog", "executed",
            "validated: driven, covered, and every citation answered by the measured take")
@@ -3033,12 +3129,18 @@ def run_pipeline(
     runtime = max(
         (float(segment["end"]) for segment in plan_segments(plan)), default=0.0
     )
-    # The placed clip each B-roll segment owns, in the order the
-    # placements ran: the chosen list is slot-ordered, and the placements
-    # walked it in exactly that order.
-    slot_order: dict[str, int] = {
-        slot_id: order for order, slot_id in enumerate(slot_segments)
-    }
+    # The placed clip each B-roll segment owns, in the order the placements
+    # ran: the placement walk runs in plan-segment order, so the order is
+    # rebuilt from the plan here - `slot_segments`'s own insertion order is
+    # the ranking pass's (chosen slots first, reused slots appended), which
+    # crosses exactly when a resumed run places some slots fresh and reuses
+    # others, and a crossed index lands a transition or a removal on the
+    # wrong clip.
+    slot_order: dict[str, int] = {}
+    for index, segment in broll_segments(plan):
+        slot_id = str(segment.get("slotId") or f"segment-{index + 1}")
+        if slot_id in slot_segments and slot_id not in slot_order:
+            slot_order[slot_id] = len(slot_order)
     segment_clip_ids: dict[int, str] = {}
     for index, segment in broll_segments(plan):
         slot_id = str(segment.get("slotId") or f"segment-{index + 1}")
@@ -3357,7 +3459,14 @@ def run_pipeline(
                     if not isinstance(kinetic_media, str) or not kinetic_media:
                         raise PipelineError("the kinetic caption reel was baked but not imported")
                     if not isinstance(track_id, str) or not track_id:
-                        track_id = advance("track_add", {"path": project})
+                        # The reply carries the lane in `createdId`, as every
+                        # other call site unwraps it: assigning the reply
+                        # itself always failed this branch after the reel was
+                        # baked and imported.
+                        reply = advance("track_add", {"path": project})
+                        track_id = (
+                            reply.get("createdId") if isinstance(reply, dict) else None
+                        )
                         if not isinstance(track_id, str) or not track_id:
                             raise PipelineError("track_add did not return the overlay lane for the captions")
                     placed = advance("clip_add", {
@@ -3676,8 +3785,14 @@ def run_pipeline(
                                 keyframes.append({"at": round(min(span_start / bed_duration, 1.0), 4), "gainDb": duck_db})
                             previous_end = span_end
                         if previous_end < runtime:
-                            keyframes.append({"at": round(min(previous_end / bed_duration, 1.0), 4), "gainDb": duck_db})
-                            keyframes.append({"at": 1.0, "gainDb": 0.0})
+                            # Unity from the last word's end - the bed is
+                            # typically much longer than the render (a 180 s
+                            # bed under a 30 s timeline), and `at` is a
+                            # fraction of the bed's own length: a unity key
+                            # at 1.0 ramped only part-way back through the
+                            # whole tail, leaving the bed ducked under
+                            # everything after the last word.
+                            keyframes.append({"at": round(min(previous_end / bed_duration, 1.0), 4), "gainDb": 0.0})
                         if keyframes:
                             advance("clip_audio_levels_db", {
                                 "path": project, "clipId": str(bed_clip["id"]),
@@ -4281,9 +4396,24 @@ def run_pipeline(
         media_id = imported.get("createdId") if isinstance(imported, dict) else None
         if not isinstance(media_id, str) or not media_id:
             raise PipelineError(f"{key}: media_import returned no media id for the revision")
+        # The lane the revision lands on: the run's own overlay lane when
+        # this run placed one, and otherwise the old graphic's own lane,
+        # read from the timeline before it is removed - a fully-resumed run
+        # that placed nothing new has no lane of its own, and the server's
+        # default lane is not where a graphic revision belongs.
+        place_track = track_id
+        if not isinstance(place_track, str) or not place_track:
+            old_id = graphic_clip_ids.get(index)
+            if isinstance(old_id, str) and old_id:
+                try:
+                    view = transport.call("project_get", {"path": project})
+                except Exception as error:  # noqa: BLE001 - the read is a courtesy
+                    log(f"{key}: could not read the old graphic's lane: {error}")
+                    view = None
+                place_track = _clip_track(view, old_id)
         placed = advance(
             "clip_add",
-            {"path": project, "mediaId": media_id, "trackId": track_id, "start": start_at},
+            {"path": project, "mediaId": media_id, "trackId": place_track, "start": start_at},
         )
         new_clip_id = placed.get("createdId") if isinstance(placed, dict) else None
         if not isinstance(new_clip_id, str) or not new_clip_id:
@@ -4672,6 +4802,26 @@ def watch(transport: Any, project: str, plan: dict[str, Any], poll: float) -> No
                         "stop": str(error),
                         **_stage_failure_note(project),
                     })
+                except Exception as error:  # noqa: BLE001 - a watcher must keep watching
+                    # A malformed plan or reply is one arrival's failure, not
+                    # the watcher's: the run is recorded, the loop goes on.
+                    log(f"STOP: unexpected {type(error).__name__}: {error}")
+                    _record_run(project, {
+                        "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                        "status": "failed",
+                        "audio": audio,
+                        "stop": f"unexpected {type(error).__name__}: {error}",
+                        **_stage_failure_note(project),
+                    })
+                # The run imported media of its own - the repaired take, the
+                # bed, the SFX - into the bin it polls: read it again so the
+                # next poll does not direct the run's own arrivals a second
+                # time (a spurious full run over the already-processed take).
+                try:
+                    view = transport.call("project_get", {"path": project})
+                    known = media_ids(view)
+                except Exception as error:  # noqa: BLE001 - polling goes on
+                    log(f"project_get after the run failed: {error}")
     except KeyboardInterrupt:
         # A cancelled run leaves its partial state named, not guessed at:
         # the log above says exactly which steps ran and which never did.
@@ -4779,9 +4929,9 @@ SELF_TEST_REPLIES = {
             ]
         },
         "signalConfidence": {"perSignal": [
-            {"name": "pauses", "confidence": 0.75, "basis": "silencedetect"},
-            {"name": "emphasisWords", "confidence": 0.8, "basis": "token timestamps"},
-            {"name": "loudness", "confidence": 0.9, "basis": "ffmpeg ebur128"},
+            {"signal": "pauses", "confidence": 0.75, "basis": "silencedetect"},
+            {"signal": "emphasisWords", "confidence": 0.8, "basis": "token timestamps"},
+            {"signal": "loudness", "confidence": 0.9, "basis": "ffmpeg ebur128"},
         ]},
     },
     "emotion": lambda args: (
@@ -5195,7 +5345,13 @@ def self_test() -> int:
         print(f"FAIL: the plan's grade was not layered over the whole runtime: {grade}")
         return 1
     captions = next(args for tool, args in by_tool if tool == "captions_add")
-    if captions.get("captions") != [{"start": 0.0, "end": 1.0, "text": "one"}]:
+    # The transcript is re-read onto the sped clip's timeline (the plan's
+    # voiceover speed is 1.2x, so a word that spans a second of the take
+    # spans 1/1.2 of a second here): the caption sits on the timeline the
+    # sped audio actually plays.
+    if captions.get("captions") != [
+        {"start": 0.0, "end": 0.8333333333333334, "text": "one"}
+    ]:
         print(f"FAIL: captions were not placed from the measured transcript: {captions}")
         return 1
     sfx_added = next(args for tool, args in by_tool if tool == "sounds_add")
@@ -5214,7 +5370,16 @@ def self_test() -> int:
         if tool == "clip_audio_levels_db" and args.get("clipId") == "c-bgm"
     )
     frames = duck.get("keyframes") or []
-    if not frames or frames[0].get("gainDb") != -14.0 or frames[-1].get("gainDb") != 0.0:
+    if (
+        not frames
+        or frames[0].get("gainDb") != -14.0
+        or frames[-1].get("gainDb") != 0.0
+        # The bed (180 s) outlasts the words by far, so unity returns at
+        # the last word's own end, never at the bed's: a unity key at
+        # `at: 1.0` ramped only part-way back through the whole tail and
+        # left the bed ducked under everything after the last word.
+        or frames[-1].get("at") == 1.0
+    ):
         print(f"FAIL: the music bed was not ducked under the words: {duck}")
         return 1
     print("enrichment ok: grade layered, captions placed, SFX peaked on beat, bed ducked")
@@ -5506,7 +5671,13 @@ def self_test() -> int:
     if animate_call is None:
         print("FAIL: the plan's kinetic captions were never baked")
         return 1
-    if animate_call.get("words") != [["The", 0.0, 0.4], ["city", 0.4, 1.0]]:
+    # The words ride the sped clip's timeline (the transcript is re-read
+    # onto it): 'The' 0..0.4s of the take is 0..1/3s here, 'city' the rest
+    # of the first second.
+    if animate_call.get("words") != [
+        ["The", 0.0, 0.33333333333333337],
+        ["city", 0.33333333333333337, 0.8333333333333334],
+    ]:
         print(f"FAIL: the bake did not carry the measured word timings: {animate_call}")
         return 1
     if animate_call.get("kinetic") is not True or animate_call.get("project") != project:
@@ -5944,12 +6115,14 @@ def self_test() -> int:
     print("music gate ok: a take that carries music gets no bed, and the music is identified")
 
     # A forged signalLog - citations no measurement answered - is refused.
+    # The reply's own shape (`signal`, the real tool's key) carries one
+    # measured family the plan's citations do not name.
     forged_replies = selftest_world()
     forged_replies["voice_signals"] = {
         "status": "ok",
         "degradations": [],
         "signalConfidence": {"perSignal": [
-            {"name": "loudness", "confidence": 0.9, "basis": "ffmpeg ebur128"},
+            {"signal": "loudness", "confidence": 0.9, "basis": "ffmpeg ebur128"},
         ]},
     }
     forged = MockMcp(forged_replies)
@@ -6528,6 +6701,18 @@ def main() -> int:
                     "status": "failed",
                     "audio": args.audio,
                     "stop": str(error),
+                    **_stage_failure_note(args.project),
+                })
+                return 1
+            except Exception as error:  # noqa: BLE001 - a one-shot run names its failure
+                # An unexpected error is a failed run with its name in the
+                # record, not a traceback with no record beside it.
+                log(f"STOP: unexpected {type(error).__name__}: {error}")
+                _record_run(args.project, {
+                    "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "status": "failed",
+                    "audio": args.audio,
+                    "stop": f"unexpected {type(error).__name__}: {error}",
                     **_stage_failure_note(args.project),
                 })
                 return 1

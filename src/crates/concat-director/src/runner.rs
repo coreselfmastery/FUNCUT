@@ -141,7 +141,7 @@ impl Runner {
         self.shared
             .state
             .lock()
-            .expect("the runner's state is not poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clone()
     }
 
@@ -181,7 +181,7 @@ impl Runner {
             .shared
             .pause
             .lock()
-            .expect("the runner's pause is not poisoned") = pause;
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = pause;
     }
 
     /// The stages a run on this runner completed, in the register's own
@@ -194,7 +194,7 @@ impl Runner {
             .shared
             .completed
             .lock()
-            .expect("the runner's stage record is not poisoned");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         Stage::ALL
             .iter()
             .copied()
@@ -211,7 +211,7 @@ impl Runner {
             .shared
             .completed
             .lock()
-            .expect("the runner's stage record is not poisoned");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         for stage in completed {
             set.insert(stage);
         }
@@ -223,7 +223,7 @@ impl Runner {
         self.shared
             .completed
             .lock()
-            .expect("the runner's stage record is not poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clear();
     }
 
@@ -234,7 +234,7 @@ impl Runner {
             .shared
             .pause
             .lock()
-            .expect("the runner's pause is not poisoned");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         base * (1u32 << (attempt - 1).min(30))
     }
 
@@ -331,7 +331,7 @@ impl Runner {
                 .shared
                 .completed
                 .lock()
-                .expect("the runner's stage record is not poisoned")
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .contains(&step.stage)
             {
                 self.emit(
@@ -533,7 +533,7 @@ impl Runner {
                     self.shared
                         .completed
                         .lock()
-                        .expect("the runner's stage record is not poisoned")
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
                         .insert(step.stage);
                 }
                 // A stop asked for while the failing call was in flight:
@@ -674,12 +674,12 @@ impl Runner {
             .shared
             .state
             .lock()
-            .expect("the runner's state is not poisoned") = state;
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = state;
         let _ = self
             .shared
             .events
             .lock()
-            .expect("the runner's channel is not poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .send(event);
     }
 }

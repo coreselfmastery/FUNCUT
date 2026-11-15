@@ -38,7 +38,11 @@ GitHub check-runs API for the exact SHA.
   commit's own main-push run and this final state push's run are the
   last two records; both are docs-equivalent content over a green tree.
 
-## Local build environment reproduction (for reproducibility)
+## Historical local build environment (not a clean-clone recipe)
+
+> **Portability note:** this section records a previous developer machine, not a clean-clone setup. The absolute `/home/z/my-project/scripts/setup-build-env.sh` and `funcut-env.sh` paths are not present in the repository. Do not copy these commands into a new checkout. The reproducible packaged build is defined by `.github/workflows/build-app.yml`, which fetches pinned assets from `scripts/ci/deps.lock` using `scripts/ci/fetch.sh`. A portable local setup script is not currently shipped.
+
+
 
 `bash scripts/setup-build-env.sh` (in the checkout, repo-relative) fetches
 the exact digest-pinned FFmpeg 8.1.3/ONNX 1.28.0/sherpa 1.13.7 through

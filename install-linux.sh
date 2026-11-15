@@ -112,7 +112,16 @@ while [ $# -gt 0 ]; do
             esac
             ;;
         -h|--help)
-            sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+            # The whole header, not a slice of it: the usage block grew
+            # past line 20 long ago, and a --help that stops
+            # mid-paragraph hides --no-models, --all-models and
+            # --with-openvid. Line 2 down to the first line that is
+            # neither a comment nor blank - the blank line before
+            # `set -euo pipefail` - is the whole usage.
+            awk 'NR==1 {next}
+                 /^#/ {sub(/^# ?/, ""); print; next}
+                 /^$/ {print; next}
+                 {exit}' "$0"
             exit 0
             ;;
         *) die "unknown option: $1 (try --help)" ;;
@@ -136,8 +145,11 @@ GH_TOKEN_VALUE="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
 # /proc and `ps`, and a header on argv would leak it for as long as the
 # release listing and the ~100 MB download run. It travels in a config
 # file instead - 600, made once up front, removed by the exit trap -
-# which curl reads with -K and wget through WGETRC. It is made before
-# the first fetch because `fetch` is called inside command substitutions
+# which curl reads with -K and wget through WGETRC. The two parsers
+# disagree on quoting (curl wants a quoted value, wget keeps the quotes
+# as literal header characters), so the file is written in the form of
+# whichever downloader this machine has. It is made before the first
+# fetch because `fetch` is called inside command substitutions
 # (the release listings), where nothing it set would survive.
 AUTH_CONF=""
 TMP=""
@@ -152,10 +164,29 @@ if [ -n "$GH_TOKEN_VALUE" ]; then
     AUTH_CONF=$(mktemp "${TMPDIR:-/tmp}/concat-install.XXXXXX") ||
         die "could not make a private scratch file for the token"
     chmod 600 "$AUTH_CONF"
-    {
-        printf 'header = "Authorization: Bearer %s"\n' "$GH_TOKEN_VALUE"
-        printf 'header = "Accept: application/vnd.github+json"\n'
-    } >"$AUTH_CONF"
+    if [ -n "$CURL" ]; then
+        # curl -K: a quoted value, the form curl's parser strips to the
+        # header line it sends.
+        {
+            printf 'header = "Authorization: Bearer %s"\n' "$GH_TOKEN_VALUE"
+            printf 'header = "Accept: application/vnd.github+json"\n'
+        } >"$AUTH_CONF"
+    else
+        # wget's WGETRC: the UNquoted form. wget keeps a quoted value's
+        # quotes as literal characters of the header line - verified
+        # against a local echo server: the request arrives as
+        # "Authorization: Bearer ..." with the quotes in place, a header
+        # no server reads, so the token never authorized anything and a
+        # private-repository download fell back to anonymous. Unquoted,
+        # wget sends the line exactly as written. (The same test showed
+        # wget re-sends custom headers to a redirect's host; the only
+        # redirects in this script's authed flow are GitHub's own
+        # release-asset CDNs, which is where the token already was.)
+        {
+            printf 'header = Authorization: Bearer %s\n' "$GH_TOKEN_VALUE"
+            printf 'header = Accept: application/vnd.github+json\n'
+        } >"$AUTH_CONF"
+    fi
 fi
 
 # fetch URL DEST [auth] - the file at URL into DEST, or to stdout when
@@ -543,6 +574,42 @@ case "$KIND" in
         cp "$TMP/$ASSET_NAME" "$DEST.new"
         chmod +x "$DEST.new"
         mv -f "$DEST.new" "$DEST"
+        # An AppImage mounts itself with FUSE - specifically libfuse2
+        # (libfuse.so.2 / fusermount), which a plain Debian 13 no longer
+        # installs: there the AppImage dies with exit 127, "No suitable
+        # fusermount binary found", and only --appimage-extract-and-run
+        # works. Rather than shipping a broken default, the install
+        # checks for FUSE: where it is missing the launcher becomes a
+        # wrapper that runs the AppImage extracted, and the AppImage
+        # itself keeps its own name beside it.
+        fuse_present=no
+        if command -v fusermount >/dev/null 2>&1; then
+            fuse_present=yes
+        elif command -v ldconfig >/dev/null 2>&1 \
+            && ldconfig -p 2>/dev/null | grep -q 'libfuse\.so\.2'; then
+            fuse_present=yes
+        fi
+        if [ "$fuse_present" = yes ]; then
+            say "installed: $DEST"
+        else
+            mv -f "$DEST" "$BIN_DIR/concat.appimage"
+            printf '%s\n' \
+                '#!/bin/sh' \
+                '# FUNCUT launcher: this machine has no libfuse2, which an' \
+                '# AppImage needs to mount itself. This wrapper runs it' \
+                '# extracted instead (--appimage-extract-and-run): slower' \
+                '# to start, but it works everywhere. Installing libfuse2' \
+                '# (apt install libfuse2) and re-running the installer' \
+                '# restores the direct, faster start.' \
+                "exec \"\$(dirname \"\$0\")/concat.appimage\" --appimage-extract-and-run \"\$@\"" \
+                >"$DEST.new"
+            chmod +x "$DEST.new"
+            mv -f "$DEST.new" "$DEST"
+            say "installed: $DEST (wrapper - this machine has no libfuse2)"
+            say "  the AppImage runs extracted; 'apt install libfuse2' +"
+            say "  re-run this installer for the faster direct start,"
+            say "  or use --deb, whose package needs no FUSE at all"
+        fi
         # The fork's own name for the same program, for the muscle
         # memory this repository is named for.
         ln -sf concat "$BIN_DIR/funcut"
@@ -577,7 +644,6 @@ DESKTOP
                 || rm -f "$ICONS_DIR/hicolor/${SIZE}x${SIZE}/apps/concat.png"
         done
         command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APPS_DIR" >/dev/null 2>&1 || true
-        say "installed: $DEST"
         say "start menu: $APPS_DIR/concat.desktop"
         say ""
         case ":$PATH:" in

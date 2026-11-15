@@ -44,7 +44,7 @@ sha2 = "0.10"
 # and byte range in one SQLite file, searched in milliseconds. Bundled, so
 # no system SQLite is asked for and every platform gets the same one, FTS5
 # included.
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 # The index's captions are zstd-compressed against a dictionary the index
 # itself carries; decompressed a page at a time, never whole.
 zstd = "0.14"

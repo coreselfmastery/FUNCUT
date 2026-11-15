@@ -249,7 +249,6 @@ def rerank(spec):
                 best[identifier] = score
     except Exception as error:  # a broken half is a fallback, not a failure
         return {"ok": False, "error": f"{type(error).__name__}: {error}", "pip": PIP_LINE}
-        return {"ok": False, "error": why, "pip": PIP_LINE}
 
     scored = [candidate for candidate in candidates if _cid(candidate) in best]
     kept = [candidate for candidate in candidates if _cid(candidate) not in best]

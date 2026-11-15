@@ -411,10 +411,9 @@ fn read(
         // up to the newline that ends it - the session resynchronises
         // instead of drowning.
         if !bytes.ends_with(b"\n") {
-            // Discard the rest of the over-long line, up to and including
-            // the newline that ends it.
-            let mut rest = Vec::new();
-            let _ = input.read_until(b'\n', &mut rest);
+            // The answer goes out before the discard: a client that
+            // streams the over-long line and holds it open must not
+            // hold the answer hostage with it.
             output.send(&failure(
                 Value::Null,
                 code::PARSE,
@@ -425,6 +424,30 @@ fn read(
                 ),
                 None,
             ));
+            // Discard the rest in bounded pieces, consuming exactly
+            // through the newline: the reader never allocates what the
+            // client streams, and a chunk that carries the newline's
+            // own line behind it leaves that line for the next read
+            // rather than eating it.
+            loop {
+                let held = match input.fill_buf() {
+                    Ok(held) => held,
+                    Err(_) => return,
+                };
+                if held.is_empty() {
+                    break;
+                }
+                match held.iter().position(|byte| *byte == b'\n') {
+                    Some(at) => {
+                        input.consume(at + 1);
+                        break;
+                    }
+                    None => {
+                        let length = held.len();
+                        input.consume(length);
+                    }
+                }
+            }
             continue;
         }
         // JSON is UTF-8. A line that is not is that line's mistake, not the

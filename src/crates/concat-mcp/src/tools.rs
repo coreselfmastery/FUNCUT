@@ -855,7 +855,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "motion_inspect",
             title: "Inspect a motion comp",
-            description: "One motion comp summarised: census, timing, text, legibility, assets and the lint.",
+            description: "What is in a comp before it is touched: nodes, spans, animated properties, slots, validation problems.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -918,7 +918,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "motion_probe",
             title: "Inspect a media file",
-            description: "What the motion engine can do here: fonts, presets, availability.",
+            description: "What a media file IS, as the engine's own reader sees it: streams, frame size and rate, duration, the audio's channels.",
             read_only: true,
             destructive: false,
             idempotent: true,

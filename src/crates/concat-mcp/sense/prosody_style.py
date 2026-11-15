@@ -497,9 +497,8 @@ def _detect_accent(spec):
     rust, rust_note = _rust_reading(spec) if audio else (None, None)
     vowel_note = None
     if rust and rust.get("forensic") and rust["forensic"].get("formants"):
-        f = rust["forensic"]["formants"]
         vowel_note = "voice-signals formants available for vowel-dispersion cross-check"
-        cues.append(vowel_note) if False else None
+        cues.append(vowel_note)
 
     weight = min(1.0, 0.25 * article_slips + 0.2 * (1 if len(toks) > 40 and per100 < 5 else 0)
                  + 0.2 * (1 if fillers and fpm > 6 else 0)

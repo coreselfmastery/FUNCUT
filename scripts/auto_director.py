@@ -3222,6 +3222,32 @@ def run_pipeline(
     captions_wanted = captions_plan is not None or any(
         segment.get("captions") for segment in plan_segments(plan)
     )
+
+    # The plan's per-segment captions flags (B1): a span the plan says no
+    # captions for gets none - computed here, used by both caption paths,
+    # where before it was computed for neither and every segment was
+    # captioned whatever the plan said.
+    _caption_false_spans = [
+        (float(segment.get("start") or 0.0), float(segment.get("end") or 0.0))
+        for segment in plan_segments(plan)
+        if segment.get("captions") is False
+    ]
+    _caption_true_wanted = captions_plan is not None or any(
+        segment.get("captions") for segment in plan_segments(plan)
+    )
+
+    def _captions_wanted(at: float) -> bool:
+        # No flag anywhere: the plan never said no, so yes.
+        if not _caption_false_spans and not _caption_true_wanted:
+            return True
+        # A span the plan flagged no: not captioned.
+        for start, end in _caption_false_spans:
+            if start <= at < end:
+                return False
+        # The plan asked for captions somewhere: what it did not
+        # exclude, it asked for.
+        return _caption_true_wanted
+
     kinetic_setting = None
     words: list[list[Any]] = []
     if captions_plan is not None:
@@ -3275,7 +3301,8 @@ def run_pipeline(
                         continue
                     text, start, end = word.get("text"), word.get("start"), word.get("end")
                     if isinstance(text, str) and text.strip() and isinstance(start, (int, float)) \
-                            and isinstance(end, (int, float)) and float(end) > float(start):
+                            and isinstance(end, (int, float)) and float(end) > float(start) \
+                            and _captions_wanted(float(start)):
                         words.append([text, float(start), float(end)])
             if not words:
                 log(
@@ -3361,12 +3388,11 @@ def run_pipeline(
                 "the export would silently lack them"
             )
         if kinetic_setting is None or not words:
-            wanted_segments = [
-                segment for segment in plan_segments(plan)
-                if segment.get("captions") or (captions_plan is not None and not any(
-                    s.get("captions") is False for s in [segment]
-                ))
-            ] if any(segment.get("captions") for segment in plan_segments(plan)) else plan_segments(plan)
+            # The plan's per-segment captions flags (B1): a transcript
+            # segment inside a span the plan flagged no captions for is
+            # not captioned - the flags used to be computed here (as
+            # wanted_segments) and dropped on the floor, captioning every
+            # segment whatever the plan said.
             timed = [
                 {"start": float(s["start"]), "end": float(s["end"]), "text": str(s.get("text") or "")}
                 for s in transcript.get("segments", [])
@@ -3374,6 +3400,7 @@ def run_pipeline(
                 and isinstance(s.get("end"), (int, float))
                 and float(s["end"]) > float(s["start"])
                 and float(s["start"]) < runtime
+                and _captions_wanted(float(s["start"]))
             ]
             for caption in timed:
                 caption["end"] = min(caption["end"], runtime)

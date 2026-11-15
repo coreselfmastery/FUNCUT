@@ -915,7 +915,9 @@ mod tests {
         let root = scratch("finished-temporary");
         let manifest = Path::new(&root).join(MANIFEST);
         let mut temporary = Temporary::open(Path::new(&root)).expect("opens a fresh temporary");
-        temporary.write(b"first snapshot").expect("writes the first snapshot");
+        temporary
+            .write(b"first snapshot")
+            .expect("writes the first snapshot");
         temporary.commit(&manifest).expect("publishes the manifest");
 
         let error = temporary

@@ -19,7 +19,9 @@
 //! again into that project's own folder by the window, so a project never
 //! points into the library and removing a sound from it breaks nothing.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
@@ -560,6 +562,15 @@ pub fn cached_file(dirs: &AppDirs, sound: &Listed) -> PathBuf {
     cache_dir(dirs).join(format!("{}-{}", &sound.sha256[..12], sound.file))
 }
 
+/// One turn per cached sound, by its digest: the map `fetch_sound` queues
+/// behind so two askers of one sound never share a partial file. The BGM
+/// library keeps the same map on its own `Library`; this one is a free
+/// function's, so it lives here for the whole process.
+fn turns() -> &'static Mutex<HashMap<String, Arc<Mutex<()>>>> {
+    static TURNS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
+    TURNS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 /// Downloads `sound` into the cache from the mirror, then the repository,
 /// and checks it against its digest; a file that does not match is
 /// deleted. Returns where it is. Blocks: a worker's.
@@ -570,6 +581,23 @@ pub fn fetch_sound(
     progress: &mut dyn FnMut(u64, u64),
 ) -> Result<PathBuf, String> {
     let target = cached_file(dirs, sound);
+    if target.is_file() {
+        return Ok(target);
+    }
+    // One turn per sound, the guard the BGM library already keeps: the
+    // window's click and the API's call (or two windows over one data
+    // folder) queue behind each other instead of appending to the same
+    // partial from two places, which `models::download`'s resume would
+    // let corrupt the cached file - one asker's rename can even land
+    // while the other is still appending to what is now the target.
+    // The second asker wakes, finds the sound on disk, and returns it.
+    let turn = {
+        let mut held = turns()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        held.entry(sound.sha256.clone()).or_default().clone()
+    };
+    let _held = turn.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if target.is_file() {
         return Ok(target);
     }
@@ -617,7 +645,46 @@ mod tests {
         assert_eq!(free_name(&dir, "Whoosh", "wav"), "Whoosh 2.wav");
         assert_eq!(free_name(&dir, "../up", "wav"), "_up.wav");
         assert_eq!(free_name(&dir, "  ", "mp3"), "Sound.mp3");
-        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// One turn per sound: two askers of the same digest queue behind
+    /// each other, and an asker of a different digest does not wait.
+    #[test]
+    fn one_turn_per_sound_queues_askers_behind_each_other() {
+        let first = {
+            let mut held = turns()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            held.entry("same-digest".to_owned()).or_default().clone()
+        };
+        let held = first
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let second = {
+            let mut held = turns()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            held.entry("same-digest".to_owned()).or_default().clone()
+        };
+        assert!(
+            second.try_lock().is_err(),
+            "the second asker of one sound waits for the first's turn"
+        );
+        let other = {
+            let mut held = turns()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            held.entry("another-digest".to_owned()).or_default().clone()
+        };
+        assert!(
+            other.try_lock().is_ok(),
+            "a different sound's turn is its own"
+        );
+        drop(held);
+        assert!(
+            second.try_lock().is_ok(),
+            "the turn passes on when the first asker is done"
+        );
     }
 
     #[test]

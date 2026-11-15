@@ -1046,7 +1046,18 @@ fn census(
                     {
                         let name_len = u16::from_le_bytes([bytes[26], bytes[27]]) as u64;
                         let extra_len = u16::from_le_bytes([bytes[28], bytes[29]]) as u64;
-                        let head = &bytes[(30 + name_len + extra_len) as usize..];
+                        let head_at = 30 + name_len + extra_len;
+                        // The lengths are the zip's own say-so: a proxy
+                        // that closes a 206 early (or a changed archive)
+                        // can name a header the span does not carry, and
+                        // a slice past the read is a panic the shipping
+                        // abort profile would take the whole app down
+                        // with. The member falls out below as one the
+                        // census could not measure - the honest refusal.
+                        if head_at > bytes.len() as u64 {
+                            continue;
+                        }
+                        let head = &bytes[head_at as usize..];
                         // Deflated members arrive compressed: the first of
                         // the track's own bytes is the first of what inflates
                         // from the span's front, read forward as far as the

@@ -40,9 +40,10 @@
 //! [microsoft/fluentui-emoji]: https://github.com/microsoft/fluentui-emoji
 //! [scripts/fluent-emoji-index.py]: ../../scripts/fluent-emoji-index.py
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
@@ -630,6 +631,23 @@ impl Library {
         if target.is_file() {
             return Ok(target);
         }
+        // One turn per picture: the window's worker and the API's call
+        // share this process, so the pid the partial's name carries stops
+        // a *cross*-process race but not the in-process one - two askers
+        // appending to one partial, or one renaming it home while the
+        // other still streams into it. The guard is the one the sounds
+        // shelf and the BGM library keep; the second asker wakes, finds
+        // the picture on disk, and returns it.
+        let turn = {
+            let mut held = turns()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            held.entry(id.to_owned()).or_default().clone()
+        };
+        let _held = turn.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if target.is_file() {
+            return Ok(target);
+        }
         // The path comes from the index the digest has already vouched
         // for, but a fetch refuses an id the index never said all the
         // same: the guard is cheap and the alternative is a request
@@ -759,6 +777,15 @@ fn images_dir(dirs: &AppDirs) -> PathBuf {
 /// Where one picture is kept once fetched.
 fn image_path(dirs: &AppDirs, id: &str) -> PathBuf {
     images_dir(dirs).join(format!("{id}.png"))
+}
+
+/// One turn per picture, by its id: the map `fetch` queues behind so the
+/// pane's worker and the API's call - one process, so one pid in the
+/// partial's name - never share a partial file. The sounds shelf and the
+/// BGM library keep the same kind of map.
+fn turns() -> &'static Mutex<HashMap<String, Arc<Mutex<()>>>> {
+    static TURNS: OnceLock<Mutex<HashMap<String, Arc<Mutex<()>>>>> = OnceLock::new();
+    TURNS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 /// Where to fetch a picture from, in order: the repository itself, then

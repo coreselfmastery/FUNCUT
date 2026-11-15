@@ -287,7 +287,7 @@ impl Shelf {
         match &*self
             .state
             .lock()
-            .expect("the bgm shelf lock is not poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
         {
             Held::Missing => Status::Missing,
             Held::Loading => Status::Loading(self.percent.load(Ordering::Relaxed).min(100)),
@@ -301,7 +301,7 @@ impl Shelf {
         match &*self
             .state
             .lock()
-            .expect("the bgm shelf lock is not poisoned")
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
         {
             Held::Ready(tracks) => Some(Arc::clone(tracks)),
             _ => None,
@@ -314,7 +314,7 @@ impl Shelf {
         *self
             .state
             .lock()
-            .expect("the bgm shelf lock is not poisoned") = held;
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = held;
         self.moved_on.notify_all();
     }
 }
@@ -410,7 +410,7 @@ impl Library {
         let mut state = shelf
             .state
             .lock()
-            .expect("the bgm shelf lock is not poisoned");
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         loop {
             match &*state {
                 Held::Ready(_) => return Ok(()),
@@ -428,7 +428,7 @@ impl Library {
                     state = shelf
                         .moved_on
                         .wait(state)
-                        .expect("the bgm shelf lock is not poisoned");
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
                 }
             }
         }
@@ -1064,7 +1064,7 @@ fn census(
                         let data = entry.offset + 30 + name_len + extra_len;
                         found
                             .lock()
-                            .expect("the census lock is not poisoned")
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
                             .push((todo[at], data, duration));
                     }
                     let measured = done.fetch_add(1, Ordering::Relaxed) + 1;
@@ -1079,7 +1079,9 @@ fn census(
     if cancel.load(Ordering::Relaxed) {
         return Err("cancelled".to_owned());
     }
-    let found = found.into_inner().expect("the census lock is not poisoned");
+    let found = found
+        .into_inner()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     for (at, data, duration) in found {
         index.entries[at].data = data;
         index.entries[at].duration = duration;
@@ -1601,6 +1603,38 @@ mod tests {
             bytes: 1000,
             file: format!("{}.mp3", title.to_lowercase().replace(' ', "-")),
         }
+    }
+
+    /// A poisoned shelf lock keeps its valid state available to later callers.
+    #[test]
+    fn a_poisoned_shelf_lock_remains_usable() {
+        let dir = scratch("poisoned-lock");
+        let shelf = Shelf::new();
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _state = shelf.state.lock().expect("initial lock");
+            panic!("poison the shelf lock");
+        }));
+        assert!(panic.is_err(), "the caught panic poisons the lock");
+        assert!(matches!(shelf.status(), Status::Missing));
+        assert!(shelf.catalog().is_none());
+
+        shelf.lands(Held::Ready(Arc::new(Vec::new())));
+        assert!(matches!(shelf.status(), Status::Ready));
+        assert!(shelf.catalog().is_some());
+
+        let library = Library {
+            dirs: dirs_at(&dir),
+            freepd: shelf,
+            lofi: Shelf::new(),
+            turns: Mutex::new(HashMap::new()),
+        };
+        assert!(
+            library
+                .prepare(Source::FreePd, &AtomicBool::new(false))
+                .is_ok(),
+            "prepare reuses the ready shelf without fetching"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// One shelf down must not make the whole library unusable: a search

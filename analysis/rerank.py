@@ -247,8 +247,11 @@ def rerank(spec):
             previous = best.get(identifier)
             if previous is None or score > previous:
                 best[identifier] = score
-    except Exception as error:  # a broken half is a fallback, not a failure
-        return {"ok": False, "error": f"{type(error).__name__}: {error}", "pip": PIP_LINE}
+    except Exception:  # a broken half is a fallback, not a failure
+        import sys
+        caught = sys.exc_info()[1]
+        why = type(caught).__name__ + ": " + str(caught)
+        return {"ok": False, "error": why, "pip": PIP_LINE}
 
     scored = [candidate for candidate in candidates if _cid(candidate) in best]
     kept = [candidate for candidate in candidates if _cid(candidate) not in best]

@@ -30,23 +30,6 @@ use crate::curve::Curve;
 use crate::route::BeatType;
 use crate::track::{Key, Track, Value};
 
-/// The beat grid a pulse is driven by: the times, in seconds from the
-/// scene's own start, that the audio lands its accents. Measured, not
-/// guessed - `suggest_cuts` reads them from the soundtrack.
-#[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize)]
-pub struct BeatGrid {
-    /// The beat times, in seconds, in order (a grid out of order is
-    /// sorted where it is read; nothing here trusts the caller's order).
-    pub beats: Vec<f64>,
-}
-
-impl BeatGrid {
-    /// A grid from measured times.
-    pub fn new(beats: Vec<f64>) -> BeatGrid {
-        BeatGrid { beats }
-    }
-}
-
 /// What a pulse drives.
 #[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

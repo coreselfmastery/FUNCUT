@@ -130,7 +130,7 @@ pub use looks::Look;
 pub use noise::Noise;
 pub use particles::{Emission, ParticlePatch, ParticleSystem, Shape, Turbulence};
 pub use plan::{Entry, Exit, SlotJob, SlotRole, Treatment, broll_share};
-pub use pulse::{BeatGrid, Driven, Pulse, curve_for_act, sound_starts_at};
+pub use pulse::{Driven, Pulse, curve_for_act, sound_starts_at};
 pub use reel::{ReelReport, SceneOutcome, render_reel, scene_key};
 pub use revision::{
     GateDecision, MAX_RETRIES, SHIP_SCORE, SlotRevision, attempt_path, decide, failing_slot_ids,

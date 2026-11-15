@@ -151,3 +151,33 @@ Geneva is ready for a release candidate when all of the following are true on th
 - [ ] Target-machine timing/memory evidence is attached, or the release notes clearly state that only hosted correctness—not target performance—has been validated.
 
 **Status rule:** never mark the whole FUNCUT product “ready” from this Geneva checklist alone. This page certifies only the Geneva motion-rendering subsystem and its stated boundaries.
+
+
+## 11. Current-main reconciliation — 15 November 2026
+
+This section supersedes older current-main snapshots above. Historical run IDs remain evidence only for their recorded commits.
+
+**Exact main SHA checked:** `8571b3a6f5acf723edfc38096aa5f7d88365bb53` (merge commit for PR #130, generated plan-schema implementation).
+
+### Same-tree / exact-commit evidence distinction
+
+- PR #130 head `e93ccf5f4e8db045aa6966ca7975b9da7753ced5`: CI completed successfully (format/locales/models, engine tests/lints, real-fixture analysis); Geneva passed 2/2; Nix passed. PR #130 is merged as `8571b3a6f5acf723edfc38096aa5f7d88365bb53`.
+- The PR head was based on an older main snapshot. The connected workflow-run interface exposes PR-triggered runs only, not the push-triggered runs for the merge commit. Therefore those green PR-head jobs are **not** represented as exact-merge-SHA validation. Re-fetch main push runs before release sign-off.
+- Current-main Build app x86_64/aarch64 and Geneva push runs are not independently discoverable through the available workflow-run interface for this SHA. Earlier architecture artifacts and Geneva runs are historical evidence only.
+
+### Geneva implementation and boundaries
+
+- Creative, Performance, Reliability and Agent pillars remain implemented; the original ten audit findings remain recorded closed, subject to the documented scope boundaries in this file.
+- Mixed markup/native-only shapes/effects remain safely refused rather than silently degraded; this is not full browser/CSS parity.
+- Static ancestor translations and animated child position offsets under static translated parents are supported. Animated parent transforms and inherited scale/rotation remain outside the flattened Geneva profile.
+- Cache hits still require the live sidecar-version query; this remains an intentional contract.
+- The hosted scene-quality and golden-frame checks validate correctness, not target antiX performance.
+
+### Current release evidence gaps
+
+- **Target antiX Geneva performance:** no verified low-memory target-machine wall-time, output-size and process-tree RSS report is attached.
+- **1080p proxy scrubbing:** implementation defaults and regression tests are documented elsewhere, but real long-GOP target-machine FPS/latency, proxy-generation cost, proxy selection during scrub and original-frame restoration after pause remain unmeasured.
+- **Whole-product acceptance:** AI Director brief-to-final-export, VAAPI hardware, and real Motion/Lottie/export workflows remain broader FUNCUT release gates, not Geneva pillar completion claims.
+- **Security:** the new RustSec audit is proposed in PR #141 and is currently running on the current-main lockfile; it is not yet part of main. The previous older-branch audit found 17 advisories and must not be ignored.
+
+**Status rule:** Geneva's hosted correctness evidence does not certify whole-product release readiness or target-device performance. The current main merge SHA remains unverified by a complete push-triggered CI/Geneva/Build/Nix run through the connected workflow listing.

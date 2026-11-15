@@ -911,6 +911,32 @@ mod tests {
     }
 
     #[test]
+    fn a_finished_temporary_refuses_another_write_without_changing_the_manifest() {
+        let root = scratch("finished-temporary");
+        let manifest = Path::new(&root).join(MANIFEST);
+        let mut temporary = Temporary::open(Path::new(&root)).expect("opens a fresh temporary");
+        temporary
+            .write(b"first snapshot")
+            .expect("writes the first snapshot");
+        temporary.commit(&manifest).expect("publishes the manifest");
+
+        let error = temporary
+            .write(b"late snapshot")
+            .expect_err("a committed temporary cannot be written again");
+        assert!(
+            error.contains("already been finished"),
+            "the refusal names the finished temporary: {error}"
+        );
+        assert_eq!(
+            std::fs::read(&manifest).expect("reads the committed manifest"),
+            b"first snapshot",
+            "the late write cannot change the published manifest"
+        );
+        assert_eq!(temporaries(&root), 0, "no temporary remains");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn a_late_snapshot_never_lands_after_a_newer_one() {
         let root = scratch("late-snapshot");
         let older = document("older");

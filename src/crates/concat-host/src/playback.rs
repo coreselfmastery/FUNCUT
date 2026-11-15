@@ -1209,8 +1209,19 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{COAST, Shared, sweep_plan, wav_data_range};
+    use super::{COAST, Shared, locked, sweep_plan, wav_data_range};
     use std::sync::atomic::Ordering;
+
+    #[test]
+    fn a_poisoned_playback_lock_keeps_its_value_available() {
+        let mutex = std::sync::Mutex::new(vec![1, 2, 3]);
+        let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = mutex.lock().expect("initial lock");
+            panic!("poison the playback lock");
+        }));
+        assert!(panic.is_err(), "the caught panic poisons the lock");
+        assert_eq!(locked(&mutex).as_slice(), &[1, 2, 3]);
+    }
 
     #[test]
     fn the_clock_runs_on_between_buffers_but_not_past_a_stall() {

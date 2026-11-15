@@ -1229,7 +1229,12 @@ impl Api {
         let Some(entries) = entries else {
             return;
         };
-        for entry in entries {
+        // Adopted oldest first, the ring's own order: `rows_for` writes
+        // the ledger newest first, so adopting the file's own order
+        // would fill the ring backwards - and the first eviction after a
+        // restart would drop the newest keys, exactly the ones a resumed
+        // run re-sends, while the oldest ones stayed answered.
+        for entry in entries.iter().rev() {
             let Some(key) = entry.get("key").and_then(serde_json::Value::as_str) else {
                 continue;
             };
@@ -3743,6 +3748,62 @@ mod tests {
                 |entry| entry["key"] == "run-1:timeline" && entry["hash"].as_u64().unwrap() > 0
             ),
             "the ledger carries the key with its hash: {entries:?}"
+        );
+    }
+
+    #[test]
+    fn the_durable_ledger_adopts_its_rows_oldest_first() {
+        // F-06: `rows_for` writes the ledger newest first, so the restart
+        // adopts it oldest first - the ring keeps its record order, and
+        // the first eviction past the cap drops the oldest keys, never
+        // the newest ones a resumed run is about to re-send. Adopting
+        // the file's own order filled the ring backwards and evicted
+        // exactly the keys the resume still owes.
+        let (mut api, scratch, _) = api();
+        let path = project(&mut api, &scratch, "Adopted");
+        let created = view(ok(api.dispatch(Request::ProjectGet { path: path.clone() })));
+        let track_id = created.project.active().tracks[0].id.clone();
+        let media = view(ok(api.dispatch(Request::EditApply {
+            path: path.clone(),
+            command: Box::new(Command::AddMedia {
+                item: still("/nowhere/still.png"),
+            }),
+            idempotency_key: None,
+        })));
+        let media_id = media.created_id.expect("minted");
+        for number in 0..4 {
+            ok(api.dispatch(Request::EditApply {
+                path: path.clone(),
+                command: Box::new(Command::AddClip {
+                    media_id: media_id.clone(),
+                    track_id: track_id.clone(),
+                    start: number as f64 * 10.0,
+                    ripple: false,
+                }),
+                idempotency_key: Some(format!("run-1:cut-{number}")),
+            }));
+        }
+        drop(api); // the restart: a whole new API over the same dirs.
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&events);
+        let mut api = Api::with_dirs(
+            AppDirs {
+                config: scratch.path().join("config"),
+                data: scratch.path().join("data"),
+            },
+            Arc::new(move |event| sink.lock().expect("events").push(event)),
+        );
+        ok(api.dispatch(Request::ProjectOpen { path: path.clone() }));
+        let keys: Vec<&str> = api
+            .applied
+            .order
+            .iter()
+            .map(|id| id.rsplit('\n').next().unwrap())
+            .collect();
+        assert_eq!(
+            keys,
+            vec!["run-1:cut-0", "run-1:cut-1", "run-1:cut-2", "run-1:cut-3"],
+            "the restarted ring is oldest first, ready to evict the oldest"
         );
     }
 

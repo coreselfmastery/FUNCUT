@@ -346,11 +346,14 @@ fn apply_one(comp: &mut Comp, fix: &Fix) -> Result<String, String> {
                     (node.start + seconds).max(0.0)
                 }
             };
-            let node = comp
+            let wanted = node.id.clone();
+            let Some(node) = comp
                 .nodes
                 .iter_mut()
-                .find(|candidate| candidate.id == node.id)
-                .expect("the node was found");
+                .find(|candidate| candidate.id == wanted)
+            else {
+                return Err(format!("the node {wanted:?} vanished from the comp"));
+            };
             let moved = start - node.start;
             node.start = start;
             Ok(format!(
@@ -379,11 +382,14 @@ fn apply_one(comp: &mut Comp, fix: &Fix) -> Result<String, String> {
             })?;
             let x = base.x + dx;
             let y = base.y + dy;
-            let node = comp
+            let wanted = node.id.clone();
+            let Some(node) = comp
                 .nodes
                 .iter_mut()
-                .find(|candidate| candidate.id == node.id)
-                .expect("the node was found");
+                .find(|candidate| candidate.id == wanted)
+            else {
+                return Err(format!("the node {wanted:?} vanished from the comp"));
+            };
             node.transform.position = Some(crate::comp::Point::new(x, y));
             // A node that was moving keeps its motion - the shift moves
             // the destination, not the journey.
@@ -413,11 +419,14 @@ fn apply_one(comp: &mut Comp, fix: &Fix) -> Result<String, String> {
                 None => parse_factor(&fix.change)
                     .ok_or_else(|| format!("no size with a unit in {:?}", fix.change))?,
             };
-            let node = comp
+            let wanted = node.id.clone();
+            let Some(node) = comp
                 .nodes
                 .iter_mut()
-                .find(|candidate| candidate.id == node.id)
-                .expect("the node was found");
+                .find(|candidate| candidate.id == wanted)
+            else {
+                return Err(format!("the node {wanted:?} vanished from the comp"));
+            };
             let rest = node.transform.scale * factor;
             node.transform.scale = rest.max(0.05);
             Ok(format!(
@@ -462,11 +471,14 @@ fn apply_one(comp: &mut Comp, fix: &Fix) -> Result<String, String> {
                     Curve::NAMES.join(", ")
                 ));
             };
-            let node = comp
+            let wanted = node.id.clone();
+            let Some(node) = comp
                 .nodes
                 .iter_mut()
-                .find(|candidate| candidate.id == node.id)
-                .expect("the node was found");
+                .find(|candidate| candidate.id == wanted)
+            else {
+                return Err(format!("the node {wanted:?} vanished from the comp"));
+            };
             let mut touched = 0;
             for track in node.tracks.values_mut() {
                 if let Some(key) = track.keys.first_mut() {

@@ -83,7 +83,6 @@ def spans_from_ffmpeg(path, threshold_db, min_seconds):
 def spans_from_librosa(path, threshold_db, min_seconds):
     """The librosa fallback when no ffmpeg binary is around: an RMS envelope."""
     import librosa
-    import numpy
     y, sr = librosa.load(path, sr=22050, mono=True)
     if y.size == 0:
         return [], 0.0

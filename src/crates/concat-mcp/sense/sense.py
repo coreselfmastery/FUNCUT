@@ -2100,7 +2100,7 @@ def overlay(spec):
             "and clip_add. The alpha sequence itself is untouched. VP9/prores alpha "
             "targets are deliberately not claimed: FFmpeg's WebM muxer does not reliably "
             "write AlphaMode, which is why this path exists. The encode ran on the "
-            f"{pick['encoder']} encoder{' on the machine\'s GPU' if pick['gpu'] else ''}."
+            f"{pick['encoder']} encoder" + (" on the machine's GPU" if pick["gpu"] else "") + "."
         ),
     }
 

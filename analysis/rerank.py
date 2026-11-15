@@ -105,7 +105,6 @@ def _ids_for(tokenizer, kind, text, length):
 
 
 def _sessions(vision_path, text_path):
-    import onnxruntime as ort
 
     options = ort.SessionOptions()
     options.intra_op_num_threads = max(1, (os.cpu_count() or 2) // 2)
@@ -184,7 +183,6 @@ def rerank(spec):
     started = time.perf_counter()
     try:
         import numpy as np  # noqa: F401 - both wheels, checked together
-        import onnxruntime  # noqa: F401
     except Exception as error:
         return {"ok": False, "error": f"python extras missing: {error}", "pip": PIP_LINE}
 

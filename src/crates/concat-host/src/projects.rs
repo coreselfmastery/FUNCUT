@@ -498,7 +498,7 @@ impl Temporary {
         let file = self
             .file
             .as_mut()
-            .ok_or_else(|| format!("{} was already finished", self.path.display()))?;
+            .ok_or_else(|| format!("{} has already been finished", self.path.display()))?;
         std::io::Write::write_all(file, encoded)
             .map_err(|error| format!("could not write {}: {error}", self.path.display()))?;
         file.sync_all()

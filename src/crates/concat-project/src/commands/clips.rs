@@ -849,8 +849,16 @@ pub(super) fn apply(
                 .filter_map(|id| timeline.clip(id).cloned())
                 .collect();
             ordered.sort_by(|left, right| left.start.total_cmp(&right.start));
-            let first = ordered.first().expect("validated above").clone();
-            let last = ordered.last().expect("validated above");
+            let Some(first) = ordered.first().cloned() else {
+                return Err(CommandError::CannotMerge {
+                    reason: "an empty selection has nothing to merge".to_owned(),
+                });
+            };
+            let Some(last) = ordered.last() else {
+                return Err(CommandError::CannotMerge {
+                    reason: "an empty selection has nothing to merge".to_owned(),
+                });
+            };
             let merged_duration = last.start + last.duration - first.start;
 
             // A set, not a Vec: the retain below tests every clip on the
@@ -858,9 +866,11 @@ pub(super) fn apply(
             let doomed: HashSet<String> =
                 ordered.iter().skip(1).map(|clip| clip.id.clone()).collect();
             timeline.clips.retain(|clip| !doomed.contains(&clip.id));
-            let survivor = timeline
-                .clip_mut(&first.id)
-                .expect("the first piece survives the retain");
+            let Some(survivor) = timeline.clip_mut(&first.id) else {
+                return Err(CommandError::CannotMerge {
+                    reason: "the merge survivor vanished from the timeline".to_owned(),
+                });
+            };
             survivor.duration = merged_duration;
             // Every piece's keys land where they were on the picture; the
             // way out is the last piece's, as the way in is the first's.
@@ -1459,11 +1469,13 @@ pub fn consolidation_clips(
     }
     // MP4 bakes against black and cannot carry the selection's alpha.
     // Refuse a bake that would cover an existing lower-track composite.
-    let lane = timeline
+    let Some(lane) = timeline
         .tracks
         .iter()
         .position(|track| track.id == first.track_id)
-        .expect("checked above");
+    else {
+        return Err(refuse("the clip's track is no longer on the timeline"));
+    };
     if timeline.clips.iter().any(|clip| {
         clip.kind != ClipKind::Audio
             && clip.start < end

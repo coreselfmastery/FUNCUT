@@ -103,6 +103,17 @@ overrides:
       - libxkbcommon-x11-0
       - libgl1
       - libasound2 | libasound2t64
+    # The Vulkan software renderer (lavapipe), a Recommends and not a
+    # Depends: a machine with a real GPU draws with its own driver and
+    # never needs it, but on a GPU-less box the compositor has no
+    # Vulkan driver to fall back to without it - preview_frame answers
+    # "no GPU or software renderer is available to draw with", which
+    # is the whole AUTO EDIT loop (critique needs to see the frame)
+    # dead on arrival for the 4-6 GB laptops this fork is for. apt
+    # installs Recommends by default, so a plain `apt install ./Concat`
+    # on a GPU-less machine gets a working preview out of the box.
+    recommends:
+      - mesa-vulkan-drivers
   rpm:
     depends:
       - gtk3
@@ -112,3 +123,6 @@ overrides:
       - libxkbcommon-x11
       - mesa-libGL
       - alsa-lib
+    # The same lavapipe fallback, for the same reason as the deb's.
+    recommends:
+      - mesa-vulkan-drivers

@@ -459,17 +459,20 @@ impl ForgePane {
     }
 
     /// Whether AUTO EDIT can run at all: a project is open and its
-    /// timeline carries audio - the voiceover the whole edit is built
-    /// around. The button is greyed until it is, and the take itself is
-    /// the same test the sibling build makes.
+    /// timeline carries narration - an audio clip that is not the bed.
+    /// The button is greyed until it is, and the take itself is the same
+    /// test the sibling build makes.
     pub fn auto_edit_available(&self, studio: &Studio) -> bool {
-        studio.session.is_some()
-            && studio
-                .project()
-                .active()
-                .clips
-                .iter()
-                .any(|clip| clip.kind == concat_project::model::ClipKind::Audio)
+        let Some(session) = studio.session.as_ref() else {
+            return false;
+        };
+        let root = std::path::Path::new(session.path());
+        let project = studio.project();
+        project
+            .active()
+            .clips
+            .iter()
+            .any(|clip| is_narration(clip, project, root))
     }
 
     /// Starts an AUTO EDIT: the sibling is built exactly as a forge run's
@@ -719,6 +722,10 @@ struct VoiceoverSegment {
     source_clip_id: String,
     /// The clip that plays it on the sibling's voiceover lane.
     sibling_clip_id: String,
+    /// The sibling file the clip plays - the copy the run repairs and
+    /// transcribes - so a reader of the mapping can name the take a
+    /// segment's words came from.
+    take: String,
     /// Seconds into the timeline - the source's own start, so the gaps
     /// and overlaps between segments survive the handoff exactly.
     start: f64,
@@ -797,6 +804,24 @@ struct TakePaths {
     enhanced: String,
 }
 
+/// One placement of a take on the sibling timeline: what the verify's
+/// expected side is made of - the file the clip plays, where on the
+/// timeline it starts, the span of the file it plays and the rate it
+/// plays at, so the take's transcript words can be placed where the
+/// export must carry them.
+struct TakePlacement {
+    /// The sibling file the clip plays.
+    take: String,
+    /// Where the clip starts on the timeline.
+    start: f64,
+    /// Where the clip begins in the file, in file seconds.
+    source_in: f64,
+    /// Where it ends in the file, in file seconds.
+    source_out: f64,
+    /// Playback rate, 1 being unity.
+    speed: f64,
+}
+
 /// What an AUTO EDIT run needs beside the forge run's handoff: the
 /// fixed paths its program is written from, all inside the sibling it
 /// edits.
@@ -805,6 +830,9 @@ struct AutoEditSource {
     project: String,
     /// One row per distinct voiceover file, in first-play order.
     takes: Vec<TakePaths>,
+    /// One row per voiceover clip, in first-play order: the placement
+    /// the verify's expected transcript is rebuilt from (F-04).
+    placements: Vec<TakePlacement>,
     /// Where the export lands, inside the sibling's own export folder.
     export: String,
     /// The contact sheet's name, relative to the project: the window's
@@ -850,6 +878,28 @@ fn voiceover_project(
     )
 }
 
+/// Whether a timeline clip is narration: audio, with media behind it,
+/// that is not the project's music bed. The bed is `bgm_import`'s own
+/// folder - `<project>/bgm/` - and a clip of it is BGM however the
+/// timeline is drawn; counting it as narration armed AUTO EDIT on a
+/// music-only project and transcribed the music as speech (F-01).
+fn is_narration(
+    clip: &concat_project::model::Clip,
+    project: &concat_project::model::Project,
+    source_root: &std::path::Path,
+) -> bool {
+    clip.kind == concat_project::model::ClipKind::Audio
+        && project
+            .media_by_id(&clip.media_id)
+            .is_some_and(|item| !item.path.is_empty() && !is_bed(item, source_root))
+}
+
+/// Whether a media item is the edit's music bed: a file `bgm_import`
+/// copied into `<project>/bgm/`, the folder the bed's own tooling owns.
+fn is_bed(item: &concat_project::model::MediaItem, source_root: &std::path::Path) -> bool {
+    std::path::Path::new(&item.path).starts_with(source_root.join("bgm"))
+}
+
 /// The handoff itself, apart from the studio so a test can drive it with
 /// a plain project model: [`voiceover_project`] supplies the window's
 /// two arguments and nothing else. With `for_auto_edit`, the copied
@@ -864,11 +914,13 @@ fn build_voiceover_sibling(
     use concat_project::model::ClipKind;
 
     let timeline = source.active();
-    // The voiceover is EVERY audio clip on the timeline, each carrying the
-    // identity it plays with - not the distinct files once each. A take
+    // The voiceover is every NARRATION clip on the timeline, each carrying
+    // the identity it plays with - not the distinct files once each. A take
     // split into pieces is several clips of one file; an edit that trims,
     // retimes or levels the narration lives in those clip fields, not in
-    // the file.
+    // the file. The bed is not the voiceover: `bgm_import` lands its music
+    // in `<project>/bgm/`, and a clip of that folder is BGM, not speech to
+    // transcribe (F-01).
     let mut audio: Vec<&concat_project::model::Clip> = timeline
         .clips
         .iter()
@@ -892,7 +944,7 @@ fn build_voiceover_sibling(
         let Some(item) = source.media_by_id(&clip.media_id) else {
             continue;
         };
-        if !item.path.is_empty() {
+        if !item.path.is_empty() && !is_bed(item, source_root) {
             voiced.push((clip, item));
         }
     }
@@ -963,6 +1015,10 @@ fn build_voiceover_sibling(
         let mut takes: Vec<TakePaths> = Vec::with_capacity(files.len());
         let mut media_id_of: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
+        // The sibling file each source take copied into - the take a
+        // segment's clip plays, named where the mapping's reader wants it.
+        let mut take_of: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
         let mut sibling_media: Vec<concat_project::model::MediaItem> = Vec::new();
         for item in &files {
             let source_file = std::path::Path::new(&item.path);
@@ -975,6 +1031,7 @@ fn build_voiceover_sibling(
             std::fs::copy(&item.path, &target)
                 .map_err(|error| format!("could not copy voiceover {}: {error}", item.path))?;
             let path = target.to_string_lossy().into_owned();
+            take_of.insert(item.path.clone(), path.clone());
             if for_auto_edit {
                 takes.push(TakePaths {
                     take: path.clone(),
@@ -1048,6 +1105,7 @@ fn build_voiceover_sibling(
             segments.push(VoiceoverSegment {
                 source_clip_id: clip.id.clone(),
                 sibling_clip_id,
+                take: take_of[&item.path].clone(),
                 start: clip.start,
                 source_in: clip.source_start,
                 source_out: clip.source_start + clip.duration * clip.speed,
@@ -1118,6 +1176,16 @@ fn build_voiceover_sibling(
                 AutoEditSource {
                     project: info.path.clone(),
                     takes,
+                    placements: segments
+                        .iter()
+                        .map(|segment| TakePlacement {
+                            take: segment.take.clone(),
+                            start: segment.start,
+                            source_in: segment.source_in,
+                            source_out: segment.source_out,
+                            speed: segment.speed,
+                        })
+                        .collect(),
                     export: export_dir
                         .join("auto-edit.mp4")
                         .to_string_lossy()
@@ -1500,12 +1568,18 @@ fn auto_edit_program(source: &AutoEditSource) -> EditProgram {
             ),
         ],
     ));
-    // 8. The verify: the words re-read from the render, and the loudness
-    //    measured against the short-form target. This reply is the
-    //    verification the run's terminal states carry. The gate is the
-    //    measurement's own word: a loudness reading that missed the
-    //    platform target is a verify that failed, not a run that
-    //    completed - the headless runner refuses the same answer.
+    // 8. The verify: the words re-read from the render, the loudness
+    //    measured against the short-form target, and the re-read words
+    //    COMPARED with the words the edit placed - the export's transcript
+    //    against the takes' own, each placed where the timeline put it
+    //    (F-04: a render that speaks the wrong words - clipped, doubled,
+    //    un-trimmed audio - used to pass a verify that only measured
+    //    loudness). This reply is the
+    //    verification the run's terminal states carry. The gates are the
+    //    measurements' own word: a loudness reading that missed the
+    //    platform target or a transcript that is not the edit's words is
+    //    a verify that failed, not a run that completed - the headless
+    //    runner refuses the same answers.
     steps.push(
         StageStep::run(
             Stage::Verify,
@@ -1520,11 +1594,31 @@ fn auto_edit_program(source: &AutoEditSource) -> EditProgram {
                     json!({ "path": source.export, "timeoutSeconds": 590 }),
                 ),
                 call("measure_loudness", json!({ "path": source.export })),
+                call(
+                    "emotion",
+                    json!({
+                        "action": "verify",
+                        "expectedTakes": source.placements.iter().map(|placed| json!({
+                            "path": placed.take,
+                            "start": placed.start,
+                            "sourceIn": placed.source_in,
+                            "sourceOut": placed.source_out,
+                            "speed": placed.speed,
+                        })).collect::<Vec<_>>(),
+                        "actualPath": source.export,
+                        "toleranceMs": 60,
+                    }),
+                ),
             ],
         )
         .gate(ReplyGate::True {
             field: "platformTargetMet",
             what: "the mix missed the platform loudness target",
+        })
+        .gate(ReplyGate::Word {
+            field: "verdict",
+            equals: "pass",
+            what: "the export's words are not the words the edit placed",
         }),
     );
     // 9. The watch, warn-policy: the whole cut as one contact sheet,
@@ -1948,6 +2042,22 @@ mod tests {
                     enhanced: "/edits/Reel edit/voiceover/enhanced-001-b.wav".to_owned(),
                 },
             ],
+            placements: vec![
+                super::TakePlacement {
+                    take: "/edits/Reel edit/voiceover/take-000-a.wav".to_owned(),
+                    start: 0.0,
+                    source_in: 0.0,
+                    source_out: 2.0,
+                    speed: 1.0,
+                },
+                super::TakePlacement {
+                    take: "/edits/Reel edit/voiceover/take-001-b.wav".to_owned(),
+                    start: 3.5,
+                    source_in: 0.5,
+                    source_out: 3.38,
+                    speed: 1.2,
+                },
+            ],
             export: "/edits/Reel edit/export/auto-edit.mp4".to_owned(),
             sheet: "auto-edit-sheet.png".to_owned(),
         };
@@ -2022,13 +2132,34 @@ mod tests {
             "/edits/Reel edit/auto-edit-sheet.png"
         );
         // Both takes get their own transcription, and the verify re-reads
-        // the render's own words beside its loudness.
+        // the render's own words beside its loudness - then COMPARES them
+        // with the takes' words placed where the timeline put them (F-04):
+        // a render that speaks the wrong words fails the run, not the
+        // loudness gate alone.
         assert_eq!(program.steps[2].calls.len(), 6);
         assert_eq!(
             program.steps[7].calls[0].arguments["path"],
             source.export.as_str()
         );
         assert_eq!(program.steps[7].calls[3].tool, "measure_loudness");
+        let compare = &program.steps[7].calls[4];
+        assert_eq!(compare.tool, "emotion");
+        assert_eq!(compare.arguments["action"], "verify");
+        assert_eq!(compare.arguments["actualPath"], source.export.as_str());
+        assert_eq!(compare.arguments["toleranceMs"], 60);
+        let expected = compare.arguments["expectedTakes"].as_array().unwrap();
+        assert_eq!(expected.len(), 2);
+        assert_eq!(expected[1]["path"], source.takes[1].take.as_str());
+        assert_eq!(expected[1]["start"], 3.5);
+        assert_eq!(expected[1]["sourceIn"], 0.5);
+        assert_eq!(expected[1]["speed"], 1.2);
+        // The verify's gates: the loudness target, and the words.
+        let gates = &program.steps[7].gates;
+        assert_eq!(gates.len(), 2);
+        assert!(matches!(
+            gates[1],
+            concat_mcp::director::ReplyGate::Word { field: "verdict", equals: "pass", .. }
+        ));
 
         // The silent-success gates, exactly where the spine's own words
         // always put them: the verify fails a loudness reading that
@@ -2058,8 +2189,10 @@ mod tests {
         }
     }
 
-    /// The button's own gate: audio on the timeline is what AUTO EDIT
-    /// stands on, and nothing else is.
+    /// The button's own gate: NARRATION on the timeline is what AUTO EDIT
+    /// stands on, and nothing else is - not a video clip, and not the
+    /// music bed either, which is audio but lives in `<project>/bgm/`
+    /// (F-01: a BGM-only project must not arm the button).
     #[test]
     fn the_auto_edit_button_needs_voiceover_clips() {
         use concat_project::model::{Clip, ClipKind, MediaItem, MediaKind, Project, VideoSettings};
@@ -2089,15 +2222,72 @@ mod tests {
             .clips
             .push(std::sync::Arc::new(video_clip));
 
-        let has_audio = |project: &concat_project::model::Project| {
+        // The bed: bgm_import's own folder under the project. A timeline
+        // that carries nothing else is a music edit, not a narration one.
+        let root = std::env::temp_dir().join(format!(
+            "concat-bed-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("bgm")).unwrap();
+        std::fs::create_dir_all(root.join("takes")).unwrap();
+        std::fs::write(root.join("takes/a.wav"), b"take").unwrap();
+        std::fs::write(root.join("bgm/lofi-track.mp3"), b"music").unwrap();
+        let take_path = root.join("takes/a.wav").to_string_lossy().into_owned();
+        let bed_path = root.join("bgm/lofi-track.mp3").to_string_lossy().into_owned();
+
+        let mut bed_only = Project::with_video(VideoSettings::default());
+        bed_only.media.push(MediaItem {
+            id: "b1".to_owned(),
+            path: bed_path.clone(),
+            name: "lofi-track.mp3".to_owned(),
+            duration: Some(90.0),
+            kind: MediaKind::Audio,
+            has_audio: true,
+            ..Default::default()
+        });
+        let mut bed_clip = Clip::blank("g1", "T1", ClipKind::Audio, "g1", 0.0, 90.0);
+        bed_clip.media_id = "b1".to_owned();
+        bed_only
+            .active_mut()
+            .clips
+            .push(std::sync::Arc::new(bed_clip));
+
+        // The same bed beside a real take: the take is narration, the bed
+        // stays out of the voiceover lane.
+        let mut mixed = with_voice.clone();
+        mixed.media[0].path = take_path;
+        mixed.media.push(bed_only.media[0].clone());
+        let mut bed_clip = Clip::blank("g1", "T1", ClipKind::Audio, "g1", 0.0, 90.0);
+        bed_clip.media_id = "b1".to_owned();
+        mixed
+            .active_mut()
+            .clips
+            .push(std::sync::Arc::new(bed_clip));
+
+        let narrated = |project: &concat_project::model::Project| {
             project
                 .active()
                 .clips
                 .iter()
-                .any(|clip| clip.kind == ClipKind::Audio)
+                .any(|clip| super::is_narration(clip, project, &root))
         };
-        assert!(has_audio(&with_voice));
-        assert!(!has_audio(&without));
+        assert!(narrated(&with_voice));
+        assert!(!narrated(&without));
+        assert!(
+            !narrated(&bed_only),
+            "a BGM-only project does not arm AUTO EDIT"
+        );
+        assert!(narrated(&mixed), "the bed does not unarm a real take");
+        // And the sibling build takes the same side: the bed is not a
+        // segment of the voiceover.
+        let (built, _) = super::build_voiceover_sibling(&mixed, &root, false).unwrap();
+        assert_eq!(built.segments.len(), 1, "only the take is the voiceover");
+        // A project whose only audio is the bed refuses the handoff with
+        // the no-voiceover notice, not a sibling of its music.
+        assert!(super::build_voiceover_sibling(&bed_only, &root, false).is_err());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// The clock, as the page spells it.

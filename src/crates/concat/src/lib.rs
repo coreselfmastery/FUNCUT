@@ -113,12 +113,35 @@ pub fn run() -> Result<(), slint::PlatformError> {
     run_with_project(None)
 }
 
+/// Reads the project a launch names, before any window exists: the same
+/// loader as Open project, on the launch path's own schedule. A bad path -
+/// one that does not exist, or is not a project - is an error naming it,
+/// so the caller can refuse to start rather than open an empty editor a
+/// user would read as the project having been wiped.
+///
+/// The path is made absolute here, so recents never depend on the
+/// launcher's working directory on a later run. Unlike canonicalize,
+/// this does not introduce Windows verbatim paths into media tooling.
+pub fn open_launch_project(
+    path: &std::path::Path,
+) -> Result<concat_host::projects::ProjectInfo, String> {
+    let absolute = std::path::absolute(path)
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    let path = absolute
+        .to_str()
+        .ok_or_else(|| "project directory is not valid Unicode".to_string())?;
+    concat_host::projects::open(path)
+}
+
 /// Builds the window and opens a project directory before its first frame.
 ///
-/// Relative paths are resolved against the launcher's working directory. An
-/// unreadable project leaves the launch screen open with the usual error notice.
-/// Each invocation creates its own window; this does not control another instance.
-pub fn run_with_project(project: Option<std::path::PathBuf>) -> Result<(), slint::PlatformError> {
+/// The project is [`ProjectInfo`] - read by [`open_launch_project`] before
+/// the window was built, so a launch that names a project it cannot read
+/// never gets as far as an empty editor. Each invocation creates its own
+/// window; this does not control another instance.
+pub fn run_with_project(
+    project: Option<concat_host::projects::ProjectInfo>,
+) -> Result<(), slint::PlatformError> {
     start(project, false)
 }
 
@@ -158,7 +181,10 @@ pub(crate) fn close_window(
 }
 
 /// [`run_with_project`], or [`smoke`] when `smoke` is set.
-fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::PlatformError> {
+fn start(
+    project: Option<concat_host::projects::ProjectInfo>,
+    smoke: bool,
+) -> Result<(), slint::PlatformError> {
     // The interface scale: a percent of the display's own, applied once
     // the window is up and kept through moves between monitors; see
     // `platform::apply_ui_scale`. https://github.com/jub0t/Concat/issues/320
@@ -2683,21 +2709,15 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         }
     });
 
-    if let Some(path) = project {
-        // Use the same loader as Open project, after all callbacks and models
-        // are installed. Make the path absolute so recents never depend on the
-        // launcher's working directory on a later run. Unlike canonicalize,
-        // this does not introduce Windows verbatim paths into media tooling.
-        let opened = std::path::absolute(&path)
-            .map_err(|error| format!("{}: {error}", path.display()))
-            .and_then(|path| {
-                let path = path
-                    .to_str()
-                    .ok_or_else(|| "project directory is not valid Unicode".to_string())?;
-                concat_host::projects::open(path)
-            })
-            .and_then(|info| shell.studio.borrow_mut().open_project(info));
-        if let Err(error) = opened {
+    if let Some(info) = project {
+        // Read before the window existed, on the launch path that names a
+        // project: a path that could not be read was an error and an exit
+        // there, not an empty editor. Opening it into the studio still uses
+        // the same door as Open project, after all callbacks and models are
+        // installed - and the rare failure inside it (a session that cannot
+        // start, not a path that could not be read) still leaves the launch
+        // screen up with the reason, the way a picked project's does.
+        if let Err(error) = shell.studio.borrow_mut().open_project(info) {
             log::error!("could not open launch project: {error}");
             shell.studio.borrow_mut().notify(&error, true);
         }
@@ -3091,6 +3111,41 @@ mod tests {
 
     fn tracks(session: &Session) -> usize {
         session.project().active().tracks.len()
+    }
+
+    /// A launch that names a project reads it before any window exists,
+    /// and the read refuses paths that are not projects - naming the
+    /// path, so the caller can error and exit instead of opening an
+    /// empty editor a user would read as the project having been wiped.
+    #[test]
+    fn a_launch_project_that_is_not_one_is_refused_with_its_path_named() {
+        // A path that does not exist at all.
+        let missing = std::env::temp_dir().join("concat-launch-does-not-exist");
+        let _ = std::fs::remove_dir_all(&missing);
+        let error = super::open_launch_project(&missing).expect_err("refuses a missing path");
+        assert!(
+            error.contains("concat-launch-does-not-exist"),
+            "the error names the path: {error}"
+        );
+
+        // A directory that exists but is no project: no manifest to read.
+        let scratch = Scratch::new("launch-project");
+        let error =
+            super::open_launch_project(&scratch.0).expect_err("refuses a non-project folder");
+        assert!(
+            error.contains("project.json") || error.contains("is not a Concat project"),
+            "the error names what it could not read: {error}"
+        );
+
+        // A real project reads, absolute, whatever the working directory.
+        let info = projects::create(&scratch.location(), "Launch", 1920, 1080, 30, 1)
+            .expect("creates the project");
+        let read = super::open_launch_project(Path::new(&info.path)).expect("reads the project");
+        assert_eq!(read.name, "Launch");
+        assert!(
+            std::path::Path::new(&read.path).is_absolute(),
+            "recents never depend on the launcher's working directory"
+        );
     }
 
     /// The regression this gate exists for, over a real project on disk: a

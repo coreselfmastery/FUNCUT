@@ -70,6 +70,16 @@ fn main() -> Result<(), slint::PlatformError> {
         .inspect_err(concat::report_startup_failure)?;
     match launch {
         Launch::Normal(project) => {
+            // The named project is read before the window is built: a
+            // path that is not a project is an error dialog naming it
+            // and a non-zero exit, not an empty editor that reads as
+            // the project having been wiped. The read is the same
+            // loader as Open project; the window opens only on it.
+            let project = project
+                .map(|path| concat::open_launch_project(&path))
+                .transpose()
+                .map_err(slint::PlatformError::Other)
+                .inspect_err(concat::report_startup_failure)?;
             concat::run_with_project(project).inspect_err(concat::report_startup_failure)
         }
         Launch::Software => {

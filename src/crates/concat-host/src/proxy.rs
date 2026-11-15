@@ -13,9 +13,9 @@
 //! adopted into the reader pool as the file's stand-in. A request that
 //! asks for the proxy reads it; the paused monitor and the export never
 //! do, and see the original. The copy is named after the file's path,
-//! size, modification time and a probe of its bytes, so a file replaced
-//! on disk gets a fresh one - however exactly the replacement keeps the
-//! original's length and timestamp - and the old copy is swept with the
+//! size, modification time and the hash of its whole content - cached
+//! by the size and the time, so a file replaced on disk gets a fresh
+//! one wherever its bytes changed - and the old copy is swept with the
 //! rest of the cache.
 //!
 //! Which codec the copy is written in is Settings' to say, as
@@ -118,52 +118,93 @@ pub fn serves_frame(width: u32, height: u32) -> bool {
     width.max(height) <= SHORTEST_LONG_SIDE
 }
 
-/// How much of a file's head, middle and tail is read to name its proxy:
-/// three small reads that differ between two same-sized files almost
-/// everywhere, and not a pass over tens of gigabytes that a lookup
-/// cannot afford - it happens for every clip when a project opens, and
-/// for every clip still waiting for its copy while the write runs.
-const PROBE: u64 = 64 * 1024;
+/// The source bytes a lookup has already hashed whole, by the file's
+/// path: `(size, mtime, the full-content hash)` - a lookup whose stat
+/// still says the same size and the same modification time is a cache
+/// hit away, not three reads of the file per edit per clip (F-08); the
+/// hash itself is over the file's WHOLE bytes, so a change anywhere
+/// gives the copy a different name, not only one the old probe's head,
+/// middle and tail happened to land on (F-09).
+///
+/// What the cache trusts is the stat: a replacement that keeps the
+/// original's size and timestamp - a backup tool restoring what it
+/// saved - is told apart by its bytes wherever the cache is cold, which
+/// a restart always is, but not by a warm one in the same process.
+/// That is the trade against re-reading every source file after every
+/// edit, and it is the one the API's per-edit proxy validation asked
+/// for: the bytes are read once per file per change, never once per
+/// edit.
+fn content_hashes(
+) -> &'static Mutex<std::collections::HashMap<String, (u64, u128, u64)>> {
+    static CONTENT_HASHES: OnceLock<
+        Mutex<std::collections::HashMap<String, (u64, u128, u64)>>,
+    > = OnceLock::new();
+    CONTENT_HASHES.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
 
-/// Folds a probe of the file's bytes into `hasher`: the first, the
-/// middle and the last [`PROBE`] bytes, each with the offset it came
-/// from - a file no longer than the probe is read whole, once, its head,
-/// middle and tail being the same bytes. What this adds to the path, the
-/// size and the modification time is the one thing none of them can say:
-/// what the file's bytes are. A replacement that keeps the original's
-/// length and timestamp - a backup tool restoring what it saved, an
-/// editor writing in place - is the case those cannot tell from an
-/// unchanged file, and the bytes can (audit 2026-11-04, #2). A file that
-/// cannot be read past its metadata contributes what it can: a key made
-/// without its bytes is a key that only asks for the copy again.
-fn probe_into(file: &mut std::fs::File, len: u64, hasher: &mut impl Hasher) {
-    use std::io::{Read, Seek, SeekFrom};
-    let probe = PROBE.min(len);
-    let starts: Vec<u64> = if probe == len {
-        vec![0]
-    } else {
-        vec![0, len / 2 - probe / 2, len - probe]
-    };
-    let mut bytes = vec![0u8; probe as usize];
-    for at in starts {
-        if file.seek(SeekFrom::Start(at)).is_err() || file.read_exact(&mut bytes).is_err() {
-            return;
-        }
-        at.hash(hasher);
-        bytes.hash(hasher);
+/// The file's whole content, hashed: from the cache when the file's
+/// size and modification time still stand, read whole and hashed once
+/// when they do not. A file that cannot be read contributes what it
+/// can: a key made without its bytes is a key that only asks for the
+/// copy again.
+fn content_hash(media: &str, meta: &std::fs::Metadata) -> u64 {
+    let len = meta.len();
+    let modified = meta
+        .modified()
+        .ok()
+        .and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|since| since.as_nanos())
+        .unwrap_or(0);
+    let known = content_hashes()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some((known_len, known_modified, hash)) = known.get(media)
+        && *known_len == len
+        && *known_modified == modified
+    {
+        return *hash;
     }
+    drop(known);
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    if let Ok(mut file) = std::fs::File::open(media) {
+        use std::io::Read;
+        let mut read: u64 = 0;
+        let mut bytes = vec![0u8; 1024 * 1024];
+        loop {
+            match file.read(&mut bytes) {
+                Ok(0) => break,
+                Ok(at) => {
+                    hasher.write(&bytes[..at]);
+                    read += at as u64;
+                }
+                Err(_) => break,
+            }
+        }
+        // The length actually read: a file that changed under the read
+        // is hashed as the bytes it gave, and its next stat - a new
+        // size or a new time - is a new key that reads it again.
+        read.hash(&mut hasher);
+    }
+    let hash = hasher.finish();
+    content_hashes()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(media.to_owned(), (len, modified, hash));
+    hash
 }
 
 /// Where the proxy of `media` lives under `project`: named by the file's
-/// path, size, modification time and a probe of its bytes, and by the
-/// range it is read as, since the copy is written from the corrected
-/// picture and a correction changed is a different copy - and by whether
-/// the file is HDR, whose proxy keeps its signal, so the tone-mapped
-/// copies earlier builds wrote of one are written again. A proxy in the
-/// codec other than H.264 - the one every proxy was before the codec was
-/// a choice - is named for that too, so a switch of codec in Settings
-/// writes the choice's copy and not the old one renamed. None for a file
-/// that cannot be stat'ed, which cannot be read either.
+/// path, size, modification time and the hash of its whole content -
+/// since the copy is written from the corrected picture and a correction
+/// changed is a different copy - and by the range it is read as, and by
+/// whether the file is HDR, whose proxy keeps its signal, so the
+/// tone-mapped copies earlier builds wrote of one are written again. A
+/// proxy in the codec other than H.264 - the one every proxy was before
+/// the codec was a choice - is named for that too, so a switch of codec
+/// in Settings writes the choice's copy and not the old one renamed.
+/// None for a file that cannot be stat'ed, which cannot be read either.
+/// The content hash is cached by the file's size and mtime: see
+/// [`content_hashes`] for what that trust means.
 pub fn path_for(
     project: &Path,
     media: &str,
@@ -175,12 +216,11 @@ pub fn path_for(
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     media.hash(&mut hasher);
     meta.len().hash(&mut hasher);
-    // The bytes tell a replacement from the file it replaced where the
-    // length and the timestamp cannot: see `probe_into`, whose probe is
-    // folded in wherever the file can be opened.
-    if let Ok(mut file) = std::fs::File::open(media) {
-        probe_into(&mut file, meta.len(), &mut hasher);
-    }
+    // The bytes, whole and hashed once per change (F-08, F-09): see
+    // `content_hash` - the cache makes the lookup after an edit a stat
+    // away, and the name itself can no longer miss a change outside a
+    // probe's sampled regions.
+    content_hash(media, &meta).hash(&mut hasher);
     if let Some(range) = range {
         range.name().hash(&mut hasher);
     }
@@ -967,7 +1007,10 @@ mod tests {
     /// modification time exactly - a backup tool restoring what it saved,
     /// an editor writing in place - is the case no fact about the file's
     /// name can tell from an unchanged file: the bytes can (audit
-    /// 2026-11-04, #2).
+    /// 2026-11-04, #2), and with the whole file hashed they always do -
+    /// the content cache's trust in a warm stat is the one window a
+    /// same-size, same-time replacement slips through, and a cold cache
+    /// - a restart - closes it.
     #[test]
     fn same_size_same_time_replacement_gets_a_new_proxy_key() {
         use std::time::{Duration, UNIX_EPOCH};
@@ -1023,6 +1066,15 @@ mod tests {
             "and the modification time, exactly"
         );
 
+        // The content cache trusts a file while its size and mtime stand
+        // (F-08) - that trust is the whole point, or every edit would
+        // re-read every source. What still tells the replacement apart
+        // is a cold cache - a restart, always - which is what this test
+        // stands for: the bytes name the copy, whole and hashed.
+        super::content_hashes()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
         let second = path_for(
             &project,
             &media.to_string_lossy(),
@@ -1035,13 +1087,30 @@ mod tests {
             first, second,
             "a replacement the file's facts cannot tell apart is told apart by its bytes"
         );
+
+        // And a warm cache over the same facts keeps the same key: the
+        // second read of one unchanged file is the cheap one (F-08).
+        let warm = path_for(
+            &project,
+            &media.to_string_lossy(),
+            None,
+            false,
+            ProxyCodec::H264,
+        )
+        .expect("a path");
+        assert_eq!(
+            second, warm,
+            "a warm cache answers an unchanged file without reading it"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The probe of an unchanged file is the same probe every time: a key
+    /// The name of an unchanged file is the same name every time: a key
     /// that moved between two looks at one file would rewrite its copy
     /// over and over, which is the failure the key exists to prevent -
-    /// the wrong copy, not no copy - in the other direction.
+    /// the wrong copy, not no copy - in the other direction. The warm
+    /// content cache answers the second look without reading the file
+    /// at all (F-08).
     #[test]
     fn an_unchanged_file_keeps_one_key() {
         let dir =
@@ -1050,9 +1119,8 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("temp dir");
         let media = dir.join("clip.mp4");
         let project = dir.join("project");
-        // A file over one probe long, so the head, the middle and the
-        // tail are three different reads of it, and a file under it, read
-        // whole: both must sit still.
+        // A file longer than a probe ever was, hashed whole now, and a
+        // file shorter than any of it: both must sit still.
         std::fs::write(&media, vec![b'x'; 256 * 1024]).expect("writes a long source");
         let long = path_for(
             &project,

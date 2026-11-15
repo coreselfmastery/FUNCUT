@@ -682,10 +682,7 @@ fn decode_worker(playback: &Arc<Playback>) {
 
         // A span queued by an edit that has since been edited again is dead
         // weight; skip it before paying for FFmpeg.
-        let wanted = playback
-            .specs
-            .lock()
-            .unwrap()
+        let wanted = locked(&playback.specs)
             .iter()
             .any(|spec| decode_key(spec) == job.key);
         if !wanted {

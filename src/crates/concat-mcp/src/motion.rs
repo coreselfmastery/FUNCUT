@@ -332,6 +332,9 @@ fn analyse(comp: &Comp, source: Option<&Path>) -> Value {
             // The puppet's bones: an empty census would say a rig comp
             // had nothing in it when it is nothing but its chain.
             NodeKind::Rig { .. } => "rig",
+            // The comp's own music: a node that binds the picture to the
+            // sound still counts as one of the comp's nodes.
+            NodeKind::Audio { .. } => "audio",
         };
         *by_kind.entry(kind).or_default() += 1;
         parents.insert(node.id.as_str(), node.parent.as_deref());

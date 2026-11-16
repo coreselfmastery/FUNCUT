@@ -66,6 +66,7 @@
 //! ```
 
 pub mod audio;
+pub mod accessibility;
 pub mod authoring;
 pub mod bench;
 pub mod cache;
@@ -109,6 +110,10 @@ pub mod track;
 pub mod transition;
 pub mod typography;
 
+pub use accessibility::{
+    AccessibilityFinding, SafeZoneProfile, audit_safe_zone, audit_text_contrast, contrast_ratio,
+    relative_luminance,
+};
 pub use authoring::{CompSummary, Op, apply};
 pub use camera::{CameraMove, apply_camera};
 pub use comp::{Comp, FORMAT, Node, NodeKind, Slot};

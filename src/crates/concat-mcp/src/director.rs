@@ -33,6 +33,7 @@
 //! use concat_mcp::backend::Backend;
 //! use concat_mcp::director::BackendToolCaller;
 //! use concat_mcp::tools::Toolbox;
+//! use std::sync::atomic::AtomicBool;
 //! use std::sync::Mutex;
 //! use std::path::PathBuf;
 //!

@@ -1680,7 +1680,10 @@ fn first_line(words: &str) -> Option<String> {
 /// posts the terminal state.
 fn run_auto_edit(
     runner: Runner,
-    program: EditProgram,
+    // The runner reads and writes the program it runs - the fan lanes and
+    // the derived steps land in it - so the run's own copy is mutable
+    // through to the `run_with_lanes` call inside its thread.
+    mut program: EditProgram,
     backend: Box<dyn concat_mcp::Backend>,
     tool_cancel: Arc<AtomicBool>,
 ) {

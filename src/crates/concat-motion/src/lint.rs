@@ -18,6 +18,7 @@
 //! | Assets | `L3xx` | the files a comp points at, against the disk |
 //! | Motion | `L4xx` | the principles, as curves measured not read |
 //! | Determinism | `L5xx` | the network, the clock and the unseeded |
+//! | Accessibility | `L6xx` | platform safe zones and text contrast |
 //!
 //! The code namespace is the lint's own: the sidecar owns `E###`/`W###`
 //! ([`crate::geneva::fix_for`]), and a document-side finding says `L###`, so
@@ -62,6 +63,8 @@ pub enum Family {
     Motion,
     /// The network, the clock and the unseeded.
     Determinism,
+    /// Platform composition and readable text contrast.
+    Accessibility,
 }
 
 impl Family {
@@ -73,6 +76,7 @@ impl Family {
             Family::Assets => "assets",
             Family::Motion => "motion",
             Family::Determinism => "determinism",
+            Family::Accessibility => "accessibility",
         }
     }
 }
@@ -211,6 +215,17 @@ pub const RULES: &[Rule] = &[
         family: Family::Determinism,
         name: "remote-asset-src",
     },
+    // Accessibility: authored safe areas and known solid-colour contrast.
+    Rule {
+        code: "L600",
+        family: Family::Accessibility,
+        name: "platform-safe-zone",
+    },
+    Rule {
+        code: "L610",
+        family: Family::Accessibility,
+        name: "text-contrast",
+    },
 ];
 
 /// How many rules the lint carries: [`RULES`]'s own length, said as a
@@ -284,6 +299,27 @@ pub fn audit(comp: &Comp, playful: bool) -> Vec<Finding> {
     comp_timing(comp, &mut found);
     motion(comp, playful, &mut found);
     determinism(comp, &mut found);
+    found
+}
+
+/// Run the ordinary document lint plus platform/accessibility checks.
+///
+/// This explicit entry point keeps the historical [`audit`] behaviour stable
+/// for existing callers while allowing previews, inspectors and agents to
+/// request a delivery-specific safe-zone profile. Contrast is checked only
+/// where the text and its background are known well enough to avoid guessing.
+pub fn audit_with_accessibility(
+    comp: &Comp,
+    playful: bool,
+    profile: crate::accessibility::SafeZoneProfile,
+) -> Vec<Finding> {
+    let mut found = audit(comp, playful);
+    let accessibility = crate::accessibility::audit_safe_zone(comp, profile)
+        .into_iter()
+        .chain(crate::accessibility::audit_text_contrast(comp));
+    for item in accessibility {
+        found.push(Finding::new(item.code, item.path, item.message).with_help(item.help));
+    }
     found
 }
 
@@ -1085,9 +1121,38 @@ mod tests {
         assert_eq!(rule_count(), RULES.len());
         assert_eq!(
             rule_count(),
-            22,
-            "the families carry 22 rules: 4 structure, \
-                    4 timing, 3 assets, 7 motion, 4 determinism"
+            24,
+            "the families carry 24 rules: 4 structure, 4 timing, 3 assets, \
+             7 motion, 4 determinism and 2 accessibility"
+        );
+    }
+
+    // ── Accessibility ─────────────────────────────────────────────────
+
+    /// The explicit accessibility audit reports platform-safe-zone and
+    /// contrast findings through the same stable lint contract.
+    #[test]
+    fn accessibility_checks_are_available_through_the_common_finding_type() {
+        let mut comp = comp_with(Track::new(vec![]));
+        comp.nodes[0].kind = NodeKind::Text(Box::new(crate::comp::TextNode {
+            color: Rgba::hex("#777777"),
+            size: 16.0,
+            weight: 400,
+            ..crate::comp::TextNode::default()
+        }));
+        comp.nodes[0].transform.position = Some(crate::comp::Point::new(10.0, 10.0));
+        comp.background = Rgba::hex("#ffffff");
+        let found = audit_with_accessibility(
+            &comp,
+            false,
+            crate::accessibility::SafeZoneProfile::Landscape16x9,
+        );
+        assert!(codes(&found).contains(&"L600"), "safe-zone finding: {found:?}");
+        assert!(codes(&found).contains(&"L610"), "contrast finding: {found:?}");
+        assert!(
+            RULES.iter().any(|rule| rule.code == "L600" && rule.family == Family::Accessibility)
+                && RULES.iter().any(|rule| rule.code == "L610" && rule.family == Family::Accessibility),
+            "both accessibility codes are registered"
         );
     }
 

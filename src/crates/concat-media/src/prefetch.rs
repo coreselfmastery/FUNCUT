@@ -37,6 +37,14 @@ use crate::pool::{FrameRequest, ReaderPool};
 /// after its frame is due, small enough that a seek wastes little.
 pub const AHEAD: u32 = 8;
 
+/// How many decoded frames the playback itself keeps once the cursor has
+/// passed them: the streaming ring the editor plays from. Four - the
+/// frame a scrub back wants, two behind it, one more - so a step back is
+/// answered from memory and a still frame the pool evicted under a
+/// bigger import is answered at all. Everything older than the ring is
+/// released to the pool, which is the cache everything else shares.
+pub const RING: u32 = 4;
+
 /// How far a cursor may move on from the last one, in its own direction
 /// and at its own rate, and still be the same playback: its queue is kept
 /// and added to, not thrown away. Further is a seek.
@@ -316,7 +324,17 @@ impl Prefetcher {
         // between them and queued twice.
         let held: Vec<i64> = {
             let mut pinned = lock(&self.shared.pinned);
-            pinned.retain(|(time, _)| !cursor.passed(*time, frame_seconds));
+            // The streaming ring: the frames the cursor has passed are not
+            // all released - the newest RING of them are kept, the rest go
+            // back to the pool. Oldest first, so the ring drains from the
+            // back of what the cursor has already shown.
+            pinned.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let passed = pinned
+                .iter()
+                .filter(|(time, _)| cursor.passed(*time, frame_seconds))
+            .count();
+            let release = passed.saturating_sub(RING as usize);
+            pinned.drain(..release);
             pinned.iter().map(|(time, _)| index(*time)).collect()
         };
         if !continues {
@@ -372,7 +390,8 @@ impl Prefetcher {
         lock(&self.lane.queue).lanes[priority as usize].len()
     }
 
-    /// Frames decoded ahead of the cursor and not yet passed.
+    /// Frames held for the cursor: the ones decoded ahead and not yet
+    /// passed, and the ring of the newest passed - what the playback owns.
     pub fn held_ahead(&self) -> usize {
         lock(&self.shared.pinned).len()
     }
@@ -697,12 +716,24 @@ mod tests {
             (6..14).rev().map(moment).collect(),
         );
         prefetcher.drain();
+        // Turned round at 14: behind a backward cursor is *greater* time,
+        // so 15..=18 are behind it, and the ring keeps the newest four of
+        // them; 11..=14 stay ahead of it, and 13 down to 6 are asked for,
+        // so the way back is held too - 6..=18 all told.
         let held = prefetcher.held_instants();
         let slack = 1.0 / fps + 1e-6;
+        assert_eq!(held.len(), 13, "6..=18, each held once: {held:?}");
         assert!(
-            held.iter().all(|time| *time <= 14.0 / fps + slack),
+            held.iter()
+                .all(|time| ((6.0 / fps - 1e-9)..=(18.0 / fps + slack)).contains(time)),
             "held behind a backward cursor: {held:?}"
         );
+        for index in 15..=18 {
+            assert!(
+                held.contains(&(index as f64 / fps)),
+                "the ring kept {index}: {held:?}"
+            );
+        }
         assert!(held.len() >= 8, "the way back is decoded: {held:?}");
         // Nothing the cursor has behind it is ever queued again: an
         // instant past it is skipped, not decoded.
@@ -784,17 +815,18 @@ mod tests {
         held.sort_unstable();
         assert_eq!(held, (1..=5).collect::<Vec<_>>());
 
-        // A jump is a new playback: the queue starts over.
+        // A jump is a new playback: the queue starts over. The ring keeps
+        // the newest four of what the cursor passed - 2..=5 - beside the
+        // queue ahead of it; nothing between 6 and 20 is held.
         prefetcher.advance(cursor(20), 1.0 / fps, moments(20));
         prefetcher.drain();
-        assert!(
-            prefetcher
-                .held_instants()
-                .iter()
-                .all(|time| *time > 20.0 / fps),
-            "{:?}",
-            prefetcher.held_instants()
-        );
+        let mut held: Vec<i64> = prefetcher
+            .held_instants()
+            .iter()
+            .map(|time| (time * fps).round() as i64)
+            .collect();
+        held.sort_unstable();
+        assert_eq!(held, [2, 3, 4, 5, 21, 22, 23, 24], "{held:?}");
         let _ = std::fs::remove_file(&path);
     }
 
@@ -833,8 +865,9 @@ mod tests {
         assert_eq!(pool.stats().since(warmed).decoded, 0, "frame 5 was ahead");
 
         // The cursor at 5 carries on from 0: the instants more than a frame
-        // behind it are released, 4..=8 stay, and of 6..=13 only 9..=13 -
-        // the ones not held already - are decoded and join them.
+        // behind it join the ring instead of leaving, 5..=8 stay ahead, and
+        // of 6..=13 only 9..=13 - the ones not held already - are decoded
+        // and join them - 1..=13 all told.
         prefetcher.advance(cursor(5), 1.0 / fps, moments(5));
         prefetcher.drain();
         let mut held: Vec<i64> = prefetcher
@@ -843,7 +876,7 @@ mod tests {
             .map(|time| (time * fps).round() as i64)
             .collect();
         held.sort_unstable();
-        assert_eq!(held, (4..=13).collect::<Vec<_>>(), "each held once");
+        assert_eq!(held, (1..=13).collect::<Vec<_>>(), "each held once");
 
         // A cursor far ahead: nothing held behind it survives, and an
         // instant queued for it that it has already passed is skipped -
@@ -859,7 +892,14 @@ mod tests {
         );
         prefetcher.advance(cursor(20), 1.0 / fps, stale);
         prefetcher.drain();
-        assert_eq!(prefetcher.held_ahead(), AHEAD as usize);
+        // The ring beside the queue: the four newest of what the far cursor
+        // passed stay held, ahead of it the queue's eight.
+        assert_eq!(
+            prefetcher.held_ahead(),
+            AHEAD as usize + RING as usize,
+            "{:?}",
+            prefetcher.held_instants()
+        );
         let before = pool.stats();
         pool.frame(&FrameRequest::new(&path, rate.time_of_frame(2), 8, 8))
             .expect("decodes");
@@ -869,5 +909,51 @@ mod tests {
         );
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// The streaming ring: the cursor passing a frame does not release it -
+    /// the newest four passed frames stay held, the rest go back to the
+    /// pool, and a jump backwards keeps the frame a scrub wants.
+    #[test]
+    fn the_ring_holds_the_newest_four_passed_frames() {
+        let pool = Arc::new(ReaderPool::new(1024, 1));
+        let prefetcher = Prefetcher::new(pool, 1);
+        let step = 0.5;
+        let cursor = |time: f64| Cursor {
+            time,
+            direction: Direction::Forward,
+            rate: 1.0,
+        };
+        // Twelve moments, no sources to decode: the jobs pin them all.
+        let moments: Vec<Moment> = (0..12)
+            .map(|index| Moment {
+                time: index as f64 * step,
+                frames: Vec::new(),
+            })
+            .collect();
+        prefetcher.advance(cursor(0.0), step, moments);
+        prefetcher.drain();
+        assert_eq!(prefetcher.held_ahead(), 12, "nothing passed, all held");
+
+        // The cursor walks to 2.6s: five moments are behind it, the oldest
+        // one is released, four are the ring, the rest are still ahead.
+        prefetcher.advance(cursor(2.6), step, Vec::new());
+        assert_eq!(prefetcher.held_ahead(), 11);
+
+        // And on to 6.0s: everything is passed but the newest four, plus
+        // the one still inside the slack.
+        prefetcher.advance(cursor(6.0), step, Vec::new());
+        let mut held = prefetcher.held_instants();
+        held.sort_by(|a, b| a.total_cmp(b));
+        assert_eq!(held, vec![3.5, 4.0, 4.5, 5.0, 5.5], "{held:?}");
+
+        // A jump backwards is a seek, and the ring survives it: the frame
+        // the scrub back wants is still held, answered from memory.
+        prefetcher.advance(cursor(4.2), step, Vec::new());
+        assert!(
+            prefetcher.held_instants().contains(&4.0),
+            "{:?}",
+            prefetcher.held_instants()
+        );
     }
 }

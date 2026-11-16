@@ -363,6 +363,144 @@ pub fn gradient_headline(
     html_node(id, &markup, &css)
 }
 
+// ------------------------------------------------------- the span markup
+
+/// One inline span of a text node's words: what the markup in
+/// [`TextNode::text`] says about a run of characters, as the native
+/// path reads it.
+///
+/// The markup is deliberately tiny - `<b>`, `<i>`, and
+/// `<span color="#..." scale="1.2" bg="#...">` - because the field it
+/// lives in is a plain string a transcript or an agent writes, not an
+/// HTML sidecar. Anything the parser does not recognise is left as
+/// literal text: a half-written tag renders as the characters it is,
+/// never as a hole.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub struct Span {
+    /// The first character of the run, in the *plain* text.
+    pub start: usize,
+    /// One past the last character of the run.
+    pub end: usize,
+    /// Overrides the base colour when set.
+    pub color: Option<crate::comp::Rgba>,
+    /// Overrides the base weight when set.
+    pub weight: Option<u32>,
+    /// Sets italic for the run.
+    pub italic: Option<bool>,
+    /// Scales the run's glyphs.
+    pub scale: Option<f64>,
+    /// A plate behind the run's own glyphs.
+    pub background: Option<crate::comp::Rgba>,
+}
+
+/// Reads the inline span markup out of a text node's words: the plain
+/// text the renderer draws, and the spans that style its runs. Nesting
+/// is not carried - a `<b>` inside a `<span>` keeps the span's own
+/// answers only, because the field is a caption's, not a document's.
+pub fn parse_spans(text: &str) -> (String, Vec<Span>) {
+    let mut plain = String::with_capacity(text.len());
+    let mut spans: Vec<Span> = Vec::new();
+    let mut open: Vec<Span> = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find('<') {
+        let (before, after) = rest.split_at(at);
+        // The characters before the tag belong to every open span.
+        plain.push_str(before);
+        rest = after;
+        // A closing tag pops the innermost open span of its kind.
+        if let Some(name) = rest.strip_prefix("</") {
+            let close = name.find('>').unwrap_or(name.len());
+            let tag = &name[..close];
+            if matches!(tag, "b" | "i" | "span") {
+                if let Some(mut span) = open.pop() {
+                    span.end = plain.chars().count();
+                    // A tag that opened and closed around nothing is
+                    // nothing: an empty run styles no characters.
+                    if span.end > span.start {
+                        spans.push(span);
+                    }
+                }
+                // Past the whole "</tag>", brackets and '>' both - or to
+                // the end when the '>' never came.
+                let eaten = 2 + close + 1;
+                rest = rest.get(eaten..).unwrap_or("");
+                continue;
+            }
+        }
+        // An opening tag reads its attributes; anything malformed is
+        // literal text, which the fall-through below keeps. The tag may
+        // not carry a second '<' or a line break - that is markup a
+        // caption never means.
+        let close = match rest.find('>') {
+            Some(at) if !rest[..at].contains('\n') && !rest[1..at].contains('<') => at,
+            _ => {
+                plain.push('<');
+                rest = &rest[1..];
+                continue;
+            }
+        };
+        let inner = &rest[1..close];
+        rest = &rest[close + 1..];
+        let (name, attrs) = match inner.split_once(' ') {
+            Some((name, attrs)) => (name, attrs),
+            None => (inner, ""),
+        };
+        let mut span = Span {
+            start: plain.chars().count(),
+            ..Span::default()
+        };
+        match name {
+            "b" => span.weight = Some(800),
+            "i" => span.italic = Some(true),
+            "span" => {
+                for pair in attrs.split_whitespace() {
+                    let Some((key, value)) = pair.split_once('=') else {
+                        continue;
+                    };
+                    let value = value.trim_matches('"').trim_matches('\'');
+                    match key {
+                        "color" => span.color = Some(crate::comp::Rgba::hex(value)),
+                        "scale" => {
+                            span.scale = value.parse::<f64>().ok().filter(|v| *v > 0.0);
+                        }
+                        "bg" => span.background = Some(crate::comp::Rgba::hex(value)),
+                        "weight" => {
+                            span.weight = value
+                                .parse::<u32>()
+                                .ok()
+                                .map(|weight| weight.clamp(100, 900));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            // An unknown tag is literal: the characters render as they
+            // read, which is the honest fallback for a hand-written
+            // field - and the one HTML itself would give.
+            _ => {
+                plain.push('<');
+                plain.push_str(inner);
+                plain.push('>');
+                continue;
+            }
+        }
+        open.push(span);
+    }
+    // The tail after the last tag, then any spans still open close at
+    // the text's end - an unclosed tag runs to the end of the line
+    // rather than eating the rest silently.
+    plain.push_str(rest);
+    let end = plain.chars().count();
+    for mut span in open {
+        span.end = end;
+        if span.end > span.start {
+            spans.push(span);
+        }
+    }
+    spans.sort_by_key(|span| span.start);
+    (plain, spans)
+}
+
 // ------------------------------------------------------------- the builders
 
 /// One unit of a stagger: a run of text, or the word boundary a
@@ -660,6 +798,9 @@ mod tests {
             line_height: 1.1,
             align: TextAlign::Center,
             max_width: None,
+            fit: None,
+            min_size: None,
+            on_path: None,
             padding: 0.0,
             background: Rgba::new(0.0, 0.0, 0.0, 0.0),
             radius: 0.0,
@@ -1174,5 +1315,46 @@ mod tests {
 
     fn entrance_debug(entrance: Entrance) -> String {
         format!("{entrance:?}")
+    }
+
+    /// The markup parser reads what a caption writes: the plain text the
+    /// renderer draws, and the spans that style its runs. `<b>` sets the
+    /// weight, `<i>` the italic, a `<span>` its own answers, an unknown
+    /// tag stays the literal characters it is, and a tag that never
+    /// closes runs to the end of the line.
+    #[test]
+    fn the_span_markup_reads_honestly() {
+        let (plain, spans) = parse_spans("plain <b>bold</b> tail");
+        assert_eq!(plain, "plain bold tail");
+        assert_eq!(spans.len(), 1, "{spans:?}");
+        assert_eq!((spans[0].start, spans[0].end), (6, 10));
+        assert_eq!(spans[0].weight, Some(800));
+
+        let (plain, spans) = parse_spans("<i>slanted");
+        assert_eq!(plain, "slanted");
+        assert_eq!(spans.len(), 1, "{spans:?}");
+        assert_eq!(spans[0].italic, Some(true));
+        assert_eq!(spans[0].end, plain.chars().count());
+
+        let (plain, spans) =
+            parse_spans(r##"<span color="#ff0000" scale="1.5" bg="#00ff0020">hot</span>"##);
+        assert_eq!(plain, "hot");
+        assert_eq!(spans.len(), 1, "{spans:?}");
+        assert_eq!(spans[0].color, Some(Rgba::hex("#ff0000")));
+        assert_eq!(spans[0].scale, Some(1.5));
+        assert_eq!(spans[0].background, Some(Rgba::hex("#00ff0020")));
+
+        // Unknown and malformed tags are literal text, never holes.
+        let (plain, spans) = parse_spans("a <u>underline</u> is not ours");
+        assert_eq!(plain, "a <u>underline</u> is not ours");
+        assert!(spans.is_empty(), "{spans:?}");
+        let (plain, spans) = parse_spans("broken <b bold");
+        assert_eq!(plain, "broken <b bold");
+        assert!(spans.is_empty(), "{spans:?}");
+
+        // A tag around nothing styles nothing.
+        let (plain, spans) = parse_spans("empty<b></b>run");
+        assert_eq!(plain, "emptyrun");
+        assert!(spans.is_empty(), "{spans:?}");
     }
 }

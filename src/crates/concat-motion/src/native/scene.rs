@@ -867,6 +867,7 @@ impl Scene<'_> {
                     | "rotate-y"
                     | "z"
                     | "perspective"
+                    | "path-offset"
             );
             if known {
                 continue;

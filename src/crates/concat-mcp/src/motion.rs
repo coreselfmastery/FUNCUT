@@ -329,6 +329,9 @@ fn analyse(comp: &Comp, source: Option<&Path>) -> Value {
             // that counted the comp's cameras as nothing would say a
             // camera comp was an empty one.
             NodeKind::Camera { .. } => "camera",
+            // The puppet's bones: an empty census would say a rig comp
+            // had nothing in it when it is nothing but its chain.
+            NodeKind::Rig { .. } => "rig",
         };
         *by_kind.entry(kind).or_default() += 1;
         parents.insert(node.id.as_str(), node.parent.as_deref());

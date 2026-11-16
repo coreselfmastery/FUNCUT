@@ -9,7 +9,7 @@
 //! rather than judged in the wrong coordinate space. Contrast is measured only
 //! when foreground and its resolved background are known solid colours.
 
-use crate::comp::{Comp, NodeKind, Paint, Rgba};
+use crate::comp::{Blend, Comp, NodeKind, Paint, Rgba};
 
 /// A target delivery format and its conservative title/action safe area.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -160,6 +160,19 @@ pub fn audit_text_contrast(comp: &Comp) -> Vec<AccessibilityFinding> {
         let NodeKind::Text(text) = &node.kind else {
             continue;
         };
+        // Effects, non-normal blends, masks and partial layer opacity change
+        // the pixels behind or inside the glyphs. Until the renderer can
+        // sample those pixels, skip rather than report a guessed ratio.
+        if !node.opacity.is_finite()
+            || node.opacity < 0.999
+            || node.blend != Blend::default()
+            || node.mask.is_some()
+            || node.matte.is_some()
+            || node.motion_blur.is_some()
+            || !node.effects.is_empty()
+        {
+            continue;
+        }
         // A solid fill is a concrete foreground and can be measured;
         // gradients are skipped because one representative colour would lie.
         let foreground = match &text.fill {
@@ -317,6 +330,16 @@ mod tests {
             audit_text_contrast(&comp).is_empty(),
             "black text over a half-white plate on black has sufficient contrast"
         );
+    }
+
+    #[test]
+    fn contrast_skips_layers_whose_effects_change_the_rendered_pixels() {
+        let mut comp = text_comp(Rgba::hex("#777777"), Rgba::hex("#ffffff"), 16.0, 400);
+        comp.nodes[0].opacity = 0.5;
+        assert!(audit_text_contrast(&comp).is_empty());
+        comp.nodes[0].opacity = 1.0;
+        comp.nodes[0].effects.push(crate::comp::Effect::Blur { radius: 2.0 });
+        assert!(audit_text_contrast(&comp).is_empty());
     }
 
     #[test]

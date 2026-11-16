@@ -1117,7 +1117,36 @@ impl CompEngine for Geneva {
             args.push("--frames".into());
             args.push(format!("{from}..{to}"));
         }
+        // The shared-memory frame pipe: when CONCAT_FRAME_PIPE names it, the
+        // bake offers the sidecar the protocol - the segment's name and its
+        // capacity on the render command - and reads its frames back from
+        // the bytes when the sidecar filled it. A sidecar that does not know
+        // the protocol ignores the flags and writes the PNG sequence as it
+        // always did; both ends agree or neither is the wiser, which is the
+        // whole seam. Only the bakes whose whole sequence fits the pipe's
+        // cap take it: a reel at thirty fps is thousands of frames, and a
+        // segment that size is a tmpfs the machine never agreed to.
+        let pipe = pipe_offer(comp, request, &mut args);
         self.run(dir, &args)?;
+        // Frames from the pipe when the sidecar filled it: the PNG sequence
+        // is the bake's contract, and a sidecar that spoke the pipe saved
+        // the round trip, not the contract. The bytes are read once, here,
+        // and the segment is retired with the bake.
+        #[cfg(feature = "raster")]
+        if let Some(pipe) = pipe.as_ref() {
+            let published = pipe.sequence().min(pipe.capacity()) as usize;
+            for index in 0..published {
+                let Some(bytes) = pipe.slot(index as u32) else { continue };
+                let Some(image) = rgba_png(bytes, pipe.width(), pipe.height()) else {
+                    continue;
+                };
+                let _ = std::fs::write(frames.join(Baked::frame_name(index as u32)), image);
+            }
+            let name = pipe.name();
+            if !name.is_empty() {
+                let _ = crate::framepipe::unlink(name);
+            }
+        }
 
         let mut written = 0_usize;
         if let Ok(entries) = std::fs::read_dir(&frames) {
@@ -1222,9 +1251,85 @@ impl CompEngine for Geneva {
             args.push("--width".into());
             args.push(width.to_string());
         }
+        // The same pipe, one frame at a time: a segment of two, named for
+        // the comp and the moment, retired with the frame.
+        let pipe_width = width.unwrap_or(comp.width);
+        let pipe = std::env::var_os("CONCAT_FRAME_PIPE")
+            .filter(|value| !value.is_empty())
+            .and_then(|_| {
+                let name = format!(
+                    "/concat-motion-frame-{:016x}-{}",
+                    comp.hash(),
+                    (at * 1000.0) as i64
+                );
+                crate::framepipe::FramePipe::create(&name, pipe_width, comp.height, 2)
+                    .ok()
+                    .map(|pipe| (pipe, name))
+            });
+        if let Some((pipe, _)) = &pipe {
+            args.push("--frame-pipe".into());
+            args.push(pipe.name().to_string());
+            args.push("--frame-capacity".into());
+            args.push("2".into());
+        }
         self.run(&scratch, &args)?;
+        // The pipe's bytes, when the sidecar wrote them, become the frame's
+        // PNG without the sidecar encoding one; the segment is retired with
+        // the frame either way.
+        #[cfg(feature = "raster")]
+        if let Some((pipe, name)) = &pipe {
+            if let Some((_, bytes)) = pipe.latest()
+                && let Some(image) = rgba_png(bytes, pipe.width(), pipe.height())
+            {
+                let _ = std::fs::write(&out, image);
+            }
+            let _ = crate::framepipe::unlink(name);
+        }
         Ok(out)
     }
+}
+
+/// The bake's pipe offer: only when CONCAT_FRAME_PIPE names it, and only
+/// for the bakes whose whole sequence fits the cap a pipe is worth - a
+/// reel at thirty fps is thousands of frames, and a segment that size is
+/// a tmpfs the machine never agreed to. `None` says nothing, changes
+/// nothing: the flags are never added, and the sidecar renders as it
+/// always did.
+fn pipe_offer(
+    comp: &Comp,
+    request: &BakeRequest,
+    args: &mut Vec<String>,
+) -> Option<crate::framepipe::FramePipe> {
+    std::env::var_os("CONCAT_FRAME_PIPE")
+        .filter(|value| !value.is_empty())?;
+    let fps = request.fps(comp);
+    let expected = ((comp.duration * fps).ceil() as u32).clamp(1, 32);
+    if (comp.duration * fps).ceil() as u32 > 32 {
+        return None;
+    }
+    let width = request.width(comp);
+    let height = request.height(comp);
+    let name = format!("/concat-motion-{:016x}", comp.hash());
+    let pipe = crate::framepipe::FramePipe::create(&name, width, height, expected).ok()?;
+    args.push("--frame-pipe".into());
+    args.push(name);
+    args.push("--frame-capacity".into());
+    args.push(expected.to_string());
+    Some(pipe)
+}
+
+/// Straight RGBA as a PNG, for the frames the pipe hands back.
+#[cfg(feature = "raster")]
+fn rgba_png(rgba: &[u8], width: u32, height: u32) -> Option<Vec<u8>> {
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut bytes, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().ok()?;
+        writer.write_image_data(rgba).ok()?;
+    }
+    Some(bytes)
 }
 
 /// The staged path an asset gets inside a bake directory: the id is kept in

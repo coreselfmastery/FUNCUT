@@ -80,6 +80,7 @@ pub mod discipline;
 pub mod engine;
 pub mod farm;
 pub mod footage;
+pub mod framepipe;
 pub mod geneva;
 pub mod grade;
 pub mod graphics;

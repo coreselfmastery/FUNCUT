@@ -57,6 +57,13 @@ pub enum Stage {
     Timeline,
     /// The plan's captions are placed (the fifteenth step's captions).
     Captions,
+    /// The music bed is shopped, imported, read back and ducked under
+    /// the voice - only where the music gate said the take carries none
+    /// of its own.
+    Music,
+    /// The sound accents land: the library shopped, one accent placed
+    /// on each of the measured emphasis peaks.
+    Sfx,
     /// A preview is rendered to be watched - the frames the Watch stage
     /// scores.
     Preview,
@@ -81,7 +88,7 @@ pub enum Stage {
 impl Stage {
     /// Every stage, in the canonical order the pipeline runs them: the
     /// register, read left to right.
-    pub const ALL: [Stage; 15] = [
+    pub const ALL: [Stage; 17] = [
         Stage::HandoffVoiceover,
         Stage::Transcribe,
         Stage::AudioRepair,
@@ -92,6 +99,8 @@ impl Stage {
         Stage::Motion,
         Stage::Timeline,
         Stage::Captions,
+        Stage::Music,
+        Stage::Sfx,
         Stage::Preview,
         Stage::Export,
         Stage::Watch,
@@ -113,6 +122,8 @@ impl Stage {
             Stage::Motion => "motion",
             Stage::Timeline => "timeline",
             Stage::Captions => "captions",
+            Stage::Music => "music",
+            Stage::Sfx => "sfx",
             Stage::Preview => "preview",
             Stage::Export => "export",
             Stage::Watch => "watch",
@@ -281,6 +292,190 @@ impl StageStep {
     }
 }
 
+/// A closure that derives a stage's next call from the replies the run
+/// has drawn so far: the whole reply log, in call order, successful calls
+/// only, growing as the stage's own calls land. Asked again and again
+/// until it answers `None`: the reactive queue a smart stage stands on.
+/// `Some(call)` is run exactly as a static stage's calls are - same
+/// retries, same gates, same IDEM stamping - and the log it next sees
+/// carries that call's own reply, so a stage can shop, read back what it
+/// shopped, and act on it, one call at a time.
+pub type Derive = Box<dyn FnMut(&[Value]) -> Option<ToolCall> + Send>;
+
+/// One stage of a program whose calls are not known until the run is:
+/// derived from the replies the earlier stages - and this stage's own
+/// calls - drew. This is the seam a smart auto-edit stands on: the
+/// tighten that cuts the dead air the voiceSignals stage measured, the
+/// captions the transcribe handed back, the music bed shopped, imported,
+/// read back and ducked - each call decided when the log that justifies
+/// it is in hand, without the program having to guess any of it ahead of
+/// the run.
+///
+/// A derive that answers `None` straight away is a stage that found
+/// nothing to do, and completes: no dead air is a tighten that succeeded,
+/// not one that failed. Gates on a derived step are checked over
+/// whatever replies the derived calls drew; a gate that wants proving
+/// belongs on a derive that always makes its proving call.
+pub struct DerivedStep {
+    /// The stage this step runs.
+    pub stage: Stage,
+    /// What this stage's failure means for the run.
+    pub policy: ErrorPolicy,
+    /// The next call, asked with the reply log until it answers `None`.
+    pub next: Derive,
+    /// What the stage's replies must say for the stage to count as done.
+    pub gates: Vec<ReplyGate>,
+}
+
+impl DerivedStep {
+    /// A stage whose failure fails the run, deriving its calls from the
+    /// run's reply log.
+    pub fn react(stage: Stage, next: Derive) -> DerivedStep {
+        DerivedStep {
+            stage,
+            policy: ErrorPolicy::Fail,
+            next,
+            gates: Vec::new(),
+        }
+    }
+
+    /// The same step, with the warn policy instead.
+    pub fn warn(mut self) -> DerivedStep {
+        self.policy = ErrorPolicy::Warn;
+        self
+    }
+
+    /// The same step, asking one more thing of the stage's replies.
+    pub fn gate(mut self, gate: ReplyGate) -> DerivedStep {
+        self.gates.push(gate);
+        self
+    }
+}
+
+/// One stage of a program whose calls run concurrently: independent
+/// groups, one lane each, all reading the same run. The transcriptions
+/// of a five-take voiceover run at once instead of one after another;
+/// the voice-signal reads of every take land in the time of the slowest.
+///
+/// A lane is its own caller - its own connection to the same server - so
+/// the groups must be independent, and they must be read-only: an
+/// `edit_apply` does not ride a fan, because the rollback order of
+/// concurrent edits is not a promise the runner can keep. Placements
+/// stay sequential; the parallel phase is the measuring (the skill's own
+/// law, made the runner's).
+#[derive(Clone, Debug, PartialEq)]
+pub struct FanStep {
+    /// The stage this step runs.
+    pub stage: Stage,
+    /// What this stage's failure means for the run.
+    pub policy: ErrorPolicy,
+    /// The independent groups, one lane each. With no lane factory the
+    /// groups still run, one after another on the one caller - correct,
+    /// only slower.
+    pub groups: Vec<Vec<ToolCall>>,
+    /// What the stage's replies (all lanes' replies, together) must say
+    /// for the stage to count as done.
+    pub gates: Vec<ReplyGate>,
+}
+
+impl FanStep {
+    /// A stage whose failure fails the run, running `groups`
+    /// concurrently.
+    pub fn fan(stage: Stage, groups: Vec<Vec<ToolCall>>) -> FanStep {
+        FanStep {
+            stage,
+            policy: ErrorPolicy::Fail,
+            groups,
+            gates: Vec::new(),
+        }
+    }
+
+    /// The same step, with the warn policy instead.
+    pub fn warn(mut self) -> FanStep {
+        self.policy = ErrorPolicy::Warn;
+        self
+    }
+
+    /// The same step, asking one more thing of the stage's replies.
+    pub fn gate(mut self, gate: ReplyGate) -> FanStep {
+        self.gates.push(gate);
+        self
+    }
+}
+
+/// One step of a program: static, derived from the run's own replies, or
+/// fanned across lanes.
+pub enum ProgramStep {
+    /// A stage whose calls are known before the run starts.
+    Static(StageStep),
+    /// A stage whose calls the run's replies write.
+    Derived(DerivedStep),
+    /// A stage whose calls run concurrently, one lane per group.
+    Fanned(FanStep),
+}
+
+impl ProgramStep {
+    /// The stage this step runs, whatever kind of step it is.
+    pub fn stage(&self) -> Stage {
+        match self {
+            ProgramStep::Static(step) => step.stage,
+            ProgramStep::Derived(step) => step.stage,
+            ProgramStep::Fanned(step) => step.stage,
+        }
+    }
+
+    /// What this step's failure means for the run.
+    pub fn policy(&self) -> ErrorPolicy {
+        match self {
+            ProgramStep::Static(step) => step.policy,
+            ProgramStep::Derived(step) => step.policy,
+            ProgramStep::Fanned(step) => step.policy,
+        }
+    }
+
+    /// What the step's replies must say for the step to count as done.
+    pub fn gates(&self) -> &[ReplyGate] {
+        match self {
+            ProgramStep::Static(step) => &step.gates,
+            ProgramStep::Derived(step) => &step.gates,
+            ProgramStep::Fanned(step) => &step.gates,
+        }
+    }
+
+    /// The step as a static one, for the tests and the panes that read a
+    /// program's shape: a derived or fanned step answers its stage and
+    /// policy with no calls of its own to show.
+    pub fn as_static(&self) -> StageStep {
+        StageStep {
+            stage: self.stage(),
+            policy: self.policy(),
+            calls: match self {
+                ProgramStep::Static(step) => step.calls.clone(),
+                _ => Vec::new(),
+            },
+            gates: self.gates().to_vec(),
+        }
+    }
+}
+
+impl From<StageStep> for ProgramStep {
+    fn from(step: StageStep) -> ProgramStep {
+        ProgramStep::Static(step)
+    }
+}
+
+impl From<DerivedStep> for ProgramStep {
+    fn from(step: DerivedStep) -> ProgramStep {
+        ProgramStep::Derived(step)
+    }
+}
+
+impl From<FanStep> for ProgramStep {
+    fn from(step: FanStep) -> ProgramStep {
+        ProgramStep::Fanned(step)
+    }
+}
+
 /// A whole auto-edit as the runner is given it: where the export will
 /// land, and the stages to run.
 ///
@@ -290,17 +485,30 @@ impl StageStep {
 /// [`verification`](Stage::Verify) record is the one thing the runner
 /// takes from the program's own replies: the last successful answer of
 /// the Verify stage, the evidence an acceptance read wants.
-#[derive(Clone, PartialEq, Debug)]
+///
+/// The steps may be static (calls known ahead), derived (calls written
+/// by the run's own replies) or fanned (independent groups on concurrent
+/// lanes); [`EditProgram::new`] takes the static kind, and
+/// [`EditProgram::mixed`](EditProgram::mixed) takes any combination.
 pub struct EditProgram {
     /// Where the plan says the export lands.
     pub export: PathBuf,
-    /// The stages, in the order the program runs them.
-    pub steps: Vec<StageStep>,
+    /// The steps, in the order the program runs them.
+    pub steps: Vec<ProgramStep>,
 }
 
 impl EditProgram {
     /// A program exporting to `export`, running `steps`.
     pub fn new(export: PathBuf, steps: Vec<StageStep>) -> EditProgram {
+        EditProgram {
+            export,
+            steps: steps.into_iter().map(ProgramStep::Static).collect(),
+        }
+    }
+
+    /// A program exporting to `export`, running `steps` of any kind:
+    /// static, derived, fanned, in any order.
+    pub fn mixed(export: PathBuf, steps: Vec<ProgramStep>) -> EditProgram {
         EditProgram { export, steps }
     }
 }
@@ -310,8 +518,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_register_holds_fifteen_stages_and_the_first_and_last_say_so() {
-        assert_eq!(Stage::ALL.len(), 15);
+    fn the_register_holds_seventeen_stages_and_the_first_and_last_say_so() {
+        assert_eq!(Stage::ALL.len(), 17);
         assert_eq!(Stage::ALL.first(), Some(&Stage::HandoffVoiceover));
         assert_eq!(Stage::ALL.last(), Some(&Stage::Verify));
     }
@@ -321,6 +529,18 @@ mod tests {
         assert_eq!(Stage::HandoffVoiceover.label(), "handoff-voiceover");
         assert_eq!(Stage::AudioRepair.label(), "audio-repair");
         assert_eq!(Stage::VoiceSignals.label(), "voice-signals");
+    }
+
+    #[test]
+    fn the_new_pair_labels_and_crosses_like_every_stage() {
+        assert_eq!(Stage::Music.label(), "music");
+        assert_eq!(Stage::Sfx.label(), "sfx");
+        for stage in [Stage::Music, Stage::Sfx] {
+            let word = serde_json::to_value(stage).expect("a stage is JSON");
+            assert_eq!(word, serde_json::json!(stage.label()));
+            let back: Stage = serde_json::from_value(word).expect("a stage reads back");
+            assert_eq!(back, stage);
+        }
     }
 
     #[test]
@@ -451,5 +671,85 @@ mod tests {
         assert_eq!(step.gates.len(), 2);
         assert_eq!(step.gates[0].field(), "platformTargetMet");
         assert_eq!(step.gates[1].field(), "overall");
+    }
+
+    #[test]
+    fn a_derived_step_answers_its_stage_and_polls_the_log() {
+        let mut step = DerivedStep::react(
+            Stage::Captions,
+            Box::new(|log| {
+                let segments: usize = log
+                    .iter()
+                    .filter_map(|reply| reply.get("segments").and_then(Value::as_array))
+                    .map(Vec::len)
+                    .sum();
+                (segments > 0).then(|| ToolCall {
+                    tool: "captions_add".to_owned(),
+                    arguments: serde_json::json!({ "path": "/p" }),
+                })
+            }),
+        )
+        .warn();
+        assert_eq!(step.stage, Stage::Captions);
+        assert_eq!(step.policy, ErrorPolicy::Warn);
+        // An empty log derives no calls; a log with segments derives one.
+        assert!((step.next)(&Vec::new()).is_none());
+        let log = vec![serde_json::json!({ "segments": [{ "text": "a" }, { "text": "b" }] })];
+        assert!((step.next)(&log).is_some());
+    }
+
+    #[test]
+    fn a_fan_step_groups_its_lanes_and_keeps_its_policy() {
+        let one = ToolCall {
+            tool: "transcribe".to_owned(),
+            arguments: serde_json::json!({ "path": "/takes/one.wav" }),
+        };
+        let two = ToolCall {
+            tool: "transcribe".to_owned(),
+            arguments: serde_json::json!({ "path": "/takes/two.wav" }),
+        };
+        let step = FanStep::fan(Stage::Transcribe, vec![vec![one], vec![two]]).warn();
+        assert_eq!(step.stage, Stage::Transcribe);
+        assert_eq!(step.policy, ErrorPolicy::Warn);
+        assert_eq!(step.groups.len(), 2);
+        assert_eq!(step.groups[0][0].tool, "transcribe");
+    }
+
+    #[test]
+    fn a_program_step_answers_stage_policy_and_gates_whatever_it_is() {
+        let static_step: ProgramStep = StageStep::run(Stage::Export, vec![]).into();
+        let derived_step: ProgramStep =
+            DerivedStep::react(Stage::Captions, Box::new(|_| None)).into();
+        let fanned_step: ProgramStep = FanStep::fan(Stage::Transcribe, vec![]).into();
+        for (step, stage) in [
+            (&static_step, Stage::Export),
+            (&derived_step, Stage::Captions),
+            (&fanned_step, Stage::Transcribe),
+        ] {
+            assert_eq!(step.stage(), stage);
+            assert_eq!(step.policy(), ErrorPolicy::Fail);
+            assert!(step.gates().is_empty());
+            // A derived or fanned step shows no static calls of its own.
+            let as_static = step.as_static();
+            assert_eq!(as_static.stage, stage);
+        }
+        assert_eq!(static_step.as_static().calls.len(), 0);
+    }
+
+    #[test]
+    fn a_mixed_program_keeps_its_steps_in_order() {
+        let program = EditProgram::mixed(
+            PathBuf::from("/e/export.mp4"),
+            vec![
+                StageStep::run(Stage::HandoffVoiceover, vec![]).into(),
+                DerivedStep::react(Stage::Captions, Box::new(|_| None)).into(),
+                FanStep::fan(Stage::Transcribe, vec![]).into(),
+            ],
+        );
+        let stages: Vec<Stage> = program.steps.iter().map(|step| step.stage()).collect();
+        assert_eq!(
+            stages,
+            vec![Stage::HandoffVoiceover, Stage::Captions, Stage::Transcribe]
+        );
     }
 }

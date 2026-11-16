@@ -1674,17 +1674,27 @@ fn transcript_words(path: &str, backend: &mut dyn Backend) -> Result<Vec<Value>,
 /// scales with the lines and the audio length: the Rust ears analyse
 /// every line and window, and a WhisperX alignment (when installed) is
 /// real work on top.
-pub fn voice_signals(arguments: Value) -> Result<Outcome, ApiError> {
-    let fields = arguments
+///
+/// A caller that names only `audio` still gets a reading when the
+/// analysis registry holds that file's transcript: the same place
+/// `analysis_wait` reads, so an unattended run whose program was written
+/// before the transcript existed (the AUTO EDIT spine, a UI button)
+/// does not refuse for want of a field it already paid to compute.
+pub fn voice_signals(arguments: Value, backend: &mut dyn Backend) -> Result<Outcome, ApiError> {
+    let mut fields = arguments
         .as_object()
         .cloned()
         .ok_or_else(|| invalid("the arguments are an object"))?;
     let action = fields
         .get("action")
         .and_then(Value::as_str)
-        .unwrap_or("extract");
-    if !["extract", "selftest"].contains(&action) {
+        .unwrap_or("extract")
+        .to_owned();
+    if !["extract", "selftest"].contains(&action.as_str()) {
         return Err(invalid("action is `extract` or `selftest`"));
+    }
+    if action == "extract" {
+        supply_transcript(&mut fields, backend)?;
     }
     let mut spec = json!({ "action": action });
     // Only the fields the action reads travel on: the spec crosses a
@@ -1730,6 +1740,53 @@ pub fn voice_signals(arguments: Value) -> Result<Outcome, ApiError> {
     };
     let result = run("voice", &spec, Duration::from_secs(budget.min(480)))?;
     Ok(Outcome::json(result))
+}
+
+/// Fill a caller's `transcript` from the analysis registry when the
+/// arguments carry an `audio` file and no lines of their own: the newest
+/// analysis job on that path, when one finished, is the transcript a
+/// transcribe already wrote there. A registry with nothing to say leaves
+/// the fields alone - the Python side's own refusal names what to pass -
+/// and a caller that brought `lines`, `script` or a `transcript` keeps
+/// what it brought, word for word.
+fn supply_transcript(
+    fields: &mut serde_json::Map<String, Value>,
+    backend: &mut dyn Backend,
+) -> Result<(), ApiError> {
+    if fields.contains_key("transcript")
+        || fields.contains_key("lines")
+        || fields.contains_key("script")
+    {
+        return Ok(());
+    }
+    let Some(audio) = fields.get("audio").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    let status = match backend.call(request("export.status", json!({ "path": audio }))?) {
+        Ok(status) => status,
+        // A backend that cannot answer the registry is no reason to
+        // refuse the extract: the Python side names what is missing.
+        Err(_) => return Ok(()),
+    };
+    if status.get("state").and_then(Value::as_str) != Some("done") {
+        return Ok(());
+    }
+    let Some(output) = status.get("output").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    let transcript: Value = match serde_json::from_str(output) {
+        Ok(value) => value,
+        Err(_) => return Ok(()),
+    };
+    let carries_segments = match &transcript {
+        Value::Object(map) => map.get("segments").and_then(Value::as_array).is_some(),
+        Value::Array(list) => !list.is_empty(),
+        _ => false,
+    };
+    if carries_segments {
+        fields.insert("transcript".to_owned(), transcript);
+    }
+    Ok(())
 }
 
 /// One tool served by the Python sense families: which command sense.py
@@ -2515,6 +2572,95 @@ mod tests {
         fn describe(&self) -> Value {
             json!({ "mode": "test" })
         }
+    }
+
+    /// A backend that answers `export.status` for one audio path with the
+    /// transcript a finished transcribe left in the analysis registry, and
+    /// nothing else: the shape `supply_transcript` reads.
+    struct RegistryTranscript {
+        asked: usize,
+    }
+
+    impl Backend for RegistryTranscript {
+        fn call(&mut self, request: Request) -> Result<Value, ApiError> {
+            match request {
+                Request::ExportStatus { path, .. } => {
+                    self.asked += 1;
+                    if path.as_deref().is_some_and(|p| p.ends_with("take.wav")) {
+                        Ok(json!({
+                            "state": "done",
+                            "output": "{\"segments\":[{\"text\":\"one\",\"start\":0.0,\"end\":1.0,\
+                                       \"words\":[]},{\"text\":\"two\",\"start\":1.0,\"end\":2.0,\
+                                       \"words\":[]}]}",
+                        }))
+                    } else {
+                        Ok(json!({ "state": "idle" }))
+                    }
+                }
+                other => Err(ApiError::failed(format!("unexpected {other:?}"))),
+            }
+        }
+        fn describe(&self) -> Value {
+            json!({ "mode": "test" })
+        }
+    }
+
+    #[test]
+    fn a_lone_audio_borrows_the_registry_transcript() {
+        // The AUTO EDIT spine calls `voice_signals` with only `audio`: the
+        // extract must borrow the transcript the transcribe stage already
+        // wrote, not refuse for want of a field the run itself produced.
+        let mut fields = serde_json::Map::new();
+        fields.insert("audio".to_owned(), json!("/project/take.wav"));
+        let mut backend = RegistryTranscript { asked: 0 };
+        super::supply_transcript(&mut fields, &mut backend).unwrap();
+        assert_eq!(backend.asked, 1, "the registry is asked once");
+        let transcript = fields
+            .get("transcript")
+            .expect("the transcript is supplied");
+        let segments = transcript["segments"].as_array().unwrap();
+        assert_eq!(segments.len(), 2, "both segments cross the boundary");
+        assert_eq!(segments[0]["text"], "one");
+    }
+
+    #[test]
+    fn a_caller_that_brought_lines_is_not_asked() {
+        // `lines`, `script` or a `transcript` of the caller's own keeps
+        // what it brought: the registry is not even consulted.
+        for (key, value) in [
+            ("lines", json!([{ "text": "brought" }])),
+            ("script", json!("brought")),
+            ("transcript", json!({ "segments": [{ "text": "brought" }] })),
+        ] {
+            let mut fields = serde_json::Map::new();
+            fields.insert("audio".to_owned(), json!("/project/take.wav"));
+            fields.insert(key.to_owned(), value);
+            let mut backend = RegistryTranscript { asked: 0 };
+            super::supply_transcript(&mut fields, &mut backend).unwrap();
+            assert_eq!(
+                backend.asked, 0,
+                "the registry is not asked when {key} is given"
+            );
+            assert!(
+                fields[key]["segments"][0]["text"] == "brought"
+                    || fields[key].as_str() == Some("brought")
+                    || fields[key][0]["text"] == "brought",
+                "what the caller brought survives: {:?}",
+                fields[key]
+            );
+        }
+    }
+
+    #[test]
+    fn a_registry_with_nothing_to_say_leaves_the_fields_alone() {
+        // No finished job on the path: the fields stay as they were, and
+        // the Python side's own refusal names what to pass.
+        let mut fields = serde_json::Map::new();
+        fields.insert("audio".to_owned(), json!("/project/other.wav"));
+        let mut backend = RegistryTranscript { asked: 0 };
+        super::supply_transcript(&mut fields, &mut backend).unwrap();
+        assert_eq!(backend.asked, 1);
+        assert!(!fields.contains_key("transcript"), "nothing is invented");
     }
 
     #[test]

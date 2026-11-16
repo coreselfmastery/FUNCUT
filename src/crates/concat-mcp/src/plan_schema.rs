@@ -398,9 +398,18 @@ mod tests {
             "the canonical's dressing stays on the canonical"
         );
         // The constraints a client can rely on survive the projection;
-        // the prose does not.
+        // the prose does not. The description's 40-character floor moved
+        // to the runtime rule - an empty visual.description with a 40+
+        // spoken line is a valid plan the schema must not reject - so the
+        // constraint the compact still carries is the query's.
         let visual = &plan["properties"]["segments"]["items"]["properties"]["visual"];
-        assert_eq!(visual["properties"]["description"]["minLength"], 40);
+        assert_eq!(visual["properties"]["query"]["minLength"], 1);
+        assert!(
+            visual["properties"]["description"]
+                .get("minLength")
+                .is_none(),
+            "the description's floor is the runtime rule, with its spoken fallback"
+        );
         assert!(visual["properties"].get("preset").is_none());
     }
 }

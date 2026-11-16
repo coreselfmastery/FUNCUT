@@ -1062,7 +1062,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "voice_signals",
             title: "Read the voiceover as a score",
-            description: "The voiceover read as a score: loudness, pauses, rate, emphasis, speakers, entities, per-signal confidence; entitiesAvailable says whether the NER ear answered.",
+            description: "The voiceover read as a score: loudness, pauses, rate, emphasis, speakers, entities, per-signal confidence; a lone audio path borrows the file's own transcript from the analysis registry.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -2642,7 +2642,7 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         Action::CraftCritique => crate::sense::craft_critique(arguments, backend),
         Action::LocalVlm => crate::sense::local_vlm(arguments),
         Action::Emotion => crate::sense::emotion(arguments, backend),
-        Action::VoiceSignals => crate::sense::voice_signals(arguments),
+        Action::VoiceSignals => crate::sense::voice_signals(arguments, backend),
         Action::Sense(name) => crate::sense::sense_family(name, arguments),
         Action::SenseFamily(family) => crate::sense::sense_family_action(family, arguments),
         Action::CreativeBrief => crate::sense::creative_brief(arguments, backend),
@@ -3039,12 +3039,17 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
                 }
                 // The pre-flight's floor, kept here so a plan the executor
                 // cannot run does not pass validation: the semantic
-                // description the CLIP rerank ranks against, with the
-                // segment's spoken words allowed to carry it when the
-                // visual does not name one.
+                // description the CLIP rerank ranks against. The
+                // precedence is the executor's own: a non-empty
+                // visual.description WINS and must carry the 40
+                // characters itself - a short supplied value must not
+                // silently fall through to a longer spoken line - and
+                // only an omitted or empty one lets the segment's spoken
+                // words carry it.
                 let description = visual
                     .get("description")
                     .and_then(Value::as_str)
+                    .filter(|description| !description.trim().is_empty())
                     .or_else(|| segment.get("spoken").and_then(Value::as_str))
                     .map(str::trim)
                     .unwrap_or("");
@@ -3477,6 +3482,35 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
     }
     let creative = creative_gate(plan, segments, runtime, &warnings);
     let signal_log = signal_log_gate(plan, segments, runtime);
+    // The craft shelves: maestro and clip-skills are the judgment the
+    // director is told to consult, and the plan's own signalLog notes are
+    // where the consultation leaves its name. A plan that never names a
+    // module is not refused - the reading of a shelf cannot be proven
+    // from here - but it is warned about, in the same voice the breath
+    // gaps are: the thing the director forgot is the thing the record
+    // says.
+    let craft_notes = plan
+        .get("signalLog")
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| entry.get("note").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_ascii_lowercase()
+        })
+        .unwrap_or_default();
+    let consulted = ["maestro", "clip-skills", "clipskills", "clip skills"]
+        .iter()
+        .any(|shelf| craft_notes.contains(shelf));
+    let mut warnings = warnings;
+    if !consulted {
+        warnings.push(
+            "no signalLog note names a maestro or clip-skills module: the plan may have              been written without the judgment shelves the skill routes to - consult them              and name the module each decision used"
+                .to_owned(),
+        );
+    }
     let mut result = json!({
         "valid": true,
         "aspect": aspect,
@@ -3847,6 +3881,10 @@ fn export_wait(
             })?
             .min(WAIT_LONGEST),
     };
+    // The path the caller asked about, echoed into the reply: a fan's
+    // lanes land in any order, and the reply's own word for what it
+    // waited on is the only mapping a reactive stage can trust.
+    let asked = arguments.get("path").cloned();
     let status = request("export.status", arguments)?;
     let until = Instant::now() + Duration::from_secs_f64(timeout);
     let mut reported = -1.0_f64;
@@ -3897,6 +3935,9 @@ fn export_wait(
                     "the job {tool} waited on ended {state}: {why}"
                 )));
             }
+            if let Some(path) = asked {
+                current["path"] = path;
+            }
             return Ok(Outcome::json(current));
         }
         if cancelled.load(Ordering::Relaxed) {
@@ -3907,6 +3948,9 @@ fn export_wait(
         }
         if Instant::now() >= until {
             current["note"] = json!("still running: call this tool again, or export_status");
+            if let Some(path) = &asked {
+                current["path"] = path.clone();
+            }
             return Ok(Outcome::json(current));
         }
         std::thread::sleep(POLL);
@@ -6189,6 +6233,19 @@ mod tests {
         assert!(
             validate_edit_plan(&spoken).is_ok(),
             "the spoken words carry the description"
+        );
+
+        // A SHORT non-empty description does not fall through to a longer
+        // spoken line: the executor's precedence is the visual's own word
+        // first, and a keyword sitting where a description belongs is
+        // refused as what it is - not quietly swapped for the narration.
+        let mut short_wins = spoken;
+        short_wins["segments"][0]["visual"]["description"] = json!("ocean");
+        assert!(
+            validate_edit_plan(&short_wins)
+                .unwrap_err()
+                .contains("at least 40"),
+            "a short supplied description takes precedence and is refused, not swapped: {short_wins}"
         );
 
         // A text card with no storyboard: the executor refuses to export

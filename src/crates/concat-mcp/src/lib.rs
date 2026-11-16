@@ -24,6 +24,7 @@
 
 pub mod backend;
 pub mod director;
+pub mod director_program;
 pub mod motion;
 pub mod plan_schema;
 pub mod protocol;

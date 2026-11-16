@@ -55,6 +55,9 @@ pub mod stage;
 pub mod state;
 
 pub use error::{AutoEditError, ToolCall, ToolError, is_retryable};
-pub use runner::{EDIT_APPLY, EDIT_UNDO, Runner, ToolCaller};
-pub use stage::{EditProgram, ErrorPolicy, ReplyGate, Stage, StageStep};
+pub use runner::{EDIT_APPLY, EDIT_UNDO, LaneFactory, Runner, ToolCaller};
+pub use stage::{
+    Derive, DerivedStep, EditProgram, ErrorPolicy, FanStep, ProgramStep, ReplyGate, Stage,
+    StageStep,
+};
 pub use state::{AutoEditEvent, AutoEditProgress, AutoEditState, RunOutcome};

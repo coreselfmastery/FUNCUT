@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use crate::error::{AutoEditError, ToolCall, ToolError};
-use crate::stage::{EditProgram, ErrorPolicy, Stage};
+use crate::stage::{EditProgram, ErrorPolicy, ProgramStep, ReplyGate, Stage};
 use crate::state::{AutoEditEvent, AutoEditProgress, AutoEditState, RunOutcome, timestamp};
 
 /// The tool that applies one edit. Every `edit_apply` a run makes is one
@@ -31,6 +31,10 @@ pub const EDIT_UNDO: &str = "edit_undo";
 /// How many attempts a retryable call gets: the watcher's own three -
 /// the first try, and two more.
 const ATTEMPTS: u32 = 3;
+
+/// What one driven queue of calls answers with: its failure, with the
+/// attempt that failed, and every reply the queue drew.
+type DriveResult = (Option<(AutoEditError, u32)>, Vec<Value>);
 
 /// The pause before the first retry. It doubles with each attempt - two
 /// seconds, then four - the watcher's own cadence.
@@ -50,6 +54,21 @@ fn idempotency_key(stage: Stage, call: &ToolCall) -> String {
     format!("{}-{:016x}", stage.label(), hasher.finish())
 }
 
+/// The one-call form of the IDEM stamping the fan and the reactive queue
+/// share with the static path: an `edit_apply` without its own key gets
+/// the key the stage and the call derive.
+fn stamp(stage: Stage) -> impl FnMut(ToolCall) -> ToolCall {
+    move |mut call| {
+        if call.tool == EDIT_APPLY && call.arguments.get("idempotencyKey").is_none() {
+            let key = idempotency_key(stage, &call);
+            if let Some(fields) = call.arguments.as_object_mut() {
+                fields.insert("idempotencyKey".to_owned(), json!(key));
+            }
+        }
+        call
+    }
+}
+
 /// What the runner drives: one tool call at a time, answered as the JSON
 /// the tool replies with.
 ///
@@ -63,6 +82,20 @@ fn idempotency_key(stage: Stage, call: &ToolCall) -> String {
 pub trait ToolCaller: Send {
     /// Runs one call, or refuses it the way the tool would.
     fn call(&mut self, call: &ToolCall) -> Result<Value, ToolError>;
+}
+
+/// Mints one caller per lane of a fan step: its own connection to the
+/// same server, so a lane's wait never queues behind another lane's.
+/// The factory a pane hands the runner is `open` away from a second
+/// backend - the window's server takes as many connections as the run
+/// asks for, and a headless lane is an in-process `Api` of its own.
+///
+/// A lane that cannot be minted is that lane's failure, said as a
+/// sentence - not the run's: one connection refused while five lanes
+/// run is one lane to retry, not a run to stop.
+pub trait LaneFactory: Send + Sync {
+    /// A fresh caller for one lane of a fan step.
+    fn lane(&self) -> Result<Box<dyn ToolCaller>, String>;
 }
 
 /// An auto-edit's runner: the loop over an [`EditProgram`], and the
@@ -190,7 +223,7 @@ impl Runner {
     /// The set lives with the runner, so a failed run's finished stages
     /// are exactly where the next run picks up.
     pub fn completed(&self) -> Vec<Stage> {
-        let completed = self
+        let mut completed = self
             .shared
             .completed
             .lock()
@@ -238,22 +271,32 @@ impl Runner {
         base * (1u32 << (attempt - 1).min(30))
     }
 
-    /// Runs `program`, driving `caller`, and comes back with which of
-    /// the four ends the run met. The details - the state, the progress,
-    /// every event - live in the runner, not the outcome: they are what
-    /// a progress reader, a log or a tool answers from.
-    ///
-    /// A call is retried when the tool is one whose retries land and the
-    /// failure sounds like the network's side of the contract, up to
-    /// [`ATTEMPTS`] attempts with the watcher's own pauses. A stage
-    /// under the warn policy does not fail the run: its failure is
-    /// recorded as a warning and the run ships
-    /// [`CompletedWithWarnings`](AutoEditState::CompletedWithWarnings).
-    /// A cancelled run stops at the next stage boundary and rolls its
-    /// edits back. A tool that panics fails the run - the state machine
-    /// must never wedge on a tool's bug - though it does not roll back;
-    /// a panic in mid-edit leaves the history for a person to read.
-    pub fn run(&self, program: &EditProgram, caller: &mut dyn ToolCaller) -> RunOutcome {
+    /// A panic in mid-edit leaves the history for a person to read.
+    pub fn run(&self, program: &mut EditProgram, caller: &mut dyn ToolCaller) -> RunOutcome {
+        self.walk(program, caller, None)
+    }
+
+    /// The same walk, with lanes for the fan steps: each group of a fan
+    /// runs on its own caller, minted fresh, so the groups measure at the
+    /// same time instead of one after another. A run without fan steps
+    /// runs exactly as [`run`](Runner::run) - the factory is never asked.
+    pub fn run_with_lanes(
+        &self,
+        program: &mut EditProgram,
+        caller: &mut dyn ToolCaller,
+        lanes: &dyn LaneFactory,
+    ) -> RunOutcome {
+        self.walk(program, caller, Some(lanes))
+    }
+
+    /// One whole walk over the program: the run both public doors above
+    /// stand on.
+    fn walk(
+        &self,
+        program: &mut EditProgram,
+        caller: &mut dyn ToolCaller,
+        lanes: Option<&dyn LaneFactory>,
+    ) -> RunOutcome {
         if self.shared.running.swap(true, Ordering::SeqCst) {
             return RunOutcome::Failed(AutoEditError::new(
                 Stage::Plan,
@@ -267,6 +310,10 @@ impl Runner {
             ));
         }
         let _still_running = RunGuard(&self.shared.running);
+        // A new run is a new intent: a cancel left over from the run
+        // before (the retry that reuses this runner) does not stop the
+        // run that was just asked for.
+        self.shared.cancel.store(false, Ordering::SeqCst);
 
         let run_started = Instant::now();
         let started = timestamp();
@@ -301,19 +348,26 @@ impl Runner {
         }
 
         // Every stage that applied an edit, in the order the edits
-        // landed. Cancel rolls them back one `edit_undo` each; an
+        // landed. Cancel rolls their back one `edit_undo` each; an
         // `edit_undo` a stage made itself comes off the list too.
         let mut applied: Vec<Stage> = Vec::new();
         let mut warnings: Vec<String> = Vec::new();
         let mut verification = Value::Null;
+        // Every successful reply the run has drawn, in call order: what
+        // a derived step derives from, and the only memory a program's
+        // later stages have of its earlier ones.
+        let mut log: Vec<Value> = Vec::new();
 
-        for (index, step) in program.steps.iter().enumerate() {
+        for index in 0..program.steps.len() {
+            let stage = program.steps[index].stage();
+            let policy = program.steps[index].policy();
+            let gates: Vec<ReplyGate> = program.steps[index].gates().to_vec();
             if self.cancelled() {
                 return self.cancel_run(
                     caller,
                     &applied,
                     AutoEditProgress::new(
-                        step.stage,
+                        stage,
                         index,
                         total,
                         run_started.elapsed(),
@@ -332,15 +386,15 @@ impl Runner {
                 .completed
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .contains(&step.stage)
+                .contains(&stage)
             {
                 self.emit(
                     AutoEditState::Running {
-                        stage: step.stage,
+                        stage,
                         started: started.clone(),
                     },
                     AutoEditProgress::new(
-                        step.stage,
+                        stage,
                         index,
                         total,
                         run_started.elapsed(),
@@ -352,13 +406,13 @@ impl Runner {
             }
             let stage_started = Instant::now();
             let running = AutoEditState::Running {
-                stage: step.stage,
+                stage,
                 started: started.clone(),
             };
             self.emit(
                 running.clone(),
                 AutoEditProgress::new(
-                    step.stage,
+                    stage,
                     index,
                     total,
                     run_started.elapsed(),
@@ -373,112 +427,208 @@ impl Runner {
             // for the gates below and dropped with them - only the Verify
             // stage's last answer travels on in `verification`.
             let mut replies: Vec<Value> = Vec::new();
-            // IDEM: every edit this run applies carries an idempotency
-            // key derived from the stage and the call itself, so the
-            // same edit re-made by a run that never heard the reply
-            // asks under the same key - and the server answers with the
-            // batch it already applied, not a second copy.
-            let calls: Vec<ToolCall> = step
-                .calls
-                .iter()
-                .cloned()
-                .map(|mut call| {
-                    if call.tool == EDIT_APPLY && call.arguments.get("idempotencyKey").is_none() {
-                        let key = idempotency_key(step.stage, &call);
-                        if let Some(fields) = call.arguments.as_object_mut() {
-                            fields.insert("idempotencyKey".to_owned(), json!(key));
-                        }
-                    }
-                    call
-                })
-                .collect();
-            'calls: for call in &calls {
-                self.emit(
-                    running.clone(),
-                    AutoEditProgress::new(
-                        step.stage,
-                        index,
-                        total,
-                        run_started.elapsed(),
-                        stage_started.elapsed(),
-                        call.tool.as_str(),
-                    ),
-                );
-                let mut attempt = 1;
-                loop {
-                    // A panicking tool must not wedge the state machine.
-                    // The window's own hub catches around each API call
-                    // for the same reason; here the run fails, recorded
-                    // as plainly as any refusal.
-                    let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        caller.call(call)
-                    }));
-                    let made = match made {
-                        Ok(made) => made,
-                        Err(panic) => {
-                            let what = if let Some(text) = panic.downcast_ref::<&str>() {
-                                (*text).to_owned()
-                            } else if let Some(text) = panic.downcast_ref::<String>() {
-                                text.clone()
-                            } else {
-                                "without a message".to_owned()
-                            };
-                            failure = Some(AutoEditError::new(
-                                step.stage,
-                                Some(call.clone()),
-                                ToolError {
-                                    message: format!("the tool panicked: {what}"),
-                                    retryable: Some(false),
-                                    retry_after: None,
-                                    code: None,
-                                },
-                            ));
-                            failed_attempt = attempt;
-                            break 'calls;
-                        }
+            // The stage's last call, for a gate failure to name: the call
+            // whose reply the gate read, whatever kind of step drew it.
+            #[allow(unused_assignments)]
+            let mut last_call: Option<ToolCall> = None;
+
+            // A fan step runs its groups concurrently, one lane each;
+            // everything else is one queue of calls on the one caller.
+            if let ProgramStep::Fanned(fan) = &program.steps[index] {
+                last_call = fan.groups.iter().flatten().last().cloned();
+                // Edits do not ride a fan: the rollback order of
+                // concurrent edits is not a promise the runner can keep,
+                // so the program that tries is refused here rather than
+                // rolled back wrongly later.
+                if let Some(call) = fan
+                    .groups
+                    .iter()
+                    .flatten()
+                    .find(|call| call.tool == EDIT_APPLY || call.tool == EDIT_UNDO)
+                {
+                    failure = Some(AutoEditError::new(
+                        stage,
+                        Some(call.clone()),
+                        ToolError {
+                            message: "edits do not ride a fan: placements stay sequential"
+                                .to_owned(),
+                            retryable: Some(false),
+                            retry_after: None,
+                            code: None,
+                        },
+                    ));
+                } else {
+                    // Stamp every lane's calls the way the sequential
+                    // path stamps its own (IDEM).
+                    let groups: Vec<Vec<ToolCall>> = fan
+                        .groups
+                        .iter()
+                        .map(|group| group.iter().cloned().map(stamp(stage)).collect())
+                        .collect();
+                    let lane_results: Vec<DriveResult> = match lanes {
+                        Some(lanes) => std::thread::scope(|scope| {
+                            let handles: Vec<_> = groups
+                                .into_iter()
+                                .map(|group| {
+                                    let runner = self.clone();
+                                    let running = running.clone();
+                                    scope.spawn(move || match lanes.lane() {
+                                        Ok(mut lane) => runner.drive_lane(
+                                            stage,
+                                            index,
+                                            total,
+                                            run_started,
+                                            running,
+                                            group,
+                                            &mut lane,
+                                        ),
+                                        Err(sentence) => (
+                                            Some((
+                                                AutoEditError::new(
+                                                    stage,
+                                                    group.first().cloned(),
+                                                    ToolError {
+                                                        message: format!(
+                                                            "the lane could not open: {sentence}"
+                                                        ),
+                                                        retryable: Some(true),
+                                                        retry_after: None,
+                                                        code: None,
+                                                    },
+                                                ),
+                                                1,
+                                            )),
+                                            Vec::new(),
+                                        ),
+                                    })
+                                })
+                                .collect();
+                            handles
+                                .into_iter()
+                                .map(|handle| {
+                                    handle.join().unwrap_or_else(|panic| {
+                                        let what = if let Some(text) = panic.downcast_ref::<&str>()
+                                        {
+                                            (*text).to_owned()
+                                        } else if let Some(text) = panic.downcast_ref::<String>() {
+                                            text.clone()
+                                        } else {
+                                            "without a message".to_owned()
+                                        };
+                                        (
+                                            Some((
+                                                AutoEditError::new(
+                                                    stage,
+                                                    None,
+                                                    ToolError {
+                                                        message: format!(
+                                                            "the lane panicked: {what}"
+                                                        ),
+                                                        retryable: Some(false),
+                                                        retry_after: None,
+                                                        code: None,
+                                                    },
+                                                ),
+                                                1,
+                                            )),
+                                            Vec::new(),
+                                        )
+                                    })
+                                })
+                                .collect()
+                        }),
+                        // No lanes: the groups still run, one after
+                        // another on the one caller - correct, only
+                        // slower.
+                        None => groups
+                            .into_iter()
+                            .map(|group| {
+                                self.drive_calls(
+                                    stage,
+                                    index,
+                                    total,
+                                    run_started,
+                                    &running,
+                                    &mut log,
+                                    &mut applied,
+                                    group,
+                                    caller,
+                                )
+                            })
+                            .collect(),
                     };
-                    match made {
-                        Ok(reply) => {
-                            if call.tool == EDIT_APPLY {
-                                applied.push(step.stage);
-                            } else if call.tool == EDIT_UNDO {
-                                applied.pop();
-                            }
-                            replies.push(reply.clone());
-                            if step.stage == Stage::Verify {
-                                verification = reply;
-                            }
+                    for (lane_failure, lane_replies) in lane_results {
+                        if let Some((error, attempt)) = lane_failure {
+                            failure.get_or_insert(error);
+                            failed_attempt = failed_attempt.max(attempt);
+                        }
+                        replies.extend(lane_replies);
+                    }
+                }
+            } else {
+                // IDEM: every edit this run applies carries an
+                // idempotency key derived from the stage and the call
+                // itself, so the same edit re-made by a run that never
+                // heard the reply asks under the same key - and the
+                // server answers with the batch it already applied, not
+                // a second copy.
+                match &mut program.steps[index] {
+                    ProgramStep::Static(step) => {
+                        let calls: Vec<ToolCall> =
+                            step.calls.clone().into_iter().map(stamp(stage)).collect();
+                        last_call = calls.last().cloned();
+                        let (walk_failure, walk_replies) = self.drive_calls(
+                            stage,
+                            index,
+                            total,
+                            run_started,
+                            &running,
+                            &mut log,
+                            &mut applied,
+                            calls,
+                            caller,
+                        );
+                        if let Some((error, attempt)) = walk_failure {
+                            failure = Some(error);
+                            failed_attempt = attempt;
+                        }
+                        replies = walk_replies;
+                    }
+                    // The reactive queue: asked for its next call with the
+                    // log the run has drawn so far - its own replies
+                    // included - until it answers None. Each call is
+                    // stamped and driven exactly as a static one is.
+                    ProgramStep::Derived(derived) => loop {
+                        let next = (derived.next)(&log);
+                        let Some(next) = next else {
+                            break;
+                        };
+                        let call = stamp(stage)(next);
+                        last_call = Some(call.clone());
+                        let (walk_failure, walk_replies) = self.drive_calls(
+                            stage,
+                            index,
+                            total,
+                            run_started,
+                            &running,
+                            &mut log,
+                            &mut applied,
+                            vec![call],
+                            caller,
+                        );
+                        replies.extend(walk_replies);
+                        if let Some((error, attempt)) = walk_failure {
+                            failure = Some(error);
+                            failed_attempt = attempt;
                             break;
                         }
-                        Err(error) => {
-                            let mut error =
-                                AutoEditError::new(step.stage, Some(call.clone()), error);
-                            // A stop asked for while the call was being
-                            // made or waited on is the stop arriving: no
-                            // more retries, and the run lands cancelled
-                            // below rather than failed - the refusal is the
-                            // stop's own work, not the tool's.
-                            if self.cancelled() {
-                                failed_attempt = attempt;
-                                failure = Some(error);
-                                break 'calls;
-                            }
-                            if error.retryable && attempt < ATTEMPTS {
-                                let pause =
-                                    error.retry_after.unwrap_or_else(|| self.pause_for(attempt));
-                                std::thread::sleep(pause);
-                                attempt += 1;
-                                continue;
-                            }
-                            if error.retryable {
-                                // The pause a fresh attempt would wait.
-                                error.retry_after = Some(self.pause_for(attempt));
-                            }
-                            failed_attempt = attempt;
-                            failure = Some(error);
-                            break 'calls;
-                        }
-                    }
+                    },
+                    ProgramStep::Fanned(_) => unreachable!("the fan ran above"),
+                }
+            }
+            for reply in &replies {
+                if stage == Stage::Verify {
+                    verification = reply.clone();
                 }
             }
 
@@ -488,8 +638,8 @@ impl Runner {
             // stage's own failure - a verify nobody ran is not a verify -
             // and a reply that failed it names the value it saw. The
             // failure lands under the stage's own policy, like any call's.
-            if failure.is_none() && !step.gates.is_empty() {
-                for gate in &step.gates {
+            if failure.is_none() && !gates.is_empty() {
+                for gate in &gates {
                     let mut answered = false;
                     let mut failed = None;
                     for reply in &replies {
@@ -510,8 +660,8 @@ impl Runner {
                     }
                     if let Some(sentence) = failed {
                         failure = Some(AutoEditError::new(
-                            step.stage,
-                            calls.last().cloned(),
+                            stage,
+                            last_call.clone(),
                             ToolError {
                                 message: sentence,
                                 retryable: Some(false),
@@ -534,7 +684,7 @@ impl Runner {
                         .completed
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner())
-                        .insert(step.stage);
+                        .insert(stage);
                 }
                 // A stop asked for while the failing call was in flight:
                 // the run lands cancelled, with its rollback, whatever
@@ -545,7 +695,7 @@ impl Runner {
                         caller,
                         &applied,
                         AutoEditProgress::new(
-                            step.stage,
+                            stage,
                             index,
                             total,
                             run_started.elapsed(),
@@ -554,18 +704,18 @@ impl Runner {
                         ),
                     );
                 }
-                Some(error) if step.policy == ErrorPolicy::Warn => {
+                Some(error) if policy == ErrorPolicy::Warn => {
                     warnings.push(error.line());
                 }
                 Some(error) => {
                     self.emit(
                         AutoEditState::Failed {
-                            stage: step.stage,
+                            stage,
                             error: error.clone(),
                             attempt: failed_attempt,
                         },
                         AutoEditProgress::new(
-                            step.stage,
+                            stage,
                             index,
                             total,
                             run_started.elapsed(),
@@ -586,7 +736,7 @@ impl Runner {
             "the export is complete, with warnings"
         };
         let progress =
-            AutoEditProgress::new(last.stage, total - 1, total, duration, duration, detail);
+            AutoEditProgress::new(last.stage(), total - 1, total, duration, duration, detail);
         if warnings.is_empty() {
             self.emit(
                 AutoEditState::Completed {
@@ -609,6 +759,205 @@ impl Runner {
             );
             RunOutcome::CompletedWithWarnings
         }
+    }
+
+    /// Drives one queue of calls on one caller: the retry loop, the
+    /// panic catch, the applied-edits stack and the reply log, shared by
+    /// the sequential stages and a fan without lanes. The replies come
+    /// back for the gates; the log grows in place.
+    fn drive_calls(
+        &self,
+        stage: Stage,
+        index: usize,
+        total: usize,
+        run_started: Instant,
+        running: &AutoEditState,
+        log: &mut Vec<Value>,
+        applied: &mut Vec<Stage>,
+        calls: Vec<ToolCall>,
+        caller: &mut dyn ToolCaller,
+    ) -> (Option<(AutoEditError, u32)>, Vec<Value>) {
+        let mut failure: Option<AutoEditError> = None;
+        let mut failed_attempt = 1;
+        let mut replies: Vec<Value> = Vec::new();
+        'calls: for call in &calls {
+            self.emit(
+                running.clone(),
+                AutoEditProgress::new(
+                    stage,
+                    index,
+                    total,
+                    run_started.elapsed(),
+                    Duration::ZERO,
+                    call.tool.as_str(),
+                ),
+            );
+            let mut attempt = 1;
+            loop {
+                // A panicking tool must not wedge the state machine.
+                // The window's own hub catches around each API call
+                // for the same reason; here the run fails, recorded
+                // as plainly as any refusal.
+                let made =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| caller.call(call)));
+                let made = match made {
+                    Ok(made) => made,
+                    Err(panic) => {
+                        let what = if let Some(text) = panic.downcast_ref::<&str>() {
+                            (*text).to_owned()
+                        } else if let Some(text) = panic.downcast_ref::<String>() {
+                            text.clone()
+                        } else {
+                            "without a message".to_owned()
+                        };
+                        failure = Some(AutoEditError::new(
+                            stage,
+                            Some(call.clone()),
+                            ToolError {
+                                message: format!("the tool panicked: {what}"),
+                                retryable: Some(false),
+                                retry_after: None,
+                                code: None,
+                            },
+                        ));
+                        failed_attempt = attempt;
+                        break 'calls;
+                    }
+                };
+                match made {
+                    Ok(reply) => {
+                        if call.tool == EDIT_APPLY {
+                            applied.push(stage);
+                        } else if call.tool == EDIT_UNDO {
+                            applied.pop();
+                        }
+                        replies.push(reply.clone());
+                        log.push(reply);
+                        break;
+                    }
+                    Err(error) => {
+                        let mut error = AutoEditError::new(stage, Some(call.clone()), error);
+                        // A stop asked for while the call was being
+                        // made or waited on is the stop arriving: no
+                        // more retries, and the run lands cancelled
+                        // below rather than failed - the refusal is the
+                        // stop's own work, not the tool's.
+                        if self.cancelled() {
+                            failed_attempt = attempt;
+                            failure = Some(error);
+                            break 'calls;
+                        }
+                        if error.retryable && attempt < ATTEMPTS {
+                            let pause =
+                                error.retry_after.unwrap_or_else(|| self.pause_for(attempt));
+                            std::thread::sleep(pause);
+                            attempt += 1;
+                            continue;
+                        }
+                        if error.retryable {
+                            // The pause a fresh attempt would wait.
+                            error.retry_after = Some(self.pause_for(attempt));
+                        }
+                        failed_attempt = attempt;
+                        failure = Some(error);
+                        break 'calls;
+                    }
+                }
+            }
+        }
+        (failure.map(|error| (error, failed_attempt)), replies)
+    }
+
+    /// Drives one lane of a fan: its own caller, its own replies, the
+    /// same retry loop - but no applied-edits stack, because a fan's
+    /// calls are reads and waits (the runner refuses the edits before
+    /// any lane starts).
+    fn drive_lane(
+        &self,
+        stage: Stage,
+        index: usize,
+        total: usize,
+        run_started: Instant,
+        running: AutoEditState,
+        calls: Vec<ToolCall>,
+        caller: &mut Box<dyn ToolCaller>,
+    ) -> (Option<(AutoEditError, u32)>, Vec<Value>) {
+        let mut failure: Option<AutoEditError> = None;
+        let mut failed_attempt = 1;
+        let mut replies: Vec<Value> = Vec::new();
+        'calls: for call in &calls {
+            if self.cancelled() {
+                break 'calls;
+            }
+            self.emit(
+                running.clone(),
+                AutoEditProgress::new(
+                    stage,
+                    index,
+                    total,
+                    run_started.elapsed(),
+                    Duration::ZERO,
+                    call.tool.as_str(),
+                ),
+            );
+            let mut attempt = 1;
+            loop {
+                let made =
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| caller.call(call)));
+                let made = match made {
+                    Ok(made) => made,
+                    Err(panic) => {
+                        let what = if let Some(text) = panic.downcast_ref::<&str>() {
+                            (*text).to_owned()
+                        } else if let Some(text) = panic.downcast_ref::<String>() {
+                            text.clone()
+                        } else {
+                            "without a message".to_owned()
+                        };
+                        failure = Some(AutoEditError::new(
+                            stage,
+                            Some(call.clone()),
+                            ToolError {
+                                message: format!("the tool panicked: {what}"),
+                                retryable: Some(false),
+                                retry_after: None,
+                                code: None,
+                            },
+                        ));
+                        failed_attempt = attempt;
+                        break 'calls;
+                    }
+                };
+                match made {
+                    Ok(reply) => {
+                        replies.push(reply);
+                        break;
+                    }
+                    Err(error) => {
+                        let mut error = AutoEditError::new(stage, Some(call.clone()), error);
+                        if self.cancelled() {
+                            failed_attempt = attempt;
+                            failure = Some(error);
+                            break 'calls;
+                        }
+                        if error.retryable && attempt < ATTEMPTS {
+                            let pause =
+                                error.retry_after.unwrap_or_else(|| self.pause_for(attempt));
+                            std::thread::sleep(pause);
+                            attempt += 1;
+                            continue;
+                        }
+                        if error.retryable {
+                            error.retry_after = Some(self.pause_for(attempt));
+                        }
+                        failed_attempt = attempt;
+                        failure = Some(error);
+                        break 'calls;
+                    }
+                }
+            }
+        }
+        (failure.map(|error| (error, failed_attempt)), replies)
     }
 
     /// The cancelled end: roll the applied edits back, one `edit_undo`
@@ -643,6 +992,23 @@ impl Runner {
                 }
             }
         }
+        // The resume record owes the rollback its truth: a stage whose
+        // edits were just stepped back is not a stage the next run may
+        // skip, or the resume would ship a timeline the rollback took
+        // apart. The read-only stages stay - their work lives in the
+        // analysis registry, not on the timeline - but every stage that
+        // applied an edit and had it undone comes off the record, whole.
+        // A partial rollback (the record says so) takes the same stages
+        // off: a half-undone stage re-run whole is IDEM's own answer.
+        let mut completed = self
+            .shared
+            .completed
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for stage in applied {
+            completed.remove(stage);
+        }
+        drop(completed);
         let mut note = boundary;
         note.detail = "cancelled".to_owned();
         self.emit(
@@ -687,7 +1053,7 @@ impl Runner {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stage::StageStep;
+    use crate::stage::{DerivedStep, FanStep, ReplyGate, StageStep};
     use std::collections::VecDeque;
 
     /// A caller that answers from a script, one reply per call, and
@@ -762,8 +1128,270 @@ mod tests {
         }
     }
 
+    fn call_with(tool: &str, arguments: Value) -> ToolCall {
+        ToolCall {
+            tool: tool.to_owned(),
+            arguments,
+        }
+    }
+
     fn program(steps: Vec<StageStep>) -> EditProgram {
         EditProgram::new(PathBuf::from("/edits/Reel/export.mp4"), steps)
+    }
+
+    #[test]
+    fn a_derived_step_derives_its_calls_from_the_earlier_replies() {
+        // The tighten that reads the voiceSignals reply: the second stage
+        // builds its calls from what the first one measured, and the run
+        // drives them exactly as it drives the static ones.
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let mut caller = Scripted::new(vec![
+            Ok(json!({ "pauses": [
+                { "start": 4.0, "end": 7.0, "class": "dead_air", "keep": false },
+            ]})),
+            Ok(json!({ "cut": 1 })),
+        ]);
+        let mut program = EditProgram::mixed(
+            PathBuf::from("/edits/Reel/export.mp4"),
+            vec![
+                StageStep::run(Stage::VoiceSignals, vec![call("voice_signals")]).into(),
+                DerivedStep::react(
+                    Stage::Timeline,
+                    Box::new({
+                        let mut issued = 0;
+                        move |log| {
+                            let mut cuts = Vec::new();
+                            for reply in log {
+                                if let Some(pauses) = reply.get("pauses").and_then(Value::as_array)
+                                {
+                                    for pause in pauses {
+                                        if pause.get("class") == Some(&json!("dead_air")) {
+                                            cuts.push(call_with(
+                                                "clip_cut_spans",
+                                                json!({ "spans": [[
+                                                    pause["start"], pause["end"]
+                                                ]]}),
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                            let next = issued < cuts.len();
+                            issued += 1;
+                            next.then(|| cuts[issued - 1].clone())
+                        }
+                    }),
+                )
+                .into(),
+            ],
+        );
+        let outcome = runner.run(&mut program, &mut caller);
+        assert_eq!(outcome, RunOutcome::Completed);
+        // The derived call names the measured span, not a guess.
+        assert_eq!(caller.calls.len(), 2);
+        assert_eq!(caller.calls[1].tool, "clip_cut_spans");
+        assert_eq!(
+            caller.calls[1].arguments["spans"][0],
+            json!([4.0, 7.0]),
+            "the derived call carries the reply's own numbers"
+        );
+        // Both stages joined the resume record.
+        let AutoEditState::Completed { .. } = runner.state() else {
+            panic!("the run completed");
+        };
+    }
+
+    #[test]
+    fn a_derived_step_that_finds_nothing_completes_the_stage() {
+        // No dead air is a tighten that succeeded, not one that failed.
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let mut caller = Scripted::new(vec![Ok(json!({ "pauses": [] }))]);
+        let mut program = EditProgram::mixed(
+            PathBuf::from("/edits/Reel/export.mp4"),
+            vec![
+                StageStep::run(Stage::VoiceSignals, vec![call("voice_signals")]).into(),
+                DerivedStep::react(
+                    Stage::Timeline,
+                    Box::new(|log| {
+                        let dead_air = log
+                            .iter()
+                            .filter_map(|reply| reply.get("pauses").and_then(Value::as_array))
+                            .flatten()
+                            .any(|pause| pause.get("class") == Some(&json!("dead_air")));
+                        dead_air.then(|| call("clip_cut_spans"))
+                    }),
+                )
+                .into(),
+            ],
+        );
+        let outcome = runner.run(&mut program, &mut caller);
+        assert_eq!(outcome, RunOutcome::Completed);
+        assert_eq!(caller.calls.len(), 1, "the derived stage made no calls");
+    }
+
+    #[test]
+    fn a_fan_step_runs_its_groups_and_merges_the_replies() {
+        // Two takes, two lanes: both groups run, and the replies of both
+        // reach the gate check together.
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let mut caller = Scripted::new(Vec::new());
+        let lanes = FanLanes::default();
+        let mut program = EditProgram::mixed(
+            PathBuf::from("/edits/Reel/export.mp4"),
+            vec![
+                FanStep::fan(
+                    Stage::Transcribe,
+                    vec![
+                        vec![call_with("transcribe", json!({ "path": "/takes/one.wav" }))],
+                        vec![call_with("transcribe", json!({ "path": "/takes/two.wav" }))],
+                    ],
+                )
+                .gate(ReplyGate::AtLeast {
+                    field: "segmentCount",
+                    minimum: 1.0,
+                    what: "a lane transcribed nothing",
+                })
+                .into(),
+            ],
+        );
+        lanes.seed(vec![
+            vec![Ok(json!({ "segments": [{}], "segmentCount": 1 }))],
+            vec![Ok(json!({ "segments": [{}, {}], "segmentCount": 2 }))],
+        ]);
+        let outcome = runner.run_with_lanes(&mut program, &mut caller, &lanes);
+        assert_eq!(outcome, RunOutcome::Completed);
+        assert_eq!(lanes.asked(), 2, "one lane per group was minted");
+        // The one caller was never asked: the lanes did the work.
+        assert_eq!(caller.calls.len(), 0);
+    }
+
+    #[test]
+    fn a_fan_step_without_lanes_still_runs_on_the_one_caller() {
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let mut caller = Scripted::new(vec![
+            Ok(json!({ "segments": [{}] })),
+            Ok(json!({ "segments": [{}, {}] })),
+        ]);
+        let mut program = EditProgram::mixed(
+            PathBuf::from("/edits/Reel/export.mp4"),
+            vec![
+                FanStep::fan(
+                    Stage::Transcribe,
+                    vec![
+                        vec![call_with("transcribe", json!({ "path": "/takes/one.wav" }))],
+                        vec![call_with("transcribe", json!({ "path": "/takes/two.wav" }))],
+                    ],
+                )
+                .into(),
+            ],
+        );
+        let outcome = runner.run(&mut program, &mut caller);
+        assert_eq!(outcome, RunOutcome::Completed);
+        assert_eq!(caller.calls.len(), 2, "both groups ran, in order");
+        assert_eq!(caller.calls[0].arguments["path"], "/takes/one.wav");
+        assert_eq!(caller.calls[1].arguments["path"], "/takes/two.wav");
+    }
+
+    #[test]
+    fn edits_do_not_ride_a_fan() {
+        // The rollback order of concurrent edits is not a promise the
+        // runner can keep: the program that tries is refused.
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let mut caller = Scripted::new(Vec::new());
+        let lanes = FanLanes::default();
+        let mut program = EditProgram::mixed(
+            PathBuf::from("/edits/Reel/export.mp4"),
+            vec![FanStep::fan(Stage::Timeline, vec![vec![call("edit_apply")]]).into()],
+        );
+        let RunOutcome::Failed(error) = runner.run_with_lanes(&mut program, &mut caller, &lanes)
+        else {
+            panic!("the run failed");
+        };
+        assert_eq!(error.stage, Stage::Timeline);
+        assert!(
+            error.message.contains("edits do not ride a fan"),
+            "the refusal names the law: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn a_lane_that_cannot_open_is_the_lanes_failure() {
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let mut caller = Scripted::new(Vec::new());
+        let lanes = RefusingLanes;
+        let mut program = EditProgram::mixed(
+            PathBuf::from("/edits/Reel/export.mp4"),
+            vec![FanStep::fan(Stage::Transcribe, vec![vec![call("transcribe")]]).into()],
+        );
+        let RunOutcome::Failed(error) = runner.run_with_lanes(&mut program, &mut caller, &lanes)
+        else {
+            panic!("the run failed");
+        };
+        assert!(
+            error.message.contains("the lane could not open"),
+            "the failure names the lane: {}",
+            error.message
+        );
+    }
+
+    /// A lane factory whose scripts are seeded per lane before the run;
+    /// each minted lane drains its own script.
+    #[derive(Default)]
+    struct FanLanes {
+        scripts: Mutex<std::collections::VecDeque<Vec<Result<Value, ToolError>>>>,
+        minted: std::sync::atomic::AtomicUsize,
+    }
+
+    impl FanLanes {
+        fn seed(&self, scripts: Vec<Vec<Result<Value, ToolError>>>) {
+            *self.scripts.lock().unwrap() = scripts.into_iter().collect();
+        }
+        fn asked(&self) -> usize {
+            self.minted.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl LaneFactory for FanLanes {
+        fn lane(&self) -> Result<Box<dyn ToolCaller>, String> {
+            self.minted
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let script = self
+                .scripts
+                .lock()
+                .unwrap()
+                .pop_front()
+                .ok_or("no script left")?;
+            Ok(Box::new(Draining::new(script)))
+        }
+    }
+
+    /// A caller that drains a fixed script and then answers nulls.
+    struct Draining {
+        replies: std::collections::VecDeque<Result<Value, ToolError>>,
+    }
+
+    impl Draining {
+        fn new(replies: Vec<Result<Value, ToolError>>) -> Draining {
+            Draining {
+                replies: replies.into_iter().collect(),
+            }
+        }
+    }
+
+    impl ToolCaller for Draining {
+        fn call(&mut self, _call: &ToolCall) -> Result<Value, ToolError> {
+            self.replies.pop_front().unwrap_or(Ok(Value::Null))
+        }
+    }
+
+    /// A lane factory that cannot mint anything.
+    struct RefusingLanes;
+
+    impl LaneFactory for RefusingLanes {
+        fn lane(&self) -> Result<Box<dyn ToolCaller>, String> {
+            Err("the connection refused".to_owned())
+        }
     }
 
     #[test]
@@ -775,7 +1403,7 @@ mod tests {
             Ok(json!({ "path": "/edits/Reel/export.mp4" })),
             Ok(json!({ "overlaps": 0, "gaps": 0 })),
         ]);
-        let program = program(vec![
+        let mut program = program(vec![
             StageStep::run(Stage::Plan, vec![call("plan_validate")]),
             StageStep::run(
                 Stage::Export,
@@ -783,7 +1411,7 @@ mod tests {
             ),
             StageStep::run(Stage::Verify, vec![call("timeline_read")]),
         ]);
-        assert_eq!(runner.run(&program, &mut caller), RunOutcome::Completed);
+        assert_eq!(runner.run(&mut program, &mut caller), RunOutcome::Completed);
         let AutoEditState::Completed {
             export,
             duration,
@@ -817,11 +1445,11 @@ mod tests {
     fn a_refusal_that_is_not_the_networks_stops_at_once() {
         let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
         let mut caller = Scripted::new(vec![refused("the lane is missing")]);
-        let program = program(vec![StageStep::run(
+        let mut program = program(vec![StageStep::run(
             Stage::Timeline,
             vec![call("clip_add")],
         )]);
-        let RunOutcome::Failed(error) = runner.run(&program, &mut caller) else {
+        let RunOutcome::Failed(error) = runner.run(&mut program, &mut caller) else {
             panic!("the run failed");
         };
         assert!(!error.retryable);
@@ -842,11 +1470,11 @@ mod tests {
             refused("the connection was reset"),
             Ok(json!({ "repaired": "/tmp/take.wav" })),
         ]);
-        let program = program(vec![StageStep::run(
+        let mut program = program(vec![StageStep::run(
             Stage::AudioRepair,
             vec![call("enhance_speech")],
         )]);
-        assert_eq!(runner.run(&program, &mut caller), RunOutcome::Completed);
+        assert_eq!(runner.run(&mut program, &mut caller), RunOutcome::Completed);
         // The same call, made twice: the first refused, the second
         // landed.
         assert_eq!(caller.calls.len(), 2);
@@ -867,11 +1495,11 @@ mod tests {
             refused("the index is temporarily unreachable"),
             refused("the index is temporarily unreachable"),
         ]);
-        let program = program(vec![StageStep::run(
+        let mut program = program(vec![StageStep::run(
             Stage::Plan,
             vec![call("plan_validate")],
         )]);
-        let RunOutcome::Failed(error) = runner.run(&program, &mut caller) else {
+        let RunOutcome::Failed(error) = runner.run(&mut program, &mut caller) else {
             panic!("the run failed");
         };
         assert!(error.retryable);
@@ -903,7 +1531,7 @@ mod tests {
             Ok(json!({ "path": "/edits/Reel/export.mp4" })),
             refused("the contact sheet is blank"),
         ]);
-        let program = program(vec![
+        let mut program = program(vec![
             StageStep::run(
                 Stage::Export,
                 vec![call("export_start"), call("export_wait")],
@@ -911,7 +1539,7 @@ mod tests {
             StageStep::run(Stage::Watch, vec![call("craft_critique")]).warn(),
         ]);
         assert_eq!(
-            runner.run(&program, &mut caller),
+            runner.run(&mut program, &mut caller),
             RunOutcome::CompletedWithWarnings
         );
         let AutoEditState::CompletedWithWarnings {
@@ -942,7 +1570,7 @@ mod tests {
             "integratedLufs": -19.4, "lufsError": -5.4,
             "platformTargetMet": false,
         }))]);
-        let program = program(vec![
+        let mut program = program(vec![
             StageStep::run(Stage::Verify, vec![call("measure_loudness")]).gate(
                 crate::stage::ReplyGate::True {
                     field: "platformTargetMet",
@@ -950,7 +1578,7 @@ mod tests {
                 },
             ),
         ]);
-        let RunOutcome::Failed(error) = runner.run(&program, &mut caller) else {
+        let RunOutcome::Failed(error) = runner.run(&mut program, &mut caller) else {
             panic!("the run failed");
         };
         assert_eq!(error.stage, Stage::Verify);
@@ -980,7 +1608,7 @@ mod tests {
         // the gate either did not run or did not say.
         let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
         let mut caller = Scripted::new(vec![Ok(json!({ "job": "e1" }))]);
-        let program = program(vec![
+        let mut program = program(vec![
             StageStep::run(Stage::Verify, vec![call("measure_loudness")]).gate(
                 crate::stage::ReplyGate::True {
                     field: "platformTargetMet",
@@ -988,7 +1616,7 @@ mod tests {
                 },
             ),
         ]);
-        let RunOutcome::Failed(error) = runner.run(&program, &mut caller) else {
+        let RunOutcome::Failed(error) = runner.run(&mut program, &mut caller) else {
             panic!("the run failed");
         };
         assert_eq!(error.stage, Stage::Verify);
@@ -1010,7 +1638,7 @@ mod tests {
             Ok(json!({ "pngPath": "/tmp/sheet.png" })),
             Ok(json!({ "engine": "heuristic", "overall": 6.0 })),
         ]);
-        let program = program(vec![
+        let mut program = program(vec![
             StageStep::run(
                 Stage::Export,
                 vec![call("export_start"), call("export_wait")],
@@ -1027,7 +1655,7 @@ mod tests {
             }),
         ]);
         assert_eq!(
-            runner.run(&program, &mut caller),
+            runner.run(&mut program, &mut caller),
             RunOutcome::CompletedWithWarnings
         );
         let AutoEditState::CompletedWithWarnings { warnings, .. } = runner.state() else {
@@ -1052,7 +1680,7 @@ mod tests {
             Ok(json!({ "pngPath": "/tmp/sheet.png" })),
             Ok(json!({ "engine": "local-vlm", "overall": 8.5 })),
         ]);
-        let program = program(vec![
+        let mut program = program(vec![
             StageStep::run(
                 Stage::Watch,
                 vec![call("watch_render"), call("craft_critique")],
@@ -1064,7 +1692,7 @@ mod tests {
                 what: "the cut scored under the craft bar",
             }),
         ]);
-        assert_eq!(runner.run(&program, &mut caller), RunOutcome::Completed);
+        assert_eq!(runner.run(&mut program, &mut caller), RunOutcome::Completed);
     }
 
     #[test]
@@ -1082,12 +1710,12 @@ mod tests {
             .collect(),
             calls: Vec::new(),
         };
-        let program = program(vec![
+        let mut program = program(vec![
             StageStep::run(Stage::Timeline, vec![call(EDIT_APPLY)]),
             StageStep::run(Stage::Captions, vec![call("captions_add")]),
             StageStep::run(Stage::Verify, vec![call("timeline_read")]),
         ]);
-        assert_eq!(runner.run(&program, &mut caller), RunOutcome::Cancelled);
+        assert_eq!(runner.run(&mut program, &mut caller), RunOutcome::Cancelled);
         let AutoEditState::Cancelled {
             rolled_back,
             undone_to,
@@ -1117,11 +1745,11 @@ mod tests {
                 .collect(),
             calls: Vec::new(),
         };
-        let program = program(vec![
+        let mut program = program(vec![
             StageStep::run(Stage::Plan, vec![call("plan_validate")]),
             StageStep::run(Stage::Export, vec![call("export_start")]),
         ]);
-        assert_eq!(runner.run(&program, &mut caller), RunOutcome::Cancelled);
+        assert_eq!(runner.run(&mut program, &mut caller), RunOutcome::Cancelled);
         let AutoEditState::Cancelled {
             rolled_back,
             undone_to,
@@ -1150,12 +1778,12 @@ mod tests {
             .collect(),
             calls: Vec::new(),
         };
-        let program = program(vec![
+        let mut program = program(vec![
             StageStep::run(Stage::Timeline, vec![call(EDIT_APPLY)]),
             StageStep::run(Stage::Captions, vec![call("captions_add")]),
             StageStep::run(Stage::Verify, vec![call("timeline_read")]),
         ]);
-        assert_eq!(runner.run(&program, &mut caller), RunOutcome::Cancelled);
+        assert_eq!(runner.run(&mut program, &mut caller), RunOutcome::Cancelled);
         let AutoEditState::Cancelled {
             rolled_back,
             undone_to,
@@ -1184,11 +1812,11 @@ mod tests {
                 .collect(),
             calls: Vec::new(),
         };
-        let program = program(vec![
+        let mut program = program(vec![
             StageStep::run(Stage::Export, vec![call("export_wait")]).warn(),
             StageStep::run(Stage::Verify, vec![call("timeline_read")]),
         ]);
-        assert_eq!(runner.run(&program, &mut caller), RunOutcome::Cancelled);
+        assert_eq!(runner.run(&mut program, &mut caller), RunOutcome::Cancelled);
         assert!(matches!(runner.state(), AutoEditState::Cancelled { .. }));
         // The run never reached the stage after the one it stopped in.
         assert!(!caller.calls.iter().any(|call| call.tool == "timeline_read"));
@@ -1199,16 +1827,16 @@ mod tests {
         let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
         let (release, gate) = mpsc::channel::<()>();
         let mut gated = Gated { gate };
-        let on_thread = program(vec![StageStep::run(
+        let mut on_thread = program(vec![StageStep::run(
             Stage::Plan,
             vec![call("plan_validate")],
         )]);
         let racing = runner.clone();
-        let first = std::thread::spawn(move || racing.run(&on_thread, &mut gated));
+        let first = std::thread::spawn(move || racing.run(&mut on_thread, &mut gated));
         // The first run reaches its call and stands in the gate.
         std::thread::sleep(Duration::from_millis(100));
         let second = runner.run(
-            &program(vec![StageStep::run(
+            &mut program(vec![StageStep::run(
                 Stage::Plan,
                 vec![call("plan_validate")],
             )]),
@@ -1232,8 +1860,9 @@ mod tests {
     #[test]
     fn a_program_without_stages_fails_at_once() {
         let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
-        let program = EditProgram::new(PathBuf::from("/edits/Reel/export.mp4"), Vec::new());
-        let RunOutcome::Failed(error) = runner.run(&program, &mut Scripted::new(Vec::new())) else {
+        let mut program = EditProgram::new(PathBuf::from("/edits/Reel/export.mp4"), Vec::new());
+        let RunOutcome::Failed(error) = runner.run(&mut program, &mut Scripted::new(Vec::new()))
+        else {
             panic!("the run failed");
         };
         assert_eq!(error.message, "the program has no stages to run");
@@ -1249,12 +1878,12 @@ mod tests {
             }
         }
         let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
-        let program = program(vec![StageStep::run(
+        let mut program = program(vec![StageStep::run(
             Stage::Plan,
             vec![call("plan_validate")],
         )]);
         let mut panicking = Panicking;
-        let RunOutcome::Failed(error) = runner.run(&program, &mut panicking) else {
+        let RunOutcome::Failed(error) = runner.run(&mut program, &mut panicking) else {
             panic!("the run failed");
         };
         assert!(error.message.contains("the sense layer lost its mind"));
@@ -1262,11 +1891,64 @@ mod tests {
         // And the runner is not wedged: the next run runs.
         assert_eq!(
             runner.run(
-                &program,
+                &mut program,
                 &mut Scripted::new(vec![Ok(json!({ "valid": true }))])
             ),
             RunOutcome::Completed
         );
+    }
+
+    #[test]
+    fn a_cancelled_runs_rolled_back_stages_leave_the_resume_record() {
+        // A cancel rolls the applied edits back; a stage whose work was
+        // just undone must not be a stage the next run skips, or the
+        // resume ships a timeline the rollback took apart. The read-only
+        // stages stay on the record - their work lives in the analysis
+        // registry, not on the timeline.
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        // The first stage edits; the second is cancelled mid-call.
+        let mut program = EditProgram::mixed(
+            PathBuf::from("/edits/Reel/export.mp4"),
+            vec![
+                StageStep::run(Stage::Timeline, vec![call("edit_apply")]).into(),
+                StageStep::run(Stage::Export, vec![call("export_start")]).into(),
+                StageStep::run(Stage::Watch, vec![call("watch_render")]).into(),
+            ],
+        );
+        let mut caller = Cancelling {
+            runner: runner.clone(),
+            when: "export_start",
+            replies: vec![
+                Ok(json!({ "applied": true })),
+                Ok(json!({ "job": "e1" })),
+                Ok(json!({ "sheet": true })),
+            ]
+            .into(),
+            calls: Vec::new(),
+        };
+        let outcome = runner.run(&mut program, &mut caller);
+        assert_eq!(outcome, RunOutcome::Cancelled);
+        // The run's rollback undid the edit: the Timeline stage is off
+        // the resume record, so the next run makes it again.
+        let mut again = EditProgram::mixed(
+            PathBuf::from("/edits/Reel/export.mp4"),
+            vec![
+                StageStep::run(Stage::Timeline, vec![call("edit_apply")]).into(),
+                StageStep::run(Stage::Export, vec![call("export_start")]).into(),
+                StageStep::run(Stage::Watch, vec![call("watch_render")]).into(),
+            ],
+        );
+        let mut scripted = Scripted::new(vec![
+            Ok(json!({ "applied": true })),
+            Ok(json!({ "job": "e1" })),
+            Ok(json!({ "sheet": true })),
+        ]);
+        let outcome = runner.run(&mut again, &mut scripted);
+        assert_eq!(outcome, RunOutcome::Completed);
+        // The edit was re-made - the first call of the second run is an
+        // edit_apply, not an export_start the stale record would have
+        // skipped to.
+        assert_eq!(scripted.calls[0].tool, "edit_apply");
     }
 
     #[test]
@@ -1275,7 +1957,7 @@ mod tests {
         // every stage completed in the first - and a fresh() runner
         // walks the program again.
         let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
-        let program = program(vec![
+        let mut program = program(vec![
             StageStep::run(Stage::Plan, vec![call("plan_validate")]),
             StageStep::run(Stage::Export, vec![call("export_start")]),
         ]);
@@ -1283,13 +1965,13 @@ mod tests {
             Ok(json!({ "valid": true })),
             Ok(json!({ "job": "e1" })),
         ]);
-        assert_eq!(runner.run(&program, &mut first), RunOutcome::Completed);
+        assert_eq!(runner.run(&mut program, &mut first), RunOutcome::Completed);
         assert_eq!(first.calls.len(), 2);
         assert_eq!(runner.completed(), vec![Stage::Plan, Stage::Export]);
 
         // The re-run: no calls at all, still completed.
         let mut second = Scripted::new(Vec::new());
-        assert_eq!(runner.run(&program, &mut second), RunOutcome::Completed);
+        assert_eq!(runner.run(&mut program, &mut second), RunOutcome::Completed);
         assert!(
             second.calls.is_empty(),
             "a completed stage re-ran: {:?}",
@@ -1303,7 +1985,7 @@ mod tests {
             Ok(json!({ "valid": true })),
             Ok(json!({ "job": "e2" })),
         ]);
-        assert_eq!(runner.run(&program, &mut third), RunOutcome::Completed);
+        assert_eq!(runner.run(&mut program, &mut third), RunOutcome::Completed);
         assert_eq!(third.calls.len(), 2);
     }
 
@@ -1314,7 +1996,7 @@ mod tests {
         // stage's calls. A caller that read the record elsewhere seeds
         // it with resume() to the same effect.
         let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
-        let program = program(vec![
+        let mut program = program(vec![
             StageStep::run(Stage::Plan, vec![call("plan_validate")]),
             StageStep::run(Stage::Timeline, vec![call("edit_apply")]),
         ]);
@@ -1322,14 +2004,14 @@ mod tests {
             Ok(json!({ "valid": true })),
             refused("the lane is missing"),
         ]);
-        let RunOutcome::Failed(error) = runner.run(&program, &mut first) else {
+        let RunOutcome::Failed(error) = runner.run(&mut program, &mut first) else {
             panic!("the run failed");
         };
         assert_eq!(error.stage, Stage::Timeline);
         assert_eq!(runner.completed(), vec![Stage::Plan]);
 
         let mut second = Scripted::new(vec![Ok(json!({ "applied": 3 }))]);
-        assert_eq!(runner.run(&program, &mut second), RunOutcome::Completed);
+        assert_eq!(runner.run(&mut program, &mut second), RunOutcome::Completed);
         assert_eq!(second.calls.len(), 1, "the completed stage re-ran");
         assert_eq!(second.calls[0].tool, "edit_apply");
         assert_eq!(runner.completed(), vec![Stage::Plan, Stage::Timeline]);
@@ -1338,7 +2020,7 @@ mod tests {
         let (other, _events) = Runner::new(PathBuf::from("/edits/Reel"));
         other.resume([Stage::Plan]);
         let mut seeded = Scripted::new(vec![Ok(json!({ "applied": 3 }))]);
-        assert_eq!(other.run(&program, &mut seeded), RunOutcome::Completed);
+        assert_eq!(other.run(&mut program, &mut seeded), RunOutcome::Completed);
         assert_eq!(seeded.calls.len(), 1);
         assert_eq!(seeded.calls[0].tool, "edit_apply");
     }
@@ -1353,12 +2035,12 @@ mod tests {
             tool: EDIT_APPLY.to_owned(),
             arguments: json!({ "path": "/edits/Reel", "idempotencyKey": "mine" }),
         };
-        let program = program(vec![StageStep::run(
+        let mut program = program(vec![StageStep::run(
             Stage::Timeline,
             vec![call(EDIT_APPLY), named],
         )]);
         let mut caller = Scripted::new(vec![Ok(json!({})), Ok(json!({}))]);
-        assert_eq!(runner.run(&program, &mut caller), RunOutcome::Completed);
+        assert_eq!(runner.run(&mut program, &mut caller), RunOutcome::Completed);
         assert_eq!(caller.calls.len(), 2);
         let stamped = caller.calls[0]
             .arguments

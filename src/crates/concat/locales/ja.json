@@ -364,6 +364,8 @@
   "forge.sourceVoiceover": "Voiceover on the timeline",
   "forge.stageAudioRepair": "Audio repair",
   "forge.stageCaptions": "Captions",
+  "forge.stageMusic": "BGMの配置",
+  "forge.stageSfx": "効果音の配置",
   "forge.stageExport": "Export",
   "forge.stageGather": "Gather",
   "forge.stageHandoffVoiceover": "Voiceover handoff",

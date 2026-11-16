@@ -364,6 +364,8 @@
   "forge.sourceVoiceover": "Voiceover on the timeline",
   "forge.stageAudioRepair": "Audio repair",
   "forge.stageCaptions": "Captions",
+  "forge.stageMusic": "แทร็กดนตรี",
+  "forge.stageSfx": "เสียงเน้นจังหวะ",
   "forge.stageExport": "Export",
   "forge.stageGather": "Gather",
   "forge.stageHandoffVoiceover": "Voiceover handoff",

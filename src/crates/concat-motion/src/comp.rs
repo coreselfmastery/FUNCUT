@@ -254,13 +254,48 @@ pub struct Transform {
     /// Scale about the anchor.
     #[serde(default = "one")]
     pub scale: f64,
-    /// Degrees clockwise about the anchor.
+    /// Degrees clockwise about the anchor - the z-axis rotation; the
+    /// 2.5D siblings are [`Transform::rotate_x`](Transform::rotate_x) and
+    /// [`Transform::rotate_y`](Transform::rotate_y).
     #[serde(default)]
     pub rotation: f64,
+    /// Degrees about the anchor's horizontal axis, the top edge tipping
+    /// away: the 2.5D pitch of a card standing up. Animatable through the
+    /// `rotate-x` track. The native engine draws it, with the perspective
+    /// divide below when one is set; Geneva cannot, so a comp that uses
+    /// it routes there.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rotate_x: f64,
+    /// Degrees about the anchor's vertical axis, the right edge coming
+    /// toward the viewer: the 2.5D yaw. Animatable through the
+    /// `rotate-y` track.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rotate_y: f64,
+    /// Depth toward the viewer, in comp pixels, on the same axis a
+    /// [`Camera`](NodeKind::Camera) node flies: without a `perspective`
+    /// it only orders layers (a node nearer draws over one farther),
+    /// with one it scales too. Animatable through the `z` track.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub z: f64,
+    /// How far the eye stands from the node's own plane, in comp
+    /// pixels: `0` is the affine view, no divide and no scaling with
+    /// depth; `800` on a 1080p comp is a marked but tasteful vanishing
+    /// point. Animatable through the `perspective` track.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub perspective: f64,
+    /// The depth the x/y rotations hinge at, in comp pixels: a card whose
+    /// face sits `40`px above the plane turns about that height rather
+    /// than about the plane itself.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub transform_origin_z: f64,
 }
 
 fn one() -> f64 {
     1.0
+}
+
+fn is_zero(value: &f64) -> bool {
+    *value == 0.0
 }
 
 impl Default for Transform {
@@ -270,6 +305,11 @@ impl Default for Transform {
             anchor: None,
             scale: 1.0,
             rotation: 0.0,
+            rotate_x: 0.0,
+            rotate_y: 0.0,
+            z: 0.0,
+            perspective: 0.0,
+            transform_origin_z: 0.0,
         }
     }
 }
@@ -505,6 +545,40 @@ pub enum NodeKind {
         /// The comp's id, which must be reachable by the caller.
         comp: String,
     },
+    /// A camera: the comp's eye, with an optional depth of field. Draws
+    /// nothing of its own; the first camera whose span covers the frame
+    /// photographs the comp - the z axis of every transform becomes real
+    /// parallax, nearer nodes drawing over farther ones whatever the
+    /// paint order says. A second camera with a later span is a cut.
+    /// The native engine reads it; Geneva cannot draw what it sees, so
+    /// a comp that carries one routes there.
+    Camera {
+        /// Where the camera stands and where it looks: position, pitch,
+        /// yaw, roll and field of view, each keyed by its own stops. A
+        /// resting rig photographs the `z = 0` plane exactly as a
+        /// camera-less comp draws it.
+        #[serde(default)]
+        rig: crate::camera::Camera3D,
+        /// What the lens does with depth: layers blur by their distance
+        /// from the focal plane.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        dof: Option<DepthOfField>,
+    },
+}
+
+/// Depth of field, as a camera node's lens carries it: layers blur by
+/// how far they stand from the focal plane, the way a real lens draws
+/// depth.
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+pub struct DepthOfField {
+    /// Where the plane of focus sits, in comp pixels along the depth
+    /// axis - the same axis [`Transform::z`](Transform::z) and the
+    /// camera's flight are measured on.
+    pub focal_distance: f64,
+    /// How strongly defocus blurs: pixels of blur per comp pixel of
+    /// distance from the plane. `0.05` is a gentle film look; `0` is
+    /// everything sharp.
+    pub aperture: f64,
 }
 
 fn auto_length() -> Length {
@@ -1047,6 +1121,18 @@ impl Comp {
             if node.matte.is_some() {
                 note("a track matte");
             }
+            // The 3D layer transform: a rotation about a horizontal or
+            // vertical axis, a depth, or a perspective divide. Geneva's
+            // flattened timeline is 2D and cannot fold any of them in.
+            let model = &node.transform;
+            if model.rotate_x != 0.0
+                || model.rotate_y != 0.0
+                || model.z != 0.0
+                || model.perspective != 0.0
+                || model.transform_origin_z != 0.0
+            {
+                note("a 3D layer transform");
+            }
             // A parent's world transform is inherited by its children.
             // Geneva's flattened timeline can fold static translations into
             // both a child's base position and every key in its position
@@ -1065,6 +1151,10 @@ impl Comp {
                 };
                 if parent_node.transform.scale != 1.0
                     || parent_node.transform.rotation != 0.0
+                    || parent_node.transform.rotate_x != 0.0
+                    || parent_node.transform.rotate_y != 0.0
+                    || parent_node.transform.z != 0.0
+                    || parent_node.transform.perspective != 0.0
                     || parent_node.tracks.contains_key("position")
                     || parent_node.tracks.contains_key("scale")
                     || parent_node.tracks.contains_key("rotation")
@@ -1084,13 +1174,20 @@ impl Comp {
                 }
             }
             for name in node.tracks.keys() {
-                if matches!(name.as_str(), "dash" | "trim" | "morph") {
+                if matches!(
+                    name.as_str(),
+                    "dash" | "trim" | "morph" | "rotate-x" | "rotate-y" | "z" | "perspective"
+                ) {
                     note(match name.as_str() {
                         "dash" => "a dash track",
                         "trim" => "a trim track",
-                        _ => "a morph track",
+                        "morph" => "a morph track",
+                        _ => "a 3D track",
                     });
                 }
+            }
+            if matches!(node.kind, NodeKind::Camera { .. }) {
+                note("a 3D camera");
             }
         }
         for sub in self.comps.values() {
@@ -1330,6 +1427,95 @@ impl Comp {
                     )
                     .with_help("samples 8 and shutter 0.5 is the 180-degree film look"),
                 );
+            }
+            // The 3D fields carry the same honesty: a negative viewing
+            // distance and a NaN anywhere in the chain are refused with
+            // the fix rather than drawn as garbage.
+            let model = &node.transform;
+            if model.perspective < 0.0
+                || !model.perspective.is_finite()
+                || !model.rotate_x.is_finite()
+                || !model.rotate_y.is_finite()
+                || !model.z.is_finite()
+                || !model.transform_origin_z.is_finite()
+            {
+                found.push(
+                    Diagnostic::new(
+                        format!("/nodes/{i}/transform"),
+                        "the 3D fields must be finite, and perspective a distance of zero or more",
+                    )
+                    .with_help(
+                        "perspective is the eye's distance from the node's plane in comp pixels; \n0 is the flat view",
+                    ),
+                );
+            }
+            // A camera's stops must run in time order inside the comp's
+            // span, its fields of view stay inside 1..=179 degrees, and
+            // its depth of field names a finite plane with a non-negative
+            // aperture.
+            if let NodeKind::Camera { rig, dof } = &node.kind {
+                let axis = |found: &mut Vec<Diagnostic>,
+                            name: &str,
+                            stops: &[crate::camera::AxisStop]| {
+                    for (stop_at, stop) in stops.iter().enumerate() {
+                        if !(0.0..=1.0).contains(&stop.at) || !stop.at.is_finite() {
+                            found.push(
+                                Diagnostic::new(
+                                    format!("/nodes/{i}/{name}/{stop_at}"),
+                                    "a camera stop is placed as a fraction of the comp's duration, 0 to 1",
+                                ),
+                            );
+                        }
+                        if stop_at > 0 && stop.at <= stops[stop_at - 1].at {
+                            found.push(Diagnostic::new(
+                                format!("/nodes/{i}/{name}/{stop_at}"),
+                                "camera stops run in time order; a hold is a stop on the spot",
+                            ));
+                        }
+                    }
+                };
+                for (stop_at, stop) in rig.path.iter().enumerate() {
+                    if !(0.0..=1.0).contains(&stop.at) || !stop.at.is_finite() {
+                        found.push(Diagnostic::new(
+                            format!("/nodes/{i}/path/{stop_at}"),
+                            "a camera stop is placed as a fraction of the comp's duration, 0 to 1",
+                        ));
+                    }
+                    if stop_at > 0 && stop.at <= rig.path[stop_at - 1].at {
+                        found.push(Diagnostic::new(
+                            format!("/nodes/{i}/path/{stop_at}"),
+                            "camera stops run in time order; a hold is a stop on the spot",
+                        ));
+                    }
+                }
+                axis(&mut found, "pitch", &rig.pitch);
+                axis(&mut found, "yaw", &rig.yaw);
+                axis(&mut found, "roll", &rig.roll);
+                for (stop_at, stop) in rig.fov.iter().enumerate() {
+                    if !(1.0..=179.0).contains(&stop.value) {
+                        found.push(Diagnostic::new(
+                            format!("/nodes/{i}/fov/{stop_at}"),
+                            format!(
+                                "the field of view {} is outside 1..=179 degrees",
+                                stop.value
+                            ),
+                        ));
+                    }
+                }
+                axis(&mut found, "fov", &rig.fov);
+                if let Some(dof) = dof
+                    && (!dof.focal_distance.is_finite()
+                        || !dof.aperture.is_finite()
+                        || dof.aperture < 0.0)
+                {
+                    found.push(
+                        Diagnostic::new(
+                            format!("/nodes/{i}/dof"),
+                            "depth of field names a finite focal distance and an aperture of zero or more",
+                        )
+                        .with_help("aperture 0.05 is a gentle film look; 0 turns the blur off"),
+                    );
+                }
             }
             // A placement names a comp this document carries: the scoping
             // rule. A name that is not in `comps` is a broken template -
@@ -2443,5 +2629,108 @@ mod phase1_tests {
         let mut parent = comp_with(Vec::new());
         parent.comps.insert("inner".into(), comp);
         assert!(parent.geneva_inexpressible().contains(&"a vector path"));
+    }
+
+    /// A flat transform serialises exactly as it always did - none of
+    /// the 3D fields appear - and one that speaks the third axis round
+    /// trips. The first half is the compatibility promise every cached
+    /// comp hash stands on.
+    #[test]
+    fn a_flat_transform_serialises_without_the_3d_fields() {
+        let flat = serde_json::to_string(&Transform::default()).expect("serialises");
+        for key in ["rotate-x", "rotate-y", "transform-origin-z", "perspective"] {
+            assert!(!flat.contains(key), "{key} appeared in {flat}");
+        }
+        assert!(!flat.contains("\"z\":"), "a z appeared in {flat}");
+        let deep = Transform {
+            rotate_x: 12.0,
+            rotate_y: -8.0,
+            z: 40.0,
+            perspective: 800.0,
+            transform_origin_z: 6.0,
+            ..Transform::default()
+        };
+        let json = serde_json::to_string(&deep).expect("serialises");
+        let back: Transform = serde_json::from_str(&json).expect("parses");
+        assert_eq!(back, deep);
+    }
+
+    /// The 3D vocabulary routes native: a layer transform, a track
+    /// driving one, and a camera node are each named in what Geneva
+    /// cannot draw.
+    #[test]
+    fn the_3d_vocabulary_routes_native() {
+        let mut tilted = comp_with(Vec::new());
+        tilted.nodes.push({
+            let mut node = path_node("card");
+            node.transform.rotate_x = 8.0;
+            node
+        });
+        assert!(
+            tilted
+                .geneva_inexpressible()
+                .contains(&"a 3D layer transform")
+        );
+        let mut tracked = comp_with(Vec::new());
+        tracked.nodes.push({
+            let mut node = path_node("card");
+            node.tracks.insert(
+                "z".into(),
+                crate::track::Track::new(vec![crate::track::Key::new(0.0, Value::number(0.0))]),
+            );
+            node
+        });
+        assert!(tracked.geneva_inexpressible().contains(&"a 3D track"));
+        let lens = Node {
+            id: "lens".into(),
+            parent: None,
+            start: 0.0,
+            duration: 0.0,
+            transform: Transform::default(),
+            opacity: 1.0,
+            blend: Blend::Normal,
+            mask: None,
+            matte: None,
+            motion_blur: None,
+            effects: Vec::new(),
+            tracks: Tracks::new(),
+            kind: NodeKind::Camera {
+                rig: crate::camera::Camera3D::default(),
+                dof: None,
+            },
+        };
+        let lensed = comp_with(vec![lens]);
+        assert!(lensed.geneva_inexpressible().contains(&"a 3D camera"));
+        // A camera's field of view is held to the range a lens carries.
+        let mut impossible = comp_with(Vec::new());
+        impossible.nodes.push(Node {
+            id: "lens".into(),
+            parent: None,
+            start: 0.0,
+            duration: 0.0,
+            transform: Transform::default(),
+            opacity: 1.0,
+            blend: Blend::Normal,
+            mask: None,
+            matte: None,
+            motion_blur: None,
+            effects: Vec::new(),
+            tracks: Tracks::new(),
+            kind: NodeKind::Camera {
+                rig: crate::camera::Camera3D {
+                    fov: vec![crate::camera::AxisStop {
+                        at: 0.0,
+                        value: 300.0,
+                        curve: None,
+                    }],
+                    ..Default::default()
+                },
+                dof: None,
+            },
+        });
+        assert!(
+            !impossible.validate().is_empty(),
+            "a 300-degree field of view is refused"
+        );
     }
 }

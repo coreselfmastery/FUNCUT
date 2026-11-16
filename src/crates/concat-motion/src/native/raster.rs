@@ -494,6 +494,139 @@ fn bilinear_channel(data: &[u8], width: f32, height: f32, x: f32, y: f32, channe
     top + (bottom - top) * fy
 }
 
+/// A projective (perspective) blit, the raster half of the 2.5D
+/// transform chain: `homography` maps *source* pixel coordinates on the
+/// layer's own `z = 0` plane to *destination* pixels, the 3x3 a node's
+/// rotations, depth and perspective - and the camera's view-projection -
+/// reduce to. Where [`blit`] inverse-maps through an affine transform,
+/// this one divides: the fourth row of the chain is the denominator.
+///
+/// Backfaces are culled: a homography that mirrors (its affine part's
+/// determinant negative) is a plane turned past edge-on, and the layer
+/// it would draw is the inside of the card - skipped whole, the way a
+/// real object hides its own back. Pixels whose source lands behind the
+/// eye (a non-positive denominator) are left untouched rather than
+/// extrapolated.
+pub(crate) fn warp(
+    destination: &mut Pixmap,
+    source: &Pixmap,
+    homography: &[f64; 9],
+    blend: Blend,
+    opacity: f32,
+) {
+    let opacity = opacity.clamp(0.0, 1.0);
+    if opacity <= 0.0 {
+        return;
+    }
+    let Some(inverse) = invert3(homography) else {
+        return;
+    };
+    let (width, height) = (destination.width(), destination.height());
+    let (source_w, source_h) = (source.width() as f64, source.height() as f64);
+    // The source's corners through the homography, divided: the quad the
+    // layer covers, and the two facts read from it - whether it faces
+    // the viewer at all, and the rows it can touch.
+    let corners = [
+        (0.0, 0.0),
+        (source_w, 0.0),
+        (0.0, source_h),
+        (source_w, source_h),
+    ]
+    .map(|(x, y)| project(homography, x, y));
+    if corners.iter().all(|corner| corner.2) {
+        // Divided and facing: the quad's signed area, positive when the
+        // layer's face is toward the viewer. Negative is a backface.
+        let quad = corners.map(|corner| (corner.0, corner.1));
+        let area = |a: (f64, f64), b: (f64, f64), c: (f64, f64)| {
+            (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0)
+        };
+        let facing = area(quad[0], quad[1], quad[2]) + area(quad[1], quad[3], quad[2]);
+        if facing <= 0.0 {
+            return;
+        }
+    }
+    let min_y = corners
+        .iter()
+        .filter(|corner| corner.2)
+        .map(|corner| corner.1.floor())
+        .fold(f64::MAX, f64::min);
+    let max_y = corners
+        .iter()
+        .filter(|corner| corner.2)
+        .map(|corner| corner.1.ceil())
+        .fold(f64::MIN, f64::max);
+    let y_from = min_y.max(0.0) as u32;
+    let y_to = max_y.min(f64::from(height)) as u32;
+    let from = source.data();
+    let into = destination.data_mut();
+    for y in y_from..y_to {
+        let row = (y as usize) * (width as usize) * 4;
+        for x in 0..width {
+            // The destination pixel's centre, inverse-mapped with the
+            // divide; a point whose denominator is not positive is the
+            // far side of the eye, left to whatever it already holds.
+            let (sx, sy, in_front) = project(&inverse, f64::from(x) + 0.5, f64::from(y) + 0.5);
+            if !in_front {
+                continue;
+            }
+            if sx <= -1.0 || sy <= -1.0 || sx >= source_w + 1.0 || sy >= source_h + 1.0 {
+                continue;
+            }
+            let sampled = bilinear(from, source_w as f32, source_h as f32, sx as f32, sy as f32);
+            if sampled.a <= 0.0 {
+                continue;
+            }
+            let at = row + (x as usize) * 4;
+            let backdrop =
+                Linear::from_premultiplied(into[at], into[at + 1], into[at + 2], into[at + 3]);
+            let out = composite_pixel(blend, backdrop, sampled, opacity).to_premultiplied();
+            into[at] = out.0;
+            into[at + 1] = out.1;
+            into[at + 2] = out.2;
+            into[at + 3] = out.3;
+        }
+    }
+}
+
+/// One point through a 3x3 homography, with the divide. The third
+/// element says whether the point is in front of the eye at all: a
+/// non-positive denominator is behind it, and the caller leaves that
+/// pixel to whatever it already holds.
+fn project(homography: &[f64; 9], x: f64, y: f64) -> (f64, f64, bool) {
+    let w = homography[6] * x + homography[7] * y + homography[8];
+    if w <= 1e-9 {
+        return (x, y, false);
+    }
+    (
+        (homography[0] * x + homography[1] * y + homography[2]) / w,
+        (homography[3] * x + homography[4] * y + homography[5]) / w,
+        true,
+    )
+}
+
+/// A 3x3 inverse by the adjugate, the closed form a 3x3 deserves. The
+/// determinant near zero is a layer edge-on to the eye - `None`, and the
+/// caller skips it.
+fn invert3(homography: &[f64; 9]) -> Option<[f64; 9]> {
+    let [a, b, c, d, e, f, g, h, i] = *homography;
+    let determinant = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+    if determinant.abs() < 1e-12 {
+        return None;
+    }
+    let scale = 1.0 / determinant;
+    Some([
+        (e * i - f * h) * scale,
+        (c * h - b * i) * scale,
+        (b * f - c * e) * scale,
+        (f * g - d * i) * scale,
+        (a * i - c * g) * scale,
+        (c * d - a * f) * scale,
+        (d * h - e * g) * scale,
+        (b * g - a * h) * scale,
+        (a * e - b * d) * scale,
+    ])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

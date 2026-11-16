@@ -105,9 +105,21 @@ pub fn relative_luminance(color: Rgba) -> f64 {
     0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
 }
 
-/// WCAG contrast ratio for two sRGB colours (1:1 through 21:1).
+/// WCAG contrast ratio for foreground sRGB colour over an opaque background.
+///
+/// A translucent foreground is first composited over the background, so the
+/// reported ratio reflects the colour a viewer actually sees. The background
+/// is expected to be opaque; callers without a known opaque background should
+/// skip the check rather than guess what sits behind it.
 pub fn contrast_ratio(foreground: Rgba, background: Rgba) -> f64 {
-    let a = relative_luminance(foreground);
+    let alpha = foreground.a.clamp(0.0, 1.0);
+    let composite = Rgba::new(
+        foreground.r * alpha + background.r * (1.0 - alpha),
+        foreground.g * alpha + background.g * (1.0 - alpha),
+        foreground.b * alpha + background.b * (1.0 - alpha),
+        1.0,
+    );
+    let a = relative_luminance(composite);
     let b = relative_luminance(background);
     (a.max(b) + 0.05) / (a.min(b) + 0.05)
 }
@@ -200,6 +212,12 @@ mod tests {
     fn contrast_ratio_matches_wcag_reference_pairs() {
         assert!((contrast_ratio(Rgba::hex("#000000"), Rgba::hex("#ffffff")) - 21.0).abs() < 0.01);
         assert!((contrast_ratio(Rgba::hex("#777777"), Rgba::hex("#ffffff")) - 4.48).abs() < 0.03);
+    }
+
+    #[test]
+    fn translucent_foreground_is_composited_before_contrast_is_measured() {
+        let ratio = contrast_ratio(Rgba::new(0.0, 0.0, 0.0, 0.5), Rgba::hex("#ffffff"));
+        assert!((ratio - 3.98).abs() < 0.02, "got {ratio:.3}");
     }
 
     #[test]

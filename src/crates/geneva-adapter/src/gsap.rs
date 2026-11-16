@@ -691,78 +691,89 @@ fn svg_path(d: &str) -> Option<Vec<PathCommand>> {
                 }
             }
             'L' | 'l' => {
-                let read = take_numbers(&mut tokens, 2)?;
-                let point = if relative {
-                    Point::new(cursor.x + read[0], cursor.y + read[1])
-                } else {
-                    Point::new(read[0], read[1])
-                };
-                cursor = point;
-                commands.push(PathCommand::LineTo { point });
+                // SVG permits multiple coordinate pairs after one command.
+                while tokens.peek().and_then(|t| t.parse::<f64>().ok()).is_some() {
+                    let read = take_numbers(&mut tokens, 2)?;
+                    let point = if relative {
+                        Point::new(cursor.x + read[0], cursor.y + read[1])
+                    } else {
+                        Point::new(read[0], read[1])
+                    };
+                    cursor = point;
+                    commands.push(PathCommand::LineTo { point });
+                }
             }
             'H' | 'h' => {
-                let read = take_numbers(&mut tokens, 1)?;
-                cursor = Point::new(
-                    if relative {
-                        cursor.x + read[0]
-                    } else {
-                        read[0]
-                    },
-                    cursor.y,
-                );
-                commands.push(PathCommand::LineTo { point: cursor });
+                while tokens.peek().and_then(|t| t.parse::<f64>().ok()).is_some() {
+                    let read = take_numbers(&mut tokens, 1)?;
+                    cursor = Point::new(
+                        if relative {
+                            cursor.x + read[0]
+                        } else {
+                            read[0]
+                        },
+                        cursor.y,
+                    );
+                    commands.push(PathCommand::LineTo { point: cursor });
+                }
             }
             'V' | 'v' => {
-                let read = take_numbers(&mut tokens, 1)?;
-                cursor = Point::new(
-                    cursor.x,
-                    if relative {
-                        cursor.y + read[0]
-                    } else {
-                        read[0]
-                    },
-                );
-                commands.push(PathCommand::LineTo { point: cursor });
+                while tokens.peek().and_then(|t| t.parse::<f64>().ok()).is_some() {
+                    let read = take_numbers(&mut tokens, 1)?;
+                    cursor = Point::new(
+                        cursor.x,
+                        if relative {
+                            cursor.y + read[0]
+                        } else {
+                            read[0]
+                        },
+                    );
+                    commands.push(PathCommand::LineTo { point: cursor });
+                }
             }
             'C' | 'c' => {
-                let read = take_numbers(&mut tokens, 6)?;
-                let (c1, c2, point) = if relative {
-                    (
-                        Point::new(cursor.x + read[0], cursor.y + read[1]),
-                        Point::new(cursor.x + read[2], cursor.y + read[3]),
-                        Point::new(cursor.x + read[4], cursor.y + read[5]),
-                    )
-                } else {
-                    (
-                        Point::new(read[0], read[1]),
-                        Point::new(read[2], read[3]),
-                        Point::new(read[4], read[5]),
-                    )
-                };
-                cursor = point;
-                commands.push(PathCommand::CubicTo { c1, c2, point });
+                while tokens.peek().and_then(|t| t.parse::<f64>().ok()).is_some() {
+                    let read = take_numbers(&mut tokens, 6)?;
+                    let (c1, c2, point) = if relative {
+                        (
+                            Point::new(cursor.x + read[0], cursor.y + read[1]),
+                            Point::new(cursor.x + read[2], cursor.y + read[3]),
+                            Point::new(cursor.x + read[4], cursor.y + read[5]),
+                        )
+                    } else {
+                        (
+                            Point::new(read[0], read[1]),
+                            Point::new(read[2], read[3]),
+                            Point::new(read[4], read[5]),
+                        )
+                    };
+                    cursor = point;
+                    commands.push(PathCommand::CubicTo { c1, c2, point });
+                }
             }
             'Q' | 'q' => {
-                let read = take_numbers(&mut tokens, 4)?;
-                let (control, point) = if relative {
-                    (
-                        Point::new(cursor.x + read[0], cursor.y + read[1]),
-                        Point::new(cursor.x + read[2], cursor.y + read[3]),
-                    )
-                } else {
-                    (Point::new(read[0], read[1]), Point::new(read[2], read[3]))
-                };
-                // The one cubic that draws the same line as this quad.
-                let c1 = Point::new(
-                    cursor.x + 2.0 / 3.0 * (control.x - cursor.x),
-                    cursor.y + 2.0 / 3.0 * (control.y - cursor.y),
-                );
-                let c2 = Point::new(
-                    point.x + 2.0 / 3.0 * (control.x - point.x),
-                    point.y + 2.0 / 3.0 * (control.y - point.y),
-                );
-                cursor = point;
-                commands.push(PathCommand::CubicTo { c1, c2, point });
+                while tokens.peek().and_then(|t| t.parse::<f64>().ok()).is_some() {
+                    let read = take_numbers(&mut tokens, 4)?;
+                    let (control, point) = if relative {
+                        (
+                            Point::new(cursor.x + read[0], cursor.y + read[1]),
+                            Point::new(cursor.x + read[2], cursor.y + read[3]),
+                        )
+                    } else {
+                        (Point::new(read[0], read[1]), Point::new(read[2], read[3]))
+                    };
+                    // The one cubic that draws the same line as this quad.
+                    let c1 = Point::new(
+                        cursor.x + 2.0 / 3.0 * (control.x - cursor.x),
+                        cursor.y + 2.0 / 3.0 * (control.y - cursor.y),
+                    );
+                    let c2 = Point::new(
+                        point.x + 2.0 / 3.0 * (control.x - point.x),
+                        point.y + 2.0 / 3.0 * (control.y - point.y),
+                    );
+                    cursor = point;
+                    commands.push(PathCommand::CubicTo { c1, c2, point });
+                }
             }
             'Z' | 'z' => {
                 cursor = start;
@@ -1427,6 +1438,15 @@ mod tests {
         );
         let commands = svg_path("M0 0 H 50 V 50").expect("reads");
         assert_eq!(commands.len(), 3, "{commands:?}");
+        // SVG allows repeated parameter groups without repeating the command.
+        let commands = svg_path("M0 0 L10 10 20 20 H30 40 V50 60").expect("reads");
+        assert_eq!(commands.len(), 6, "{commands:?}");
+        let commands = svg_path("M0 0 C1 2 3 4 5 6 7 8 9 10 11 12").expect("reads");
+        assert_eq!(commands.len(), 3, "{commands:?}");
+        let commands = svg_path("M0 0 Q10 20 20 0 30 -20 40 0").expect("reads");
+        assert_eq!(commands.len(), 3, "{commands:?}");
+        let commands = svg_path("M0 0 l10 0 10 0 h10 10 v10 10").expect("reads");
+        assert_eq!(commands.len(), 6, "{commands:?}");
         assert!(
             svg_path("M0 0 A 50 50 0 0 1 100 0").is_none(),
             "arcs are refused"

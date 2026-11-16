@@ -12167,6 +12167,7 @@ impl Studio {
             let keys = &self.prefs.forge;
             page.set_groq_key(keys.groq.clone().into());
             page.set_gemini_key(keys.gemini.clone().into());
+            page.set_zai_key(keys.zai.clone().into());
             page.set_openrouter_key(keys.openrouter.clone().into());
             page.set_mistral_key(keys.mistral.clone().into());
             page.set_cerebras_key(keys.cerebras.clone().into());

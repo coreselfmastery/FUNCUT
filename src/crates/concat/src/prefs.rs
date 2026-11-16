@@ -333,6 +333,12 @@ pub struct ForgePrefs {
     pub groq: String,
     /// Google Gemini.
     pub gemini: String,
+    /// Z.AI: the GLM models - and, with `zai` picked as the vision
+    /// critic's provider, the free `glm-4v-flash` eyes the craft
+    /// critique's strong tier runs on. The key is handed to the spawned
+    /// harness as `ZAI_API_KEY` and to the in-process AUTO EDIT's tool
+    /// calls alike.
+    pub zai: String,
     /// OpenRouter: every model behind one key.
     pub openrouter: String,
     /// Mistral, La Plateforme.

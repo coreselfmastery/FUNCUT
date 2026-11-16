@@ -1044,7 +1044,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "local_vlm",
             title: "Local or hosted vision critic",
-            description: "Status or first-use setup of the local sub-1B vision critic.",
+            description: "Status, first-use setup, or hosted configure (groq/gemini/zai/openrouter/custom) of the vision critic craft_critique grades frames with; providers lists what an endpoint serves, clear removes the saved config.",
             read_only: false,
             destructive: false,
             idempotent: true,

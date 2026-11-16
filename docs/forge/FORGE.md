@@ -50,14 +50,17 @@ forge mcp add funcut concat -- --mcp window -s user
 ```
 
 or run Forge from inside this repository — the repo's own `.forge/mcp.toml`
-already declares the server (and a 900 s call timeout, because transcription
-and analysis take longer than the default 60 s), with the per-tool allowlist
-already active in the server's `env`: every tool served but `project_close`
-and `export_cancel`, the two an agent must never call by surprise:
+already declares the server (and a 1200 s call timeout, because the deep
+tools - transcription, the sense families, motion reels - are budgeted up
+to 1200 s server-side), with the per-tool allowlist already active in the
+server's `env`: the director's 100-tool surface, every tool but the ten
+an agent must never call by surprise - `project_close` and `export_cancel`
+among them, plus the diagnostics and farm doors the director has no use
+for:
 
 ```toml
 # .forge/mcp.toml (this repo)
-call_timeout_secs = 900
+call_timeout_secs = 1200
 
 [[servers]]
 name = "funcut"
@@ -181,7 +184,7 @@ home (or `CONCAT_MCP_ROOTS`), never touching the window's open projects.
 | `forge: command not found` | `~/.local/bin` not on PATH: `export PATH="$HOME/.local/bin:$PATH"` |
 | `forge mcp` shows funcut "failed: the Concat window is not serving the API" | Open FUNCUT > Settings > Automation > turn on **Scripts and apps**; or use `--mcp headless` |
 | `analysis.scenes` returns "python3 not found" / a pip hint | `pip install -r ~/.local/share/app.concat.editor/analysis/requirements.txt` (scenedetect, opencv-headless, librosa) |
-| A tool call times out | This repo's `.forge/mcp.toml` sets `call_timeout_secs = 900`; if you declared the server yourself, raise yours (default 60) |
+| A tool call times out | This repo's `.forge/mcp.toml` sets `call_timeout_secs = 1200`; if you declared the server yourself, raise yours (default 60) |
 | `transcribe` says a model is not downloaded | Settings > Transcriber, download `base.en` (fast, English) or `small` (multilingual) |
 | `tts_generate` says a model is not downloaded | Settings > Speech, download Kokoro int8 (the 4 GB-laptop choice) |
 | Agent "done" but the video looks wrong | The skill's quality loop is mandatory: `watch_render` (whole cut as one image) -> `craft_critique` (six craft scores) -> revise at least once -> `watch_render` again -> `watch_render {path}` on the exported file. `plan_validate` must also say `creativeReady: true`. Never accept "done" without an export `export_wait` says succeeded AND a measured score >= 7 |

@@ -295,6 +295,7 @@ impl ForgePane {
                 match provider.as_str() {
                     "groq" => forge.groq = key,
                     "gemini" => forge.gemini = key,
+                    "zai" => forge.zai = key,
                     "openrouter" => forge.openrouter = key,
                     "mistral" => forge.mistral = key,
                     "cerebras" => forge.cerebras = key,
@@ -418,6 +419,7 @@ impl ForgePane {
         for (name, value) in [
             ("GROQ_API_KEY", &forge.groq),
             ("GEMINI_API_KEY", &forge.gemini),
+            ("ZAI_API_KEY", &forge.zai),
             ("OPENROUTER_API_KEY", &forge.openrouter),
             ("MISTRAL_API_KEY", &forge.mistral),
             ("CEREBRAS_API_KEY", &forge.cerebras),
@@ -503,6 +505,29 @@ impl ForgePane {
         let Some(auto) = auto else {
             return;
         };
+        // The keys the Forge page keeps are the environment of the
+        // in-process tool calls too, not only the spawned harness: with a
+        // hosted critic key saved here, the program's watch stage gets
+        // the strong VLM tier and the verify stage's emotion read runs on
+        // the multilingual model - all without the user exporting a
+        // single variable. An exported variable always wins: the editor
+        // never overrides the environment it was started with.
+        let forge = &studio.prefs.forge;
+        for (name, value) in [
+            ("ZAI_API_KEY", &forge.zai),
+            ("GROQ_API_KEY", &forge.groq),
+            ("GEMINI_API_KEY", &forge.gemini),
+            ("OPENROUTER_API_KEY", &forge.openrouter),
+            ("FUNCUT_EMOTION_API_KEY", &forge.hf),
+            ("HF_TOKEN", &forge.hf),
+        ] {
+            if !value.trim().is_empty() && std::env::var_os(name).is_none() {
+                // SAFETY: the editor is single-window and this runs on the
+                // UI thread before the run's worker threads are spawned;
+                // the same pattern `--software` rendering already uses.
+                unsafe { std::env::set_var(name, value.trim()) };
+            }
+        }
         // The window's own server is the backend: the pane is inside the
         // window, and the server serves the sibling the way it serves any
         // agent's - the same surface a forge run drives.
@@ -1216,6 +1241,57 @@ fn build_voiceover_sibling(
     }
 }
 
+/// Whether a vision critic answers without any setup: the environment the
+/// editor was started with, a key the Forge page keeps (handed to the
+/// spawned harness and to the in-process AUTO EDIT's tool calls alike), or
+/// the saved `vlm.json` the `local_vlm {action:"configure"}` tool writes.
+/// The run prompt used to look only at `FUNCUT_VLM_ENDPOINT` and
+/// `FUNCUT_VLM_API_KEY`, so a critic configured the normal way was
+/// invisible to it - the agent was told to set one up when one was
+/// already active, and the quality loop started a step behind.
+fn hosted_critic_ready(studio: &Studio) -> bool {
+    if std::env::var("FUNCUT_VLM_ENDPOINT").is_ok()
+        || std::env::var("FUNCUT_VLM_API_KEY").is_ok()
+    {
+        return true;
+    }
+    // A provider key the page keeps, or one already exported, is a hosted
+    // critic the run can reach: the craft critique's strong tier resolves
+    // exactly these spellings.
+    let forge = &studio.prefs.forge;
+    let provider_keys = [
+        (&forge.groq, "GROQ_API_KEY"),
+        (&forge.gemini, "GEMINI_API_KEY"),
+        (&forge.zai, "ZAI_API_KEY"),
+        (&forge.openrouter, "OPENROUTER_API_KEY"),
+    ];
+    if provider_keys
+        .iter()
+        .any(|(field, name)| !field.trim().is_empty() || std::env::var(name).is_ok())
+    {
+        return true;
+    }
+    // The saved provider config, written by the local_vlm tool. A key or
+    // an endpoint in it means a critic is configured; the masked replies
+    // the tool gives never carry the whole key, but the file does.
+    let path = studio.host.dirs.data.join("vlm").join("vlm.json");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return false;
+    };
+    let Ok(saved) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return false;
+    };
+    let key = saved
+        .get("apiKey")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|key| !key.trim().is_empty());
+    let endpoint = saved
+        .get("endpoint")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|endpoint| !endpoint.trim().is_empty());
+    key || endpoint
+}
+
 /// The one prompt the pane sends. It used to be a single sentence of
 /// instructions ("verify with preview_frame, then export") with no creative
 /// intent and no way for the agent to judge its own work. Now it carries the
@@ -1270,9 +1346,7 @@ fn director_run_prompt(
                  sharp angle from the script; do not proceed without one.\n\n"
             .to_owned();
     }
-    let critic = if std::env::var("FUNCUT_VLM_ENDPOINT").is_ok()
-        || std::env::var("FUNCUT_VLM_API_KEY").is_ok()
-    {
+    let critic = if hosted_critic_ready(studio) {
         "A vision critic is configured. Prefer craft_critique with autoSetup:true \
          so a model, not a heuristic, grades the frames.\n"
             .to_owned()

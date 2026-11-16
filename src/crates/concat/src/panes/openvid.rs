@@ -479,12 +479,19 @@ impl OpenvidPane {
                     // the window's thread's work: it can hold the window
                     // for the read's whole timeout.
                     Ok(path) => {
-                        if live.is_none() {
-                            if let Some(library) = self.library() {
-                                if let Ok(id_number) = id.parse::<i64>() {
-                                    let _ = library.dims(id_number);
-                                }
-                            }
+                        // A local card's frame size is free now that its
+                        // bytes are local, and its card is redrawn with
+                        // it; a live card's shelf measured nothing. On
+                        // the failed road there is nothing on disk to
+                        // read, and the network read `dims` would fall
+                        // back to is not the window's thread's work: it
+                        // can hold the window for the read's whole
+                        // timeout.
+                        if live.is_none()
+                            && let Some(library) = self.library()
+                            && let Ok(id_number) = id.parse::<i64>()
+                        {
+                            let _ = library.dims(id_number);
                         }
                         // A live card's placement id is its card id with the
                         // shelf's separator made file-safe: the file the

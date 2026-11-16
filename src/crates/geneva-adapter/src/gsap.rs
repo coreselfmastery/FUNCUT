@@ -1440,7 +1440,7 @@ mod tests {
         assert_eq!(commands.len(), 3, "{commands:?}");
         // SVG allows repeated parameter groups without repeating the command.
         let commands = svg_path("M0 0 L10 10 20 20 H30 40 V50 60").expect("reads");
-        assert_eq!(commands.len(), 6, "{commands:?}");
+        assert_eq!(commands.len(), 7, "{commands:?}");
         let commands = svg_path("M0 0 C1 2 3 4 5 6 7 8 9 10 11 12").expect("reads");
         assert_eq!(commands.len(), 3, "{commands:?}");
         let commands = svg_path("M0 0 Q10 20 20 0 30 -20 40 0").expect("reads");

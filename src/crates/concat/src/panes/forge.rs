@@ -1455,7 +1455,15 @@ fn director_run_prompt(
     };
     format!(
         "Use the funcut-director skill and follow its phases IN ORDER. You are directing a \
-         video, not assembling clips.\n\n{brief}{material}\
+         video, not assembling clips. The skill rides with two judgment shelves you MUST \
+         consult, not decorate with: maestro (design, motion and film judgment - its shot \
+         cards, its 157-shot vocabulary, its sound-design method) and clip-skills (the \
+         editing craft - where to cut, the audio spine, B-roll matching, pacing, grading, \
+         voice processing, export numbers). Phase 3 draws on clip-skills' audio-driven \
+         cutting module and maestro's shot cards for scale, motion and register; Phase 4 \
+         draws on clip-skills' B-roll matching module; name the module each decision used \
+         in the plan's signalLog notes. An edit that never opened a shelf is an edit that \
+         guessed.\n\n{brief}{material}\
          {look}\
          MANDATORY QUALITY LOOP (do not skip, do not just describe it):\n\
          1. plan_validate must return BOTH valid:true AND creativeReady:true. Fix every \
@@ -1488,7 +1496,17 @@ fn probe_setup() -> (Result<bool, String>, Result<bool, String>) {
         Err(error) => Err(error),
     };
     let installed = match forge(&["commands"]) {
-        Ok((_, words)) => Ok(words.to_ascii_lowercase().contains("funcut-director")),
+        // The door and the shelves both: a harness that serves
+        // funcut-director but not maestro or clip-skills still runs - the
+        // run prompt points the agent at the shelves the skill's own
+        // sections keep - but a full install serves all three, and every
+        // one it finds is one the director can be told to read.
+        Ok((_, words)) => {
+            let words = words.to_ascii_lowercase();
+            Ok(["funcut-director", "maestro", "clip-skills"]
+                .iter()
+                .any(|name| words.contains(name)))
+        }
         Err(error) => Err(error),
     };
     (connected, installed)

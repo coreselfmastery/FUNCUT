@@ -234,7 +234,10 @@ visual (B-roll query or a motion comp), its **cutType**, its **in/out**
 entrance and exit, its `transitionIn` at section changes, its SFX with the
 time its PEAK must land on, its caption style, and the **grade** (required —
 a video with no grade is a rough cut, not a finished piece). Consult
-clip-skills' audio-driven cutting module. The cut lands on the emphasis
+clip-skills' audio-driven cutting module and maestro's shot cards for
+scale, motion and register - and NAME the module each decision used in
+the plan's signalLog notes (the craft warning asks for exactly that).
+The cut lands on the emphasis
 word and the beat, not the line boundary. Segments under
 a voiceover also carry the Phase-1b read — **emotion, act, easing,
 colourTemp, duckDb** — copied from the extract's lines (the schema documents

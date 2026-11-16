@@ -3482,6 +3482,35 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
     }
     let creative = creative_gate(plan, segments, runtime, &warnings);
     let signal_log = signal_log_gate(plan, segments, runtime);
+    // The craft shelves: maestro and clip-skills are the judgment the
+    // director is told to consult, and the plan's own signalLog notes are
+    // where the consultation leaves its name. A plan that never names a
+    // module is not refused - the reading of a shelf cannot be proven
+    // from here - but it is warned about, in the same voice the breath
+    // gaps are: the thing the director forgot is the thing the record
+    // says.
+    let craft_notes = plan
+        .get("signalLog")
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| entry.get("note").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_ascii_lowercase()
+        })
+        .unwrap_or_default();
+    let consulted = ["maestro", "clip-skills", "clipskills", "clip skills"]
+        .iter()
+        .any(|shelf| craft_notes.contains(shelf));
+    let mut warnings = warnings;
+    if !consulted {
+        warnings.push(
+            "no signalLog note names a maestro or clip-skills module: the plan may have              been written without the judgment shelves the skill routes to - consult them              and name the module each decision used"
+                .to_owned(),
+        );
+    }
     let mut result = json!({
         "valid": true,
         "aspect": aspect,

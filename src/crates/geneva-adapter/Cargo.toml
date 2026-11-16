@@ -15,6 +15,12 @@ concat-motion = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror.workspace = true
+# The SVG importer's parser: groups, paths, fills, gradients and transforms
+# resolved to the same geometry vocabulary the comp already carries. Default
+# features off - system font resolution is not an importer's job, and <text>
+# elements are said rather than shaped (the comp's text is a text node with
+# its own style).
+usvg = { version = "0.45", default-features = false }
 
 [lints]
 workspace = true

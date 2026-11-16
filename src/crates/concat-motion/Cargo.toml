@@ -28,6 +28,11 @@ raster = [
 # being hand-maintained beside it (SCH-02). What concat-mcp splices into
 # edit_plan.schema.json rides this feature.
 schema = ["dep:schemars"]
+# The software 3D scene: .glb/.gltf meshes, extruded type and lit surfaces
+# rasterized on the CPU beside the 2D stack, so a 4 GB laptop without a
+# GPU still renders them. Off by default because the glTF and glyph
+# parsers are only worth their compile time when a project asks for 3D.
+scene3d = ["dep:gltf", "dep:ttf-parser", "raster"]
 
 [dependencies]
 # The comp document is JSON a template, an agent or the editor writes; serde
@@ -66,6 +71,32 @@ rasterlottie = { version = "0.2.4", default-features = false, features = ["image
 base64 = { version = "0.23", optional = true }
 # dotLottie archive inspection is bounded before parsing; no archive paths are extracted.
 zip = { version = "9", default-features = false, features = ["deflate"], optional = true }
+# The 2.5D/3D transform chain: rotate_x/rotate_y, z depth, perspective and
+# the camera rig all compose through glam's 4x4 matrices before the
+# projective pass hands a homography to the raster. Small, allocation-free
+# where it matters, and the whole crate already speaks f64.
+glam = "0.30"
+# Boolean vector ops, variable-width stroke ribbons and the tessellated
+# glyph fronts and sides of extruded type: the geometry helpers the path
+# work needs, pure Rust with no system libraries.
+lyon = "1"
+# The comp template preprocessor: {% for %}, {% if %} and JSON data
+# injection before the document is parsed, so a shelf of comps can share
+# one parameterised source. minijinja is the smallest engine that speaks
+# the Jinja dialect authors already know.
+minijinja = "2"
+# Shared-memory frame transport (memfd_create, POSIX shm, mmap) with safe
+# wrappers - the crate carries no unsafe of its own and this keeps it that
+# way. The sidecar seam reads and writes frame bytes without a PNG round
+# trip when both ends agree on the protocol.
+rustix = { version = "1", default-features = false, features = ["std", "mm", "shm", "system"] }
+# glTF parsing for NodeKind::Scene3D, behind the scene3d feature: meshes,
+# materials and node trees out of .glb/.gltf binaries. Image decode stays
+# with the crate's own png/jpeg readers, so no extra decoder rides along.
+gltf = { version = "1", default-features = false, features = ["import"], optional = true }
+# Glyph outlines for 3D extruded typography, behind the scene3d feature:
+# the same parser every Rust font stack uses, no rasterizer attached.
+ttf-parser = { version = "0.25", optional = true }
 
 [lints]
 workspace = true

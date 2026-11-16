@@ -1659,6 +1659,16 @@ fn layer_of(comp: &Comp, node: &Node, scope: &str, warnings: &mut Vec<String>) -
                 "node {:?}: chromatic aberration is drawn by the native engine only",
                 node.id
             )),
+            Effect::Ripple { .. }
+            | Effect::Wave { .. }
+            | Effect::Bulge { .. }
+            | Effect::Pixelate { .. }
+            | Effect::Scanlines { .. }
+            | Effect::Tracking { .. }
+            | Effect::Kaleidoscope { .. } => warnings.push(format!(
+                "node {:?}: a distortion effect is drawn by the native engine only",
+                node.id
+            )),
             Effect::Shader { id, .. } => warnings.push(format!(
                 "node {:?}: shader {id:?} is a project package, drawn by the native engine only",
                 node.id

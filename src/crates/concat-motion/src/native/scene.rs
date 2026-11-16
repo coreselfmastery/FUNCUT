@@ -394,14 +394,50 @@ impl Scene<'_> {
             }
         };
         // Motion blur wraps everything else the node does: the whole
-        // subtree, sampled across the shutter and averaged.
+        // subtree, sampled across the shutter and averaged. An adaptive
+        // blur spends the samples where the motion is: the node's anchor
+        // is placed at this frame and the next, the distance between
+        // the two is the velocity in pixels per frame, and the samples
+        // follow it - a still node renders once, however many the field
+        // allows, and a fast one spends them all.
         if let Some(blur) = &node.motion_blur {
-            let samples = blur.samples.clamp(2, 64) as usize;
+            let samples = if blur.adaptive {
+                let dt = 1.0 / self.comp.fps.max(1e-6);
+                let reference = node_transform_reference(self, node);
+                let anchor = anchor_of(node, box_of);
+                let place_at = |t: f64| {
+                    let local = self.local_transform(node, t, reference, box_of);
+                    let mut point = tiny_skia::Point {
+                        x: anchor.0 as f32,
+                        y: anchor.1 as f32,
+                    };
+                    parent_world.pre_concat(local).map_point(&mut point);
+                    (f64::from(point.x), f64::from(point.y))
+                };
+                let (x0, y0) = place_at(at);
+                let (x1, y1) = place_at(at + dt);
+                let velocity = (x1 - x0).hypot(y1 - y0);
+                // One more sample for every six pixels of travel, from
+                // one to the field's own cap - the smear a hand keys and
+                // the pin-sharp rest, from one field.
+                ((velocity / 6.0).ceil() as usize)
+                    .clamp(1, 16)
+                    .min(blur.samples.max(2) as usize)
+            } else {
+                blur.samples.clamp(2, 64) as usize
+            };
             let half = (blur.shutter.clamp(0.0, 2.0) / self.comp.fps.max(1e-6)) / 2.0;
             let mut sum: Option<Vec<f32>> = None;
             let mut size = (self.frame.0.max(1.0) as u32, self.frame.1.max(1.0) as u32);
             for sample in 0..samples {
-                let t = at + half * (sample as f64 / (samples - 1) as f64 * 2.0 - 1.0);
+                // One sample is the shutter's own centre: a still node's
+                // adaptive render is the plain frame, not a divide by
+                // the zero a second sample would need.
+                let t = if samples == 1 {
+                    at
+                } else {
+                    at + half * (sample as f64 / (samples - 1) as f64 * 2.0 - 1.0)
+                };
                 let Some(layer) = self.node_layer_at(
                     node,
                     t,
@@ -750,6 +786,41 @@ impl Scene<'_> {
                         amount * self.scale,
                         (f64::from(centre.x), f64::from(centre.y)),
                     );
+                }
+                Effect::Ripple {
+                    amplitude,
+                    wavelength,
+                    speed,
+                } => raster::ripple(
+                    layer,
+                    amplitude * self.scale,
+                    wavelength * self.scale,
+                    *speed,
+                    at,
+                ),
+                Effect::Wave {
+                    amplitude,
+                    wavelength,
+                    angle,
+                    speed,
+                } => raster::wave(
+                    layer,
+                    amplitude * self.scale,
+                    wavelength * self.scale,
+                    *angle,
+                    *speed,
+                    at,
+                ),
+                Effect::Bulge { amount, radius } => {
+                    raster::bulge(layer, *amount, radius * self.scale)
+                }
+                Effect::Pixelate { size } => raster::pixelate(layer, size * self.scale),
+                Effect::Scanlines { count, opacity } => raster::scanlines(layer, *count, *opacity),
+                Effect::Tracking { amount, speed } => {
+                    raster::tracking(layer, amount * self.scale, *speed, at)
+                }
+                Effect::Kaleidoscope { segments, rotation } => {
+                    raster::kaleidoscope(layer, *segments, *rotation)
                 }
                 Effect::Shader { id, .. } => {
                     self.warnings.push(format!(

@@ -365,8 +365,8 @@ impl CompEngine for Native {
 mod tests {
     use super::*;
     use crate::comp::{
-        Asset, AssetKind, Blend, Effect, Fit, Length, Mask, MaskShape, Node, NodeKind, Paint,
-        Point, Rgba, Stroke, TextNode, Transform,
+        Asset, AssetKind, Blend, Effect, Fit, Length, Mask, MaskShape, MotionBlur, Node, NodeKind,
+        Paint, Point, Rgba, Stroke, TextNode, Transform,
     };
     use crate::track::{Key, Track, Value};
 
@@ -1321,9 +1321,10 @@ mod tests {
     #[test]
     fn a_motion_blurred_move_smears_rather_than_strobes() {
         let mut moving = node("box", rect(Rgba::new(1.0, 0.0, 0.0, 1.0)));
-        moving.motion_blur = Some(crate::comp::MotionBlur {
+        moving.motion_blur = Some(MotionBlur {
             samples: 8,
             shutter: 1.0,
+            adaptive: false,
         });
         moving.tracks.insert(
             "position".into(),
@@ -1548,6 +1549,131 @@ mod tests {
         assert_eq!(
             plain_png, lens_png,
             "a resting camera changes not one byte of the frame"
+        );
+    }
+
+    /// The distortion catalogue draws, and each of its members is named
+    /// in what Geneva cannot: a comp that carries one routes native.
+    #[test]
+    fn the_distortions_draw_and_route_native() {
+        let distortions = [
+            Effect::Ripple {
+                amplitude: 4.0,
+                wavelength: 16.0,
+                speed: 1.0,
+            },
+            Effect::Wave {
+                amplitude: 4.0,
+                wavelength: 20.0,
+                angle: 0.0,
+                speed: 1.0,
+            },
+            Effect::Bulge {
+                amount: 0.5,
+                radius: 20.0,
+            },
+            // A size that does not divide the card's own edges, so
+            // the mosaic's blocks straddle them rather than tiling
+            // inside them.
+            Effect::Pixelate { size: 5.0 },
+            Effect::Scanlines {
+                count: 12,
+                opacity: 0.5,
+            },
+            Effect::Tracking {
+                amount: 4.0,
+                speed: 8.0,
+            },
+            Effect::Kaleidoscope {
+                segments: 4,
+                rotation: 0.0,
+            },
+        ];
+        let plain = comp_of("plain", vec![node("card", rect(Rgba::hex("#ff4433")))]);
+        let (_, plain_frame) = first_frame(&plain);
+        for effect in distortions {
+            let mut card = node("card", rect(Rgba::hex("#ff4433")));
+            // Off-centre, so the symmetric folds - a kaleidoscope about
+            // the frame's own centre - have an asymmetry to fold.
+            card.transform.position = Some(Point::new(20.0, 20.0));
+            card.effects.push(effect.clone());
+            let comp = comp_of("distorted", vec![card]);
+            assert!(comp.validate().is_empty(), "{effect:?}");
+            assert!(
+                comp.geneva_inexpressible().contains(&"a distortion effect"),
+                "{effect:?}"
+            );
+            let (_, frame) = first_frame(&comp);
+            assert!(ink_of(&frame) > 0, "{effect:?} draws something");
+            assert!(
+                frame.data() != plain_frame.data(),
+                "{effect:?} is not a no-op over the plain frame"
+            );
+        }
+    }
+
+    /// A distortion with impossible numbers is refused before the bake,
+    /// with a pointer into the effects list.
+    #[test]
+    fn a_distortion_with_impossible_numbers_is_refused() {
+        let mut card = node("card", rect(Rgba::hex("#ffffff")));
+        card.effects.push(Effect::Pixelate { size: 0.0 });
+        let comp = comp_of("bad", vec![card]);
+        let found = comp.validate();
+        assert!(
+            found
+                .iter()
+                .any(|d| d.path == "/nodes/0/effects" && d.message.contains("pixelation")),
+            "{found:?}"
+        );
+    }
+
+    /// An adaptive blur renders a still node once: the frame is the plain
+    /// frame, byte for byte, however many samples the field allows.
+    #[test]
+    fn an_adaptive_blur_renders_a_still_node_once() {
+        let plain = comp_of("plain", vec![node("card", rect(Rgba::hex("#33aa55")))]);
+        let mut still = node("card", rect(Rgba::hex("#33aa55")));
+        still.motion_blur = Some(MotionBlur {
+            samples: 16,
+            shutter: 0.5,
+            adaptive: true,
+        });
+        let blurred = comp_of("still", vec![still]);
+        let (_, plain_frame) = first_frame(&plain);
+        let (_, still_frame) = first_frame(&blurred);
+        assert_eq!(
+            plain_frame.data(),
+            still_frame.data(),
+            "a still node's adaptive blur is the plain frame"
+        );
+    }
+
+    /// A moving node spends the samples: the adaptive smear differs from
+    /// both the plain frame and the same node without the blur.
+    #[test]
+    fn an_adaptive_blur_smears_a_moving_node() {
+        let mut moving = node("card", rect(Rgba::hex("#33aa55")));
+        moving.tracks.insert(
+            "position".into(),
+            Track::new(vec![
+                Key::new(0.0, Value::Point { x: 0.0, y: 24.0 }),
+                Key::new(1.0, Value::Point { x: 64.0, y: 24.0 }),
+            ]),
+        );
+        let plain = comp_of("moving", vec![moving.clone()]);
+        moving.motion_blur = Some(MotionBlur {
+            samples: 16,
+            shutter: 0.5,
+            adaptive: true,
+        });
+        let blurred = comp_of("moving-blurred", vec![moving]);
+        let (_, plain_frame) = first_frame(&plain);
+        let (_, blurred_frame) = first_frame(&blurred);
+        assert_ne!(
+            plain_frame.data(),
+            blurred_frame.data(),
+            "the moving node smears where the plain frame does not"
         );
     }
 }

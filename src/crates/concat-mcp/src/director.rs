@@ -183,6 +183,95 @@ fn refusal_code(structured: Option<&Value>) -> Option<i64> {
         .and_then(Value::as_i64)
 }
 
+/// One lane of a fan step: its own backend, opened fresh, behind the same
+/// shared toolbox - the caller a lane factory mints. The window's server
+/// takes as many connections as the run asks for; a headless lane is an
+/// in-process `Api` of its own.
+pub struct LaneCaller {
+    /// The served tools, shared with the run's own caller: one build,
+    /// many lanes.
+    toolbox: Arc<Toolbox>,
+    /// This lane's own connection.
+    backend: Box<dyn Backend>,
+    /// The run's stop flag, shared.
+    cancelled: Arc<AtomicBool>,
+}
+
+impl ToolCaller for LaneCaller {
+    fn call(&mut self, call: &ToolCall) -> Result<Value, ToolError> {
+        let context = Context {
+            backend: self.backend.as_mut(),
+            cancelled: &self.cancelled,
+            progress: None,
+        };
+        match self
+            .toolbox
+            .call(&call.tool, call.arguments.clone(), context)
+        {
+            None => Err(ToolError {
+                message: format!("there is no {} tool on this server", call.tool),
+                retryable: Some(false),
+                retry_after: None,
+                code: None,
+            }),
+            Some(Outcome {
+                is_error: false,
+                structured,
+                ..
+            }) => Ok(structured.unwrap_or_else(|| json!({}))),
+            Some(Outcome {
+                is_error: true,
+                content,
+                structured,
+                ..
+            }) => Err(ToolError {
+                message: refusal_message(&content, structured.as_ref()),
+                retryable: None,
+                retry_after: None,
+                code: refusal_code(structured.as_ref()),
+            }),
+        }
+    }
+}
+
+/// The lane factory the window's Forge page hands the runner: every lane
+/// opens its own backend in the run's own mode, over the one shared
+/// toolbox, stopped by the one shared flag.
+pub struct LaneOpener {
+    /// The mode the run's own backend opened in.
+    mode: crate::backend::Mode,
+    /// The tools every lane serves - the same catalogue, built once.
+    toolbox: Arc<Toolbox>,
+    /// Set when the run is asked to stop.
+    cancelled: Arc<AtomicBool>,
+}
+
+impl LaneOpener {
+    /// A factory over the run's own mode, toolbox and stop flag.
+    pub fn new(
+        mode: crate::backend::Mode,
+        toolbox: Arc<Toolbox>,
+        cancelled: Arc<AtomicBool>,
+    ) -> LaneOpener {
+        LaneOpener {
+            mode,
+            toolbox,
+            cancelled,
+        }
+    }
+}
+
+impl concat_director::LaneFactory for LaneOpener {
+    fn lane(&self) -> Result<Box<dyn ToolCaller>, String> {
+        let backend = crate::backend::open(self.mode)?;
+        Ok(Box::new(LaneCaller {
+            toolbox: Arc::clone(&self.toolbox),
+            backend,
+            cancelled: Arc::clone(&self.cancelled),
+        }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -338,94 +427,5 @@ mod tests {
         );
         // Nothing reached the backend: the safety net answered first.
         assert!(backend.taken.is_empty());
-    }
-}
-
-/// One lane of a fan step: its own backend, opened fresh, behind the same
-/// shared toolbox - the caller a lane factory mints. The window's server
-/// takes as many connections as the run asks for; a headless lane is an
-/// in-process `Api` of its own.
-pub struct LaneCaller {
-    /// The served tools, shared with the run's own caller: one build,
-    /// many lanes.
-    toolbox: Arc<Toolbox>,
-    /// This lane's own connection.
-    backend: Box<dyn Backend>,
-    /// The run's stop flag, shared.
-    cancelled: Arc<AtomicBool>,
-}
-
-impl ToolCaller for LaneCaller {
-    fn call(&mut self, call: &ToolCall) -> Result<Value, ToolError> {
-        let context = Context {
-            backend: self.backend.as_mut(),
-            cancelled: &self.cancelled,
-            progress: None,
-        };
-        match self
-            .toolbox
-            .call(&call.tool, call.arguments.clone(), context)
-        {
-            None => Err(ToolError {
-                message: format!("there is no {} tool on this server", call.tool),
-                retryable: Some(false),
-                retry_after: None,
-                code: None,
-            }),
-            Some(Outcome {
-                is_error: false,
-                structured,
-                ..
-            }) => Ok(structured.unwrap_or_else(|| json!({}))),
-            Some(Outcome {
-                is_error: true,
-                content,
-                structured,
-                ..
-            }) => Err(ToolError {
-                message: refusal_message(&content, structured.as_ref()),
-                retryable: None,
-                retry_after: None,
-                code: refusal_code(structured.as_ref()),
-            }),
-        }
-    }
-}
-
-/// The lane factory the window's Forge page hands the runner: every lane
-/// opens its own backend in the run's own mode, over the one shared
-/// toolbox, stopped by the one shared flag.
-pub struct LaneOpener {
-    /// The mode the run's own backend opened in.
-    mode: crate::backend::Mode,
-    /// The tools every lane serves - the same catalogue, built once.
-    toolbox: Arc<Toolbox>,
-    /// Set when the run is asked to stop.
-    cancelled: Arc<AtomicBool>,
-}
-
-impl LaneOpener {
-    /// A factory over the run's own mode, toolbox and stop flag.
-    pub fn new(
-        mode: crate::backend::Mode,
-        toolbox: Arc<Toolbox>,
-        cancelled: Arc<AtomicBool>,
-    ) -> LaneOpener {
-        LaneOpener {
-            mode,
-            toolbox,
-            cancelled,
-        }
-    }
-}
-
-impl concat_director::LaneFactory for LaneOpener {
-    fn lane(&self) -> Result<Box<dyn ToolCaller>, String> {
-        let backend = crate::backend::open(self.mode)?;
-        Ok(Box::new(LaneCaller {
-            toolbox: Arc::clone(&self.toolbox),
-            backend,
-            cancelled: Arc::clone(&self.cancelled),
-        }))
     }
 }

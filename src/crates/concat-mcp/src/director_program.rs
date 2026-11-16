@@ -390,9 +390,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     if batch.is_some() {
                         return batch.take();
                     }
-                    let Some(view) = latest_view(log) else {
-                        return None;
-                    };
+                    let view = latest_view(log)?;
                     let media = media_paths(view);
                     let mut captions: Vec<Value> = Vec::new();
                     for (take, segments) in transcripts_of(log, &caption_source) {
@@ -572,7 +570,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 clip["media"]
                                     .as_str()
                                     .and_then(|id| media.iter().find(|(mid, _)| mid == id))
-                                    .and_then(|(_, path)| Some(path.contains("/bgm/")))
+                                    .map(|(_, path)| path.contains("/bgm/"))
                                     .unwrap_or(false)
                             });
                         return bed.map(|bed| {
@@ -648,9 +646,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     if placed >= peaks.len() {
                         return None;
                     }
-                    let Some(view) = latest_view(log) else {
-                        return None;
-                    };
+                    let view = latest_view(log)?;
                     let media = media_paths(view);
                     let take = sfx_source
                         .iter()

@@ -3533,7 +3533,6 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
     let consulted = ["maestro", "clip-skills", "clipskills", "clip skills"]
         .iter()
         .any(|shelf| craft_notes.contains(shelf));
-    let mut warnings = warnings;
     if !consulted {
         warnings.push(
             "no signalLog note names a maestro or clip-skills module: the plan may have              been written without the judgment shelves the skill routes to - consult them              and name the module each decision used"

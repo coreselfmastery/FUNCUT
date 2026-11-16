@@ -223,7 +223,7 @@ impl Runner {
     /// The set lives with the runner, so a failed run's finished stages
     /// are exactly where the next run picks up.
     pub fn completed(&self) -> Vec<Stage> {
-        let mut completed = self
+        let completed = self
             .shared
             .completed
             .lock()

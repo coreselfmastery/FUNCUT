@@ -285,7 +285,9 @@ mod tests {
         bones[0].rest = -90.0;
         bones[1].rest = 90.0;
         bones[2].rest = 90.0;
-        let target = Point::new(-20.0, 100.0);
+        // Within the pair's reach of the first bone's tip (60 from
+        // (0, -40)), so the solve lands on the target exactly.
+        let target = Point::new(-20.0, -10.0);
         let posed = pose(&bones, Point::new(0.0, 0.0), target, 0.0);
         assert_eq!(posed.len(), 3, "{posed:?}");
         // The first bone sits at its rest, pointing up the screen.
@@ -294,7 +296,7 @@ mod tests {
         // And the pair after it reaches.
         let tip = posed[2].tip;
         assert!(
-            ((tip.x - target.x).hypot(tip.y - target.y)) < 1e-6,
+            (tip.x - target.x).hypot(tip.y - target.y) < 1e-6,
             "{posed:?}"
         );
     }

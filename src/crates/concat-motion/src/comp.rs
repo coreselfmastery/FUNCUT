@@ -633,6 +633,19 @@ pub enum NodeKind {
         /// The comp's id, which must be reachable by the caller.
         comp: String,
     },
+    /// An audio reaction: the comp's music, and the track bindings its
+    /// bands drive. Draws nothing of its own; the bake reads the WAV
+    /// asset once, measures its bands frame by frame, and expands every
+    /// binding into an ordinary keyframe track - so every engine that
+    /// reads tracks plays the reaction, and the flattened timeline's
+    /// own keyfloor still holds.
+    Audio {
+        /// The WAV asset the bands read, by id.
+        asset: String,
+        /// The bindings: which node's which track each band drives.
+        #[serde(default)]
+        bindings: Vec<AudioBinding>,
+    },
     /// A bone rig: a chain of segments posed by inverse kinematics,
     /// the last two bones solving for the `target` track's point with
     /// the `pole` track picking the middle joint's side. The bones draw
@@ -824,6 +837,44 @@ pub struct BooleanCombine {
     /// How the two combine.
     #[serde(default)]
     pub op: BooleanOp,
+}
+
+/// One audio-driven track binding: the band that drives, the track it
+/// drives, and the arithmetic of the drive.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct AudioBinding {
+    /// The node whose track is driven, by id.
+    pub node: String,
+    /// The track's name: `scale`, `opacity`, `blur` - any number track.
+    pub track: String,
+    /// The band that drives it.
+    #[serde(default)]
+    pub band: Band,
+    /// The value at rest, before the music moves it.
+    #[serde(default)]
+    pub base: f64,
+    /// How far above `base` the band's loudest frame carries it: the
+    /// driven value is `base + envelope * amount`.
+    #[serde(default = "one")]
+    pub amount: f64,
+}
+
+/// The bands of the spectrum a binding can follow.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Band {
+    /// 20 to 60 Hz: the pressure a sub carries.
+    SubBass,
+    /// 60 to 250 Hz: the body of a kick and a bass line.
+    Bass,
+    /// 250 Hz to 2 kHz: where words and chords live.
+    #[default]
+    Mid,
+    /// 2 to 6 kHz: the edge of consonants and hats.
+    Presence,
+    /// The spectrum's positive step from the last frame: onsets, the
+    /// music's own pulse of change.
+    Flux,
 }
 
 /// The boolean operations two outlines combine by.
@@ -1230,7 +1281,7 @@ pub struct Diagnostic {
 }
 
 impl Diagnostic {
-    fn new(path: impl Into<String>, message: impl Into<String>) -> Diagnostic {
+    pub(crate) fn new(path: impl Into<String>, message: impl Into<String>) -> Diagnostic {
         Diagnostic {
             path: path.into(),
             message: message.into(),
@@ -1329,6 +1380,7 @@ impl Comp {
         for node in &self.nodes {
             match &node.kind {
                 NodeKind::Rig { .. } => note("a bone rig"),
+                NodeKind::Audio { .. } => note("an audio reaction"),
                 NodeKind::Path { boolean, taper, .. } => {
                     note("a vector path");
                     if boolean.is_some() {
@@ -1739,6 +1791,33 @@ impl Comp {
                             format!(
                                 "the bone carries a node called {id:?} that is not on the comp"
                             ),
+                        ));
+                    }
+                }
+            }
+            if let NodeKind::Audio { asset, bindings } = &node.kind {
+                if !self.assets.contains_key(asset) {
+                    found.push(Diagnostic::new(
+                        format!("/nodes/{i}/asset"),
+                        format!(
+                            "the audio reaction names an asset {asset:?} the comp does not carry"
+                        ),
+                    ));
+                }
+                for (b, binding) in bindings.iter().enumerate() {
+                    if self.node(&binding.node).is_none() {
+                        found.push(Diagnostic::new(
+                            format!("/nodes/{i}/bindings/{b}/node"),
+                            format!(
+                                "the binding drives a node called {:?} that is not on the comp",
+                                binding.node
+                            ),
+                        ));
+                    }
+                    if binding.track.is_empty() {
+                        found.push(Diagnostic::new(
+                            format!("/nodes/{i}/bindings/{b}/track"),
+                            "a binding with no track name drives nothing",
                         ));
                     }
                 }

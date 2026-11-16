@@ -193,6 +193,11 @@ impl CompEngine for Native {
         if let Some(hit) = bake_cache_hit(dir, comp, request, EngineKind::Native, &version) {
             return Ok(hit);
         }
+        // An audio reaction expands into ordinary tracks before anything
+        // renders: the bindings become keys, one a frame, and every
+        // engine downstream reads them as keyframes.
+        let expanded = crate::audio::expand(comp, &source_dir)?;
+        let comp = &expanded;
         self.register_font_assets(comp, &source_dir);
         let (width, height) = (request.width(comp), request.height(comp));
         let fps = request.fps(comp);

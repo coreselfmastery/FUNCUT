@@ -985,9 +985,10 @@ impl Scene<'_> {
     /// What a node draws, before any placing.
     fn content_of(&mut self, node: &Node, at: f64, depth: usize) -> Content {
         match &node.kind {
-            NodeKind::Group { .. } | NodeKind::Adjustment | NodeKind::Camera { .. } => {
-                Content::Nothing
-            }
+            NodeKind::Group { .. }
+            | NodeKind::Adjustment
+            | NodeKind::Camera { .. }
+            | NodeKind::Audio { .. } => Content::Nothing,
             NodeKind::Rig {
                 bones,
                 fill,

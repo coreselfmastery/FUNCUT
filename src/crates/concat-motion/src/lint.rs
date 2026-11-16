@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
-//! The lint: five families of rules, every finding carrying a stable code.
+//! The lint: six families of rules, every finding carrying a stable code.
 //!
 //! The motion principles ([`crate::discipline`], now [`sentences`] here) were
 //! the first family: an opinion about curves, said as a sentence. What a comp
@@ -40,7 +40,9 @@
 //!   disk, no reel, just the document;
 //! - [`audit_assets`]: the asset family, which has to look at the files;
 //! - [`audit_sequence`]: the sequence-level timing family, which has to look
-//!   at the reel the scenes make together.
+//!   at the reel the scenes make together;
+//! - [`audit_with_accessibility`]: the optional platform safe-zone and text-contrast
+//!   family, selected for a specific delivery profile.
 
 use std::collections::BTreeMap;
 use std::path::Path;

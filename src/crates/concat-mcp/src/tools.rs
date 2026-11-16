@@ -1062,7 +1062,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "voice_signals",
             title: "Read the voiceover as a score",
-            description: "The voiceover read as a score: loudness, pauses, rate, emphasis, speakers, entities, per-signal confidence; entitiesAvailable says whether the NER ear answered.",
+            description: "The voiceover read as a score: loudness, pauses, rate, emphasis, speakers, entities, per-signal confidence; a lone audio path borrows the file's own transcript from the analysis registry.",
             read_only: true,
             destructive: false,
             idempotent: true,
@@ -2642,7 +2642,7 @@ fn run(tool: &Tool, arguments: Value, context: Context<'_>) -> Result<Outcome, A
         Action::CraftCritique => crate::sense::craft_critique(arguments, backend),
         Action::LocalVlm => crate::sense::local_vlm(arguments),
         Action::Emotion => crate::sense::emotion(arguments, backend),
-        Action::VoiceSignals => crate::sense::voice_signals(arguments),
+        Action::VoiceSignals => crate::sense::voice_signals(arguments, backend),
         Action::Sense(name) => crate::sense::sense_family(name, arguments),
         Action::SenseFamily(family) => crate::sense::sense_family_action(family, arguments),
         Action::CreativeBrief => crate::sense::creative_brief(arguments, backend),

@@ -573,6 +573,19 @@ pub enum NodeKind {
         /// point for point where they do not. `None` never morphs.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         morph: Option<Vec<PathCommand>>,
+        /// A second outline this one is combined with before it draws:
+        /// the union, difference, intersection or exclusive-or of the
+        /// two, the way a logo mark is cut from two shapes. `None`
+        /// draws the outline alone.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        boolean: Option<BooleanCombine>,
+        /// The stroke's variable width, when it is not the constant
+        /// `stroke.width`: tapered ends, a swelling middle, an arrow
+        /// head where the outline lands. `None` strokes the whole
+        /// outline at one width. A tapered stroke ignores `dash`, and
+        /// only draws when `stroke` is set - it is the stroke.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        taper: Option<StrokeTaper>,
     },
     /// An adjustment: a span of time whose `effects` are applied to
     /// everything painted beneath it in this comp, the way a colourist
@@ -782,6 +795,68 @@ pub struct Stroke {
     pub color: Rgba,
     /// Width in pixels, centred on the outline.
     pub width: f64,
+}
+
+/// Two outlines combined into one, as a path node carries the second.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct BooleanCombine {
+    /// The second outline, in the node's own pixels.
+    pub operand: Vec<PathCommand>,
+    /// How the two combine.
+    #[serde(default)]
+    pub op: BooleanOp,
+}
+
+/// The boolean operations two outlines combine by.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BooleanOp {
+    /// Both outlines' area, as one shape.
+    #[default]
+    Union,
+    /// The subject's area with the operand's taken out.
+    Subtract,
+    /// Only the area the two share.
+    Intersect,
+    /// The area of either, minus the area of both.
+    Xor,
+}
+
+/// A stroke's variable width: the profile its ribbon carries along the
+/// outline.
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+pub struct StrokeTaper {
+    /// The width multiplier where the outline starts: `0` is a pin
+    /// tip, `1` the stroke's own width.
+    #[serde(default = "one")]
+    pub start: f64,
+    /// The width multiplier where the outline ends.
+    #[serde(default = "one")]
+    pub end: f64,
+    /// An arrow head at the outline's end: its length and width as
+    /// multiples of the stroke's own width. `None` ends as the profile
+    /// says, plainly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arrow: Option<ArrowHead>,
+}
+
+/// An arrow head's own size, in multiples of the stroke's width.
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+pub struct ArrowHead {
+    /// How far the head reaches past the outline's end.
+    #[serde(default = "two")]
+    pub length: f64,
+    /// How wide the head's flanks stand apart.
+    #[serde(default = "three")]
+    pub width: f64,
+}
+
+fn two() -> f64 {
+    2.0
+}
+
+fn three() -> f64 {
+    3.0
 }
 
 /// One command of a path.
@@ -1234,7 +1309,15 @@ impl Comp {
         };
         for node in &self.nodes {
             match &node.kind {
-                NodeKind::Path { .. } => note("a vector path"),
+                NodeKind::Path { boolean, taper, .. } => {
+                    note("a vector path");
+                    if boolean.is_some() {
+                        note("a boolean path");
+                    }
+                    if taper.is_some() {
+                        note("a tapered stroke");
+                    }
+                }
                 NodeKind::Adjustment => note("an adjustment layer"),
                 NodeKind::Text(inner) => {
                     if inner.on_path.is_some() {
@@ -1553,6 +1636,8 @@ impl Comp {
                 commands,
                 morph,
                 trim,
+                boolean,
+                taper,
                 ..
             } = &node.kind
             {
@@ -1587,6 +1672,29 @@ impl Comp {
                             ),
                         );
                     }
+                }
+                if let Some(combine) = boolean
+                    && combine.operand.is_empty()
+                {
+                    found.push(Diagnostic::new(
+                        format!("/nodes/{i}/boolean/operand"),
+                        "a boolean operand with no commands combines nothing",
+                    ));
+                }
+                if let Some(taper) = taper
+                    && taper
+                        .arrow
+                        .is_some_and(|head| head.length <= 0.0 || head.width <= 0.0)
+                {
+                    found.push(
+                        Diagnostic::new(
+                            format!("/nodes/{i}/taper/arrow"),
+                            "an arrow head needs a length and a width above zero",
+                        )
+                        .with_help(
+                            "both are multiples of the stroke's own width - length 2, width 3 reads well",
+                        ),
+                    );
                 }
             }
             // A matte names another node, and the pair is a stencil: the
@@ -2639,6 +2747,8 @@ mod phase1_tests {
                 dash: None,
                 trim: None,
                 morph: None,
+                boolean: None,
+                taper: None,
             },
         )
     }

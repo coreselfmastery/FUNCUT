@@ -89,6 +89,10 @@ enum Content {
         /// true for rectangles and ellipses, false for a path, which is
         /// an outline first.
         default_fill: bool,
+        /// A tapered stroke's ribbon, drawn as a filled polygon in
+        /// addition to the shape's own fill: the stroke it replaces.
+        /// Boxed to keep the variant from dwarfing the others.
+        ribbon: Option<Box<(tiny_skia::Path, Rgba)>>,
     },
     /// Text, as the passes that composite it.
     Text(Box<text::TextPasses>),
@@ -574,6 +578,7 @@ impl Scene<'_> {
                 fill,
                 stroke,
                 default_fill,
+                ribbon,
             } => {
                 self.draw_shape(
                     &mut layer,
@@ -583,6 +588,19 @@ impl Scene<'_> {
                     stroke.as_ref(),
                     default_fill,
                 );
+                // A tapered stroke is a filled polygon, not a stroke:
+                // the ribbon paints after the shape's own fill, the way
+                // the stroke it replaces would have.
+                if let Some((ribbon, color)) = ribbon.as_deref() {
+                    self.draw_shape(
+                        &mut layer,
+                        ribbon,
+                        &world,
+                        Some(&Paint::Solid { color: *color }),
+                        None,
+                        false,
+                    );
+                }
             }
             Content::Text(passes) => {
                 // The canvas the text was rendered into maps onto the
@@ -907,6 +925,7 @@ impl Scene<'_> {
                         path,
                         fill: fill.clone(),
                         stroke: None,
+                        ribbon: None,
                         default_fill: true,
                     },
                     None => {
@@ -929,6 +948,7 @@ impl Scene<'_> {
                         path,
                         fill: fill.clone(),
                         stroke: None,
+                        ribbon: None,
                         default_fill: true,
                     },
                     None => {
@@ -945,6 +965,8 @@ impl Scene<'_> {
                 dash,
                 trim,
                 morph,
+                boolean,
+                taper,
             } => {
                 let mut commands = commands.clone();
                 if let Some(target) = morph
@@ -955,6 +977,13 @@ impl Scene<'_> {
                         target,
                         t_of(node, "morph", at, self.comp.duration),
                     );
+                }
+                // A boolean combine folds the second outline in before
+                // the trim narrows the walk: the cut shape is what gets
+                // trimmed, not the two shapes each on their own.
+                if let Some(combine) = boolean {
+                    commands =
+                        crate::native::boolean::combine(&commands, &combine.operand, combine.op);
                 }
                 // A trim track moves the window the field opens: either
                 // one is enough, and the track's value wins.
@@ -979,14 +1008,35 @@ impl Scene<'_> {
                     (vec![on * self.scale, off * self.scale], offset * self.scale)
                 });
                 match shapes::path_of(&commands) {
-                    Some(path) => Content::Shape {
-                        path,
-                        fill: fill.clone(),
-                        stroke: stroke
-                            .as_ref()
-                            .map(|stroke| (stroke.color, stroke.width * self.scale, dashing)),
-                        default_fill: false,
-                    },
+                    Some(path) => {
+                        // A tapered stroke is a ribbon - a filled polygon
+                        // the width profile carries - so the stroke it
+                        // replaces steps aside for it.
+                        let ribbon = match (stroke.as_ref(), taper) {
+                            (Some(stroke), Some(taper)) => crate::native::taper::ribbon(
+                                &commands,
+                                stroke.width * self.scale,
+                                taper,
+                            )
+                            .and_then(|commands| shapes::path_of(&commands))
+                            .map(|path| Box::new((path, stroke.color))),
+                            _ => None,
+                        };
+                        let stroked = if ribbon.is_some() {
+                            None
+                        } else {
+                            stroke.as_ref().map(|stroke| {
+                                (stroke.color, stroke.width * self.scale, dashing.clone())
+                            })
+                        };
+                        Content::Shape {
+                            path,
+                            fill: fill.clone(),
+                            stroke: stroked,
+                            default_fill: false,
+                            ribbon,
+                        }
+                    }
                     None => {
                         self.warnings.push(format!(
                             "node {:?}: its path has no commands that draw",

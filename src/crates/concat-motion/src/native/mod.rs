@@ -30,10 +30,12 @@
 //! text pinned across machines pins the font as an asset, the same
 //! rule titles follow.
 
+mod boolean;
 mod images;
 mod raster;
 mod scene;
 mod shapes;
+mod taper;
 mod text;
 
 use std::collections::HashSet;
@@ -726,6 +728,8 @@ mod tests {
                 dash: None,
                 trim: None,
                 morph: None,
+                boolean: None,
+                taper: None,
             },
         );
         let comp = comp_of("mark", vec![path]);
@@ -761,6 +765,8 @@ mod tests {
                     dash: None,
                     trim,
                     morph: None,
+                    boolean: None,
+                    taper: None,
                 },
             );
             node.tracks.insert(
@@ -805,6 +811,8 @@ mod tests {
                             point: Point { x: 56.0, y: 8.0 },
                         },
                     ]),
+                    boolean: None,
+                    taper: None,
                 },
             );
             node.tracks.insert(
@@ -1675,5 +1683,114 @@ mod tests {
             blurred_frame.data(),
             "the moving node smears where the plain frame does not"
         );
+    }
+
+    /// A boolean cut takes a bite out of a filled square: the middle
+    /// goes, the rim stays.
+    #[test]
+    fn a_boolean_cut_takes_a_bite() {
+        let square = |x0: f64, y0: f64, size: f64| {
+            vec![
+                crate::comp::PathCommand::MoveTo {
+                    point: Point { x: x0, y: y0 },
+                },
+                crate::comp::PathCommand::LineTo {
+                    point: Point {
+                        x: x0 + size,
+                        y: y0,
+                    },
+                },
+                crate::comp::PathCommand::LineTo {
+                    point: Point {
+                        x: x0 + size,
+                        y: y0 + size,
+                    },
+                },
+                crate::comp::PathCommand::LineTo {
+                    point: Point {
+                        x: x0,
+                        y: y0 + size,
+                    },
+                },
+                crate::comp::PathCommand::Close,
+            ]
+        };
+        let mark = node(
+            "mark",
+            NodeKind::Path {
+                commands: square(8.0, 8.0, 48.0),
+                fill: Some(Paint::Solid {
+                    color: Rgba::new(1.0, 0.5, 0.0, 1.0),
+                }),
+                stroke: None,
+                dash: None,
+                trim: None,
+                morph: None,
+                boolean: Some(crate::comp::BooleanCombine {
+                    operand: square(24.0, 16.0, 16.0),
+                    op: crate::comp::BooleanOp::Subtract,
+                }),
+                taper: None,
+            },
+        );
+        let comp = comp_of("cut", vec![mark]);
+        let (_, frame) = first_frame(&comp);
+        // The rim of the mark is orange, the bitten middle is not.
+        let rim = frame.pixel(12, 24).unwrap();
+        assert!(rim.red() > 200 && rim.green() > 60, "{rim:?}");
+        let below = frame.pixel(32, 40).unwrap();
+        assert!(below.red() > 200 && below.green() > 60, "{below:?}");
+        let bite = frame.pixel(32, 16).unwrap();
+        assert_eq!(bite.alpha(), 0, "{bite:?}");
+    }
+
+    /// A tapered stroke grows from its tip and lands an arrow head:
+    /// thin where it starts, fat where it ends, flanked at the landing.
+    #[test]
+    fn a_tapered_stroke_grows_and_lands() {
+        let arrow = node(
+            "arrow",
+            NodeKind::Path {
+                commands: vec![
+                    crate::comp::PathCommand::MoveTo {
+                        point: Point { x: 4.0, y: 24.0 },
+                    },
+                    crate::comp::PathCommand::LineTo {
+                        point: Point { x: 56.0, y: 24.0 },
+                    },
+                ],
+                fill: None,
+                stroke: Some(Stroke {
+                    color: Rgba::new(1.0, 0.0, 0.0, 1.0),
+                    width: 4.0,
+                }),
+                dash: None,
+                trim: None,
+                morph: None,
+                boolean: None,
+                taper: Some(crate::comp::StrokeTaper {
+                    start: 0.0,
+                    end: 1.0,
+                    arrow: Some(crate::comp::ArrowHead {
+                        length: 1.5,
+                        width: 3.0,
+                    }),
+                }),
+            },
+        );
+        let comp = comp_of("arrow", vec![arrow]);
+        let (_, frame) = first_frame(&comp);
+        // The tip at x=4 is a point: nothing to draw a pixel or two in.
+        let tip = frame.pixel(5, 24).unwrap();
+        assert_eq!(tip.alpha(), 0, "{tip:?}");
+        // The tail runs at the stroke's whole width.
+        let tail = frame.pixel(54, 24).unwrap();
+        assert!(tail.red() > 200, "{tail:?}");
+        // The head flanks past the ribbon's own width: the triangle's
+        // base (x=56) spans 18..=30 where the ribbon spans 22..=26, so
+        // a pixel one step in from the base, outside the ribbon, is
+        // the head's own ink.
+        let flank = frame.pixel(58, 27).unwrap();
+        assert!(flank.red() > 200, "{flank:?}");
     }
 }

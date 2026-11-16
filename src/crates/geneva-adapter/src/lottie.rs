@@ -686,6 +686,8 @@ impl<'a> Walk<'a> {
                             dash: None,
                             trim: None,
                             morph: None,
+                            boolean: None,
+                            taper: None,
                         },
                     );
                     node.parent = Some(owner.into());

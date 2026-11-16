@@ -97,6 +97,11 @@ gltf = { version = "1", default-features = false, features = ["import"], optiona
 # Glyph outlines for 3D extruded typography, behind the scene3d feature:
 # the same parser every Rust font stack uses, no rasterizer attached.
 ttf-parser = { version = "0.25", optional = true }
+# Boolean vector ops: the union, difference, intersection and xor of
+# two outlines, on an integer grid so the result is exact and
+# reproducible frame to frame. lyon carries no stable boolean ops, so
+# the path work leans on this instead. Pure Rust, no system libraries.
+i_overlay = { version = "9.2", default-features = false }
 
 [lints]
 workspace = true

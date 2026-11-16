@@ -2580,6 +2580,8 @@ mod tests {
         comp.nodes[0].kind = NodeKind::Path {
             trim: None,
             morph: None,
+            boolean: None,
+            taper: None,
             commands: vec![PathCommand::MoveTo {
                 point: crate::comp::Point::new(0.0, 0.0),
             }],

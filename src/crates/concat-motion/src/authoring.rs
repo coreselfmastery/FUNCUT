@@ -1333,6 +1333,7 @@ impl CompSummary {
                         NodeKind::Composition { .. } => ("composition", None),
                         NodeKind::Camera { .. } => ("camera", None),
                         NodeKind::Rig { .. } => ("rig", None),
+                        NodeKind::Audio { .. } => ("audio", None),
                     };
                     NodeSummary {
                         id: node.id.clone(),

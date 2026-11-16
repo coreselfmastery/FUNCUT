@@ -1795,6 +1795,14 @@ fn source_of(comp: &Comp, node: &Node, scope: &str, warnings: &mut Vec<String>) 
             ));
             None
         }
+        NodeKind::Audio { .. } => {
+            warnings.push(format!(
+                "node {:?} is an audio reaction, which the flattened timeline cannot drive; the \
+                 comp routes to the native engine for it",
+                node.id
+            ));
+            None
+        }
         NodeKind::Rect {
             width,
             height,

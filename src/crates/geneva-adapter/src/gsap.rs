@@ -590,11 +590,7 @@ fn stagger_offsets(tween: &Json, count: usize, index: usize, notes: &mut Vec<Str
 /// and anything else is nothing.
 fn parse_window(said: &str) -> Option<(f64, f64)> {
     let percent = |token: &str| -> Option<f64> {
-        let value = token
-            .strip_suffix('%')?
-            .trim()
-            .parse::<f64>()
-            .ok()?;
+        let value = token.strip_suffix('%')?.trim().parse::<f64>().ok()?;
         (value.is_finite() && (0.0..=100.0).contains(&value)).then_some(value / 100.0)
     };
     let mut tokens = said.split_whitespace();

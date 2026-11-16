@@ -528,6 +528,20 @@ impl ForgePane {
                 unsafe { std::env::set_var(name, value.trim()) };
             }
         }
+        // The live stock shelves' keys ride along the same road: with a
+        // Pexels or Pixabay key typed once in the Stock page's settings,
+        // the gather stage shops the rights-cleared shelves with nothing
+        // else configured. The same safety argument, the same thread,
+        // the same precedence - an exported variable still wins.
+        let stock = &studio.prefs.stock;
+        for (name, value) in [
+            ("PEXELS_API_KEY", &stock.pexels),
+            ("PIXABAY_API_KEY", &stock.pixabay),
+        ] {
+            if !value.trim().is_empty() && std::env::var_os(name).is_none() {
+                unsafe { std::env::set_var(name, value.trim()) };
+            }
+        }
         // The window's own server is the backend: the pane is inside the
         // window, and the server serves the sibling the way it serves any
         // agent's - the same surface a forge run drives.
@@ -1250,9 +1264,7 @@ fn build_voiceover_sibling(
 /// invisible to it - the agent was told to set one up when one was
 /// already active, and the quality loop started a step behind.
 fn hosted_critic_ready(studio: &Studio) -> bool {
-    if std::env::var("FUNCUT_VLM_ENDPOINT").is_ok()
-        || std::env::var("FUNCUT_VLM_API_KEY").is_ok()
-    {
+    if std::env::var("FUNCUT_VLM_ENDPOINT").is_ok() || std::env::var("FUNCUT_VLM_API_KEY").is_ok() {
         return true;
     }
     // A provider key the page keeps, or one already exported, is a hosted

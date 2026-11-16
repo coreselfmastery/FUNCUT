@@ -2423,6 +2423,22 @@ export component MediaPane inherits Rectangle {
                             current: OpenVid.source == 3;
                             clicked => { OpenVid.source = 3; OpenVid.search(OpenVid.query, OpenVid.source, OpenVid.shape, OpenVid.duration, OpenVid.quality, OpenVid.camera, OpenVid.order); }
                         }
+                        // The live shelves: the providers' own APIs, whose
+                        // clips carry a licence a monetized edit stands on.
+                        // They need a key rather than an index, so they are
+                        // picks beside the dataset's own, not replacements.
+                        if root.openvid-shelves-open: CategoryRow {
+                            height: 24px;
+                            label: I18n.t("openvid.pexelsLive");
+                            current: OpenVid.source == 4;
+                            clicked => { OpenVid.source = 4; OpenVid.search(OpenVid.query, OpenVid.source, OpenVid.shape, OpenVid.duration, OpenVid.quality, OpenVid.camera, OpenVid.order); }
+                        }
+                        if root.openvid-shelves-open: CategoryRow {
+                            height: 24px;
+                            label: I18n.t("openvid.pixabayLive");
+                            current: OpenVid.source == 5;
+                            clicked => { OpenVid.source = 5; OpenVid.search(OpenVid.query, OpenVid.source, OpenVid.shape, OpenVid.duration, OpenVid.quality, OpenVid.camera, OpenVid.order); }
+                        }
                         CategoryHeading {
                             height: 26px;
                             title: I18n.t("openvid.shape");
@@ -3003,11 +3019,40 @@ export component MediaPane inherits Rectangle {
                         // Enter is just a pause in the typing.
                     }
 
+                    // The live shelf's key: the one thing a live search
+                    // needs that the local one does not. Held in the
+                    // settings, saved as it is typed, and never echoed
+                    // anywhere but into the provider's own request.
+                    if OpenVid.live: VerticalLayout {
+                        spacing: 4px;
+
+                        SearchField {
+                            placeholder: I18n.t("openvid.keyPlaceholder");
+                            text: OpenVid.source == 4 ? OpenVid.pexels-key : OpenVid.pixabay-key;
+                            edited(text) => {
+                                OpenVid.stock-key(
+                                    OpenVid.source == 4 ? "pexels" : "pixabay",
+                                    text);
+                            }
+                        }
+
+                        Text {
+                            text: I18n.t("openvid.keyNote");
+                            color: Theme.fg-muted;
+                            font-size: Theme.fs-xs;
+                            wrap: word-wrap;
+                        }
+                    }
+
                     // The narrowing that is not words. Marked rather than
                     // worded where a word costs more room than it earns;
                     // the camera filter is worded because its words are
-                    // the library's own and cannot be a mark.
-                    HorizontalLayout {
+                    // the library's own and cannot be a mark. The live
+                    // shelves carry none of these signals - their clips
+                    // come without an aesthetic score, a length filter or
+                    // a camera motion - so the asking is words and frame
+                    // shape alone, said honestly by absence.
+                    if !OpenVid.live: HorizontalLayout {
                         spacing: 4px;
                         Select {
                             horizontal-stretch: 0;
@@ -3047,10 +3092,12 @@ export component MediaPane inherits Rectangle {
                     }
 
                     // What stands between the person and the library,
-                    // when something does.
-                    if OpenVid.state != 2: OpenVidStatus { }
+                    // when something does. The live shelves stand on their
+                    // own feet: the index download is the local one's ask,
+                    // not theirs.
+                    if OpenVid.state != 2 && !OpenVid.live: OpenVidStatus { }
 
-                    if OpenVid.state == 2: VerticalLayout {
+                    if OpenVid.state == 2 || OpenVid.live: VerticalLayout {
                         spacing: 8px;
 
                         // The honest word about the shape filter, shown
@@ -3058,8 +3105,10 @@ export component MediaPane inherits Rectangle {
                         // shelves are 512x512 and the WebVid shelf is
                         // 720p/1080p landscape, each said so by its own
                         // sampled headers, and a shape nobody has measured
-                        // is a shape nobody can filter by.
-                        if OpenVid.shape == 2 || OpenVid.shape == 3: Text {
+                        // is a shape nobody can filter by. The live shelves'
+                        // shape is the provider's own orientation, so their
+                        // note is not this one.
+                        if (OpenVid.shape == 2 || OpenVid.shape == 3) && !OpenVid.live: Text {
                             text: I18n.t("openvid.shapeNote");
                             color: Theme.fg-muted;
                             font-size: Theme.fs-sm;

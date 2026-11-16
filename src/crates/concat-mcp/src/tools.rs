@@ -464,6 +464,29 @@ pub fn catalogue() -> Vec<Tool> {
             Raw,
         ),
         method(
+            "stock_search",
+            "Search live stock (Pexels, Pixabay)",
+            "Search the live rights-cleared shelves (Pexels, Pixabay) by words; every hit carries the licence commercial use stands on. A missing key is a named refusal, not an empty page.",
+            "stock.search",
+            Raw,
+        )
+        .reading(),
+        method(
+            "stock_fetch",
+            "Fetch a live-stock clip",
+            "Fetch one hit's MP4 into the app's cache and return its localPath; adds nothing to any project.",
+            "stock.fetch",
+            Raw,
+        )
+        .idempotent(),
+        method(
+            "stock_import",
+            "Import a live-stock clip",
+            "Fetch a live-shelf hit and add it to a project's bin, copied into its own stock folder; monetized is served - the licence travels in the reply.",
+            "stock.import",
+            Raw,
+        ),
+        method(
             "sounds_search",
             "Search the sound library",
             "Search the bundled CC0 sound shelf (530 effects) by words, category and length; candidates carry ids, durations and licenses.",
@@ -1044,7 +1067,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "local_vlm",
             title: "Local or hosted vision critic",
-            description: "Status, first-use setup, or hosted configure (groq/gemini/zai/openrouter/custom) of the vision critic craft_critique grades frames with; providers lists what an endpoint serves, clear removes the saved config.",
+            description: "Status, setup, or hosted configure (groq/gemini/zai/openrouter/custom) of the vision critic craft_critique grades frames with; providers lists endpoints, clear drops the config.",
             read_only: false,
             destructive: false,
             idempotent: true,
@@ -1178,6 +1201,11 @@ impl Tool {
             // healthy work mid-flight.
             "openvid_search",
             "openvid_import",
+            // The live shelves' own search and import: one API round trip
+            // through whatever proxy the machine names, the same class
+            // of network-bound work the local index's own calls keep.
+            "stock_search",
+            "stock_import",
             "bgm_import",
             // The synchronous fetches: a whole clip, a whole track, a
             // sticker's PNG or a sound's file, downloaded inside the call
@@ -1185,6 +1213,7 @@ impl Tool {
             // with the download still healthy; the tool's own work has
             // no inner deadline, so this is the only net it has.
             "openvid_fetch",
+            "stock_fetch",
             "bgm_fetch",
             "magick_fetch",
             "magick_add",
@@ -4588,6 +4617,18 @@ mod tests {
             (
                 "openvid_import",
                 json!({ "path": "/tmp/Cut", "ids": [820338756299i64], "start": 0.0 }),
+            ),
+            (
+                "stock_search",
+                json!({ "provider": "pexels", "query": "ocean waves sunset", "orientation": "vertical", "limit": 12 }),
+            ),
+            (
+                "stock_fetch",
+                json!({ "provider": "pexels", "id": "2499611", "url": "https://videos.pexels.com/files/hd.mp4" }),
+            ),
+            (
+                "stock_import",
+                json!({ "path": "/tmp/Cut", "provider": "pixabay", "id": "5", "url": "https://cdn.pixabay.com/video/2023/large.mp4", "start": 0.0 }),
             ),
             (
                 "sounds_search",

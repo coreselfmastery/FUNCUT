@@ -22,6 +22,7 @@ use std::sync::atomic::AtomicBool;
 
 use concat_host::AppDirs;
 use concat_host::openvid::{self as library, Found, Orientation, Query, Sort, Source};
+use concat_host::stock::{self as live, Provider};
 
 use crate::i18n::{t, tf};
 use crate::panes::Msg;
@@ -68,6 +69,14 @@ pub enum OpenvidMsg {
     /// arrives after a newer search was asked is dropped rather than
     /// laying its results over the newer one's.
     Searched(Result<Found, String>, bool, u64),
+    /// The live shelf's answer: the same shape as [`OpenvidMsg::Searched`],
+    /// for a Pexels or Pixabay search the page ran with the settings'
+    /// own key - the epoch guard the local search keeps applies to it
+    /// exactly the same way.
+    LiveSearched(Result<live::Found, String>, bool, u64),
+    /// A live-shelf key field was edited: which provider, and what the
+    /// field says now.
+    StockKey { provider: String, key: String },
     /// The next page of what the last search found.
     More,
     /// A card dragged onto the lanes: fetch it if need be, then lay it
@@ -103,6 +112,20 @@ pub struct OpenvidPane {
     pub results: Vec<library::Clip>,
     /// How many clips match in all, this page aside.
     pub total: u64,
+    /// The live shelf's hits, when the page is shopping one: Pexels or
+    /// Pixabay live, rights-cleared, the key from the settings. A live
+    /// search and a local one never share the page: whichever ran last
+    /// is what the rows show.
+    pub live: Vec<live::Hit>,
+    /// How many the live shelf holds, this page aside.
+    pub live_total: u64,
+    /// The live search the page ran, for More: the provider, the words,
+    /// the frame shape the words were narrowed by, and the page the next
+    /// ask wants.
+    live_last: Option<(Provider, String, Option<&'static str>, u32)>,
+    /// Whether the rows are the live shelf's (a key field and a live
+    /// shelf pick made them so) or the local index's.
+    live_mode: bool,
     /// A search or its next page is running.
     pub searching: bool,
     /// The searches asked so far, counted up as each is sent: the number
@@ -132,6 +155,10 @@ impl OpenvidPane {
             state: library::shared(dirs).status(),
             results: Vec::new(),
             total: 0,
+            live: Vec::new(),
+            live_total: 0,
+            live_last: None,
+            live_mode: false,
             searching: false,
             epoch: 0,
             last: None,
@@ -180,6 +207,41 @@ impl OpenvidPane {
                 camera,
                 order,
             } => {
+                // The live shelves: source 4 is Pexels live, 5 Pixabay
+                // live. The same filters the local search reads - the
+                // words, the frame shape - go to the provider's own
+                // dialect; the local index's own gates (the download
+                // state, the camera list) are the local index's.
+                if let Some(provider) = match source {
+                    4 => Some(Provider::Pexels),
+                    5 => Some(Provider::Pixabay),
+                    _ => None,
+                } {
+                    let key = match provider {
+                        Provider::Pexels => studio.prefs.stock.pexels.clone(),
+                        Provider::Pixabay => studio.prefs.stock.pixabay.clone(),
+                    };
+                    let words = query.trim().to_owned();
+                    let orientation = match shape {
+                        1 => Some("square"),
+                        2 => Some("vertical"),
+                        3 => Some("horizontal"),
+                        _ => None,
+                    };
+                    self.live_mode = true;
+                    self.live_last = Some((provider, words.clone(), orientation, 1));
+                    self.results.clear();
+                    // A fresh ask empties the page it is about to answer:
+                    // the stale rows are not the answer, and the searching
+                    // mark is the honest state until the shelf replies.
+                    self.live.clear();
+                    self.live_total = 0;
+                    self.search_live(provider, &words, 1, orientation, key, false);
+                    return;
+                }
+                self.live_mode = false;
+                self.live.clear();
+                self.live_last = None;
                 let search = Query {
                     text: (!query.trim().is_empty()).then(|| query.clone()),
                     source: match source {
@@ -233,8 +295,46 @@ impl OpenvidPane {
                 self.last = Some(search.clone());
                 self.search(search, false);
             }
+            OpenvidMsg::LiveSearched(result, appended, epoch) => {
+                if epoch != self.epoch {
+                    return; // A newer search was asked; this answer is late.
+                }
+                self.searching = false;
+                match result {
+                    Ok(found) => {
+                        self.live_total = found.total;
+                        if appended {
+                            self.live.extend(found.hits);
+                        } else {
+                            self.live = found.hits;
+                        }
+                    }
+                    // The live shelves' refusals are already words a
+                    // person can act on - a missing key names where to
+                    // set one, a refused key says so.
+                    Err(error) => studio.notify(&error, true),
+                }
+            }
+            OpenvidMsg::StockKey { provider, key } => {
+                let key = key.trim().to_owned();
+                match provider.as_str() {
+                    "pexels" => studio.prefs.stock.pexels = key,
+                    "pixabay" => studio.prefs.stock.pixabay = key,
+                    _ => return,
+                }
+                studio.prefs.save(&studio.host.dirs);
+            }
             OpenvidMsg::More => {
                 if self.searching {
+                    return;
+                }
+                if let Some((provider, words, shape, page)) = self.live_last.clone() {
+                    let key = match provider {
+                        Provider::Pexels => studio.prefs.stock.pexels.clone(),
+                        Provider::Pixabay => studio.prefs.stock.pixabay.clone(),
+                    };
+                    self.live_last = Some((provider, words.clone(), shape, page + 1));
+                    self.search_live(provider, &words, page + 1, shape, key, true);
                     return;
                 }
                 let Some(mut search) = self.last.clone() else {
@@ -348,18 +448,29 @@ impl OpenvidPane {
             }
             OpenvidMsg::Fetched(id, result, then) => {
                 self.fetching.remove(&id);
-                let Some(library) = self.library() else {
-                    return;
+                // A live-shelf card ("pexels:2499611") carries its name in
+                // the hit itself; a local one reads it out of the index.
+                let live = id.split_once(':');
+                let name = if let Some((_, hit_id)) = live {
+                    self.live
+                        .iter()
+                        .find(|hit| hit.id == hit_id)
+                        .map(|hit| hit.name.clone())
+                        .unwrap_or_default()
+                } else {
+                    let Some(library) = self.library() else {
+                        return;
+                    };
+                    let Ok(id_number) = id.parse::<i64>() else {
+                        return;
+                    };
+                    library
+                        .clip(id_number)
+                        .ok()
+                        .flatten()
+                        .map(|clip| clip.name)
+                        .unwrap_or_default()
                 };
-                let Ok(id_number) = id.parse::<i64>() else {
-                    return;
-                };
-                let name = library
-                    .clip(id_number)
-                    .ok()
-                    .flatten()
-                    .map(|clip| clip.name)
-                    .unwrap_or_default();
                 match result {
                     // The frame size is free now that the bytes are local,
                     // and the card that asked is redrawn with it. On the
@@ -368,12 +479,27 @@ impl OpenvidPane {
                     // the window's thread's work: it can hold the window
                     // for the read's whole timeout.
                     Ok(path) => {
-                        let _ = library.dims(id_number);
+                        if live.is_none() {
+                            if let Some(library) = self.library() {
+                                if let Ok(id_number) = id.parse::<i64>() {
+                                    let _ = library.dims(id_number);
+                                }
+                            }
+                        }
+                        // A live card's placement id is its card id with the
+                        // shelf's separator made file-safe: the file the
+                        // project keeps is named for the clip, and a colon
+                        // is not a character a name carries.
+                        let file_id = if live.is_some() {
+                            id.replace(':', "-")
+                        } else {
+                            id.clone()
+                        };
                         match then {
                             Then::Preview => studio.preview_file(&id, &name, &path),
-                            Then::Place => studio.place_openvid(&name, &id, &path),
+                            Then::Place => studio.place_openvid(&name, &file_id, &path),
                             Then::PlaceAt(track_id, start) => {
-                                studio.place_openvid_at(&name, &id, &path, track_id, start)
+                                studio.place_openvid_at(&name, &file_id, &path, track_id, start)
                             }
                         }
                     }
@@ -429,10 +555,57 @@ impl OpenvidPane {
         );
     }
 
+    /// Runs a live-shelf search on a worker: the same epoch guard the
+    /// local one keeps, so an answer that arrives after a newer ask was
+    /// made is dropped rather than laid over the newer one's. The key is
+    /// the settings' own; a missing one is already the refusal the
+    /// library words for a person.
+    fn search_live(
+        &mut self,
+        provider: Provider,
+        words: &str,
+        page: u32,
+        orientation: Option<&str>,
+        key: String,
+        appended: bool,
+    ) {
+        let Some(dirs) = self.dirs.clone() else {
+            return;
+        };
+        self.searching = true;
+        self.epoch += 1;
+        let epoch = self.epoch;
+        let words = words.to_owned();
+        let orientation = orientation.map(str::to_owned);
+        crate::host::spawn(
+            move || {
+                live::Library::shared(&dirs).search(
+                    provider,
+                    &words,
+                    PAGE,
+                    page,
+                    orientation.as_deref(),
+                    Some(&key),
+                )
+            },
+            move |studio, _, _, result| {
+                studio.handle(Msg::Openvid(OpenvidMsg::LiveSearched(
+                    result, appended, epoch,
+                )));
+            },
+        );
+    }
+
     /// A card's verb: the clip's bytes if they are not on this machine
     /// yet, then [`OpenvidMsg::Fetched`] with what they were for. A clip
     /// already on disk goes straight to its verb.
     fn take(&mut self, id: String, then: Then, studio: &mut Studio) {
+        // A live-shelf card's id is "<provider>:<hit>": the shelf's own
+        // bytes, from the URL the search page's hit carried.
+        if let Some((provider, hit_id)) = id.split_once(':') {
+            self.take_live(provider, hit_id, &id, then, studio);
+            return;
+        }
         let Some(library) = self.library() else {
             return;
         };
@@ -469,9 +642,77 @@ impl OpenvidPane {
         );
     }
 
+    /// The live card's verb: the hit's own URL fetched into the live
+    /// cache when the bytes are not on this machine yet, then the same
+    /// acts a local card's take lands in - a click previews, a plus lays
+    /// at the playhead, a drag places where it landed. The card's id
+    /// keeps its provider's name all the way to the placement, where it
+    /// is made file-safe before it names a file.
+    fn take_live(
+        &mut self,
+        provider_name: &str,
+        hit_id: &str,
+        card_id: &str,
+        then: Then,
+        studio: &mut Studio,
+    ) {
+        let Some(provider) = live::Provider::of(provider_name) else {
+            return;
+        };
+        let Some(dirs) = self.dirs.clone() else {
+            return;
+        };
+        let Some(hit) = self
+            .live
+            .iter()
+            .find(|hit| hit.provider == provider && hit.id == hit_id)
+            .cloned()
+        else {
+            return;
+        };
+        let library = live::Library::shared(&dirs);
+        let file_id = card_id.replace(':', "-");
+        if let Some(path) = library.fetched(provider, &hit.id) {
+            match then {
+                Then::Preview => studio.preview_file(card_id, &hit.name, &path),
+                Then::Place => studio.place_openvid(&hit.name, &file_id, &path),
+                Then::PlaceAt(track_id, start) => {
+                    studio.place_openvid_at(&hit.name, &file_id, &path, track_id, start)
+                }
+            }
+            return;
+        }
+        if self.fetching.contains_key(card_id) {
+            return;
+        }
+        self.fetching.insert(card_id.to_owned(), then.clone());
+        // The card's id is owned before the worker owns it: the answer
+        // arrives after this frame is gone, so nothing the closure keeps
+        // may point into it.
+        let card_id = card_id.to_owned();
+        let cancel = AtomicBool::new(false);
+        let url = hit.url.clone();
+        let hit_id = hit.id.clone();
+        crate::host::spawn(
+            move || library.fetch_url(provider, &hit_id, &url, &cancel),
+            move |studio, _, _, result| {
+                studio.handle(Msg::Openvid(OpenvidMsg::Fetched(card_id, result, then)));
+            },
+        );
+    }
+
     /// One result's name and seconds, for the ghost a drag shows while
     /// it crosses the lanes. `None` when the id is not on the page.
     pub fn summary(&self, id: &str) -> Option<(String, f64)> {
+        // A live-shelf card's name and seconds are the hit's own.
+        if let Some((provider, hit_id)) = id.split_once(':') {
+            let provider = live::Provider::of(provider)?;
+            return self
+                .live
+                .iter()
+                .find(|hit| hit.provider == provider && hit.id == hit_id)
+                .map(|hit| (hit.name.clone(), hit.seconds));
+        }
         let id = id.parse::<i64>().ok()?;
         self.results
             .iter()
@@ -479,9 +720,50 @@ impl OpenvidPane {
             .map(|clip| (clip.name.clone(), clip.seconds))
     }
 
+    /// Whether the rows are the live shelves' rather than the local
+    /// index's: the page's counts and its More follow the one in play.
+    pub fn live_mode(&self) -> bool {
+        self.live_mode
+    }
+
     /// The cards, as Slint shows them. Everything display-ready: the
     /// numbers arrive as words because a card is a picture of a clip.
     pub fn rows(&self) -> Vec<OpenvidCardData> {
+        // The live shelves' rows: the hit's own words and numbers, the
+        // live cache's own ready mark - the same picture of a clip the
+        // local rows are, said in the shelf's own terms. The aesthetic
+        // badge is empty here: the live shelves carry no such score, and
+        // a made-up number would be a lie where a picture asks for one.
+        if self.live_mode {
+            let library = self.dirs.as_ref().map(|dirs| live::Library::shared(dirs));
+            return self
+                .live
+                .iter()
+                .map(|hit| {
+                    let mut meta = format!("{:.1}s", hit.seconds);
+                    if hit.bytes > 0 {
+                        meta.push_str(&format!(" \u{00b7} {:.1} MB", hit.bytes as f64 / 1e6));
+                    }
+                    meta.push_str(&format!(" \u{00b7} {}\u{d7}{}", hit.width, hit.height));
+                    if let Some(fps) = hit.fps {
+                        meta.push_str(&format!(" \u{00b7} {:.0} fps", fps));
+                    }
+                    meta.push_str(&format!(" \u{00b7} {}", hit.provider.name()));
+                    let card_id = format!("{}:{}", hit.provider.name(), hit.id);
+                    OpenvidCardData {
+                        id: card_id.as_str().into(),
+                        name: hit.name.as_str().into(),
+                        caption: hit.caption.as_str().into(),
+                        meta: meta.into(),
+                        quality: String::new().into(),
+                        ready: library.is_some_and(|library| {
+                            library.fetched(hit.provider, &hit.id).is_some()
+                        }),
+                        busy: self.fetching.contains_key(&card_id),
+                    }
+                })
+                .collect();
+        }
         self.results
             .iter()
             .map(|clip| {
@@ -518,6 +800,10 @@ impl Default for OpenvidPane {
             state: library::Status::Missing,
             results: Vec::new(),
             total: 0,
+            live: Vec::new(),
+            live_total: 0,
+            live_last: None,
+            live_mode: false,
             searching: false,
             epoch: 0,
             last: None,
@@ -585,6 +871,14 @@ impl Studio {
     /// the same clip is always the same file and two different clips
     /// never share one.
     fn adopt_openvid(&mut self, name: &str, id: &str, path: &PathBuf) -> Result<String, String> {
+        // The id names the file the clip's copy lands in, so whatever
+        // road it came by it is made a name's own characters on its way
+        // in - a live card's shelf separator is not one of them, and a
+        // hand-made id with stranger ones is not either.
+        let id: String = id
+            .chars()
+            .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+            .collect::<String>();
         let project = self
             .session
             .as_ref()

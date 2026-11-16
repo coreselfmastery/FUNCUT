@@ -1590,6 +1590,17 @@ fn start(
         openvid.on_shown(on_window!(|state, on: bool| {
             state.handle(Msg::Openvid(OpenvidMsg::Shown(on)));
         }));
+        // A live-shelf key field was edited on the Stock page: which
+        // provider the field belongs to and what it says now, saved in
+        // the settings the moment it is typed.
+        openvid.on_stock_key(on_window!(
+            |state, provider: SharedString, key: SharedString| {
+                state.handle(Msg::Openvid(OpenvidMsg::StockKey {
+                    provider: provider.to_string(),
+                    key: key.to_string(),
+                }));
+            }
+        ));
 
         // ── the library's Music page ──
         let music = app.global::<crate::ui::Music>();

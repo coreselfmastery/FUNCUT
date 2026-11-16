@@ -29,6 +29,25 @@ the index semantic: always call `stock_contact_sheet` and look at real
 frames before importing. See `docs/STOCK_LICENSING.md` — OpenVid is a
 research dataset, not rights-cleared stock.
 
+### Stock clips (live shelves: Pexels, Pixabay)
+
+The `stock` tools are the other half of the stock story: the live APIs
+whose clips carry a licence that allows commercial use without
+attribution (the Pexels License and the Pixabay Content License — neither
+allows reselling the clips as stock, and the tools' refusals say so). A
+monetized project, which `openvid_import` refuses, is served here:
+`stock_search` with words and an orientation (`provider: "pexels"`,
+`query: "ocean waves sunset"`, `orientation: "vertical"`) → `stock_fetch`
+to pull one hit's MP4 into the app's cache → `stock_import` with `start`
+to copy it into the project and lay it on a lane as one undoable step, the
+licence travelling in the reply. One search and one fetch is a round trip
+each, through the machine's own proxy routing. The key is the
+provider's own (`PEXELS_API_KEY`, `PIXABAY_API_KEY`), taken from the
+call's `apiKey` argument or the environment; a missing key is a named
+refusal, not an empty page. Free keys at pexels.com/api and pixabay.com;
+the editor's Stock page keeps them in Settings and the AUTO EDIT run
+exports them for its gather stage.
+
 ### Sound effects
 
 The `sounds` tools search the built-in CC0 sound library this repository
@@ -591,7 +610,7 @@ Tools are named for what they do, and their argument schemas are generated from 
 | Projects | `project_list`, `project_create`, `project_open`, `project_save`, `project_close`, `project_set_video` |
 | Reading and plans | `timeline_read` (compact: lanes, clips in time order, media, ids), `timeline_seek` (scrubs the open window's playhead - window mode only; headless refuses), `collision_check` (every place two clips share a lane; `clean` when none), `project_get` (everything), `concat_version`, `plan_validate` (checks a director plan before edits) |
 | Media | `media_probe`, `media_import` |
-| Stock clips | `openvid_status`, `openvid_prepare`, `openvid_search`, `openvid_search_batch` (several queries, one call, the CLIP rerank riding along per query unless `rerank: false`), `openvid_get`, `openvid_fetch`, `openvid_import` |
+| Stock clips | `openvid_status`, `openvid_prepare`, `openvid_search`, `openvid_search_batch` (several queries, one call, the CLIP rerank riding along per query unless `rerank: false`), `openvid_get`, `openvid_fetch`, `openvid_import` — and the live rights-cleared shelves: `stock_search`, `stock_fetch`, `stock_import` (Pexels, Pixabay; commercial-use licences, a key each) |
 | Footage planning | `openvid_rank_for_slot` (rank a page against a slot's rich description: the CLIP second pass, the queries blended in at `tag_weight`, used ids and clips under the motion floor never returned, a hero slot asking for thirty), `footage_continuity` (the filled manifest read the way an editor scrubs - colour jumps, reversed travels, repeated scales, one-category runs, clips under their slot's motion floor - each flag naming its slot, rule and remedy) |
 | Sound effects | `sounds_search`, `sounds_add` |
 | Music | `bgm_status`, `bgm_prepare`, `bgm_search`, `bgm_fetch`, `bgm_import` |
@@ -634,7 +653,7 @@ For scripts that do not speak MCP, the same API is served as JSON-RPC lines on a
 Three switches - two off by default for a server started bare, and the allowlist already on for the server this repository's own `.forge/mcp.toml` declares:
 
 - **`--mcp-read-only`** (binary) or **`CONCAT_MCP_READ_ONLY=1`** (the app's `concat --mcp` and anything else that starts it): every tool that changes something is refused by name - an edit, an export, a stock import, the reel's render half. The reads stay, and `motion_reel` keeps its look halves (`plan`, `frame`, `sheet`): they change nothing outside the project's cache, and taking them away takes away the only way to see a design before committing to it.
-- **`--mcp-allow a,b,c|all`** (binary), **`--full-tools`** (binary) or **`CONCAT_MCP_ALLOW=a,b,c|all`**: the only tools this server serves - in `tools/list` and at `tools/call` alike. A tool not on the list is neither listed nor called, as if it were not there: the surface served is what the operator said, not what the build happens to carry. An operator who sets no list gets the **director's default** - 100 of the 110 tools, the creative loop the funcut-director skill documents plus its remedies (the library prepares, the model downloads) and the five sense family doors, the footage layer's three included (`openvid_rank_for_slot`, `footage_continuity`, `footage_plan_suggest`) and the playhead (`timeline_seek`); the ten left off are the ones a director never calls by surprise (`project_close`, `export_cancel`, the farm pair, the specialist motion reads, `track_subject`, `geneva_explain`). `CONCAT_MCP_ALLOW=all` (or `--full-tools`, or `--mcp-allow all`) serves the whole catalogue. `.forge/mcp.toml` starts the repo's own server with the director's list already set (its `[servers.transport.env]` table), and carries both that list and the whole-catalogue list as comments, ready to paste for a server started by hand.
+- **`--mcp-allow a,b,c|all`** (binary), **`--full-tools`** (binary) or **`CONCAT_MCP_ALLOW=a,b,c|all`**: the only tools this server serves - in `tools/list` and at `tools/call` alike. A tool not on the list is neither listed nor called, as if it were not there: the surface served is what the operator said, not what the build happens to carry. An operator who sets no list gets the **director's default** - 103 of the 113 tools, the creative loop the funcut-director skill documents plus its remedies (the library prepares, the model downloads) and the five sense family doors, the footage layer's three included (`openvid_rank_for_slot`, `footage_continuity`, `footage_plan_suggest`) and the playhead (`timeline_seek`); the ten left off are the ones a director never calls by surprise (`project_close`, `export_cancel`, the farm pair, the specialist motion reads, `track_subject`, `geneva_explain`). `CONCAT_MCP_ALLOW=all` (or `--full-tools`, or `--mcp-allow all`) serves the whole catalogue. `.forge/mcp.toml` starts the repo's own server with the director's list already set (its `[servers.transport.env]` table), and carries both that list and the whole-catalogue list as comments, ready to paste for a server started by hand.
 - **Per-tool timeouts**: every tool carries its own limit (`Tool::timeout_secs` - the VLM download and the overlay encode 1200 s, transcribe 900 s, exports and the sense family 600 s, the renders and watches 300 s, everything else 60 s), and a call that outlives it is cancelled and answered for at the deadline, with the limit in the message. The client-side `call_timeout_secs` stays as the ceiling over all of them; the engine's own calls are bounded a second time, per call, by the Geneva guard (see `docs/MOTION.md`).
 
 ## The reel contact sheet

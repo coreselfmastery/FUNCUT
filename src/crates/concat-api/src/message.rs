@@ -314,6 +314,81 @@ pub enum Request {
         monetized: bool,
     },
 
+    /// `stock.search`: the live rights-cleared shelves - Pexels and
+    /// Pixabay - searched with this machine's own key, over the machine's
+    /// own proxy routing. Every hit carries the licence its provider
+    /// grants (commercial use allowed, redistribution as stock refused),
+    /// so a monetized edit may import what it finds - the door OpenVid's
+    /// own import keeps shut. The key is `apiKey` when the caller hands
+    /// one, else the provider's own environment variable
+    /// (`PEXELS_API_KEY`, `PIXABAY_API_KEY`); without either the refusal
+    /// names both places the key could be.
+    #[serde(rename = "stock.search")]
+    StockSearch {
+        /// Which live shelf: "pexels" or "pixabay".
+        provider: String,
+        /// The words to find. Both providers treat them as their own
+        /// search does - Pexels matches them against tags and alt text,
+        /// Pixabay against its keyword set.
+        #[serde(default)]
+        query: Option<String>,
+        /// The frame shape to keep: "vertical", "horizontal" or
+        /// "square" - spelled the way `openvid.search`'s orientation
+        /// filter spells it, mapped to each provider's own dialect.
+        #[serde(default)]
+        orientation: Option<String>,
+        /// At most this many hits, 1-40; 20 when absent.
+        #[serde(default)]
+        limit: Option<u32>,
+        /// The providers' own page to fetch, 1-based; 1 when absent.
+        #[serde(default)]
+        page: Option<u32>,
+        /// The provider's API key, when the caller holds one; the
+        /// environment's own otherwise. Never echoed back.
+        #[serde(default)]
+        api_key: Option<String>,
+    },
+
+    /// `stock.fetch`: one clip from its own URL - the exact file the
+    /// search page described - into the app's own cache
+    /// (`<data>/stock/<provider>/`), where `stock.import` (or
+    /// `media.import` on the path) finds it. Nothing is added to any
+    /// project. A clip already cached answers as it lies.
+    #[serde(rename = "stock.fetch")]
+    StockFetch {
+        /// Which live shelf the clip is on: "pexels" or "pixabay".
+        provider: String,
+        /// The clip's id on that shelf, as `stock.search` gave it.
+        id: String,
+        /// The download URL `stock.search` gave for the chosen file.
+        url: String,
+    },
+
+    /// `stock.import`: fetches one clip (if its bytes are not on this
+    /// machine yet), copies it into an open project's own `stock`
+    /// folder, and imports it into the bin - with `start` it is also laid
+    /// on the timeline at that moment, as one undoable step. The live
+    /// shelves' licences allow commercial use, so a monetized edit is
+    /// served, not refused: the licence each clip carries travels in
+    /// the reply.
+    #[serde(rename = "stock.import")]
+    StockImport {
+        /// The project folder.
+        path: String,
+        /// Which live shelf the clip is on: "pexels" or "pixabay".
+        provider: String,
+        /// The clip's id on that shelf, as `stock.search` gave it.
+        id: String,
+        /// The download URL `stock.search` gave for the chosen file.
+        url: String,
+        /// Lay it on the timeline from this moment, in sequence.
+        #[serde(default)]
+        start: Option<f64>,
+        /// The lane to lay it on; the first lane with room when absent.
+        #[serde(default)]
+        track: Option<String>,
+    },
+
     /// Searches the built-in sound library - 530 CC0 sounds: whooshes,
     /// impacts, risers, ambiences, music beds, UI clicks, motion pops,
     /// notifications, keyboards, glitches, foley and writing - and returns
@@ -918,6 +993,12 @@ pub enum Reply {
     OpenvidClips(Vec<OpenvidClip>),
     /// [`Request::OpenvidImport`].
     OpenvidImported(OpenvidImport),
+    /// [`Request::StockSearch`].
+    StockFound(StockFound),
+    /// [`Request::StockFetch`].
+    StockFetched(StockFetched),
+    /// [`Request::StockImport`].
+    StockImported(StockImported),
     /// [`Request::SoundsSearch`].
     SoundsFound(SoundsFound),
     /// [`Request::SoundsAdd`].
@@ -1116,6 +1197,88 @@ pub struct OpenvidImport {
     /// The media ids the clips were given in the project's bin, in the
     /// order the ids were given in.
     pub media_ids: Vec<String>,
+    /// The project as it now stands.
+    pub view: Box<EditorView>,
+}
+
+/// What `stock.search` found, on the live rights-cleared shelves.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StockFound {
+    /// The hits, normalized out of the provider's own dialect: what they
+    /// show, how long they run, the file chosen for them, the licence
+    /// they carry.
+    pub hits: Vec<StockHit>,
+    /// How many match in all, this page aside.
+    pub total: u64,
+    /// Which shelf answered: "pexels" or "pixabay".
+    pub provider: String,
+    /// What the shelf's licence allows - the words every hit's own
+    /// licence field repeats, said once for the page.
+    pub license: String,
+}
+
+/// One clip of a live shelf, as every `stock` method hands it back.
+/// The `url` is the exact file the sizes describe - the thing `fetch`
+/// and `import` take back, so a hit and its verbs agree.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StockHit {
+    /// The clip's id on its shelf, and the id every verb takes back.
+    pub id: String,
+    /// Which live shelf: "pexels" or "pixabay".
+    pub provider: String,
+    /// What the clip shows, in the provider's own words.
+    pub caption: String,
+    /// A name for the bin: the caption's first words, as a file name
+    /// can carry them.
+    pub name: String,
+    /// How long the clip runs, seconds.
+    pub seconds: f64,
+    /// The chosen file's frame width.
+    pub width: u32,
+    /// The chosen file's frame height.
+    pub height: u32,
+    /// The chosen file's frame rate, when the provider said one.
+    pub fps: Option<f64>,
+    /// The download URL of the chosen file - the exact thing
+    /// `stock.fetch` and `stock.import` take.
+    pub url: String,
+    /// The provider's own thumbnail of the clip.
+    pub preview: String,
+    /// Who shot it, when the provider named them.
+    pub author: String,
+    /// The licence the clip carries, spelled by the shelf itself.
+    pub license: String,
+    /// The clip's MP4 is already in this machine's cache.
+    pub cached: bool,
+    /// Where it is, when it is: the cache path a second fetch answers
+    /// with without another round trip.
+    pub local_path: Option<String>,
+}
+
+/// What `stock.fetch` did.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StockFetched {
+    /// The clip's id on its shelf.
+    pub id: String,
+    /// Which live shelf: "pexels" or "pixabay".
+    pub provider: String,
+    /// Where the clip's MP4 landed on this machine.
+    pub path: String,
+    /// The bytes that landed, when the shelf's own headers said.
+    pub bytes: u64,
+}
+
+/// What `stock.import` did.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StockImported {
+    /// The media id the clip was given in the project's bin.
+    pub media_ids: Vec<String>,
+    /// The licence the clip carries, the words the import stands on.
+    pub license: String,
     /// The project as it now stands.
     pub view: Box<EditorView>,
 }

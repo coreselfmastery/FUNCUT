@@ -81,3 +81,13 @@ check/
 /sherpa/
 /sysroot/
 
+
+# The local build environment: the extracts scripts/setup-build-env.sh
+# fetches, and the Geneva sidecar deps.lock pulls in. Never committed.
+/geneva/
+/ffmpeg-dev/
+/ffmpeg.tar.xz
+/onnxruntime-linux-x64-*/
+/sherpa/
+/sysroot/
+/sysroot-extra/

@@ -83,7 +83,9 @@ pub fn audit_safe_zone(comp: &Comp, profile: SafeZoneProfile) -> Vec<Accessibili
     let (left, top, right, bottom) = profile.bounds();
     let mut findings = Vec::new();
     for (index, node) in comp.nodes.iter().enumerate() {
-        let NodeKind::Text(_) = &node.kind else { continue };
+        let NodeKind::Text(_) = &node.kind else {
+            continue;
+        };
         if node.parent.is_some() || node.tracks.contains_key("position") {
             continue;
         }
@@ -155,7 +157,9 @@ pub fn contrast_ratio(foreground: Rgba, background: Rgba) -> f64 {
 pub fn audit_text_contrast(comp: &Comp) -> Vec<AccessibilityFinding> {
     let mut findings = Vec::new();
     for (index, node) in comp.nodes.iter().enumerate() {
-        let NodeKind::Text(text) = &node.kind else { continue };
+        let NodeKind::Text(text) = &node.kind else {
+            continue;
+        };
         // A solid fill is a concrete foreground and can be measured;
         // gradients are skipped because one representative colour would lie.
         let foreground = match &text.fill {
@@ -173,7 +177,9 @@ pub fn audit_text_contrast(comp: &Comp) -> Vec<AccessibilityFinding> {
         } else {
             None
         };
-        let Some(background) = background else { continue };
+        let Some(background) = background else {
+            continue;
+        };
         let ratio = contrast_ratio(foreground, background);
         let large = text.size >= 24.0 || (text.weight >= 700 && text.size >= 18.66);
         let required = if large { 3.0 } else { 4.5 };
@@ -218,7 +224,10 @@ mod tests {
             effects: Vec::new(),
             tracks: Default::default(),
             kind: NodeKind::Text(Box::new(TextNode {
-                color, size, weight, ..TextNode::default()
+                color,
+                size,
+                weight,
+                ..TextNode::default()
             })),
         };
         Comp {
@@ -240,9 +249,18 @@ mod tests {
 
     #[test]
     fn dimensions_infer_only_supported_delivery_profiles() {
-        assert_eq!(profile_for_dimensions(1920, 1080), Some(SafeZoneProfile::Landscape16x9));
-        assert_eq!(profile_for_dimensions(1080, 1920), Some(SafeZoneProfile::Vertical9x16));
-        assert_eq!(profile_for_dimensions(1080, 1350), Some(SafeZoneProfile::Feed4x5));
+        assert_eq!(
+            profile_for_dimensions(1920, 1080),
+            Some(SafeZoneProfile::Landscape16x9)
+        );
+        assert_eq!(
+            profile_for_dimensions(1080, 1920),
+            Some(SafeZoneProfile::Vertical9x16)
+        );
+        assert_eq!(
+            profile_for_dimensions(1080, 1350),
+            Some(SafeZoneProfile::Feed4x5)
+        );
         assert_eq!(profile_for_dimensions(1000, 1000), None);
         assert_eq!(profile_for_dimensions(0, 1080), None);
     }
@@ -271,7 +289,9 @@ mod tests {
     fn solid_text_fill_is_measured_but_gradient_fill_is_not_guessed() {
         let mut solid = text_comp(Rgba::hex("#ffffff"), Rgba::hex("#ffffff"), 16.0, 400);
         if let NodeKind::Text(text) = &mut solid.nodes[0].kind {
-            text.fill = Some(Paint::Solid { color: Rgba::hex("#777777") });
+            text.fill = Some(Paint::Solid {
+                color: Rgba::hex("#777777"),
+            });
         }
         assert_eq!(audit_text_contrast(&solid)[0].code, "L610");
 
@@ -301,7 +321,12 @@ mod tests {
 
     #[test]
     fn unknown_transparent_background_is_not_guessed() {
-        let comp = text_comp(Rgba::hex("#777777"), Rgba::new(0.0, 0.0, 0.0, 0.0), 16.0, 400);
+        let comp = text_comp(
+            Rgba::hex("#777777"),
+            Rgba::new(0.0, 0.0, 0.0, 0.0),
+            16.0,
+            400,
+        );
         assert!(audit_text_contrast(&comp).is_empty());
     }
 

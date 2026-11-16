@@ -3039,12 +3039,17 @@ fn validate_edit_plan(plan: &Value) -> Result<Value, String> {
                 }
                 // The pre-flight's floor, kept here so a plan the executor
                 // cannot run does not pass validation: the semantic
-                // description the CLIP rerank ranks against, with the
-                // segment's spoken words allowed to carry it when the
-                // visual does not name one.
+                // description the CLIP rerank ranks against. The
+                // precedence is the executor's own: a non-empty
+                // visual.description WINS and must carry the 40
+                // characters itself - a short supplied value must not
+                // silently fall through to a longer spoken line - and
+                // only an omitted or empty one lets the segment's spoken
+                // words carry it.
                 let description = visual
                     .get("description")
                     .and_then(Value::as_str)
+                    .filter(|description| !description.trim().is_empty())
                     .or_else(|| segment.get("spoken").and_then(Value::as_str))
                     .map(str::trim)
                     .unwrap_or("");
@@ -6199,6 +6204,19 @@ mod tests {
         assert!(
             validate_edit_plan(&spoken).is_ok(),
             "the spoken words carry the description"
+        );
+
+        // A SHORT non-empty description does not fall through to a longer
+        // spoken line: the executor's precedence is the visual's own word
+        // first, and a keyword sitting where a description belongs is
+        // refused as what it is - not quietly swapped for the narration.
+        let mut short_wins = spoken;
+        short_wins["segments"][0]["visual"]["description"] = json!("ocean");
+        assert!(
+            validate_edit_plan(&short_wins)
+                .unwrap_err()
+                .contains("at least 40"),
+            "a short supplied description takes precedence and is refused, not swapped: {short_wins}"
         );
 
         // A text card with no storyboard: the executor refuses to export

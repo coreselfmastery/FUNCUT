@@ -8,9 +8,12 @@
 //! it to a binary: shapes, vector paths (fills, strokes, dash draw-ons,
 //! trims, morphs), text through the shaped-run path `concat-text`
 //! provides, stills, nested comps, masks, track mattes, adjustment
-//! layers, the nine blends, multi-sample motion blur and the shadow,
-//! glow, blur and aberration effects - every pixel composited in linear
-//! light, the way `concat-render` composites on the GPU.
+//! layers, the nine blends, multi-sample motion blur, the shadow, glow,
+//! blur and aberration effects, and the 2.5D/3D transform chain -
+//! rotations about either screen axis, depth with perspective, a
+//! six-degree-of-freedom camera with depth of field - every pixel
+//! composited in linear light, the way `concat-render` composites on
+//! the GPU.
 //!
 //! What it does not draw it says in [`Baked::warnings`], never silently:
 //! markup (Geneva's alone), Lottie features outside the rasterlottie support
@@ -47,7 +50,7 @@ use images::Pictures;
 /// entry an older revision wrote stops matching and re-bakes. The
 /// package version alone is not enough - a fix to a blend's math is a
 /// new render of every comp, without a new package.
-const RENDERER_REVISION: u8 = 2;
+const RENDERER_REVISION: u8 = 3;
 
 /// The native engine. Owns the faces a bake shapes text with, loaded
 /// once and kept - building one per bake would re-read the machine's
@@ -1207,7 +1210,7 @@ mod tests {
 
     #[test]
     fn an_invalid_comp_is_refused_before_any_render() {
-        let mut comp = comp_of("bad", vec![node("orphan", rect(Rgba::hex("#fff")))]);
+        let mut comp = comp_of("bad", vec![node("orphan", rect(Rgba::hex("#ffffff")))]);
         comp.duration = 0.0;
         let engine = native();
         let dir = tempfile::tempdir().expect("a temp dir");
@@ -1244,7 +1247,7 @@ mod tests {
 
     #[test]
     fn two_bakes_of_one_comp_write_identical_frames() {
-        let comp = comp_of("same", vec![node("box", rect(Rgba::hex("#00f")))]);
+        let comp = comp_of("same", vec![node("box", rect(Rgba::hex("#0000ff")))]);
         let engine = native();
         let one = tempfile::tempdir().expect("a temp dir");
         let two = tempfile::tempdir().expect("a temp dir");
@@ -1263,7 +1266,7 @@ mod tests {
 
     #[test]
     fn a_bake_at_half_width_renders_the_same_picture_small() {
-        let comp = comp_of("half", vec![node("box", rect(Rgba::hex("#f00")))]);
+        let comp = comp_of("half", vec![node("box", rect(Rgba::hex("#ff0000")))]);
         let engine = native();
         let dir = tempfile::tempdir().expect("a temp dir");
         let request = BakeRequest {
@@ -1280,7 +1283,7 @@ mod tests {
 
     #[test]
     fn a_ranged_bake_renders_its_shard_without_a_manifest() {
-        let comp = comp_of("shard", vec![node("box", rect(Rgba::hex("#fff")))]);
+        let comp = comp_of("shard", vec![node("box", rect(Rgba::hex("#ffffff")))]);
         let engine = native();
         let dir = tempfile::tempdir().expect("a temp dir");
         let request = BakeRequest {
@@ -1353,5 +1356,198 @@ mod tests {
             "the smear paints {smeared_columns}, the sharp box {sharp_columns}"
         );
         assert!(smeared_columns >= 34, "{smeared_columns} columns painted");
+    }
+
+    /// How many pixels of the frame carry ink.
+    fn ink_of(frame: &tiny_skia::Pixmap) -> usize {
+        frame
+            .data()
+            .chunks_exact(4)
+            .filter(|pixel| pixel[3] > 0)
+            .count()
+    }
+
+    /// A 2.5D pitch stands the card up: the same rectangle, tipped 60
+    /// degrees about its horizontal axis, covers about half the flat
+    /// card's area - the height cosines down while the width holds.
+    #[test]
+    fn a_pitched_card_covers_less_of_the_frame() {
+        let flat = comp_of("flat", vec![node("card", rect(Rgba::hex("#ff4433")))]);
+        let mut tipped = node("card", rect(Rgba::hex("#ff4433")));
+        tipped.transform.rotate_x = 60.0;
+        let pitched = comp_of("pitched", vec![tipped]);
+        let (_, flat_frame) = first_frame(&flat);
+        let (_, tipped_frame) = first_frame(&pitched);
+        let (flat_ink, tipped_ink) = (ink_of(&flat_frame), ink_of(&tipped_frame));
+        assert!(
+            tipped_ink < flat_ink * 9 / 10,
+            "a 60-degree pitch stands the card up: flat {flat_ink}, tipped {tipped_ink}"
+        );
+        assert!(tipped_ink > 0, "the card still draws");
+    }
+
+    /// Depth scales through the perspective divide: with the eye 200px
+    /// behind the plane, a card pushed 100px toward the viewer doubles.
+    #[test]
+    fn depth_scales_through_the_perspective_divide() {
+        let flat = comp_of("flat", vec![node("card", rect(Rgba::hex("#33aaff")))]);
+        let mut near = node("card", rect(Rgba::hex("#33aaff")));
+        near.transform.perspective = 200.0;
+        near.transform.z = 100.0;
+        let comp = comp_of("near", vec![near]);
+        let (_, flat_frame) = first_frame(&flat);
+        let (_, near_frame) = first_frame(&comp);
+        let (flat_ink, near_ink) = (ink_of(&flat_frame), ink_of(&near_frame));
+        assert!(
+            near_ink > flat_ink * 3,
+            "the divide scales the card by 1/(1 - z/perspective): flat {flat_ink}, near {near_ink}"
+        );
+    }
+
+    /// A card turned past edge-on shows its back, and a back is culled:
+    /// 180 degrees of yaw leaves the frame empty.
+    #[test]
+    fn a_turned_away_card_is_culled() {
+        let mut turned = node("card", rect(Rgba::hex("#ff4433")));
+        turned.transform.rotate_y = 180.0;
+        let comp = comp_of("turned", vec![turned]);
+        let (_, frame) = first_frame(&comp);
+        assert_eq!(ink_of(&frame), 0, "the back of a card draws nothing");
+    }
+
+    /// Depth orders the placements: a nearer node draws over a farther
+    /// one whatever the paint order says. The red card is painted first
+    /// and stands nearer, so it wins the centre.
+    #[test]
+    fn a_nearer_node_draws_over_a_farther_one() {
+        let mut near = node("near", rect(Rgba::hex("#ff0000")));
+        near.transform.z = 50.0;
+        let far = node("far", rect(Rgba::hex("#0000ff")));
+        let comp = comp_of("z", vec![near, far]);
+        let (_, frame) = first_frame(&comp);
+        let centre = frame.pixel(32, 24).expect("canvas centre");
+        assert!(centre.red() > 200, "the nearer card wins: {centre:?}");
+        assert!(
+            centre.blue() < 10,
+            "the farther card is under it: {centre:?}"
+        );
+    }
+
+    /// Depth of field: the layer on the focal plane holds its edge, the
+    /// one 40px off it with the aperture open softens past where the
+    /// flat card ever reached.
+    #[test]
+    fn depth_of_field_blurs_what_sits_off_the_focal_plane() {
+        let camera = |aperture: f64| {
+            let mut card = node("card", rect(Rgba::hex("#ffffff")));
+            card.transform.z = 6.0;
+            comp_of(
+                "dof",
+                vec![
+                    node(
+                        "lens",
+                        NodeKind::Camera {
+                            rig: crate::camera::Camera3D::default(),
+                            dof: Some(crate::comp::DepthOfField {
+                                focal_distance: 0.0,
+                                aperture,
+                            }),
+                        },
+                    ),
+                    card,
+                ],
+            )
+        };
+        let (_, sharp) = first_frame(&camera(0.0));
+        let (_, soft) = first_frame(&camera(0.5));
+        // The card's right edge sits at x=48; four columns past it are
+        // ink only once the lens has softened the edge.
+        let edge = |frame: &tiny_skia::Pixmap| frame.pixel(52, 24).expect("past the edge").alpha();
+        assert_eq!(edge(&sharp), 0, "the sharp card ends at its edge");
+        assert!(edge(&soft) > 0, "the defocused card bleeds past its edge");
+    }
+
+    /// A camera flown closer magnifies the frame about its centre: the
+    /// resting camera's distance halved doubles the card.
+    #[test]
+    fn a_camera_flown_closer_magnifies_the_frame() {
+        let resting_z = (48.0 / 2.0) / (crate::camera::DEFAULT_FOV / 2.0).to_radians().tan();
+        let card = |w: f64, h: f64| NodeKind::Rect {
+            width: Length::Px(w),
+            height: Length::Px(h),
+            fill: Some(Paint::Solid {
+                color: Rgba::hex("#33aaff"),
+            }),
+            radius: 0.0,
+        };
+        let flat = comp_of("flat", vec![node("card", card(16.0, 12.0))]);
+        let flown = comp_of(
+            "flown",
+            vec![
+                node(
+                    "lens",
+                    NodeKind::Camera {
+                        rig: crate::camera::Camera3D {
+                            path: vec![crate::camera::CameraStop {
+                                at: 0.0,
+                                x: 32.0,
+                                y: 24.0,
+                                z: resting_z / 2.0,
+                                curve: None,
+                            }],
+                            ..Default::default()
+                        },
+                        dof: None,
+                    },
+                ),
+                node("card", card(16.0, 12.0)),
+            ],
+        );
+        let (_, flat_frame) = first_frame(&flat);
+        let (_, flown_frame) = first_frame(&flown);
+        let (flat_ink, flown_ink) = (ink_of(&flat_frame), ink_of(&flown_frame));
+        assert!(
+            flown_ink > flat_ink * 3,
+            "half the distance, twice the size in each axis: flat {flat_ink}, flown {flown_ink}"
+        );
+    }
+
+    /// A camera standing exactly at rest photographs the z = 0 plane
+    /// one-to-one - the same bytes a camera-less comp bakes, which is
+    /// the compatibility promise the whole 3D chain is built on.
+    #[test]
+    fn a_camera_at_rest_draws_the_comp_it_always_drew() {
+        let resting_z = (48.0 / 2.0) / (crate::camera::DEFAULT_FOV / 2.0).to_radians().tan();
+        let plain = comp_of("plain", vec![node("card", rect(Rgba::hex("#dd44ff")))]);
+        let with_lens = comp_of(
+            "lensed",
+            vec![
+                node(
+                    "lens",
+                    NodeKind::Camera {
+                        rig: crate::camera::Camera3D {
+                            path: vec![crate::camera::CameraStop {
+                                at: 0.0,
+                                x: 32.0,
+                                y: 24.0,
+                                z: resting_z,
+                                curve: None,
+                            }],
+                            ..Default::default()
+                        },
+                        dof: None,
+                    },
+                ),
+                node("card", rect(Rgba::hex("#dd44ff"))),
+            ],
+        );
+        let (plain_baked, _) = first_frame(&plain);
+        let (lens_baked, _) = first_frame(&with_lens);
+        let plain_png = std::fs::read(plain_baked.frame_path(1)).expect("plain frame");
+        let lens_png = std::fs::read(lens_baked.frame_path(1)).expect("lensed frame");
+        assert_eq!(
+            plain_png, lens_png,
+            "a resting camera changes not one byte of the frame"
+        );
     }
 }

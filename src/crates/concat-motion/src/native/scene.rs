@@ -13,14 +13,29 @@
 //! use them arrive here), percentages resolve against the nearest box
 //! ancestor and otherwise the comp's frame, and every pixel blends in
 //! linear light the way the project's compositor blends.
+//!
+//! On top of that flat chain sits the 3D one, and the two are kept
+//! apart deliberately. A node's `rotate_x`, `rotate_y`, `z` and
+//! `perspective` compose into a 4x4 bracket that hinges at the anchor;
+//! the bracket is conjugated through the node's affine world so it
+//! turns in its own placed space, the parent's bracket rides on top of
+//! that, and a camera node's view-projection rides on top of the
+//! whole chain. The composed 4x4 reduces to a 3x3 homography on the
+//! layer's plane and is drawn by one projective blit ([`raster::warp`]);
+//! the affine path every flat comp takes is untouched, so the same
+//! document renders the same pixels it always did. Depth orders the
+//! placements (nearer over farther, whatever the paint order says) and
+//! feeds the camera's depth of field; a layer turned past edge-on is
+//! culled as the back of the card it is.
 
 use std::collections::{HashMap, HashSet};
 
+use glam::DMat4;
 use tiny_skia::{Pixmap, Transform};
 
 use crate::comp::{
-    Blend, Comp, Effect, Fit, Length, Mask, MaskShape, MatteMode, Node, NodeKind, Paint, Point,
-    Rgba,
+    Blend, Comp, DepthOfField, Effect, Fit, Length, Mask, MaskShape, MatteMode, Node, NodeKind,
+    Paint, Point, Rgba,
 };
 use crate::native::images::Pictures;
 use crate::native::raster;
@@ -124,10 +139,40 @@ impl Scene<'_> {
             .iter()
             .filter_map(|node| node.parent.as_deref())
             .collect();
+        // The 3D machinery, woken only when the document asks for it: a
+        // camera covering this moment, a layer transform that speaks z,
+        // or a track driving one. Without any of these - the comp every
+        // existing document is - the walk below is the exact one it
+        // always was, pixel for pixel.
+        let camera = self.camera_at(at);
+        let camera_vp = camera.map(|(rig, _)| {
+            let vp = rig.view_projection(
+                at,
+                self.comp.duration,
+                f64::from(self.comp.width),
+                f64::from(self.comp.height),
+            );
+            // The chain this joins works in output pixels; conjugate the
+            // comp-pixel matrix by the bake's own scale.
+            let scale = DMat4::from_scale(glam::DVec3::splat(self.scale));
+            scale * vp * scale.inverse()
+        });
+        let camera_dof = camera.and_then(|(_, dof)| dof);
+        let depth_3d = camera.is_some()
+            || self
+                .comp
+                .nodes
+                .iter()
+                .any(|node| speaks_z(node) || node.tracks.keys().any(|name| is_3d_track(name)));
         let mut stencils: HashMap<String, Pixmap> = HashMap::new();
         let mut worlds: HashMap<String, Transform> = HashMap::new();
         let mut rendered: HashMap<String, Content> = HashMap::new();
         let mut boxes: HashMap<String, NodeBox> = HashMap::new();
+        // The 3D residuals and depths, filled only when `depth_3d`: the
+        // 4x4 a node's own bracket and every ancestor's amount to, and
+        // how far down the camera's axis its anchor sits.
+        let mut residuals: HashMap<String, Option<DMat4>> = HashMap::new();
+        let mut depths: HashMap<String, f64> = HashMap::new();
         for node in self.comp.paint_order() {
             let parent_world = node
                 .parent
@@ -135,6 +180,12 @@ impl Scene<'_> {
                 .and_then(|parent| worlds.get(parent))
                 .copied()
                 .unwrap_or(Transform::identity());
+            let parent_residual = node
+                .parent
+                .as_deref()
+                .and_then(|parent| residuals.get(parent))
+                .copied()
+                .flatten();
             let needs_content =
                 parents.contains(node.id.as_str()) || matte_sources.contains(&node.id);
             if needs_content || node.covers(at, self.comp.duration) {
@@ -146,9 +197,42 @@ impl Scene<'_> {
                 rendered.insert(node.id.clone(), content);
                 boxes.insert(node.id.clone(), box_of);
                 worlds.insert(node.id.clone(), world);
+                if depth_3d {
+                    // The node's own bracket, conjugated so it turns about
+                    // the anchor the flat chain placed - the same point the
+                    // flat chain's own rotation and scale turn about - with
+                    // the parent's whole residual riding on top. Hinging at
+                    // the anchor's placed point rather than at the world
+                    // transform's origin is what keeps a card's pitch a
+                    // card's pitch: a bracket conjugated by the affine
+                    // alone turns about the box's corner.
+                    let residual = match self.bracket_3d(node, at) {
+                        Some(own) => {
+                            let hinge = hinge_of(&world, node, box_of);
+                            let conjugated = hinge * own * hinge.inverse();
+                            match parent_residual {
+                                Some(chain) => Some(chain * conjugated),
+                                None => Some(conjugated),
+                            }
+                        }
+                        None => parent_residual,
+                    };
+                    // The anchor's place on the depth axis, read from the
+                    // residual's own z row and never from the camera:
+                    // depth is a property of the scene - the same number
+                    // a lens focuses at - not of wherever the eye stands.
+                    if let Some(matrix) = residual {
+                        let anchor = anchor_of(node, box_of);
+                        depths.insert(
+                            node.id.clone(),
+                            (matrix * glam::DVec4::new(anchor.0, anchor.1, 0.0, 1.0)).z,
+                        );
+                    }
+                    residuals.insert(node.id.clone(), residual);
+                }
                 if matte_sources.contains(&node.id) {
                     let content = rendered.remove(&node.id);
-                    if let Some(stencil) = self.node_layer_at(
+                    if let Some(mut stencil) = self.node_layer_at(
                         node,
                         at,
                         parent_world,
@@ -158,6 +242,14 @@ impl Scene<'_> {
                         &mut rendered,
                         0,
                     ) {
+                        // A matte source's own 3D turns its stencil with
+                        // it, hinged at its anchor the same way its own
+                        // placement is; the consumer's chain is applied
+                        // when the matted layer is placed.
+                        if let Some(own) = self.bracket_3d(node, at) {
+                            let hinge = hinge_of(&world, node, box_of);
+                            stencil = warp_pixmap(&stencil, &(hinge * own * hinge.inverse()));
+                        }
                         stencils.insert(node.id.clone(), stencil);
                     }
                 }
@@ -165,6 +257,9 @@ impl Scene<'_> {
                 // Nothing places it and nothing hangs off it: the world
                 // it would have had is read by no one.
                 worlds.insert(node.id.clone(), parent_world);
+                if depth_3d {
+                    residuals.insert(node.id.clone(), parent_residual);
+                }
             }
         }
         // A child of a group is drawn by its group's own layer, which
@@ -183,7 +278,12 @@ impl Scene<'_> {
             })
             .map(|node| node.id.as_str())
             .collect();
-        for node in self.comp.paint_order() {
+        // The placements, collected so depth can order them: a nearer
+        // layer draws over a farther one whatever the paint order says.
+        // A flat comp keeps its authored order exactly - every depth is
+        // zero and the sort never runs.
+        let mut placements: Vec<(&Node, Transform, NodeBox, f64, usize)> = Vec::new();
+        for (index, node) in self.comp.paint_order().iter().enumerate() {
             if matte_sources.contains(&node.id) {
                 continue;
             }
@@ -197,8 +297,9 @@ impl Scene<'_> {
             if !node.covers(at, self.comp.duration) {
                 continue;
             }
-            if matches!(node.kind, NodeKind::Adjustment) {
-                self.apply_adjustment(node, at, &mut frame);
+            // A camera photographs; it is not itself placed. The walk
+            // found the one covering this moment above.
+            if matches!(node.kind, NodeKind::Camera { .. }) {
                 continue;
             }
             let parent_world = node
@@ -207,11 +308,34 @@ impl Scene<'_> {
                 .and_then(|parent| worlds.get(parent))
                 .copied()
                 .unwrap_or(Transform::identity());
-            let content = rendered.remove(&node.id);
             let box_of = boxes
                 .get(&node.id)
                 .copied()
                 .unwrap_or((self.frame, (0.0, 0.0)));
+            let depth = depths.get(&node.id).copied().unwrap_or(0.0);
+            placements.push((node, parent_world, box_of, depth, index));
+        }
+        if depth_3d {
+            placements.sort_by(|a, b| a.3.total_cmp(&b.3).then(a.4.cmp(&b.4)));
+        }
+        for (node, parent_world, box_of, depth, _) in placements {
+            if matches!(node.kind, NodeKind::Adjustment) {
+                self.apply_adjustment(node, at, &mut frame);
+                continue;
+            }
+            let content = rendered.remove(&node.id);
+            // The warp this placement draws through: the camera's
+            // view-projection over the node's whole residual chain.
+            let warp = match &camera_vp {
+                Some(vp) => Some(
+                    *vp * residuals
+                        .get(&node.id)
+                        .copied()
+                        .flatten()
+                        .unwrap_or(DMat4::IDENTITY),
+                ),
+                None => residuals.get(&node.id).copied().flatten(),
+            };
             self.place(
                 node,
                 at,
@@ -222,6 +346,9 @@ impl Scene<'_> {
                 &stencils,
                 &mut rendered,
                 0,
+                warp,
+                depth,
+                camera_dof,
             );
         }
         frame
@@ -230,6 +357,13 @@ impl Scene<'_> {
     /// One node onto a target: content into a layer, mask, matte,
     /// effects and motion blur through it, then the composite. The
     /// content arrives rendered when the walk already had it.
+    ///
+    /// The `warp` is the 3D half of the placement: the camera's
+    /// view-projection over the node's whole residual chain, drawn as
+    /// one projective blit of the finished layer. `None`, or a matrix
+    /// that reads as the identity, takes the flat composite the walk
+    /// has always taken. `z_depth` is where the node's anchor sits on
+    /// the depth axis, which a camera's `dof` turns into blur.
     #[allow(clippy::too_many_arguments)]
     fn place(
         &mut self,
@@ -242,7 +376,23 @@ impl Scene<'_> {
         stencils: &HashMap<String, Pixmap>,
         rendered: &mut HashMap<String, Content>,
         depth: usize,
+        warp: Option<DMat4>,
+        z_depth: f64,
+        dof: Option<DepthOfField>,
     ) {
+        // The depth-of-field blur every sample of the node shares: the
+        // whole layer sits at one depth, so the lens blurs it once. The
+        // radius is read before the closure so the closure borrows
+        // nothing of `self` the walk below needs.
+        let defocus_radius =
+            dof.map(|dof| dof.aperture * (z_depth - dof.focal_distance * self.scale).abs());
+        let defocus = |layer: &mut Pixmap| {
+            if let Some(radius) = defocus_radius
+                && radius >= 0.5
+            {
+                raster::blur(layer, radius);
+            }
+        };
         // Motion blur wraps everything else the node does: the whole
         // subtree, sampled across the shutter and averaged.
         if let Some(blur) = &node.motion_blur {
@@ -264,6 +414,17 @@ impl Scene<'_> {
                 ) else {
                     continue;
                 };
+                // The 3D warp rides every sample - a node turning in
+                // depth smears through its own rotation. The warp is the
+                // one baked at `at`; a sub-frame's own bracket is the
+                // approximation, and a cheap one beside the samples it
+                // saves.
+                let layer = match &warp {
+                    Some(matrix) if !near_identity(&homography_of(matrix)) => {
+                        warp_pixmap(&layer, matrix)
+                    }
+                    _ => layer,
+                };
                 size = (layer.width(), layer.height());
                 match sum.as_mut() {
                     None => {
@@ -282,15 +443,16 @@ impl Scene<'_> {
                     .map(|value| (value / samples as f32).round().clamp(0.0, 255.0) as u8)
                     .collect();
                 if let Some(size) = tiny_skia::IntSize::from_wh(size.0, size.1)
-                    && let Some(layer) = Pixmap::from_vec(averaged, size)
+                    && let Some(mut layer) = Pixmap::from_vec(averaged, size)
                 {
                     let opacity = node_opacity(node, at, self.comp.duration);
+                    defocus(&mut layer);
                     raster::composite(target, &layer, node.blend, opacity as f32);
                 }
             }
             return;
         }
-        if let Some(layer) = self.node_layer_at(
+        if let Some(mut layer) = self.node_layer_at(
             node,
             at,
             parent_world,
@@ -301,7 +463,19 @@ impl Scene<'_> {
             depth,
         ) {
             let opacity = node_opacity(node, at, self.comp.duration);
-            raster::composite(target, &layer, node.blend, opacity as f32);
+            defocus(&mut layer);
+            match warp.as_ref() {
+                Some(matrix) if !near_identity(&homography_of(matrix)) => {
+                    raster::warp(
+                        target,
+                        &layer,
+                        &homography_of(matrix),
+                        node.blend,
+                        opacity as f32,
+                    );
+                }
+                _ => raster::composite(target, &layer, node.blend, opacity as f32),
+            }
         }
     }
 
@@ -441,6 +615,20 @@ impl Scene<'_> {
                         Some(content) => (self.box_of(child, content), rendered.remove(&child.id)),
                         None => (((0.0, 0.0), (0.0, 0.0)), None),
                     };
+                    // The child's own 3D bracket only, hinged at the
+                    // child's own anchor as its own placement placed it:
+                    // the parent's residual and the camera ride when the
+                    // group's own layer is placed, warping the children
+                    // with it - applying the chain here too would turn
+                    // every child twice. A flat child draws as it always
+                    // did.
+                    let child_warp = self.bracket_3d(child, at).map(|own| {
+                        let reference = node_transform_reference(self, child);
+                        let child_world =
+                            world.pre_concat(self.local_transform(child, at, reference, child_box));
+                        let hinge = hinge_of(&child_world, child, child_box);
+                        hinge * own * hinge.inverse()
+                    });
                     self.place(
                         child,
                         at,
@@ -451,6 +639,12 @@ impl Scene<'_> {
                         stencils,
                         rendered,
                         depth + 1,
+                        child_warp,
+                        // The group's own placement blurs the whole layer
+                        // at the group's depth once; a child must not
+                        // blur inside it a second time.
+                        0.0,
+                        None,
                     );
                 }
             }
@@ -590,7 +784,18 @@ impl Scene<'_> {
         for name in node.tracks.keys() {
             let known = matches!(
                 name.as_str(),
-                "position" | "scale" | "rotation" | "opacity" | "blur" | "dash" | "trim" | "morph"
+                "position"
+                    | "scale"
+                    | "rotation"
+                    | "opacity"
+                    | "blur"
+                    | "dash"
+                    | "trim"
+                    | "morph"
+                    | "rotate-x"
+                    | "rotate-y"
+                    | "z"
+                    | "perspective"
             );
             if known {
                 continue;
@@ -613,7 +818,9 @@ impl Scene<'_> {
     /// What a node draws, before any placing.
     fn content_of(&mut self, node: &Node, at: f64, depth: usize) -> Content {
         match &node.kind {
-            NodeKind::Group { .. } | NodeKind::Adjustment => Content::Nothing,
+            NodeKind::Group { .. } | NodeKind::Adjustment | NodeKind::Camera { .. } => {
+                Content::Nothing
+            }
             NodeKind::Rect {
                 width,
                 height,
@@ -856,7 +1063,9 @@ impl Scene<'_> {
     /// and its children are placed from its origin.
     fn box_of(&self, node: &Node, content: &Content) -> NodeBox {
         match (&node.kind, content) {
-            (NodeKind::Group { .. }, _) | (NodeKind::Adjustment, _) => ((0.0, 0.0), (0.0, 0.0)),
+            (NodeKind::Group { .. }, _)
+            | (NodeKind::Adjustment, _)
+            | (NodeKind::Camera { .. }, _) => ((0.0, 0.0), (0.0, 0.0)),
             (NodeKind::Rect { width, height, .. }, _)
             | (NodeKind::Ellipse { width, height, .. }, _) => {
                 let (reference, _) = self.reference_of(node);
@@ -1036,6 +1245,72 @@ impl Scene<'_> {
             depth += 1;
         }
         false
+    }
+
+    /// The camera covering this moment, if the comp carries one that is
+    /// doing anything: the first in paint order whose span holds `at`.
+    /// A resting rig with no depth of field draws the comp exactly as a
+    /// camera-less one does, and reads as `None` so the walk stays on
+    /// its flat path.
+    fn camera_at(&self, at: f64) -> Option<(&crate::camera::Camera3D, Option<DepthOfField>)> {
+        self.comp.nodes.iter().find_map(|node| {
+            if !node.covers(at, self.comp.duration) {
+                return None;
+            }
+            match &node.kind {
+                NodeKind::Camera { rig, dof } if !rig.is_resting() || dof.is_some() => {
+                    Some((rig, *dof))
+                }
+                _ => None,
+            }
+        })
+    }
+
+    /// The node's 3D bracket: the yaw, then the pitch, then the push
+    /// out to `z`, then the perspective divide, all hinging at
+    /// `transform_origin_z` and turning about the anchor the flat chain
+    /// has already carried to the origin. `None` when the node is flat,
+    /// the case that must cost nothing, because it is every node of
+    /// every comp that came before the third axis.
+    fn bracket_3d(&self, node: &Node, at: f64) -> Option<DMat4> {
+        let tracked = |name: &str, base: f64| match node.property(
+            name,
+            at,
+            self.comp.duration,
+            Value::Number { value: base },
+        ) {
+            Value::Number { value } => value,
+            _ => base,
+        };
+        let rotate_x = tracked("rotate-x", node.transform.rotate_x);
+        let rotate_y = tracked("rotate-y", node.transform.rotate_y);
+        let z = tracked("z", node.transform.z);
+        let perspective = tracked("perspective", node.transform.perspective);
+        let origin_z = node.transform.transform_origin_z;
+        if rotate_x == 0.0 && rotate_y == 0.0 && z == 0.0 && perspective == 0.0 && origin_z == 0.0 {
+            return None;
+        }
+        // Depth, hinge and viewing distance are comp pixels; the chain
+        // this bracket joins works in output pixels, so they scale.
+        let scale = self.scale;
+        let hinge = DMat4::from_translation(glam::DVec3::new(0.0, 0.0, -origin_z * scale));
+        // y runs down the frame, so glam's right-handed rotation about
+        // +y sends the right edge away from the viewer - the card's yaw
+        // is the negation of it, the way CSS turns a card.
+        let yaw = DMat4::from_rotation_y(-rotate_y.to_radians());
+        let pitch = DMat4::from_rotation_x(rotate_x.to_radians());
+        let push = DMat4::from_translation(glam::DVec3::new(0.0, 0.0, z * scale));
+        let perspective = if perspective > 0.0 {
+            crate::camera::from_rows([
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, -1.0 / (perspective * scale), 1.0],
+            ])
+        } else {
+            DMat4::IDENTITY
+        };
+        Some(perspective * push * pitch * yaw * hinge)
     }
 
     /// The stencil of a mask: the shape in the node's own box, expanded
@@ -1268,4 +1543,110 @@ fn apply_matte(layer: &mut Pixmap, source: &Pixmap, mode: MatteMode) {
         below[2] = ((u16::from(below[2]) * masked + 127) / 255) as u8;
         below[3] = masked.clamp(0, 255) as u8;
     }
+}
+
+/// The 3D bracket's hinge: the node's anchor at the place the flat
+/// chain put it, in layer pixels - the point the bracket's rotations,
+/// depth and perspective divide turn about, which must be the same
+/// point the flat chain's own rotation and scale turn about. The anchor
+/// is read in the node's own content pixels and carried through the
+/// world transform, because that is the journey the flat chain sends it
+/// on; conjugating by the world affine alone would hinge the bracket at
+/// the affine's origin instead, turning a card about its corner.
+fn hinge_of(world: &Transform, node: &Node, box_of: NodeBox) -> DMat4 {
+    let (ax, ay) = anchor_of(node, box_of);
+    let mut placed = tiny_skia::Point {
+        x: ax as f32,
+        y: ay as f32,
+    };
+    world.map_point(&mut placed);
+    DMat4::from_translation(glam::DVec3::new(
+        f64::from(placed.x),
+        f64::from(placed.y),
+        0.0,
+    ))
+}
+
+/// The 3x3 homography a 4x4 induces on the layer's own `z = 0` plane:
+/// the x and y rows and the translation, with the matrix's own divide,
+/// its fourth row, as the denominator. The z column never appears
+/// because the plane is the layer itself, and the z row never does
+/// because a perspective divide reads the w a matrix computes, not the
+/// depth it passes along.
+fn homography_of(matrix: &DMat4) -> [f64; 9] {
+    let columns = matrix.to_cols_array();
+    let at = |row: usize, column: usize| columns[column * 4 + row];
+    [
+        at(0, 0),
+        at(0, 1),
+        at(0, 3),
+        at(1, 0),
+        at(1, 1),
+        at(1, 3),
+        at(3, 0),
+        at(3, 1),
+        at(3, 3),
+    ]
+}
+
+/// Whether a homography reads as the identity: the warp that is no
+/// warp, whose layers take the flat composite the walk has always
+/// taken - byte for byte, because the projective blit of an identity is
+/// a copy but the copy has no reason to exist. A homography is its
+/// action on the plane, not its numbers, so it is normalised by its own
+/// bottom-right entry first: a camera at rest induces a scaled identity,
+/// which is still the identity.
+fn near_identity(homography: &[f64; 9]) -> bool {
+    let scale = if homography[8].abs() > 1e-12 {
+        homography[8]
+    } else {
+        1.0
+    };
+    let identity = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
+    homography
+        .iter()
+        .zip(identity)
+        .all(|(found, expected)| (found / scale - expected).abs() < 1e-9)
+}
+
+/// A layer warped by a 4x4 onto a cleared canvas of its own size: what
+/// a motion-blur sample and a matte stencil are turned through before
+/// they meet what is under them.
+fn warp_pixmap(source: &Pixmap, matrix: &DMat4) -> Pixmap {
+    let mut warped = Pixmap::new(source.width(), source.height())
+        .unwrap_or_else(|| Pixmap::new(1, 1).expect("a 1x1 pixmap always allocates"));
+    raster::warp(
+        &mut warped,
+        source,
+        &homography_of(matrix),
+        Blend::Normal,
+        1.0,
+    );
+    warped
+}
+
+/// Whether a node's own transform speaks the third axis.
+fn speaks_z(node: &Node) -> bool {
+    let model = &node.transform;
+    model.rotate_x != 0.0
+        || model.rotate_y != 0.0
+        || model.z != 0.0
+        || model.perspective != 0.0
+        || model.transform_origin_z != 0.0
+}
+
+/// Whether a track name drives one of the 3D fields.
+fn is_3d_track(name: &str) -> bool {
+    matches!(name, "rotate-x" | "rotate-y" | "z" | "perspective")
+}
+
+/// A node's anchor point in output pixels: the box's origin plus the
+/// anchor fractions, the same place [`Scene::local_transform`] hinges
+/// the flat chain.
+fn anchor_of(node: &Node, box_of: NodeBox) -> (f64, f64) {
+    let anchor = node.transform.anchor.unwrap_or(Point { x: 0.5, y: 0.5 });
+    (
+        box_of.1.0 + anchor.x * box_of.0.0,
+        box_of.1.1 + anchor.y * box_of.0.1,
+    )
 }

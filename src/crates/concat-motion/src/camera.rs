@@ -520,6 +520,264 @@ fn fail(message: String, help: impl Into<String>) -> MotionError {
     }
 }
 
+/// The field of view a 3D camera photographs at when no `fov` axis names
+/// another: the vertical one, in degrees, the horizontal following the
+/// frame's aspect.
+pub const DEFAULT_FOV: f64 = 60.0;
+
+/// A 6-DOF camera, as a node the comp carries rather than a move baked
+/// into its layers: where [`CameraMove`](crate::camera::CameraMove) is a
+/// 2D move folded into every root node's own tracks, this is a lens the
+/// scene walks past. Position, pitch, yaw, roll and field of view are
+/// each their own spline, sampled live at every frame, so a comp's z
+/// depth ([`Transform::z`](crate::comp::Transform::z)) turns into real
+/// parallax and a node's `perspective` into a real vanishing point.
+///
+/// The flight path is Catmull-Rom through its stops - one cubic segment
+/// between each pair, the neighbours bending it - with the curve a stop
+/// carries easing its segment's parameter, so a spring on one stop
+/// shapes one leg of the flight. The axes interpolate stop to stop the
+/// same way, one value at a time.
+///
+/// Where the camera stands when nothing moves it: the centre of the
+/// frame, `DEFAULT_FOV` back from the `z = 0` plane, looking straight
+/// down the depth axis - which photographs that plane one-to-one, the
+/// comp exactly as a camera-less comp draws it. A narrower field of view
+/// from that resting distance is a zoom: the plane's scale rides the
+/// focal length, and deeper or nearer planes ride it harder.
+#[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct Camera3D {
+    /// The flight path: where the camera stands, in comp pixels, `x`
+    /// across, `y` down, `z` toward the viewer. One stop is a fixed
+    /// camera, none the resting one, two or more a spline.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub path: Vec<CameraStop>,
+    /// Degrees the lens tilts up (`> 0`) or down, keyed by stops.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pitch: Vec<AxisStop>,
+    /// Degrees the lens turns right (`> 0`) or left, keyed by stops.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub yaw: Vec<AxisStop>,
+    /// Degrees the frame rolls clockwise, keyed by stops.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub roll: Vec<AxisStop>,
+    /// The vertical field of view in degrees, keyed by stops. The resting
+    /// camera's `DEFAULT_FOV` photographs the `z = 0` plane one-to-one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fov: Vec<AxisStop>,
+}
+
+/// One stop on the camera's flight path: where it stands at `at`, a
+/// fraction of the comp's duration `0..=1` - the same clock every track
+/// is keyed against - carrying the curve that eases the segment leaving
+/// it.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct CameraStop {
+    /// When the camera stands here, as a fraction of the comp's duration.
+    pub at: f64,
+    /// Across, in comp pixels.
+    pub x: f64,
+    /// Down, in comp pixels.
+    pub y: f64,
+    /// Toward the viewer, in comp pixels: `0` is the plane a camera-less
+    /// comp draws on, and the resting camera sits well behind it.
+    pub z: f64,
+    /// How the segment leaving this stop is eased; `None` is linear.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub curve: Option<Curve>,
+}
+
+/// One stop on a one-axis camera track: the value at `at`, a fraction of
+/// the comp's duration, with the curve easing the segment that leaves it.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct AxisStop {
+    /// When the axis stands here, as a fraction of the comp's duration.
+    pub at: f64,
+    /// The value - degrees, or degrees of field of view for `fov`.
+    pub value: f64,
+    /// How the segment leaving this stop is eased; `None` is linear.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub curve: Option<Curve>,
+}
+
+impl Camera3D {
+    /// Whether every axis is left at rest: a camera that photographs the
+    /// comp exactly as a camera-less one draws it, which the scene can
+    /// skip outright.
+    pub fn is_resting(&self) -> bool {
+        self.path.is_empty()
+            && self.pitch.is_empty()
+            && self.yaw.is_empty()
+            && self.roll.is_empty()
+            && self.fov.is_empty()
+    }
+
+    /// The axis's value at `fraction` of the comp: bracketing stops eased
+    /// by the leaving stop's curve, the first held before it, the last
+    /// held after it, and `resting` when no stop keys the axis at all.
+    fn axis_at(stops: &[AxisStop], fraction: f64, resting: f64) -> f64 {
+        let Some(first) = stops.first() else {
+            return resting;
+        };
+        if fraction <= first.at {
+            return first.value;
+        }
+        for (index, stop) in stops.iter().enumerate() {
+            if fraction <= stop.at {
+                let from = &stops[index - 1];
+                let span = stop.at - from.at;
+                let progress = if span > 1e-9 {
+                    (fraction - from.at) / span
+                } else {
+                    1.0
+                };
+                let shaped = from
+                    .curve
+                    .clone()
+                    .unwrap_or(Curve::Linear)
+                    .apply(progress.clamp(0.0, 1.0));
+                return from.value + (stop.value - from.value) * shaped;
+            }
+        }
+        stops.last().map(|stop| stop.value).unwrap_or(resting)
+    }
+
+    /// The camera's position at `fraction`: Catmull-Rom through the
+    /// stops, the segment's parameter eased by the curve its leaving
+    /// stop carries. `None` when no path is keyed - the resting position.
+    fn position_at(&self, fraction: f64) -> Option<(f64, f64, f64)> {
+        match self.path.len() {
+            0 => None,
+            1 => Some((self.path[0].x, self.path[0].y, self.path[0].z)),
+            _ => {
+                // The bracketing segment, with the ends' neighbours
+                // clamped to themselves - the standard cardinal spline's
+                // treatment of an open path.
+                let mut index = 0;
+                for (at, stop) in self.path.iter().enumerate() {
+                    if fraction <= stop.at {
+                        index = at.saturating_sub(1);
+                        break;
+                    }
+                    index = self.path.len() - 2;
+                }
+                let from = &self.path[index];
+                let to = &self.path[(index + 1).min(self.path.len() - 1)];
+                let span = to.at - from.at;
+                let progress = if span > 1e-9 {
+                    (fraction - from.at) / span
+                } else {
+                    1.0
+                };
+                let shaped = from
+                    .curve
+                    .clone()
+                    .unwrap_or(Curve::Linear)
+                    .apply(progress.clamp(0.0, 1.0));
+                let before = &self.path[index.saturating_sub(1)];
+                let after = &self.path[(index + 2).min(self.path.len() - 1)];
+                let catmull_rom = |p0: f64, p1: f64, p2: f64, p3: f64, u: f64| {
+                    0.5 * ((2.0 * p1)
+                        + (-p0 + p2) * u
+                        + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * u * u
+                        + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * u * u * u)
+                };
+                Some((
+                    catmull_rom(before.x, from.x, to.x, after.x, shaped),
+                    catmull_rom(before.y, from.y, to.y, after.y, shaped),
+                    catmull_rom(before.z, from.z, to.z, after.z, shaped),
+                ))
+            }
+        }
+    }
+
+    /// The view-projection at `at` seconds: a 4x4 that maps a comp
+    /// point `(x, y, z, 1)` to output pixels `(X, Y, depth·W, W)`, with
+    /// the perspective divide the caller applies. The frame's own
+    /// `width` and `height` are the comp's authored ones, not the bake's
+    /// scaled output - the caller scales the matrix's translation by its
+    /// own `scale` when it works in output pixels.
+    pub fn view_projection(&self, at: f64, duration: f64, width: f64, height: f64) -> glam::DMat4 {
+        let fraction = if duration > 1e-9 {
+            (at / duration).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let fov = Self::axis_at(&self.fov, fraction, DEFAULT_FOV).clamp(1.0, 179.0);
+        // The resting position photographs the z = 0 plane one-to-one at
+        // the default field; a different focal length from that distance
+        // is a zoom about the plane's centre. The audience sits on the
+        // positive z side - the same side a node's own `perspective` puts
+        // its eye - so the camera flies at +z looking back down the
+        // depth axis.
+        let resting_z = (height / 2.0) / (DEFAULT_FOV / 2.0).to_radians().tan();
+        let (px, py, pz) =
+            self.position_at(fraction)
+                .unwrap_or((width / 2.0, height / 2.0, resting_z));
+        let pitch = Self::axis_at(&self.pitch, fraction, 0.0).to_radians();
+        let yaw = Self::axis_at(&self.yaw, fraction, 0.0).to_radians();
+        let roll = Self::axis_at(&self.roll, fraction, 0.0).to_radians();
+
+        // The camera's basis in comp space (x across, y down, z toward
+        // the viewer): at rest it looks straight down -z, yaw swings the
+        // look toward +x, pitch lifts the nose (which on a y-down frame
+        // is -y), and roll spins the pair about the look axis.
+        let forward = glam::DVec3::new(
+            yaw.sin() * pitch.cos(),
+            -pitch.sin(),
+            -yaw.cos() * pitch.cos(),
+        );
+        let mut right = glam::DVec3::new(yaw.cos(), 0.0, yaw.sin());
+        // Up is the side that keeps y down on the frame at rest.
+        let mut up = forward.cross(right);
+        if up.length_squared() < 1e-12 {
+            up = glam::DVec3::new(0.0, -1.0, 0.0);
+        }
+        if roll != 0.0 {
+            let spun = glam::DMat4::from_axis_angle(forward, roll) * right.extend(1.0);
+            right = glam::DVec3::new(spun.x, spun.y, spun.z);
+            let spun = glam::DMat4::from_axis_angle(forward, roll) * up.extend(1.0);
+            up = glam::DVec3::new(spun.x, spun.y, spun.z);
+        }
+        let position = glam::DVec3::new(px, py, pz);
+        // Camera space: x along the frame's right, y down the frame (the
+        // basis's up, flipped), z along the look - so the pixel map below
+        // needs no axis flip and the resting camera is the identity on
+        // the z = 0 plane.
+        let view = from_rows([
+            [right.x, right.y, right.z, -right.dot(position)],
+            [-up.x, -up.y, -up.z, up.dot(position)],
+            [forward.x, forward.y, forward.z, -forward.dot(position)],
+            [0.0, 0.0, 0.0, 1.0],
+        ]);
+        // The pixel map: focal length f = (height/2) / tan(fov/2), the
+        // frame's half-extents the vanishing points. The fourth row is
+        // the divide - the view depth itself, so a nearer plane divides
+        // by less and magnifies.
+        let f = (height / 2.0) / (fov / 2.0).to_radians().tan();
+        let pixels = from_rows([
+            [f, 0.0, width / 2.0, 0.0],
+            [0.0, f, height / 2.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+        ]);
+        pixels * view
+    }
+}
+
+/// A 4x4 built from its rows, the way the derivations above read; glam
+/// stores columns, so this is the transpose on the way in.
+pub(crate) fn from_rows(rows: [[f64; 4]; 4]) -> glam::DMat4 {
+    glam::DMat4::from_cols_array(&[
+        rows[0][0], rows[1][0], rows[2][0], rows[3][0], rows[0][1], rows[1][1], rows[2][1],
+        rows[3][1], rows[0][2], rows[1][2], rows[2][2], rows[3][2], rows[0][3], rows[1][3],
+        rows[2][3], rows[3][3],
+    ])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1056,5 +1314,94 @@ mod tests {
         assert_eq!(move_json.path[1].pan, None);
         assert_eq!(move_json.path[2].pan, Some((180.0, -30.0)));
         assert!(move_json.zoom.is_none() && move_json.pan.is_none());
+    }
+
+    /// The resting camera photographs the z = 0 plane one-to-one: a
+    /// point on the plane lands exactly where it sits, which is the
+    /// compatibility promise every 3D feature hangs under. The divide is
+    /// the view depth, which for the plane is the resting distance
+    /// itself.
+    #[test]
+    fn the_resting_camera_is_the_identity_on_the_plane() {
+        let resting = Camera3D::default();
+        let vp = resting.view_projection(0.0, 4.0, 1920.0, 1080.0);
+        for (x, y) in [(0.0, 0.0), (960.0, 540.0), (1920.0, 1080.0), (483.0, 211.0)] {
+            let mapped = vp * glam::DVec4::new(x, y, 0.0, 1.0);
+            assert!((mapped.x / mapped.w - x).abs() < 1e-6, "x {x} moved");
+            assert!((mapped.y / mapped.w - y).abs() < 1e-6, "y {y} moved");
+        }
+        let resting_z = (1080.0 / 2.0) / (DEFAULT_FOV / 2.0).to_radians().tan();
+        let mapped = vp * glam::DVec4::new(960.0, 540.0, 0.0, 1.0);
+        assert!(
+            (mapped.w - resting_z).abs() < 1e-6,
+            "the divide is the view depth"
+        );
+        // A nearer point divides by less and lands farther from the
+        // centre: 60px toward the audience on a 935px resting distance.
+        let nearer = vp * glam::DVec4::new(1060.0, 540.0, 60.0, 1.0);
+        let spread = (nearer.x / nearer.w - 960.0) / 100.0;
+        assert!(spread > 1.0, "the nearer point magnifies: {spread}");
+    }
+
+    /// The flight passes through its stops: at each stop's own fraction
+    /// the camera stands exactly where the stop says, whatever the
+    /// neighbours bend the segments into between them.
+    #[test]
+    fn the_flight_passes_through_its_stops() {
+        let rig = Camera3D {
+            path: vec![
+                CameraStop {
+                    at: 0.0,
+                    x: 0.0,
+                    y: 0.0,
+                    z: -100.0,
+                    curve: None,
+                },
+                CameraStop {
+                    at: 0.5,
+                    x: 100.0,
+                    y: 50.0,
+                    z: -200.0,
+                    curve: None,
+                },
+                CameraStop {
+                    at: 1.0,
+                    x: 200.0,
+                    y: 0.0,
+                    z: -300.0,
+                    curve: None,
+                },
+            ],
+            ..Default::default()
+        };
+        for (fraction, expected) in [
+            (0.0, (0.0, 0.0, -100.0)),
+            (0.5, (100.0, 50.0, -200.0)),
+            (1.0, (200.0, 0.0, -300.0)),
+        ] {
+            let (x, y, z) = rig.position_at(fraction).expect("keyed");
+            assert!((x - expected.0).abs() < 1e-9, "fraction {fraction}: x {x}");
+            assert!((y - expected.1).abs() < 1e-9, "fraction {fraction}: y {y}");
+            assert!((z - expected.2).abs() < 1e-9, "fraction {fraction}: z {z}");
+        }
+    }
+
+    /// A rig with every axis at rest says so, and one with a single key
+    /// does not - the gate the scene reads to keep flat comps on their
+    /// flat path.
+    #[test]
+    fn a_rig_says_when_it_is_resting() {
+        assert!(Camera3D::default().is_resting());
+        assert!(
+            !Camera3D {
+                fov: vec![AxisStop {
+                    at: 0.0,
+                    value: 50.0,
+                    curve: None
+                }],
+                ..Default::default()
+            }
+            .is_resting()
+        );
     }
 }

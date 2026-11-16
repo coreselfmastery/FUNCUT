@@ -1767,6 +1767,16 @@ fn source_of(comp: &Comp, node: &Node, scope: &str, warnings: &mut Vec<String>) 
             ));
             None
         }
+        NodeKind::Camera { .. } => {
+            // A camera is the native engine's lens; a comp that carries
+            // one routes there, so this arm is the belt under the brace.
+            warnings.push(format!(
+                "node {:?} is a 3D camera, which the flattened timeline cannot draw; the comp \
+                 routes to the native engine for it",
+                node.id
+            ));
+            None
+        }
         NodeKind::Rect {
             width,
             height,

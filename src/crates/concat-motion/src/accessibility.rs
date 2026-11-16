@@ -270,9 +270,11 @@ mod tests {
 
         if let NodeKind::Text(text) = &mut solid.nodes[0].kind {
             text.fill = Some(Paint::Gradient {
-                kind: crate::comp::GradientKind::Linear,
                 stops: vec![(0.0, Rgba::hex("#777777")), (1.0, Rgba::hex("#ffffff"))],
+                ramp: crate::comp::GradientKind::Linear,
                 angle: 0.0,
+                from: 0.0,
+                to: 1.0,
             });
         }
         assert!(audit_text_contrast(&solid).is_empty());

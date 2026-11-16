@@ -27,7 +27,7 @@ use std::time::{Duration, Instant};
 
 use concat_mcp::director::{
     AutoEditError, AutoEditState, EditProgram, ReplyGate, Runner, Stage, StageStep, ToolCall,
-    ToolError,
+    ToolError, auto_edit_program,
 };
 use serde_json::json;
 use slint::SharedString;
@@ -192,6 +192,11 @@ pub struct AutoEditPane {
     /// The sibling this run edits: where the report is written, and the
     /// project that opens when the run ships.
     project: Option<String>,
+    /// The source a retryable end keeps: the same sibling, the same
+    /// program, the same runner - whose completed-stage record is the
+    /// resume the next press of the button picks up from, instead of
+    /// building a fresh sibling and paying for every stage again.
+    source: Option<AutoEditSource>,
 }
 
 impl ForgePane {
@@ -487,6 +492,69 @@ impl ForgePane {
         if self.auto.running || self.running {
             return;
         }
+        // A retryable end kept its sibling, its source and its runner:
+        // the resume picks up after the stages the failed run completed
+        // (IDEM), instead of building a fresh sibling and paying for the
+        // repair, the transcription and every reading again.
+        if let (Some(runner), Some(source)) = (self.auto.runner.clone(), self.auto.source.clone())
+            && source
+                .takes
+                .iter()
+                .all(|take| std::path::Path::new(&take.take).exists())
+            && std::path::Path::new(&source.project)
+                .join("concat.json")
+                .exists()
+        {
+            let backend = match concat_mcp::backend::open(concat_mcp::backend::Mode::Window) {
+                Ok(backend) => backend,
+                Err(error) => {
+                    studio.notify(&tf("forge.autoEditNeedServer", &[&error]), true);
+                    return;
+                }
+            };
+            let mut program = auto_edit_program(&concat_mcp::director::AutoEditProgramSource {
+                project: source.project.clone(),
+                takes: source
+                    .takes
+                    .iter()
+                    .map(|take| concat_mcp::director::TakePaths {
+                        take: take.take.clone(),
+                        enhanced: take.enhanced.clone(),
+                    })
+                    .collect(),
+                placements: source
+                    .placements
+                    .iter()
+                    .map(|placed| concat_mcp::director::TakePlacement {
+                        take: placed.take.clone(),
+                        start: placed.start,
+                        source_in: placed.source_in,
+                        source_out: placed.source_out,
+                        speed: placed.speed,
+                    })
+                    .collect(),
+                export: source.export.clone(),
+                sheet: source.sheet.clone(),
+            });
+            let tool_cancel = Arc::new(AtomicBool::new(false));
+            let project = source.project.clone();
+            self.auto = AutoEditPane {
+                running: true,
+                stage: t("forge.autoEditStarting"),
+                elapsed: elapsed_text(Duration::ZERO),
+                fraction: 0.0,
+                visible: true,
+                outcome: 0,
+                runner: Some(runner.clone()),
+                tool_cancel: Some(Arc::clone(&tool_cancel)),
+                started: Some(Instant::now()),
+                project: Some(project),
+                source: Some(source),
+            };
+            self.set_status(t("forge.autoEditRunning"));
+            run_auto_edit(runner, &mut program, backend, tool_cancel);
+            return;
+        }
         let Some(session) = studio.session.as_ref() else {
             studio.notify(&t("forge.needProject"), true);
             return;
@@ -513,7 +581,30 @@ impl ForgePane {
                 return;
             }
         };
-        let program = auto_edit_program(&auto);
+        let mut program = auto_edit_program(&concat_mcp::director::AutoEditProgramSource {
+            project: auto.project.clone(),
+            takes: auto
+                .takes
+                .iter()
+                .map(|take| concat_mcp::director::TakePaths {
+                    take: take.take.clone(),
+                    enhanced: take.enhanced.clone(),
+                })
+                .collect(),
+            placements: auto
+                .placements
+                .iter()
+                .map(|placed| concat_mcp::director::TakePlacement {
+                    take: placed.take.clone(),
+                    start: placed.start,
+                    source_in: placed.source_in,
+                    source_out: placed.source_out,
+                    speed: placed.speed,
+                })
+                .collect(),
+            export: auto.export.clone(),
+            sheet: auto.sheet.clone(),
+        });
         let (runner, _events) = Runner::new(PathBuf::from(&auto.project));
         let tool_cancel = Arc::new(AtomicBool::new(false));
         self.auto = AutoEditPane {
@@ -527,9 +618,10 @@ impl ForgePane {
             tool_cancel: Some(Arc::clone(&tool_cancel)),
             started: Some(Instant::now()),
             project: Some(auto.project.clone()),
+            source: Some(auto),
         };
         self.set_status(t("forge.autoEditRunning"));
-        run_auto_edit(runner, program, backend, tool_cancel);
+        run_auto_edit(runner, &mut program, backend, tool_cancel);
     }
 
     /// Rereads the runner's last event into the page's own fields: the
@@ -556,9 +648,20 @@ impl ForgePane {
     /// of the run.
     fn auto_edit_ended(&mut self, state: AutoEditState, studio: &mut Studio) {
         self.auto.running = false;
-        self.auto.runner = None;
-        self.auto.tool_cancel = None;
         self.auto.started = None;
+        // A retryable end keeps the runner and its source for the resume;
+        // a completed or hard-failed run has nothing to pick up from.
+        let keep_for_retry = matches!(
+            &state,
+            AutoEditState::Failed { error, .. } if error.retryable
+        ) || matches!(&state, AutoEditState::Cancelled { .. });
+        if !keep_for_retry {
+            self.auto.runner = None;
+            self.auto.source = None;
+            self.auto.tool_cancel = None;
+        } else {
+            self.auto.tool_cancel = None;
+        }
         match &state {
             AutoEditState::Completed {
                 export, duration, ..
@@ -792,8 +895,10 @@ fn enhanced_copy_name(index: usize, source: &std::path::Path) -> String {
 /// One voiceover file's fixed paths inside the sibling, as the AUTO
 /// EDIT's program is written from them: the take the timeline plays, and
 /// the enhanced stepping stone the repair writes before the clean.
-/// Every path is known before the run starts - that is what makes the
-/// program static.
+/// One voiceover file's fixed paths inside the sibling, as the AUTO
+/// EDIT's program is written from them: the take the timeline plays, and
+/// the enhanced stepping stone the repair writes before the clean.
+#[derive(Clone)]
 struct TakePaths {
     /// The file the sibling's voiceover clips play: the pristine copy
     /// until the repair's clean pass overwrites it with the enhanced,
@@ -809,6 +914,7 @@ struct TakePaths {
 /// timeline it starts, the span of the file it plays and the rate it
 /// plays at, so the take's transcript words can be placed where the
 /// export must carry them.
+#[derive(Clone)]
 struct TakePlacement {
     /// The sibling file the clip plays.
     take: String,
@@ -825,6 +931,7 @@ struct TakePlacement {
 /// What an AUTO EDIT run needs beside the forge run's handoff: the
 /// fixed paths its program is written from, all inside the sibling it
 /// edits.
+#[derive(Clone)]
 struct AutoEditSource {
     /// The sibling project the run edits.
     project: String,
@@ -1464,204 +1571,6 @@ fn first_line(words: &str) -> Option<String> {
 /// The creative layer - B-roll, captions, the grade - is the Director
 /// agent's; those stages are simply not in the program, and the progress
 /// fraction counts only the stages that are.
-fn auto_edit_program(source: &AutoEditSource) -> EditProgram {
-    let project = source.project.clone();
-    let mut steps = Vec::new();
-    let call = |tool: &str, arguments: serde_json::Value| ToolCall {
-        tool: tool.to_owned(),
-        arguments,
-    };
-    // 1. The handoff, read back: the sibling is opened on the window's
-    //    server - the same register a forge run's edit sits in - and the
-    //    voiceover lane is read as the run's own ground truth.
-    steps.push(StageStep::run(
-        Stage::HandoffVoiceover,
-        vec![
-            call("project_open", json!({ "path": project })),
-            call("timeline_read", json!({ "path": project })),
-        ],
-    ));
-    // 2. The repair, per distinct take: the enhanced chain lands on the
-    //    take the timeline plays, so the export ships the sound the
-    //    repair made. One file's failure warns and skips the rest - the
-    //    take ships as recorded.
-    let mut repair = Vec::new();
-    for take in &source.takes {
-        repair.push(call(
-            "sense_audio_repair",
-            json!({
-                "action": "enhance_speech",
-                "audio": take.take,
-                "out": take.enhanced,
-                "overwrite": true,
-            }),
-        ));
-        repair.push(call(
-            "sense_audio_repair",
-            json!({
-                "action": "remove_hiss_hum_rumble",
-                "audio": take.enhanced,
-                "out": take.take,
-                "overwrite": true,
-            }),
-        ));
-    }
-    steps.push(StageStep::run(Stage::AudioRepair, repair).warn());
-    // 3. The words: each take transcribed and waited on, by its own file.
-    //    Two waits cover the transcriber's own 900-second budget, which
-    //    one 590-second wait does not.
-    let mut words = Vec::new();
-    for take in &source.takes {
-        words.push(call("transcribe", json!({ "path": take.take })));
-        words.push(call(
-            "analysis_wait",
-            json!({ "path": take.take, "timeoutSeconds": 590 }),
-        ));
-        words.push(call(
-            "analysis_wait",
-            json!({ "path": take.take, "timeoutSeconds": 590 }),
-        ));
-    }
-    steps.push(StageStep::run(Stage::Transcribe, words));
-    // 4. The delivery: pauses, emphasis, the read itself.
-    let mut signals = Vec::new();
-    for take in &source.takes {
-        signals.push(call("voice_signals", json!({ "audio": take.take })));
-    }
-    steps.push(StageStep::run(Stage::VoiceSignals, signals));
-    // 5. The music gate: a take that already carries music gets no bed
-    //    stacked under it - the record the gate leaves behind.
-    let mut gate = Vec::new();
-    for take in &source.takes {
-        gate.push(call(
-            "sense_audio_repair",
-            json!({ "action": "detect_music_segments", "audio": take.take }),
-        ));
-    }
-    steps.push(StageStep::run(Stage::Understand, gate));
-    // 6. The sanity reads before any render: collisions, and the timeline
-    //    as it stands.
-    steps.push(StageStep::run(
-        Stage::Timeline,
-        vec![
-            call("collision_check", json!({ "path": project })),
-            call("timeline_read", json!({ "path": project })),
-        ],
-    ));
-    // 7. The render, waited on by its project folder: the job's name is
-    //    minted when the export starts, and a program written before that
-    //    moment asks for the work by what it was started on.
-    steps.push(StageStep::run(
-        Stage::Export,
-        vec![
-            call(
-                "export_start",
-                json!({ "path": project, "output": source.export, "crf": 20, "codec": "h264" }),
-            ),
-            call(
-                "export_wait",
-                json!({ "path": project, "timeoutSeconds": 590 }),
-            ),
-            call(
-                "export_wait",
-                json!({ "path": project, "timeoutSeconds": 590 }),
-            ),
-        ],
-    ));
-    // 8. The verify: the words re-read from the render, the loudness
-    //    measured against the short-form target, and the re-read words
-    //    COMPARED with the words the edit placed - the export's transcript
-    //    against the takes' own, each placed where the timeline put it
-    //    (F-04: a render that speaks the wrong words - clipped, doubled,
-    //    un-trimmed audio - used to pass a verify that only measured
-    //    loudness). This reply is the
-    //    verification the run's terminal states carry. The gates are the
-    //    measurements' own word: a loudness reading that missed the
-    //    platform target or a transcript that is not the edit's words is
-    //    a verify that failed, not a run that completed - the headless
-    //    runner refuses the same answers.
-    steps.push(
-        StageStep::run(
-            Stage::Verify,
-            vec![
-                call("transcribe", json!({ "path": source.export })),
-                call(
-                    "analysis_wait",
-                    json!({ "path": source.export, "timeoutSeconds": 590 }),
-                ),
-                call(
-                    "analysis_wait",
-                    json!({ "path": source.export, "timeoutSeconds": 590 }),
-                ),
-                call("measure_loudness", json!({ "path": source.export })),
-                call(
-                    "emotion",
-                    json!({
-                        "action": "verify",
-                        "expectedTakes": source.placements.iter().map(|placed| json!({
-                            "path": placed.take,
-                            "start": placed.start,
-                            "sourceIn": placed.source_in,
-                            "sourceOut": placed.source_out,
-                            "speed": placed.speed,
-                        })).collect::<Vec<_>>(),
-                        "actualPath": source.export,
-                        "toleranceMs": 60,
-                    }),
-                ),
-            ],
-        )
-        .gate(ReplyGate::True {
-            field: "platformTargetMet",
-            what: "the mix missed the platform loudness target",
-        })
-        .gate(ReplyGate::Word {
-            field: "verdict",
-            equals: "pass",
-            what: "the export's words are not the words the edit placed",
-        }),
-    );
-    // 9. The watch, warn-policy: the whole cut as one contact sheet,
-    //    written beside the export, then read and scored. A score under
-    //    the bar is a flaw the edit ships with - recorded, yellow - not a
-    //    run thrown away after the render already landed. The gate is
-    //    the craft bar the headless runner ships on (7.0), so the flaw
-    //    the comment always promised is one the record actually carries.
-    steps.push(
-        StageStep::run(
-            Stage::Watch,
-            vec![
-                call(
-                    "watch_render",
-                    json!({
-                        "path": source.export,
-                        "project": project,
-                        "out": source.sheet,
-                        "audio": true,
-                    }),
-                ),
-                call(
-                    "craft_critique",
-                    json!({
-                        "pngPath": std::path::Path::new(&source.project)
-                            .join(&source.sheet)
-                            .display()
-                            .to_string(),
-                        "project": project,
-                    }),
-                ),
-            ],
-        )
-        .warn()
-        .gate(ReplyGate::AtLeast {
-            field: "overall",
-            minimum: 7.0,
-            what: "the cut scored under the craft bar",
-        }),
-    );
-    EditProgram::new(PathBuf::from(&source.export), steps)
-}
-
 /// Runs the auto-edit on its own thread: the toolbox and the backend are
 /// the adapter's ground, the runner drives them, and the pane hears every
 /// move through the messages the threads post. A ticker beside the run
@@ -1669,7 +1578,7 @@ fn auto_edit_program(source: &AutoEditSource) -> EditProgram {
 /// posts the terminal state.
 fn run_auto_edit(
     runner: Runner,
-    program: EditProgram,
+    program: &mut EditProgram,
     backend: Box<dyn concat_mcp::Backend>,
     tool_cancel: Arc<AtomicBool>,
 ) {
@@ -1701,7 +1610,7 @@ fn run_auto_edit(
         // with a sentence, not a thread that dies quietly and leaves the
         // button saying "running" forever.
         let toolbox = match std::panic::catch_unwind(concat_mcp::tools::Toolbox::new) {
-            Ok(toolbox) => toolbox,
+            Ok(toolbox) => std::sync::Arc::new(toolbox),
             Err(_) => {
                 still.store(false, Ordering::Relaxed);
                 crate::host::on_ui(|studio, _, _| {
@@ -1729,6 +1638,15 @@ fn run_auto_edit(
         let cancelled = tool_cancel;
         let mut caller =
             concat_mcp::director::BackendToolCaller::new(&toolbox, backend.as_mut(), &cancelled);
+        // The lanes a fan step runs its groups on: every lane its own
+        // connection to the same server, over the one shared toolbox,
+        // stopped by the one shared flag. A run without fan steps never
+        // asks the factory for a lane.
+        let lanes = concat_mcp::director::LaneOpener::new(
+            concat_mcp::backend::Mode::Window,
+            toolbox,
+            Arc::clone(&cancelled),
+        );
         // The run itself, under the same guard the toolbox was built
         // under: a panic in the runner's own frame - between the calls
         // its per-call guard already catches - must not leave the
@@ -1736,7 +1654,7 @@ fn run_auto_edit(
         // clears its one-run latch on unwind; this guard is the pane's
         // half: the ticker stops and the end still posts.
         let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            runner.run(&program, &mut caller)
+            runner.run_with_lanes(program, &mut caller, &lanes)
         }));
         still.store(false, Ordering::Relaxed);
         let state = match made {
@@ -1791,6 +1709,8 @@ fn stage_label(stage: &Stage) -> String {
         Stage::Motion => t("forge.stageMotion"),
         Stage::Timeline => t("forge.stageTimeline"),
         Stage::Captions => t("forge.stageCaptions"),
+        Stage::Music => t("forge.stageMusic"),
+        Stage::Sfx => t("forge.stageSfx"),
         Stage::Preview => t("forge.stagePreview"),
         Stage::Export => t("forge.stageExport"),
         Stage::Watch => t("forge.stageWatch"),
@@ -2019,186 +1939,6 @@ mod tests {
         assert_eq!(auto.sheet, "auto-edit-sheet.png");
 
         std::fs::remove_dir_all(&dir).ok();
-    }
-
-    /// The program the button runs: the watcher's own spine, in the
-    /// runner's register, with the two warn-policy stages exactly where
-    /// the design puts them - the repair (a take that cannot be repaired
-    /// ships as recorded) and the watch (a low craft score is a flaw, not
-    /// a failure). Every path is the sibling's own, fixed before the run.
-    #[test]
-    fn the_auto_edit_program_is_the_watchers_spine_over_fixed_paths() {
-        use concat_mcp::director::ErrorPolicy;
-
-        let source = super::AutoEditSource {
-            project: "/edits/Reel edit".to_owned(),
-            takes: vec![
-                super::TakePaths {
-                    take: "/edits/Reel edit/voiceover/take-000-a.wav".to_owned(),
-                    enhanced: "/edits/Reel edit/voiceover/enhanced-000-a.wav".to_owned(),
-                },
-                super::TakePaths {
-                    take: "/edits/Reel edit/voiceover/take-001-b.wav".to_owned(),
-                    enhanced: "/edits/Reel edit/voiceover/enhanced-001-b.wav".to_owned(),
-                },
-            ],
-            placements: vec![
-                super::TakePlacement {
-                    take: "/edits/Reel edit/voiceover/take-000-a.wav".to_owned(),
-                    start: 0.0,
-                    source_in: 0.0,
-                    source_out: 2.0,
-                    speed: 1.0,
-                },
-                super::TakePlacement {
-                    take: "/edits/Reel edit/voiceover/take-001-b.wav".to_owned(),
-                    start: 3.5,
-                    source_in: 0.5,
-                    source_out: 3.38,
-                    speed: 1.2,
-                },
-            ],
-            export: "/edits/Reel edit/export/auto-edit.mp4".to_owned(),
-            sheet: "auto-edit-sheet.png".to_owned(),
-        };
-        let program = super::auto_edit_program(&source);
-
-        // The register, in the watcher's order - and the creative layer's
-        // stages (Plan, Gather, Motion, Captions, Preview, Revise) simply
-        // absent: the fraction the page shows counts only these.
-        let order: Vec<&str> = program
-            .steps
-            .iter()
-            .map(|step| step.stage.label())
-            .collect();
-        assert_eq!(
-            order,
-            vec![
-                "handoff-voiceover",
-                "audio-repair",
-                "transcribe",
-                "voice-signals",
-                "understand",
-                "timeline",
-                "export",
-                "verify",
-                "watch",
-            ]
-        );
-        // The two warn-policy stages, and only them.
-        let warn: Vec<&str> = program
-            .steps
-            .iter()
-            .filter(|step| step.policy == ErrorPolicy::Warn)
-            .map(|step| step.stage.label())
-            .collect();
-        assert_eq!(warn, vec!["audio-repair", "watch"]);
-
-        // The export is promised where the program says it lands, and the
-        // repair chain lands on the take the timeline plays.
-        assert_eq!(
-            program.export,
-            Path::new("/edits/Reel edit/export/auto-edit.mp4")
-        );
-        let repair = &program.steps[1].calls;
-        assert_eq!(repair[0].tool, "sense_audio_repair");
-        assert_eq!(repair[0].arguments["action"], "enhance_speech");
-        assert_eq!(
-            repair[0].arguments["out"],
-            source.takes[0].enhanced.as_str()
-        );
-        assert_eq!(repair[1].arguments["action"], "remove_hiss_hum_rumble");
-        assert_eq!(
-            repair[1].arguments["audio"],
-            source.takes[0].enhanced.as_str()
-        );
-        // The clean pass lands on the take: the export ships the repaired
-        // sound, the watcher's own promise.
-        assert_eq!(repair[1].arguments["out"], source.takes[0].take.as_str());
-
-        // The export is waited on by its project folder - the job's name
-        // is minted at run time - and the watch's sheet is a project-
-        // relative name, because the window's server refuses absolute
-        // write paths.
-        let export = &program.steps[6].calls;
-        assert_eq!(export[0].tool, "export_start");
-        assert_eq!(export[0].arguments["output"], source.export.as_str());
-        assert_eq!(export[1].tool, "export_wait");
-        assert_eq!(export[1].arguments["path"], source.project.as_str());
-        let watch = &program.steps[8].calls;
-        assert_eq!(watch[0].arguments["out"], "auto-edit-sheet.png");
-        assert_eq!(
-            watch[1].arguments["pngPath"],
-            "/edits/Reel edit/auto-edit-sheet.png"
-        );
-        // Both takes get their own transcription, and the verify re-reads
-        // the render's own words beside its loudness - then COMPARES them
-        // with the takes' words placed where the timeline put them (F-04):
-        // a render that speaks the wrong words fails the run, not the
-        // loudness gate alone.
-        assert_eq!(program.steps[2].calls.len(), 6);
-        assert_eq!(
-            program.steps[7].calls[0].arguments["path"],
-            source.export.as_str()
-        );
-        assert_eq!(program.steps[7].calls[3].tool, "measure_loudness");
-        let compare = &program.steps[7].calls[4];
-        assert_eq!(compare.tool, "emotion");
-        assert_eq!(compare.arguments["action"], "verify");
-        assert_eq!(compare.arguments["actualPath"], source.export.as_str());
-        assert_eq!(compare.arguments["toleranceMs"], 60);
-        let expected = compare.arguments["expectedTakes"].as_array().unwrap();
-        assert_eq!(expected.len(), 2);
-        assert_eq!(expected[1]["path"], source.takes[1].take.as_str());
-        assert_eq!(expected[1]["start"], 3.5);
-        assert_eq!(expected[1]["sourceIn"], 0.5);
-        assert_eq!(expected[1]["speed"], 1.2);
-        // The verify's gates: the loudness target, and the words.
-        let gates = &program.steps[7].gates;
-        assert_eq!(gates.len(), 2);
-        assert!(matches!(
-            gates[1],
-            concat_mcp::director::ReplyGate::Word {
-                field: "verdict",
-                equals: "pass",
-                ..
-            }
-        ));
-
-        // The silent-success gates, exactly where the spine's own words
-        // always put them: the verify fails a loudness reading that
-        // missed the platform target and a render whose words are not
-        // the ones the edit placed (F-04), and the watch warns a craft
-        // score under the bar the headless runner ships on.
-        use concat_mcp::director::ReplyGate;
-        assert_eq!(
-            program.steps[7].gates,
-            vec![
-                ReplyGate::True {
-                    field: "platformTargetMet",
-                    what: "the mix missed the platform loudness target",
-                },
-                ReplyGate::Word {
-                    field: "verdict",
-                    equals: "pass",
-                    what: "the export's words are not the words the edit placed",
-                },
-            ]
-        );
-        assert_eq!(
-            program.steps[8].gates,
-            vec![ReplyGate::AtLeast {
-                field: "overall",
-                minimum: 7.0,
-                what: "the cut scored under the craft bar",
-            }]
-        );
-        // No other stage gates its replies.
-        for (at, step) in program.steps.iter().enumerate() {
-            if at != 7 && at != 8 {
-                assert!(step.gates.is_empty(), "step {at} gates its replies");
-            }
-        }
     }
 
     /// The button's own gate: NARRATION on the timeline is what AUTO EDIT

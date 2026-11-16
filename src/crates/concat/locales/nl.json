@@ -364,6 +364,8 @@
   "forge.sourceVoiceover": "Voiceover on the timeline",
   "forge.stageAudioRepair": "Audio repair",
   "forge.stageCaptions": "Captions",
+  "forge.stageMusic": "Muziekbed",
+  "forge.stageSfx": "Geluidsaccenten",
   "forge.stageExport": "Export",
   "forge.stageGather": "Gather",
   "forge.stageHandoffVoiceover": "Voiceover handoff",

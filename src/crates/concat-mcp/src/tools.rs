@@ -3847,6 +3847,10 @@ fn export_wait(
             })?
             .min(WAIT_LONGEST),
     };
+    // The path the caller asked about, echoed into the reply: a fan's
+    // lanes land in any order, and the reply's own word for what it
+    // waited on is the only mapping a reactive stage can trust.
+    let asked = arguments.get("path").cloned();
     let status = request("export.status", arguments)?;
     let until = Instant::now() + Duration::from_secs_f64(timeout);
     let mut reported = -1.0_f64;
@@ -3897,6 +3901,9 @@ fn export_wait(
                     "the job {tool} waited on ended {state}: {why}"
                 )));
             }
+            if let Some(path) = asked {
+                current["path"] = path;
+            }
             return Ok(Outcome::json(current));
         }
         if cancelled.load(Ordering::Relaxed) {
@@ -3907,6 +3914,9 @@ fn export_wait(
         }
         if Instant::now() >= until {
             current["note"] = json!("still running: call this tool again, or export_status");
+            if let Some(path) = &asked {
+                current["path"] = path.clone();
+            }
             return Ok(Outcome::json(current));
         }
         std::thread::sleep(POLL);

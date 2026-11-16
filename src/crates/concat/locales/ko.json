@@ -364,6 +364,8 @@
   "forge.sourceVoiceover": "Voiceover on the timeline",
   "forge.stageAudioRepair": "Audio repair",
   "forge.stageCaptions": "Captions",
+  "forge.stageMusic": "배경 음악",
+  "forge.stageSfx": "사운드 강조",
   "forge.stageExport": "Export",
   "forge.stageGather": "Gather",
   "forge.stageHandoffVoiceover": "Voiceover handoff",

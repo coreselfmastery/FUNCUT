@@ -9,7 +9,7 @@
 //! rather than judged in the wrong coordinate space. Contrast is measured only
 //! when foreground and background are known opaque solid colours.
 
-use crate::comp::{Comp, NodeKind, Rgba};
+use crate::comp::{Comp, NodeKind, Paint, Rgba};
 
 /// A target delivery format and its conservative title/action safe area.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -152,9 +152,13 @@ pub fn audit_text_contrast(comp: &Comp) -> Vec<AccessibilityFinding> {
     let mut findings = Vec::new();
     for (index, node) in comp.nodes.iter().enumerate() {
         let NodeKind::Text(text) = &node.kind else { continue };
-        if text.fill.is_some() {
-            continue;
-        }
+        // A solid fill is a concrete foreground and can be measured;
+        // gradients are skipped because one representative colour would lie.
+        let foreground = match &text.fill {
+            Some(Paint::Solid { color }) => *color,
+            Some(Paint::Gradient { .. }) => continue,
+            None => text.color,
+        };
         let background = if text.background.a >= 0.999 {
             Some(text.background)
         } else if comp.background.a >= 0.999 {
@@ -163,7 +167,7 @@ pub fn audit_text_contrast(comp: &Comp) -> Vec<AccessibilityFinding> {
             None
         };
         let Some(background) = background else { continue };
-        let ratio = contrast_ratio(text.color, background);
+        let ratio = contrast_ratio(foreground, background);
         let large = text.size >= 24.0 || (text.weight >= 700 && text.size >= 18.66);
         let required = if large { 3.0 } else { 4.5 };
         if ratio + 1e-9 < required {
@@ -254,6 +258,24 @@ mod tests {
         assert_eq!(audit_text_contrast(&normal)[0].code, "L610");
         let large = text_comp(Rgba::hex("#777777"), Rgba::hex("#ffffff"), 24.0, 400);
         assert!(audit_text_contrast(&large).is_empty());
+    }
+
+    #[test]
+    fn solid_text_fill_is_measured_but_gradient_fill_is_not_guessed() {
+        let mut solid = text_comp(Rgba::hex("#ffffff"), Rgba::hex("#ffffff"), 16.0, 400);
+        if let NodeKind::Text(text) = &mut solid.nodes[0].kind {
+            text.fill = Some(Paint::Solid { color: Rgba::hex("#777777") });
+        }
+        assert_eq!(audit_text_contrast(&solid)[0].code, "L610");
+
+        if let NodeKind::Text(text) = &mut solid.nodes[0].kind {
+            text.fill = Some(Paint::Gradient {
+                kind: crate::comp::GradientKind::Linear,
+                stops: vec![(0.0, Rgba::hex("#777777")), (1.0, Rgba::hex("#ffffff"))],
+                angle: 0.0,
+            });
+        }
+        assert!(audit_text_contrast(&solid).is_empty());
     }
 
     #[test]

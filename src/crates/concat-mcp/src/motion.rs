@@ -615,16 +615,22 @@ fn comp_lint(comp: &Comp, source: Option<&Path>) -> Vec<concat_motion::lint::Fin
 /// One finding, as the tool answers it: the code, the family the code's
 /// prefix names, the place, the sentence, and the help when there is one.
 fn finding_json(finding: &concat_motion::lint::Finding) -> Value {
-    let family = match finding.code.as_bytes().first() {
-        Some(b'L') => match finding.code.as_bytes().get(1) {
-            Some(b'1') => "structure",
-            Some(b'2') => "timing",
-            Some(b'3') => "assets",
-            Some(b'4') => "motion",
-            Some(b'5') => "determinism",
+    let family = if finding.code.starts_with("L60") {
+        "platform"
+    } else if finding.code.starts_with("L61") {
+        "accessibility"
+    } else {
+        match finding.code.as_bytes().first() {
+            Some(b'L') => match finding.code.as_bytes().get(1) {
+                Some(b'1') => "structure",
+                Some(b'2') => "timing",
+                Some(b'3') => "assets",
+                Some(b'4') => "motion",
+                Some(b'5') => "determinism",
+                _ => "unknown",
+            },
             _ => "unknown",
-        },
-        _ => "unknown",
+        }
     };
     let mut value = json!({
         "code": finding.code,
@@ -1219,9 +1225,82 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
         request.fps(&comp),
     ));
     let engine = geneva()?;
-    let baked = engine
-        .bake(&comp, &request, &dir)
-        .map_err(|error| ApiError::failed(error.to_string()))?;
+    // The incremental seam: a fix patch changes the comp's hash, and the
+    // whole bake re-rendered for it - even when the change was one node's
+    // timing, and only the frames that node's window touches ever drew
+    // differently. The closest earlier bake at the same frame is diffed
+    // against this one: the frames the change cannot reach are inherited
+    // from it byte for byte - determinism is the guarantee - and only the
+    // rest re-render, as one contiguous range the sidecar renders.
+    let mut request = request;
+    let mut inherited_note: Option<String> = None;
+    let mut predecessor_dir: Option<PathBuf> = None;
+    let mut render_range: Option<(u32, u32)> = None;
+    let mut skip_render = false;
+    if let Some((previous_dir, previous_comp)) = predecessor(&project, &comp, &request) {
+        let fps = request.fps(&comp);
+        let frames = ((comp.duration * fps).ceil() as usize).max(1);
+        let mut dirty =
+            concat_motion::diff::diff(&previous_comp, &comp).dirty_frames(&previous_comp, &comp);
+        dirty.truncate(frames);
+        while dirty.len() < frames {
+            dirty.push(false);
+        }
+        let from = dirty.iter().position(|dirty| *dirty);
+        let to = dirty.iter().rposition(|dirty| *dirty);
+        match (from, to) {
+            (Some(from), Some(to)) => {
+                render_range = Some((from as u32, to as u32 + 1));
+                request.frames = render_range;
+            }
+            (None, None) => {
+                skip_render = true;
+            }
+            _ => {}
+        }
+        let inherited = dirty.iter().filter(|dirty| !**dirty).count();
+        inherited_note = Some(format!(
+            "{inherited} of {frames} frames inherited from {:016x}, the rest re-rendered",
+            previous_comp.hash()
+        ));
+        predecessor_dir = Some(previous_dir);
+    }
+    let baked = if skip_render {
+        // Nothing the change reaches: the whole sequence inherits, and
+        // nothing renders at all.
+        let frames_dir = dir.join("frames");
+        std::fs::create_dir_all(&frames_dir)
+            .map_err(|error| ApiError::failed(format!("{}: {error}", frames_dir.display())))?;
+        let copied = predecessor_dir
+            .as_deref()
+            .map(|previous| inherit_outside(previous, &frames_dir, None))
+            .unwrap_or(0);
+        concat_motion::engine::Baked {
+            dir: frames_dir,
+            frames: copied,
+            width: request.width(&comp),
+            height: request.height(&comp),
+            fps: request.fps(&comp),
+            hash: comp.hash(),
+            assets: concat_motion::engine::bake_assets_key(&comp, &comps_dir(&project)),
+            engine: concat_motion::engine::EngineKind::Geneva,
+            engine_version: "inherited".into(),
+            alpha: request.alpha,
+            warnings: Vec::new(),
+            cached: false,
+        }
+    } else {
+        let mut baked = engine
+            .bake(&comp, &request, &dir)
+            .map_err(|error| ApiError::failed(error.to_string()))?;
+        // The frames the render did not produce: inherited from the bake
+        // before it, byte for byte - determinism is the guarantee.
+        if let Some(previous) = predecessor_dir.as_deref() {
+            let copied = inherit_outside(previous, &baked.dir, render_range);
+            baked.frames += copied;
+        }
+        baked
+    };
 
     // The bake cache is bounded: every bake sweeps its own root under the
     // machine-sized budget, the bake just written kept but counted, so
@@ -1250,6 +1329,9 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
     if asked != (width, height) {
         reply["clampedTo"] =
             json!("4096: the bake was requested above 4K and is rendered at 4K for safety");
+    }
+    if let Some(note) = inherited_note {
+        reply["inherited"] = json!(note);
     }
     // The sweep is said only when it did something: a sweep that freed
     // nothing is housekeeping, not news.
@@ -1294,6 +1376,92 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
         reply["file"] = json!(out.display().to_string());
     }
     Ok(Outcome::json(reply))
+}
+
+/// The closest earlier bake of a different revision at the same frame:
+/// same width, height and rate - the frames have to line up - the
+/// manifest's own mtime ordering them, and the comp it baked read back
+/// from the project's content-addressed comps/.
+fn predecessor(project: &Path, comp: &Comp, request: &BakeRequest) -> Option<(PathBuf, Comp)> {
+    let suffix = format!(
+        "-{}x{}@{}",
+        request.width(comp),
+        request.height(comp),
+        request.fps(comp)
+    );
+    let mut candidates: Vec<(std::time::SystemTime, PathBuf, Comp)> = Vec::new();
+    let root = cache_dir(project);
+    let Ok(entries) = std::fs::read_dir(&root) else {
+        return None;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.contains(&suffix) || name.starts_with(&format!("{:016x}", comp.hash())) {
+            continue;
+        }
+        let Ok(manifest) = std::fs::read_to_string(path.join("manifest.json")) else {
+            continue;
+        };
+        let Ok(manifest) = serde_json::from_str::<Value>(&manifest) else {
+            continue;
+        };
+        let Some(hash) = manifest.get("hash").and_then(Value::as_str) else {
+            continue;
+        };
+        if hash == format!("{:016x}", comp.hash()) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(comps_dir(project).join(format!("{hash}.json")))
+        else {
+            continue;
+        };
+        let Ok(previous) = serde_json::from_str::<Comp>(&text) else {
+            continue;
+        };
+        let Ok(at) = std::fs::metadata(&path).and_then(|meta| meta.modified()) else {
+            continue;
+        };
+        candidates.push((at, path, previous));
+    }
+    candidates.sort_by_key(|(at, ..)| *at);
+    candidates.reverse();
+    candidates
+        .into_iter()
+        .next()
+        .map(|(_, path, comp)| (path, comp))
+}
+
+/// Copy the frames a re-render did not produce from the bake before it:
+/// every NNNN.png outside `range`, byte for byte, determinism the
+/// guarantee. `None` copies them all.
+fn inherit_outside(previous: &Path, dir: &Path, range: Option<(u32, u32)>) -> usize {
+    let Ok(entries) = std::fs::read_dir(previous) else {
+        return 0;
+    };
+    let mut copied = 0;
+    for entry in entries.filter_map(Result::ok) {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let Some(stem) = name.strip_suffix(".png") else {
+            continue;
+        };
+        let Ok(index) = stem.parse::<u32>() else {
+            continue;
+        };
+        if let Some((from, to)) = range
+            && index >= from
+            && index < to
+        {
+            continue;
+        }
+        if std::fs::copy(entry.path(), dir.join(&name)).is_ok() {
+            copied += 1;
+        }
+    }
+    copied
 }
 
 /// Encode a staged bake to one file, the way `concat-motion-agent bake

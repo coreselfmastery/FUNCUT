@@ -342,6 +342,15 @@ pub enum Op {
         /// The move: zoom, pan, roll, seconds, curve, depths.
         camera: CameraMove,
     },
+    /// Re-ink a text node: the one colour its words draw with, a gradient
+    /// over them replaced by it, because an ink is one opinion. The lint's
+    /// contrast gate writes these through [`patches`](crate::lint::patches).
+    Ink {
+        /// The node.
+        node: String,
+        /// The colour.
+        color: Rgba,
+    },
 }
 
 /// Apply a batch of operations, all or nothing.
@@ -435,6 +444,19 @@ pub fn one(mut comp: Comp, op: &Op) -> Result<Comp, MotionError> {
         Op::SetText { node, text } => {
             set_text(&mut comp, node, text)?;
             Ok(comp)
+        }
+        Op::Ink { node, color } => {
+            let entry = node_mut(&mut comp, node)?;
+            match &mut entry.kind {
+                NodeKind::Text(text) => {
+                    // The words draw with the one colour; a gradient over
+                    // them is replaced by it, because an ink is one opinion.
+                    text.color = *color;
+                    text.fill = None;
+                    Ok(comp)
+                }
+                _ => Err(not_text(node)),
+            }
         }
         Op::SetMarkup { node, markup } => {
             let entry = node_mut(&mut comp, node)?;

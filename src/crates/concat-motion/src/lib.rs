@@ -76,6 +76,7 @@ pub mod continuity;
 pub mod critic;
 pub mod css;
 pub mod curve;
+pub mod diff;
 pub mod discipline;
 pub mod engine;
 pub mod farm;

@@ -44,7 +44,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::comp::{AssetKind, Comp, NodeKind};
+use crate::comp::{AssetKind, Comp, NodeKind, Paint, Point, Rgba};
 use crate::curve::Curve;
 use crate::sequence::Sequence;
 
@@ -62,6 +62,10 @@ pub enum Family {
     Motion,
     /// The network, the clock and the unseeded.
     Determinism,
+    /// Where a platform lets words sit: the safe zones.
+    Platform,
+    /// Whether the words can be read at all: the contrast.
+    Accessibility,
 }
 
 impl Family {
@@ -73,6 +77,8 @@ impl Family {
             Family::Assets => "assets",
             Family::Motion => "motion",
             Family::Determinism => "determinism",
+            Family::Platform => "platform",
+            Family::Accessibility => "accessibility",
         }
     }
 }
@@ -211,6 +217,18 @@ pub const RULES: &[Rule] = &[
         family: Family::Determinism,
         name: "remote-asset-src",
     },
+    // Platform: where the platforms let words sit.
+    Rule {
+        code: "L600",
+        family: Family::Platform,
+        name: "outside-the-safe-zone",
+    },
+    // Accessibility: whether the words can be read at all.
+    Rule {
+        code: "L610",
+        family: Family::Accessibility,
+        name: "low-contrast",
+    },
 ];
 
 /// How many rules the lint carries: [`RULES`]'s own length, said as a
@@ -284,6 +302,8 @@ pub fn audit(comp: &Comp, playful: bool) -> Vec<Finding> {
     comp_timing(comp, &mut found);
     motion(comp, playful, &mut found);
     determinism(comp, &mut found);
+    platform(comp, &mut found);
+    accessibility(comp, &mut found);
     found
 }
 
@@ -1009,6 +1029,225 @@ fn markup_outside_styles(markup: &str) -> String {
     }
 }
 
+// ── Platform: the safe zones ──────────────────────────────────────────
+
+/// The margins a platform reserves for its own chrome, as fractions of
+/// the frame, by the frame's own shape: a portrait is a Shorts/TikTok/
+/// Reels canvas - the top and the bottom are the platform's, the words
+/// sit in the middle - a landscape is a player that reserves a twentieth,
+/// and the near-square 4:5 is the feed's own read.
+fn zone_of(comp: &Comp) -> (&'static str, (f64, f64), (f64, f64)) {
+    if f64::from(comp.height.max(1)) / f64::from(comp.width.max(1)) > 1.1 {
+        ("9:16 Shorts/TikTok/Reels", (0.04, 0.04), (0.12, 0.14))
+    } else if f64::from(comp.width.max(1)) / f64::from(comp.height.max(1)) > 1.2 {
+        ("16:9", (0.05, 0.05), (0.05, 0.05))
+    } else {
+        ("4:5", (0.06, 0.06), (0.08, 0.12))
+    }
+}
+
+/// Where a node sits at rest: the position track's first key when it
+/// carries one - the renderer plays it from there - and the static
+/// transform when it does not.
+fn resting_place(node: &crate::comp::Node) -> Option<Point> {
+    if let Some(track) = node.tracks.get("position")
+        && let Some(first) = track.keys.first()
+        && let crate::track::Value::Point { x, y } = &first.value
+    {
+        return Some(Point::new(*x, *y));
+    }
+    node.transform.position
+}
+
+/// The safe zones, on the words: a text node whose placed position sits
+/// outside the zone its frame's shape reserves. A node that never names
+/// a position - the markup an HTML node carries, laid out by its own CSS
+/// - cannot be judged from the document, and is not.
+fn platform(comp: &Comp, found: &mut Vec<Finding>) {
+    let (name, (side_left, side_right), (top, bottom)) = zone_of(comp);
+    let left = side_left * f64::from(comp.width);
+    let right = (1.0 - side_right) * f64::from(comp.width);
+    let ceiling = top * f64::from(comp.height);
+    let floor = (1.0 - bottom) * f64::from(comp.height);
+    for (i, node) in comp.nodes.iter().enumerate() {
+        if !matches!(&node.kind, NodeKind::Text(_)) {
+            continue;
+        }
+        let Some(place) = resting_place(node) else {
+            continue;
+        };
+        if place.x < left || place.x > right || place.y < ceiling || place.y > floor {
+            found.push(
+                Finding::new(
+                    "L600",
+                    format!("/nodes/{i}/transform/position"),
+                    format!(
+                        "node {:?} sits at ({:.0}, {:.0}), outside the {} safe zone \
+                         (top {:.0}%, bottom {:.0}%, sides {:.0}%) - the platform's own \
+                         chrome eats it",
+                        node.id,
+                        place.x,
+                        place.y,
+                        name,
+                        top * 100.0,
+                        bottom * 100.0,
+                        side_left * 100.0
+                    ),
+                )
+                .with_help(
+                    "pull it inside the zone - `patches` writes the position key that does it",
+                ),
+            );
+        }
+    }
+}
+
+// ── Accessibility: the contrast ────────────────────────────────────────
+
+/// WCAG's relative luminance, the same formula the analysis door computes:
+/// the two doors must never disagree about what a ratio is.
+fn luminance(color: &Rgba) -> f64 {
+    let channel = |value: f64| {
+        if value <= 0.04045 {
+            value / 12.92
+        } else {
+            ((value + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
+}
+
+fn contrast_ratio(ink: &Rgba, backdrop: &Rgba) -> f64 {
+    let a = luminance(ink);
+    let b = luminance(backdrop);
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
+/// The contrast gate, on the words: a text node whose ink, against the
+/// plate it draws over or the comp's own background, carries less than
+/// AA - 4.5:1 at body sizes, 3:1 from 24 pixels up. An ink the document
+/// cannot name (a gradient over video) is left to the analysis door,
+/// which reads it honestly as null: a gate that cannot measure does not
+/// guess.
+fn accessibility(comp: &Comp, found: &mut Vec<Finding>) {
+    for (i, node) in comp.nodes.iter().enumerate() {
+        let NodeKind::Text(text) = &node.kind else {
+            continue;
+        };
+        // The backdrop: the plate when it is opaque enough to matter, the
+        // comp's background when it is, video nobody can read from when
+        // neither - and no finding, rather than a guess.
+        let backdrop = if text.background.a > 0.5 {
+            text.background
+        } else if comp.background.a > 0.5 {
+            comp.background
+        } else {
+            continue;
+        };
+        // The ink: a flat colour answers with one ratio; a gradient is
+        // only as legible as its quietest stop.
+        let inks: Vec<&Rgba> = match &text.fill {
+            Some(Paint::Solid { color }) => vec![color],
+            Some(Paint::Gradient { stops, .. }) => stops.iter().map(|(_, color)| color).collect(),
+            None => vec![&text.color],
+        };
+        let worst = inks
+            .iter()
+            .map(|ink| contrast_ratio(ink, &backdrop))
+            .fold(f64::INFINITY, f64::min);
+        let floor = if text.size >= 24.0 { 3.0 } else { 4.5 };
+        if worst < floor {
+            found.push(
+                Finding::new(
+                    "L610",
+                    format!("/nodes/{i}/kind/text/color"),
+                    format!(
+                        "node {:?}'s ink carries {:.2}:1 against what it draws over, \
+                         under the {:.1}:1 AA asks at its size",
+                        node.id, worst, floor
+                    ),
+                )
+                .with_help(
+                    "re-ink it - `patches` writes the ink with the better contrast \
+                     of the library's own two",
+                ),
+            );
+        }
+    }
+}
+
+/// The auto-fix patches the library can write for a comp's own findings:
+/// the safe-zone pull-ins as position keys, the contrast fails as inks,
+/// as authoring operations a plan, an agent or the MCP `motion_fix` door
+/// applies. Every patch is a suggestion until something applies it, and
+/// the audit after is the proof.
+pub fn patches(comp: &Comp) -> Vec<crate::authoring::Op> {
+    let found = audit(comp, false);
+    let (_, (side_left, side_right), (top, bottom)) = zone_of(comp);
+    let left = side_left * f64::from(comp.width);
+    let right = (1.0 - side_right) * f64::from(comp.width);
+    let ceiling = top * f64::from(comp.height);
+    let floor = (1.0 - bottom) * f64::from(comp.height);
+    let library_inks = [Rgba::hex("#f4f1ea"), Rgba::hex("#101216")];
+    let mut ops = Vec::new();
+    for finding in found {
+        // The finding's own node, by the path that names it.
+        let index = finding
+            .path
+            .trim_start_matches("/nodes/")
+            .split('/')
+            .next()
+            .and_then(|at| at.parse::<usize>().ok());
+        let Some(node) = index.and_then(|index| comp.nodes.get(index)) else {
+            continue;
+        };
+        match finding.code {
+            "L600" => {
+                // The nearest point inside the zone, as a one-key position
+                // track: the author's intent kept, the platform's chrome
+                // respected.
+                let Some(place) = resting_place(node) else {
+                    continue;
+                };
+                ops.push(crate::authoring::Op::SetTrackPoints {
+                    node: node.id.clone(),
+                    keys: vec![(
+                        0.0,
+                        place.x.clamp(left, right),
+                        place.y.clamp(ceiling, floor),
+                        None,
+                    )],
+                });
+            }
+            "L610" => {
+                // The library's own two inks, whichever contrasts better
+                // against the same backdrop.
+                let NodeKind::Text(text) = &node.kind else {
+                    continue;
+                };
+                let backdrop = if text.background.a > 0.5 {
+                    text.background
+                } else {
+                    comp.background
+                };
+                let ink = library_inks
+                    .iter()
+                    .copied()
+                    .max_by(|a, b| {
+                        contrast_ratio(a, &backdrop).total_cmp(&contrast_ratio(b, &backdrop))
+                    })
+                    .unwrap_or(library_inks[0]);
+                ops.push(crate::authoring::Op::Ink {
+                    node: node.id.clone(),
+                    color: ink,
+                });
+            }
+            _ => {}
+        }
+    }
+    ops
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1085,9 +1324,9 @@ mod tests {
         assert_eq!(rule_count(), RULES.len());
         assert_eq!(
             rule_count(),
-            22,
-            "the families carry 22 rules: 4 structure, \
-                    4 timing, 3 assets, 7 motion, 4 determinism"
+            24,
+            "the families carry 24 rules: 4 structure, \
+                    4 timing, 3 assets, 7 motion, 4 determinism, 1 platform, 1 accessibility"
         );
     }
 
@@ -1686,5 +1925,151 @@ mod tests {
                     .to_string()
             ]
         );
+    }
+}
+
+#[cfg(test)]
+mod platform_tests {
+    use super::*;
+    use crate::comp::Point;
+    use crate::comp::{Comp, FORMAT, Node, NodeKind, Rgba, TextNode, Transform};
+
+    fn comp_of(width: u32, height: u32) -> Comp {
+        Comp {
+            format: FORMAT,
+            id: "test.zone".into(),
+            name: "Zone".into(),
+            width,
+            height,
+            fps: 30.0,
+            duration: 4.0,
+            background: Rgba::new(0.0, 0.0, 0.0, 0.0),
+            assets: Default::default(),
+            curves: Default::default(),
+            nodes: Vec::new(),
+            comps: Default::default(),
+            slots: Vec::new(),
+        }
+    }
+
+    fn text_at(id: &str, x: f64, y: f64, color: Rgba, size: f64, plate: Rgba) -> Node {
+        Node {
+            id: id.into(),
+            parent: None,
+            start: 0.0,
+            duration: 0.0,
+            transform: Transform {
+                position: Some(Point::new(x, y)),
+                ..Transform::default()
+            },
+            opacity: 1.0,
+            blend: crate::comp::Blend::Normal,
+            mask: None,
+            matte: None,
+            motion_blur: None,
+            effects: Vec::new(),
+            tracks: Default::default(),
+            kind: NodeKind::Text(Box::new(TextNode {
+                text: "words".into(),
+                color,
+                size,
+                background: plate,
+                ..TextNode::default()
+            })),
+        }
+    }
+
+    /// A portrait comp reserves its top and bottom for the platform: a
+    /// word in the top twelve percent is outside the zone, said with the
+    /// zone's own numbers, and the patch pulls it to the nearest point
+    /// inside - one key, applied, audited clean.
+    #[test]
+    fn a_portrait_word_outside_the_zone_is_pulled_inside() {
+        let mut comp = comp_of(1080, 1920);
+        comp.nodes.push(text_at(
+            "caption",
+            540.0,
+            100.0,
+            Rgba::new(1.0, 1.0, 1.0, 1.0),
+            64.0,
+            Rgba::new(0.0, 0.0, 0.0, 0.0),
+        ));
+        let found = audit(&comp, false);
+        assert!(
+            found
+                .iter()
+                .any(|finding| finding.code == "L600" && finding.message.contains("9:16")),
+            "{found:?}"
+        );
+        // The patch: one position key at the nearest point inside.
+        let ops = patches(&comp);
+        assert_eq!(ops.len(), 1, "{ops:?}");
+        let fixed = crate::authoring::apply(&comp, &ops).expect("the patch applies");
+        let found = audit(&fixed, false);
+        assert!(
+            found.iter().all(|finding| finding.code != "L600"),
+            "pulled in: {found:?}"
+        );
+        let pulled = fixed.node("caption").expect("the node");
+        let Some(place) = resting_place(pulled) else {
+            panic!("the patch left no resting place");
+        };
+        assert!(
+            (place.x - 540.0).abs() < 1e-6 && (place.y - 230.4).abs() < 1e-6,
+            "clamped to the zone's own ceiling: {place:?}"
+        );
+    }
+
+    /// The contrast gate: grey words on a dark plate carry less than AA,
+    /// are said with the ratio, and the patch re-inks them with the
+    /// library's own ink that contrasts better - applied, audited clean.
+    #[test]
+    fn grey_words_on_a_dark_plate_are_re_inked() {
+        let mut comp = comp_of(1920, 1080);
+        comp.nodes.push(text_at(
+            "caption",
+            960.0,
+            540.0,
+            Rgba::new(0.35, 0.35, 0.35, 1.0),
+            16.0,
+            Rgba::new(0.05, 0.05, 0.06, 1.0),
+        ));
+        let found = audit(&comp, false);
+        assert!(
+            found
+                .iter()
+                .any(|finding| finding.code == "L610" && finding.message.contains("4.5:1")),
+            "{found:?}"
+        );
+        let ops = patches(&comp);
+        assert_eq!(ops.len(), 1, "{ops:?}");
+        let fixed = crate::authoring::apply(&comp, &ops).expect("the patch applies");
+        let found = audit(&fixed, false);
+        assert!(
+            found.iter().all(|finding| finding.code != "L610"),
+            "re-inked: {found:?}"
+        );
+        let NodeKind::Text(text) = &fixed.node("caption").expect("the node").kind else {
+            panic!("a text node");
+        };
+        assert_eq!(text.color, Rgba::hex("#f4f1ea"));
+        assert!(text.fill.is_none(), "the gradient gave way to the one ink");
+    }
+
+    /// A word inside the zone, carrying AA, is left alone: no finding, no
+    /// patch, nothing to say.
+    #[test]
+    fn a_reading_word_is_left_alone() {
+        let mut comp = comp_of(1920, 1080);
+        comp.nodes.push(text_at(
+            "caption",
+            960.0,
+            540.0,
+            Rgba::new(1.0, 1.0, 1.0, 1.0),
+            64.0,
+            Rgba::new(0.02, 0.024, 0.04, 1.0),
+        ));
+        assert!(audit(&comp, false).is_empty());
+        assert!(patches(&comp).is_empty());
     }
 }

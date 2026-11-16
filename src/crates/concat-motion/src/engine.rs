@@ -324,7 +324,7 @@ impl Baked {
 /// with no assets; a file that is not there hashes as `missing`, because a
 /// bake that could not read an asset is a bake a later re-render with the
 /// file present must not be served in place of.
-pub(crate) fn bake_assets_key(comp: &Comp, source_dir: &Path) -> Option<u64> {
+pub fn bake_assets_key(comp: &Comp, source_dir: &Path) -> Option<u64> {
     let mut walk: BTreeMap<String, &str> = BTreeMap::new();
     fn gather<'a>(comp: &'a Comp, scope: &str, walk: &mut BTreeMap<String, &'a str>) {
         for (id, asset) in &comp.assets {

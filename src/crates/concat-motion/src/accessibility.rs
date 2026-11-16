@@ -338,7 +338,9 @@ mod tests {
         comp.nodes[0].opacity = 0.5;
         assert!(audit_text_contrast(&comp).is_empty());
         comp.nodes[0].opacity = 1.0;
-        comp.nodes[0].effects.push(crate::comp::Effect::Blur { radius: 2.0 });
+        comp.nodes[0]
+            .effects
+            .push(crate::comp::Effect::Blur { radius: 2.0 });
         assert!(audit_text_contrast(&comp).is_empty());
     }
 

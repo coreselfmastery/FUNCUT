@@ -12167,6 +12167,7 @@ impl Studio {
             let keys = &self.prefs.forge;
             page.set_groq_key(keys.groq.clone().into());
             page.set_gemini_key(keys.gemini.clone().into());
+            page.set_zai_key(keys.zai.clone().into());
             page.set_openrouter_key(keys.openrouter.clone().into());
             page.set_mistral_key(keys.mistral.clone().into());
             page.set_cerebras_key(keys.cerebras.clone().into());
@@ -12235,8 +12236,25 @@ impl Studio {
                 thousands(self.openvid.state_measured()).as_str(),
             ));
             page.set_searching(self.openvid.searching);
-            page.set_total(SharedString::from(thousands(self.openvid.total).as_str()));
-            page.set_more((self.openvid.results.len() as u64) < self.openvid.total);
+            // Whether the rows are the live shelves': the page's own
+            // asking and gating follow it.
+            page.set_live(self.openvid.live_mode());
+            // The counts follow the shelf in play: the live page counts
+            // its own hits against its own total, the local one the
+            // index's, so the page's More and its number say the shelf
+            // the rows are actually standing on.
+            let (total, shown) = if self.openvid.live_mode() {
+                (self.openvid.live_total, self.openvid.live.len() as u64)
+            } else {
+                (self.openvid.total, self.openvid.results.len() as u64)
+            };
+            page.set_total(SharedString::from(thousands(total).as_str()));
+            page.set_more(shown < total);
+            // The live shelves' keys, as the settings hold them: the
+            // page's own fields read them back, so a key typed once is a
+            // filled field wherever the page is opened from.
+            page.set_pexels_key(SharedString::from(self.prefs.stock.pexels.as_str()));
+            page.set_pixabay_key(SharedString::from(self.prefs.stock.pixabay.as_str()));
             // "Any camera" leads the list, so 0 is that and the rest are
             // the library's own motions, in the index's own order.
             let mut cameras = vec![SharedString::from(crate::i18n::t("openvid.anyCamera"))];

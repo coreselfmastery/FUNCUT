@@ -54,6 +54,7 @@ use concat_host::preview::{FrameSpec, Monitor};
 use concat_host::session::EditorView;
 use concat_host::sounds;
 use concat_host::stabilize::{StabilizeRequest, Stabilizers};
+use concat_host::stock::{self as live_stock, Provider};
 use concat_host::templates::{self, SlotFill};
 use concat_host::{ProjectInfo, Session, Titles, lock, media, projects};
 use concat_project::Command;
@@ -65,7 +66,8 @@ pub use message::{
     ErrorCode, Event, ExportSpec, Fill, JobState, JobStatus, MagickAdd, MagickEntry, MagickFound,
     MagickState, OpenvidClip, OpenvidFound, OpenvidImport, OpenvidRerank, OpenvidState,
     PackageInfo, ParamInfo, Picture, Reply, Request, Response, SoundEntry, SoundsAdded,
-    SoundsFound, Started, VersionInfo, WindowSought, Written,
+    SoundsFound, Started, StockFetched, StockFound, StockHit, StockImported, VersionInfo,
+    WindowSought, Written,
 };
 
 /// The export sheet's middle quality, and what an export gets when the
@@ -728,6 +730,34 @@ impl Api {
                 monetized,
             } => Ok(Reply::OpenvidImported(
                 self.openvid_import(&path, &ids, start, track, monetized)?,
+            )),
+            Request::StockSearch {
+                provider,
+                query,
+                orientation,
+                limit,
+                page,
+                api_key,
+            } => Ok(Reply::StockFound(self.stock_search(
+                &provider,
+                query.as_deref(),
+                orientation.as_deref(),
+                limit.unwrap_or(20),
+                page.unwrap_or(1),
+                api_key.as_deref(),
+            )?)),
+            Request::StockFetch { provider, id, url } => {
+                Ok(Reply::StockFetched(self.stock_fetch(&provider, &id, &url)?))
+            }
+            Request::StockImport {
+                path,
+                provider,
+                id,
+                url,
+                start,
+                track,
+            } => Ok(Reply::StockImported(
+                self.stock_import(&path, &provider, &id, &url, start, track)?,
             )),
             Request::SoundsSearch {
                 query,
@@ -1667,6 +1697,205 @@ impl Api {
         }
         Ok(OpenvidImport {
             media_ids,
+            view: Box::new(view),
+        })
+    }
+
+    // ── the live stock APIs ────────────────────────────────────────────────
+
+    /// The live shelves' own library, the one [`stock::shared`] holds for
+    /// this process.
+    fn live_library(&self) -> &'static live_stock::Library {
+        live_stock::Library::shared(&self.dirs)
+    }
+
+    /// The live provider a caller named, or the refusal that names both.
+    fn live_provider(name: &str) -> Result<Provider, ApiError> {
+        live_stock::Provider::of(name).ok_or_else(|| {
+            ApiError::failed(format!(
+                "the provider must be pexels or pixabay, not {:?}",
+                name.trim()
+            ))
+        })
+    }
+
+    /// [`Request::StockSearch`]: one live shelf, searched with this
+    /// machine's own key (or the one the caller handed), the hits
+    /// normalized out of the provider's dialect.
+    pub fn stock_search(
+        &self,
+        provider: &str,
+        query: Option<&str>,
+        orientation: Option<&str>,
+        limit: u32,
+        page: u32,
+        api_key: Option<&str>,
+    ) -> Result<StockFound, ApiError> {
+        let provider = Self::live_provider(provider)?;
+        if let Some(orientation) = orientation.filter(|orientation| {
+            !matches!(
+                orientation.trim().to_ascii_lowercase().as_str(),
+                "vertical" | "horizontal" | "square"
+            )
+        }) {
+            return Err(ApiError::failed(format!(
+                "the orientation must be vertical, horizontal or square, not {orientation:?}"
+            )));
+        }
+        let found = self
+            .live_library()
+            .search(
+                provider,
+                query.unwrap_or_default().trim(),
+                limit,
+                page.max(1),
+                orientation.map(str::trim),
+                api_key,
+            )
+            .map_err(ApiError::failed)?;
+        let library = self.live_library();
+        Ok(StockFound {
+            hits: found
+                .hits
+                .iter()
+                .map(|hit| StockHit {
+                    id: hit.id.clone(),
+                    provider: provider.name().to_owned(),
+                    caption: hit.caption.clone(),
+                    name: hit.name.clone(),
+                    seconds: hit.seconds,
+                    width: hit.width,
+                    height: hit.height,
+                    fps: hit.fps,
+                    url: hit.url.clone(),
+                    preview: hit.preview.clone(),
+                    author: hit.author.clone(),
+                    license: hit.license.to_owned(),
+                    cached: library.fetched(provider, &hit.id).is_some(),
+                    local_path: library
+                        .fetched(provider, &hit.id)
+                        .map(|path| path.to_string_lossy().into_owned()),
+                })
+                .collect(),
+            total: found.total,
+            provider: provider.name().to_owned(),
+            license: live_stock::license_of(provider).to_owned(),
+        })
+    }
+
+    /// [`Request::StockFetch`]: the clip's bytes into the cache, checked
+    /// the way OpenVid's own fetch checks them - an unreadable copy is
+    /// dropped from the cache, so a second ask re-downloads it.
+    pub fn stock_fetch(
+        &self,
+        provider: &str,
+        id: &str,
+        url: &str,
+    ) -> Result<StockFetched, ApiError> {
+        let provider = Self::live_provider(provider)?;
+        let path = self.stock_fetch_checked(provider, id, url)?;
+        let bytes = std::fs::metadata(&path).map(|meta| meta.len()).unwrap_or(0);
+        Ok(StockFetched {
+            id: id.trim().to_owned(),
+            provider: provider.name().to_owned(),
+            path: path.to_string_lossy().into_owned(),
+            bytes,
+        })
+    }
+
+    /// The fetched-and-checked path of one live clip: cached as it lies,
+    /// fetched when it is not, and refused - with the bad copy dropped -
+    /// when the bytes that arrive do not read as MP4 media.
+    fn stock_fetch_checked(
+        &self,
+        provider: Provider,
+        id: &str,
+        url: &str,
+    ) -> Result<PathBuf, ApiError> {
+        let library = self.live_library();
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let path = library
+            .fetch_url(provider, id.trim(), url, &cancel)
+            .map_err(ApiError::failed)?;
+        if !Self::mp4_head_ok(&path) {
+            let _ = std::fs::remove_file(&path);
+            return Err(ApiError::failed(format!(
+                "the {} clip {id} arrived but does not read as MP4 media; the bad copy was \
+                 dropped from the cache - ask again to re-download it",
+                provider.name()
+            )));
+        }
+        Ok(path)
+    }
+
+    /// [`Request::StockImport`]: fetch if need be, copy into the project's
+    /// own `stock` folder, and add to the bin - one undoable step, or two
+    /// when the clip is also laid on a lane. The live shelves' licences
+    /// allow commercial use, so the monetized edit is served here, not
+    /// refused: the licence travels in the reply, the words the import
+    /// stands on.
+    pub fn stock_import(
+        &mut self,
+        path: &str,
+        provider: &str,
+        id: &str,
+        url: &str,
+        start: Option<f64>,
+        track: Option<String>,
+    ) -> Result<StockImported, ApiError> {
+        let provider = Self::live_provider(provider)?;
+        if id.trim().is_empty() || url.trim().is_empty() {
+            return Err(ApiError::failed(
+                "the live import needs the hit's id and the url the search page gave".to_owned(),
+            ));
+        }
+        self.writable(path)?;
+        // Everything is fetched and checked before anything is added, so
+        // a clip that will not arrive refuses the whole request rather
+        // than leaving half an import behind.
+        let cached = self.stock_fetch_checked(provider, id, url)?;
+        let folder = {
+            let session = self.session(path)?;
+            let folder = std::path::PathBuf::from(session.path()).join("stock");
+            std::fs::create_dir_all(&folder).map_err(|error| {
+                ApiError::failed(format!("could not create {}: {error}", folder.display()))
+            })?;
+            folder
+        };
+        // The provider's own name plus the id: unique for ever, and the
+        // same clip imported twice is the same file, copied over itself.
+        let name = format!("{}-{}.mp4", provider.name(), live_stock::safe_stem(id));
+        let into = folder.join(&name);
+        std::fs::copy(&cached, &into).map_err(|error| {
+            ApiError::failed(format!("could not copy into the project: {error}"))
+        })?;
+        let item = media::probe(&into.to_string_lossy())
+            .map_err(ApiError::failed)?
+            .to_new_media();
+        let mut view = self.apply(path, Command::AddMedia { item: item.clone() })?;
+        let media_id = view
+            .project
+            .media
+            .iter()
+            .find(|item| item.path == into.to_string_lossy())
+            .map(|item| item.id.clone())
+            .ok_or_else(|| {
+                ApiError::failed("the clip was imported but could not be found again".to_owned())
+            })?;
+        if let Some(start) = start {
+            view = self.apply(
+                path,
+                Command::AddClipsInSequence {
+                    media_ids: vec![media_id.clone()],
+                    track_id: track,
+                    start,
+                    ripple: false,
+                },
+            )?;
+        }
+        Ok(StockImported {
+            media_ids: vec![media_id],
+            license: live_stock::license_of(provider).to_owned(),
             view: Box::new(view),
         })
     }

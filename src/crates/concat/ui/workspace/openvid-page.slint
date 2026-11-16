@@ -49,7 +49,9 @@ export global OpenVid {
     /// The search field's words, held here so the page's controls and the
     /// Rust side read one thing.
     in-out property <string> query;
-    /// The shelves: 0 All, 1 Pixabay, 2 Pexels, 3 CelebV.
+    /// The shelves: 0 All, 1 Pixabay, 2 Pexels, 3 CelebV, 4 Pexels
+    /// live, 5 Pixabay live. The live two shop the providers' own APIs
+    /// rather than the local index, so they work with or without it.
     in-out property <int> source;
     /// The frame shape: 0 Any, 1 Square, 2 Vertical, 3 Horizontal.
     in-out property <int> shape;
@@ -80,6 +82,19 @@ export global OpenVid {
     in property <string> total;
     /// Whether another page of results waits behind the More button.
     in property <bool> more;
+    /// The rows are the live shelves' rather than the local index's: the
+    /// page counts its own hits then, and works without the index.
+    in property <bool> live;
+
+    /// The Pexels key as the settings hold it, shown in the page's own
+    /// key field when its live shelf is picked.
+    in property <string> pexels-key;
+    /// The Pixabay key, the same way.
+    in property <string> pixabay-key;
+
+    /// A live shelf's key field was edited: which provider ("pexels" or
+    /// "pixabay") and what its field says now.
+    callback stock-key(provider: string, key: string);
 
     /// "Download the index": the one-time fetch of the library's index.
     callback download();

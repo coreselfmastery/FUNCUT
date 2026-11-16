@@ -148,6 +148,13 @@ pub struct Preferences {
     /// keeps itself; these are the ones the editor passes along).
     #[serde(default)]
     pub forge: ForgePrefs,
+    /// The stock page's live API keys: Pexels and Pixabay, the two shelves
+    /// whose clips carry a licence that allows commercial use. The key is
+    /// typed once here, handed to the pane's own searches, and exported to
+    /// the tool calls' environment for single-flight consistency; an
+    /// exported variable always wins over what the settings hold.
+    #[serde(default)]
+    pub stock: StockPrefs,
     /// The look new titles start from and generated captions are set in,
     /// kept from a title by the Text panel's "Use for new titles"; its
     /// words are empty. None starts titles in the bundled face.
@@ -333,6 +340,12 @@ pub struct ForgePrefs {
     pub groq: String,
     /// Google Gemini.
     pub gemini: String,
+    /// Z.AI: the GLM models - and, with `zai` picked as the vision
+    /// critic's provider, the free `glm-4v-flash` eyes the craft
+    /// critique's strong tier runs on. The key is handed to the spawned
+    /// harness as `ZAI_API_KEY` and to the in-process AUTO EDIT's tool
+    /// calls alike.
+    pub zai: String,
     /// OpenRouter: every model behind one key.
     pub openrouter: String,
     /// Mistral, La Plateforme.
@@ -350,6 +363,20 @@ pub struct ForgePrefs {
     /// director's `emotion` tool runs on the multilingual model instead of
     /// the English-only lexicon.
     pub hf: String,
+}
+
+/// The stock page's live API keys, one field a shelf. Free tiers both
+/// (pexels.com/api, pixabay.com), kept beside the Forge page's own keys
+/// and handed to the live searches the stock page runs - and to the
+/// in-process tool calls' environment, so the AUTO EDIT's gather stage
+/// shops the rights-cleared shelves with a key typed once, in the GUI.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct StockPrefs {
+    /// The Pexels key; that API reads it as the Authorization header.
+    pub pexels: String,
+    /// The Pixabay key; that API reads it as the URL's `key=` parameter.
+    pub pixabay: String,
 }
 
 /// Where the window's server listens unless told otherwise: loopback, on

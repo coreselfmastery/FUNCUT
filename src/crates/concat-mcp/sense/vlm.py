@@ -755,6 +755,35 @@ def _shape_json_constraint(endpoint, payload, json_schema):
         payload["response_format"] = {"type": "json_object", "schema": json_schema}
 
 
+def _versioned_tail(tail: str) -> bool:
+    """True when a base URL's last path segment is itself a version -
+    `v1`, `v4`, `v1beta` - meaning the base already carries the API's
+    versioning and the chat path hangs directly off it."""
+    if not tail or tail[0] != "v" or len(tail) < 2 or not tail[1].isdigit():
+        return False
+    return all(ch.isdigit() or ch.isalpha() for ch in tail[1:])
+
+
+def _chat_url(ep: dict, base: str) -> str:
+    """The chat-completions URL for an endpoint's base.
+
+    The four named hosted providers and any base whose last segment is a
+    version (``.../openai/v1``, ``.../v1beta/openai``, ``.../api/paas/v4``)
+    already carry their versioning, so the path is ``/chat/completions``.
+    A bare host - llama.cpp, LM Studio, vLLM's root - serves the OpenAI
+    dialect one level down, so it gets ``/v1/chat/completions``. Appending
+    ``/v1`` blindly doubled the path for every named provider, and
+    OpenRouter answered those doubled URLs with a flat 404 - a hosted
+    critic that could never answer once."""
+    base = base.rstrip("/")
+    if (ep or {}).get("provider") in PROVIDERS:
+        return base + "/chat/completions"
+    tail = base.rsplit("/", 1)[-1] if "/" in base else ""
+    if _versioned_tail(tail):
+        return base + "/chat/completions"
+    return base + "/v1/chat/completions"
+
+
 def ask(prompt: str, images=None, endpoint=None, model=None, timeout=90.0,
         max_tokens=600, json_schema=None, temperature=0.2):
     """Send images + prompt to a local or hosted OpenAI-compatible vision
@@ -806,7 +835,7 @@ def ask(prompt: str, images=None, endpoint=None, model=None, timeout=90.0,
             "temperature": temperature,
             "messages": [{"role": "user", "content": content}],
         }
-        url = base + "/v1/chat/completions"
+        url = _chat_url(ep, base)
         _shape_json_constraint(ep, payload, json_schema)
 
     def send(body):
@@ -993,6 +1022,22 @@ def selftest():
         _shape_json_constraint({"type": "openai", "provider": "groq"}, no_schema, None)
         assert no_schema == {}, no_schema
         out["jsonAdapters"] = "ok"
+        # The chat URL join: a named provider's base is already versioned
+        # and must not gain a second /v1 (OpenRouter answered the doubled
+        # path with a 404); a bare local host still gets /v1 prefixed; a
+        # custom base that already ends in a version is trusted as-is.
+        for name, provider in PROVIDERS.items():
+            got = _chat_url({"provider": name}, provider["base"])
+            want = provider["base"].rstrip("/") + "/chat/completions"
+            assert got == want, (name, got, want)
+        assert _chat_url({}, "http://127.0.0.1:8099") == "http://127.0.0.1:8099/v1/chat/completions"
+        assert _chat_url({}, "http://127.0.0.1:8099/") == "http://127.0.0.1:8099/v1/chat/completions"
+        assert _chat_url({}, "http://127.0.0.1:1234/v1") == "http://127.0.0.1:1234/v1/chat/completions"
+        assert _chat_url({}, "https://my-gateway.example.com/api/v2") == "https://my-gateway.example.com/api/v2/chat/completions"
+        assert _chat_url({}, "http://127.0.0.1:11434") == "http://127.0.0.1:11434/v1/chat/completions"
+        assert _versioned_tail("v1") and _versioned_tail("v4") and _versioned_tail("v1beta")
+        assert not _versioned_tail("8099") and not _versioned_tail("voice") and not _versioned_tail("")
+        out["chatUrl"] = "ok"
         # The saved config is written private: 0600 on the file, 0700 on
         # its directory - a key the operator saved is not world-readable.
         entry = configure(provider="groq", api_key="sk-test-123456789")

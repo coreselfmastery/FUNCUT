@@ -36,6 +36,7 @@ export global Forge {
     /// the automation token.
     in-out property <string> groq-key;
     in-out property <string> gemini-key;
+    in-out property <string> zai-key;
     in-out property <string> openrouter-key;
     in-out property <string> mistral-key;
     in-out property <string> cerebras-key;
@@ -153,6 +154,7 @@ export component ForgePage inherits VerticalLayout {
     property <[ForgeKeyData]> key-rows: [
         { id: "groq", label: "Groq" },
         { id: "gemini", label: "Gemini" },
+        { id: "zai", label: "Z.AI" },
         { id: "openrouter", label: "OpenRouter" },
         { id: "mistral", label: "Mistral" },
         { id: "cerebras", label: "Cerebras" },
@@ -468,6 +470,7 @@ export component ForgePage inherits VerticalLayout {
                     font-size: Theme.fs-sm;
                     text: row.id == "groq" ? Forge.groq-key
                         : row.id == "gemini" ? Forge.gemini-key
+                        : row.id == "zai" ? Forge.zai-key
                         : row.id == "openrouter" ? Forge.openrouter-key
                         : row.id == "mistral" ? Forge.mistral-key
                         : row.id == "cerebras" ? Forge.cerebras-key

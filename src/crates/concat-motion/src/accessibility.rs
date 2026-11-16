@@ -22,6 +22,25 @@ pub enum SafeZoneProfile {
     Feed4x5,
 }
 
+/// Infer a conservative safe-zone profile from a comp's frame dimensions.
+///
+/// Only the three explicitly supported delivery ratios are inferred. Custom
+/// aspect ratios return `None` rather than being silently judged against
+/// a profile that may not match the destination platform.
+pub fn profile_for_dimensions(width: u32, height: u32) -> Option<SafeZoneProfile> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let ratio = f64::from(width) / f64::from(height);
+    [
+        (16.0 / 9.0, SafeZoneProfile::Landscape16x9),
+        (9.0 / 16.0, SafeZoneProfile::Vertical9x16),
+        (4.0 / 5.0, SafeZoneProfile::Feed4x5),
+    ]
+    .into_iter()
+    .find_map(|(expected, profile)| ((ratio - expected).abs() <= 0.02).then_some(profile))
+}
+
 impl SafeZoneProfile {
     /// Normalized (left, top, right, bottom) safe-area bounds.
     pub const fn bounds(self) -> (f64, f64, f64, f64) {
@@ -206,6 +225,15 @@ mod tests {
             comps: Default::default(),
             slots: Vec::new(),
         }
+    }
+
+    #[test]
+    fn dimensions_infer_only_supported_delivery_profiles() {
+        assert_eq!(profile_for_dimensions(1920, 1080), Some(SafeZoneProfile::Landscape16x9));
+        assert_eq!(profile_for_dimensions(1080, 1920), Some(SafeZoneProfile::Vertical9x16));
+        assert_eq!(profile_for_dimensions(1080, 1350), Some(SafeZoneProfile::Feed4x5));
+        assert_eq!(profile_for_dimensions(1000, 1000), None);
+        assert_eq!(profile_for_dimensions(0, 1080), None);
     }
 
     #[test]

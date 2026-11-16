@@ -649,22 +649,9 @@ fn finding_json(finding: &concat_motion::lint::Finding) -> Value {
 /// video borrows for want of its own: a caption's legibility against a
 /// plate is the same arithmetic a page's is against a background.
 fn contrast_ratio(ink: &Rgba, backdrop: &Rgba) -> f64 {
-    let lighter = luminance(ink).max(luminance(backdrop));
-    let darker = luminance(ink).min(luminance(backdrop));
-    (lighter + 0.05) / (darker + 0.05)
-}
-
-/// Relative luminance, the WCAG shape: linearised channels, weighted,
-/// alpha ignored (the caller already chose an opaque-enough backdrop).
-fn luminance(color: &Rgba) -> f64 {
-    let channel = |c: f64| {
-        if c <= 0.03928 {
-            c / 12.92
-        } else {
-            ((c + 0.055) / 1.055).powf(2.4)
-        }
-    };
-    0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
+    // Keep the scene report and the formal L610 lint on the same WCAG
+    // implementation, including correct compositing of translucent ink.
+    concat_motion::accessibility::contrast_ratio(*ink, *backdrop)
 }
 
 /// `motion_frame`: one frame of a comp at `at` seconds, drawn in tens of

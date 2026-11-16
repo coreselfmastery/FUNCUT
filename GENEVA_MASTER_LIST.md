@@ -1,6 +1,6 @@
 # Geneva master list — current verified state
 
-**Last reconciled:** 13 November 2026  
+**Last reconciled:** 16 November 2026  
 **Repository:** `coreselfmastery/FUNCUT`  
 **Canonical implementation:** `src/crates/concat-motion`  
 **Sidecar contract:** Geneva 1.6.0, pinned by the installer and CI dependency lock  
@@ -10,7 +10,7 @@
 
 Geneva is a substantial, integrated motion-rendering path, not a placeholder. The four pillars—Creative, Performance, Reliability and Agent—are implemented in the repository. The ten findings in the original 1 November register are recorded as closed in the 3 November postscript. The current Geneva workflow also exercises the real sidecar, rendered output, scene-quality floors and golden-frame comparisons.
 
-**Do not interpret this as proof that every FUNCUT release requirement is complete.** This page is scoped to Geneva. It does not certify the separate full AI Director workflow, target-laptop performance, Lottie playback, or the editor's general release readiness. The latest observed `main` commit is `77392956859352c18924e728b1ccdaa286ac60f7` (13 November 2026), the merge of PR #110. On the merged tree, Geneva run `43475024413` completed both jobs successfully; CI run `43475024461` passed format/locales/models and real-fixture analysis while engine tests/lints remain in progress; Nix run `43475024616` is still building. The Build app workflow runs on pushes to `main`, but its current-main run and artifacts are not discoverable through the connected workflow-run interface, so x86_64/aarch64 package verification for this exact SHA remains unverified. The release tracker records `v0.2.8-funcut.12` at `6f9ab45fb0916f44675f10769351d911e0e7f75b`; a commit comparison shows current `main` is 27 commits ahead of that release target. Release assets could not be independently enumerated through the connected tools.
+**Do not interpret this as proof that every FUNCUT release requirement is complete.** This page is scoped to Geneva. It does not certify the separate full AI Director workflow, target-laptop performance, or the editor's general release readiness. The latest observed `main` commit is `61aa81a3` (16 November 2026), the merge of PR #150 - the 2026-11-16 deep review (37 fixes, 13 regression tests) stacked on PR #149 (the dependency clearance of PR #146 and the nine panic-site fixes of PR #147, carried to main after #147's merge landed on its stacked base branch) and PR #145's stale-assertion repair (`1e0498bb`). PR #150's head `e9522e6f` passed all six checks (format/locales/models, real-fixture analysis, the dependency dance, the multi-layer example, Nix and the engine tests/lints - the last after two infrastructure retries: a runner shutdown and a 50-minute build-step timeout on slow runners), and PR #149's head passed its five. Current-main push-triggered Geneva, Nix and Build app runs are not exposed by the connected workflow-run interface, so their status on these exact merge SHAs is unverified; per-branch-head evidence is recorded above, not substituted for it. The `v0.2.8-funcut.13` release is not cut: the latest tag and release remain `v0.2.8-funcut.12` (verified against the tag list on 16 November), and KNOWN_ISSUES.md item 9 records what cutting `.13` owes.
 
 ## 1. Creative pillar — implemented
 
@@ -115,8 +115,9 @@ The canonical workflow is `.github/workflows/geneva.yml`. It has two jobs:
 No item from the original ten-finding register is currently listed as open. The following are the remaining validation/roadmap boundaries, not claims that the closed findings are still broken:
 
 - [x] Historical 12 November baseline `cbcf821e465c265aef26071be3350fe239619aaf`: Geneva, Nix and Linux x86_64/aarch64 packaging passed on that exact SHA; general CI's format/locales/models and real-fixture jobs passed, with engine tests still running at the last poll. This is historical evidence, not current-main validation.
-- [ ] Current 13 November main `77392956859352c18924e728b1ccdaa286ac60f7`: Geneva run `43475024413` passed both jobs; CI run `43475024461` has format/locales/models and real-fixture analysis passed, with engine tests/lints in progress; Nix run `43475024616` is building. The push-triggered Build app run is not discoverable through the connected tools, so current-main Linux x86_64/aarch64 packaging is not verified. Current main is 27 commits ahead of the `v0.2.8-funcut.12` target `6f9ab45fb0916f44675f10769351d911e0e7f75b`.
-- [x] Current scene-quality and golden-frame gates passed on the latest observed `main` SHA in Geneva run `43236482716`; keep these as mandatory gates on every relevant future change and review any intentional golden/quality-floor update.
+- [ ] Current 16 November main `61aa81a3` (merge of PR #150, the deep review, stacked on PR #149's `3f942f61`): the branch heads' checks were green - #150's `e9522e6f` passed all six jobs, #149's `9b42aa65` passed its five, #145's `1e0498bb` repaired the two stale assertions its own PR named - but the push-triggered exact-merge-SHA Geneva, Nix and Build app runs are not exposed by the connected workflow-run interface, so those exact-SHA results are unverified. PR #141 (the RustSec audit workflow) is retargeted to main and pending.
+- [x] Historical scene-quality and golden-frame gates passed on the 12 November baseline in Geneva run `43236482716`; keep these mandatory on every relevant future change and review any intentional golden/quality-floor update.
+- [ ] Re-run scene-quality and golden-frame gates on current main `61aa81a3`; a current-main push-triggered Geneva run was not retrievable through the connected workflow-run interface. The deep review's PR-head multi-layer example job passed on `e9522e6f`; that is PR-head evidence, not exact-main evidence.
 - [ ] Run and record representative timing/memory measurements on the target low-memory Linux machine for realistic 1080p motion workloads. PR #86 is merged: the reproducible cold 1080p30 Geneva benchmark records machine, sidecar version, wall time, output size and sampled process-tree RSS. Hosted CI proves correctness, not target-device speed; a real antiX run remains required.
 - [x] Mixed markup comps that also use native-only shape gradients, mattes, effects, paths or masks are refused by Geneva bake/frame instead of being silently degraded; PR #84 shipped the safe refusal and native fallback for non-markup comps. PR #85 added the selection-time explanation and regression test; it merged as `cf82462c`.
 - [ ] Optional future feature: implement true Geneva rendering support for those mixed markup/native-only cases. This is a feature-parity enhancement, not a silent-degradation blocker while the refusal remains in place.
@@ -140,44 +141,16 @@ These must remain on the broader FUNCUT release tracker, not be misreported as G
 
 ## 9. Definition of Geneva-ready
 
-Geneva is ready for a release candidate when all of the following are true on the same commit:
+Geneva is ready for a release candidate only when the following evidence is current on the same main commit:
 
-- [x] The current `main` SHA is recorded: `cbcf821e465c265aef26071be3350fe239619aaf` (12 November 2026).
-- [x] Geneva example and dependency-dance jobs pass on that SHA (`43236482716`).
-- [x] Nix build and binary-link checks pass on that SHA (`43236482693`). Workspace Clippy passed in CI `43236482894`, but test-binary compilation was still running; unit tests, documentation examples and gRPC checks had not yet started at the last poll.
-- [x] Scene-quality and golden-frame checks pass in the Geneva rendered-example job (`43236482716`), without a baseline update.
+- [x] Historical 12 November baseline `cbcf821e465c265aef26071be3350fe239619aaf`: Geneva example/dependency-dance, Nix and Linux x86_64/aarch64 package smoke checks passed on that exact SHA. General CI format/locales/models and real-fixture jobs passed; engine tests were still in progress at that historical poll.
+- [ ] Current main `61aa81a3` is not fully exact-SHA validated: every branch head in its merge stack passed its own checks (PR #150 `e9522e6f` all six, PR #149 `9b42aa65` its five, PR #145's repair merged as `1e0498bb`), but the push-triggered exact-merge-SHA runs are not exposed by the connected workflow-run interface. Do not substitute green branch-head checks for exact-main evidence.
+- [ ] Current-main Geneva, Nix, Linux x86_64 and ARM64 packaging results are unverified through the connected workflow-run interface. Do not substitute green PR-head checks for exact-main evidence.
+- [x] Historical scene-quality and golden-frame checks passed on the 12 November baseline in Geneva run [43236482716](https://github.com/coreselfmastery/FUNCUT/actions/runs/43236482716).
+- [ ] Re-run scene-quality and golden-frame checks on current main and retain the exact-head render reports.
 - [x] Mixed markup comps that contain native-only features are explicitly refused with a useful diagnostic; PR #85's selection-time explanation and regression test merged as `cf82462c`.
-- [x] The pinned sidecar installs and is discovered in the Linux x86_64 and aarch64 package builds (`43236482829`); other release targets must be checked when their packages are built.
-- [ ] Target-machine timing/memory evidence is attached, or the release notes clearly state that only hosted correctness—not target performance—has been validated.
+- [x] The pinned sidecar installed and was discovered in the Linux x86_64 and aarch64 package builds on the historical 12 November baseline (run [43236482829](https://github.com/coreselfmastery/FUNCUT/actions/runs/43236482829)); these artifacts do not validate the current main SHA.
+- [ ] Target-machine timing/memory evidence is attached, or release notes clearly state that only hosted correctness—not target-device performance—has been validated.
+- [ ] The claimed `v0.2.8-funcut.13` release is independently verified by resolving its tag and enumerating its assets; the available commit-comparison endpoint returned 404 for that tag, and the connected integration has no release-list operation.
 
 **Status rule:** never mark the whole FUNCUT product “ready” from this Geneva checklist alone. This page certifies only the Geneva motion-rendering subsystem and its stated boundaries.
-
-
-## 11. Current-main reconciliation — 15 November 2026
-
-This section supersedes older current-main snapshots above. Historical run IDs remain evidence only for their recorded commits.
-
-**Exact main SHA checked:** `8571b3a6f5acf723edfc38096aa5f7d88365bb53` (merge commit for PR #130, generated plan-schema implementation).
-
-### Same-tree / exact-commit evidence distinction
-
-- PR #130 head `e93ccf5f4e8db045aa6966ca7975b9da7753ced5`: CI completed successfully (format/locales/models, engine tests/lints, real-fixture analysis); Geneva passed 2/2; Nix passed. PR #130 is merged as `8571b3a6f5acf723edfc38096aa5f7d88365bb53`.
-- The PR head was based on an older main snapshot. The connected workflow-run interface exposes PR-triggered runs only, not the push-triggered runs for the merge commit. Therefore those green PR-head jobs are **not** represented as exact-merge-SHA validation. Re-fetch main push runs before release sign-off.
-- Current-main Build app x86_64/aarch64 and Geneva push runs are not independently discoverable through the available workflow-run interface for this SHA. Earlier architecture artifacts and Geneva runs are historical evidence only.
-
-### Geneva implementation and boundaries
-
-- Creative, Performance, Reliability and Agent pillars remain implemented; the original ten audit findings remain recorded closed, subject to the documented scope boundaries in this file.
-- Mixed markup/native-only shapes/effects remain safely refused rather than silently degraded; this is not full browser/CSS parity.
-- Static ancestor translations and animated child position offsets under static translated parents are supported. Animated parent transforms and inherited scale/rotation remain outside the flattened Geneva profile.
-- Cache hits still require the live sidecar-version query; this remains an intentional contract.
-- The hosted scene-quality and golden-frame checks validate correctness, not target antiX performance.
-
-### Current release evidence gaps
-
-- **Target antiX Geneva performance:** no verified low-memory target-machine wall-time, output-size and process-tree RSS report is attached.
-- **1080p proxy scrubbing:** implementation defaults and regression tests are documented elsewhere, but real long-GOP target-machine FPS/latency, proxy-generation cost, proxy selection during scrub and original-frame restoration after pause remain unmeasured.
-- **Whole-product acceptance:** AI Director brief-to-final-export, VAAPI hardware, and real Motion/Lottie/export workflows remain broader FUNCUT release gates, not Geneva pillar completion claims.
-- **Security:** the new RustSec audit is proposed in PR #141 and is currently running on the current-main lockfile; it is not yet part of main. The previous older-branch audit found 17 advisories and must not be ignored.
-
-**Status rule:** Geneva's hosted correctness evidence does not certify whole-product release readiness or target-device performance. The current main merge SHA remains unverified by a complete push-triggered CI/Geneva/Build/Nix run through the connected workflow listing.

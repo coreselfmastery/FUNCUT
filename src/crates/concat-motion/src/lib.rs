@@ -104,6 +104,7 @@ pub mod route;
 pub mod sequence;
 pub mod storyboard;
 pub mod style;
+pub mod template;
 pub mod track;
 pub mod transition;
 pub mod typography;

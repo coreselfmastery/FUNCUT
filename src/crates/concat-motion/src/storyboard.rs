@@ -108,6 +108,11 @@ pub struct Storyboard {
     /// The dip between scenes; `None` cuts hard.
     #[serde(default)]
     pub curtain: Option<CurtainCard>,
+    /// Template variables handed to every comp file the storyboard reads,
+    /// rendered before the parse: one parameterised source, many scenes.
+    /// A comp file without placeholders passes through untouched.
+    #[serde(default)]
+    pub vars: Option<Json>,
 }
 
 /// One scene: a preset or a comp file, operations on it, layers stacked
@@ -167,6 +172,13 @@ pub struct SceneCard {
     /// that names a curve keeps it; the author's hand beats the read's.
     #[serde(default)]
     pub act: Option<crate::route::BeatType>,
+    /// The mood the scene plays in, as the soundtrack's own read:
+    /// `{"valence": 0.4, "arousal": 0.7}`. Where the act picks the
+    /// curve's family discretely, the mood bends the spring inside it,
+    /// scales the speed its words read at and calms or excites the
+    /// particle weather - continuously, between the seven acts.
+    #[serde(default)]
+    pub mood: Option<crate::audio::Mood>,
     /// The scene's pulse, when the audio drives it: the beat grid as
     /// measured times (`suggest_cuts` reads them from the soundtrack),
     /// baked into the comp's nodes as the plan is laid.
@@ -859,6 +871,7 @@ impl Storyboard {
         let mut sequence = Sequence::new(self.width, self.height, self.fps);
         sequence.source_dir = source.clone();
         sequence.scene_cards = self.scenes.clone();
+        sequence.vars = self.vars.clone();
         for (id, src) in &self.assets {
             sequence.asset(
                 id.clone(),
@@ -878,7 +891,7 @@ impl Storyboard {
             });
         }
         for (index, card) in self.scenes.iter().enumerate() {
-            sequence.push(card.scene(index, &source)?);
+            sequence.push(card.scene(index, &source, self.vars.as_ref())?);
         }
         // The choreographed cuts. A scene's `transition` is the cut it
         // enters by: on the first scene it opens the reel, elsewhere it
@@ -933,11 +946,16 @@ impl SceneCard {
     /// The scene this card describes: its comp resolved, its operations
     /// parsed, its layers stacked. Errors name the scene's index, so a
     /// twelve-scene storyboard is debuggable from one refusal.
-    pub(crate) fn scene(&self, index: usize, root: &Path) -> Result<Scene, String> {
+    pub(crate) fn scene(
+        &self,
+        index: usize,
+        root: &Path,
+        vars: Option<&Json>,
+    ) -> Result<Scene, String> {
         let comp = match (&self.preset, &self.comp) {
             (Some(id), _) => presets::build(id)
                 .ok_or_else(|| format!("scene {index}: no preset called {id:?}"))?,
-            (None, Some(file)) => read_comp(index, root, file)?,
+            (None, Some(file)) => read_comp(index, root, file, vars)?,
             (None, None) => return Err(format!("scene {index} needs a `preset` or a `comp`")),
         };
         let mut scene = Scene::new(comp).with_ops(self.ops(index)?);
@@ -968,7 +986,12 @@ impl SceneCard {
             if let Some(act) = self.act
                 && pulse.curve == crate::pulse::Pulse::default().curve
             {
-                pulse.curve = crate::pulse::curve_for_act(act);
+                // A mood bends the act's spring continuously; without one
+                // the act stands as it always did.
+                pulse.curve = match self.mood {
+                    Some(mood) => crate::pulse::curve_for_mood(act, &mood),
+                    None => crate::pulse::curve_for_act(act),
+                };
             }
             scene = scene.pulsing(pulse);
         }
@@ -980,6 +1003,9 @@ impl SceneCard {
         }
         if let Some(style) = self.style {
             scene = scene.styled(style);
+        }
+        if let Some(mood) = self.mood {
+            scene = scene.feeling(mood);
         }
         Ok(scene)
     }
@@ -1104,7 +1130,7 @@ impl LayerCard {
 /// climbs out of the root or names a whole disk is refused: a storyboard is
 /// a document that travels, and one that reaches around its own folder does
 /// not.
-fn read_comp(index: usize, root: &Path, file: &str) -> Result<Comp, String> {
+fn read_comp(index: usize, root: &Path, file: &str, vars: Option<&Json>) -> Result<Comp, String> {
     if file.starts_with('/') || file.contains("..") {
         return Err(format!(
             "scene {index}: the comp {file:?} is a name under the storyboard's folder, not a path out of it"
@@ -1112,6 +1138,8 @@ fn read_comp(index: usize, root: &Path, file: &str) -> Result<Comp, String> {
     }
     let path = root.join(file);
     let text = std::fs::read_to_string(&path)
+        .map_err(|error| format!("scene {index}: {}: {error}", path.display()))?;
+    let text = crate::template::render(&text, vars)
         .map_err(|error| format!("scene {index}: {}: {error}", path.display()))?;
     serde_json::from_str(&text)
         .map_err(|error| format!("scene {index}: {}: {error}", path.display()))

@@ -1200,6 +1200,7 @@ mod tests {
                 grade: None,
                 look: None,
                 style: None,
+                mood: None,
             }
         };
         // Overlap: the second scene starts inside the first, with no

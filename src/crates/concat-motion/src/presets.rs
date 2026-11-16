@@ -63,6 +63,22 @@ pub enum Category {
     Compare,
     /// A moving background: mesh gradients and grid light.
     Backdrop,
+    /// Rows that race: bars ranked live.
+    Leaderboard,
+    /// A feature table: two columns, one verdict.
+    Table,
+    /// The card a platform's own words sit on.
+    Social,
+    /// A headline band: the flash a bulletin is.
+    News,
+    /// A screen in a frame: phone, tablet, laptop.
+    Device,
+    /// A route drawn between pins.
+    Map,
+    /// Milestones along one rule.
+    Timeline,
+    /// Boxes and the lines that join them.
+    Diagram,
 }
 
 impl Category {
@@ -80,12 +96,20 @@ impl Category {
             Category::Chart => "Charts",
             Category::Compare => "Before / after",
             Category::Backdrop => "Backdrops",
+            Category::Leaderboard => "Leaderboards",
+            Category::Table => "Tables",
+            Category::Social => "Social",
+            Category::News => "News",
+            Category::Device => "Devices",
+            Category::Map => "Maps",
+            Category::Timeline => "Timelines",
+            Category::Diagram => "Diagrams",
         }
     }
 }
 
 /// Every preset, in library order.
-pub const ALL: [Preset; 18] = [
+pub const ALL: [Preset; 32] = [
     Preset {
         id: "funcut.lower-third.glass",
         name: "Glass lower third",
@@ -194,6 +218,90 @@ pub const ALL: [Preset; 18] = [
         category: Category::Backdrop,
         engine: crate::engine::EngineKind::Geneva,
     },
+    Preset {
+        id: "funcut.chart.line",
+        name: "Line chart",
+        category: Category::Chart,
+        engine: crate::engine::EngineKind::Geneva,
+    },
+    Preset {
+        id: "funcut.chart.donut",
+        name: "Donut chart",
+        category: Category::Chart,
+        engine: crate::engine::EngineKind::Geneva,
+    },
+    Preset {
+        id: "funcut.chart.area",
+        name: "Area chart",
+        category: Category::Chart,
+        engine: crate::engine::EngineKind::Geneva,
+    },
+    Preset {
+        id: "funcut.leaderboard.bar-race",
+        name: "Bar race",
+        category: Category::Leaderboard,
+        engine: crate::engine::EngineKind::Geneva,
+    },
+    Preset {
+        id: "funcut.table.comparison",
+        name: "Comparison table",
+        category: Category::Table,
+        engine: crate::engine::EngineKind::Geneva,
+    },
+    Preset {
+        id: "funcut.social.quote",
+        name: "Social quote card",
+        category: Category::Social,
+        engine: crate::engine::EngineKind::Geneva,
+    },
+    Preset {
+        id: "funcut.social.stat",
+        name: "Social stat card",
+        category: Category::Social,
+        engine: crate::engine::EngineKind::Geneva,
+    },
+    Preset {
+        id: "funcut.news.headline-flash",
+        name: "Headline flash",
+        category: Category::News,
+        engine: crate::engine::EngineKind::Geneva,
+    },
+    Preset {
+        id: "funcut.device.phone",
+        name: "Phone frame",
+        category: Category::Device,
+        engine: crate::engine::EngineKind::Geneva,
+    },
+    Preset {
+        id: "funcut.device.tablet",
+        name: "Tablet frame",
+        category: Category::Device,
+        engine: crate::engine::EngineKind::Geneva,
+    },
+    Preset {
+        id: "funcut.device.laptop",
+        name: "Laptop frame",
+        category: Category::Device,
+        engine: crate::engine::EngineKind::Geneva,
+    },
+    Preset {
+        id: "funcut.map.pin-route",
+        name: "Pin route map",
+        category: Category::Map,
+        engine: crate::engine::EngineKind::Geneva,
+    },
+    Preset {
+        id: "funcut.timeline.horizontal",
+        name: "Horizontal timeline",
+        category: Category::Timeline,
+        engine: crate::engine::EngineKind::Geneva,
+    },
+    Preset {
+        id: "funcut.diagram.flowchart",
+        name: "Flowchart",
+        category: Category::Diagram,
+        engine: crate::engine::EngineKind::Geneva,
+    },
 ];
 
 /// Build a preset by id.
@@ -217,6 +325,20 @@ pub fn build(id: &str) -> Option<Comp> {
         "funcut.compare.split" => Some(split_compare()),
         "funcut.ticker.count" => Some(counting_number()),
         "funcut.backdrop.mesh" => Some(mesh_backdrop()),
+        "funcut.chart.line" => Some(line_chart()),
+        "funcut.chart.donut" => Some(donut_chart()),
+        "funcut.chart.area" => Some(area_chart()),
+        "funcut.leaderboard.bar-race" => Some(bar_race()),
+        "funcut.table.comparison" => Some(comparison_table()),
+        "funcut.social.quote" => Some(social_quote()),
+        "funcut.social.stat" => Some(social_stat()),
+        "funcut.news.headline-flash" => Some(headline_flash()),
+        "funcut.device.phone" => Some(device_phone()),
+        "funcut.device.tablet" => Some(device_tablet()),
+        "funcut.device.laptop" => Some(device_laptop()),
+        "funcut.map.pin-route" => Some(pin_route()),
+        "funcut.timeline.horizontal" => Some(horizontal_timeline()),
+        "funcut.diagram.flowchart" => Some(flowchart()),
         _ => None,
     }
 }
@@ -1633,6 +1755,1420 @@ pub fn progress_bar() -> Comp {
     built
 }
 
+// ------------------------------------------------------------ charts, drawn
+
+/// A line chart: the stroke draws itself across the plot, a dot pops where
+/// it lands, and the quarters name themselves underneath. The chart a
+/// retention curve or a quarterly read is.
+pub fn line_chart() -> Comp {
+    // (fraction across the plot, fraction up it) per quarter.
+    let points: [(f64, f64); 6] = [
+        (0.05, 0.58),
+        (0.24, 0.50),
+        (0.43, 0.62),
+        (0.62, 0.34),
+        (0.80, 0.42),
+        (0.99, 0.16),
+    ];
+    let (plot_w, plot_h) = (1600.0, 620.0);
+    let at = |(fx, fy): (f64, f64)| {
+        (
+            40.0 + fx * (plot_w - 80.0),
+            plot_h - 40.0 - fy * (plot_h - 80.0),
+        )
+    };
+    let stroke = points
+        .iter()
+        .map(|point| at(*point))
+        .map(|(x, y)| format!("{x:.0},{y:.0}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let dots = points
+        .iter()
+        .enumerate()
+        .map(|(i, point)| {
+            let (x, y) = at(*point);
+            format!(
+                r#"<circle class="dot" style="animation-delay: {:.2}s" cx="{x:.0}" cy="{y:.0}" r="7"/>"#,
+                0.55 + i as f64 * 0.14
+            )
+        })
+        .collect::<String>();
+    let labels = points
+        .iter()
+        .enumerate()
+        .map(|(i, point)| {
+            let (x, _) = at(*point);
+            format!(
+                r#"<text class="lab" style="animation-delay: {:.2}s" x="{x:.0}" y="{:.0}">{}</text>"#,
+                0.65 + i as f64 * 0.14,
+                plot_h - 6.0,
+                ["Q1", "Q2", "Q3", "Q4", "Q5", "Q6"][i]
+            )
+        })
+        .collect::<String>();
+    let grid = (1..=3)
+        .map(|i| {
+            let y = 40.0 + (plot_h - 80.0) * (i as f64 / 4.0);
+            format!(
+                r#"<line x1="40" x2="{:.0}" y1="{y:.0}" y2="{y:.0}"/>"#,
+                plot_w - 40.0
+            )
+        })
+        .collect::<String>();
+    let css = format!(
+        r#"
+.sheet {{ position: absolute; left: 160px; top: 180px; width: 1600px; height: 820px;
+  display: flex; flex-direction: column; gap: 18px; }}
+.head {{ display: flex; flex-direction: row; align-items: baseline; gap: 16px; }}
+.t {{ font-family: {DISPLAY}; font-size: 46px; font-weight: 800; color: {INK}; }}
+.s {{ font-family: {MONO}; font-size: 16px; letter-spacing: 0.22em; color: {MUTED}; }}
+.plot {{ flex: 1; }}
+.plot svg {{ width: 100%; height: 100%; }}
+.grid line {{ stroke: rgba(244,241,234,0.08); stroke-width: 1; }}
+.line {{ fill: none; stroke: {INK}; stroke-width: 3; stroke-linejoin: round; stroke-linecap: round;
+  stroke-dasharray: 3200; stroke-dashoffset: 3200;
+  animation: draw 1.3s cubic-bezier(0.16,1,0.3,1) 0.35s both; }}
+.dot {{ fill: {ACCENT}; opacity: 0; transform-box: fill-box; transform-origin: center;
+  animation: pop 0.5s cubic-bezier(0.16,1,0.3,1) both; }}
+.lab {{ font-family: {MONO}; font-size: 17px; letter-spacing: 0.12em; fill: {MUTED};
+  text-anchor: middle; opacity: 0; animation: fade 0.4s ease-out both; }}
+@keyframes draw {{ to {{ stroke-dashoffset: 0 }} }}
+@keyframes pop {{ from {{ opacity: 0; transform: scale(0.4) }} to {{ opacity: 1; transform: scale(1) }} }}
+@keyframes fade {{ from {{ opacity: 0 }} to {{ opacity: 1 }} }}
+"#
+    );
+    let markup = format!(
+        r#"
+<div class="sheet">
+  <div class="head"><div class="t">Retention by quarter</div><div class="s">PERCENT RETURNING, %</div></div>
+  <div class="plot"><svg viewBox="0 0 1600 620" fill="none">
+    <g class="grid">{grid}</g>
+    <polyline class="line" points="{stroke}"/>
+    {dots}
+    {labels}
+  </svg></div>
+</div>
+"#
+    );
+    let mut built = comp("funcut.chart.line", "Line chart", 1920, 1080, 5.0);
+    let node = with_track(
+        html_node(
+            "sheet",
+            &markup,
+            &css,
+            Length::Px(1920.0),
+            Length::Px(1080.0),
+        ),
+        "opacity",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.0), Curve::EASE_OUT),
+            Key::new(0.22, Value::number(1.0)),
+        ]),
+    );
+    let node = with_track(
+        node,
+        "scale",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.93), Curve::SPRING_POP),
+            Key::new(0.55, Value::number(1.0)),
+        ]),
+    );
+    built.nodes.push(node);
+    built.slots.push(Slot {
+        node: "sheet".into(),
+        field: SlotField::Text,
+        sample: "Retention by quarter".into(),
+        label: "Chart title".into(),
+    });
+    built.slots.push(Slot {
+        node: "sheet".into(),
+        field: SlotField::Text,
+        sample: "PERCENT RETURNING, %".into(),
+        label: "Chart subline".into(),
+    });
+    built
+}
+
+/// A donut chart: four arcs that fill in staggered turns around one ring,
+/// the leading share in the hole, and a legend that names each slice. The
+/// chart a breakdown of hours or a share of total is.
+pub fn donut_chart() -> Comp {
+    // (share, name): the share is percent of the whole ring.
+    let slices: [(u32, &str); 4] = [
+        (38, "Editing"),
+        (26, "Renders"),
+        (21, "Planning"),
+        (15, "Waiting"),
+    ];
+    let rings = [
+        ACCENT,
+        "rgba(217,164,65,0.62)",
+        "rgba(217,164,65,0.40)",
+        "rgba(217,164,65,0.24)",
+    ];
+    let mut arcs = String::new();
+    let mut turned = 0u32;
+    for (i, (share, _)) in slices.iter().enumerate() {
+        arcs.push_str(&format!(
+            r#"<circle class="seg seg{}" style="animation-delay: {:.2}s" transform="rotate({turned} 460 310)" cx="460" cy="310" r="210" stroke-width="96" pathLength="100" stroke="{}"/>"#,
+            i + 1,
+            0.30 + i as f64 * 0.12,
+            rings[i]
+        ));
+        turned += share;
+    }
+    let mut fills = String::new();
+    for (i, (share, _)) in slices.iter().enumerate() {
+        fills.push_str(&format!(
+            "@keyframes fill{} {{ to {{ stroke-dasharray: {} {} }} }}\n",
+            i + 1,
+            share,
+            100 - share
+        ));
+    }
+    let legend = slices
+        .iter()
+        .enumerate()
+        .map(|(i, (share, name))| {
+            format!(
+                r#"<div class="row" style="animation-delay: {:.2}s"><span class="chip" style="background: {}"></span><span class="name">{name}</span><span class="pct">{}%</span></div>"#,
+                0.5 + i as f64 * 0.1,
+                rings[i],
+                share
+            )
+        })
+        .collect::<String>();
+    let css = format!(
+        r#"
+.sheet {{ position: absolute; left: 160px; top: 180px; width: 1600px; height: 820px;
+  display: flex; flex-direction: column; gap: 18px; }}
+.head {{ display: flex; flex-direction: row; align-items: baseline; gap: 16px; }}
+.t {{ font-family: {DISPLAY}; font-size: 46px; font-weight: 800; color: {INK}; }}
+.s {{ font-family: {MONO}; font-size: 16px; letter-spacing: 0.22em; color: {MUTED}; }}
+.plot {{ flex: 1; position: relative; }}
+.plot svg {{ width: 100%; height: 100%; }}
+.seg {{ fill: none; stroke-dasharray: 0 100;
+  animation-duration: 0.9s; animation-timing-function: cubic-bezier(0.16,1,0.3,1); animation-fill-mode: both; }}
+.seg1 {{ animation-name: fill1; }}
+.seg2 {{ animation-name: fill2; }}
+.seg3 {{ animation-name: fill3; }}
+.seg4 {{ animation-name: fill4; }}
+.hole {{ font-family: {DISPLAY}; font-weight: 800; fill: {INK}; text-anchor: middle; }}
+.hole-sub {{ font-family: {MONO}; font-size: 17px; letter-spacing: 0.24em; fill: {MUTED}; text-anchor: middle; }}
+.legend {{ position: absolute; right: 120px; top: 220px; display: flex; flex-direction: column; gap: 30px; }}
+.legend .row {{ display: flex; flex-direction: row; align-items: center; gap: 18px;
+  opacity: 0; animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) both; }}
+.chip {{ width: 16px; height: 16px; border-radius: 5px; }}
+.name {{ font-family: {DISPLAY}; font-size: 30px; font-weight: 700; color: {INK}; width: 220px; }}
+.pct {{ font-family: {MONO}; font-size: 24px; color: {MUTED}; }}
+@keyframes rise {{ from {{ opacity: 0; transform: translateY(14px) }} to {{ opacity: 1; transform: translateY(0) }} }}
+{fills}
+"#
+    );
+    let markup = format!(
+        r#"
+<div class="sheet">
+  <div class="head"><div class="t">Where the time goes</div><div class="s">HOURS BY STAGE, %</div></div>
+  <div class="plot"><svg viewBox="0 0 1600 620" fill="none">
+    <g transform="rotate(-90 460 310)">{arcs}</g>
+    <text class="hole" x="460" y="330" style="font-size: 96px">38%</text>
+    <text class="hole-sub" x="460" y="386">TOP SHARE</text>
+  </svg>
+  <div class="legend">{legend}</div>
+  </div>
+</div>
+"#
+    );
+    let mut built = comp("funcut.chart.donut", "Donut chart", 1920, 1080, 5.0);
+    let node = with_track(
+        html_node(
+            "sheet",
+            &markup,
+            &css,
+            Length::Px(1920.0),
+            Length::Px(1080.0),
+        ),
+        "opacity",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.0), Curve::EASE_OUT),
+            Key::new(0.22, Value::number(1.0)),
+        ]),
+    );
+    built.nodes.push(node);
+    built.slots.push(Slot {
+        node: "sheet".into(),
+        field: SlotField::Text,
+        sample: "Where the time goes".into(),
+        label: "Chart title".into(),
+    });
+    built.slots.push(Slot {
+        node: "sheet".into(),
+        field: SlotField::Text,
+        sample: "HOURS BY STAGE, %".into(),
+        label: "Chart subline".into(),
+    });
+    built.slots.push(Slot {
+        node: "sheet".into(),
+        field: SlotField::Text,
+        sample: "38%".into(),
+        label: "Leading share".into(),
+    });
+    for (share, name) in slices {
+        built.slots.push(Slot {
+            node: "sheet".into(),
+            field: SlotField::Text,
+            sample: name.into(),
+            label: format!("Legend {}", name),
+        });
+        built.slots.push(Slot {
+            node: "sheet".into(),
+            field: SlotField::Text,
+            sample: format!("{}%", share),
+            label: format!("Legend {} share", name),
+        });
+    }
+    built
+}
+
+/// An area chart: the fill and its outline wiped on together from the left,
+/// so the shape arrives as one sheet rather than a line that colours in.
+/// The chart a cumulative total or a burn-down is.
+pub fn area_chart() -> Comp {
+    let points: [(f64, f64); 6] = [
+        (0.05, 0.55),
+        (0.24, 0.48),
+        (0.43, 0.60),
+        (0.62, 0.34),
+        (0.80, 0.44),
+        (0.99, 0.14),
+    ];
+    let (plot_w, plot_h) = (1600.0, 620.0);
+    let at = |(fx, fy): (f64, f64)| {
+        (
+            40.0 + fx * (plot_w - 80.0),
+            plot_h - 40.0 - fy * (plot_h - 80.0),
+        )
+    };
+    let line = points
+        .iter()
+        .map(|point| at(*point))
+        .map(|(x, y)| format!("{x:.0},{y:.0}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let (_, base_y) = at((0.0, 0.0));
+    let (first_x, _) = at((0.05, 0.55));
+    let (last_x, _) = at((0.99, 0.14));
+    let area = format!(
+        "M {first_x:.0},{base_y:.0} {} {last_x:.0},{base_y:.0} Z",
+        points
+            .iter()
+            .map(|point| at(*point))
+            .map(|(x, y)| format!("L {x:.0},{y:.0}"))
+            .collect::<Vec<_>>()
+            .join(" ")
+    );
+    let dots = points
+        .iter()
+        .enumerate()
+        .map(|(i, point)| {
+            let (x, y) = at(*point);
+            format!(
+                r#"<circle class="dot" style="animation-delay: {:.2}s" cx="{x:.0}" cy="{y:.0}" r="7"/>"#,
+                1.1 + i as f64 * 0.1
+            )
+        })
+        .collect::<String>();
+    let grid = (1..=3)
+        .map(|i| {
+            let y = 40.0 + (plot_h - 80.0) * (i as f64 / 4.0);
+            format!(
+                r#"<line x1="40" x2="{:.0}" y1="{y:.0}" y2="{y:.0}"/>"#,
+                plot_w - 40.0
+            )
+        })
+        .collect::<String>();
+    let css = format!(
+        r#"
+.sheet {{ position: absolute; left: 160px; top: 180px; width: 1600px; height: 820px;
+  display: flex; flex-direction: column; gap: 18px; }}
+.head {{ display: flex; flex-direction: row; align-items: baseline; gap: 16px; }}
+.t {{ font-family: {DISPLAY}; font-size: 46px; font-weight: 800; color: {INK}; }}
+.s {{ font-family: {MONO}; font-size: 16px; letter-spacing: 0.22em; color: {MUTED}; }}
+.plot {{ flex: 1; }}
+.plot svg {{ width: 100%; height: 100%; }}
+.grid line {{ stroke: rgba(244,241,234,0.08); stroke-width: 1; }}
+.wipe {{ transform-box: fill-box; transform-origin: left;
+  animation: wipe 1.2s cubic-bezier(0.16,1,0.3,1) 0.3s both; }}
+.area {{ fill: rgba(217,164,65,0.14); stroke: none; }}
+.line {{ fill: none; stroke: {INK}; stroke-width: 3; stroke-linejoin: round; stroke-linecap: round; }}
+.dot {{ fill: {ACCENT}; opacity: 0; transform-box: fill-box; transform-origin: center;
+  animation: pop 0.5s cubic-bezier(0.16,1,0.3,1) both; }}
+@keyframes wipe {{ from {{ transform: scaleX(0) }} to {{ transform: scaleX(1) }} }}
+@keyframes pop {{ from {{ opacity: 0; transform: scale(0.4) }} to {{ opacity: 1; transform: scale(1) }} }}
+"#
+    );
+    let markup = format!(
+        r#"
+<div class="sheet">
+  <div class="head"><div class="t">Minutes per render, per week</div><div class="s">MEAN OVER 30 DAYS</div></div>
+  <div class="plot"><svg viewBox="0 0 1600 620" fill="none">
+    <defs><clipPath id="reveal"><rect class="wipe" x="0" y="0" width="1600" height="620"/></clipPath></defs>
+    <g class="grid">{grid}</g>
+    <g clip-path="url(#reveal)">
+      <path class="area" d="{area}"/>
+      <polyline class="line" points="{line}"/>
+    </g>
+    {dots}
+  </svg></div>
+</div>
+"#
+    );
+    let mut built = comp("funcut.chart.area", "Area chart", 1920, 1080, 5.0);
+    let node = with_track(
+        html_node(
+            "sheet",
+            &markup,
+            &css,
+            Length::Px(1920.0),
+            Length::Px(1080.0),
+        ),
+        "opacity",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.0), Curve::EASE_OUT),
+            Key::new(0.22, Value::number(1.0)),
+        ]),
+    );
+    built.nodes.push(node);
+    built.slots.push(Slot {
+        node: "sheet".into(),
+        field: SlotField::Text,
+        sample: "Minutes per render, per week".into(),
+        label: "Chart title".into(),
+    });
+    built.slots.push(Slot {
+        node: "sheet".into(),
+        field: SlotField::Text,
+        sample: "MEAN OVER 30 DAYS".into(),
+        label: "Chart subline".into(),
+    });
+    built
+}
+
+/// A bar race: rows ranked live, the leader's bar in full accent and the
+/// rest falling away through the ramp. The chart a countdown or a weekly
+/// leaderboard is.
+pub fn bar_race() -> Comp {
+    // (rank, name, percent): one week of seconds saved per job.
+    let rows: [(u32, &str, u32); 5] = [
+        (1, "Renders", 92),
+        (2, "Exports", 74),
+        (3, "Bakes", 61),
+        (4, "Relinks", 40),
+        (5, "Batches", 26),
+    ];
+    let bars = [
+        ACCENT,
+        "rgba(217,164,65,0.58)",
+        "rgba(217,164,65,0.40)",
+        "rgba(217,164,65,0.26)",
+        "rgba(217,164,65,0.16)",
+    ];
+    let board = rows
+        .iter()
+        .enumerate()
+        .map(|(i, (rank, name, pct))| {
+            format!(
+                r#"<div class="row" style="animation-delay: {:.2}s"><span class="rank">{rank}</span><span class="name">{name}</span><span class="track"><span class="fill" style="width: {pct}%; background: {}; animation-delay: {:.2}s"></span></span><span class="val">{pct}</span></div>"#,
+                0.08 + i as f64 * 0.08,
+                bars[i],
+                0.35 + i as f64 * 0.08
+            )
+        })
+        .collect::<String>();
+    let css = format!(
+        r#"
+.board {{ position: absolute; left: 160px; top: 200px; width: 1600px; }}
+.head {{ display: flex; flex-direction: row; align-items: baseline; gap: 16px; margin-bottom: 44px; }}
+.t {{ font-family: {DISPLAY}; font-size: 46px; font-weight: 800; color: {INK}; }}
+.s {{ font-family: {MONO}; font-size: 16px; letter-spacing: 0.22em; color: {MUTED}; }}
+.row {{ display: flex; flex-direction: row; align-items: center; gap: 28px; margin-bottom: 30px;
+  opacity: 0; animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) both; }}
+.rank {{ font-family: {MONO}; font-size: 30px; font-weight: 700; color: {MUTED}; width: 56px; }}
+.name {{ font-family: {DISPLAY}; font-size: 34px; font-weight: 800; color: {INK}; width: 250px; }}
+.track {{ flex: 1; height: 42px; border-radius: 21px; background: rgba(244,241,234,0.08); overflow: hidden; }}
+.fill {{ display: block; height: 100%; border-radius: 21px; transform-origin: left;
+  animation: grow 1.0s cubic-bezier(0.16,1,0.3,1) both; }}
+.val {{ font-family: {MONO}; font-size: 24px; color: {MUTED}; width: 96px; text-align: right; }}
+@keyframes rise {{ from {{ opacity: 0; transform: translateY(16px) }} to {{ opacity: 1; transform: translateY(0) }} }}
+@keyframes grow {{ from {{ transform: scaleX(0) }} to {{ transform: scaleX(1) }} }}
+"#
+    );
+    let markup = format!(
+        r#"<div class="board"><div class="head"><div class="t">This week, by seconds saved</div><div class="s">MEAN PER JOB, SECONDS</div></div>{board}</div>"#
+    );
+    let mut built = comp("funcut.leaderboard.bar-race", "Bar race", 1920, 1080, 5.5);
+    let node = with_track(
+        html_node(
+            "board",
+            &markup,
+            &css,
+            Length::Px(1920.0),
+            Length::Px(1080.0),
+        ),
+        "opacity",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.0), Curve::EASE_OUT),
+            Key::new(0.2, Value::number(1.0)),
+        ]),
+    );
+    let node = with_track(
+        node,
+        "scale",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.94), Curve::SPRING_POP),
+            Key::new(0.55, Value::number(1.0)),
+        ]),
+    );
+    built.nodes.push(node);
+    built.slots.push(Slot {
+        node: "board".into(),
+        field: SlotField::Text,
+        sample: "This week, by seconds saved".into(),
+        label: "Chart title".into(),
+    });
+    built.slots.push(Slot {
+        node: "board".into(),
+        field: SlotField::Text,
+        sample: "MEAN PER JOB, SECONDS".into(),
+        label: "Chart subline".into(),
+    });
+    built.slots.push(Slot {
+        node: "board".into(),
+        field: SlotField::Text,
+        sample: "Renders".into(),
+        label: "Leader name".into(),
+    });
+    built.slots.push(Slot {
+        node: "board".into(),
+        field: SlotField::Text,
+        sample: "92".into(),
+        label: "Leader value".into(),
+    });
+    built.slots.push(Slot {
+        node: "board".into(),
+        field: SlotField::Text,
+        sample: "Exports".into(),
+        label: "Second name".into(),
+    });
+    built
+}
+
+/// A comparison table: two columns and one verdict, the winning column
+/// tinted and its dots in accent. The table a release note or a versus
+/// card is.
+pub fn comparison_table() -> Comp {
+    let features: [(&str, &str, &str); 4] = [
+        ("Timeline", "30 fps", "60 fps"),
+        ("Trim", "keyed only", "ripples"),
+        ("Grade", "8-bit", "10-bit linear"),
+        ("Export", "one queue", "farms"),
+    ];
+    let body = features
+        .iter()
+        .enumerate()
+        .map(|(i, (feature, was, now))| {
+            format!(
+                r#"<div class="feat" style="animation-delay: {:.2}s"><span class="f">{feature}</span><span class="a">● {was}</span><span class="b">● {now}</span></div>"#,
+                0.35 + i as f64 * 0.1
+            )
+        })
+        .collect::<String>();
+    let css = format!(
+        r#"
+.sheet {{ position: absolute; left: 200px; top: 210px; width: 1520px; }}
+.head {{ display: grid; grid-template-columns: 1fr 140px 1fr; align-items: center;
+  padding-bottom: 26px; border-bottom: 2px solid rgba(244,241,234,0.16); }}
+.product {{ font-family: {DISPLAY}; font-size: 44px; font-weight: 800; color: {INK}; }}
+.product.b {{ color: {ACCENT}; text-align: right; }}
+.vs {{ justify-self: center; font-family: {MONO}; font-size: 15px; letter-spacing: 0.3em;
+  color: {MUTED}; border: 1px solid rgba(244,241,234,0.22); border-radius: 999px; padding: 10px 22px 10px 26px; }}
+.feat {{ display: grid; grid-template-columns: 1fr 140px 1fr; align-items: center;
+  padding: 30px 0; opacity: 0; animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) both; }}
+.f {{ font-family: {MONO}; font-size: 19px; letter-spacing: 0.18em; color: {MUTED}; }}
+.a {{ font-family: {DISPLAY}; font-size: 28px; font-weight: 700; color: rgba(244,241,234,0.55); }}
+.b {{ font-family: {DISPLAY}; font-size: 28px; font-weight: 700; color: {INK}; text-align: right;
+  background: rgba(217,164,65,0.06); border-radius: 14px; padding: 18px 24px; margin: -18px 0; }}
+@keyframes rise {{ from {{ opacity: 0; transform: translateY(16px) }} to {{ opacity: 1; transform: translateY(0) }} }}
+"#
+    );
+    let markup = format!(
+        r#"<div class="sheet"><div class="head"><div class="product">Cut 24.2</div><div class="vs">VS</div><div class="product b">Cut 25.1</div></div>{body}</div>"#
+    );
+    let mut built = comp(
+        "funcut.table.comparison",
+        "Comparison table",
+        1920,
+        1080,
+        5.5,
+    );
+    let node = with_track(
+        html_node(
+            "sheet",
+            &markup,
+            &css,
+            Length::Px(1920.0),
+            Length::Px(1080.0),
+        ),
+        "opacity",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.0), Curve::EASE_OUT),
+            Key::new(0.22, Value::number(1.0)),
+        ]),
+    );
+    let node = with_track(
+        node,
+        "scale",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.95), Curve::SPRING_POP),
+            Key::new(0.5, Value::number(1.0)),
+        ]),
+    );
+    built.nodes.push(node);
+    built.slots.push(Slot {
+        node: "sheet".into(),
+        field: SlotField::Text,
+        sample: "Cut 24.2".into(),
+        label: "Product A".into(),
+    });
+    built.slots.push(Slot {
+        node: "sheet".into(),
+        field: SlotField::Text,
+        sample: "Cut 25.1".into(),
+        label: "Product B".into(),
+    });
+    built.slots.push(Slot {
+        node: "sheet".into(),
+        field: SlotField::Text,
+        sample: "Timeline".into(),
+        label: "Feature 1".into(),
+    });
+    built.slots.push(Slot {
+        node: "sheet".into(),
+        field: SlotField::Text,
+        sample: "Trim".into(),
+        label: "Feature 2".into(),
+    });
+    built
+}
+
+// ------------------------------------------------- social, news, devices
+
+/// A social quote card: an avatar, a handle, the claim, and the counts a
+/// platform reads back. The card a pull-quote or a testimonial is, cut
+/// for a feed.
+pub fn social_quote() -> Comp {
+    let css = format!(
+        r#"
+.card {{ position: absolute; left: 520px; top: 150px; width: 880px; padding: 56px 64px 48px 64px;
+  background: rgba(12,13,16,0.92); border: 1px solid rgba(244,241,234,0.12); border-radius: 18px;
+  opacity: 0; animation: rise 0.6s cubic-bezier(0.16,1,0.3,1) both; }}
+.who {{ display: flex; flex-direction: row; align-items: center; gap: 26px; margin-bottom: 40px; }}
+.avatar {{ width: 96px; height: 96px; border-radius: 999px; background: #14161a;
+  border: 1px solid rgba(244,241,234,0.18); display: flex; align-items: center; justify-content: center;
+  font-family: {DISPLAY}; font-size: 34px; font-weight: 800; color: {INK}; }}
+.id {{ display: flex; flex-direction: column; gap: 8px; }}
+.name {{ font-family: {DISPLAY}; font-size: 28px; font-weight: 700; color: {INK}; }}
+.handle {{ font-family: {MONO}; font-size: 17px; letter-spacing: 0.08em; color: {ACCENT}; }}
+.claim {{ font-family: {DISPLAY}; font-size: 52px; font-weight: 800; letter-spacing: -0.02em;
+  line-height: 1.2; color: {INK}; margin-bottom: 44px; }}
+.counts {{ display: flex; flex-direction: row; gap: 36px; padding-top: 28px;
+  border-top: 1px solid rgba(244,241,234,0.12); }}
+.count {{ font-family: {MONO}; font-size: 20px; color: {MUTED}; }}
+.count b {{ color: {INK}; font-weight: 600; }}
+@keyframes rise {{ from {{ opacity: 0; transform: translateY(18px) }} to {{ opacity: 1; transform: translateY(0) }} }}
+"#
+    );
+    let markup = r#"
+<div class="card">
+  <div class="who">
+    <div class="avatar">GH</div>
+    <div class="id"><div class="name">Grace Hopper</div><div class="handle">@gracebuilds</div></div>
+  </div>
+  <div class="claim">The best error message is the one that never shows.</div>
+  <div class="counts">
+    <div class="count"><b>1.2k</b> likes</div>
+    <div class="count"><b>340</b> reposts</div>
+    <div class="count"><b>52</b> replies</div>
+  </div>
+</div>
+"#;
+    let mut built = comp("funcut.social.quote", "Social quote card", 1920, 1080, 5.0);
+    let node = with_track(
+        html_node("card", markup, &css, Length::Px(1920.0), Length::Px(1080.0)),
+        "opacity",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.0), Curve::EASE_OUT),
+            Key::new(0.24, Value::number(1.0)),
+        ]),
+    );
+    let node = with_track(
+        node,
+        "scale",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.95), Curve::SPRING_POP),
+            Key::new(0.55, Value::number(1.0)),
+        ]),
+    );
+    built.nodes.push(node);
+    built.slots.push(Slot {
+        node: "card".into(),
+        field: SlotField::Text,
+        sample: "Grace Hopper".into(),
+        label: "Name".into(),
+    });
+    built.slots.push(Slot {
+        node: "card".into(),
+        field: SlotField::Text,
+        sample: "@gracebuilds".into(),
+        label: "Handle".into(),
+    });
+    built.slots.push(Slot {
+        node: "card".into(),
+        field: SlotField::Text,
+        sample: "The best error message is the one that never shows.".into(),
+        label: "Quote".into(),
+    });
+    built.slots.push(Slot {
+        node: "card".into(),
+        field: SlotField::Text,
+        sample: "1.2k".into(),
+        label: "Likes".into(),
+    });
+    built
+}
+
+/// A social stat card: one number at poster size, the label under it, a
+/// sparkline that draws, and the delta chip. The card a weekly number or a
+/// launch count is.
+pub fn social_stat() -> Comp {
+    let css = format!(
+        r#"
+.card {{ position: absolute; left: 600px; top: 130px; width: 720px; height: 820px;
+  background: rgba(12,13,16,0.92); border: 1px solid rgba(244,241,234,0.12); border-radius: 22px;
+  padding: 52px 56px; display: flex; flex-direction: column;
+  opacity: 0; animation: rise 0.6s cubic-bezier(0.16,1,0.3,1) both; }}
+.chip {{ align-self: flex-start; display: flex; flex-direction: row; align-items: center; gap: 10px;
+  font-family: {MONO}; font-size: 15px; letter-spacing: 0.28em; color: {MUTED};
+  border: 1px solid rgba(244,241,234,0.18); border-radius: 999px; padding: 10px 20px; }}
+.chip i {{ width: 9px; height: 9px; border-radius: 999px; background: {ACCENT}; }}
+.num {{ font-family: {DISPLAY}; font-size: 190px; font-weight: 800; letter-spacing: -0.05em;
+  line-height: 1; color: {INK}; margin: 60px 0 12px 0; }}
+.lab {{ font-family: {MONO}; font-size: 19px; letter-spacing: 0.3em; color: {MUTED}; }}
+.spark {{ margin-top: auto; margin-bottom: 36px; }}
+.spark svg {{ width: 100%; height: 130px; }}
+.rise {{ stroke: {ACCENT}; stroke-width: 3; fill: none; stroke-linejoin: round; stroke-linecap: round;
+  stroke-dasharray: 700; stroke-dashoffset: 700; animation: draw 1.2s cubic-bezier(0.16,1,0.3,1) 0.5s both; }}
+.delta {{ align-self: flex-start; font-family: {MONO}; font-size: 20px; color: {ACCENT}; }}
+@keyframes rise {{ from {{ opacity: 0; transform: translateY(18px) }} to {{ opacity: 1; transform: translateY(0) }} }}
+@keyframes draw {{ to {{ stroke-dashoffset: 0 }} }}
+"#
+    );
+    let markup = r#"
+<div class="card">
+  <div class="chip"><i></i>WEEKLY</div>
+  <div class="num">24,180</div>
+  <div class="lab">RENDERS THIS WEEK</div>
+  <div class="spark"><svg viewBox="0 0 600 130" fill="none">
+    <polyline class="rise" points="10,96 90,88 170,92 250,70 330,74 410,52 490,56 570,30"/>
+  </svg></div>
+  <div class="delta">+18% week over week</div>
+</div>
+"#;
+    let mut built = comp("funcut.social.stat", "Social stat card", 1920, 1080, 4.5);
+    let node = with_track(
+        html_node("card", markup, &css, Length::Px(1920.0), Length::Px(1080.0)),
+        "opacity",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.0), Curve::EASE_OUT),
+            Key::new(0.24, Value::number(1.0)),
+        ]),
+    );
+    let node = with_track(
+        node,
+        "scale",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.94), Curve::SPRING_POP),
+            Key::new(0.55, Value::number(1.0)),
+        ]),
+    );
+    built.nodes.push(node);
+    built.slots.push(Slot {
+        node: "card".into(),
+        field: SlotField::Text,
+        sample: "24,180".into(),
+        label: "Number".into(),
+    });
+    built.slots.push(Slot {
+        node: "card".into(),
+        field: SlotField::Text,
+        sample: "RENDERS THIS WEEK".into(),
+        label: "Label".into(),
+    });
+    built.slots.push(Slot {
+        node: "card".into(),
+        field: SlotField::Text,
+        sample: "+18% week over week".into(),
+        label: "Delta".into(),
+    });
+    built
+}
+
+/// A headline flash: a band across the bottom, a LIVE kicker with a dot
+/// that pulses, the headline at poster weight, and a rule that draws under
+/// it. The flash a bulletin or a breaking change is.
+pub fn headline_flash() -> Comp {
+    let css = format!(
+        r#"
+.band {{ position: absolute; left: 0; right: 0; bottom: 110px; padding: 44px 120px 0 120px;
+  opacity: 0; animation: rise 0.55s cubic-bezier(0.16,1,0.3,1) both; }}
+.rule {{ height: 3px; background: {ACCENT}; transform-origin: left;
+  animation: grow 0.9s cubic-bezier(0.16,1,0.3,1) 0.2s both; }}
+.row {{ display: flex; flex-direction: row; align-items: center; gap: 28px; margin: 26px 0 18px 0; }}
+.live {{ display: flex; flex-direction: row; align-items: center; gap: 12px;
+  font-family: {MONO}; font-size: 18px; font-weight: 700; letter-spacing: 0.34em; color: {ACCENT}; }}
+.live i {{ width: 11px; height: 11px; border-radius: 999px; background: {ACCENT};
+  animation: pulse 1.6s ease-in-out infinite; }}
+.state {{ font-family: {MONO}; font-size: 18px; letter-spacing: 0.3em; color: {MUTED}; }}
+.when {{ margin-left: auto; font-family: {MONO}; font-size: 18px; color: {MUTED}; }}
+.head {{ font-family: {DISPLAY}; font-size: 84px; font-weight: 800; letter-spacing: -0.03em;
+  line-height: 1.05; color: {INK}; }}
+@keyframes rise {{ from {{ opacity: 0; transform: translateY(26px) }} to {{ opacity: 1; transform: translateY(0) }} }}
+@keyframes grow {{ from {{ transform: scaleX(0) }} to {{ transform: scaleX(1) }} }}
+@keyframes pulse {{ 0%, 100% {{ opacity: 1 }} 50% {{ opacity: 0.35 }} }}
+"#
+    );
+    let markup = r#"
+<div class="band">
+  <div class="rule"></div>
+  <div class="row">
+    <div class="live"><i></i>LIVE</div>
+    <div class="state">DEVELOPING</div>
+    <div class="when">22:41 UTC</div>
+  </div>
+  <div class="head">The render farm now bakes while you sleep.</div>
+</div>
+"#;
+    let mut built = comp(
+        "funcut.news.headline-flash",
+        "Headline flash",
+        1920,
+        1080,
+        4.5,
+    );
+    let node = with_track(
+        html_node("band", markup, &css, Length::Px(1920.0), Length::Px(1080.0)),
+        "opacity",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.0), Curve::EASE_OUT),
+            Key::new(0.2, Value::number(1.0)),
+        ]),
+    );
+    built.nodes.push(node);
+    built.slots.push(Slot {
+        node: "band".into(),
+        field: SlotField::Text,
+        sample: "The render farm now bakes while you sleep.".into(),
+        label: "Headline".into(),
+    });
+    built.slots.push(Slot {
+        node: "band".into(),
+        field: SlotField::Text,
+        sample: "LIVE".into(),
+        label: "Kicker".into(),
+    });
+    built.slots.push(Slot {
+        node: "band".into(),
+        field: SlotField::Text,
+        sample: "22:41 UTC".into(),
+        label: "Timestamp".into(),
+    });
+    built.slots.push(Slot {
+        node: "band".into(),
+        field: SlotField::Text,
+        sample: "DEVELOPING".into(),
+        label: "State".into(),
+    });
+    built
+}
+
+/// A phone frame: the device centred, an island at the top, a status bar,
+/// and the screen's own words under a kicker - the frame a product shot or
+/// an app tease is, without a photo of a phone.
+pub fn device_phone() -> Comp {
+    let css = format!(
+        r#"
+.stage {{ position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }}
+.phone {{ width: 430px; height: 880px; border-radius: 56px; background: #0b0c0f;
+  border: 1px solid rgba(244,241,234,0.20); padding: 14px; }}
+.screen {{ position: relative; width: 100%; height: 100%; border-radius: 44px; background: #101216;
+  overflow: hidden; display: flex; flex-direction: column; padding: 64px 34px 44px 34px; gap: 26px; }}
+.island {{ position: absolute; top: 22px; left: 50%; margin-left: -61px; width: 122px; height: 34px;
+  border-radius: 20px; background: #050507; opacity: 0; animation: fade 0.5s ease-out 0.5s both; }}
+.bar {{ display: flex; flex-direction: row; align-items: center; }}
+.time {{ font-family: {MONO}; font-size: 17px; color: {INK}; }}
+.bicons {{ margin-left: auto; display: flex; flex-direction: row; gap: 7px; }}
+.bicons i {{ width: 8px; height: 8px; border-radius: 999px; background: rgba(244,241,234,0.45); }}
+.kicker {{ font-family: {MONO}; font-size: 15px; letter-spacing: 0.32em; color: {ACCENT}; margin-top: 26px; }}
+.words {{ font-family: {DISPLAY}; font-size: 58px; font-weight: 800; letter-spacing: -0.03em;
+  line-height: 1.08; color: {INK}; opacity: 0; animation: rise 0.6s cubic-bezier(0.16,1,0.3,1) 0.35s both; }}
+.cta {{ margin-top: auto; align-self: flex-start; background: {ACCENT}; color: #101216;
+  font-family: {MONO}; font-size: 17px; font-weight: 700; letter-spacing: 0.06em;
+  border-radius: 999px; padding: 16px 30px; opacity: 0;
+  animation: rise 0.6s cubic-bezier(0.16,1,0.3,1) 0.55s both; }}
+.home {{ position: absolute; bottom: 18px; left: 50%; margin-left: -70px; width: 140px; height: 5px;
+  border-radius: 3px; background: rgba(244,241,234,0.35); }}
+@keyframes rise {{ from {{ opacity: 0; transform: translateY(16px) }} to {{ opacity: 1; transform: translateY(0) }} }}
+@keyframes fade {{ from {{ opacity: 0 }} to {{ opacity: 1 }} }}
+"#
+    );
+    let markup = r#"
+<div class="stage">
+  <div class="phone">
+    <div class="screen">
+      <div class="island"></div>
+      <div class="bar"><div class="time">9:41</div><div class="bicons"><i></i><i></i><i></i></div></div>
+      <div class="kicker">CONCAT MOTION</div>
+      <div class="words">Bakes while you sleep.</div>
+      <div class="cta">Render now</div>
+      <div class="home"></div>
+    </div>
+  </div>
+</div>
+"#;
+    let mut built = comp("funcut.device.phone", "Phone frame", 1920, 1080, 5.0);
+    let node = with_track(
+        html_node(
+            "stage",
+            markup,
+            &css,
+            Length::Px(1920.0),
+            Length::Px(1080.0),
+        ),
+        "opacity",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.0), Curve::EASE_OUT),
+            Key::new(0.22, Value::number(1.0)),
+        ]),
+    );
+    let node = with_track(
+        node,
+        "scale",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.9), Curve::SPRING_POP),
+            Key::new(0.6, Value::number(1.0)),
+        ]),
+    );
+    built.nodes.push(node);
+    built.slots.push(Slot {
+        node: "stage".into(),
+        field: SlotField::Text,
+        sample: "Bakes while you sleep.".into(),
+        label: "Heading".into(),
+    });
+    built.slots.push(Slot {
+        node: "stage".into(),
+        field: SlotField::Text,
+        sample: "9:41".into(),
+        label: "Clock".into(),
+    });
+    built.slots.push(Slot {
+        node: "stage".into(),
+        field: SlotField::Text,
+        sample: "Render now".into(),
+        label: "Button".into(),
+    });
+    built
+}
+
+/// A tablet frame: a wide screen, a rail of dots down the left edge, and
+/// real words on the right - the frame a dashboard tease or a release note
+/// is, at the scale a tablet reads at.
+pub fn device_tablet() -> Comp {
+    let css = format!(
+        r#"
+.stage {{ position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }}
+.slate {{ width: 1240px; height: 840px; border-radius: 40px; background: #0b0c0f;
+  border: 1px solid rgba(244,241,234,0.20); padding: 18px; }}
+.glass {{ position: relative; width: 100%; height: 100%; border-radius: 26px; background: #101216;
+  overflow: hidden; display: flex; flex-direction: row; }}
+.cam {{ position: absolute; top: 9px; left: 50%; margin-left: -5px; width: 10px; height: 10px;
+  border-radius: 999px; background: #050507; border: 1px solid rgba(244,241,234,0.14); }}
+.rail {{ width: 96px; border-right: 1px solid rgba(244,241,234,0.12); display: flex;
+  flex-direction: column; align-items: center; gap: 30px; padding-top: 88px; }}
+.rail i {{ width: 14px; height: 14px; border-radius: 999px; background: rgba(244,241,234,0.28);
+  opacity: 0; animation: fade 0.4s ease-out both; }}
+.rail i:first-child {{ background: {ACCENT}; }}
+.body {{ flex: 1; padding: 88px 64px; display: flex; flex-direction: column; gap: 34px; }}
+.title {{ font-family: {DISPLAY}; font-size: 64px; font-weight: 800; letter-spacing: -0.03em;
+  line-height: 1.06; color: {INK}; opacity: 0; animation: rise 0.6s cubic-bezier(0.16,1,0.3,1) 0.3s both; }}
+.line {{ font-family: {SANS}; font-size: 27px; line-height: 1.5; color: {MUTED};
+  opacity: 0; animation: rise 0.6s cubic-bezier(0.16,1,0.3,1) both; }}
+.row {{ margin-top: auto; display: flex; flex-direction: row; gap: 22px; }}
+.chip {{ font-family: {MONO}; font-size: 16px; letter-spacing: 0.14em; color: {INK};
+  border: 1px solid rgba(244,241,234,0.22); border-radius: 999px; padding: 15px 30px;
+  opacity: 0; animation: rise 0.6s cubic-bezier(0.16,1,0.3,1) both; }}
+.chip.gold {{ background: {ACCENT}; border-color: {ACCENT}; color: #101216; font-weight: 700; }}
+@keyframes rise {{ from {{ opacity: 0; transform: translateY(16px) }} to {{ opacity: 1; transform: translateY(0) }} }}
+@keyframes fade {{ from {{ opacity: 0 }} to {{ opacity: 1 }} }}
+"#
+    );
+    let markup = r#"
+<div class="stage">
+  <div class="slate">
+    <div class="glass">
+      <div class="cam"></div>
+      <div class="rail"><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="body">
+        <div class="title">The whole board, one pass.</div>
+        <div class="line" style="animation-delay: 0.45s">Parts that survive a failed run.</div>
+        <div class="line" style="animation-delay: 0.6s">A cache that answers before it asks.</div>
+        <div class="line" style="animation-delay: 0.75s">One queue for every engine.</div>
+        <div class="row">
+          <div class="chip gold" style="animation-delay: 0.95s">RENDER</div>
+          <div class="chip" style="animation-delay: 1.1s">Plan first</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+"#;
+    let mut built = comp("funcut.device.tablet", "Tablet frame", 1920, 1080, 5.5);
+    let node = with_track(
+        html_node(
+            "stage",
+            markup,
+            &css,
+            Length::Px(1920.0),
+            Length::Px(1080.0),
+        ),
+        "opacity",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.0), Curve::EASE_OUT),
+            Key::new(0.22, Value::number(1.0)),
+        ]),
+    );
+    let node = with_track(
+        node,
+        "scale",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.93), Curve::SPRING_POP),
+            Key::new(0.55, Value::number(1.0)),
+        ]),
+    );
+    built.nodes.push(node);
+    built.slots.push(Slot {
+        node: "stage".into(),
+        field: SlotField::Text,
+        sample: "The whole board, one pass.".into(),
+        label: "Title".into(),
+    });
+    built.slots.push(Slot {
+        node: "stage".into(),
+        field: SlotField::Text,
+        sample: "RENDER".into(),
+        label: "Primary chip".into(),
+    });
+    built
+}
+
+/// A laptop frame: a screen with a bezel, a hinge line, and a base that
+/// slides home under it - the frame a keynote tease or a desktop story is,
+/// drawn rather than photographed.
+pub fn device_laptop() -> Comp {
+    let css = format!(
+        r#"
+.stage {{ position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 0; }}
+.lid {{ width: 1500px; border-radius: 22px 22px 0 0; background: #0b0c0f;
+  border: 1px solid rgba(244,241,234,0.20); border-bottom: none; padding: 18px 18px 12px 18px;
+  opacity: 0; animation: rise 0.6s cubic-bezier(0.16,1,0.3,1) both; }}
+.glass {{ position: relative; width: 100%; height: 830px; border-radius: 10px; background: #101216;
+  overflow: hidden; display: flex; flex-direction: column; align-items: center; padding-top: 120px; }}
+.kicker {{ font-family: {MONO}; font-size: 16px; letter-spacing: 0.34em; color: {ACCENT}; }}
+.title {{ font-family: {DISPLAY}; font-size: 78px; font-weight: 800; letter-spacing: -0.03em;
+  color: {INK}; margin-top: 30px; opacity: 0; animation: rise 0.6s cubic-bezier(0.16,1,0.3,1) 0.35s both; }}
+.dock {{ position: absolute; bottom: 26px; display: flex; flex-direction: row; gap: 18px; }}
+.dock i {{ width: 14px; height: 14px; border-radius: 999px; background: rgba(244,241,234,0.30);
+  opacity: 0; animation: fade 0.4s ease-out both; }}
+.dock i:nth-child(4) {{ background: {ACCENT}; }}
+.base {{ width: 1740px; height: 36px; background: #14161a;
+  clip-path: polygon(3% 0, 97% 0, 100% 100%, 0 100%);
+  border-top: 1px solid rgba(244,241,234,0.16);
+  opacity: 0; animation: settle 0.6s cubic-bezier(0.16,1,0.3,1) 0.15s both; }}
+.notch {{ width: 230px; height: 10px; background: #0a0b0e; border-radius: 0 0 8px 8px; margin: 0 auto; }}
+@keyframes rise {{ from {{ opacity: 0; transform: translateY(22px) }} to {{ opacity: 1; transform: translateY(0) }} }}
+@keyframes settle {{ from {{ opacity: 0; transform: translateY(14px) }} to {{ opacity: 1; transform: translateY(0) }} }}
+@keyframes fade {{ from {{ opacity: 0 }} to {{ opacity: 1 }} }}
+"#
+    );
+    let markup = r#"
+<div class="stage">
+  <div class="lid">
+    <div class="glass">
+      <div class="kicker">CONCAT 25.1</div>
+      <div class="title">One timeline, every engine.</div>
+      <div class="dock"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    </div>
+  </div>
+  <div class="base"><div class="notch"></div></div>
+</div>
+"#;
+    let mut built = comp("funcut.device.laptop", "Laptop frame", 1920, 1080, 5.5);
+    let node = with_track(
+        html_node(
+            "stage",
+            markup,
+            &css,
+            Length::Px(1920.0),
+            Length::Px(1080.0),
+        ),
+        "opacity",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.0), Curve::EASE_OUT),
+            Key::new(0.22, Value::number(1.0)),
+        ]),
+    );
+    let node = with_track(
+        node,
+        "scale",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.92), Curve::SPRING_POP),
+            Key::new(0.6, Value::number(1.0)),
+        ]),
+    );
+    built.nodes.push(node);
+    built.slots.push(Slot {
+        node: "stage".into(),
+        field: SlotField::Text,
+        sample: "One timeline, every engine.".into(),
+        label: "Heading".into(),
+    });
+    built.slots.push(Slot {
+        node: "stage".into(),
+        field: SlotField::Text,
+        sample: "CONCAT 25.1".into(),
+        label: "Kicker".into(),
+    });
+    built
+}
+
+/// A pin route map: an abstract street grid, a dashed route that draws
+/// itself across it, and pins that drop where it bends - start small,
+/// destination heavy. The map a journey or a rollout plan is, without a
+/// map.
+pub fn pin_route() -> Comp {
+    let grid_v = (0..15)
+        .map(|i| {
+            format!(
+                r#"<line x1="{}" x2="{}" y1="0" y2="760"/>"#,
+                i * 107 + 20,
+                i * 107 + 20
+            )
+        })
+        .collect::<String>();
+    let grid_h = (0..8)
+        .map(|i| {
+            format!(
+                r#"<line x1="0" x2="1600" y1="{}" y2="{}"/>"#,
+                i * 95 + 10,
+                i * 95 + 10
+            )
+        })
+        .collect::<String>();
+    let css = format!(
+        r#"
+.map {{ position: absolute; left: 160px; top: 160px; width: 1600px; height: 760px; }}
+.map svg {{ width: 100%; height: 100%; }}
+.streets line {{ stroke: rgba(244,241,234,0.07); stroke-width: 1; }}
+.blocks rect {{ fill: rgba(244,241,234,0.045); }}
+.route {{ fill: none; stroke: {ACCENT}; stroke-width: 5; stroke-linecap: round;
+  stroke-dasharray: 2600; stroke-dashoffset: 2600;
+  animation: draw 1.6s cubic-bezier(0.16,1,0.3,1) 0.3s both; }}
+.pin {{ opacity: 0; animation: drop 0.55s cubic-bezier(0.34,1.56,0.64,1) both; }}
+.pin circle {{ fill: {ACCENT}; }}
+.pin.home circle {{ fill: {INK}; }}
+.pin.end circle {{ fill: #101216; stroke: {ACCENT}; stroke-width: 4; }}
+.tag {{ position: absolute; font-family: {MONO}; font-size: 16px; letter-spacing: 0.22em;
+  color: {INK}; background: rgba(12,13,16,0.92); border: 1px solid rgba(244,241,234,0.18);
+  border-radius: 999px; padding: 10px 20px; opacity: 0;
+  animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) both; }}
+@keyframes draw {{ to {{ stroke-dashoffset: 0 }} }}
+@keyframes drop {{ from {{ opacity: 0; transform: translateY(-22px) scale(0.8) }} to {{ opacity: 1; transform: translateY(0) scale(1) }} }}
+@keyframes rise {{ from {{ opacity: 0; transform: translateY(10px) }} to {{ opacity: 1; transform: translateY(0) }} }}
+"#
+    );
+    let markup = format!(
+        r##"
+<div class="map">
+  <svg viewBox="0 0 1600 760" fill="none">
+    <g class="streets">{grid_v}{grid_h}</g>
+    <g class="blocks">
+      <rect x="180" y="120" width="220" height="150" rx="14"/>
+      <rect x="1150" y="420" width="260" height="170" rx="14"/>
+      <rect x="520" y="560" width="180" height="120" rx="14"/>
+    </g>
+    <path class="route" d="M 140,620 C 420,540 380,300 760,300 S 1180,420 1460,180"/>
+    <g class="pin home" style="animation-delay: 0.35s" transform="translate(140,620)">
+      <circle r="13"/><path d="M -9,8 L 0,30 L 9,8 Z" fill="#f4f1ea"/>
+    </g>
+    <g class="pin" style="animation-delay: 0.95s" transform="translate(760,300)">
+      <circle r="13"/><path d="M -9,8 L 0,30 L 9,8 Z" fill="#d9a441"/>
+    </g>
+    <g class="pin end" style="animation-delay: 1.55s" transform="translate(1460,180)">
+      <circle r="19"/><path d="M -13,12 L 0,44 L 13,12 Z" fill="#d9a441"/>
+    </g>
+  </svg>
+  <div class="tag" style="left: 6%; top: 86%; animation-delay: 0.5s">START</div>
+  <div class="tag" style="left: 44%; top: 30%; animation-delay: 1.1s">BEND</div>
+  <div class="tag" style="right: 4%; top: 12%; animation-delay: 1.7s">SHIP</div>
+</div>
+"##
+    );
+    let mut built = comp("funcut.map.pin-route", "Pin route map", 1920, 1080, 5.5);
+    let node = with_track(
+        html_node("map", &markup, &css, Length::Px(1920.0), Length::Px(1080.0)),
+        "opacity",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.0), Curve::EASE_OUT),
+            Key::new(0.2, Value::number(1.0)),
+        ]),
+    );
+    let node = with_track(
+        node,
+        "scale",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.95), Curve::SPRING_POP),
+            Key::new(0.5, Value::number(1.0)),
+        ]),
+    );
+    built.nodes.push(node);
+    built.slots.push(Slot {
+        node: "map".into(),
+        field: SlotField::Text,
+        sample: "START".into(),
+        label: "Origin label".into(),
+    });
+    built.slots.push(Slot {
+        node: "map".into(),
+        field: SlotField::Text,
+        sample: "SHIP".into(),
+        label: "Destination label".into(),
+    });
+    built.slots.push(Slot {
+        node: "map".into(),
+        field: SlotField::Text,
+        sample: "BEND".into(),
+        label: "Waypoint label".into(),
+    });
+    built
+}
+
+/// A horizontal timeline: one rule that draws left to right, milestones
+/// that pop along it, alternating labels above and below. The timeline a
+/// roadmap or a retrospective is.
+pub fn horizontal_timeline() -> Comp {
+    let marks: [(&str, &str, &str); 5] = [
+        ("01", "Open", "the board loads"),
+        ("02", "Cut", "transitions own their windows"),
+        ("03", "Grade", "ten-bit linear"),
+        ("04", "Bake", "farms survive a failure"),
+        ("05", "Ship", "one queue, every engine"),
+    ];
+    let spots = [280, 660, 1020, 1380, 1700];
+    let mut dots = String::new();
+    let mut labels = String::new();
+    for (i, (era, name, note)) in marks.iter().enumerate() {
+        let x = spots[i];
+        let above = i % 2 == 0;
+        dots.push_str(&format!(
+            r#"<div class="dot{}" style="left: {x}px; animation-delay: {:.2}s"></div>"#,
+            if i == 2 { " gold" } else { "" },
+            0.5 + i as f64 * 0.18
+        ));
+        labels.push_str(&format!(
+            r#"<div class="side {}" style="left: {}px; animation-delay: {:.2}s"><div class="era">{era}</div><div class="name">{name}</div><div class="note">{note}</div></div>"#,
+            if above { "up" } else { "down" },
+            x,
+            0.62 + i as f64 * 0.18
+        ));
+    }
+    let css = format!(
+        r#"
+.board {{ position: absolute; left: 0; right: 0; top: 540px; height: 0; }}
+.axis {{ position: absolute; left: 160px; right: 160px; top: -1px; height: 2px;
+  background: rgba(244,241,234,0.20); transform-origin: left;
+  animation: grow 1.4s cubic-bezier(0.16,1,0.3,1) both; }}
+.dot {{ position: absolute; top: -9px; width: 18px; height: 18px; border-radius: 999px;
+  margin-left: -9px; background: #101216; border: 2px solid rgba(244,241,234,0.5);
+  opacity: 0; animation: pop 0.45s cubic-bezier(0.34,1.56,0.64,1) both; }}
+.dot.gold {{ background: {ACCENT}; border-color: {ACCENT}; }}
+.side {{ position: absolute; width: 300px; opacity: 0;
+  animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) both; }}
+.side.up {{ bottom: 34px; }}
+.side.down {{ top: 34px; }}
+.side .era {{ font-family: {MONO}; font-size: 15px; letter-spacing: 0.3em; color: {ACCENT}; margin-bottom: 10px; }}
+.side .name {{ font-family: {DISPLAY}; font-size: 40px; font-weight: 800; color: {INK}; letter-spacing: -0.02em; }}
+.side .note {{ font-family: {SANS}; font-size: 22px; color: {MUTED}; margin-top: 8px; }}
+.side.down {{ text-align: left; }}
+@keyframes grow {{ from {{ transform: scaleX(0) }} to {{ transform: scaleX(1) }} }}
+@keyframes pop {{ from {{ opacity: 0; transform: scale(0.4) }} to {{ opacity: 1; transform: scale(1) }} }}
+@keyframes rise {{ from {{ opacity: 0; transform: translateY(14px) }} to {{ opacity: 1; transform: translateY(0) }} }}
+"#
+    );
+    let markup = format!(r#"<div class="board"><div class="axis"></div>{dots}{labels}</div>"#);
+    let mut built = comp(
+        "funcut.timeline.horizontal",
+        "Horizontal timeline",
+        1920,
+        1080,
+        5.5,
+    );
+    let node = with_track(
+        html_node(
+            "board",
+            &markup,
+            &css,
+            Length::Px(1920.0),
+            Length::Px(1080.0),
+        ),
+        "opacity",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.0), Curve::EASE_OUT),
+            Key::new(0.2, Value::number(1.0)),
+        ]),
+    );
+    let node = with_track(
+        node,
+        "scale",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.97), Curve::SPRING_POP),
+            Key::new(0.5, Value::number(1.0)),
+        ]),
+    );
+    built.nodes.push(node);
+    built.slots.push(Slot {
+        node: "board".into(),
+        field: SlotField::Text,
+        sample: "Open".into(),
+        label: "First milestone".into(),
+    });
+    built.slots.push(Slot {
+        node: "board".into(),
+        field: SlotField::Text,
+        sample: "Ship".into(),
+        label: "Last milestone".into(),
+    });
+    built.slots.push(Slot {
+        node: "board".into(),
+        field: SlotField::Text,
+        sample: "one queue, every engine".into(),
+        label: "Last note".into(),
+    });
+    built
+}
+
+/// A flowchart: boxes that rise, connectors that draw themselves between
+/// them, the path to the outcome in accent. The diagram a pipeline or a
+/// decision tree is.
+pub fn flowchart() -> Comp {
+    let css = format!(
+        r#"
+.sheet {{ position: absolute; left: 160px; top: 150px; width: 1600px; height: 780px; }}
+.sheet svg {{ position: absolute; inset: 0; width: 100%; height: 100%; }}
+.wire {{ fill: none; stroke: rgba(244,241,234,0.28); stroke-width: 2;
+  stroke-dasharray: 700; stroke-dashoffset: 700;
+  animation: draw 0.8s cubic-bezier(0.16,1,0.3,1) both; }}
+.wire.gold {{ stroke: {ACCENT}; stroke-width: 3; }}
+.box {{ position: absolute; background: rgba(12,13,16,0.92); border: 1px solid rgba(244,241,234,0.16);
+  border-radius: 14px; padding: 24px 34px; opacity: 0;
+  animation: rise 0.5s cubic-bezier(0.16,1,0.3,1) both; }}
+.box .step {{ font-family: {MONO}; font-size: 13px; letter-spacing: 0.3em; color: {MUTED}; margin-bottom: 8px; }}
+.box .what {{ font-family: {DISPLAY}; font-size: 34px; font-weight: 800; color: {INK}; }}
+.box.end {{ border-color: {ACCENT}; }}
+.box.end .what {{ color: {ACCENT}; }}
+@keyframes draw {{ to {{ stroke-dashoffset: 0 }} }}
+@keyframes rise {{ from {{ opacity: 0; transform: translateY(16px) }} to {{ opacity: 1; transform: translateY(0) }} }}
+"#
+    );
+    let markup = r#"
+<div class="sheet">
+  <svg viewBox="0 0 1600 780" fill="none">
+    <path class="wire" style="animation-delay: 0.55s" d="M 800,96 V 220 M 800,220 H 400 V 320"/>
+    <path class="wire" style="animation-delay: 0.55s" d="M 800,220 H 1200 V 320"/>
+    <path class="wire gold" style="animation-delay: 1.0s" d="M 400,470 V 560 H 800"/>
+    <path class="wire gold" style="animation-delay: 1.0s" d="M 1200,470 V 560 H 800"/>
+    <path class="wire" style="animation-delay: 0.3s" d="M 800,96 V 220"/>
+  </svg>
+  <div class="box" style="left: 660px; top: 30px; animation-delay: 0.1s">
+    <div class="step">STEP 00</div><div class="what">Shot</div>
+  </div>
+  <div class="box" style="left: 260px; top: 320px; animation-delay: 0.35s">
+    <div class="step">STEP 01</div><div class="what">Plan</div>
+  </div>
+  <div class="box" style="left: 1060px; top: 320px; animation-delay: 0.45s">
+    <div class="step">STEP 02</div><div class="what">Grade</div>
+  </div>
+  <div class="box end" style="left: 660px; top: 560px; animation-delay: 0.75s">
+    <div class="step">OUTCOME</div><div class="what">Reel</div>
+  </div>
+</div>
+"#;
+    let mut built = comp("funcut.diagram.flowchart", "Flowchart", 1920, 1080, 5.5);
+    let node = with_track(
+        html_node(
+            "sheet",
+            markup,
+            &css,
+            Length::Px(1920.0),
+            Length::Px(1080.0),
+        ),
+        "opacity",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.0), Curve::EASE_OUT),
+            Key::new(0.2, Value::number(1.0)),
+        ]),
+    );
+    let node = with_track(
+        node,
+        "scale",
+        Track::new(vec![
+            Key::eased(0.0, Value::number(0.96), Curve::SPRING_POP),
+            Key::new(0.5, Value::number(1.0)),
+        ]),
+    );
+    built.nodes.push(node);
+    built.slots.push(Slot {
+        node: "sheet".into(),
+        field: SlotField::Text,
+        sample: "Reel".into(),
+        label: "Outcome".into(),
+    });
+    built.slots.push(Slot {
+        node: "sheet".into(),
+        field: SlotField::Text,
+        sample: "Plan".into(),
+        label: "Step one".into(),
+    });
+    built.slots.push(Slot {
+        node: "sheet".into(),
+        field: SlotField::Text,
+        sample: "Grade".into(),
+        label: "Step two".into(),
+    });
+    built
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1703,6 +3239,19 @@ mod tests {
             Category::Sting,
             Category::Quote,
             Category::Chapter,
+            Category::CallToAction,
+            Category::Code,
+            Category::Chart,
+            Category::Compare,
+            Category::Backdrop,
+            Category::Leaderboard,
+            Category::Table,
+            Category::Social,
+            Category::News,
+            Category::Device,
+            Category::Map,
+            Category::Timeline,
+            Category::Diagram,
         ] {
             assert!(
                 ALL.iter().any(|preset| preset.category == category),

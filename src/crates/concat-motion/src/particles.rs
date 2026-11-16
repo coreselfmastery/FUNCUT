@@ -224,6 +224,19 @@ impl Default for Turbulence {
     }
 }
 
+impl Turbulence {
+    /// The same gust in a mood: strength follows arousal - an alive read
+    /// pushes the field up to half as hard again, a still one calms it
+    /// toward half - so the weather answers the music continuously, the
+    /// same bend the spring and the typography take.
+    pub fn scaled_by(self, mood: &crate::audio::Mood) -> Turbulence {
+        Turbulence {
+            strength: self.strength * (0.5 + 0.9 * mood.arousal.clamp(0.0, 1.0)),
+            ..self
+        }
+    }
+}
+
 /// The named fields, tuned. One word names the weather a scene asks for,
 /// and each name is a whole [`ParticleSystem`] with its own seed - the
 /// same preset is the same field on every machine, the determinism

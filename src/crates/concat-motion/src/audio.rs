@@ -381,6 +381,41 @@ pub fn mood_of(env: &[Bands]) -> (f64, f64) {
     (valence, arousal)
 }
 
+/// The mood one moment of audio carries: `valence` from the spectrum's
+/// brightness tilt, `arousal` from its flux and loudness - the same two
+/// axes the emotion work reads, continuous where the seven acts are
+/// discrete. The clip-level [`mood_of`] averages a whole read; this is
+/// the per-frame one the pulse, the typography and the turbulence bend
+/// with, so a scene can travel from one mood to the next inside itself.
+#[derive(Clone, Copy, PartialEq, Debug, serde::Serialize, serde::Deserialize)]
+pub struct Mood {
+    /// -1 (a dark read) to 1 (a bright one).
+    pub valence: f64,
+    /// 0 (still) to 1 (alive).
+    pub arousal: f64,
+}
+
+impl Mood {
+    /// The neutral mood: the read that changes nothing, so a caller
+    /// without an opinion still has a value to hand down.
+    pub const NEUTRAL: Mood = Mood {
+        valence: 0.0,
+        arousal: 0.5,
+    };
+}
+
+/// The mood one frame's bands carry: the same arithmetic
+/// [`mood_of`](self) averages over a clip, read at the moment.
+pub fn mood_at(bands: &Bands) -> Mood {
+    let bright = bands.presence;
+    let dark = bands.bass + bands.sub_bass;
+    let loud = (bands.bass + bands.mid + bands.presence) / 3.0;
+    Mood {
+        valence: ((bright - dark) / (bright + dark + 1e-9)).clamp(-1.0, 1.0),
+        arousal: ((bands.flux * 0.6 + loud * 0.4) * 1.6 - 0.1).clamp(0.0, 1.0),
+    }
+}
+
 /// Expands a comp's audio bindings into ordinary tracks: every bound
 /// `(node, track, band)` gains a key a frame, `base + envelope *
 /// amount`, in the track's own fraction clock. The comp it returns is

@@ -131,6 +131,39 @@ pub fn curve_for_act(beat: BeatType) -> Curve {
     }
 }
 
+/// The curve an act's motion travels **in a mood**: the act picks the
+/// family, the mood bends the spring inside it. Arousal stiffens the
+/// spring - an alive read lands faster - and valence sets how far it is
+/// allowed to overshoot: a dark one barely does (a damping ratio of
+/// 0.86, the overshoot a frame can just see), a bright one settles at
+/// the library's own 0.997. Everything between the seven discrete acts
+/// is the point: this is the continuous read the act table interpolates.
+///
+/// A non-spring curve is returned as the act wrote it: the mood bends
+/// springs, not beziers - a bezier's shape is an author's opinion about
+/// time, and the read has no business rewriting it.
+pub fn curve_for_mood(act: BeatType, mood: &crate::audio::Mood) -> Curve {
+    let Curve::Spring(spring) = curve_for_act(act) else {
+        return curve_for_act(act);
+    };
+    let stiffness = spring.stiffness * (0.8 + 0.4 * mood.arousal.clamp(0.0, 1.0));
+    let zeta = 0.86 + 0.137 * mood.valence.clamp(-1.0, 1.0).max(0.0);
+    let damping = 2.0 * (stiffness * spring.mass).sqrt() * zeta;
+    Curve::Spring(crate::curve::Spring {
+        stiffness,
+        damping,
+        mass: spring.mass,
+    })
+}
+
+/// How fast typography reads in a mood: a multiplier on the time between
+/// words, `1.0` at the neutral centre. An aroused read runs up to a
+/// quarter faster, a still, dark one up to a quarter slower - the same
+/// two axes the emotion work carries, spent where the words are.
+pub fn speed_for_mood(mood: &crate::audio::Mood) -> f64 {
+    (1.0 + 0.3 * (mood.arousal - 0.5) + 0.1 * mood.valence).clamp(0.75, 1.25)
+}
+
 /// Where a sound must start for its peak to land on the moment it is
 /// for: the sounds library carries each sound's `syncAt` - seconds in
 /// where its transient peaks - and an entrance aligned to the *peak*
@@ -624,6 +657,72 @@ mod tests {
             sound_starts_at(0.05, Some(0.092)),
             0.0,
             "never before the reel"
+        );
+    }
+
+    /// The mood bends the spring, not the family: the same act stiffer
+    /// and less overshooting as the read brightens, every damping ratio
+    /// inside the band the motion principles allow.
+    #[test]
+    fn a_mood_bends_the_act_spring_continuously() {
+        use crate::audio::Mood;
+        let dark = Mood {
+            valence: -0.8,
+            arousal: 0.1,
+        };
+        let bright = Mood {
+            valence: 0.9,
+            arousal: 0.9,
+        };
+        let still = curve_for_mood(BeatType::Reveal, &Mood::NEUTRAL);
+        let alive = curve_for_mood(BeatType::Reveal, &bright);
+        let brooding = curve_for_mood(BeatType::Reveal, &dark);
+        let (Curve::Spring(a), Curve::Spring(b), Curve::Spring(c)) = (still, alive, brooding)
+        else {
+            panic!("reveal is a spring in every mood");
+        };
+        // Stiffness grows with arousal: the dark read is slowest.
+        assert!(
+            c.stiffness < a.stiffness && a.stiffness < b.stiffness,
+            "{a:?} {b:?} {c:?}"
+        );
+        // Every damping ratio sits in the visible-but-allowed band, the
+        // bright one at the library's own settle.
+        let ratio = |s: &crate::curve::Spring| s.damping / (2.0 * (s.stiffness * s.mass).sqrt());
+        assert!((0.86..=0.997).contains(&ratio(&c)), "{c:?}");
+        assert!((0.86..=0.997).contains(&ratio(&a)), "{a:?}");
+        assert!((0.86..=0.997).contains(&ratio(&b)), "{b:?}");
+        // A non-spring act is returned as the act wrote it.
+        assert_eq!(curve_for_mood(BeatType::Hook, &bright), Curve::EASE_OUT);
+    }
+
+    /// Typography speed: the neutral centre is exactly 1, and the bounds
+    /// are the quarter either way.
+    #[test]
+    fn typography_speed_follows_the_mood() {
+        use crate::audio::Mood;
+        assert_eq!(speed_for_mood(&Mood::NEUTRAL), 1.0);
+        let fast = speed_for_mood(&Mood {
+            valence: 1.0,
+            arousal: 1.0,
+        });
+        let slow = speed_for_mood(&Mood {
+            valence: -1.0,
+            arousal: 0.0,
+        });
+        assert_eq!(fast, 1.25);
+        assert_eq!(slow, 0.75);
+        assert!(
+            fast > speed_for_mood(&Mood {
+                valence: 0.0,
+                arousal: 0.5
+            })
+        );
+        assert!(
+            slow < speed_for_mood(&Mood {
+                valence: 0.0,
+                arousal: 0.5
+            })
         );
     }
 }

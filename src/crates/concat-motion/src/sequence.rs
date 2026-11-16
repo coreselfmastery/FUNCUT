@@ -84,6 +84,11 @@ pub struct Scene {
     /// move with, the tempo its animations run at - and, when no grade
     /// is named, the colour it is graded. One layout, three moods.
     pub style: Option<crate::style::Style>,
+    /// The mood the scene plays in, when the soundtrack's read is known:
+    /// the continuous bend of the act's spring, the speed its words read
+    /// at, and the strength of its weather - [`crate::audio::Mood`] from
+    /// the storyboard, spent where the plan is laid.
+    pub mood: Option<crate::audio::Mood>,
 }
 
 /// Organic drift, deterministic: a seeded noise field the layer wanders
@@ -419,6 +424,10 @@ pub struct Sequence {
     /// scene can find it: the plan places named scenes as nested
     /// compositions. Empty for a sequence built by hand.
     pub scene_cards: Vec<crate::storyboard::SceneCard>,
+    /// The storyboard's template variables, kept so a named scene's comp
+    /// file is rendered with them when the plan places it as a nested
+    /// composition. `None` for a sequence built by hand.
+    pub vars: Option<Json>,
     /// The choreographed cuts, keyed by the **outgoing** scene's index:
     /// `transitions[0]` is the cut between scene 0 and scene 1. A cut
     /// writes motion into both sides - the outgoing scene's last
@@ -447,6 +456,7 @@ impl Sequence {
             audio: Vec::new(),
             curtain: Some(Curtain::default()),
             scene_cards: Vec::new(),
+            vars: None,
             transitions: BTreeMap::new(),
             opening: None,
             crf: 18,
@@ -543,6 +553,50 @@ fn enter_overlap(sequence: &Sequence, index: usize, previous_hold: f64) -> f64 {
     cut.seconds().min((previous_hold - 0.1).max(0.0))
 }
 
+/// One operation in a mood: the particle fields a scene carries get their
+/// turbulence bent by the read - the gust the preset or the patch already
+/// names, scaled by arousal - so the weather answers the music without a
+/// single track being keyed for it. Every other operation passes through
+/// untouched.
+fn in_the_mood(op: &Op, mood: &crate::audio::Mood) -> Op {
+    match op {
+        Op::AddParticles {
+            id,
+            x,
+            y,
+            width,
+            height,
+            at,
+            preset,
+            system,
+        } => {
+            let mut system = system.clone();
+            if let Some(patch) = &mut system {
+                let base = patch.turbulence.or_else(|| {
+                    preset
+                        .as_deref()
+                        .and_then(crate::particles::preset)
+                        .and_then(|preset| preset.turbulence)
+                });
+                if let Some(gust) = base {
+                    patch.turbulence = Some(gust.scaled_by(mood));
+                }
+            }
+            Op::AddParticles {
+                id: id.clone(),
+                x: *x,
+                y: *y,
+                width: *width,
+                height: *height,
+                at: *at,
+                preset: preset.clone(),
+                system,
+            }
+        }
+        other => other.clone(),
+    }
+}
+
 impl Scene {
     /// A scene showing `comp`.
     pub fn new(comp: Comp) -> Scene {
@@ -556,6 +610,7 @@ impl Scene {
             grade: None,
             look: None,
             style: None,
+            mood: None,
         }
     }
 
@@ -626,6 +681,15 @@ impl Scene {
     /// grade is named. The layout keeps its geometry and its words.
     pub fn styled(mut self, style: crate::style::Style) -> Scene {
         self.style = Some(style);
+        self
+    }
+
+    /// Play the scene in a mood: the continuous read - valence and
+    /// arousal - that bends the act's spring, scales the speed its words
+    /// read at and calms or excites the turbulence of its particle
+    /// fields. A scene that names none plays exactly as it always did.
+    pub fn feeling(mut self, mood: crate::audio::Mood) -> Scene {
+        self.mood = Some(mood);
         self
     }
 }
@@ -1319,16 +1383,46 @@ fn plan_with_chain(
     let mut scene_ends: Vec<f64> = Vec::new();
     let mut holds: Vec<f64> = Vec::new();
     for (index, scene) in sequence.scenes.iter().enumerate() {
-        let mut comp = if scene.ops.is_empty() {
+        // A mood bends the particle weather before it bakes: the gust
+        // the scene's read owns, spent before the simulation is keyed
+        // into tracks - the same continuous bend the spring and the
+        // typography take here and below.
+        let ops = match scene.mood {
+            Some(mood) => scene.ops.iter().map(|op| in_the_mood(op, &mood)).collect(),
+            None => scene.ops.clone(),
+        };
+        let mut comp = if ops.is_empty() {
             scene.comp.clone()
         } else {
-            authoring::apply(&scene.comp, &scene.ops).map_err(|error| MotionError::Engine {
+            authoring::apply(&scene.comp, &ops).map_err(|error| MotionError::Engine {
                 code: None,
                 message: format!("scene {index} ({}): {error}", scene.comp.id),
                 path: None,
                 help: Some("the batch is applied to the comp before it is placed".into()),
             })?
         };
+        // Typography at the mood's own speed: the word timing scaled,
+        // clamped inside the node's span so a slower read never runs past
+        // the scene the words live in.
+        if let Some(mood) = scene.mood {
+            let speed = crate::pulse::speed_for_mood(&mood);
+            for node in &mut comp.nodes {
+                let span = if node.duration > 0.0 {
+                    node.duration
+                } else {
+                    (comp.duration - node.start).max(0.0)
+                };
+                if span <= 1e-9 {
+                    continue;
+                }
+                if let crate::comp::NodeKind::Text(text) = &mut node.kind {
+                    for word in &mut text.words {
+                        word.start = (word.start * speed).min(span);
+                        word.end = word.end.map(|end| (end * speed).min(span));
+                    }
+                }
+            }
+        }
         // A scene that holds for less than its comp runs the comp shorter, not
         // cut off: every node ends by the new end, so a track keyed as a
         // fraction of a span is still inside its span rather than waving at a
@@ -1395,6 +1489,10 @@ fn plan_with_chain(
                 cut,
                 enter_drift,
             );
+            // The cut's own sound, once, on the entering side: the boundary
+            // belongs to the scene that arrives by it, and one sound at the
+            // seam is the read - a whoosh from both sides is two.
+            crate::transition::attach_sfx(&mut comp, cut, crate::transition::Side::Enter);
             // A cut whose window is the scene's whole length has no room
             // to settle in: the entrance is clamped to the span, which
             // is shorter than the author wrote. Said, not passed over.
@@ -2065,14 +2163,14 @@ fn collect_compositions(
         sub.assets = sequence.assets.clone();
         sub.scene_cards = sequence.scene_cards.clone();
         sub.curtain = None;
-        let mut scene =
-            card.scene(index, &sequence.source_dir)
-                .map_err(|message| MotionError::Engine {
-                    code: None,
-                    message,
-                    path: None,
-                    help: None,
-                })?;
+        let mut scene = card
+            .scene(index, &sequence.source_dir, sequence.vars.as_ref())
+            .map_err(|message| MotionError::Engine {
+                code: None,
+                message,
+                path: None,
+                help: None,
+            })?;
         // A composition shows the scene at relative times: its own `at`
         // is where it sits in a whole reel, which is not where it sits
         // inside the composition that places it.
@@ -4148,7 +4246,7 @@ mod tests {
         let mut sequence = Sequence::new(1920, 1080, 30.0);
         sequence.scene_cards = vec![card("a", "b"), card("b", "a")];
         let scene = sequence.scene_cards[0]
-            .scene(0, Path::new("."))
+            .scene(0, Path::new("."), None)
             .expect("a scene");
         sequence.push(scene);
         let error = plan(&geneva(), &sequence).expect_err("a cycle is refused");

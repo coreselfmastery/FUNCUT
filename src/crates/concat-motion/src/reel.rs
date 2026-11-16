@@ -646,6 +646,7 @@ fn render_run(
     // The whole storyboard's cards, so a layer naming a scene finds it
     // and the segment carries the nested composition.
     sub.scene_cards = board.scenes.clone();
+    sub.vars = board.vars.clone();
     for (id, src) in &board.assets {
         sub.asset(
             id.clone(),
@@ -660,7 +661,7 @@ fn render_run(
             .scenes
             .get(index)
             .expect("the scene exists")
-            .scene(index, root)
+            .scene(index, root, board.vars.as_ref())
             .map_err(|message| MotionError::Engine {
                 code: None,
                 message,
@@ -1036,6 +1037,10 @@ mod tests {
             std::fs::create_dir_all(root.join("assets")).unwrap();
             std::fs::write(root.join("back.png"), b"back-bytes-v1").unwrap();
             std::fs::write(root.join("card.png"), b"card-bytes-v1").unwrap();
+            // The cut's own sound: the shelf clip a whip pan attaches,
+            // staged where the reel's assets resolve from.
+            std::fs::create_dir_all(root.join("audio")).unwrap();
+            std::fs::write(root.join("audio/whoosh-hard-cut.ogg"), b"whoosh-bytes-v1").unwrap();
 
             let board = Storyboard::parse(&board_text()).expect("a storyboard");
             (board, root)

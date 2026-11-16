@@ -37,7 +37,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::comp::{Comp, Effect, Node, Point};
+use std::collections::BTreeMap;
+
+use crate::comp::{Asset, AssetKind, Blend, Comp, Effect, Node, NodeKind, Point, Transform};
 use crate::curve::Curve;
 use crate::track::{Key, Value};
 
@@ -213,6 +215,86 @@ impl Cut {
     pub fn overlaps(&self) -> bool {
         !matches!(self, Cut::StaggerExit { .. })
     }
+
+    /// The sound the cut makes: one deterministic shelf clip per cut
+    /// kind, the same on every machine - a cut that wants a different
+    /// sound stages its own beside it, the way every other default here
+    /// works.
+    pub fn sfx(&self) -> Sfx {
+        let (clip, gain) = match self {
+            Cut::WhipPan { .. } => ("whoosh-hard-cut.ogg", 0.9),
+            Cut::ZoomThrough { .. } => ("move-zoom-in.ogg", 0.8),
+            Cut::InverseZoom { .. } => ("whoosh-cinematic-down.ogg", 0.7),
+            Cut::RackFocus { .. } => ("whoosh-medium-soft.ogg", 0.45),
+            Cut::VelocityMatch { .. } => ("whoosh-soft-bed.ogg", 0.4),
+            Cut::StaggerExit { .. } => ("transition-slick-slide.ogg", 0.6),
+        };
+        Sfx { clip, gain }
+    }
+}
+
+/// One sound effect a cut carries: the shelf clip its read wants, and how
+/// hard it lands.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Sfx {
+    /// The clip's file name under the shelf's `audio/` folder - the
+    /// library every install ships - e.g. `whoosh-hard-cut.ogg`.
+    pub clip: &'static str,
+    /// How hard it lands, `0..=1` against the shelf's own level.
+    pub gain: f64,
+}
+
+/// Attach the cut's own sound to a comp, as an audio node: the entering
+/// scene's comp carries it from its first frame, the leaving scene's from
+/// its last. The clip is registered as an asset pointing at the shelf's
+/// `audio/` folder, which is where the sound library lands on every
+/// install and where a project that stages its own `audio/` sits; the
+/// asset audit (L300) says so when neither is there, rather than the cut
+/// rendering silently dry.
+///
+/// The node draws nothing and drives nothing - no bindings - so engines
+/// that only read tracks ignore it, and the document a reel flattens
+/// carries the cut's own read of itself. A second attach of the same side
+/// is a no-op: a comp enters by one cut and leaves by one, and neither
+/// writes over the other's sound.
+pub fn attach_sfx(comp: &mut Comp, cut: &Cut, side: Side) {
+    let sfx = cut.sfx();
+    let (id, at) = match side {
+        Side::Enter => ("cut-sfx-enter", 0.0),
+        Side::Exit => (
+            "cut-sfx-exit",
+            (comp.duration - cut.seconds().max(0.0)).max(0.0),
+        ),
+    };
+    if comp.nodes.iter().any(|node| node.id == id) || comp.assets.contains_key(id) {
+        return;
+    }
+    let seconds = cut.seconds().clamp(0.0, comp.duration.max(0.0));
+    comp.assets.insert(
+        id.into(),
+        Asset {
+            src: format!("audio/{}", sfx.clip),
+            kind: Some(AssetKind::Audio),
+        },
+    );
+    comp.nodes.push(Node {
+        id: id.into(),
+        parent: None,
+        start: at,
+        duration: seconds,
+        transform: Transform::default(),
+        opacity: 1.0,
+        blend: Blend::Normal,
+        mask: None,
+        matte: None,
+        motion_blur: None,
+        effects: Vec::new(),
+        tracks: BTreeMap::new(),
+        kind: NodeKind::Audio {
+            asset: id.into(),
+            bindings: Vec::new(),
+        },
+    });
 }
 
 /// How far a whip carries, as a fraction of the frame: sixty percent
@@ -1064,5 +1146,67 @@ mod tests {
         // drifting the way it was, which is the whole trick.
         let outgoing = plate_cut(&cut, Side::Exit, drift, (1920.0, 1080.0));
         assert_eq!(outgoing.from, (0.0, 0.0));
+    }
+
+    /// A cut carries its own sound: the entering comp gains an audio node
+    /// at its first frame, the leaving one at its last, both pointing at
+    /// the shelf clip the cut's read wants - and neither a second attach
+    /// nor the validate the document then runs has anything to say
+    /// against it.
+    #[test]
+    fn a_whip_pan_carries_its_whoosh() {
+        let cut = Cut::WhipPan {
+            direction: Direction::Left,
+            seconds: 0.24,
+            blur: 12.0,
+        };
+        assert_eq!(cut.sfx().clip, "whoosh-hard-cut.ogg");
+        let mut comp = node_comp(placed_node());
+        attach_sfx(&mut comp, &cut, Side::Enter);
+        let node = comp.node("cut-sfx-enter").expect("the sfx node");
+        assert_eq!(node.start, 0.0);
+        assert!((node.duration - 0.24).abs() < 1e-9);
+        match &node.kind {
+            NodeKind::Audio { asset, bindings } => {
+                assert_eq!(asset, "cut-sfx-enter");
+                assert!(bindings.is_empty(), "a cut's sound drives nothing");
+            }
+            other => panic!("an audio node, not {other:?}"),
+        }
+        assert_eq!(
+            comp.assets["cut-sfx-enter"].src,
+            "audio/whoosh-hard-cut.ogg"
+        );
+        // Once only: the second attach is a no-op, and the document the
+        // node lands in still validates clean.
+        attach_sfx(&mut comp, &cut, Side::Enter);
+        assert_eq!(
+            comp.nodes
+                .iter()
+                .filter(|node| node.id == "cut-sfx-enter")
+                .count(),
+            1
+        );
+        assert!(comp.validate().is_empty(), "{:?}", comp.validate());
+    }
+
+    /// The exit side lands at the end: a zoom-through leaving a four
+    /// second comp starts its sound 0.35s before the end, clamped inside
+    /// the comp a shorter one would be.
+    #[test]
+    fn an_exit_sfx_lands_at_the_end() {
+        let cut = Cut::ZoomThrough { seconds: 0.35 };
+        assert_eq!(cut.sfx().clip, "move-zoom-in.ogg");
+        let mut comp = node_comp(placed_node());
+        attach_sfx(&mut comp, &cut, Side::Exit);
+        let node = comp.node("cut-sfx-exit").expect("the exit sfx");
+        assert!((node.start - (4.0 - 0.35)).abs() < 1e-9, "{node:?}");
+        // A cut longer than the comp clamps to the comp's own length.
+        let mut short = node_comp(placed_node());
+        short.duration = 0.2;
+        attach_sfx(&mut short, &cut, Side::Exit);
+        let node = short.node("cut-sfx-exit").expect("the clamped sfx");
+        assert_eq!(node.start, 0.0);
+        assert!((node.duration - 0.2).abs() < 1e-9);
     }
 }

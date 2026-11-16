@@ -12,6 +12,8 @@
 //! agent list
 //! # what is in a comp: nodes, tracks, slots, whether it needs a markup engine
 //! agent inspect comps/funcut.lower-third.glass.json
+//! # a template comp: the variables render before the parse
+//! agent inspect comps/quote.json --vars '{"title": "Ship it", "seconds": 4.5}'
 //! # change it: a batch of operations, validated before anything is written
 //! agent edit comps/lower-third.json ops.json -o edited.json
 //! # apply a critic's fixes: a patch is applied as written, a skip is said
@@ -78,11 +80,11 @@ fn usage() -> serde_json::Value {
         "ok": true,
         "usage": {
             "list": "agent list - every preset in the motion library",
-            "inspect": "agent inspect <comp.json>",
-            "edit": "agent edit <comp.json> <ops.json|-> [-o out.json]",
-            "fix": "agent fix <comp.json> <fixes.json|-> [-o out.json] - apply a critic's fixes (where/problem/change/op, and a patch when the number was measured); a patch is applied as written, a skip is said",
-            "frame": "agent frame <comp.json> <seconds> [-o frame.png] [--width N]",
-            "bake": "agent bake <comp.json> <dir> [--width N] [--height N] [--fps N] [--opaque] [--encode out.mp4|webm|mov] [--crf N]",
+            "inspect": "agent inspect <comp.json> [--vars JSON]",
+            "edit": "agent edit <comp.json> <ops.json|-> [-o out.json] [--vars JSON]",
+            "fix": "agent fix <comp.json> <fixes.json|-> [-o out.json] [--vars JSON] - apply a critic's fixes (where/problem/change/op, and a patch when the number was measured); a patch is applied as written, a skip is said",
+            "frame": "agent frame <comp.json> <seconds> [-o frame.png] [--width N] [--vars JSON]",
+            "bake": "agent bake <comp.json> <dir> [--width N] [--height N] [--fps N] [--opaque] [--encode out.mp4|webm|mov] [--crf N] [--vars JSON]",
             "reel": "agent reel <storyboard.json> [-o reel.mp4] [--cache DIR] [--frame SECONDS] [--plan] [--geneva-timeout SECONDS]",
             "render": "agent render <storyboard.json> [-o out.mp4] [--parts N] [--farm DIR] [--frame SECONDS] [--plan] [--geneva-timeout SECONDS] - the whole board in one pass; --parts N renders through geneva farm, the parallel path for long reels; --farm DIR renders in resumable parts that survive a failed run and serve on the way back",
             "captions": "agent captions <words.json> [-o storyboard.json] [--words-per-line N] [--max-line S] [--preset ID] [--plate IMG] [--audio WAV|MP3]"
@@ -559,14 +561,40 @@ fn list() -> Result<serde_json::Value, String> {
     Ok(json!({ "ok": true, "count": presets.len(), "presets": presets }))
 }
 
-fn load(path: &str) -> Result<Comp, String> {
+fn load(path: &str, vars: Option<&serde_json::Value>) -> Result<Comp, String> {
     let text = std::fs::read_to_string(path).map_err(|error| format!("{path}: {error}"))?;
+    // The template preprocessor runs before the parse: a comp file without
+    // placeholders passes through untouched, and a template without its
+    // variables is refused here rather than rendered empty.
+    let text =
+        concat_motion::template::render(&text, vars).map_err(|error| format!("{path}: {error}"))?;
     let comp: Comp = serde_json::from_str(&text).map_err(|error| format!("{path}: {error}"))?;
     Ok(comp)
 }
 
+/// The template variables a verb was handed, from `--vars`: a JSON object
+/// (or `null`, which reads as none) rendered into a comp file's
+/// placeholders before the parse.
+fn vars_of(args: &[String]) -> Result<Option<serde_json::Value>, String> {
+    match flag(args, "--vars") {
+        None => Ok(None),
+        Some(text) => {
+            let value: serde_json::Value =
+                serde_json::from_str(&text).map_err(|error| format!("--vars is JSON: {error}"))?;
+            if !value.is_object() {
+                return Err("--vars is a JSON object of template variables".into());
+            }
+            Ok(Some(value))
+        }
+    }
+}
+
 fn inspect(args: &[String]) -> Result<serde_json::Value, String> {
-    let comp = load(args.first().ok_or("inspect needs a comp file")?)?;
+    let vars = vars_of(args)?;
+    let comp = load(
+        args.first().ok_or("inspect needs a comp file")?,
+        vars.as_ref(),
+    )?;
     Ok(json!({
         "ok": true,
         "comp": CompSummary::of(&comp),
@@ -578,13 +606,14 @@ fn inspect(args: &[String]) -> Result<serde_json::Value, String> {
 }
 
 fn edit(args: &[String]) -> Result<serde_json::Value, String> {
+    let vars = vars_of(args)?;
     let comp_path = args.first().ok_or("edit needs a comp file")?;
     let ops_path = args
         .get(1)
         .ok_or("edit needs an operations file (or - for stdin)")?;
     let out = flag(args, "-o").map(PathBuf::from);
 
-    let comp = load(comp_path)?;
+    let comp = load(comp_path, vars.as_ref())?;
     let batch = if ops_path == "-" {
         let mut text = String::new();
         std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)
@@ -625,13 +654,14 @@ fn edit(args: &[String]) -> Result<serde_json::Value, String> {
 /// why, and the problems the edited comp still has, all come back in
 /// the one JSON document.
 fn fix(args: &[String]) -> Result<serde_json::Value, String> {
+    let vars = vars_of(args)?;
     let comp_path = args.first().ok_or("fix needs a comp file")?;
     let fixes_path = args
         .get(1)
         .ok_or("fix needs a fixes file (or - for stdin)")?;
     let out = flag(args, "-o").map(PathBuf::from);
 
-    let mut comp = load(comp_path)?;
+    let mut comp = load(comp_path, vars.as_ref())?;
     let document: serde_json::Value = if fixes_path == "-" {
         let mut text = String::new();
         std::io::Read::read_to_string(&mut std::io::stdin(), &mut text)
@@ -709,6 +739,7 @@ fn engine() -> Result<Geneva, String> {
 }
 
 fn frame(args: &[String]) -> Result<serde_json::Value, String> {
+    let vars = vars_of(args)?;
     let comp_path = args.first().ok_or("frame needs a comp file")?;
     let at: f64 = args
         .get(1)
@@ -718,7 +749,7 @@ fn frame(args: &[String]) -> Result<serde_json::Value, String> {
     let out = flag(args, "-o").map(PathBuf::from);
     let width: Option<u32> = flag(args, "--width").and_then(|value| value.parse().ok());
 
-    let comp = load(comp_path)?;
+    let comp = load(comp_path, vars.as_ref())?;
     let geneva = engine()?;
     // The comp's assets resolve from its own folder, like a bake's do.
     let source_dir = Path::new(comp_path)
@@ -749,10 +780,11 @@ fn frame(args: &[String]) -> Result<serde_json::Value, String> {
 }
 
 fn bake(args: &[String]) -> Result<serde_json::Value, String> {
+    let vars = vars_of(args)?;
     let comp_path = args.first().ok_or("bake needs a comp file")?;
     let dir = PathBuf::from(args.get(1).ok_or("bake needs an output directory")?);
 
-    let comp = load(comp_path)?;
+    let comp = load(comp_path, vars.as_ref())?;
     let geneva = engine()?;
     let request = BakeRequest {
         width: flag(args, "--width").and_then(|value| value.parse().ok()),

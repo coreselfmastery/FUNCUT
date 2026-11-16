@@ -887,7 +887,7 @@ pub fn catalogue() -> Vec<Tool> {
         Tool {
             name: "scene_analysis",
             title: "Analyse a scene before a frame is drawn",
-            description: "One comp read as an engineer reads it - no frame drawn: census, timing, text, legibility, lint.",
+            description: "One comp read as an engineer reads it - no frame drawn: census, timing, text legibility, platform safe zones, asset checks and lint.",
             read_only: true,
             destructive: false,
             idempotent: true,

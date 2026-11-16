@@ -7,7 +7,7 @@
 //! bounds: resolving arbitrary parent transforms, animated tracks, text metrics
 //! and perspective belongs to a renderer-aware pass. Child nodes are omitted
 //! rather than judged in the wrong coordinate space. Contrast is measured only
-//! when foreground and background are known opaque solid colours.
+//! when foreground and its resolved background are known solid colours.
 
 use crate::comp::{Comp, NodeKind, Paint, Rgba};
 
@@ -132,7 +132,7 @@ pub fn relative_luminance(color: Rgba) -> f64 {
 /// reported ratio reflects the colour a viewer actually sees. The background
 /// is expected to be opaque; callers without a known opaque background should
 /// skip the check rather than guess what sits behind it.
-fn composite_over(foreground: Rgba, background: Rgba) -> Rgba {
+pub fn composite_over(foreground: Rgba, background: Rgba) -> Rgba {
     let alpha = foreground.a.clamp(0.0, 1.0);
     Rgba::new(
         foreground.r * alpha + background.r * (1.0 - alpha),

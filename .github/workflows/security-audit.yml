@@ -1,0 +1,65 @@
+name: Dependency security audit
+
+# The seven ignored advisories below are the residue the dependency-upgrade
+# session (PR #146) cleared thirteen of seventeen of: zip 2.4.2 (x4) and the
+# zstd/zstd-safe pair riding its optional feature sit in the sherpa-onnx-sys
+# 1.13.7 build-dependency subtree, which the supported build never executes -
+# its build.rs opens an archive only on the iOS .xcframework path, a
+# Linux-only product never takes it, SHERPA_ONNX_LIB_DIR (always set by the
+# supported env, scripts/funcut-env.sh) returns before the download path is
+# reached, and the prebuilt archives are sha256-verified against
+# scripts/ci/deps.lock first. The real fix is the sherpa-onnx 2.x migration
+# with re-pinned digests - its own session. The ignores are per-ID, so any
+# NEW advisory still fails the audit.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/Cargo.lock'
+      - 'src/**/Cargo.toml'
+      - '.github/workflows/security-audit.yml'
+  pull_request:
+    paths:
+      - 'src/Cargo.lock'
+      - 'src/**/Cargo.toml'
+      - '.github/workflows/security-audit.yml'
+  schedule:
+    - cron: '17 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-audit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cargo-audit:
+    name: RustSec dependency vulnerability audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Read the repository's pinned Rust toolchain
+        id: toolchain
+        run: echo "channel=$(sed -n 's/^channel = \"\(.*\)\"/\1/p' src/rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master (v1), 2026-10-09
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+      - name: Install pinned cargo-audit
+        run: cargo install --locked --version 0.22.2 cargo-audit
+      - name: Audit the committed dependency lockfile
+        # The seven inert sherpa-subtree advisories above, ignored per ID so
+        # anything new still fails.
+        run: >
+          cargo audit --file src/Cargo.lock
+          --ignore RUSTSEC-2026-0367
+          --ignore RUSTSEC-2026-0368
+          --ignore RUSTSEC-2026-0369
+          --ignore RUSTSEC-2026-0429
+          --ignore RUSTSEC-2026-0391
+          --ignore RUSTSEC-2026-0398
+          --ignore RUSTSEC-2026-0403
+

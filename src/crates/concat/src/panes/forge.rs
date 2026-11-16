@@ -26,10 +26,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use concat_mcp::director::{
-    AutoEditError, AutoEditState, EditProgram, ReplyGate, Runner, Stage, StageStep, ToolCall,
-    ToolError, auto_edit_program,
+    AutoEditError, AutoEditState, EditProgram, Runner, Stage, ToolError, auto_edit_program,
 };
-use serde_json::json;
 use slint::SharedString;
 
 use crate::i18n::{t, tf};
@@ -514,7 +512,7 @@ impl ForgePane {
                     return;
                 }
             };
-            let mut program = auto_edit_program(&concat_mcp::director::AutoEditProgramSource {
+            let program = auto_edit_program(&concat_mcp::director::AutoEditProgramSource {
                 project: source.project.clone(),
                 takes: source
                     .takes
@@ -554,7 +552,7 @@ impl ForgePane {
                 source: Some(source),
             };
             self.set_status(t("forge.autoEditRunning"));
-            run_auto_edit(runner, &mut program, backend, tool_cancel);
+            run_auto_edit(runner, program, backend, tool_cancel);
             return;
         }
         let Some(session) = studio.session.as_ref() else {
@@ -620,7 +618,7 @@ impl ForgePane {
                 return;
             }
         };
-        let mut program = auto_edit_program(&concat_mcp::director::AutoEditProgramSource {
+        let program = auto_edit_program(&concat_mcp::director::AutoEditProgramSource {
             project: auto.project.clone(),
             takes: auto
                 .takes
@@ -660,7 +658,7 @@ impl ForgePane {
             source: Some(auto),
         };
         self.set_status(t("forge.autoEditRunning"));
-        run_auto_edit(runner, &mut program, backend, tool_cancel);
+        run_auto_edit(runner, program, backend, tool_cancel);
     }
 
     /// Rereads the runner's last event into the page's own fields: the
@@ -1682,7 +1680,7 @@ fn first_line(words: &str) -> Option<String> {
 /// posts the terminal state.
 fn run_auto_edit(
     runner: Runner,
-    program: &mut EditProgram,
+    program: EditProgram,
     backend: Box<dyn concat_mcp::Backend>,
     tool_cancel: Arc<AtomicBool>,
 ) {
@@ -1748,7 +1746,7 @@ fn run_auto_edit(
         // asks the factory for a lane.
         let lanes = concat_mcp::director::LaneOpener::new(
             concat_mcp::backend::Mode::Window,
-            toolbox,
+            Arc::clone(&toolbox),
             Arc::clone(&cancelled),
         );
         // The run itself, under the same guard the toolbox was built
@@ -1758,7 +1756,7 @@ fn run_auto_edit(
         // clears its one-run latch on unwind; this guard is the pane's
         // half: the ticker stops and the end still posts.
         let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            runner.run_with_lanes(program, &mut caller, &lanes)
+            runner.run_with_lanes(&mut program, &mut caller, &lanes)
         }));
         still.store(false, Ordering::Relaxed);
         let state = match made {

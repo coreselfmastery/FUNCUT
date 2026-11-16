@@ -28,13 +28,20 @@
 //! top (a `fl` paints the geometry accumulated before it in the same
 //! group - the `[el, fl, tr]` pattern every file writes).
 //!
-//! What does not convert - a text layer, a matte, a mask, a trim path, a
-//! gradient paint, a repeater, an effect, a 3D layer, a hidden layer - is
-//! skipped with a note naming the layer and the feature, because the comp
-//! vocabulary has no counterpart and a quiet guess is how a logo comes
-//! back wrong. What converts nearly - a non-uniform scale, a curved motion
-//! path, an animated shape size, a group paint over several shapes, an
-//! elastic ease - is approximated and said.
+//! What does not convert (a matte, a mask, an effect, a hidden layer, a
+//! text animator's range selectors) is skipped with a note naming the
+//! layer and the feature, because the comp vocabulary has no counterpart
+//! and a quiet guess is how a logo comes back wrong. What converts
+//! nearly (a non-uniform scale, a curved motion path, an animated shape
+//! size, a group paint over several shapes, an elastic ease, a gradient
+//! stroke drawn at its ramp's middle colour, an animated trim window, an
+//! animated repeater count) is approximated and said.
+//!
+//! What Lottie's own expressions drive - `wiggle`, `loopOut`,
+//! `valueAtTime`, and the constant `time` - becomes the comp's keyframes:
+//! a seeded wobble, a cyclic repeat, a shift of the keys, or a linear
+//! ramp, each said in the notes. Anything else an expression might say is
+//! skipped honestly, the property held at its keyframes.
 //!
 //! Paths are re-based to their own bounding box and the box is placed
 //! where the source drew it, which is the convention the comp's `path`
@@ -51,8 +58,8 @@
 use std::collections::BTreeMap;
 
 use concat_motion::comp::{
-    Asset, AssetKind, Comp, Fit, Length, Node, NodeKind, Paint, PathCommand, Point, Rgba, Stroke,
-    Transform,
+    Asset, AssetKind, Comp, Fit, GradientKind, Length, Node, NodeKind, Paint, PathCommand, Point,
+    Rgba, Stroke, TextAlign, TextNode, Transform,
 };
 use concat_motion::curve::{Curve, StepPosition};
 use concat_motion::track::{Key, Track, Value};
@@ -286,12 +293,10 @@ impl<'a> Walk<'a> {
             )],
             Some(4) => self.shape_layer(layer, &id, start, end, &name, import),
             Some(0) => self.precomp(layer, &id, start, end, &name, import),
-            Some(5) => {
-                import.note(format!(
-                    "skipped: text layer {name:?}; the comp's text is a text node with its own style - write the words in by hand"
-                ));
-                Vec::new()
-            }
+            Some(5) => self
+                .text_layer(layer, &id, start, end, &name, import)
+                .into_iter()
+                .collect(),
             other => {
                 import.note(format!(
                     "skipped: layer {name:?} is of type {other:?}, which the adapter does not read"
@@ -325,6 +330,117 @@ impl<'a> Walk<'a> {
             import,
         );
         made
+    }
+
+    /// A text layer: the words, the face, the size and the colour, as a
+    /// text node. The source text's own keyframes are read at their first
+    /// frame and the animators - range selectors above all - are noted
+    /// skipped, because the comp's text timing is a caption's, not an
+    /// animator's.
+    fn text_layer(
+        &mut self,
+        layer: &Json,
+        id: &str,
+        start: f64,
+        end: f64,
+        name: &str,
+        import: &mut Import,
+    ) -> Option<Node> {
+        let text = layer.get("t")?;
+        // The document data: `d.k` holds the styled runs; a legacy file
+        // puts the plain string at `k`.
+        let (words, style) = if let Some(runs) = text
+            .get("d")
+            .and_then(|d| d.get("k"))
+            .and_then(Json::as_array)
+        {
+            let first = runs.first().cloned().unwrap_or(Json::Null);
+            let style = first.get("s").cloned().unwrap_or(Json::Null);
+            let words = style
+                .get("t")
+                .and_then(Json::as_str)
+                .unwrap_or_default()
+                .to_string();
+            if runs.len() > 1 {
+                import.note(format!(
+                    "approximated: text layer {name:?} keys its own source text; the words are held at their first frame"
+                ));
+            }
+            (words, style)
+        } else {
+            (
+                text.get("k")
+                    .and_then(Json::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                Json::Null,
+            )
+        };
+        let font = style.get("f").and_then(Json::as_str).unwrap_or_default();
+        let size = style.get("s").and_then(Json::as_f64).unwrap_or(48.0);
+        let face_style = style
+            .get("fStyle")
+            .and_then(Json::as_str)
+            .unwrap_or_default();
+        let weight = if face_style.contains("Black") {
+            900
+        } else if face_style.contains("Bold") {
+            700
+        } else if face_style.contains("Light") {
+            300
+        } else {
+            400
+        };
+        let color = style
+            .get("fc")
+            .and_then(Json::as_array)
+            .and_then(|vec| rgba_of(vec))
+            .unwrap_or_else(|| Rgba::new(1.0, 1.0, 1.0, 1.0));
+        let align = match style.get("j").and_then(Json::as_i64) {
+            Some(1) => TextAlign::Right,
+            Some(2) => TextAlign::Center,
+            _ => TextAlign::Left,
+        };
+        let tracking = style.get("tr").and_then(Json::as_f64).unwrap_or(0.0);
+        let line_height = style
+            .get("lh")
+            .and_then(Json::as_f64)
+            .filter(|lh| *lh > 0.0)
+            .map(|lh| lh / size.max(1.0))
+            .unwrap_or(1.2);
+        if let Some(animators) = text.get("a").and_then(Json::as_array)
+            && !animators.is_empty()
+        {
+            import.note(format!(
+                "skipped: text layer {name:?} carries {} animator(s) with range selectors; the words import untimed",
+                animators.len()
+            ));
+        }
+        let mut node = shell(
+            id,
+            start,
+            end,
+            NodeKind::Text(Box::new(TextNode {
+                text: words,
+                font: font.to_string(),
+                size,
+                weight,
+                italic: face_style.contains("Italic"),
+                color,
+                align,
+                letter_spacing: tracking * size / 1000.0,
+                line_height,
+                ..TextNode::default()
+            })),
+        );
+        node.opacity = layer
+            .get("ks")
+            .and_then(|ks| ks.get("o"))
+            .and_then(|o| o.get("k"))
+            .and_then(Json::as_f64)
+            .map(|o| o / 100.0)
+            .unwrap_or(1.0);
+        Some(node)
     }
 
     /// A solid layer: one rectangle, the comp's cheapest and most faithful
@@ -720,6 +836,92 @@ impl<'a> Walk<'a> {
                             "approximated: a stroke's width is animated; it is held at its first value",
                         );
                     }
+                    // The dash pattern: `d` is one on and one gap, the
+                    // offset a track the comp already speaks.
+                    let dashed = item.get("d").and_then(Json::as_array).map(|entries| {
+                        let number = |name: &str| {
+                            entries
+                                .iter()
+                                .find(|entry| entry.get("n").and_then(Json::as_str) == Some(name))
+                                .and_then(|entry| entry.get("v"))
+                                .and_then(|v| v.get("k"))
+                                .and_then(Json::as_f64)
+                        };
+                        (number("d"), number("g"), number("o"))
+                    });
+                    let dash = dashed.and_then(|(on, gap, _)| {
+                        let on = on?;
+                        let gap = gap.unwrap_or(on);
+                        (on > 0.0).then_some((on, gap))
+                    });
+                    if dashed.is_some_and(|(_, _, offset)| offset.is_some()) {
+                        import.note(
+                            "approximated: a dashed stroke's offset is animated; it is drawn from the pattern's start",
+                        );
+                    }
+                    let indices = unpainted.clone();
+                    paint(
+                        &mut walked.nodes,
+                        &mut unpainted,
+                        import,
+                        None,
+                        Some(Stroke { color, width }),
+                    );
+                    if let Some(dash) = dash {
+                        for index in indices {
+                            if let Some(node) = walked.nodes.get_mut(index)
+                                && let NodeKind::Path { dash: into, .. } = &mut node.kind
+                            {
+                                *into = Some(dash);
+                            }
+                        }
+                    }
+                }
+                Some("tm") => {
+                    // The trim's window: Lottie's start and end are
+                    // percentages of the path and its offset degrees of
+                    // a whole loop; the comp's trim field keeps
+                    // fractions, so both are folded in as what they are.
+                    let start = prop(item, "s")
+                        .and_then(|p| p.static_number())
+                        .unwrap_or(0.0)
+                        / 100.0;
+                    let end = prop(item, "e")
+                        .and_then(|p| p.static_number())
+                        .unwrap_or(100.0)
+                        / 100.0;
+                    let offset = prop(item, "o")
+                        .and_then(|p| p.static_number())
+                        .unwrap_or(0.0)
+                        / 360.0;
+                    if matches!(prop(item, "s"), Some(Prop::Keyed(_)))
+                        || matches!(prop(item, "e"), Some(Prop::Keyed(_)))
+                    {
+                        import.note(format!(
+                            "approximated: a trim path's animated window inside {owner:?} is held at its first frame"
+                        ));
+                    }
+                    let (from, to) = (
+                        (start + offset).rem_euclid(1.0),
+                        (end + offset).rem_euclid(1.0),
+                    );
+                    for index in unpainted.iter().copied() {
+                        if let Some(node) = walked.nodes.get_mut(index)
+                            && let NodeKind::Path { trim, .. } = &mut node.kind
+                        {
+                            *trim = Some((from, to));
+                        }
+                    }
+                }
+                Some("gf") => {
+                    let fill = gradient_paint(item, import);
+                    paint(&mut walked.nodes, &mut unpainted, import, Some(fill), None);
+                }
+                Some("gs") => {
+                    // The comp's stroke is a flat colour; a gradient
+                    // stroke is drawn at the middle of its own ramp and
+                    // said.
+                    let (color, width) = gradient_stroke(item, import);
                     paint(
                         &mut walked.nodes,
                         &mut unpainted,
@@ -728,16 +930,168 @@ impl<'a> Walk<'a> {
                         Some(Stroke { color, width }),
                     );
                 }
+                Some("rp") => {
+                    // A repeater: the shapes before it, copied, each copy
+                    // carrying the repeater transform one more time. An
+                    // animated copy count is held at its first frame and
+                    // said.
+                    let copies = prop(item, "c")
+                        .and_then(|p| p.static_number())
+                        .unwrap_or(1.0)
+                        .round()
+                        .clamp(0.0, 64.0) as usize;
+                    if matches!(prop(item, "c"), Some(Prop::Keyed(_))) {
+                        import.note(format!(
+                            "approximated: a repeater's animated copy count inside {owner:?} is held at its first frame"
+                        ));
+                    }
+                    let offset = prop(item, "o")
+                        .and_then(|p| p.static_number())
+                        .unwrap_or(0.0);
+                    let tr = item.get("tr").cloned().unwrap_or(Json::Null);
+                    let vec2 = |name: &str| match prop(&tr, name) {
+                        Some(Prop::Static(vec)) => (
+                            vec.first().copied().unwrap_or(0.0),
+                            vec.get(1).copied().unwrap_or(0.0),
+                        ),
+                        _ => (0.0, 0.0),
+                    };
+                    let (px, py) = vec2("p");
+                    let (sx, sy) = vec2("s");
+                    let turn = prop(&tr, "r")
+                        .and_then(|p| p.static_number())
+                        .unwrap_or(0.0);
+                    let so = prop(&tr, "so")
+                        .and_then(|p| p.static_number())
+                        .unwrap_or(100.0);
+                    let eo = prop(&tr, "eo")
+                        .and_then(|p| p.static_number())
+                        .unwrap_or(100.0);
+                    if (so - 100.0).abs() > 1e-9 || (eo - 100.0).abs() > 1e-9 {
+                        import.note(format!(
+                            "approximated: a repeater's per-copy opacity inside {owner:?} is drawn at full opacity"
+                        ));
+                    }
+                    let original = walked.nodes.len();
+                    for copy in 1..copies.max(1) {
+                        let step = copy as f64 + offset;
+                        for index in 0..original {
+                            let mut clone = walked.nodes[index].clone();
+                            clone.id = self.unique_id(&format!("{}-rp{copy}", clone.id));
+                            let home = clone.transform.position.unwrap_or(Point::new(0.0, 0.0));
+                            clone.transform.position =
+                                Some(Point::new(home.x + px * step, home.y + py * step));
+                            clone.transform.rotation += turn * step;
+                            // The comp's scale is one number: a
+                            // non-uniform repeater scale is drawn at its
+                            // axes' mean and said.
+                            clone.transform.scale *=
+                                ((sx.max(0.0) + sy.max(0.0)) / 200.0).powf(step);
+                            if (sx - sy).abs() > 1e-9 {
+                                import.note(format!(
+                                    "approximated: a repeater's non-uniform scale inside {owner:?} is drawn uniform, at its axes' mean"
+                                ));
+                            }
+                            walked.nodes.push(clone);
+                        }
+                    }
+                    // The clones take paint with their originals.
+                    let mut painted_too: Vec<usize> = Vec::new();
+                    for index in unpainted.iter().copied() {
+                        for copy in 1..copies.max(1) {
+                            let clone = index + copy * original;
+                            if clone < walked.nodes.len() && !unpainted.contains(&clone) {
+                                painted_too.push(clone);
+                            }
+                        }
+                    }
+                    unpainted.append(&mut painted_too);
+                }
+                Some("sr") => {
+                    // A star or polygon: the vertices are geometry the
+                    // comp's own path draws, re-based to its bounds the
+                    // way any hand-drawn path is.
+                    let id = self.next_id(owner, "star");
+                    let points = prop(item, "pt")
+                        .and_then(|p| p.static_number())
+                        .unwrap_or(5.0)
+                        .round()
+                        .clamp(3.0, 128.0) as usize;
+                    let rotation = prop(item, "rt")
+                        .and_then(|p| p.static_number())
+                        .unwrap_or(0.0);
+                    let outer = prop(item, "or")
+                        .and_then(|p| p.static_number())
+                        .unwrap_or(50.0)
+                        .max(0.0);
+                    let inner = prop(item, "ir")
+                        .and_then(|p| p.static_number())
+                        .unwrap_or(outer * 0.5)
+                        .max(0.0);
+                    let star = prop(item, "sy")
+                        .and_then(|p| p.static_number())
+                        .unwrap_or(1.0)
+                        .round() as i64
+                        == 1;
+                    let (px, py) = match prop(item, "p") {
+                        Some(Prop::Static(vec)) => (
+                            vec.first().copied().unwrap_or(0.0),
+                            vec.get(1).copied().unwrap_or(0.0),
+                        ),
+                        _ => (0.0, 0.0),
+                    };
+                    let mut vertices: Vec<(f64, f64)> = Vec::new();
+                    let steps = if star { points * 2 } else { points };
+                    for step in 0..steps {
+                        let radius = if star && step % 2 == 1 { inner } else { outer };
+                        let angle = rotation.to_radians()
+                            + std::f64::consts::TAU * step as f64 / steps as f64;
+                        vertices.push((px + angle.cos() * radius, py + angle.sin() * radius));
+                    }
+                    let (x0, y0) = (
+                        vertices.iter().map(|v| v.0).fold(f64::INFINITY, f64::min),
+                        vertices.iter().map(|v| v.1).fold(f64::INFINITY, f64::min),
+                    );
+                    let commands = {
+                        let mut commands = Vec::with_capacity(vertices.len() + 2);
+                        commands.push(PathCommand::MoveTo {
+                            point: Point::new(vertices[0].0 - x0, vertices[0].1 - y0),
+                        });
+                        for vertex in vertices.iter().skip(1) {
+                            commands.push(PathCommand::LineTo {
+                                point: Point::new(vertex.0 - x0, vertex.1 - y0),
+                            });
+                        }
+                        commands.push(PathCommand::Close);
+                        commands
+                    };
+                    let mut node = shell(
+                        &id,
+                        start,
+                        end,
+                        NodeKind::Path {
+                            commands,
+                            fill: None,
+                            stroke: None,
+                            dash: None,
+                            trim: None,
+                            morph: None,
+                            boolean: None,
+                            taper: None,
+                        },
+                    );
+                    node.parent = Some(owner.into());
+                    node.transform.position = Some(Point::new(x0, y0));
+                    unpainted.push(walked.nodes.len());
+                    walked.direct.push(node.id.clone());
+                    walked.nodes.push(node);
+                }
                 Some(other) => {
                     let said = match other {
-                        "gf" | "gs" => "a gradient paint",
-                        "tm" => "a trim path",
                         "rd" => "rounded corners",
                         "mm" => "a merge",
-                        "rp" => "a repeater",
                         "pb" => "a pucker and bloat",
                         "zz" => "a zigzag",
-                        "sr" => "a star or polygon",
                         _ => "a shape modifier the adapter does not read",
                     };
                     import.note(format!("skipped: {said} inside {owner:?}"));
@@ -757,6 +1111,9 @@ impl<'a> Walk<'a> {
     /// Place a geometry item: its `p` (the shape's own place in the group)
     /// becomes the node's transform, static or animated.
     fn placed(&mut self, item: &Json, node: &mut Node, import: &mut Import) {
+        if let Some(said) = expression_of(item, "p") {
+            self.apply_expression(&said, node, "position", import);
+        }
         match prop(item, "p") {
             Some(Prop::Static(vec)) if vec.len() >= 2 => {
                 node.transform.position = Some(Point::new(vec[0], vec[1]));
@@ -906,9 +1263,25 @@ impl<'a> Walk<'a> {
             }
             None => {}
         }
+        // The expressions the properties carry, on the tracks above.
+        self.expressions_of_transform(ks, node, import);
     }
 
-    /// Note a static non-uniform scale.
+    /// The expressions a transform's properties carry, applied to the
+    /// tracks the walk above built for them.
+    fn expressions_of_transform(&mut self, ks: &Json, node: &mut Node, import: &mut Import) {
+        for (source, track) in [
+            ("o", "opacity"),
+            ("r", "rotation"),
+            ("p", "position"),
+            ("s", "scale"),
+        ] {
+            if let Some(said) = expression_of(ks, source) {
+                self.apply_expression(&said, node, track, import);
+            }
+        }
+    }
+
     fn note_non_uniform(&mut self, vec: &[f64], name: &str, import: &mut Import) {
         if let (Some(x), Some(y)) = (vec.first(), vec.get(1))
             && (x - y).abs() > 1e-9
@@ -974,6 +1347,165 @@ impl<'a> Walk<'a> {
             }
         }
         node.tracks.insert(name.into(), Track::new(deduped));
+    }
+
+    /// Applies the expression a property carries to the track the
+    /// importer built for it: the four calls a comp speaks - `wiggle`,
+    /// `loopOut`, `valueAtTime`, and `time` alone or scaled - and an
+    /// honest note for anything else, the property held at its keys.
+    fn apply_expression(&mut self, said: &str, node: &mut Node, name: &str, import: &mut Import) {
+        let span = if node.duration > 0.0 {
+            node.duration
+        } else {
+            1.0
+        };
+        // A trailing semicolon is the statement's own punctuation, not
+        // the expression's.
+        let said = said.trim().trim_end_matches(';').trim();
+        // wiggle(freq, amp): a seeded smooth wobble around whatever the
+        // property already says, keyed a frame. Not After Effects' own
+        // noise - a deterministic cousin, and said so.
+        if let Some(args) = said
+            .strip_prefix("wiggle(")
+            .and_then(|rest| rest.strip_suffix(')'))
+        {
+            let numbers: Vec<f64> = args
+                .split(',')
+                .filter_map(|number| number.trim().parse::<f64>().ok())
+                .collect();
+            if numbers.len() == 2 {
+                let (freq, amp) = (numbers[0].abs().max(1e-6), numbers[1]);
+                let seed = node
+                    .id
+                    .bytes()
+                    .fold(0_u64, |seed, byte| seed.rotate_left(5) ^ u64::from(byte))
+                    | 1;
+                let wobble = |x: f64| -> f64 {
+                    0.5 * (x * std::f64::consts::TAU + seed as f64).sin()
+                        + 0.3 * (x * std::f64::consts::TAU * 2.13 + seed as f64 * 1.7).sin()
+                        + 0.2 * (x * std::f64::consts::TAU * 4.71 + seed as f64 * 2.9).sin()
+                };
+                let frames = ((span * self.fps).round() as usize).clamp(2, 512);
+                let base = |fraction: f64| -> Value {
+                    if let Some(track) = node.tracks.get(name)
+                        && let Some(value) = track.sample(fraction.clamp(0.0, 1.0))
+                    {
+                        return value;
+                    }
+                    let home = node.transform.position.unwrap_or(Point::new(0.0, 0.0));
+                    match name {
+                        "position" => Value::Point {
+                            x: home.x,
+                            y: home.y,
+                        },
+                        "scale" => Value::Point {
+                            x: node.transform.scale * 100.0,
+                            y: node.transform.scale * 100.0,
+                        },
+                        "rotation" => Value::number(node.transform.rotation),
+                        _ => Value::number(node.opacity * 100.0),
+                    }
+                };
+                let mut keys: Vec<Key> = Vec::with_capacity(frames + 1);
+                for frame in 0..=frames {
+                    let fraction = frame as f64 / frames as f64;
+                    let seconds = node.start + fraction * span;
+                    let nudge = wobble(seconds * freq) * amp;
+                    let value = match base(fraction) {
+                        Value::Point { x, y } => Value::Point {
+                            x: x + nudge,
+                            y: y + nudge,
+                        },
+                        Value::Number { value } => Value::number(value + nudge),
+                        other => other,
+                    };
+                    keys.push(Key::new(fraction, value));
+                }
+                node.tracks.insert(name.into(), Track::new(keys));
+                import.note(format!(
+                    "approximated: wiggle({freq}, {amp}) on {name:?} becomes a seeded wobble, keyed a frame - not After Effects' own noise"
+                ));
+                return;
+            }
+        }
+        // loopOut("cycle"): the keys repeat until the node's span ends.
+        if said.starts_with("loopOut(") {
+            if let Some(track) = node.tracks.get(name)
+                && track.keys.len() >= 2
+            {
+                let period = track.keys.last().unwrap().at - track.keys[0].at;
+                if period > 1e-9 {
+                    let mut grown = track.keys.clone();
+                    let mut cycle = 1_u32;
+                    while grown.last().unwrap().at < 1.0 - 1e-9 && cycle <= 64 {
+                        for key in &track.keys {
+                            let at = key.at + period * f64::from(cycle);
+                            if at > 1.0 + 1e-9 {
+                                break;
+                            }
+                            if at > grown.last().unwrap().at + 1e-9 {
+                                grown.push(Key::new(at.min(1.0), key.value.clone()));
+                            }
+                        }
+                        cycle += 1;
+                    }
+                    node.tracks.insert(name.into(), Track::new(grown));
+                    import.note(format!(
+                        "approximated: loopOut on {name:?} cycles the keyframes to the layer's end"
+                    ));
+                    return;
+                }
+            }
+            import.note(format!(
+                "skipped: loopOut on {name:?} has no keyframes to cycle; the property is held"
+            ));
+            return;
+        }
+        // valueAtTime(t): the keys shift by the literal seconds asked.
+        if let Some(args) = said
+            .strip_prefix("valueAtTime(")
+            .and_then(|rest| rest.strip_suffix(')'))
+            && let Ok(offset) = args.trim().parse::<f64>()
+        {
+            if let Some(track) = node.tracks.get(name) {
+                let shifted: Vec<Key> = track
+                    .keys
+                    .iter()
+                    .map(|key| {
+                        Key::new((key.at + offset / span).clamp(0.0, 1.0), key.value.clone())
+                    })
+                    .collect();
+                if shifted.len() >= 2 {
+                    node.tracks.insert(name.into(), Track::new(shifted));
+                }
+            }
+            import.note(format!(
+                "approximated: valueAtTime({offset}) on {name:?} shifts the keyframes; an animated argument would not"
+            ));
+            return;
+        }
+        // time alone, or time scaled: a linear ramp in seconds.
+        let slope = if said == "time" {
+            Some(1.0)
+        } else {
+            said.strip_prefix("time*")
+                .or_else(|| said.strip_suffix("*time"))
+                .and_then(|k| k.trim().parse::<f64>().ok())
+        };
+        if let Some(slope) = slope {
+            let keys = vec![
+                Key::new(0.0, Value::number(node.start * slope)),
+                Key::new(1.0, Value::number((node.start + span) * slope)),
+            ];
+            node.tracks.insert(name.into(), Track::new(keys));
+            import.note(format!(
+                "approximated: the expression {said:?} on {name:?} becomes a linear ramp of time"
+            ));
+            return;
+        }
+        import.note(format!(
+            "skipped: the expression {said:?} on {name:?} is not one the adapter speaks (wiggle, loopOut, valueAtTime, time); the property is held at its keyframes"
+        ));
     }
 
     /// The layer's window on the comp's clock, clamped to the comp with a
@@ -1114,6 +1646,16 @@ struct PropKey {
 }
 
 /// Read a property by name from a transform or a shape item.
+/// The expression a property carries, when it carries one: the human
+/// string at `x`, which bodymovin writes beside the keyframes.
+fn expression_of(parent: &Json, name: &str) -> Option<String> {
+    let x = parent.get(name)?.get("x")?;
+    if let Some(said) = x.as_str() {
+        return Some(said.to_string());
+    }
+    x.get("k").and_then(Json::as_str).map(String::from)
+}
+
 fn prop(parent: &Json, name: &str) -> Option<Prop> {
     let property = parent.get(name)?;
     let k = property.get("k")?;
@@ -1152,6 +1694,144 @@ fn handles(key: &Json, side: &str) -> Option<(f64, f64)> {
 /// A paint's colour with its own opacity folded in: bodymovin keeps the
 /// colour as 0..1 sRGB and the opacity as 0..100 beside it, and a comp
 /// wants the one number that says both.
+/// A colour as Lottie writes it: `[r, g, b]` or `[r, g, b, a]`, 0..1.
+fn rgba_of(vec: &[Json]) -> Option<Rgba> {
+    let number = |at: usize| vec.get(at).and_then(Json::as_f64);
+    Some(Rgba::new(
+        number(0)?,
+        number(1)?,
+        number(2)?,
+        number(3).unwrap_or(1.0),
+    ))
+}
+
+/// A gradient's stops and its ramp's own shape, as a comp paint. The
+/// stops are the flat `g.k.k` array - a position then three (or four)
+/// channels each - and the ramp is the line from `s` to `e`, or a disc
+/// when the type says so. An animated ramp is held at its first frame
+/// and said.
+fn gradient_paint(item: &Json, import: &mut Import) -> Paint {
+    if item
+        .get("g")
+        .and_then(|g| g.get("k"))
+        .and_then(|k| k.get("a"))
+        .and_then(Json::as_i64)
+        == Some(1)
+    {
+        import.note("approximated: an animated gradient ramp is held at its first frame");
+    }
+    let stops = item
+        .get("g")
+        .and_then(|g| g.get("k"))
+        .and_then(|k| k.get("k"))
+        .and_then(Json::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let count = item
+        .get("g")
+        .and_then(|g| g.get("p"))
+        .and_then(Json::as_f64)
+        .unwrap_or(2.0)
+        .round()
+        .max(2.0) as usize;
+    let chunk = if stops.len() >= count * 5 { 5 } else { 4 };
+    let mut ramp: Vec<(f64, Rgba)> = Vec::new();
+    for step in 0..count {
+        let at = step * chunk;
+        let Some(position) = stops.get(at).and_then(Json::as_f64) else {
+            break;
+        };
+        // The colour channels after the position: three flat, or four
+        // with an alpha of their own.
+        let channels = (at + 1 + chunk - 1).min(stops.len());
+        let Some(color) = rgba_of(&stops[at + 1..channels]) else {
+            break;
+        };
+        ramp.push((position.clamp(0.0, 1.0), color));
+    }
+    if ramp.is_empty() {
+        ramp = vec![
+            (0.0, Rgba::new(0.0, 0.0, 0.0, 1.0)),
+            (1.0, Rgba::new(1.0, 1.0, 1.0, 1.0)),
+        ];
+    }
+    // The ramp's paint opacity, folded into the stops.
+    let opacity = item
+        .get("o")
+        .and_then(|o| o.get("k"))
+        .and_then(Json::as_f64)
+        .unwrap_or(100.0)
+        / 100.0;
+    let ramp: Vec<(f64, Rgba)> = ramp
+        .into_iter()
+        .map(|(at, mut color)| {
+            color.a *= opacity;
+            (at, color)
+        })
+        .collect();
+    let radial = item.get("t").and_then(Json::as_f64).unwrap_or(1.0).round() == 2.0;
+    let start = item
+        .get("s")
+        .and_then(|s| s.get("k"))
+        .and_then(Json::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let end = item
+        .get("e")
+        .and_then(|e| e.get("k"))
+        .and_then(Json::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let point =
+        |vec: &Vec<Json>, at: usize, or: f64| vec.get(at).and_then(Json::as_f64).unwrap_or(or);
+    let (x0, y0) = (point(&start, 0, 0.0), point(&start, 1, 0.0));
+    let (x1, y1) = (point(&end, 0, 1.0), point(&end, 1, 0.0));
+    let angle = (y1 - y0).atan2(x1 - x0).to_degrees();
+    if radial {
+        Paint::Gradient {
+            stops: ramp,
+            ramp: GradientKind::Radial,
+            angle: 0.0,
+            from: 0.0,
+            to: 1.0,
+        }
+    } else {
+        Paint::Gradient {
+            stops: ramp,
+            ramp: GradientKind::Linear,
+            angle,
+            from: 0.0,
+            to: 1.0,
+        }
+    }
+}
+
+/// A gradient stroke's flat stand-in: the colour at the middle of its
+/// own ramp, with the width the stroke carries.
+fn gradient_stroke(item: &Json, import: &mut Import) -> (Rgba, f64) {
+    import.note(
+        "approximated: a gradient stroke is drawn at the middle of its own ramp, as a flat colour",
+    );
+    let paint = gradient_paint(item, import);
+    let width = prop(item, "w")
+        .and_then(|prop| prop.static_number())
+        .unwrap_or(1.0);
+    let color = match paint {
+        Paint::Gradient { stops, .. } => stops
+            .iter()
+            .min_by(|a, b| {
+                (a.0 - 0.5)
+                    .abs()
+                    .partial_cmp(&(b.0 - 0.5).abs())
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|(_, color)| *color)
+            .unwrap_or_else(|| Rgba::new(1.0, 1.0, 1.0, 1.0)),
+        Paint::Solid { color } => color,
+    };
+    (color, width)
+}
+
 fn paint_color(item: &Json, color: &str, opacity: &str, import: &mut Import) -> Rgba {
     let color = match prop(item, color) {
         Some(Prop::Static(vec)) => vec,
@@ -2038,5 +2718,247 @@ mod tests {
             findings.is_empty(),
             "a clean conversion lints clean: {findings:?}"
         );
+    }
+
+    /// A shape layer with every new reader: a trim path, a gradient
+    /// fill, a dashed stroke, a repeater and a star - each what the
+    /// comp itself now speaks.
+    #[test]
+    fn the_shape_catalogue_reads() {
+        let layer = json!({
+            "ind": 1, "ty": 4, "nm": "catalogue", "ip": 0, "op": 90, "st": 0,
+            "ks": {
+                "o": {"a": 0, "k": 100},
+                "r": {"a": 0, "k": 0},
+                "p": {"a": 0, "k": [256, 256, 0]},
+                "a": {"a": 0, "k": [0, 0, 0]},
+                "s": {"a": 0, "k": [100, 100, 100]},
+            },
+            "shapes": [
+                { "ty": "gr", "it": [
+                    { "ty": "sh", "ks": {"a": 0, "k": {"c": false, "v": [[0,0],[100,0]], "i": [[0,0],[0,0]], "o": [[0,0],[0,0]]}} },
+                    { "ty": "tm", "s": {"a": 0, "k": 0}, "e": {"a": 0, "k": 50}, "o": {"a": 0, "k": 0} },
+                    { "ty": "st", "c": {"a": 0, "k": [1, 0, 0, 1]}, "o": {"a": 0, "k": 100},
+                      "w": {"a": 0, "k": 4},
+                      "d": [
+                        {"n": "d", "v": {"a": 0, "k": 8}},
+                        {"n": "g", "v": {"a": 0, "k": 4}},
+                        {"n": "o", "v": {"a": 0, "k": 0}},
+                      ] },
+                    { "ty": "tr", "p": {"a": 0, "k": [0, 0]}, "a": {"a": 0, "k": [0, 0]},
+                      "s": {"a": 0, "k": [100, 100]}, "r": {"a": 0, "k": 0}, "o": {"a": 0, "k": 100} },
+                ] },
+                { "ty": "gr", "it": [
+                    { "ty": "sr", "sy": 1, "pt": {"a": 0, "k": 5}, "rt": {"a": 0, "k": 0},
+                      "or": {"a": 0, "k": 50}, "ir": {"a": 0, "k": 20},
+                      "p": {"a": 0, "k": [60, 60]} },
+                    { "ty": "gf", "t": 1, "s": {"a": 0, "k": [0, 0]}, "e": {"a": 0, "k": [100, 0]},
+                      "o": {"a": 0, "k": 100},
+                      "g": {"p": 2, "k": {"a": 0, "k": [0, 0, 0, 0, 1, 1, 0, 0]}} },
+                    { "ty": "rp", "c": {"a": 0, "k": 3}, "o": {"a": 0, "k": 0},
+                      "tr": {"p": {"a": 0, "k": [20, 0]}, "s": {"a": 0, "k": [100, 100]},
+                             "r": {"a": 0, "k": 15}, "so": {"a": 0, "k": 100}, "eo": {"a": 0, "k": 100}} },
+                    { "ty": "tr", "p": {"a": 0, "k": [0, 0]}, "a": {"a": 0, "k": [0, 0]},
+                      "s": {"a": 0, "k": [100, 100]}, "r": {"a": 0, "k": 0}, "o": {"a": 0, "k": 100} },
+                ] },
+            ],
+        });
+        let import = import(&lottie(vec![layer])).expect("converts");
+        let paths: Vec<&Node> = import
+            .comp
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.kind, NodeKind::Path { .. }))
+            .collect();
+        assert!(!paths.is_empty(), "{:?}", import.comp.nodes);
+        // The trimmed, dashed line: trim 0..0.5 and dash (8, 4).
+        let line = paths
+            .iter()
+            .find(|node| node.id.contains("path"))
+            .expect("the line converts");
+        let NodeKind::Path {
+            trim, dash, stroke, ..
+        } = &line.kind
+        else {
+            panic!("a path");
+        };
+        assert_eq!(*trim, Some((0.0, 0.5)));
+        assert_eq!(*dash, Some((8.0, 4.0)));
+        assert!(stroke.is_some(), "the stroke painted");
+        // The star and its repeats: three copies of one star, the first
+        // two gradient-filled by the paint's split, all carried by the
+        // repeater's offsets.
+        let stars: Vec<&Node> = paths
+            .iter()
+            .copied()
+            .filter(|node| node.id.contains("star") || node.id.contains("rp"))
+            .collect();
+        assert!(
+            stars.len() >= 3,
+            "the star repeated: {:?}",
+            stars.iter().map(|n| n.id.clone()).collect::<Vec<_>>()
+        );
+        // Every star carries a gradient fill.
+        for star in &stars {
+            let NodeKind::Path { fill, .. } = &star.kind else {
+                continue;
+            };
+            assert!(
+                matches!(fill, Some(Paint::Gradient { .. })),
+                "star {:?} has {fill:?}",
+                star.id
+            );
+        }
+        // The clones walk the repeater: 20px apart, 15 degrees apart.
+        let mut places: Vec<f64> = stars
+            .iter()
+            .filter_map(|star| star.transform.position.map(|p| p.x))
+            .collect();
+        places.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        assert!(places.len() >= 3, "{places:?}");
+        assert!((places[1] - places[0] - 20.0).abs() < 1e-6, "{places:?}");
+        assert!((places[2] - places[1] - 20.0).abs() < 1e-6, "{places:?}");
+    }
+
+    /// A text layer becomes a text node: the words, the face, the size,
+    /// the colour, the alignment - and the animators noted skipped.
+    #[test]
+    fn a_text_layer_becomes_words() {
+        let layer = json!({
+            "ind": 1, "ty": 5, "nm": "title", "ip": 0, "op": 90, "st": 0,
+            "ks": {
+                "o": {"a": 0, "k": 100},
+                "r": {"a": 0, "k": 0},
+                "p": {"a": 0, "k": [256, 256, 0]},
+                "a": {"a": 0, "k": [0, 0, 0]},
+                "s": {"a": 0, "k": [100, 100, 100]},
+            },
+            "t": {
+                "d": {"k": [
+                    {"s": {"s": 72, "f": "ArchivoBlack", "fStyle": "Bold", "t": "HELLO\rWORLD",
+                           "j": 2, "tr": 0, "lh": 86.4, "ls": 0, "fc": [0.1, 0.2, 0.9]},
+                     "t": 0},
+                ]},
+                "p": {}, "m": "g",
+                "a": [{"nm": "animator"}],
+            },
+        });
+        let import = import(&lottie(vec![layer])).expect("converts");
+        let node = import
+            .comp
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, NodeKind::Text(_)))
+            .expect("the text layer converts");
+        let NodeKind::Text(inner) = &node.kind else {
+            unreachable!();
+        };
+        assert_eq!(inner.text, "HELLO\rWORLD");
+        assert_eq!(inner.font, "ArchivoBlack");
+        assert_eq!(inner.size, 72.0);
+        assert_eq!(inner.weight, 700);
+        assert_eq!(inner.align, TextAlign::Center);
+        assert_eq!(inner.color, Rgba::new(0.1, 0.2, 0.9, 1.0));
+        assert!(
+            import
+                .notes
+                .iter()
+                .any(|note| note.contains("1 animator(s) with range selectors")),
+            "{:?}",
+            import.notes
+        );
+    }
+
+    /// The expressions a property carries become the comp's keyframes:
+    /// a wiggle becomes a seeded wobble, a loopOut cycles, and a bare
+    /// time ramps - each said in the notes.
+    #[test]
+    fn the_expressions_become_keyframes() {
+        let wiggle = json!({
+            "ind": 1, "ty": 1, "nm": "wiggler", "ip": 0, "op": 90, "st": 0,
+            "sw": 200, "sh": 100, "sc": "#336699",
+            "ks": {
+                "o": {"a": 0, "k": 100},
+                "r": {"a": 0, "k": 0},
+                "p": {"a": 0, "k": [256, 256, 0], "x": {"a": 0, "k": "wiggle(2, 25);"}},
+                "a": {"a": 0, "k": [100, 50, 0]},
+                "s": {"a": 0, "k": [100, 100, 100]},
+            },
+        });
+        let first = import(&lottie(vec![wiggle])).expect("converts");
+        let node = &first.comp.nodes[0];
+        let track = node
+            .tracks
+            .get("position")
+            .expect("the wiggle wrote a track");
+        assert!(track.keys.len() >= 30, "{} keys", track.keys.len());
+        // The wobble moves: not every key is the base.
+        let values: Vec<f64> = track
+            .keys
+            .iter()
+            .map(|key| match &key.value {
+                Value::Point { x, y } => (*x + *y) / 2.0,
+                _ => f64::NAN,
+            })
+            .collect();
+        assert!(
+            values.iter().any(|v| (*v - 512.0).abs() > 1.0),
+            "{values:?}"
+        );
+        assert!(
+            first.notes.iter().any(|note| note.contains("wiggle")),
+            "{:?}",
+            first.notes
+        );
+
+        // loopOut: two keys cycling to the layer's end.
+        let cycling = json!({
+            "ind": 1, "ty": 1, "nm": "cycler", "ip": 0, "op": 90, "st": 0,
+            "sw": 200, "sh": 100, "sc": "#336699",
+            "ks": {
+                "o": {"a": 1, "k": [
+                    {"t": 0, "s": [100]},
+                    {"t": 30, "s": [0]},
+                ], "x": {"a": 0, "k": "loopOut(\"cycle\");"}},
+                "r": {"a": 0, "k": 0},
+                "p": {"a": 0, "k": [256, 256, 0]},
+                "a": {"a": 0, "k": [100, 50, 0]},
+                "s": {"a": 0, "k": [100, 100, 100]},
+            },
+        });
+        let second = import(&lottie(vec![cycling])).expect("converts");
+        let node = &second.comp.nodes[0];
+        let track = node.tracks.get("opacity").expect("loopOut kept the track");
+        assert!(track.keys.len() > 2, "{} keys", track.keys.len());
+        assert!(
+            (track.keys.last().unwrap().at - 1.0).abs() < 1e-9,
+            "{:?}",
+            track.keys.last().unwrap().at
+        );
+
+        // A bare time: a linear ramp of seconds.
+        let timing = json!({
+            "ind": 1, "ty": 1, "nm": "clock", "ip": 0, "op": 90, "st": 0,
+            "sw": 200, "sh": 100, "sc": "#336699",
+            "ks": {
+                "o": {"a": 0, "k": 100},
+                "r": {"a": 0, "k": 0, "x": {"a": 0, "k": "time*30"}},
+                "p": {"a": 0, "k": [256, 256, 0]},
+                "a": {"a": 0, "k": [100, 50, 0]},
+                "s": {"a": 0, "k": [100, 100, 100]},
+            },
+        });
+        let third = import(&lottie(vec![timing])).expect("converts");
+        let node = &third.comp.nodes[0];
+        let track = node.tracks.get("rotation").expect("the ramp wrote a track");
+        assert_eq!(track.keys.len(), 2);
+        let Value::Number { value: first } = &track.keys[0].value else {
+            panic!("a number");
+        };
+        let Value::Number { value: last } = &track.keys[1].value else {
+            panic!("a number");
+        };
+        assert!((first - 0.0).abs() < 1e-9, "{first}");
+        assert!((last - 90.0).abs() < 1e-6, "{last}");
     }
 }

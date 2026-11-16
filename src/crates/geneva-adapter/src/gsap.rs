@@ -1446,7 +1446,7 @@ mod tests {
         let commands = svg_path("M0 0 Q10 20 20 0 30 -20 40 0").expect("reads");
         assert_eq!(commands.len(), 3, "{commands:?}");
         let commands = svg_path("M0 0 l10 0 10 0 h10 10 v10 10").expect("reads");
-        assert_eq!(commands.len(), 6, "{commands:?}");
+        assert_eq!(commands.len(), 7, "{commands:?}");
         assert!(
             svg_path("M0 0 A 50 50 0 0 1 100 0").is_none(),
             "arcs are refused"

@@ -608,10 +608,11 @@ fn analyse(comp: &Comp, source: Option<&Path>) -> Value {
 /// document, plus the asset family when there is a folder to read. The
 /// `playful` voice is off - an agent wants the sentence, not the wink.
 fn comp_lint(comp: &Comp, source: Option<&Path>) -> Vec<concat_motion::lint::Finding> {
-    let mut found = match concat_motion::accessibility::profile_for_dimensions(comp.width, comp.height) {
-        Some(profile) => concat_motion::lint::audit_with_accessibility(comp, false, profile),
-        None => concat_motion::lint::audit(comp, false),
-    };
+    let mut found =
+        match concat_motion::accessibility::profile_for_dimensions(comp.width, comp.height) {
+            Some(profile) => concat_motion::lint::audit_with_accessibility(comp, false, profile),
+            None => concat_motion::lint::audit(comp, false),
+        };
     if let Some(source) = source {
         found.extend(concat_motion::lint::audit_assets(comp, source));
     }

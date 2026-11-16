@@ -82,6 +82,7 @@ pub mod footage;
 pub mod geneva;
 pub mod grade;
 pub mod graphics;
+pub mod ik;
 pub mod lint;
 pub mod looks;
 /// The native engine, behind the `raster` feature: the in-process

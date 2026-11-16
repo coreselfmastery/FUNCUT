@@ -1787,6 +1787,14 @@ fn source_of(comp: &Comp, node: &Node, scope: &str, warnings: &mut Vec<String>) 
             ));
             None
         }
+        NodeKind::Rig { .. } => {
+            warnings.push(format!(
+                "node {:?} is a bone rig, which the flattened timeline cannot pose; the comp \
+                 routes to the native engine for it",
+                node.id
+            ));
+            None
+        }
         NodeKind::Rect {
             width,
             height,

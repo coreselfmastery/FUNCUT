@@ -1332,6 +1332,7 @@ impl CompSummary {
                         NodeKind::Lottie { .. } => ("lottie", None),
                         NodeKind::Composition { .. } => ("composition", None),
                         NodeKind::Camera { .. } => ("camera", None),
+                        NodeKind::Rig { .. } => ("rig", None),
                     };
                     NodeSummary {
                         id: node.id.clone(),

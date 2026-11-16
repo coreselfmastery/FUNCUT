@@ -633,6 +633,25 @@ pub enum NodeKind {
         /// The comp's id, which must be reachable by the caller.
         comp: String,
     },
+    /// A bone rig: a chain of segments posed by inverse kinematics,
+    /// the last two bones solving for the `target` track's point with
+    /// the `pole` track picking the middle joint's side. The bones draw
+    /// as the chain itself when a fill or stroke is set, and each
+    /// bone's `attach` carries another node at its tip - the node's own
+    /// transform composing onto the bone's, so artwork rides the limb.
+    /// The native engine reads it; a flattened timeline cannot fold a
+    /// solved joint, so a comp that carries one routes there.
+    Rig {
+        /// The bones, root first: each bone's parent is the bone before
+        /// it, and the first swings from the node's own origin.
+        bones: Vec<crate::ik::Bone>,
+        /// What the bones themselves are drawn with, when they draw.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fill: Option<Paint>,
+        /// The bones' outline, in pixels.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stroke: Option<Stroke>,
+    },
     /// A camera: the comp's eye, with an optional depth of field. Draws
     /// nothing of its own; the first camera whose span covers the frame
     /// photographs the comp - the z axis of every transform becomes real
@@ -1309,6 +1328,7 @@ impl Comp {
         };
         for node in &self.nodes {
             match &node.kind {
+                NodeKind::Rig { .. } => note("a bone rig"),
                 NodeKind::Path { boolean, taper, .. } => {
                     note("a vector path");
                     if boolean.is_some() {
@@ -1695,6 +1715,32 @@ impl Comp {
                             "both are multiples of the stroke's own width - length 2, width 3 reads well",
                         ),
                     );
+                }
+            }
+            if let NodeKind::Rig { bones, .. } = &node.kind {
+                if bones.is_empty() {
+                    found.push(Diagnostic::new(
+                        format!("/nodes/{i}/bones"),
+                        "a rig with no bones poses nothing",
+                    ));
+                }
+                for (b, bone) in bones.iter().enumerate() {
+                    if bone.length <= 0.0 {
+                        found.push(Diagnostic::new(
+                            format!("/nodes/{i}/bones/{b}/length"),
+                            "a bone's length is what it swings through; this one has none",
+                        ));
+                    }
+                    if let Some(id) = &bone.attach
+                        && self.node(id).is_none()
+                    {
+                        found.push(Diagnostic::new(
+                            format!("/nodes/{i}/bones/{b}/attach"),
+                            format!(
+                                "the bone carries a node called {id:?} that is not on the comp"
+                            ),
+                        ));
+                    }
                 }
             }
             // A matte names another node, and the pair is a stencil: the

@@ -1744,6 +1744,89 @@ mod tests {
         assert_eq!(bite.alpha(), 0, "{bite:?}");
     }
 
+    /// A rig poses its bones for a target and carries its attached
+    /// child: the chain bends toward the keyed target, and the artwork
+    /// riding the tip lands rotated with its bone.
+    #[test]
+    fn a_rig_reaches_and_carries() {
+        let mut rig = node(
+            "arm",
+            NodeKind::Rig {
+                bones: vec![
+                    crate::ik::Bone {
+                        length: 20.0,
+                        rest: 0.0,
+                        limits: None,
+                        attach: None,
+                    },
+                    crate::ik::Bone {
+                        length: 20.0,
+                        rest: 0.0,
+                        limits: None,
+                        attach: Some("hand".into()),
+                    },
+                ],
+                fill: None,
+                stroke: Some(Stroke {
+                    color: Rgba::new(1.0, 0.0, 0.0, 1.0),
+                    width: 2.0,
+                }),
+            },
+        );
+        rig.tracks.insert(
+            "target".into(),
+            Track::new(vec![Key::new(0.0, Value::Point { x: 30.0, y: 10.0 })]),
+        );
+        let hand = node(
+            "hand",
+            NodeKind::Rect {
+                width: Length::Px(6.0),
+                height: Length::Px(6.0),
+                fill: Some(Paint::Solid {
+                    color: Rgba::new(0.0, 0.0, 1.0, 1.0),
+                }),
+                radius: 0.0,
+            },
+        );
+        let hand = {
+            let mut hand = hand;
+            hand.parent = Some("arm".into());
+            // The hand sits at its own origin, so the bone's transform
+            // is the whole ride: the default a parentless node gets
+            // would carry the frame's centre along.
+            hand.transform.position = Some(Point { x: 0.0, y: 0.0 });
+            hand
+        };
+        let comp = comp_of("rig", vec![rig, hand]);
+        let (_, frame) = first_frame(&comp);
+        // The chain's own bounds centre on the node's position, so the
+        // local target (30, 10) lands around (47, 28) on the frame: a
+        // 20+20 chain reaching 31.6 bends, and its tip's ink lands
+        // there.
+        let mut reached = false;
+        for x in 43..=51 {
+            for y in 24..=32 {
+                let pixel = frame.pixel(x, y).unwrap();
+                if pixel.red() > 150 && pixel.alpha() == 255 {
+                    reached = true;
+                }
+            }
+        }
+        assert!(reached, "the rig's ink never reached its target");
+        // The hand rides the tip: blue ink near the same landing, from
+        // the child the bone carries.
+        let mut carried = false;
+        for x in 39..=55 {
+            for y in 20..=36 {
+                let pixel = frame.pixel(x, y).unwrap();
+                if pixel.blue() > 150 && pixel.red() < 100 {
+                    carried = true;
+                }
+            }
+        }
+        assert!(carried, "the attached hand never rode the bone");
+    }
+
     /// A tapered stroke grows from its tip and lands an arrow head:
     /// thin where it starts, fat where it ends, flanked at the landing.
     #[test]

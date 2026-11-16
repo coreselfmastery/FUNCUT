@@ -72,6 +72,21 @@ type NodeBox = ((f64, f64), (f64, f64));
 /// and the dash `(pattern, offset)` when it draws on.
 type Pen = (Rgba, f64, Option<(Vec<f64>, f64)>);
 
+/// A posed rig, as the content carries it: the chain as one path
+/// (every bone a subpath from its joint to its tip), the paints the
+/// bones draw with, and the transforms the attached nodes compose
+/// onto, keyed by the node each carries.
+struct RigPose {
+    /// The chain: every bone one subpath.
+    bones: tiny_skia::Path,
+    /// What the bones fill with, when they fill.
+    fill: Option<Paint>,
+    /// What the bones stroke with, in local pixels.
+    stroke: Option<Pen>,
+    /// `(node id, bone transform)` for every bone that carries a node.
+    attach: Vec<(String, Transform)>,
+}
+
 /// A node's content, rendered and ready to place.
 enum Content {
     /// A shape or path, in its own pixels: the path, what fills it,
@@ -94,6 +109,10 @@ enum Content {
         /// Boxed to keep the variant from dwarfing the others.
         ribbon: Option<Box<(tiny_skia::Path, Rgba)>>,
     },
+    /// A posed bone rig: the bones as one path of subpaths, the paints
+    /// they draw with, and each bone's transform for the node it
+    /// carries at its tip.
+    Rig(Box<RigPose>),
     /// Text, as the passes that composite it.
     Text(Box<text::TextPasses>),
     /// A picture, blitted through a fit transform.
@@ -602,6 +621,62 @@ impl Scene<'_> {
                     );
                 }
             }
+            Content::Rig(posed) => {
+                // The bones draw as one chain, under the same world the
+                // node itself was placed with.
+                self.draw_shape(
+                    &mut layer,
+                    &posed.bones,
+                    &world,
+                    posed.fill.as_ref(),
+                    posed.stroke.as_ref(),
+                    false,
+                );
+                // The children the rig carries: an attached child
+                // composes onto its bone's transform, an unattached one
+                // sits in the rig's own world the way a group's child
+                // does.
+                let children: Vec<&Node> = self
+                    .comp
+                    .nodes
+                    .iter()
+                    .filter(|child| child.parent.as_deref() == Some(node.id.as_str()))
+                    .collect();
+                for child in children {
+                    if !child.covers(at, self.comp.duration) {
+                        continue;
+                    }
+                    if stencils.contains_key(&child.id) {
+                        continue;
+                    }
+                    if !rendered.contains_key(&child.id) {
+                        let content = self.content_of(child, at, depth + 1);
+                        rendered.insert(child.id.clone(), content);
+                    }
+                    let (child_box, child_content) = match rendered.remove(&child.id) {
+                        Some(content) => (self.box_of(child, &content), Some(content)),
+                        None => (((0.0, 0.0), (0.0, 0.0)), None),
+                    };
+                    let child_world = match posed.attach.iter().find(|(id, _)| id == &child.id) {
+                        Some((_, bone)) => world.pre_concat(*bone),
+                        None => world,
+                    };
+                    self.place(
+                        child,
+                        at,
+                        child_world,
+                        child_content,
+                        child_box,
+                        &mut layer,
+                        stencils,
+                        rendered,
+                        depth + 1,
+                        None,
+                        0.0,
+                        None,
+                    );
+                }
+            }
             Content::Text(passes) => {
                 // The canvas the text was rendered into maps onto the
                 // node's box: its block centre is the box's centre.
@@ -886,6 +961,8 @@ impl Scene<'_> {
                     | "z"
                     | "perspective"
                     | "path-offset"
+                    | "target"
+                    | "pole"
             );
             if known {
                 continue;
@@ -910,6 +987,87 @@ impl Scene<'_> {
         match &node.kind {
             NodeKind::Group { .. } | NodeKind::Adjustment | NodeKind::Camera { .. } => {
                 Content::Nothing
+            }
+            NodeKind::Rig {
+                bones,
+                fill,
+                stroke,
+            } => {
+                if bones.is_empty() {
+                    self.warnings
+                        .push(format!("node {:?}: its rig has no bones to pose", node.id));
+                    return Content::Nothing;
+                }
+                let root = Point::new(0.0, 0.0);
+                // The chain at rest: where the target track's fallback
+                // sits, so an unkeyed rig stands at its rest.
+                let rest_tip = crate::ik::pose(bones, root, Point::new(0.0, 0.0), 90.0)
+                    .last()
+                    .map(|last| last.tip)
+                    .unwrap_or(root);
+                let fallback = match &node.tracks.get("target") {
+                    Some(track) => track
+                        .keys
+                        .first()
+                        .map(|key| match &key.value {
+                            Value::Point { x, y } => Point::new(*x, *y),
+                            _ => rest_tip,
+                        })
+                        .unwrap_or(rest_tip),
+                    None => rest_tip,
+                };
+                let target = match node.property(
+                    "target",
+                    at,
+                    self.comp.duration,
+                    Value::Point {
+                        x: fallback.x,
+                        y: fallback.y,
+                    },
+                ) {
+                    Value::Point { x, y } => Point::new(x, y),
+                    _ => fallback,
+                };
+                let pole = match node.property(
+                    "pole",
+                    at,
+                    self.comp.duration,
+                    Value::Number { value: 90.0 },
+                ) {
+                    Value::Number { value } => value,
+                    _ => 90.0,
+                };
+                let posed = crate::ik::pose(bones, root, target, pole);
+                // The chain as one path: every bone a subpath from its
+                // joint to its tip.
+                let mut builder = tiny_skia::PathBuilder::new();
+                for bone in &posed {
+                    builder.move_to(bone.joint.x as f32, bone.joint.y as f32);
+                    builder.line_to(bone.tip.x as f32, bone.tip.y as f32);
+                }
+                let bones_path = builder.finish();
+                let mut attach = Vec::new();
+                for (bone, pose) in bones.iter().zip(&posed) {
+                    let Some(id) = &bone.attach else {
+                        continue;
+                    };
+                    let angle =
+                        ((pose.tip.y - pose.joint.y).atan2(pose.tip.x - pose.joint.x)).to_degrees();
+                    let carried = Transform::from_translate(pose.tip.x as f32, pose.tip.y as f32)
+                        .pre_concat(Transform::from_rotate(angle as f32));
+                    attach.push((id.clone(), carried));
+                }
+                let (fill, stroke) = (fill.clone(), stroke.clone());
+                match bones_path {
+                    Some(bones) => Content::Rig(Box::new(RigPose {
+                        bones,
+                        fill,
+                        stroke: stroke
+                            .map(|stroke| (stroke.color, stroke.width * self.scale, None)),
+                        attach,
+                    })),
+                    None => Content::Nothing,
+                }
             }
             NodeKind::Rect {
                 width,
@@ -1199,6 +1357,25 @@ impl Scene<'_> {
                     (0.0, 0.0),
                 )
             }
+            (NodeKind::Rig { .. }, Content::Rig(posed)) => {
+                let bounds = posed.bones.compute_tight_bounds();
+                match bounds {
+                    Some(rect) => (
+                        (
+                            (f64::from(rect.right()) - f64::from(rect.left())).max(0.0)
+                                * self.scale,
+                            (f64::from(rect.bottom()) - f64::from(rect.top())).max(0.0)
+                                * self.scale,
+                        ),
+                        (
+                            f64::from(rect.left()) * self.scale,
+                            f64::from(rect.top()) * self.scale,
+                        ),
+                    ),
+                    None => ((0.0, 0.0), (0.0, 0.0)),
+                }
+            }
+            (NodeKind::Rig { .. }, _) => ((0.0, 0.0), (0.0, 0.0)),
             (NodeKind::Path { commands, .. }, _) => {
                 let bounds = shapes::path_of(commands).and_then(|path| path.compute_tight_bounds());
                 match bounds {

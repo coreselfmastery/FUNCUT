@@ -272,7 +272,8 @@ pub fn inspect(arguments: Value) -> Result<Outcome, ApiError> {
 /// frame, the fonts, karaoke, plates, outlines, shadows, gradient ink),
 /// per-text legibility (contrast of the ink against the plate or the
 /// background it actually draws over, WCAG-shaped and honestly null when
-/// the ink is a gradient over video), the assets against the disk, and
+/// the ink is a gradient over video), platform safe zones for supported
+/// delivery ratios, the assets against the disk, and
 /// the lint's own findings with their stable `L###` codes. No engine, no
 /// render, no write: everything here is read off the document, so it
 /// costs nothing and refuses nothing - it is the critique that happens
@@ -543,7 +544,7 @@ fn analyse(comp: &Comp, source: Option<&Path>) -> Value {
             "code": "clean",
             "family": "none",
             "path": "/",
-            "message": "The lint has nothing to say: no finding in any of its five families.",
+            "message": "The lint has nothing to say: no finding in any of its six families.",
         })];
     }
 
@@ -605,7 +606,10 @@ fn analyse(comp: &Comp, source: Option<&Path>) -> Value {
 /// document, plus the asset family when there is a folder to read. The
 /// `playful` voice is off - an agent wants the sentence, not the wink.
 fn comp_lint(comp: &Comp, source: Option<&Path>) -> Vec<concat_motion::lint::Finding> {
-    let mut found = concat_motion::lint::audit(comp, false);
+    let mut found = match concat_motion::accessibility::profile_for_dimensions(comp.width, comp.height) {
+        Some(profile) => concat_motion::lint::audit_with_accessibility(comp, false, profile),
+        None => concat_motion::lint::audit(comp, false),
+    };
     if let Some(source) = source {
         found.extend(concat_motion::lint::audit_assets(comp, source));
     }
@@ -622,6 +626,7 @@ fn finding_json(finding: &concat_motion::lint::Finding) -> Value {
             Some(b'3') => "assets",
             Some(b'4') => "motion",
             Some(b'5') => "determinism",
+            Some(b'6') => "accessibility",
             _ => "unknown",
         },
         _ => "unknown",

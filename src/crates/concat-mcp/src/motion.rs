@@ -325,6 +325,10 @@ fn analyse(comp: &Comp, source: Option<&Path>) -> Value {
             NodeKind::Image { .. } => "image",
             NodeKind::Lottie { .. } => "lottie",
             NodeKind::Composition { .. } => "composition",
+            // The comp's eye: draws nothing of its own, but a census
+            // that counted the comp's cameras as nothing would say a
+            // camera comp was an empty one.
+            NodeKind::Camera { .. } => "camera",
         };
         *by_kind.entry(kind).or_default() += 1;
         parents.insert(node.id.as_str(), node.parent.as_deref());

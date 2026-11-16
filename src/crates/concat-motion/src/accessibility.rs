@@ -130,14 +130,18 @@ pub fn relative_luminance(color: Rgba) -> f64 {
 /// reported ratio reflects the colour a viewer actually sees. The background
 /// is expected to be opaque; callers without a known opaque background should
 /// skip the check rather than guess what sits behind it.
-pub fn contrast_ratio(foreground: Rgba, background: Rgba) -> f64 {
+fn composite_over(foreground: Rgba, background: Rgba) -> Rgba {
     let alpha = foreground.a.clamp(0.0, 1.0);
-    let composite = Rgba::new(
+    Rgba::new(
         foreground.r * alpha + background.r * (1.0 - alpha),
         foreground.g * alpha + background.g * (1.0 - alpha),
         foreground.b * alpha + background.b * (1.0 - alpha),
         1.0,
-    );
+    )
+}
+
+pub fn contrast_ratio(foreground: Rgba, background: Rgba) -> f64 {
+    let composite = composite_over(foreground, background);
     let a = relative_luminance(composite);
     let b = relative_luminance(background);
     (a.max(b) + 0.05) / (a.min(b) + 0.05)
@@ -162,7 +166,10 @@ pub fn audit_text_contrast(comp: &Comp) -> Vec<AccessibilityFinding> {
         let background = if text.background.a >= 0.999 {
             Some(text.background)
         } else if comp.background.a >= 0.999 {
-            Some(comp.background)
+            // A translucent text plate is drawn over the comp background;
+            // compare against the resulting pixel, not the unblended plate
+            // or the background underneath it.
+            Some(composite_over(text.background, comp.background))
         } else {
             None
         };
@@ -278,6 +285,18 @@ mod tests {
             });
         }
         assert!(audit_text_contrast(&solid).is_empty());
+    }
+
+    #[test]
+    fn translucent_text_plate_is_composited_over_opaque_comp_background() {
+        let mut comp = text_comp(Rgba::hex("#000000"), Rgba::hex("#000000"), 16.0, 400);
+        if let NodeKind::Text(text) = &mut comp.nodes[0].kind {
+            text.background = Rgba::new(1.0, 1.0, 1.0, 0.5);
+        }
+        assert!(
+            audit_text_contrast(&comp).is_empty(),
+            "black text over a half-white plate on black has sufficient contrast"
+        );
     }
 
     #[test]

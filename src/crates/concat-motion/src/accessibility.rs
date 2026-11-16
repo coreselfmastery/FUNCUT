@@ -236,8 +236,8 @@ mod tests {
         comp.nodes[0].tracks.insert(
             "position".into(),
             crate::track::Track::new(vec![
-                crate::track::Key::new(0.0, crate::track::Value::point(0.0, 0.0)),
-                crate::track::Key::new(1.0, crate::track::Value::point(1.0, 1.0)),
+                crate::track::Key::new(0.0, crate::track::Value::Point { x: 0.0, y: 0.0 }),
+                crate::track::Key::new(1.0, crate::track::Value::Point { x: 1.0, y: 1.0 }),
             ]),
         );
         assert!(audit_safe_zone(&comp, SafeZoneProfile::Landscape16x9).is_empty());

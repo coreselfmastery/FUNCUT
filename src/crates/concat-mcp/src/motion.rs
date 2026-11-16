@@ -554,6 +554,8 @@ fn analyse(comp: &Comp, source: Option<&Path>) -> Value {
             "name": comp.name,
             "width": comp.width,
             "height": comp.height,
+            "safeZoneProfile": concat_motion::accessibility::profile_for_dimensions(comp.width, comp.height)
+                .map(|profile| profile.as_str()),
             "fps": comp.fps,
             "duration": comp.duration,
             "needsMarkup": comp.needs_markup(),

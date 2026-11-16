@@ -65,8 +65,8 @@
 //! # }
 //! ```
 
-pub mod audio;
 pub mod accessibility;
+pub mod audio;
 pub mod authoring;
 pub mod bench;
 pub mod cache;

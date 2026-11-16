@@ -430,6 +430,80 @@ pub enum Effect {
         /// widest corner.
         amount: f64,
     },
+    /// A radial ripple: the layer's pixels displaced along their radius
+    /// from the centre by a sine, as though the layer sat on water. The
+    /// phase advances with time at `speed` cycles per second, so the
+    /// ripple travels without a track keying it.
+    Ripple {
+        /// The displacement's height, in pixels at the comp's own scale.
+        amplitude: f64,
+        /// The distance between crests, in pixels.
+        wavelength: f64,
+        /// Cycles per second the phase advances.
+        #[serde(default)]
+        speed: f64,
+    },
+    /// A directional wave: the displacement travels along `angle`
+    /// degrees rather than out from a centre - the flag, the
+    /// heat shimmer, the banner.
+    Wave {
+        /// The displacement's height, in pixels at the comp's own scale.
+        amplitude: f64,
+        /// The distance between crests, in pixels.
+        wavelength: f64,
+        /// Degrees the wave travels at; `0` runs left to right.
+        #[serde(default)]
+        angle: f64,
+        /// Cycles per second the phase advances.
+        #[serde(default)]
+        speed: f64,
+    },
+    /// A bulge (or, negative, a pinch): a circular lens over the node's
+    /// centre that magnifies what it covers, falling off to nothing at
+    /// `radius`.
+    Bulge {
+        /// How strong the lens is: `0.5` is a marked magnify, `-0.5` a
+        /// pinch.
+        amount: f64,
+        /// The lens's radius in pixels at the comp's own scale.
+        radius: f64,
+    },
+    /// Pixelation: the layer averaged into squares `size` pixels wide,
+    /// the mosaic a censor bar or a retro cut is.
+    Pixelate {
+        /// The square's side, in pixels at the comp's own scale.
+        size: f64,
+    },
+    /// CRT scanlines: every other band of `count` darkened by
+    /// `opacity` - the tube television's own texture.
+    Scanlines {
+        /// How many bands across the whole frame height.
+        count: u32,
+        /// How dark the darkened bands go, `0` to `1`.
+        opacity: f64,
+    },
+    /// VHS tracking jitter: the rows of the layer displaced sideways in
+    /// bands that roll with time, with one displaced band sweeping
+    /// down the frame - the worn tape's own signature.
+    Tracking {
+        /// The sideways displacement's height, in pixels at the comp's
+        /// own scale.
+        amount: f64,
+        /// How many band-rows the pattern rolls per second.
+        #[serde(default)]
+        speed: f64,
+    },
+    /// A kaleidoscope: the layer mirrored about `segments` wedges
+    /// through its centre, the symmetry a title card or a logo
+    /// bumper is.
+    Kaleidoscope {
+        /// How many wedges; at least 2, or the layer is what it always
+        /// was.
+        segments: u32,
+        /// Degrees the whole fold is turned by.
+        #[serde(default)]
+        rotation: f64,
+    },
     /// A named shader from the project's effect catalogue, keyed by
     /// `param:<key>` tracks.
     Shader {
@@ -679,6 +753,13 @@ pub struct MotionBlur {
     /// `0.5` is the 180-degree film shutter, `1.0` a whole frame.
     #[serde(default = "half")]
     pub shutter: f64,
+    /// Spend the samples where the motion is: a still node renders once
+    /// however many samples it asked for, and a fast one spends them all,
+    /// the smear a hand keys and the pin-sharp rest, from one field.
+    /// `false` spends `samples` on every frame whatever the motion, which
+    /// is what a comp written before the field does and keeps doing.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub adaptive: bool,
 }
 
 fn eight() -> u8 {
@@ -1170,6 +1251,13 @@ impl Comp {
                     Effect::Shadow { .. } => note("a drop shadow effect"),
                     Effect::Glow { .. } => note("a glow effect"),
                     Effect::Aberration { .. } => note("a chromatic aberration effect"),
+                    Effect::Ripple { .. }
+                    | Effect::Wave { .. }
+                    | Effect::Bulge { .. }
+                    | Effect::Pixelate { .. }
+                    | Effect::Scanlines { .. }
+                    | Effect::Tracking { .. }
+                    | Effect::Kaleidoscope { .. } => note("a distortion effect"),
                     _ => {}
                 }
             }
@@ -1427,6 +1515,92 @@ impl Comp {
                     )
                     .with_help("samples 8 and shutter 0.5 is the 180-degree film look"),
                 );
+            }
+            // The distortions carry the same honesty as the fields they
+            // drive: every number finite, the wavelengths and the mosaic
+            // square positive, the scanline count one band or more, its
+            // opacity a fraction, the kaleidoscope two wedges or more.
+            for effect in &node.effects {
+                let problem = match effect {
+                    Effect::Ripple {
+                        amplitude,
+                        wavelength,
+                        speed,
+                    } => {
+                        if !amplitude.is_finite()
+                            || !wavelength.is_finite()
+                            || *wavelength <= 0.0
+                            || !speed.is_finite()
+                        {
+                            Some(
+                                "a ripple needs a finite amplitude and speed, and a wavelength above zero",
+                            )
+                        } else {
+                            None
+                        }
+                    }
+                    Effect::Wave {
+                        amplitude,
+                        wavelength,
+                        angle,
+                        speed,
+                    } => {
+                        if !amplitude.is_finite()
+                            || !wavelength.is_finite()
+                            || *wavelength <= 0.0
+                            || !angle.is_finite()
+                            || !speed.is_finite()
+                        {
+                            Some("a wave needs finite numbers, and a wavelength above zero")
+                        } else {
+                            None
+                        }
+                    }
+                    Effect::Bulge { amount, radius } => {
+                        if !amount.is_finite() || !radius.is_finite() || *radius < 0.0 {
+                            Some("a bulge needs finite numbers, and a radius of zero or more")
+                        } else {
+                            None
+                        }
+                    }
+                    Effect::Pixelate { size } => {
+                        if !size.is_finite() || *size <= 0.0 {
+                            Some("pixelation needs a square size above zero")
+                        } else {
+                            None
+                        }
+                    }
+                    Effect::Scanlines { count, opacity } => {
+                        if *count < 1 || !(0.0..=1.0).contains(opacity) {
+                            Some(
+                                "scanlines need a count of one band or more, and an opacity from 0 to 1",
+                            )
+                        } else {
+                            None
+                        }
+                    }
+                    Effect::Tracking { amount, speed } => {
+                        if !amount.is_finite() || !speed.is_finite() {
+                            Some("tracking jitter needs finite numbers")
+                        } else {
+                            None
+                        }
+                    }
+                    Effect::Kaleidoscope { segments, rotation } => {
+                        if *segments < 2 || !rotation.is_finite() {
+                            Some("a kaleidoscope needs two wedges or more, and a finite rotation")
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some(said) = problem {
+                    found.push(
+                        Diagnostic::new(format!("/nodes/{i}/effects"), said)
+                            .with_help("the native engine draws every distortion; Geneva does not"),
+                    );
+                }
             }
             // The 3D fields carry the same honesty: a negative viewing
             // distance and a NaN anywhere in the chain are refused with
@@ -2496,6 +2670,7 @@ mod phase1_tests {
         node.motion_blur = Some(MotionBlur {
             samples: 1,
             shutter: 0.5,
+            adaptive: false,
         });
         let problems = comp_with(vec![node]).validate();
         assert!(
@@ -2506,6 +2681,7 @@ mod phase1_tests {
         wide.motion_blur = Some(MotionBlur {
             samples: 8,
             shutter: 1.5,
+            adaptive: false,
         });
         let problems = comp_with(vec![wide]).validate();
         assert!(
@@ -2517,6 +2693,7 @@ mod phase1_tests {
         film.motion_blur = Some(MotionBlur {
             samples: 8,
             shutter: 0.5,
+            adaptive: false,
         });
         assert!(comp_with(vec![film]).validate().is_empty());
     }

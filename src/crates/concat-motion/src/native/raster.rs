@@ -454,7 +454,7 @@ pub(crate) fn aberrate(pixmap: &mut Pixmap, amount: f64, centre: (f64, f64)) {
     let into = pixmap.data_mut();
     for y in 0..rows {
         for x in 0..columns {
-            let (px, py) = (f64::from(x) + 0.5, f64::from(y) + 0.5);
+            let (px, py) = (x as f64 + 0.5, y as f64 + 0.5);
             let (dx, dy) = (px - centre.0, py - centre.1);
             let at = (y as usize) * (columns as usize) * 4 + (x as usize) * 4;
             if dx == 0.0 && dy == 0.0 {
@@ -492,6 +492,312 @@ fn bilinear_channel(data: &[u8], width: f32, height: f32, x: f32, y: f32, channe
     let top = at(x0, y0) + (at(x1, y0) - at(x0, y0)) * fx;
     let bottom = at(x0, y1) + (at(x1, y1) - at(x0, y1)) * fx;
     top + (bottom - top) * fy
+}
+
+/// One bilinear sample of a whole pixel as a straight-linear colour, the
+/// read the displacement distortions share: every one of them answers
+/// "what colour lands here" by sampling the layer somewhere else, so the
+/// sample is one function and the geometries are what differ.
+fn sample_at(source: &Pixmap, x: f64, y: f64) -> Linear {
+    let (width, height) = (f64::from(source.width()), f64::from(source.height()));
+    bilinear(
+        source.data(),
+        width as f32,
+        height as f32,
+        x as f32,
+        y as f32,
+    )
+}
+
+/// A radial ripple, `at` seconds in: each destination pixel samples the
+/// layer displaced along its own radius by a sine of the radius, so the
+/// crests travel outward as `speed` turns the phase. In place, over a
+/// copy, in straight linear light.
+pub(crate) fn ripple(pixmap: &mut Pixmap, amplitude: f64, wavelength: f64, speed: f64, at: f64) {
+    if amplitude.abs() < 0.05 || wavelength <= 0.0 {
+        return;
+    }
+    let original = pixmap.clone();
+    let (columns, rows) = (pixmap.width() as usize, pixmap.height() as usize);
+    let (width, height) = (f64::from(pixmap.width()), f64::from(pixmap.height()));
+    let centre = (width / 2.0, height / 2.0);
+    let phase = speed * at * std::f64::consts::TAU;
+    let into = pixmap.data_mut();
+    for y in 0..rows {
+        for x in 0..columns {
+            let (px, py) = (x as f64 + 0.5, y as f64 + 0.5);
+            let (dx, dy) = (px - centre.0, py - centre.1);
+            let radius = dx.hypot(dy);
+            if radius < 1e-9 {
+                continue;
+            }
+            let drift = (radius / wavelength * std::f64::consts::TAU - phase).sin() * amplitude;
+            let sampled = sample_at(
+                &original,
+                px - dx / radius * drift,
+                py - dy / radius * drift,
+            );
+            let at = (y * columns + x) * 4;
+            let out = sampled.to_premultiplied();
+            into[at] = out.0;
+            into[at + 1] = out.1;
+            into[at + 2] = out.2;
+            into[at + 3] = out.3;
+        }
+    }
+}
+
+/// A directional wave, `at` seconds in: the displacement travels along
+/// `angle` degrees, a sine of the position along that axis rather than
+/// of the radius - the flag and the heat shimmer to ripple's pond.
+pub(crate) fn wave(
+    pixmap: &mut Pixmap,
+    amplitude: f64,
+    wavelength: f64,
+    angle: f64,
+    speed: f64,
+    at: f64,
+) {
+    if amplitude.abs() < 0.05 || wavelength <= 0.0 {
+        return;
+    }
+    let original = pixmap.clone();
+    let (columns, rows) = (pixmap.width() as usize, pixmap.height() as usize);
+    let radians = angle.to_radians();
+    let (along_x, along_y) = (radians.cos(), radians.sin());
+    let phase = speed * at * std::f64::consts::TAU;
+    let into = pixmap.data_mut();
+    for y in 0..rows {
+        for x in 0..columns {
+            let (px, py) = (x as f64 + 0.5, y as f64 + 0.5);
+            let along = px * along_x + py * along_y;
+            let drift = (along / wavelength * std::f64::consts::TAU - phase).sin() * amplitude;
+            let sampled = sample_at(&original, px - along_x * drift, py - along_y * drift);
+            let at = (y * columns + x) * 4;
+            let out = sampled.to_premultiplied();
+            into[at] = out.0;
+            into[at + 1] = out.1;
+            into[at + 2] = out.2;
+            into[at + 3] = out.3;
+        }
+    }
+}
+
+/// A bulge over the node's centre: within `radius`, the destination
+/// samples the source closer to the centre by the lens's factor, which
+/// magnifies (a positive `amount`) or pinches (a negative one); outside
+/// the lens the layer is what it was.
+pub(crate) fn bulge(pixmap: &mut Pixmap, amount: f64, radius: f64) {
+    if amount.abs() < 1e-3 || radius <= 0.0 {
+        return;
+    }
+    let original = pixmap.clone();
+    let (columns, rows) = (pixmap.width() as usize, pixmap.height() as usize);
+    let (width, height) = (f64::from(pixmap.width()), f64::from(pixmap.height()));
+    let centre = (width / 2.0, height / 2.0);
+    let into = pixmap.data_mut();
+    for y in 0..rows {
+        for x in 0..columns {
+            let (px, py) = (x as f64 + 0.5, y as f64 + 0.5);
+            let (dx, dy) = (px - centre.0, py - centre.1);
+            let distance = dx.hypot(dy);
+            if distance >= radius || distance < 1e-9 {
+                continue;
+            }
+            // The lens's power falls off as the square of the distance
+            // from the centre, so the magnification is smooth into the
+            // untouched rim rather than stepping at the edge.
+            let falloff = (1.0 - distance / radius).powi(2);
+            let factor = 1.0 + amount * falloff;
+            if factor <= 1e-3 {
+                continue;
+            }
+            let sampled = sample_at(&original, centre.0 + dx / factor, centre.1 + dy / factor);
+            let at = (y * columns + x) * 4;
+            let out = sampled.to_premultiplied();
+            into[at] = out.0;
+            into[at + 1] = out.1;
+            into[at + 2] = out.2;
+            into[at + 3] = out.3;
+        }
+    }
+}
+
+/// Pixelation: the layer averaged into squares `size` pixels wide. The
+/// average is taken over the premultiplied bytes, which a mosaic is
+/// honest about - a chunky average of a chunky look, in the same space
+/// the layer stores.
+pub(crate) fn pixelate(pixmap: &mut Pixmap, size: f64) {
+    let size = size.clamp(1.0, 4096.0).round() as usize;
+    if size <= 1 {
+        return;
+    }
+    let (width, height) = (pixmap.width() as usize, pixmap.height() as usize);
+    if width == 0 || height == 0 {
+        return;
+    }
+    let data = pixmap.data_mut();
+    for block_y in (0..height).step_by(size) {
+        for block_x in (0..width).step_by(size) {
+            let (x1, y1) = ((block_x + size).min(width), (block_y + size).min(height));
+            let mut sums = [0u32; 4];
+            let mut count = 0u32;
+            for y in block_y..y1 {
+                for x in block_x..x1 {
+                    let at = (y * width + x) * 4;
+                    for channel in 0..4 {
+                        sums[channel] += u32::from(data[at + channel]);
+                    }
+                    count += 1;
+                }
+            }
+            if count == 0 {
+                continue;
+            }
+            let average: [u8; 4] = sums.map(|sum| (sum / count) as u8);
+            for y in block_y..y1 {
+                for x in block_x..x1 {
+                    let at = (y * width + x) * 4;
+                    data[at..at + 4].copy_from_slice(&average);
+                }
+            }
+        }
+    }
+}
+
+/// CRT scanlines: every other band of `count` across the frame height
+/// darkened by `opacity`, in place, on the premultiplied bytes - a
+/// multiply of the colour channels, which the premultiply carries with
+/// it, is the darkening a tube does.
+pub(crate) fn scanlines(pixmap: &mut Pixmap, count: u32, opacity: f64) {
+    let count = count.max(1);
+    let opacity = opacity.clamp(0.0, 1.0);
+    if opacity <= 0.0 {
+        return;
+    }
+    let height = pixmap.height();
+    let width = pixmap.width() as usize;
+    let data = pixmap.data_mut();
+    let band = (f64::from(height) / f64::from(count)).max(1.0);
+    for y in 0..height {
+        if ((f64::from(y) + 0.5) / band).floor() as u32 % 2 == 1 {
+            let row = (y as usize) * width * 4;
+            let keep = (1.0 - opacity) * 255.0;
+            // Alpha rides along: a darkened band of an opaque layer stays
+            // opaque, but a transparent pixel has no colour to darken and
+            // its zero alpha is all it is.
+            for byte in data.iter_mut().skip(row).take(width * 4) {
+                *byte = ((u16::from(*byte) * keep as u16 + 127) / 255) as u8;
+            }
+        }
+    }
+}
+
+/// The band's displacement for the tracking jitter: a hash of the band
+/// and the step the clock has reached, folded to `-1..=1` - a
+/// deterministic wobble, the same bytes on every render of the same
+/// frame, which a seeded shake would need a seed handed to say.
+fn band_drift(band: u64, step: u64) -> f64 {
+    let mut hash = band
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        .wrapping_add(step.wrapping_mul(0xD1B5_4A32_D192_ED03));
+    hash ^= hash >> 33;
+    hash = hash.wrapping_mul(0xFF51_AFD7_ED55_8CCD);
+    hash ^= hash >> 33;
+    // The odd multiples of a half avoid the exact zero a centre fold of
+    // a small hash would keep landing on: the jitter always jitters.
+    ((hash % 2_048) as f64 / 1024.0 - 1.0).clamp(-1.0, 1.0)
+}
+
+/// VHS tracking jitter, `at` seconds in: the rows displaced sideways in
+/// bands eight pixels tall, the band pattern stepped by `speed` bands a
+/// second, and one band sweeping down the frame displaced by its own
+/// half - the worn tape's roll, the bar and the wobble together.
+pub(crate) fn tracking(pixmap: &mut Pixmap, amount: f64, speed: f64, at: f64) {
+    if amount.abs() < 0.05 {
+        return;
+    }
+    let original = pixmap.clone();
+    let (columns, rows) = (pixmap.width() as usize, pixmap.height() as usize);
+    // The clock: `speed` bands a second, so the pattern rolls at the
+    // speed a tape's own control track would.
+    let step = (speed * at * 8.0).round() as u64;
+    // The sweeping bar: one band in twenty, rolling down the frame once
+    // every twenty band-steps.
+    let bar_band = (step % 20) as f64 * 8.0;
+    let band_rows = 8.0;
+    let into = pixmap.data_mut();
+    for y in 0..rows {
+        let band = (y as f64 / band_rows).floor() as u64;
+        let mut drift = band_drift(band, step) * amount;
+        // The bar itself: the band the sweep is on, plus its two
+        // neighbours, displaced harder and to one side - the classic
+        // tear, not just a louder wobble.
+        let distance = (y as f64 - bar_band).abs();
+        if distance < band_rows * 3.0 {
+            drift += amount * 1.5 * (1.0 - distance / (band_rows * 3.0));
+        }
+        if drift.abs() < 0.05 {
+            continue;
+        }
+        for x in 0..columns {
+            let at = (y * columns + x) * 4;
+            let sampled = sample_at(&original, x as f64 + 0.5 - drift, y as f64 + 0.5);
+            let out = sampled.to_premultiplied();
+            into[at] = out.0;
+            into[at + 1] = out.1;
+            into[at + 2] = out.2;
+            into[at + 3] = out.3;
+        }
+    }
+}
+
+/// A kaleidoscope: the destination's angle about the centre folded into
+/// the first wedge, so every wedge shows the first one's mirror - the
+/// fold is its own inverse, which is what makes it a destination-side
+/// sample like every other distortion here.
+pub(crate) fn kaleidoscope(pixmap: &mut Pixmap, segments: u32, rotation: f64) {
+    let segments = segments.max(2);
+    let original = pixmap.clone();
+    let (columns, rows) = (pixmap.width() as usize, pixmap.height() as usize);
+    let (width, height) = (f64::from(pixmap.width()), f64::from(pixmap.height()));
+    let centre = (width / 2.0, height / 2.0);
+    let wedge = std::f64::consts::TAU / f64::from(segments);
+    let spin = rotation.to_radians();
+    let into = pixmap.data_mut();
+    for y in 0..rows {
+        for x in 0..columns {
+            let (px, py) = (x as f64 + 0.5, y as f64 + 0.5);
+            let (dx, dy) = (px - centre.0, py - centre.1);
+            let radius = dx.hypot(dy);
+            if radius < 1e-9 {
+                continue;
+            }
+            // The angle in the fold's own frame, spun by the rotation;
+            // the triangle wave a mirror fold is - a period of two
+            // wedges, folded back onto the first - and the spin added
+            // back, so the wedge the fold samples from is the one the
+            // rotation points at.
+            let turned = (dy.atan2(dx) - spin).rem_euclid(2.0 * wedge);
+            let folded = if turned <= wedge {
+                turned
+            } else {
+                2.0 * wedge - turned
+            };
+            let sample_angle = folded + spin;
+            let sampled = sample_at(
+                &original,
+                centre.0 + sample_angle.cos() * radius,
+                centre.1 + sample_angle.sin() * radius,
+            );
+            let at = (y * columns + x) * 4;
+            let out = sampled.to_premultiplied();
+            into[at] = out.0;
+            into[at + 1] = out.1;
+            into[at + 2] = out.2;
+            into[at + 3] = out.3;
+        }
+    }
 }
 
 /// A projective (perspective) blit, the raster half of the 2.5D
@@ -833,5 +1139,192 @@ mod tests {
         blur(&mut pixmap, 0.0);
         aberrate(&mut pixmap, 0.0, (4.0, 4.0));
         assert_eq!(pixmap.pixel(4, 4).unwrap(), before);
+    }
+
+    /// A half-and-half field: the seam every displacement filter is
+    /// measured against.
+    fn seam_pixmap(size: u32) -> Pixmap {
+        let mut pixmap = Pixmap::new(size, size).expect("a test pixmap allocates");
+        let mut paint = tiny_skia::Paint::default();
+        paint.set_color(tiny_skia::Color::from_rgba8(255, 0, 0, 255));
+        let left = tiny_skia::PathBuilder::from_rect(
+            tiny_skia::Rect::from_ltrb(0.0, 0.0, size as f32 / 2.0, size as f32).unwrap(),
+        );
+        pixmap.as_mut().fill_path(
+            &left,
+            &paint,
+            tiny_skia::FillRule::Winding,
+            tiny_skia::Transform::identity(),
+            None,
+        );
+        paint.set_color(tiny_skia::Color::from_rgba8(0, 0, 255, 255));
+        let right = tiny_skia::PathBuilder::from_rect(
+            tiny_skia::Rect::from_ltrb(size as f32 / 2.0, 0.0, size as f32, size as f32).unwrap(),
+        );
+        pixmap.as_mut().fill_path(
+            &right,
+            &paint,
+            tiny_skia::FillRule::Winding,
+            tiny_skia::Transform::identity(),
+            None,
+        );
+        pixmap
+    }
+
+    #[test]
+    fn a_ripple_blurs_the_seam_and_stays_deterministic() {
+        let mut first = seam_pixmap(48);
+        ripple(&mut first, 6.0, 12.0, 1.0, 0.4);
+        let mut again = seam_pixmap(48);
+        ripple(&mut again, 6.0, 12.0, 1.0, 0.4);
+        assert_eq!(
+            first.data(),
+            again.data(),
+            "the same frame is the same bytes"
+        );
+        // A seam displaced is a seam moved: some pixel of the seam's own
+        // column reads differently than the flat seam's, and the frame
+        // still carries ink.
+        let flat = seam_pixmap(48);
+        let mut moved = 0;
+        for y in 0..48usize {
+            let at = y * 48 * 4 + 24 * 4;
+            if first.data()[at] != flat.data()[at] || first.data()[at + 2] != flat.data()[at + 2] {
+                moved += 1;
+            }
+        }
+        assert!(moved > 0, "the ripple moved the seam");
+        assert!(first.data().iter().skip(3).step_by(4).any(|a| *a > 0));
+    }
+
+    #[test]
+    fn a_wave_displaces_along_its_angle() {
+        // A vertical wave moves the seam sideways: red appears past the
+        // seam's own half, on the blue side.
+        let mut pixmap = seam_pixmap(48);
+        wave(&mut pixmap, 8.0, 96.0, 0.0, 0.0, 0.0);
+        let past = pixmap.pixel(26, 24).unwrap();
+        assert!(past.red() > 20, "the wave carried red right: {past:?}");
+    }
+
+    #[test]
+    fn a_bulge_magnifies_the_centre() {
+        // A one-pixel dot at the centre, magnified: its ink spreads over
+        // the pixels the lens pulls it across.
+        let mut pixmap = Pixmap::new(32, 32).expect("a test pixmap allocates");
+        fill_rect(
+            &mut pixmap,
+            tiny_skia::Rect::from_ltrb(15.0, 15.0, 17.0, 17.0).unwrap(),
+        );
+        assert!(!inkish(&pixmap, 14, 16), "the rim of the dot is empty");
+        bulge(&mut pixmap, 0.8, 12.0);
+        assert!(
+            inkish(&pixmap, 14, 16),
+            "a magnified centre dot spreads to its neighbours"
+        );
+    }
+
+    /// Whether a pixel carries any ink at all.
+    fn inkish(pixmap: &Pixmap, x: u32, y: u32) -> bool {
+        pixmap.pixel(x, y).is_some_and(|px| px.alpha() > 0)
+    }
+
+    #[test]
+    fn pixelation_averages_into_squares() {
+        // A quarter of the frame red, mosaiced into 8-pixel squares: the
+        // square that straddles the red edge carries the average - half
+        // red, half transparent - and every pixel of it matches it.
+        let mut pixmap = Pixmap::new(16, 16).expect("a test pixmap allocates");
+        fill_rect(
+            &mut pixmap,
+            tiny_skia::Rect::from_ltrb(0.0, 0.0, 4.0, 16.0).unwrap(),
+        );
+        pixelate(&mut pixmap, 8.0);
+        let a = pixmap.pixel(1, 1).unwrap();
+        let b = pixmap.pixel(7, 7).unwrap();
+        let c = pixmap.pixel(5, 12).unwrap();
+        assert_eq!(a, b, "one block, one colour");
+        assert_eq!(a, c, "the block's every pixel is its average");
+        assert_eq!(a.alpha(), 127, "half the block's pixels were red");
+        assert!(a.red() > 100, "the average carries the red: {a:?}");
+        assert_eq!(
+            pixmap.pixel(12, 12).unwrap().alpha(),
+            0,
+            "the empty block stays empty"
+        );
+    }
+
+    #[test]
+    fn scanlines_darken_every_other_band() {
+        let mut pixmap = pixmap_of(16, 16, tiny_skia::Color::from_rgba8(200, 200, 200, 255));
+        scanlines(&mut pixmap, 8, 0.5);
+        let bright = pixmap.pixel(4, 0).unwrap().red();
+        let dark = pixmap.pixel(4, 2).unwrap().red();
+        assert!(bright > 180, "{bright}");
+        assert!(dark < 120, "the darkened band is half the light: {dark}");
+        assert_eq!(pixmap.pixel(4, 0).unwrap().alpha(), 255);
+    }
+
+    #[test]
+    fn tracking_shifts_rows_deterministically() {
+        let mut first = seam_pixmap(48);
+        tracking(&mut first, 10.0, 8.0, 0.25);
+        let mut again = seam_pixmap(48);
+        tracking(&mut again, 10.0, 8.0, 0.25);
+        assert_eq!(first.data(), again.data(), "the jitter is deterministic");
+        // Some row's seam moved: a row's red-blue boundary is not at 24.
+        let flat = seam_pixmap(48);
+        let mut moved = 0;
+        for y in 0..48usize {
+            let x = 24usize;
+            let at = y * 48 * 4 + x * 4;
+            if first.data()[at] != flat.data()[at] {
+                moved += 1;
+            }
+        }
+        assert!(moved > 0, "at least one band is displaced");
+    }
+
+    #[test]
+    fn a_kaleidoscope_mirrors_the_first_wedge() {
+        // The bottom half red, the top empty: two segments fold the
+        // bottom onto the top, and the frame fills red - the wedge the
+        // fold samples from is the one below the centre line.
+        let mut pixmap = Pixmap::new(32, 32).expect("a test pixmap allocates");
+        let mut paint = tiny_skia::Paint::default();
+        paint.set_color(tiny_skia::Color::from_rgba8(255, 0, 0, 255));
+        let bottom = tiny_skia::PathBuilder::from_rect(
+            tiny_skia::Rect::from_ltrb(0.0, 16.0, 32.0, 32.0).unwrap(),
+        );
+        pixmap.as_mut().fill_path(
+            &bottom,
+            &paint,
+            tiny_skia::FillRule::Winding,
+            tiny_skia::Transform::identity(),
+            None,
+        );
+        kaleidoscope(&mut pixmap, 2, 0.0);
+        assert!(
+            pixmap.pixel(16, 4).unwrap().red() > 200,
+            "the top half carries the bottom's mirror"
+        );
+        assert!(
+            pixmap.pixel(16, 28).unwrap().red() > 200,
+            "the wedge itself stays"
+        );
+        // Four segments fold every quadrant onto the first: a corner
+        // outside a two-segment fold's reach carries ink too.
+        let mut quartered = Pixmap::new(32, 32).expect("a test pixmap allocates");
+        quartered.as_mut().fill_path(
+            &tiny_skia::PathBuilder::from_rect(
+                tiny_skia::Rect::from_ltrb(0.0, 16.0, 32.0, 32.0).unwrap(),
+            ),
+            &paint,
+            tiny_skia::FillRule::Winding,
+            tiny_skia::Transform::identity(),
+            None,
+        );
+        kaleidoscope(&mut quartered, 4, 0.0);
+        assert!(inkish(&quartered, 4, 4), "four wedges reach the top-left");
     }
 }

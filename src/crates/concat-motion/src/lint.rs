@@ -1149,11 +1149,21 @@ mod tests {
             false,
             crate::accessibility::SafeZoneProfile::Landscape16x9,
         );
-        assert!(codes(&found).contains(&"L600"), "safe-zone finding: {found:?}");
-        assert!(codes(&found).contains(&"L610"), "contrast finding: {found:?}");
         assert!(
-            RULES.iter().any(|rule| rule.code == "L600" && rule.family == Family::Accessibility)
-                && RULES.iter().any(|rule| rule.code == "L610" && rule.family == Family::Accessibility),
+            codes(&found).contains(&"L600"),
+            "safe-zone finding: {found:?}"
+        );
+        assert!(
+            codes(&found).contains(&"L610"),
+            "contrast finding: {found:?}"
+        );
+        assert!(
+            RULES
+                .iter()
+                .any(|rule| rule.code == "L600" && rule.family == Family::Accessibility)
+                && RULES
+                    .iter()
+                    .any(|rule| rule.code == "L610" && rule.family == Family::Accessibility),
             "both accessibility codes are registered"
         );
     }

@@ -451,10 +451,13 @@ fn analyse(comp: &Comp, source: Option<&Path>) -> Value {
         // The backdrop the words actually draw over: their own plate when
         // it is opaque enough to matter, else the comp's background when
         // it is, else video nobody can read from the document.
-        let backdrop = if text.background.a > 0.5 {
+        let backdrop = if text.background.a >= 0.999 {
             Some(text.background)
-        } else if comp.background.a > 0.5 {
-            Some(comp.background)
+        } else if comp.background.a >= 0.999 {
+            Some(concat_motion::accessibility::composite_over(
+                text.background,
+                comp.background,
+            ))
         } else {
             None
         };

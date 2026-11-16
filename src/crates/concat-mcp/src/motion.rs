@@ -597,7 +597,7 @@ fn analyse(comp: &Comp, source: Option<&Path>) -> Value {
         "note": "Read this before a frame is drawn: the small and the low-contrast are the \
                  retakes a render would have to tell you, the gaps are the dead air, and the \
                  lint's codes are stable - L1xx structure, L2xx timing, L3xx assets, L4xx \
-                 motion, L5xx determinism. Nothing here refused anything; everything here is \
+                 motion, L5xx determinism, L6xx accessibility. Nothing here refused anything; everything here is \
                  advice about a document you can still change for free.",
     })
 }

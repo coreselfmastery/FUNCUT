@@ -72,15 +72,11 @@ impl FramePipe {
     /// RGBA, owned by the caller until `unlink` retires the name. Creating
     /// over an existing name is refused, as a stale segment from a crashed
     /// run must not be read as this one's frames.
-    pub fn create(
-        name: &str,
-        width: u32,
-        height: u32,
-        capacity: u32,
-    ) -> Result<FramePipe, String> {
+    pub fn create(name: &str, width: u32, height: u32, capacity: u32) -> Result<FramePipe, String> {
         if !name.starts_with('/') || name.len() < 2 {
             return Err(
-                "a shm name is a path: `/concat-motion-…`, leading slash, at least one character".into(),
+                "a shm name is a path: `/concat-motion-…`, leading slash, at least one character"
+                    .into(),
             );
         }
         if width == 0 || height == 0 || capacity == 0 {
@@ -124,7 +120,8 @@ impl FramePipe {
     pub fn open(name: &str) -> Result<FramePipe, String> {
         if !name.starts_with('/') || name.len() < 2 {
             return Err(
-                "a shm name is a path: `/concat-motion-…`, leading slash, at least one character".into(),
+                "a shm name is a path: `/concat-motion-…`, leading slash, at least one character"
+                    .into(),
             );
         }
         let c_name = CString::new(name).map_err(|_| "a shm name carries no NUL")?;
@@ -162,11 +159,9 @@ impl FramePipe {
         let stride = width.saturating_mul(4) as usize;
         let frame = stride.saturating_mul(height as usize);
         let len = FRAMES_AT + frame.saturating_mul(capacity as usize);
-        let fd = rustix::fs::memfd_create(
-            c"concat-motion-frame-pipe",
-            rustix::fs::MemfdFlags::CLOEXEC,
-        )
-        .map_err(|source| format!("memfd_create: {source}"))?;
+        let fd =
+            rustix::fs::memfd_create(c"concat-motion-frame-pipe", rustix::fs::MemfdFlags::CLOEXEC)
+                .map_err(|source| format!("memfd_create: {source}"))?;
         rustix::fs::ftruncate(&fd, len as u64)
             .map_err(|source| format!("memfd ftruncate: {source}"))?;
         let ptr = map(&fd, len)?;
@@ -228,7 +223,10 @@ impl FramePipe {
     /// The slot `index` names, for reading.
     pub fn slot(&self, index: u32) -> Option<&[u8]> {
         // Safety: as `slot_mut`, for reading.
-        unsafe { self.slot_ptr(index).map(|(ptr, len)| std::slice::from_raw_parts(ptr, len)) }
+        unsafe {
+            self.slot_ptr(index)
+                .map(|(ptr, len)| std::slice::from_raw_parts(ptr, len))
+        }
     }
 
     /// Publish slot `index`: the acquire/release turnstile. A frame is
@@ -237,8 +235,11 @@ impl FramePipe {
         unsafe {
             let header = &*header_ptr(self.ptr);
             let sequence = header.sequence.load(Ordering::Acquire);
-            debug_assert_eq!(sequence % header.capacity, index % header.capacity,
-                "publish names the slot the sequence points at");
+            debug_assert_eq!(
+                sequence % header.capacity,
+                index % header.capacity,
+                "publish names the slot the sequence points at"
+            );
             header
                 .sequence
                 .store(sequence.wrapping_add(1), Ordering::Release);

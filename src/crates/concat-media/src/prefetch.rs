@@ -332,7 +332,7 @@ impl Prefetcher {
             let passed = pinned
                 .iter()
                 .filter(|(time, _)| cursor.passed(*time, frame_seconds))
-            .count();
+                .count();
             let release = passed.saturating_sub(RING as usize);
             pinned.drain(..release);
             pinned.iter().map(|(time, _)| index(*time)).collect()

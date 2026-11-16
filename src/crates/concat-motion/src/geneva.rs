@@ -1136,7 +1136,9 @@ impl CompEngine for Geneva {
         if let Some(pipe) = pipe.as_ref() {
             let published = pipe.sequence().min(pipe.capacity()) as usize;
             for index in 0..published {
-                let Some(bytes) = pipe.slot(index as u32) else { continue };
+                let Some(bytes) = pipe.slot(index as u32) else {
+                    continue;
+                };
                 let Some(image) = rgba_png(bytes, pipe.width(), pipe.height()) else {
                     continue;
                 };
@@ -1300,8 +1302,7 @@ fn pipe_offer(
     request: &BakeRequest,
     args: &mut Vec<String>,
 ) -> Option<crate::framepipe::FramePipe> {
-    std::env::var_os("CONCAT_FRAME_PIPE")
-        .filter(|value| !value.is_empty())?;
+    std::env::var_os("CONCAT_FRAME_PIPE").filter(|value| !value.is_empty())?;
     let fps = request.fps(comp);
     let expected = ((comp.duration * fps).ceil() as u32).clamp(1, 32);
     if (comp.duration * fps).ceil() as u32 > 32 {

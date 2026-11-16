@@ -4,7 +4,8 @@
 //! A motion comp: the document a designer, a template or an agent writes.
 //!
 //! A comp is a small scene graph - nodes with a span, a transform, tracks and
-//! one of a handful of kinds - plus the assets it points at. It is stored as
+//! one of a handful of kinds - plus the assets it points at.
+//! It is stored as
 //! JSON inside the project (`comps/<hash>.json`), addressed by content hash,
 //! and baked into an RGBA frame sequence by whichever engine is configured.
 //! Nothing here knows how to draw: this module is the format, the validation
@@ -814,6 +815,9 @@ pub enum PathCommand {
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct TextNode {
     /// The words, when they are not timed. Ignored when `words` is set.
+    /// May carry inline span markup - `<b>`, `<i>`,
+    /// `<span color=... scale=... bg=...>` - which the native path
+    /// reads and the markup engine ignores, so one field serves both.
     #[serde(default)]
     pub text: String,
     /// Timed words, in order: `(word, start, end)` in seconds, relative to the
@@ -848,6 +852,22 @@ pub struct TextNode {
     /// Wrap width in pixels; the comp's width when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_width: Option<f64>,
+    /// What to do when the words are wider than `max_width`: wrap them
+    /// (the default), shrink the size until they fit, or end them with
+    /// an ellipsis. `None` wraps, which is what a comp written before
+    /// the field does and keeps doing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit: Option<TextFit>,
+    /// The smallest size `shrink-to-fit` will step down to, in pixels;
+    /// the style's own size when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_size: Option<f64>,
+    /// The path the words walk, when they walk one: the glyphs set
+    /// along the outline, each turned to the tangent where it sits -
+    /// the title-on-a-curve. `None` is the ordinary block. Animatable
+    /// through the `path-offset` track.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_path: Option<TextOnPath>,
     /// Padding between the words and the plate behind them.
     #[serde(default)]
     pub padding: f64,
@@ -888,6 +908,9 @@ impl Default for TextNode {
             line_height: one_two(),
             align: TextAlign::Left,
             max_width: None,
+            fit: None,
+            min_size: None,
+            on_path: None,
             padding: 0.0,
             background: transparent(),
             radius: 0.0,
@@ -897,6 +920,35 @@ impl Default for TextNode {
             shadow: None,
         }
     }
+}
+
+/// Text set along a path: the glyphs walk the outline, each turned to
+/// the tangent where it sits.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct TextOnPath {
+    /// The outline, in the node's own pixels.
+    pub commands: Vec<PathCommand>,
+    /// Where along the path the first glyph starts, as a fraction of the
+    /// path's own length `0..=1` - the running start of a circular
+    /// badge title. Animatable through the `path-offset` track.
+    #[serde(default)]
+    pub offset: f64,
+    /// Extra room between one glyph and the next, in pixels.
+    #[serde(default)]
+    pub spacing: f64,
+}
+
+/// What a text node does when its words are wider than its `max_width`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TextFit {
+    /// Break the line at the spaces, the way text has always wrapped.
+    Wrap,
+    /// Step the size down until the line fits, bounded by `min_size`.
+    ShrinkToFit,
+    /// Cut the line at the last word that fits and end it with an
+    /// ellipsis.
+    Ellipsis,
 }
 
 /// Text style overrides a highlight or a slot applies.
@@ -1184,6 +1236,23 @@ impl Comp {
             match &node.kind {
                 NodeKind::Path { .. } => note("a vector path"),
                 NodeKind::Adjustment => note("an adjustment layer"),
+                NodeKind::Text(inner) => {
+                    if inner.on_path.is_some() {
+                        note("text on a path");
+                    }
+                    if matches!(inner.fit, Some(TextFit::ShrinkToFit | TextFit::Ellipsis)) {
+                        note("a text fit mode");
+                    }
+                    // Inline span markup: the native path reads it as
+                    // styling, the flattened timeline would draw it as
+                    // the literal characters it is.
+                    if inner.words.is_empty()
+                        && inner.text.contains('<')
+                        && !crate::typography::parse_spans(&inner.text).1.is_empty()
+                    {
+                        note("inline span markup");
+                    }
+                }
                 NodeKind::Rect { fill, .. } | NodeKind::Ellipse { fill, .. } => {
                     if matches!(fill, Some(Paint::Gradient { .. })) {
                         note("a shape gradient");
@@ -1440,6 +1509,45 @@ impl Comp {
                     format!("/nodes/{i}/asset"),
                     format!("no asset called {asset:?}"),
                 ));
+            }
+            if let NodeKind::Text(inner) = &node.kind {
+                if inner
+                    .on_path
+                    .as_ref()
+                    .is_some_and(|on| on.commands.is_empty())
+                {
+                    found.push(Diagnostic::new(
+                        format!("/nodes/{i}/on-path/commands"),
+                        "a path with no commands walks its words nowhere",
+                    ));
+                }
+                if inner
+                    .on_path
+                    .as_ref()
+                    .is_some_and(|on| !(0.0..=1.0).contains(&on.offset))
+                {
+                    found.push(
+                        Diagnostic::new(
+                            format!("/nodes/{i}/on-path/offset"),
+                            "an offset is placed as a fraction of the path's length, 0 to 1",
+                        )
+                        .with_help("the path-offset track moves it; the field is where it starts"),
+                    );
+                }
+                if inner.fit.is_some() && inner.max_width.is_none() {
+                    found.push(Diagnostic::new(
+                        format!("/nodes/{i}/fit"),
+                        "a fit mode answers a max_width; this text node sets none",
+                    ));
+                }
+                if let (Some(min), size) = (inner.min_size, inner.size)
+                    && min > size
+                {
+                    found.push(Diagnostic::new(
+                        format!("/nodes/{i}/min-size"),
+                        "the smallest size a shrink steps down to is above the size it starts from",
+                    ));
+                }
             }
             if let NodeKind::Path {
                 commands,
@@ -2204,6 +2312,9 @@ mod tests {
             line_height: 1.2,
             align: TextAlign::Center,
             max_width: None,
+            fit: None,
+            min_size: None,
+            on_path: None,
             padding: 0.0,
             background: transparent(),
             radius: 0.0,
@@ -2830,6 +2941,155 @@ mod phase1_tests {
         let json = serde_json::to_string(&deep).expect("serialises");
         let back: Transform = serde_json::from_str(&json).expect("parses");
         assert_eq!(back, deep);
+    }
+
+    /// The text features carry their own honesty: a path with no
+    /// commands, an offset outside its fractions, a fit mode with no
+    /// width to answer, and a floor above the size it shrinks from are
+    /// each refused with a pointer.
+    #[test]
+    fn the_text_features_are_checked() {
+        let mut comp = comp_with(vec![shell("words", NodeKind::Text(Box::default()))]);
+        comp.nodes[0].kind = NodeKind::Text(Box::new(TextNode {
+            on_path: Some(TextOnPath {
+                commands: Vec::new(),
+                offset: 0.0,
+                spacing: 0.0,
+            }),
+            ..TextNode::default()
+        }));
+        assert!(
+            comp.validate()
+                .iter()
+                .any(|d| d.path == "/nodes/0/on-path/commands"),
+            "{:?}",
+            comp.validate()
+        );
+        let mut comp = comp_with(vec![shell("words", NodeKind::Text(Box::default()))]);
+        comp.nodes[0].kind = NodeKind::Text(Box::new(TextNode {
+            on_path: Some(TextOnPath {
+                commands: vec![PathCommand::MoveTo {
+                    point: Point::new(0.0, 0.0),
+                }],
+                offset: 1.5,
+                spacing: 0.0,
+            }),
+            ..TextNode::default()
+        }));
+        assert!(
+            comp.validate()
+                .iter()
+                .any(|d| d.path == "/nodes/0/on-path/offset"),
+            "{:?}",
+            comp.validate()
+        );
+        let mut comp = comp_with(vec![shell("words", NodeKind::Text(Box::default()))]);
+        comp.nodes[0].kind = NodeKind::Text(Box::new(TextNode {
+            fit: Some(TextFit::Ellipsis),
+            ..TextNode::default()
+        }));
+        assert!(
+            comp.validate().iter().any(|d| d.path == "/nodes/0/fit"),
+            "{:?}",
+            comp.validate()
+        );
+        let mut comp = comp_with(vec![shell("words", NodeKind::Text(Box::default()))]);
+        comp.nodes[0].kind = NodeKind::Text(Box::new(TextNode {
+            size: 48.0,
+            min_size: Some(64.0),
+            max_width: Some(400.0),
+            fit: Some(TextFit::ShrinkToFit),
+            ..TextNode::default()
+        }));
+        assert!(
+            comp.validate()
+                .iter()
+                .any(|d| d.path == "/nodes/0/min-size"),
+            "{:?}",
+            comp.validate()
+        );
+    }
+
+    /// The text features route native: text on a path, a fit mode beyond
+    /// wrapping, and inline span markup are each named in what Geneva
+    /// cannot draw - a wrap, which the timeline has always done, is not.
+    #[test]
+    fn the_text_vocabulary_routes_native() {
+        let mut comp = comp_with(vec![shell("words", NodeKind::Text(Box::default()))]);
+        comp.nodes[0].kind = NodeKind::Text(Box::new(TextNode {
+            on_path: Some(TextOnPath {
+                commands: vec![PathCommand::MoveTo {
+                    point: Point::new(0.0, 0.0),
+                }],
+                offset: 0.0,
+                spacing: 0.0,
+            }),
+            ..TextNode::default()
+        }));
+        assert!(
+            comp.geneva_inexpressible().contains(&"text on a path"),
+            "{:?}",
+            comp.geneva_inexpressible()
+        );
+        let mut comp = comp_with(vec![shell("words", NodeKind::Text(Box::default()))]);
+        comp.nodes[0].kind = NodeKind::Text(Box::new(TextNode {
+            fit: Some(TextFit::ShrinkToFit),
+            max_width: Some(400.0),
+            ..TextNode::default()
+        }));
+        assert!(
+            comp.geneva_inexpressible().contains(&"a text fit mode"),
+            "{:?}",
+            comp.geneva_inexpressible()
+        );
+        let mut comp = comp_with(vec![shell("words", NodeKind::Text(Box::default()))]);
+        comp.nodes[0].kind = NodeKind::Text(Box::new(TextNode {
+            text: "plain <b>bold</b> tail".into(),
+            ..TextNode::default()
+        }));
+        assert!(
+            comp.geneva_inexpressible().contains(&"inline span markup"),
+            "{:?}",
+            comp.geneva_inexpressible()
+        );
+        let mut comp = comp_with(vec![shell("words", NodeKind::Text(Box::default()))]);
+        comp.nodes[0].kind = NodeKind::Text(Box::new(TextNode {
+            fit: Some(TextFit::Wrap),
+            max_width: Some(400.0),
+            ..TextNode::default()
+        }));
+        assert!(
+            !comp.geneva_inexpressible().contains(&"a text fit mode"),
+            "a wrap is what the timeline already does"
+        );
+    }
+
+    /// A text document from before the fields loads unchanged: the
+    /// on-path, fit and floor fields default to nothing, and a node
+    /// without them round-trips exactly as it wrote.
+    #[test]
+    fn a_text_document_from_before_the_fields_loads_unchanged() {
+        let document = serde_json::json!({
+            "id": "old.text",
+            "width": 640,
+            "height": 360,
+            "duration": 2.0,
+            "nodes": [{
+                "id": "words",
+                "kind": "text",
+                "text": "Before the fields",
+                "size": 32.0
+            }]
+        });
+        let comp: Comp = serde_json::from_value(document).expect("parses");
+        let text = match &comp.nodes[0].kind {
+            NodeKind::Text(inner) => inner.as_ref(),
+            other => panic!("a text node: {other:?}"),
+        };
+        assert!(text.on_path.is_none());
+        assert!(text.fit.is_none());
+        assert!(text.min_size.is_none());
+        assert!(comp.validate().is_empty(), "{:?}", comp.validate());
     }
 
     /// The 3D vocabulary routes native: a layer transform, a track

@@ -15,7 +15,7 @@
 use concat_text::{Align, Fonts, RenderedFrame, TitleRun, TitleStyle};
 use tiny_skia::Pixmap;
 
-use crate::comp::{Node, Paint, TextNode};
+use crate::comp::{Node, Paint, PathCommand, Point, Rgba, TextFit, TextNode, TextOnPath};
 
 /// Everything a text node needs drawn around it: the passes, in the
 /// order they composite.
@@ -54,21 +54,52 @@ pub(crate) fn passes(
 ) -> TextPasses {
     let local = at - node.start;
     let current = Node::current_word(text, at, node.start);
-    let content = content_of(text);
+    // The span markup lives in the plain text; the words a caption's
+    // timing carries are already per-word styled and carry no markup.
+    let (mut plain, spans) = if text.words.is_empty() && text.text.contains('<') {
+        crate::typography::parse_spans(&text.text)
+    } else {
+        (content_of(text), Vec::new())
+    };
+    let on_path = text.on_path.as_ref();
+    if let Some(on) = on_path {
+        return passes_on_path(
+            node, text, on, &plain, &spans, local, current, frame, scale, fonts,
+        );
+    }
+    // The fit solver answers a max_width with the mode the node names:
+    // measure once unwrapped, then shrink the size, cut the line, or
+    // leave the wrapping to the renderer below.
+    let text = solve_fit(text, &mut plain, &spans, frame, fonts);
+    let content = if text.words.is_empty() {
+        plain.clone()
+    } else {
+        content_of(&text)
+    };
     let gradient_ink = match &text.fill {
         Some(Paint::Gradient { .. }) => text.fill.clone(),
         _ => None,
     };
     let needs_split = gradient_ink.is_some() || text.shadow.is_some();
 
-    let mut glyph_style = base_style(text, frame);
-    glyph_style.runs = runs_of(text, &content, local, current);
+    let mut glyph_style = base_style(&text, frame);
+    let mut spans = spans;
+    // A span the fit solver's cut left past the end is clipped, not
+    // dropped whole: half a styled run is half a run.
+    for span in &mut spans {
+        span.end = span.end.min(content.chars().count());
+    }
+    spans.retain(|span| span.end > span.start);
+    glyph_style.runs = runs_of(&text, &content, local, current)
+        .into_iter()
+        .chain(span_runs(&spans))
+        .collect();
     if gradient_ink.is_some() {
         // The glyphs pass draws white and becomes the mask a gradient
         // paints through.
         glyph_style.color = "#ffffffff".into();
     }
-    let plate_style_base = base_style(text, frame);
+    let plate_style_base = base_style(&text, frame);
     let glyphs =
         match concat_text::render_frame(fonts, &glyph_style, frame.0 as u32, frame.1 as u32) {
             Ok(rendered) => rendered,
@@ -134,6 +165,49 @@ pub(crate) fn passes(
         raster_composite(&mut glyph_pixmap, &region);
     }
 
+    // The span plates: a `bg` run's own glyph alpha, tinted, blurred
+    // a touch for the padding a plate wants, laid under the glyphs.
+    let backplates: Vec<Pixmap> = bg_spans(&spans)
+        .into_iter()
+        .filter_map(|(span, color)| {
+            let mut mask_style = glyph_style.clone();
+            mask_style.color = "#00000000".into();
+            mask_style.stroke_color = "#00000000".into();
+            mask_style.runs = vec![TitleRun {
+                start: span.start,
+                end: span.end,
+                color: Some("#ffffffff".into()),
+                font_weight: None,
+                italic: None,
+                underline: None,
+                strikethrough: None,
+                font_scale: None,
+                stroke_color: Some("#00000000".into()),
+            }];
+            let mask =
+                concat_text::render_frame(fonts, &mask_style, frame.0 as u32, frame.1 as u32)
+                    .ok()
+                    .map(|rendered| pixmap_of(&rendered))?;
+            let mut plate = crate::native::raster::tinted_alpha(&mask, color);
+            crate::native::raster::blur(&mut plate, text.size * 0.08 * scale);
+            Some(plate)
+        })
+        .collect();
+    if !backplates.is_empty() {
+        let mut under = Pixmap::new(glyph_pixmap.width(), glyph_pixmap.height())
+            .unwrap_or_else(|| empty(frame));
+        for plate in &backplates {
+            crate::native::raster::composite(&mut under, plate, crate::comp::Blend::Normal, 1.0);
+        }
+        crate::native::raster::composite(
+            &mut under,
+            &glyph_pixmap,
+            crate::comp::Blend::Normal,
+            1.0,
+        );
+        glyph_pixmap = under;
+    }
+
     // The shadow: the glyph alpha, tinted, blurred, offset. Over the
     // plate, under the glyphs - where a text shadow has always sat.
     let shadow = text.shadow.as_ref().map(|shadow| {
@@ -168,6 +242,417 @@ pub(crate) fn passes(
             canvas_h / 2.0 + f64::from(glyphs.block_dy),
         ),
     }
+}
+
+/// The fit solver: measure the line unwrapped, and when it runs past
+/// `max_width` do what the node's mode says - step the size down
+/// (bounded by `min_size`), cut the line at the last full word and end
+/// it with an ellipsis, or leave it to the wrapping the renderer below
+/// already does. A line that fits keeps everything it had.
+fn solve_fit(
+    text: &TextNode,
+    plain: &mut String,
+    spans: &[crate::typography::Span],
+    frame: (f64, f64),
+    fonts: &Fonts,
+) -> TextNode {
+    let Some(max_width) = text.max_width else {
+        return text.clone();
+    };
+    let mode = text.fit.unwrap_or(TextFit::Wrap);
+    if mode == TextFit::Wrap || text.words.is_empty() && text.text.trim().is_empty() {
+        return text.clone();
+    }
+    // The measure: the same style, unwrapped, so the answer is one
+    // number - how wide the line is as a single run.
+    let mut probe = text.clone();
+    probe.max_width = None;
+    let measured = |probe: &TextNode| {
+        let style = base_style(probe, frame);
+        concat_text::render_frame(fonts, &style, frame.0 as u32, frame.1 as u32)
+            .map(|rendered| f64::from(rendered.block_width))
+            .unwrap_or(f64::INFINITY)
+    };
+    let width = measured(&probe);
+    if width <= max_width {
+        return text.clone();
+    }
+    match mode {
+        TextFit::Wrap => text.clone(),
+        TextFit::ShrinkToFit => {
+            let factor = max_width / width;
+            let floor = text.min_size.unwrap_or(text.size * 0.25);
+            let size = (text.size * factor).clamp(floor.min(text.size), text.size);
+            probe.size = size;
+            probe.letter_spacing *= size / text.size;
+            probe
+        }
+        TextFit::Ellipsis => {
+            // Cut at the last whole word that fits, then the ellipsis -
+            // a line that cannot fit its own first word keeps the word
+            // and the ellipsis both, cut mid-word, because a caption
+            // that shows nothing is worse than one that shows a break.
+            let chars: Vec<char> = plain.chars().collect();
+            let mut kept = chars.len();
+            let fits;
+            loop {
+                let candidate: String = chars[..kept].iter().collect();
+                probe.text = format!("{candidate}…");
+                if measured(&probe) <= max_width || kept == 0 {
+                    fits = probe.text.clone();
+                    break;
+                }
+                kept = chars[..kept]
+                    .iter()
+                    .rposition(|c| *c == ' ')
+                    .unwrap_or(kept - 1);
+            }
+            let _ = spans;
+            probe.text = fits;
+            *plain = probe.text.clone();
+            probe
+        }
+    }
+}
+
+/// The runs a span list adds to the block render: each span's answers
+/// over the base style, for exactly its characters.
+fn span_runs(spans: &[crate::typography::Span]) -> Vec<TitleRun> {
+    spans
+        .iter()
+        .map(|span| TitleRun {
+            start: span.start,
+            end: span.end,
+            color: span.color.map(|color| color.to_hex()),
+            font_weight: span.weight.map(f64::from),
+            italic: span.italic,
+            underline: None,
+            strikethrough: None,
+            font_scale: span.scale,
+            stroke_color: None,
+        })
+        .collect()
+}
+
+/// The spans that asked for a plate, with the colour they asked for.
+fn bg_spans(spans: &[crate::typography::Span]) -> Vec<(crate::typography::Span, Rgba)> {
+    spans
+        .iter()
+        .filter_map(|span| span.background.map(|color| (*span, color)))
+        .collect()
+}
+
+/// One sample of a walked path: where it is and which way it runs.
+struct PathStep {
+    /// The point, in the node's own pixels.
+    point: Point,
+    /// The tangent's angle, degrees clockwise on the screen.
+    angle: f64,
+}
+
+/// A path flattened into arc length: the polyline every text-on-a-path
+/// walks, with each sample's place and tangent.
+struct PathWalk {
+    /// The samples, in order, each with the length reached at it.
+    steps: Vec<(f64, PathStep)>,
+    /// The path's whole length.
+    total: f64,
+}
+
+/// Flattens commands into a walked path: lines as one segment, cubics
+/// as thirty-two, which is finer than a glyph is wide on any path a
+/// title walks.
+fn walk_path(commands: &[PathCommand]) -> PathWalk {
+    let mut steps: Vec<(f64, PathStep)> = Vec::new();
+    let mut cursor = Point::new(0.0, 0.0);
+    let mut carried = 0.0;
+    let push = |from: Point, to: Point, carried: &mut f64, steps: &mut Vec<(f64, PathStep)>| {
+        let (dx, dy) = (to.x - from.x, to.y - from.y);
+        let length = dx.hypot(dy);
+        if length < 1e-9 {
+            return;
+        }
+        *carried += length;
+        steps.push((
+            *carried,
+            PathStep {
+                point: to,
+                angle: dy.atan2(dx).to_degrees(),
+            },
+        ));
+    };
+    for command in commands {
+        match *command {
+            PathCommand::MoveTo { point } => {
+                cursor = point;
+                if steps.is_empty() {
+                    steps.push((0.0, PathStep { point, angle: 0.0 }));
+                }
+            }
+            PathCommand::LineTo { point } => {
+                push(cursor, point, &mut carried, &mut steps);
+                cursor = point;
+            }
+            PathCommand::CubicTo { c1, c2, point } => {
+                let from = cursor;
+                for i in 1..=32u32 {
+                    let t = f64::from(i) / 32.0;
+                    let one = 1.0 - t;
+                    let at = |p: Point| Point {
+                        x: one * one * one * p.x
+                            + 3.0 * one * one * t * c1.x
+                            + 3.0 * one * t * t * c2.x
+                            + t * t * t * point.x,
+                        y: one * one * one * p.y
+                            + 3.0 * one * one * t * c1.y
+                            + 3.0 * one * t * t * c2.y
+                            + t * t * t * point.y,
+                    };
+                    let to = at(from);
+                    push(cursor, to, &mut carried, &mut steps);
+                    cursor = to;
+                }
+            }
+            PathCommand::Close => {
+                let start = steps.first().map(|(_, step)| step.point).unwrap_or(cursor);
+                push(cursor, start, &mut carried, &mut steps);
+                cursor = start;
+            }
+        }
+    }
+    PathWalk {
+        total: carried,
+        steps,
+    }
+}
+
+impl PathWalk {
+    /// The step at `length` along the walk, held at the ends.
+    fn at(&self, length: f64) -> PathStep {
+        let length = length.clamp(0.0, self.total);
+        for (reached, step) in &self.steps {
+            if *reached >= length {
+                return PathStep {
+                    point: step.point,
+                    angle: step.angle,
+                };
+            }
+        }
+        self.steps
+            .last()
+            .map(|(_, step)| PathStep {
+                point: step.point,
+                angle: step.angle,
+            })
+            .unwrap_or(PathStep {
+                point: Point::new(0.0, 0.0),
+                angle: 0.0,
+            })
+    }
+}
+
+/// The glyph cache an on-path render shares between its characters:
+/// one pixmap and the pen advance metrics, keyed by everything that
+/// changes the drawing.
+type GlyphCache =
+    std::collections::HashMap<(char, u64, String, u32, bool), (Pixmap, f64, f64, f64)>;
+
+/// The on-path render: one canvas, one glyph at a time, each turned to
+/// the tangent where it sits. The current word's highlight scales and
+/// recolours its glyphs the way the block path's does; the plate behind
+/// the words becomes the ink's own bounds.
+#[allow(clippy::too_many_arguments)]
+fn passes_on_path(
+    node: &Node,
+    text: &TextNode,
+    on: &TextOnPath,
+    plain: &str,
+    spans: &[crate::typography::Span],
+    local: f64,
+    current: Option<usize>,
+    frame: (f64, f64),
+    scale: f64,
+    fonts: &Fonts,
+) -> TextPasses {
+    let _ = (local, current);
+    let mut canvas = empty(frame);
+    let walk = walk_path(&on.commands);
+    // The offset: the field plus the track, both fractions of the path.
+    let tracked = match node.property(
+        "path-offset",
+        0.0,
+        0.0,
+        crate::track::Value::Number { value: 0.0 },
+    ) {
+        crate::track::Value::Number { value } => value,
+        _ => 0.0,
+    };
+    let mut along = (on.offset + tracked).rem_euclid(1.0).max(0.0) * walk.total;
+    // The word layout the spans and the highlight read: plain char
+    // indices, the same clock the block path counts.
+    let chars: Vec<char> = plain.chars().collect();
+    // One render per distinct (char, size, colour, weight, italic) the
+    // line asks for: a title's repeated letters pay once.
+    let mut cache: GlyphCache = std::collections::HashMap::new();
+    for (start, character) in chars.iter().enumerate() {
+        // The span answers, the innermost that covers the glyph.
+        let span = spans
+            .iter()
+            .rev()
+            .find(|span| span.start <= start && start < span.end);
+        let mut style = base_style(text, frame);
+        style.content = character.to_string();
+        style.max_width = 0.0;
+        if let Some(span) = span {
+            if let Some(color) = span.color {
+                style.color = color.to_hex();
+            }
+            if let Some(weight) = span.weight {
+                style.font_weight = f64::from(weight);
+            }
+            if let Some(italic) = span.italic {
+                style.italic = italic;
+            }
+            if let Some(size) = span.scale {
+                style.font_size *= size.clamp(0.1, 8.0);
+            }
+        }
+        let key = (
+            *character,
+            style.font_size.to_bits(),
+            style.color.clone(),
+            style.font_weight.round() as u32,
+            style.italic,
+        );
+        let entry = match cache.get(&key) {
+            Some(found) => found.clone(),
+            None => {
+                let rendered = match concat_text::render_frame(
+                    fonts,
+                    &style,
+                    frame.0 as u32,
+                    frame.1 as u32,
+                ) {
+                    Ok(rendered) => rendered,
+                    Err(_) => continue,
+                };
+                let built = (
+                    pixmap_of(&rendered),
+                    f64::from(rendered.block_width),
+                    f64::from(rendered.width) / 2.0 + f64::from(rendered.block_dx),
+                    f64::from(rendered.height) / 2.0 + f64::from(rendered.block_dy),
+                );
+                cache.insert(key.clone(), built.clone());
+                built
+            }
+        };
+        let (_, advance, centre_x, centre_y) = entry;
+        if *character == ' ' {
+            along += advance * scale;
+            continue;
+        }
+        let step = walk.at(along);
+        let placed = tiny_skia::Transform::from_translate(
+            (step.point.x * scale) as f32,
+            (step.point.y * scale) as f32,
+        )
+        .pre_concat(tiny_skia::Transform::from_rotate(step.angle as f32))
+        .pre_concat(tiny_skia::Transform::from_translate(
+            -(centre_x * scale) as f32,
+            -(centre_y * scale) as f32,
+        ));
+        crate::native::raster::blit(
+            &mut canvas,
+            cache_get(&cache, &key),
+            placed,
+            crate::comp::Blend::Normal,
+            1.0,
+        );
+        along += (advance + on.spacing + text.letter_spacing) * scale;
+    }
+    // The ink's own bounds are the block: what the node's transform
+    // places and what a mask is inscribed in.
+    let (block, centre) = ink_bounds(&canvas, frame);
+    // The plate behind the words: the bounds themselves, rounded the
+    // way the block path's plate is.
+    let plate = if text.background.a > 0.0 {
+        let mut plate = empty(frame);
+        if let Some(rect) = tiny_skia::Rect::from_ltrb(
+            (centre.0 - block.0 / 2.0 - text.padding * scale) as f32,
+            (centre.1 - block.1 / 2.0 - text.padding * scale) as f32,
+            (centre.0 + block.0 / 2.0 + text.padding * scale) as f32,
+            (centre.1 + block.1 / 2.0 + text.padding * scale) as f32,
+        )
+        .map(|rect| rounded(rect, text.radius * scale))
+        {
+            let mut paint = tiny_skia::Paint::default();
+            paint.set_color(crate::native::shapes::color_skia(text.background));
+            paint.anti_alias = true;
+            plate.as_mut().fill_path(
+                &rect,
+                &paint,
+                tiny_skia::FillRule::Winding,
+                tiny_skia::Transform::identity(),
+                None,
+            );
+        }
+        Some(plate)
+    } else {
+        None
+    };
+    TextPasses {
+        plate,
+        shadow: None,
+        glyphs: canvas,
+        block,
+        centre,
+    }
+}
+
+/// The cached glyph pixmap for a key, by reference.
+fn cache_get<'a>(cache: &'a GlyphCache, key: &(char, u64, String, u32, bool)) -> &'a Pixmap {
+    &cache.get(key).expect("the key was just inserted").0
+}
+
+/// A rectangle with its corners rounded, as a path.
+fn rounded(rect: tiny_skia::Rect, radius: f64) -> tiny_skia::Path {
+    match crate::native::shapes::rounded_rect(
+        f64::from(rect.width()),
+        f64::from(rect.height()),
+        radius,
+    ) {
+        Some(path) => path,
+        None => tiny_skia::PathBuilder::from_rect(rect),
+    }
+}
+
+/// The ink's bounds on a canvas, as `(block size, centre)`: the same
+/// two numbers a block render's `block_*` carry, read from the pixels
+/// themselves because the on-path line has no layout of its own.
+fn ink_bounds(canvas: &Pixmap, frame: (f64, f64)) -> ((f64, f64), (f64, f64)) {
+    let (width, height) = (canvas.width() as usize, canvas.height() as usize);
+    let data = canvas.data();
+    let mut x0 = usize::MAX;
+    let mut y0 = usize::MAX;
+    let mut x1 = 0usize;
+    let mut y1 = 0usize;
+    for y in 0..height {
+        for x in 0..width {
+            if data[(y * width + x) * 4 + 3] > 0 {
+                x0 = x0.min(x);
+                y0 = y0.min(y);
+                x1 = x1.max(x + 1);
+                y1 = y1.max(y + 1);
+            }
+        }
+    }
+    if x0 == usize::MAX {
+        return ((0.0, 0.0), (frame.0 / 2.0, frame.1 / 2.0));
+    }
+    (
+        ((x1 - x0) as f64, (y1 - y0) as f64),
+        ((x0 + x1) as f64 / 2.0, (y0 + y1) as f64 / 2.0),
+    )
 }
 
 /// The words a text node shows, as one string: the timed words joined

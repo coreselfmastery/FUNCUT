@@ -142,6 +142,11 @@ pub fn composite_over(foreground: Rgba, background: Rgba) -> Rgba {
     )
 }
 
+/// Calculate the WCAG contrast ratio after compositing the foreground over the background.
+///
+/// The returned ratio is at least 1.0; WCAG AA uses 4.5:1 for normal text and
+/// 3:1 for large text. The caller is responsible for supplying a meaningful
+/// background (this helper treats the supplied background as opaque).
 pub fn contrast_ratio(foreground: Rgba, background: Rgba) -> f64 {
     let composite = composite_over(foreground, background);
     let a = relative_luminance(composite);

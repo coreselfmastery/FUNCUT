@@ -167,8 +167,31 @@ impl Scene<'_> {
                 worlds.insert(node.id.clone(), parent_world);
             }
         }
+        // A child of a group is drawn by its group's own layer, which
+        // the second walk below places whole; placing the child again
+        // on its own row would composite it a second time - a
+        // translucent child of a group reads as nearly solid, and a
+        // blended one doubles its effect. Only a group that is placed
+        // this frame (it covers `at`) draws its children this way; one
+        // outside its span leaves them to their own rows, as before.
+        let placed_groups: HashSet<&str> = self
+            .comp
+            .nodes
+            .iter()
+            .filter(|node| {
+                matches!(node.kind, NodeKind::Group { .. }) && node.covers(at, self.comp.duration)
+            })
+            .map(|node| node.id.as_str())
+            .collect();
         for node in self.comp.paint_order() {
             if matte_sources.contains(&node.id) {
+                continue;
+            }
+            if node
+                .parent
+                .as_deref()
+                .is_some_and(|parent| placed_groups.contains(parent))
+            {
                 continue;
             }
             if !node.covers(at, self.comp.duration) {
@@ -402,6 +425,12 @@ impl Scene<'_> {
                     .collect();
                 for child in children {
                     if !child.covers(at, self.comp.duration) {
+                        continue;
+                    }
+                    // A matte source draws nothing of its own while it is
+                    // a matte - the same pass-two rule - and the first
+                    // walk already holds its pixels aside as a stencil.
+                    if stencils.contains_key(&child.id) {
                         continue;
                     }
                     if !rendered.contains_key(&child.id) {
@@ -926,7 +955,16 @@ impl Scene<'_> {
     ) -> Transform {
         let model = &node.transform;
         let grouped = matches!(node.kind, NodeKind::Group { .. } | NodeKind::Adjustment);
-        let fallback = if grouped {
+        // A positionless child of a positioned ancestor rides the
+        // ancestor's transform to the ancestor's origin - the same
+        // folded placement the Geneva timeline gives it (the static
+        // ancestor translations the sidecar folds into child
+        // positions), so the one comp both engines claim renders the
+        // same pixels whichever of the two draws it. The comp frame's
+        // centre stays the fallback only when no ancestor carries a
+        // position.
+        let carried = !grouped && self.inherits_position(node);
+        let fallback = if grouped || carried {
             Point { x: 0.0, y: 0.0 }
         } else {
             Point {
@@ -973,6 +1011,31 @@ impl Scene<'_> {
             .pre_concat(spin)
             .pre_concat(grow)
             .pre_concat(to_anchor)
+    }
+
+    /// Whether an ancestor within the graph's depth bound carries a
+    /// position of its own: the case the Geneva timeline answers by
+    /// folding the ancestor's position into a positionless child, which
+    /// this engine's composed transforms answer the same way once the
+    /// child's own fallback is the ancestor's origin rather than the
+    /// comp frame's centre.
+    fn inherits_position(&self, node: &Node) -> bool {
+        let mut cursor = node.parent.as_deref();
+        let mut depth = 0;
+        while let Some(parent) = cursor {
+            if depth >= 32 {
+                return false;
+            }
+            let Some(parent_node) = self.comp.node(parent) else {
+                return false;
+            };
+            if parent_node.transform.position.is_some() {
+                return true;
+            }
+            cursor = parent_node.parent.as_deref();
+            depth += 1;
+        }
+        false
     }
 
     /// The stencil of a mask: the shape in the node's own box, expanded

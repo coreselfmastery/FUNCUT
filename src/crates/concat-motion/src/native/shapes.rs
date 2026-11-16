@@ -371,12 +371,15 @@ pub(crate) fn morphed(from: &[PathCommand], to: &[PathCommand], t: f64) -> Vec<P
             x: a.x + (b.x - a.x) * t,
             y: a.y + (b.y - a.y) * t,
         };
-        if pen != Some(point) {
-            out.push(PathCommand::MoveTo { point });
-            pen = Some(point);
-        } else {
-            out.push(PathCommand::LineTo { point });
+        // The first station opens the outline and the rest draw on, the
+        // way `trimmed` walks its own stations: a `MoveTo` per station is
+        // a path of dots that fills nothing, which a morph between two
+        // differing topologies became before this.
+        match pen {
+            Some(_) => out.push(PathCommand::LineTo { point }),
+            None => out.push(PathCommand::MoveTo { point }),
         }
+        pen = Some(point);
     }
     out
 }
@@ -753,6 +756,23 @@ mod tests {
         } else {
             panic!("the morph should open with a move");
         }
+        // One move and the rest lines, or the outline is a path of dots
+        // that fills nothing - which the morph between differing shapes
+        // became when every station opened its own subpath.
+        assert_eq!(
+            mid.iter()
+                .filter(|command| matches!(command, PathCommand::MoveTo { .. }))
+                .count(),
+            1,
+            "the morph opens one outline, not one per station: {mid:?}"
+        );
+        assert!(
+            mid.iter()
+                .filter(|command| matches!(command, PathCommand::LineTo { .. }))
+                .count()
+                >= 7,
+            "the resampled morph draws on between its stations: {mid:?}"
+        );
     }
 
     #[test]

@@ -168,10 +168,12 @@ pub struct Release {
 }
 
 /// Reads GitHub's answer to the releases request: the stable releases from
-/// [`FIRST_SWITCHABLE`] on, newest first, belonging to `repo`. Drafts and
-/// pre-releases are left out, as is anything whose tag is not a plain
-/// version.
-fn releases_from_json(json: &str, repo: &'static str) -> Result<Vec<Release>, String> {
+/// [`FIRST_SWITCHABLE`] on, newest first, belonging to `repo`, beside the
+/// count of the answer's *own* entries - a page is the last one only when
+/// GitHub sent fewer than asked for, not when the filters below kept some
+/// of a full page (drafts, pre-releases and shelf tags are dropped, so a
+/// filtered page can be short while another one follows).
+fn releases_with_count(json: &str, repo: &'static str) -> Result<(Vec<Release>, usize), String> {
     let value: serde_json::Value = serde_json::from_str(json)
         .map_err(|error| format!("the release list does not read as JSON: {error}"))?;
     let Some(entries) = value.as_array() else {
@@ -179,6 +181,7 @@ fn releases_from_json(json: &str, repo: &'static str) -> Result<Vec<Release>, St
         // rate limit, for the most part.
         return Err(format!("GitHub answered: {}", github_message(&value)));
     };
+    let answered = entries.len();
     let mut releases: Vec<Release> = entries
         .iter()
         .filter_map(|entry| {
@@ -213,7 +216,12 @@ fn releases_from_json(json: &str, repo: &'static str) -> Result<Vec<Release>, St
         .collect();
     releases.sort_by(|a, b| b.version.cmp(&a.version));
     releases.dedup_by(|a, b| a.version == b.version);
-    Ok(releases)
+    Ok((releases, answered))
+}
+
+/// The releases alone, for the callers that do not page.
+fn releases_from_json(json: &str, repo: &'static str) -> Result<Vec<Release>, String> {
+    releases_with_count(json, repo).map(|(releases, _)| releases)
 }
 
 /// The `message` of a GitHub error body, or the body's first line.
@@ -254,8 +262,8 @@ fn own_releases() -> Result<Vec<Release>, String> {
     let mut all = Vec::new();
     for page in 1..=3 {
         let url = format!("https://api.github.com/repos/{REPO}/releases?per_page=100&page={page}");
-        let page_releases = releases_from_json(&get_text(&url)?, REPO)?;
-        let short = page_releases.len() < 100;
+        let (page_releases, answered) = releases_with_count(&get_text(&url)?, REPO)?;
+        let short = answered < 100;
         all.extend(page_releases);
         if short {
             break;

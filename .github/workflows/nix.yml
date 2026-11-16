@@ -158,5 +158,11 @@ jobs:
       # is there, links, and resolves every library it needs.
       - name: Check the binary links
         run: |
-          file result/bin/.concat-wrapped || file result/bin/concat
-          ldd result/bin/.concat-wrapped 2>/dev/null | grep -i 'not found' && exit 1 || true
+          # The binary first, whichever name the build made: ldd of a
+          # missing file silenced its own error before, and the `|| true`
+          # behind it passed the step vacuously.
+          bin=result/bin/.concat-wrapped
+          [ -e "$bin" ] || bin=result/bin/concat
+          file "$bin"
+          ldd "$bin" | tee ldd.log
+          ! grep -i 'not found' ldd.log

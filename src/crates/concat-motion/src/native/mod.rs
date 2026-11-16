@@ -204,7 +204,13 @@ impl CompEngine for Native {
 
         let frames = dir.join("frames");
         // A bake counts what the render wrote, so a stale `frames/`
-        // left by an interrupted run must not survive into the count.
+        // left by an interrupted run must not survive into the count -
+        // and the manifest of the bake before it must not survive into
+        // this one either: a cache hit reads the manifest and counts the
+        // frames, so a manifest that outlives its frames would answer a
+        // hit while this bake is still writing them. The manifest comes
+        // back last, whole, as the bake's own sentinel.
+        let _ = std::fs::remove_file(dir.join("manifest.json"));
         let _ = std::fs::remove_dir_all(&frames);
         std::fs::create_dir_all(&frames).map_err(|source| MotionError::Io {
             doing: "creating".into(),
@@ -228,11 +234,22 @@ impl CompEngine for Native {
                 &mut warnings,
                 &mut pictures,
             )?;
+            // Each frame appears in one piece - written beside its name
+            // and renamed in - the same publish discipline the manifest
+            // and every cache entry already keep, so a concurrent reader
+            // (another process, a farm worker) never counts a frame that
+            // is still being written.
             let path = frames.join(Baked::frame_name(index));
-            frame.save_png(&path).map_err(|source| MotionError::Io {
+            let part = crate::cache::part_path(&path);
+            frame.save_png(&part).map_err(|source| MotionError::Io {
                 doing: "writing".into(),
-                path,
+                path: part.clone(),
                 source: std::io::Error::other(source.to_string()),
+            })?;
+            crate::cache::publish(&part, &path).map_err(|source| MotionError::Io {
+                doing: "publishing".into(),
+                path,
+                source,
             })?;
             written += 1;
         }
@@ -581,6 +598,102 @@ mod tests {
         // box shows and the near corner does not.
         assert_eq!(frame.pixel(60, 40).unwrap().alpha(), 255);
         assert_eq!(frame.pixel(4, 4).unwrap().alpha(), 0);
+    }
+
+    #[test]
+    fn a_translucent_child_of_a_group_composites_once() {
+        let group = node(
+            "group",
+            NodeKind::Group {
+                children: vec!["child".into()],
+            },
+        );
+        let mut child = node("child", rect(Rgba::new(1.0, 0.0, 0.0, 0.5)));
+        child.parent = Some("group".into());
+        let comp = comp_of("once", vec![group, child]);
+        let (_, frame) = first_frame(&comp);
+        let over = frame.pixel(32, 24).unwrap();
+        // Half-opacity red over a transparent frame, composited once:
+        // the alpha lands near 128, not near the 192 the same child
+        // drawn a second time on its own row would read as.
+        assert!(
+            over.alpha() > 112 && over.alpha() < 144,
+            "a half-opacity child of a group composites once: {over:?}"
+        );
+        assert!(over.red() > over.green() && over.red() > over.blue());
+    }
+
+    #[test]
+    fn a_matte_source_inside_a_group_draws_nothing_of_its_own() {
+        let mut fill = node(
+            "fill",
+            NodeKind::Rect {
+                width: Length::Px(64.0),
+                height: Length::Px(48.0),
+                fill: Some(Paint::Solid {
+                    color: Rgba::new(0.0, 1.0, 0.0, 1.0),
+                }),
+                radius: 0.0,
+            },
+        );
+        fill.matte = Some(crate::comp::Matte {
+            source: "stencil".into(),
+            mode: crate::comp::MatteMode::Alpha,
+        });
+        let group = node(
+            "group",
+            NodeKind::Group {
+                children: vec!["stencil".into()],
+            },
+        );
+        let mut stencil = node(
+            "stencil",
+            NodeKind::Rect {
+                width: Length::Px(16.0),
+                height: Length::Px(48.0),
+                fill: Some(Paint::Solid {
+                    color: Rgba::new(1.0, 1.0, 1.0, 1.0),
+                }),
+                radius: 0.0,
+            },
+        );
+        stencil.parent = Some("group".into());
+        stencil.transform.position = Some(Point { x: 16.0, y: 24.0 });
+        let comp = comp_of("grouped-matte", vec![fill, group, stencil]);
+        let (_, frame) = first_frame(&comp);
+        // The stencil is a matte source, so it draws nothing of its own
+        // inside the group either: the fill shows as the matted green,
+        // not with the group's own copy of the white stencil over it.
+        let seen = frame.pixel(12, 24).unwrap();
+        assert_eq!(seen.alpha(), 255);
+        assert!(
+            seen.green() > 200 && seen.red() < 100 && seen.blue() < 100,
+            "the matte source leaves the fill's own colour: {seen:?}"
+        );
+        assert_eq!(frame.pixel(40, 24).unwrap().alpha(), 0);
+    }
+
+    #[test]
+    fn a_positionless_child_of_a_positioned_group_sits_at_the_group() {
+        let mut group = node(
+            "group",
+            NodeKind::Group {
+                children: vec!["child".into()],
+            },
+        );
+        group.transform.position = Some(Point { x: 32.0, y: 24.0 });
+        let mut child = node("child", rect(Rgba::new(1.0, 0.0, 0.0, 1.0)));
+        child.parent = Some("group".into());
+        let comp = comp_of("carried", vec![group, child]);
+        let (_, frame) = first_frame(&comp);
+        // The child has no position of its own, so it rides the group's
+        // to the group's origin, its 32x24 box centred on (32,24) - the
+        // same folded placement the Geneva timeline gives it - and not
+        // on the comp frame's centre the old fallback read as (64,48).
+        assert_eq!(frame.pixel(32, 24).unwrap().alpha(), 255);
+        assert_eq!(frame.pixel(24, 20).unwrap().alpha(), 255);
+        assert_eq!(frame.pixel(8, 24).unwrap().alpha(), 0);
+        assert_eq!(frame.pixel(60, 40).unwrap().alpha(), 0);
     }
 
     #[test]

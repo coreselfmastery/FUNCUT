@@ -64,3 +64,50 @@ cmake for whisper.cpp remains the system's to give (the script names it).
 The `concat` GUI crate cannot compile on this box (rustc OOM at 4 GB even
 in check mode, `-j1`, no incremental, debuginfo 0). Its validation is CI's;
 this is recorded rather than hidden.
+
+## `fix/deep-review-2026-11-16` (the 2026-11-16 deep-review session)
+
+Branch head of this session, base `81439cc3` (the PR #147/#149 content).
+The same box class as the record above (2 cores / 4 GB / no root; the
+sysroot carries clang 19, alsa, and - new this session - the Vulkan
+loader plus Mesa's lavapipe ICD, unpacked the same no-root way with
+`apt-get download` + `dpkg-deb -x`, driven through `VK_ICD_FILENAMES`
+with the ICD json's `library_path` rewritten to the sysroot copy).
+
+- `cargo fmt --all --check`: green.
+- `cargo clippy -p concat-motion -p concat-host -p concat-export -p
+  concat-render -p concat-mcp -p concat-api -p concat-project -p
+  concat-effects -p voice-signals --all-targets -- -D warnings`: green.
+- `cargo test -p concat-motion`: 535 passed, 0 failed, 5 ignored (the
+  Geneva-sidecar lanes; no sidecar binary on this box, unchanged
+  before this session). The new regressions among them:
+  `a_translucent_child_of_a_group_composites_once`,
+  `a_matte_source_inside_a_group_draws_nothing_of_its_own`,
+  `a_positionless_child_of_a_positioned_group_sits_at_the_group`, the
+  morph `MoveTo`/`LineTo` assertions inside
+  `a_morph_between_disagreeing_shapes_resamples_both`, and
+  `soft_light_follows_the_w3c_table_it_cites`.
+- `cargo test -p voice-signals`: 73 passed, 0 failed.
+- `cargo test -p concat-effects`: 23 passed, 0 failed (incl.
+  `resolved_values_are_held_to_their_parameter_ranges`).
+- `cargo test -p concat-project`: 214 passed, 0 failed (incl.
+  `a_detached_sound_survives_the_slot_being_filled`).
+- `cargo test -p concat-api` (lavapipe): 43 passed, 0 failed (incl.
+  `the_durable_ledger_adopts_its_rows_oldest_first`).
+- `cargo test -p concat-host`: 198 lib passed + 17 + 1, 0 failed, 4
+  ignored (unchanged GPU/environment lanes; incl.
+  `one_turn_per_sound_queues_askers_behind_each_other`).
+- `cargo test -p concat-export` (lavapipe): 52 passed, 0 failed, 1
+  ignored (incl. `a_clip_marked_preserve_alpha_keeps_its_background_layer`).
+- `cargo test -p concat-render` (lavapipe): 103 passed, 0 failed, 1
+  ignored.
+- `cargo test -p concat-mcp`: 67 lib + 7 e2e + 1 doc passed, 0 failed.
+- `python3 scripts/auto_director.py --self-test`: exit 0, no FAIL
+  lines - the full mock-suite (run, resume, revision, gates, verify
+  record) green against the fixed harness, with the assertions
+  re-pinned to the sped-timeline timebase and the real `signal`
+  confidence key.
+- The `concat` GUI crate remains CI's on this box (rustc OOM at 4 GB,
+  unchanged); its four fixes this session (wave/speed, mute/muted,
+  apply_within flush, monitor quality clear) are validated by CI's
+  engine lane on the branch.

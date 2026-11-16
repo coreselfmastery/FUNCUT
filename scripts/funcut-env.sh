@@ -18,7 +18,11 @@
 # line tables for a build that fits, and a debugging session on a
 # machine that can afford more sets the variable back -
 # CARGO_PROFILE_DEV_DEBUG=2 cargo test - the documented way.
-set -euo pipefail
+#
+# No `set` of its own: a sourced script that sets the caller's shell
+# options hands every build script that sources this one an exit-on-error
+# and a nounset it never asked for. The guards below fail loudly on
+# their own.
 
 _funcut_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 _fetch="$_funcut_root/scripts/ci/fetch.sh"

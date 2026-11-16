@@ -4394,6 +4394,81 @@ mod tests {
     }
 
     #[test]
+    fn a_detached_sound_survives_the_slot_being_filled() {
+        let (mut editor, media_id, clip_id) = fixture();
+        // The slot's audio detached: the sound keeps the media and lands
+        // on its own lane, the way a template whose audio was detached
+        // looks.
+        editor
+            .apply(Command::DetachAudio {
+                clip_id: clip_id.clone(),
+            })
+            .expect("detaches");
+        editor
+            .apply(Command::SetMediaPlaceholder {
+                media_id: media_id.clone(),
+                placeholder: true,
+            })
+            .expect("marks");
+        // The slot filled with new video: the slot's own clip takes the
+        // new kind, and the detached sound stays a sound - or the fill
+        // would turn it into a second copy of the picture on its own
+        // lane, and the timeline would play the same video twice.
+        editor
+            .apply(Command::FillSlot {
+                media_id: media_id.clone(),
+                item: crate::commands::NewMedia {
+                    path: "/b.mp4".to_owned(),
+                    name: "b.mp4".to_owned(),
+                    duration: Some(20.0),
+                    kind: MediaKind::Video,
+                    width: Some(1920),
+                    height: Some(1080),
+                    frame_rate: Some(30.0),
+                    frame_rate_fraction: Some("30/1".to_owned()),
+                    video_codec: Some("h264".to_owned()),
+                    audio_codec: Some("aac".to_owned()),
+                    has_audio: true,
+                    audio_tracks: Vec::new(),
+                    origin: None,
+                    color_space: Default::default(),
+                },
+            })
+            .expect("fills");
+        let project = editor.project();
+        let timeline = project.active();
+        let video = timeline
+            .clips
+            .iter()
+            .find(|clip| clip.id == clip_id)
+            .expect("the slot's own clip");
+        assert_eq!(
+            video.kind,
+            ClipKind::Video,
+            "the slot's own clip takes the new file's kind"
+        );
+        let sound = timeline
+            .clips
+            .iter()
+            .find(|clip| clip.detached_from.as_deref() == Some(clip_id.as_str()))
+            .expect("the detached sound");
+        assert_eq!(
+            sound.kind,
+            ClipKind::Audio,
+            "the detached sound stays a sound"
+        );
+        assert_eq!(
+            timeline
+                .clips
+                .iter()
+                .filter(|clip| clip.kind == ClipKind::Video)
+                .count(),
+            1,
+            "one picture on the timeline, not the sound doubling it"
+        );
+    }
+
+    #[test]
     fn filling_ordinary_media_is_refused() {
         let (mut editor, media_id, _) = fixture();
         let refused = editor.apply(Command::FillSlot {

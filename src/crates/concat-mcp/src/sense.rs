@@ -1325,7 +1325,7 @@ pub fn track_subject(arguments: Value) -> Result<Outcome, ApiError> {
     }
     result["aspect"] = json!(aspect);
     result["hint"] = json!(
-        "Keyframes are the crop path's turns, `at` seconds from the clip's start: keyframe_set each one on the clip's offsetX/offsetY (and the first at the clip's start) so the vertical crop follows the subject instead of centre-cropping it. `path` is the smoothed position every sample, `held` marking the holds; a `moved: false` subject needs no keys - the single reframeHint is enough."
+        "Keyframes are the crop path's turns, `at` seconds from the tracked span's start. `keyframe_set` takes a 0..=1 place in the clip, not seconds: pass each `at` divided by the clip's duration (the span runs the whole clip unless `from`/`to`/`times` said otherwise). Set each one on the clip's offsetX/offsetY (and the first at the clip's start) so the vertical crop follows the subject instead of centre-cropping it. `path` is the smoothed position every sample, `held` marking the holds; a `moved: false` subject needs no keys - the single reframeHint is enough."
     );
     Ok(Outcome::json(result))
 }

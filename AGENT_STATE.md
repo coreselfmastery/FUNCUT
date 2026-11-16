@@ -74,3 +74,49 @@ and an honest feature ledger. No fake green, no doc-only features.
 6. Run the documented 1080p30 benchmark and proxy scrub/playback measurements on the actual antiX laptop; compare H.264 and MJPEG generation time, responsiveness and disk use. Do not infer results from hosted CI.
 7. Run a real AI Director brief-to-final-export acceptance project and attach artifacts/logs.
 8. Keep `KNOWN_ISSUES.md` and this state file synchronized with implementation and evidence; close blockers only after code, regression tests and required validation are present on `main`.
+
+## Session 7 log (2026-11-16) - the deep review
+
+Principal instruction: fix everything, in depth, no mistakes, use
+parallel agents. Base: the PR #147 head `81439cc3` (the panic-site and
+deps content), carried to main through **PR #149** after #147's merge
+API call landed it into its stacked base branch instead of main - #147
+is merged (into `deps/rustsec-clearance-2026-11-15`), and #149 carries
+that merge the rest of the way to main. Branch
+`fix/deep-review-2026-11-16` (37 fixes, 12 new regression tests, the
+director self-test re-pinned; evidence in TEST_EVIDENCE.md, units in
+IMPLEMENTATION_LEDGER.md) is this session's delivery.
+
+1. Seven parallel read-only reviews (host, motion+geneva,
+   media/render/export, mcp+director+server+api, project-side crates,
+   the GUI crate, the director harness Python + CI/packaging); every
+   finding re-verified against the code before a fix was written, and
+   everything already fixed by the open PRs (the #146 deps, the #147
+   panic sites) excluded.
+2. All fixes implemented with regression tests where the crate's test
+   surface allows (see the units table); the director harness's own
+   60+-scenario mock suite passes green after the harness fixes, with
+   the caption/kinetic/duck assertions re-pinned to the sped-timeline
+   timebase and the real `signal` confidence key.
+3. The two P0s were evidence bugs, not editor crashes: the
+   forged-signalLog gate was dead (wrong reply key, plus a gate that
+   needed a non-empty reading to refuse), and the watcher re-directed
+   its own imports.
+4. PR #141 (the RustSec audit workflow) still wants its seven
+   per-ID ignores now that #146/#149 cleared thirteen advisories; PR
+   #148 (docs) wants a rebase onto current main.
+5. Local gates (this box): fmt, clippy -D warnings, and every non-GUI
+   crate's tests green - including the GPU export/render lanes through
+   a no-root lavapipe ICD (see TEST_EVIDENCE.md). The GUI crate is
+   CI's, unchanged (OOM at 4 GB); its four fixes ride the CI engine
+   lane on this branch.
+
+## Next actions
+
+1. Merge PR #149 (the deps/panic content to main) once its checks
+   finish; then rebase #148 and give #141 its ignores (the seven
+   sherpa-subtree IDs: zip 0367/0368/0369/0429, zstd 0391, zstd-safe
+   0398/0403) per its own PR body's plan.
+2. Merge this session's branch after its CI; the hardware/real-project
+   acceptance items (KNOWN_ISSUES.md items 8-10) remain open and are
+   unchanged by this session.

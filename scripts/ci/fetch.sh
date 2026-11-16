@@ -108,7 +108,12 @@ while :; do
   sleep "$(backoff_for "$attempt")"
 
   rc=0
-  code=$(curl -sS -L --connect-timeout 30 -o "$out" -w '%{http_code}' "$url" 2>"$err") || rc=$?
+  # A server that accepts the connection and then stalls the body never
+  # trips --connect-timeout; --speed-limit/-time aborts it (curl exit 28,
+  # the timeout the backoff below was written for) once less than a
+  # kilobyte a second has arrived for a straight minute.
+  code=$(curl -sS -L --connect-timeout 30 --speed-limit 1024 --speed-time 60 \
+    -o "$out" -w '%{http_code}' "$url" 2>"$err") || rc=$?
 
   if [ "$rc" -eq 0 ] && is_2xx "$code"; then
     got=$(digest "$out")

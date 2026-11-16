@@ -651,19 +651,32 @@ impl Package {
     /// Every declared parameter: the value in `set`, or the default, and a
     /// compound knob's dotted keys as `set` has them - a wheel's puck and
     /// master, a curve's points. Keys the manifest does not own are
-    /// dropped.
+    /// dropped. Every value is held to its parameter's own range, the way
+    /// `replacing` holds a carried-over knob: a key or a hand-edited
+    /// document that lands outside it is a value the FFmpeg graph or the
+    /// shader would only fail on later, and a non-finite one is the
+    /// default rather than a NaN in a uniform.
     pub fn resolve(&self, set: &BTreeMap<String, f64>) -> BTreeMap<String, f64> {
+        let held = |param: &crate::manifest::Param, asked: f64| -> f64 {
+            if !asked.is_finite() {
+                return param.default;
+            }
+            asked.clamp(param.min.min(param.max), param.min.max(param.max))
+        };
         let mut values = BTreeMap::new();
         for param in &self.manifest.params {
-            let value = set.get(&param.key).copied().unwrap_or(param.default);
-            values.insert(param.key.clone(), value);
+            let asked = set.get(&param.key).copied().unwrap_or(param.default);
+            values.insert(param.key.clone(), held(param, asked));
             if param.kind.is_compound() {
                 let prefix = format!("{}.", param.key);
                 values.extend(
                     set.range(prefix.clone()..)
                         .take_while(|(key, _)| key.starts_with(&prefix))
-                        .filter(|(key, _)| self.manifest.owner(key).is_some())
-                        .map(|(key, value)| (key.clone(), *value)),
+                        .filter_map(|(key, value)| {
+                            self.manifest
+                                .owner(key)
+                                .map(|owner| (key.clone(), held(owner, *value)))
+                        }),
                 );
             }
         }
@@ -1453,6 +1466,57 @@ mod tests {
             names_a_file("scale=profile=1"),
             None,
             "an option that merely ends in the word"
+        );
+    }
+
+    /// A resolved value is held to its parameter's own range, the way
+    /// `replacing` holds a carried-over knob: a keyed or hand-edited value
+    /// outside it used to ride verbatim into the FFmpeg filtergraph or a
+    /// shader uniform, and a non-finite one with it.
+    #[test]
+    fn resolved_values_are_held_to_their_parameter_ranges() {
+        let catalogue = Catalogue::builtin();
+        let package = catalogue
+            .packages
+            .iter()
+            .find(|package| {
+                package
+                    .manifest
+                    .params
+                    .iter()
+                    .any(|param| param.max > param.min)
+            })
+            .expect("a builtin package with a ranged parameter");
+        let param = package
+            .manifest
+            .params
+            .iter()
+            .find(|param| param.max > param.min)
+            .expect("a ranged parameter");
+        let set = |value: f64| {
+            let mut set = BTreeMap::new();
+            set.insert(param.key.clone(), value);
+            package.resolve(&set)
+        };
+        assert_eq!(
+            set(param.max + 1_000.0)[&param.key],
+            param.max,
+            "held at the top of its range"
+        );
+        assert_eq!(
+            set(param.min - 1_000.0)[&param.key],
+            param.min,
+            "held at the bottom of its range"
+        );
+        assert_eq!(
+            set(f64::NAN)[&param.key],
+            param.default,
+            "a non-finite value is the default, never a NaN in a uniform"
+        );
+        assert_eq!(
+            set(param.default)[&param.key],
+            param.default.clamp(param.min, param.max),
+            "the default itself is inside the range"
         );
     }
 }

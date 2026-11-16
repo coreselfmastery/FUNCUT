@@ -147,6 +147,13 @@ pub(crate) struct BuiltTimeline {
     pub(crate) timeline: Timeline,
     /// Clips that are stills: one-frame streams, decoded looping.
     pub(crate) stills: std::collections::HashSet<ClipId>,
+    /// Clips whose pixels carry transparency a background must show
+    /// through (a motion comp's RGBA PNG sequence): the flattener's
+    /// `preserve_alpha` mark, which `with_backdrops`'s `opaque` word reads
+    /// beside the stills and the cutouts - a full-frame comp that is not
+    /// opaque would otherwise composite its clear pixels over black and
+    /// hide the timeline's own background.
+    pub(crate) alpha_clips: std::collections::HashSet<ClipId>,
     /// Contain-fitted decode size per clip, where the source's size is known.
     pub(crate) decode_sizes: HashMap<ClipId, (u32, u32)>,
     /// Each picture's track, so a treatment knows what lies beneath it.
@@ -266,6 +273,7 @@ pub(crate) fn build_timeline(
 ) -> BuiltTimeline {
     let mut timeline = Timeline::new(request.width, request.height, rate);
     let mut stills = std::collections::HashSet::new();
+    let mut alpha_clips = std::collections::HashSet::new();
     let mut decode_sizes: HashMap<ClipId, (u32, u32)> = HashMap::new();
     let mut tracks_of: HashMap<ClipId, usize> = HashMap::new();
     let mut treatments: Vec<Treatment> = Vec::new();
@@ -344,6 +352,9 @@ pub(crate) fn build_timeline(
             if clip.kind == ClipKind::Image {
                 stills.insert(id);
             }
+            if clip.preserve_alpha {
+                alpha_clips.insert(id);
+            }
             let planned = planned_geometry(clip);
             let steadied = StabilizeJob::of(clip);
             if let Some(size) = fitted_size(request, clip, planned.is_some()) {
@@ -400,6 +411,7 @@ pub(crate) fn build_timeline(
     BuiltTimeline {
         timeline,
         stills,
+        alpha_clips,
         decode_sizes,
         tracks: tracks_of,
         treatments,

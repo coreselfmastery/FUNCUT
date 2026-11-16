@@ -152,20 +152,21 @@ jobs:
       # See build-app.yml: the version the ort crate is built against.
       # scripts/ci/deps.lock pins the file.
       ORT_VERSION: 1.28.0
-      # The workspace's whole test build lives on the runner's big volume.
-      # The root disk holds the toolchain, the prebuilt libraries and the
-      # restored target cache beside the build's own output, and the
-      # workspace's test binaries - every crate's tests, examples and
-      # benches, one of them the window crate with Slint and wgpu linked
-      # whole - grew past what the root disk had left: the runner's own
-      # agent stopped answering twice at the same step, which GitHub
-      # reports as the runner losing communication with the server.
-      # /mnt carries the space (tens of gigabytes free where the root
-      # disk's remainder is single digits), cargo makes the directory,
-      # and rust-cache caches whatever CARGO_TARGET_DIR names as surely
-      # as it cached ./target. The JUnit reports and the failure logs the
-      # job keeps follow it, said with the variable rather than a path.
-      CARGO_TARGET_DIR: /mnt/funcut-target
+      # The test binaries on CI carry no debug information at all. The
+      # line tables the profiles keep locally (see [profile.dev] in
+      # Cargo.toml) are a cost the whole workspace's test binaries pay at
+      # once on the runner - every crate's tests, one of them the window
+      # crate with Slint and wgpu linked whole - and twice the runner
+      # stopped answering at this job's test build with the disk and the
+      # linker both at the edge, which GitHub reports as the runner losing
+      # communication with the server. The app release builds, which carry
+      # no debug information, link whole on the same runner size; the
+      # trade here is a failing test's panic on CI naming its file and
+      # line. Locally nothing changes: the profiles still carry line
+      # tables, and `CARGO_PROFILE_DEV_DEBUG=2 cargo test` remains the
+      # door to full debug information for a session that wants it.
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_PROFILE_DOCTEST_DEBUG: "0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -282,15 +283,12 @@ jobs:
 
       # The tests are compiled in a step of their own, so a slow compile
       # and a slow test are told apart by which step ran out of time. One
-      # job at a time, to stay inside the runner's memory; the line tables
-      # the dev profile carries instead of full debug information (see
-      # [profile.dev] in Cargo.toml) do the rest, and the run below finds
+      # job at a time, to stay inside the runner's memory; the absence of
+      # debug information above does the rest, and the run below finds
       # everything already built.
       # A cold cache, one build job at a time, has run past 25 minutes; the
-      # first run after the target directory moved is one of those (the
-      # cache is saved under the new directory, so the move's own first
-      # run builds the dependencies from nothing), and the motion and
-      # adapter shelves grew the tree since the 25 was measured.
+      # motion and adapter shelves grew the tree since that was measured,
+      # so the budget takes them.
       - name: Build the tests
         timeout-minutes: 60
         working-directory: src
@@ -307,7 +305,7 @@ jobs:
           set -o pipefail
           status=0
           cargo nextest run --workspace --build-jobs 1 --profile ci 2>&1 | tee nextest-workspace.log || status=$?
-          mv "$CARGO_TARGET_DIR/nextest/ci/junit.xml" "$CARGO_TARGET_DIR/nextest/ci/junit-workspace.xml" 2>/dev/null || true
+          mv target/nextest/ci/junit.xml target/nextest/ci/junit-workspace.xml 2>/dev/null || true
           exit "$status"
       # nextest does not run the examples in the documentation; cargo does.
       - name: Run the documentation's examples
@@ -339,7 +337,7 @@ jobs:
           set -o pipefail
           status=0
           cargo nextest run -p concat-server --features grpc --profile ci 2>&1 | tee nextest-grpc.log || status=$?
-          mv "$CARGO_TARGET_DIR/nextest/ci/junit.xml" "$CARGO_TARGET_DIR/nextest/ci/junit-grpc.xml" 2>/dev/null || true
+          mv target/nextest/ci/junit.xml target/nextest/ci/junit-grpc.xml 2>/dev/null || true
           exit "$status"
 
       - name: Keep the test report (failure only)
@@ -348,6 +346,6 @@ jobs:
         with:
           name: test-report-linux
           path: |
-            /mnt/funcut-target/nextest/ci/*.xml
+            src/target/nextest/ci/*.xml
             src/nextest-*.log
           if-no-files-found: ignore

@@ -119,7 +119,8 @@ fn project_of(fields: &Map<String, Value>, backend: &dyn Backend) -> Result<Path
 }
 
 /// The comp an argument set names: a preset id, or a file under the
-/// project's `comps/`, optionally edited by one batch of operations first.
+/// project's `comps/` - rendered through the template preprocessor when
+/// `vars` is given, then optionally edited by one batch of operations.
 fn resolve_comp(fields: &Map<String, Value>) -> Result<(Comp, Option<PathBuf>), ApiError> {
     let preset = fields.get("preset").and_then(Value::as_str);
     let comp = fields.get("comp").and_then(Value::as_str);
@@ -152,6 +153,12 @@ fn resolve_comp(fields: &Map<String, Value>) -> Result<(Comp, Option<PathBuf>), 
                 ));
             }
             let text = std::fs::read_to_string(&file)
+                .map_err(|error| ApiError::failed(format!("{}: {error}", file.display())))?;
+            // The template preprocessor runs before the parse: `vars` is
+            // the object the document's placeholders read, and a comp file
+            // without placeholders passes through untouched.
+            let vars = fields.get("vars").filter(|value| !value.is_null());
+            let text = concat_motion::template::render(&text, vars)
                 .map_err(|error| ApiError::failed(format!("{}: {error}", file.display())))?;
             let comp: Comp = serde_json::from_str(&text)
                 .map_err(|error| ApiError::failed(format!("{}: {error}", file.display())))?;
@@ -240,7 +247,7 @@ pub fn inspect(arguments: Value) -> Result<Outcome, ApiError> {
         .as_object()
         .cloned()
         .ok_or_else(|| ApiError::invalid("invalid arguments: the arguments are an object"))?;
-    let known = ["preset", "comp", "project", "ops"];
+    let known = ["preset", "comp", "project", "ops", "vars"];
     for key in fields.keys() {
         if !known.contains(&key.as_str()) {
             return Err(ApiError::invalid(format!(
@@ -275,7 +282,7 @@ pub fn scene_analysis(arguments: Value) -> Result<Outcome, ApiError> {
         .as_object()
         .cloned()
         .ok_or_else(|| ApiError::invalid("invalid arguments: the arguments are an object"))?;
-    let known = ["preset", "comp", "project", "ops"];
+    let known = ["preset", "comp", "project", "ops", "vars"];
     for key in fields.keys() {
         if !known.contains(&key.as_str()) {
             return Err(ApiError::invalid(format!(
@@ -668,7 +675,7 @@ pub fn frame(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiErro
         // aspect, and a height the engine cannot honour is a promise the
         // tool must not make - `motion_bake` takes one because it renders
         // a whole clip at the project's frame; this draws one frame.
-        if !["preset", "comp", "project", "ops", "at", "width"].contains(&key.as_str()) {
+        if !["preset", "comp", "project", "ops", "vars", "at", "width"].contains(&key.as_str()) {
             return Err(ApiError::invalid(format!(
                 "invalid arguments: unknown field `{key}`"
             )));
@@ -865,7 +872,7 @@ pub fn import(arguments: Value) -> Result<Outcome, ApiError> {
         .cloned()
         .ok_or_else(|| ApiError::invalid("invalid arguments: the arguments are an object"))?;
     let known = [
-        "action", "project", "file", "name", "preset", "comp", "timeline",
+        "action", "project", "file", "name", "preset", "comp", "timeline", "vars",
     ];
     for key in fields.keys() {
         if !known.contains(&key.as_str()) {
@@ -877,7 +884,11 @@ pub fn import(arguments: Value) -> Result<Outcome, ApiError> {
     let action = fields
         .get("action")
         .and_then(Value::as_str)
-        .ok_or_else(|| ApiError::invalid("invalid arguments: `action` is `lottie` or `gsap`"))?;
+        .ok_or_else(|| {
+            ApiError::invalid(
+                "invalid arguments: `action` is `lottie`, `gsap`, `svg`, `rive` or `srt`",
+            )
+        })?;
     let project = fields
         .get("project")
         .and_then(Value::as_str)
@@ -955,7 +966,7 @@ pub fn import(arguments: Value) -> Result<Outcome, ApiError> {
             // comp tool makes, `ops` included. resolve_comp refuses any
             // field but its own four, so it is handed exactly those.
             let mut naming = Map::new();
-            for key in ["preset", "comp", "project", "ops"] {
+            for key in ["preset", "comp", "project", "ops", "vars"] {
                 if let Some(value) = fields.get(key) {
                     naming.insert(key.to_owned(), value.clone());
                 }
@@ -990,9 +1001,89 @@ pub fn import(arguments: Value) -> Result<Outcome, ApiError> {
                 .to_owned();
             (comp, applied, name, from)
         }
+        "svg" => {
+            let file = fields.get("file").and_then(Value::as_str).ok_or_else(|| {
+                ApiError::invalid("invalid arguments: `file` is the SVG document to read (a .svg)")
+            })?;
+            let text = std::fs::read_to_string(file).map_err(|error| {
+                ApiError::new(
+                    ErrorCode::NotFound,
+                    format!("could not read {file}: {error}"),
+                )
+            })?;
+            let imported = geneva_adapter::svg::import(&text).map_err(|error| {
+                ApiError::invalid(format!("the SVG document does not convert: {error}"))
+            })?;
+            let name = clean_name(fields.get("name").and_then(Value::as_str).unwrap_or_else(
+                || {
+                    Path::new(file)
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .unwrap_or("imported")
+                },
+            ))?;
+            (imported.comp, imported.notes, name, file.to_owned())
+        }
+        "rive" => {
+            let file = fields.get("file").and_then(Value::as_str).ok_or_else(|| {
+                ApiError::invalid("invalid arguments: `file` is the Rive document to read (a .riv)")
+            })?;
+            let bytes = std::fs::read(file).map_err(|error| {
+                ApiError::new(
+                    ErrorCode::NotFound,
+                    format!("could not read {file}: {error}"),
+                )
+            })?;
+            let stem = Path::new(file)
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("document");
+            let imported = geneva_adapter::rive::import(&bytes, stem).map_err(|error| {
+                ApiError::invalid(format!("the Rive document does not convert: {error}"))
+            })?;
+            let name = clean_name(fields.get("name").and_then(Value::as_str).unwrap_or_else(
+                || {
+                    Path::new(file)
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .unwrap_or("imported")
+                },
+            ))?;
+            (imported.comp, imported.notes, name, file.to_owned())
+        }
+        "srt" => {
+            let file = fields.get("file").and_then(Value::as_str).ok_or_else(|| {
+                ApiError::invalid(
+                    "invalid arguments: `file` is the captions document to read \
+                         (an .srt, or the JSON whisper writes)",
+                )
+            })?;
+            let text = std::fs::read_to_string(file).map_err(|error| {
+                ApiError::new(
+                    ErrorCode::NotFound,
+                    format!("could not read {file}: {error}"),
+                )
+            })?;
+            let stem = Path::new(file)
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .unwrap_or("transcript");
+            let imported = geneva_adapter::srt::import(&text, stem).map_err(|error| {
+                ApiError::invalid(format!("the captions document does not convert: {error}"))
+            })?;
+            let name = clean_name(fields.get("name").and_then(Value::as_str).unwrap_or_else(
+                || {
+                    Path::new(file)
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .unwrap_or("imported")
+                },
+            ))?;
+            (imported.comp, imported.notes, name, file.to_owned())
+        }
         _ => {
             return Err(ApiError::invalid(
-                "invalid arguments: `action` is `lottie` or `gsap`",
+                "invalid arguments: `action` is `lottie`, `gsap`, `svg`, `rive` or `srt`",
             ));
         }
     };
@@ -1057,6 +1148,7 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
     for key in fields.keys() {
         if ![
             "project", "preset", "comp", "ops", "width", "height", "fps", "crf", "encode", "name",
+            "vars",
         ]
         .contains(&key.as_str())
         {

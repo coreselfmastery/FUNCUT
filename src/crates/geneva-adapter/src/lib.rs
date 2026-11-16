@@ -47,6 +47,9 @@
 
 pub mod gsap;
 pub mod lottie;
+pub mod rive;
+pub mod srt;
+pub mod svg;
 
 use concat_motion::comp::Comp;
 

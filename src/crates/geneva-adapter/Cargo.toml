@@ -21,6 +21,9 @@ thiserror.workspace = true
 # elements are said rather than shaped (the comp's text is a text node with
 # its own style).
 usvg = { version = "0.45", default-features = false }
+# The path algebra usvg hands back - the same version it builds against,
+# re-declared so the importer can name the segment type it matches on.
+tiny-skia-path = "0.11"
 
 [lints]
 workspace = true

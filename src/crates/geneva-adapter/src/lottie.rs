@@ -58,8 +58,8 @@
 use std::collections::BTreeMap;
 
 use concat_motion::comp::{
-    Asset, AssetKind, Comp, Fit, GradientKind, Length, Node, NodeKind, Paint, PathCommand, Point,
-    Rgba, Stroke, TextAlign, TextNode, Transform,
+    Asset, AssetKind, Comp, Fit, GradientKind, Length, Matte, MatteMode, Node, NodeKind, Paint,
+    PathCommand, Point, Rgba, Stroke, TextAlign, TextNode, Transform,
 };
 use concat_motion::curve::{Curve, StepPosition};
 use concat_motion::track::{Key, Track, Value};
@@ -224,8 +224,54 @@ impl<'a> Walk<'a> {
             ids.insert(ind, self.unique_id(&format!("{prefix}{}", slug(&name))));
         }
         let mut walked = Nested::default();
-        for layer in layers.iter().rev() {
+        for (position, layer) in layers.iter().enumerate().rev() {
             let mut made = self.layer(layer, &ids, duration, import);
+            // A track matte, paired: the layer with `tt` is stencilled by
+            // the layer below it - the next entry in the array as written,
+            // which carries `td: 1`. Both convert as the shapes they are;
+            // the content names the source in a matte, and the engine
+            // draws the source as nothing of its own while it is one.
+            if let Some(tt) = layer.get("tt").and_then(Json::as_i64) {
+                let name = layer_name(layer, layer.get("ind").and_then(Json::as_i64).unwrap_or(0));
+                let source = layers
+                    .get(position + 1)
+                    .filter(|below| below.get("td").and_then(Json::as_i64) == Some(1))
+                    .and_then(|below| below.get("ind").and_then(Json::as_i64))
+                    .and_then(|ind| ids.get(&ind).cloned());
+                match source {
+                    Some(source) => {
+                        let mode = match tt {
+                            2 => MatteMode::AlphaInverted,
+                            3 => MatteMode::Luma,
+                            4 => MatteMode::LumaInverted,
+                            _ => MatteMode::Alpha,
+                        };
+                        if !(1..=4).contains(&tt) {
+                            import.note(format!(
+                                "approximated: layer {name:?} names matte type {tt}, which the comp does not read; the alpha read is used"
+                            ));
+                        }
+                        if let Some(first) = made.first_mut() {
+                            first.matte = Some(Matte {
+                                source: source.clone(),
+                                mode,
+                            });
+                        }
+                        import.note(format!(
+                            "paired: layer {name:?} is stencilled by {source:?}, {}",
+                            match mode {
+                                MatteMode::Alpha => "alpha",
+                                MatteMode::AlphaInverted => "inverted alpha",
+                                MatteMode::Luma => "luma",
+                                MatteMode::LumaInverted => "inverted luma",
+                            }
+                        ));
+                    }
+                    None => import.note(format!(
+                        "skipped: layer {name:?} carries `tt` but the layer under it is not a matte source; it imports unpaired"
+                    )),
+                }
+            }
             if let Some(first) = made.first_mut() {
                 if first.parent.is_none() {
                     first.parent = owner.map(ToString::to_string);
@@ -408,14 +454,6 @@ impl<'a> Walk<'a> {
             .filter(|lh| *lh > 0.0)
             .map(|lh| lh / size.max(1.0))
             .unwrap_or(1.2);
-        if let Some(animators) = text.get("a").and_then(Json::as_array)
-            && !animators.is_empty()
-        {
-            import.note(format!(
-                "skipped: text layer {name:?} carries {} animator(s) with range selectors; the words import untimed",
-                animators.len()
-            ));
-        }
         let mut node = shell(
             id,
             start,
@@ -440,6 +478,80 @@ impl<'a> Walk<'a> {
             .and_then(Json::as_f64)
             .map(|o| o / 100.0)
             .unwrap_or(1.0);
+        // The text animators: the first one whose opacity, scale, rotation
+        // or position is keyframed drives the node's own tracks, exactly
+        // as a transform's properties do. The range its selector carries is
+        // said, not modelled - the comp has no word-wise travel - and the
+        // animators after the first are said with it.
+        if let Some(animators) = text.get("a").and_then(Json::as_array)
+            && !animators.is_empty()
+        {
+            let keyed = |animator: &Json, key: &str| match prop(animator, key) {
+                Some(Prop::Keyed(keys)) if keys.len() > 1 => Some(keys),
+                _ => None,
+            };
+            let mut applied = 0;
+            let mut said = 0;
+            for animator in animators {
+                let (opacity, scale, rotation, place) = (
+                    keyed(animator, "o"),
+                    keyed(animator, "s"),
+                    keyed(animator, "r"),
+                    keyed(animator, "p"),
+                );
+                if opacity.is_none() && scale.is_none() && rotation.is_none() && place.is_none() {
+                    said += 1;
+                    continue;
+                }
+                if applied > 0 {
+                    said += 1;
+                    continue;
+                }
+                if let Some(keys) = opacity {
+                    self.track_of(&keys, &mut node, "opacity", import, |v| {
+                        v.first().map(|o| Value::number(o / 100.0))
+                    });
+                }
+                if let Some(keys) = scale {
+                    self.track_of(&keys, &mut node, "scale", import, |v| {
+                        v.first()
+                            .and_then(|x| v.get(1).map(|y| (x, y)))
+                            .map(|(x, y)| Value::number((x + y) / 200.0))
+                    });
+                }
+                if let Some(keys) = rotation {
+                    self.track_of(&keys, &mut node, "rotation", import, |v| {
+                        v.first().map(|r| Value::number(*r))
+                    });
+                }
+                if let Some(keys) = place {
+                    self.track_of(&keys, &mut node, "position", import, |v| {
+                        match (v.first(), v.get(1)) {
+                            (Some(x), Some(y)) => Some(Value::Point { x: *x, y: *y }),
+                            _ => None,
+                        }
+                    });
+                }
+                applied += 1;
+                let read = |key: &str| {
+                    animator
+                        .get("s")
+                        .and_then(|selector| selector.get(key))
+                        .and_then(Json::as_f64)
+                        .unwrap_or(0.0)
+                };
+                import.note(format!(
+                    "approximated: text animator range selectors: the first animator's opacity/scale/rotation/position keyframes drive the node's own tracks; the range {:.0}%-{:.0}% is not modelled word-wise",
+                    read("s"),
+                    read("e")
+                ));
+            }
+            if said > 0 {
+                import.note(format!(
+                    "skipped: {said} more text animator(s) with nothing the comp reads"
+                ));
+            }
+        }
         Some(node)
     }
 
@@ -1545,9 +1657,9 @@ impl<'a> Walk<'a> {
                 "approximated: layer {name:?} is 3D; the comp is a 2D document and the z axis is dropped"
             ));
         }
-        if layer.get("tt").is_some() || layer.get("td").is_some() {
+        if layer.get("td").and_then(Json::as_i64) == Some(1) {
             import.note(format!(
-                "skipped: layer {name:?} is a matte participant; this importer does not pair mattes yet"
+                "kept: layer {name:?} is a matte source; it draws nothing of its own while it is one"
             ));
         }
         if layer
@@ -1708,47 +1820,99 @@ fn rgba_of(vec: &[Json]) -> Option<Rgba> {
 /// A gradient's stops and its ramp's own shape, as a comp paint. The
 /// stops are the flat `g.k.k` array - a position then three (or four)
 /// channels each - and the ramp is the line from `s` to `e`, or a disc
-/// when the type says so. An animated ramp is held at its first frame
-/// and said.
+/// when the type says so. An animated ramp is folded into one gradient,
+/// each keyframe's ramp becoming stops along the tile, and said.
 fn gradient_paint(item: &Json, import: &mut Import) -> Paint {
-    if item
+    let animated = item
         .get("g")
         .and_then(|g| g.get("k"))
         .and_then(|k| k.get("a"))
         .and_then(Json::as_i64)
-        == Some(1)
-    {
-        import.note("approximated: an animated gradient ramp is held at its first frame");
-    }
-    let stops = item
-        .get("g")
-        .and_then(|g| g.get("k"))
-        .and_then(|k| k.get("k"))
-        .and_then(Json::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let count = item
-        .get("g")
-        .and_then(|g| g.get("p"))
-        .and_then(Json::as_f64)
-        .unwrap_or(2.0)
-        .round()
-        .max(2.0) as usize;
-    let chunk = if stops.len() >= count * 5 { 5 } else { 4 };
-    let mut ramp: Vec<(f64, Rgba)> = Vec::new();
-    for step in 0..count {
-        let at = step * chunk;
-        let Some(position) = stops.get(at).and_then(Json::as_f64) else {
-            break;
-        };
-        // The colour channels after the position: three flat, or four
-        // with an alpha of their own.
-        let channels = (at + 1 + chunk - 1).min(stops.len());
-        let Some(color) = rgba_of(&stops[at + 1..channels]) else {
-            break;
-        };
-        ramp.push((position.clamp(0.0, 1.0), color));
-    }
+        == Some(1);
+    let mut ramp: Vec<(f64, Rgba)> = if animated {
+        // An animated ramp: each keyframe carries its own stops at its own
+        // time. The comp's paint is one static gradient, so the animation
+        // is folded into it spatially - the ramp each keyframe carries
+        // becomes stops along the tile, in keyframe order - which reads as
+        // the sweep the animation was, and says so.
+        import.note(
+            "approximated: an animated ramp is folded into one gradient - each keyframe's ramp becomes stops along the tile, in keyframe order",
+        );
+        let keyframes = item
+            .get("g")
+            .and_then(|g| g.get("k"))
+            .and_then(|k| k.get("k"))
+            .and_then(Json::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let last = keyframes
+            .iter()
+            .filter_map(|key| key.get("t").and_then(Json::as_f64))
+            .fold(0.0_f64, f64::max)
+            .max(1.0);
+        let count = item
+            .get("g")
+            .and_then(|g| g.get("p"))
+            .and_then(Json::as_f64)
+            .unwrap_or(2.0)
+            .round()
+            .max(2.0) as usize;
+        let mut folded: Vec<(f64, Rgba)> = Vec::new();
+        for key in &keyframes {
+            let time = key.get("t").and_then(Json::as_f64).unwrap_or(0.0);
+            let stops = key
+                .get("s")
+                .and_then(Json::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let chunk = if stops.len() >= count * 5 { 5 } else { 4 };
+            let middle = (count / 2) * chunk;
+            let channels = (middle + 1 + chunk - 1).min(stops.len());
+            let Some(color) = stops.get(middle + 1..channels).and_then(rgba_of) else {
+                continue;
+            };
+            let at = (time / last).clamp(0.0, 1.0);
+            if folded
+                .iter()
+                .any(|(seen, _): &(f64, Rgba)| (seen - at).abs() < 1e-9)
+            {
+                continue;
+            }
+            folded.push((at, color));
+        }
+        folded
+    } else {
+        let stops = item
+            .get("g")
+            .and_then(|g| g.get("k"))
+            .and_then(|k| k.get("k"))
+            .and_then(Json::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let count = item
+            .get("g")
+            .and_then(|g| g.get("p"))
+            .and_then(Json::as_f64)
+            .unwrap_or(2.0)
+            .round()
+            .max(2.0) as usize;
+        let chunk = if stops.len() >= count * 5 { 5 } else { 4 };
+        let mut flat: Vec<(f64, Rgba)> = Vec::new();
+        for step in 0..count {
+            let at = step * chunk;
+            let Some(position) = stops.get(at).and_then(Json::as_f64) else {
+                break;
+            };
+            // The colour channels after the position: three flat, or four
+            // with an alpha of their own.
+            let channels = (at + 1 + chunk - 1).min(stops.len());
+            let Some(color) = rgba_of(&stops[at + 1..channels]) else {
+                break;
+            };
+            flat.push((position.clamp(0.0, 1.0), color));
+        }
+        flat
+    };
     if ramp.is_empty() {
         ramp = vec![
             (0.0, Rgba::new(0.0, 0.0, 0.0, 1.0)),
@@ -2863,10 +3027,213 @@ mod tests {
             import
                 .notes
                 .iter()
-                .any(|note| note.contains("1 animator(s) with range selectors")),
+                .any(|note| note.contains("nothing the comp reads")),
             "{:?}",
             import.notes
         );
+    }
+
+    /// A track matte pairs with its source: the layer carrying `tt` names
+    /// the layer below it - `td: 1` - in a matte, and the mode follows the
+    /// number After Effects wrote. Both layers convert as the shapes they
+    /// are; the source draws nothing of its own while it is one.
+    #[test]
+    fn a_track_matte_pairs_with_its_source() {
+        let ks = json!({
+            "o": {"a": 0, "k": 100},
+            "r": {"a": 0, "k": 0},
+            "p": {"a": 0, "k": [256, 256, 0]},
+            "a": {"a": 0, "k": [100, 50, 0]},
+            "s": {"a": 0, "k": [100, 100, 100]},
+        });
+        let content = |tt: i64| {
+            json!({
+                "ind": 1, "ty": 1, "nm": "word", "ip": 0, "op": 90, "st": 0,
+                "tt": tt,
+                "sw": 200, "sh": 100, "sc": "#ffffff",
+                "ks": ks,
+            })
+        };
+        let source = json!({
+            "ind": 2, "ty": 1, "nm": "stencil", "ip": 0, "op": 90, "st": 0,
+            "td": 1,
+            "sw": 200, "sh": 100, "sc": "#000000",
+            "ks": {
+                "o": {"a": 0, "k": 100},
+                "r": {"a": 0, "k": 0},
+                "p": {"a": 0, "k": [256, 256, 0]},
+                "a": {"a": 0, "k": [100, 50, 0]},
+                "s": {"a": 0, "k": [100, 100, 100]},
+            },
+        });
+        let first_import = import(&lottie(vec![content(1), source.clone()])).expect("converts");
+        let word = first_import.comp.node("word").expect("the content node");
+        assert_eq!(
+            word.matte,
+            Some(Matte {
+                source: "stencil".into(),
+                mode: MatteMode::Alpha
+            })
+        );
+        assert!(
+            first_import.comp.node("stencil").is_some(),
+            "the source converted"
+        );
+        assert!(
+            first_import
+                .notes
+                .iter()
+                .any(|note| note.contains("paired: layer")),
+            "{:?}",
+            first_import.notes
+        );
+        // Luma reads pair as luma.
+        let luma = import(&lottie(vec![content(3), source])).expect("converts");
+        let word = luma.comp.node("word").expect("the content node");
+        assert_eq!(
+            word.matte,
+            Some(Matte {
+                source: "stencil".into(),
+                mode: MatteMode::Luma
+            })
+        );
+        // A `tt` with no source under it imports unpaired, and says so.
+        let lone = import(&lottie(vec![content(1)])).expect("converts");
+        let word = lone.comp.node("word").expect("the content node");
+        assert_eq!(word.matte, None);
+        assert!(
+            lone.notes
+                .iter()
+                .any(|note| note.contains("imports unpaired")),
+            "{:?}",
+            lone.notes
+        );
+    }
+
+    /// A text animator with range selectors drives the node's own tracks:
+    /// the opacity keyframes become an opacity track, and the range the
+    /// selector carries is said, not modelled.
+    #[test]
+    fn a_text_animator_drives_the_nodes_own_tracks() {
+        let layer = json!({
+            "ind": 1, "ty": 5, "nm": "title", "ip": 0, "op": 90, "st": 0,
+            "ks": {
+                "o": {"a": 0, "k": 100},
+                "r": {"a": 0, "k": 0},
+                "p": {"a": 0, "k": [256, 256, 0]},
+                "a": {"a": 0, "k": [0, 0, 0]},
+                "s": {"a": 0, "k": [100, 100, 100]},
+            },
+            "t": {
+                "d": {"k": [
+                    {"s": {"s": 72, "f": "Archivo", "fStyle": "Bold", "t": "HELLO",
+                           "j": 2, "tr": 0, "lh": 86.4, "ls": 0, "fc": [0.1, 0.2, 0.9]},
+                     "t": 0},
+                ]},
+                "p": {}, "m": "g",
+                "a": [
+                    {"nm": "reveal", "s": {"t": 1, "s": 0, "e": 100},
+                     "o": {"a": 1, "k": [
+                         {"t": 0, "s": [0]},
+                         {"t": 60, "s": [100]},
+                     ]}},
+                    {"nm": "empty"},
+                ],
+            },
+        });
+        let import = import(&lottie(vec![layer])).expect("converts");
+        let node = import
+            .comp
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, NodeKind::Text(_)))
+            .expect("the text layer converts");
+        let track = node
+            .tracks
+            .get("opacity")
+            .expect("the animator's keyframes drove a track");
+        assert_eq!(track.keys.len(), 2, "{:?}", track.keys);
+        let Value::Number { value: first } = &track.keys[0].value else {
+            panic!("a number");
+        };
+        let Value::Number { value: last } = &track.keys[1].value else {
+            panic!("a number");
+        };
+        assert!((first - 0.0).abs() < 1e-9, "{first}");
+        assert!((last - 1.0).abs() < 1e-9, "{last}");
+        assert!(
+            import
+                .notes
+                .iter()
+                .any(|note| note.contains("range selectors")),
+            "{:?}",
+            import.notes
+        );
+        assert!(
+            import
+                .notes
+                .iter()
+                .any(|note| note.contains("1 more text animator")),
+            "{:?}",
+            import.notes
+        );
+    }
+
+    /// An animated gradient ramp folds into one gradient: each keyframe's
+    // own ramp becomes stops along the tile, in keyframe order.
+    #[test]
+    fn an_animated_ramp_folds_into_one_gradient() {
+        let layer = json!({
+            "ind": 1, "ty": 4, "nm": "sweep", "ip": 0, "op": 90, "st": 0,
+            "ks": {
+                "o": {"a": 0, "k": 100},
+                "r": {"a": 0, "k": 0},
+                "p": {"a": 0, "k": [256, 256, 0]},
+                "a": {"a": 0, "k": [0, 0, 0]},
+                "s": {"a": 0, "k": [100, 100, 100]},
+            },
+            "shapes": [
+                { "ty": "gr", "it": [
+                    { "ty": "sh", "ks": {"a": 0, "k": {"c": false, "v": [[0,0],[100,0]], "i": [[0,0],[0,0]], "o": [[0,0],[0,0]]}} },
+                    { "ty": "gf", "t": 1, "s": {"a": 0, "k": [0, 0]}, "e": {"a": 0, "k": [100, 0]},
+                      "o": {"a": 0, "k": 100},
+                      "g": {"p": 2, "k": {"a": 1, "k": [
+                          {"t": 0,  "s": [0, 0, 0, 0, 1, 1, 1, 1]},
+                          {"t": 30, "s": [0, 0, 0, 1, 1, 1, 1, 1]},
+                          {"t": 60, "s": [0, 1, 1, 0, 1, 1, 0, 1]},
+                      ]}} },
+                    { "ty": "tr", "p": {"a": 0, "k": [0, 0]}, "a": {"a": 0, "k": [0, 0]},
+                      "s": {"a": 0, "k": [100, 100]}, "r": {"a": 0, "k": 0}, "o": {"a": 0, "k": 100} },
+                ] },
+            ],
+        });
+        let import = import(&lottie(vec![layer])).expect("converts");
+        assert!(
+            import
+                .notes
+                .iter()
+                .any(|note| note.contains("folded into one gradient")),
+            "{:?}",
+            import.notes
+        );
+        let node = import
+            .comp
+            .nodes
+            .iter()
+            .find(|node| matches!(node.kind, NodeKind::Path { .. }))
+            .expect("the shape converts");
+        let NodeKind::Path { fill, .. } = &node.kind else {
+            panic!("a path");
+        };
+        let Some(Paint::Gradient { stops, .. }) = fill else {
+            panic!("a gradient fill, found {fill:?}");
+        };
+        assert!(stops.len() >= 3, "the fold kept every keyframe: {stops:?}");
+        // The first keyframe's ramp is black-to-white, so its middle - the
+        // white end - is the folded gradient's first stop; the last
+        // keyframe's ramp ends magenta, and that is the last stop.
+        assert_eq!(stops.first().unwrap().1, Rgba::new(1.0, 1.0, 1.0, 1.0));
+        assert_eq!(stops.last().unwrap().1, Rgba::new(1.0, 0.0, 1.0, 1.0));
     }
 
     /// The expressions a property carries become the comp's keyframes:

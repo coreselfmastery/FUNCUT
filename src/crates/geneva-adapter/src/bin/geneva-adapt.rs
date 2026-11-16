@@ -7,6 +7,9 @@
 //! ```text
 //! geneva-adapt lottie animation.json -o comp.json
 //! geneva-adapt gsap comp.json timeline.json -o comp.json
+//! geneva-adapt svg drawing.svg -o comp.json
+//! geneva-adapt rive player.riv -o comp.json
+//! geneva-adapt srt captions.srt -o comp.json
 //! ```
 //!
 //! The report is printed to stderr as JSON, the comp to stdout (or `-o`),
@@ -38,9 +41,30 @@ fn run() -> i32 {
                 2
             }
         },
+        Some("svg") => match text_verb(&args[1..], "svg", geneva_adapter::svg::import) {
+            Ok(()) => 0,
+            Err(said) => {
+                eprintln!("{said}");
+                2
+            }
+        },
+        Some("rive") => match rive(&args[1..]) {
+            Ok(()) => 0,
+            Err(said) => {
+                eprintln!("{said}");
+                2
+            }
+        },
+        Some("srt") => match srt(&args[1..]) {
+            Ok(()) => 0,
+            Err(said) => {
+                eprintln!("{said}");
+                2
+            }
+        },
         _ => {
             eprintln!(
-                "usage: geneva-adapt lottie <animation.json> [-o comp.json]\n       geneva-adapt gsap <comp.json> <timeline.json> [-o comp.json]"
+                "usage: geneva-adapt lottie <animation.json> [-o comp.json]\n       geneva-adapt gsap <comp.json> <timeline.json> [-o comp.json] [--vars JSON]\n       geneva-adapt svg <drawing.svg> [-o comp.json]\n       geneva-adapt rive <player.riv> [-o comp.json]\n       geneva-adapt srt <captions.srt|whisper.json> [-o comp.json]"
             );
             64
         }
@@ -66,12 +90,70 @@ fn lottie(args: &[String]) -> Result<(), String> {
     write(&import.comp, &import.notes, out)
 }
 
+/// The svg verb: read an SVG document, write the comp and print the
+/// report. The reader is shared with every other text verb.
+fn text_verb(
+    args: &[String],
+    name: &str,
+    convert: fn(&str) -> Result<geneva_adapter::Import, geneva_adapter::AdapterError>,
+) -> Result<(), String> {
+    let input = args
+        .first()
+        .ok_or_else(|| format!("usage: geneva-adapt {name} <document> [-o comp.json]"))?;
+    let out = flag(args, "-o");
+    let mut text = String::new();
+    std::fs::File::open(input)
+        .map_err(|source| format!("could not read {input:?}: {source}"))?
+        .read_to_string(&mut text)
+        .map_err(|source| format!("could not read {input:?}: {source}"))?;
+    let import =
+        convert(&text).map_err(|error| format!("the document does not convert: {error}"))?;
+    write(&import.comp, &import.notes, out)
+}
+
+/// The rive verb: read a .riv, write the comp the honest nothing imports as.
+fn rive(args: &[String]) -> Result<(), String> {
+    let input = args
+        .first()
+        .ok_or("usage: geneva-adapt rive <player.riv> [-o comp.json]")?;
+    let out = flag(args, "-o");
+    let bytes =
+        std::fs::read(input).map_err(|source| format!("could not read {input:?}: {source}"))?;
+    let stem = std::path::Path::new(input)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("document");
+    let import = geneva_adapter::rive::import(&bytes, stem)
+        .map_err(|error| format!("the document does not convert: {error}"))?;
+    write(&import.comp, &import.notes, out)
+}
+
+/// The srt verb: SRT or whisper JSON, sniffed, into timed text nodes.
+fn srt(args: &[String]) -> Result<(), String> {
+    let input = args
+        .first()
+        .ok_or("usage: geneva-adapt srt <captions.srt|whisper.json> [-o comp.json]")?;
+    let out = flag(args, "-o");
+    let mut text = String::new();
+    std::fs::File::open(input)
+        .map_err(|source| format!("could not read {input:?}: {source}"))?
+        .read_to_string(&mut text)
+        .map_err(|source| format!("could not read {input:?}: {source}"))?;
+    let stem = std::path::Path::new(input)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("transcript");
+    let import = geneva_adapter::srt::import(&text, stem)
+        .map_err(|error| format!("the document does not convert: {error}"))?;
+    write(&import.comp, &import.notes, out)
+}
+
 /// The gsap verb: read a comp and a timeline, write the comp the timeline
 /// was applied to and print the report.
 fn gsap(args: &[String]) -> Result<(), String> {
-    let comp_path = args
-        .first()
-        .ok_or("usage: geneva-adapt gsap <comp.json> <timeline.json> [-o comp.json]")?;
+    let comp_path = args.first().ok_or(
+        "usage: geneva-adapt gsap <comp.json> <timeline.json> [-o comp.json] [--vars JSON]",
+    )?;
     let timeline_path = args
         .get(1)
         .ok_or("usage: geneva-adapt gsap <comp.json> <timeline.json> [-o comp.json]")?;
@@ -81,6 +163,17 @@ fn gsap(args: &[String]) -> Result<(), String> {
         .map_err(|source| format!("could not read {comp_path:?}: {source}"))?
         .read_to_string(&mut text)
         .map_err(|source| format!("could not read {comp_path:?}: {source}"))?;
+    // A comp the timeline animates can be a template: `--vars` renders it
+    // before the parse, the same seam every other comp reader shares.
+    let vars = match flag(args, "--vars") {
+        Some(text) => Some(
+            serde_json::from_str::<serde_json::Value>(&text)
+                .map_err(|source| format!("--vars is JSON: {source}"))?,
+        ),
+        None => None,
+    };
+    let text = concat_motion::template::render(&text, vars.as_ref())
+        .map_err(|source| format!("{comp_path:?} does not render: {source}"))?;
     let comp: serde_json::Value = serde_json::from_str(&text)
         .map_err(|source| format!("{comp_path:?} is not JSON: {source}"))?;
     let comp = serde_json::from_value::<concat_motion::comp::Comp>(comp)

@@ -1914,10 +1914,7 @@ mod tests {
         assert!(commands.iter().any(|command| command["op"] == "trimClip"));
         assert!(commands.iter().any(|command| command["op"] == "frameClip"));
         assert!(commands.iter().any(|command| command["op"] == "updateClip"));
-        assert!(
-            (gather.next)(&log).is_none(),
-            "one gap is placed only once"
-        );
+        assert!((gather.next)(&log).is_none(), "one gap is placed only once");
     }
 
     /// A malformed live-stock hit without a provider licence is not

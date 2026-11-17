@@ -1,5 +1,9 @@
 # Known issues and verified limitations
 
+> Counts and the canonical feature inventory live in
+> [docs/FEATURES.md](docs/FEATURES.md); this file carries the dated
+> limitation detail, not the numbers.
+
 This file records limitations that remain on `main`. It is not a list of historical bugs that have already been fixed.
 
 ## Remaining limitations

@@ -1,5 +1,22 @@
 # FEATURES — the whole inventory, read from the source
 
+> **This is the canonical status page.** When any other document disagrees
+> with the counts or the state of a feature here, this page wins. It is
+> verified against the source tree and its tool count is held to the code
+> by a test (`tools.rs::the_documents_tool_count_is_the_catalogues_own`).
+> Other status documents — `KNOWN_ISSUES.md`, `GENEVA_MASTER_LIST.md`,
+> `docs/COMPLETION-AUDIT-2026-11-16.md`,
+> `docs/DIRECTOR-COMPLETION-TRACKER.md`,
+> `docs/DIRECTOR-INTEGRATION-PLAN.md` — carry dated detail and should link
+> here rather than restate a count.
+>
+> Each feature below may be at one of four levels, and a feature is only
+> "done" at the last:
+> **Implemented** (code exists) · **Connected** (the editor or director
+> actually calls it) · **Tested** (an integration test exercises the whole
+> operation) · **Accepted** (a real project proves it on the target
+> machine). A panel or a function existing is level one, not done.
+
 This page lists everything FUNCUT is, verified against the source tree (not
 against marketing or README claims): every tool an agent can call, every page
 the window shows, every engine, library, model and skill. Counts are exact and

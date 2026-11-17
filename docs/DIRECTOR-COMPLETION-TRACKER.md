@@ -1,15 +1,26 @@
 # DIRECTOR-COMPLETION-TRACKER
 
-> **Status, 2026-11-17:** the release owed by the 2026-11-15 session was
-> cut and published as `v0.2.8-funcut.13` (2026-11-16) — eight bundles
-> plus `manifest.json` and `SHA256SUMS`. The `main` head is now
-> `c05f743a` (PR #156), which repairs the one defect the `.13` release
-> left behind: a choreographed cut's unreferenced shelf sound aborted the
-> render, and the golden Geneva lane was red until it landed. `main` is
-> protected (three required CI checks). The entries below are the
-> session's own log and are kept for their reasoning; the lines that say
-> "no release cut" describe the moment they were written, not the current
-> state.
+> **Status, 2026-11-17:** the `.13` release's owed fixes have landed and
+> `v0.2.8-funcut.14` is prepared. `main` head is now `3ea400ca` (PR #163).
+> Merged since the last update: #153 (GSAP drawSVG trim windows), #159
+> (the AUTO EDIT pipeline no longer ends before its work is done), #160
+> (one Forge run may edit the project at a time), #161 (the completion
+> audit), #162 (the `.14` letter), #163 (the director integration plan).
+> The release is published but behind the tag: `v0.2.8-funcut.13`'s tag is
+> an ancestor 28+ commits behind `main`; `.14` is owed for everything
+> after it.
+>
+> **The forward plan is now its own document:**
+> [`docs/DIRECTOR-INTEGRATION-PLAN.md`](DIRECTOR-INTEGRATION-PLAN.md) - a
+> file-by-file plan to connect the subsystems the editor already has
+> (the button's missing stock/motion stages, the watcher's live-shelf
+> fallback, Geneva linked clips, the export-vs-plan QC report), with a
+> four-level evidence model. It also corrects four facts the earlier
+> integration audit got wrong against the code.
+>
+> The entries below are the earlier session's own log and are kept for
+> their reasoning; lines that name long-merged PRs (#108, #111, #112)
+> describe the moment they were written, not the current state.
 
 ## The 2026-11-15 fix session — the bug list, worked through
 
@@ -601,10 +612,19 @@ credential for any follow-up commits (KNOWN_ISSUES entries for failures).
 
 ## Next exact task
 
-1. Complete PR #112's current CI and Geneva runs; fix any failures on the exact head.
-2. Complete PR #111's current CI and Geneva runs; then close PR #108 as superseded.
-3. Implement and test the revise loop.
-4. Wire the runner into MCP and the editor UI, including progress and cancellation.
-5. Run a real AI Director project from brief through final export and inspect the output.
-6. Measure 1080p long-GOP proxy behavior on the target antiX machine and test VAAPI on real hardware.
-7. Reconcile the release tracker, require review/check evidence, validate both Linux packages, and publish only a fully verified release.
+The forward work is the workstreams in
+[`docs/DIRECTOR-INTEGRATION-PLAN.md`](DIRECTOR-INTEGRATION-PLAN.md), in
+priority order:
+
+1. Workstream A - the AUTO EDIT button gathers live stock (P0).
+2. Workstream C - the watcher falls back to the cleared shelf when
+   monetized (P0).
+3. Workstream E - the export-vs-plan QC report (P0).
+4. Workstream B - the button renders motion (P1).
+5. Workstream D - Geneva linked motion clips (P1).
+6. Workstream F - one OxiMedia crate, with a measured benefit (P2).
+
+Independent of the plan, the release blocker still owed: run a real AI
+Director project from brief through final export on the target laptop and
+inspect the output, then measure 1080p long-GOP proxy behaviour and test
+VAAPI on real hardware. Hosted CI is not a substitute for either.

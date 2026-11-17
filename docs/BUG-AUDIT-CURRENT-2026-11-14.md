@@ -7,6 +7,22 @@ Scope requested: functional correctness, feature wiring, incomplete implementati
 
 This report supplements `docs/BUG-AUDIT-FINAL.md`. That earlier report was written against `21d136c3972ad87033992968b987b3b0c6ebb5c7`; its statuses for PRs #130–#134 must not be read as current-main truth.
 
+## Status update — 2026-11-17 (verified against `main` `c05f743a`)
+
+The findings below are historical. Read against the current tree, they
+stand as:
+
+| ID | Was | Now |
+|---|---|---|
+| FUNCUT-001 | queued-proxy race, fix PR open | **Fixed on `main`** — `startup_io.rs` rechecks the gate in the worker-start wrapper; the regression test is present. |
+| FUNCUT-002 | export verify missed the audio stream | **Fixed** — PR #134 merged; the Director probe enumerates streams and refuses a silent export. |
+| FUNCUT-003 | edit-plan schema could drift | **Fixed** — PR #130 merged; the generated schema and its drift tests are present. |
+| FUNCUT-004 | clean-clone build scripts missing | **Fixed** — both portable scripts are in the tree. |
+| FUNCUT-005 | Slint Skia `todo!` panic on `StaticTextures` | **Still on `main`; fix open as PR #157** — the arm returns `None` so a stray static texture draws nothing instead of aborting the process. |
+
+Four of the five are resolved. Keep this file for the reasoning of each
+finding; do not read its "fix PR open" statuses as current.
+
 ## Executive result
 
 This pass found **4 confirmed defects / engineering gaps** on the audited main SHA, plus **1 conditional panic hazard** and several integration-acceptance gaps. This is not a claim that the whole repository contains only four bugs. The full line-by-line/dynamic audit is not complete, and several historical ledger IDs remain undefined because their original private session-brief definitions are not present in the repository.

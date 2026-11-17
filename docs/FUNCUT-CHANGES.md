@@ -2273,10 +2273,13 @@ piece is a normal clip to tweak. The stages that still want a brain (the
 plan, the motion comps, the preview/revise loop) remain the Director
 agent's; the run gains the two that never needed one.
 
-Verified on the machine the fork targets: `cargo test -p concat-mcp -p
-concat-director` (136 tests, including the new
-`the_broll_slots_are_the_narration_s_gaps`), `cargo fmt --check`, and
-`cargo clippy -p concat-mcp --all-targets -- -D warnings` all pass.
+At the original OpenVid-based implementation commit, the target
+machine recorded 136 tests plus format and Clippy passing. Those results
+are historical, not validation of this change: this PR replaces the
+research-dataset import with live Pexels/Pixabay imports and adds
+regressions for licensed-hit selection and missing licence metadata.
+Current-head CI is the evidence required for the replacement; no local
+test run is claimed here.
 
 ## 51. The button moves its titles: the entrance the one-click run gives its own type
 

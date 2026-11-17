@@ -105,11 +105,20 @@ fn clip_file_span(clip: &Value) -> (f64, f64, f64) {
 /// never placed) answers None.
 fn timeline_at(view: &Value, media: &[(String, String)], take: &str, moment: f64) -> Option<f64> {
     for clip in view["timeline"]["clips"].as_array()? {
-        let media_id = clip["media"].as_str()?;
-        let path = media
+        // A clip with no media - a title or an effect layer - plays no
+        // file moment, so it is stepped over, not the end of the scan:
+        // reading it with `?` would answer None for the whole view the
+        // moment any caption the run placed sorts first.
+        let Some(media_id) = clip["media"].as_str() else {
+            continue;
+        };
+        let Some(path) = media
             .iter()
             .find(|(id, _)| id == media_id)
-            .map(|(_, path)| path.as_str())?;
+            .map(|(_, path)| path.as_str())
+        else {
+            continue;
+        };
         if path != take {
             continue;
         }
@@ -216,6 +225,34 @@ fn dead_air_cuts(log: &[Value], takes: &[TakePaths], project: &str) -> Vec<ToolC
 /// Three decimals, the way the timeline's own numbers read.
 fn round3(value: f64) -> f64 {
     (value * 1000.0).round() / 1000.0
+}
+
+/// The timeline moment the accents stage should place next, stepping
+/// `placed` over any peak the timeline does not play and answering
+/// `None` only once the budget is spent. The Sfx derive returns `None`
+/// to end its stage, so a peak that no clip plays - the tighten cut it
+/// away, or the voiceover never reached it - must advance the cursor
+/// and look again rather than end the stage and drop every later peak.
+fn next_played_peak(
+    placed: &mut usize,
+    peaks: &[(f64, f64)],
+    log: &[Value],
+    takes: &[TakePaths],
+) -> Option<f64> {
+    let view = latest_view(log)?;
+    let media = media_paths(view);
+    while *placed < peaks.len() {
+        let moment = peaks[*placed].0;
+        let found = takes
+            .iter()
+            .map(|take| take.take.clone())
+            .find_map(|take| timeline_at(view, &media, &take, moment));
+        if let Some(at) = found {
+            return Some(at);
+        }
+        *placed += 1;
+    }
+    None
 }
 
 /// The transcript each take's wait left behind: the take file and the
@@ -385,10 +422,14 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         DerivedStep::react(
             Stage::Captions,
             Box::new({
-                let mut batch: Option<ToolCall> = None;
+                // The captions are one edit, made once: the edit's own
+                // reply is a timeline view carrying the titles just
+                // placed, and re-deriving from it would place every
+                // caption a second time.
+                let mut issued = false;
                 move |log| {
-                    if batch.is_some() {
-                        return batch.take();
+                    if issued {
+                        return None;
                     }
                     let view = latest_view(log)?;
                     let media = media_paths(view);
@@ -465,14 +506,14 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             })
                         })
                         .collect();
-                    batch = Some(ToolCall {
+                    issued = true;
+                    Some(ToolCall {
                         tool: "edit_apply".to_owned(),
                         arguments: json!({
                             "path": caption_project,
                             "command": { "op": "batch", "commands": commands },
                         }),
-                    });
-                    batch.take()
+                    })
                 }
             }),
         )
@@ -491,6 +532,16 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             Stage::Music,
             Box::new({
                 let mut polls = 0u32;
+                // How many replies the run had drawn before this stage's
+                // first call: everything before that index belongs to the
+                // earlier stages, and the stage reads only what it drew
+                // itself. The captions stage leaves a timeline view behind,
+                // and reading it as this stage's own is how the bed was
+                // never shopped.
+                let mut base: Option<usize> = None;
+                // The bed is ducked once; the duck's own reply is another
+                // timeline view, and the stage must not duck it again.
+                let mut ducked = false;
                 move |log| {
                     // The gate's own answer first: music already in the
                     // take means no bed, ever.
@@ -500,9 +551,15 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     {
                         return None;
                     }
-                    let Some(last) = log.last() else {
+                    if ducked {
+                        return None;
+                    }
+                    let base = *base.get_or_insert(log.len());
+                    if log.len() == base {
+                        // The stage's own first call: the shelf's state.
                         return Some(call("bgm_status", json!({})));
-                    };
+                    }
+                    let last = log.last().expect("the log grew since base");
                     if last.get("freepd").is_some() {
                         // A bgm_status reply: prepare the missing shelf,
                         // poll the loading one, shop the ready one.
@@ -525,6 +582,9 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             }
                             Some("missing") => {
                                 polls += 1;
+                                if polls > 200 {
+                                    return None;
+                                }
                                 Some(call("bgm_prepare", json!({ "source": "freepd" })))
                             }
                             Some("loading") => {
@@ -557,9 +617,14 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             )
                         });
                     }
+                    if last.get("mediaIds").is_some() {
+                        // The import's own reply (`{mediaIds, view}`): read
+                        // the timeline back for the bed's clip id.
+                        return Some(call("timeline_read", json!({ "path": music_project })));
+                    }
                     if last.pointer("/timeline/clips").is_some() {
-                        // A timeline read after the import: the bed is the
-                        // clip whose media landed in the project's bgm
+                        // The timeline read after the import: the bed is
+                        // the clip whose media landed in the project's bgm
                         // folder. Duck it under the voice and be done.
                         let media = media_paths(last);
                         let bed = last["timeline"]["clips"]
@@ -574,6 +639,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     .unwrap_or(false)
                             });
                         return bed.map(|bed| {
+                            ducked = true;
                             call(
                                 "clip_audio_levels_db",
                                 json!({
@@ -584,11 +650,6 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 }),
                             )
                         });
-                    }
-                    if last.get("state").is_some() && last.get("path").is_none() {
-                        // The import's own reply: read the timeline back
-                        // for the bed's clip id.
-                        return Some(call("timeline_read", json!({ "path": music_project })));
                     }
                     None
                 }
@@ -643,23 +704,13 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         found.sort_by(|left, right| left.0.total_cmp(&right.0));
                         found
                     });
-                    if placed >= peaks.len() {
-                        return None;
-                    }
-                    let view = latest_view(log)?;
-                    let media = media_paths(view);
-                    let take = sfx_source
-                        .iter()
-                        .map(|take| take.take.clone())
-                        .find(|take| timeline_at(view, &media, take, peaks[placed].0).is_some());
-                    let Some(take) = take else {
-                        placed += 1;
-                        return None;
-                    };
-                    let Some(at) = timeline_at(view, &media, &take, peaks[placed].0) else {
-                        placed += 1;
-                        return None;
-                    };
+                    // The next peak the timeline actually plays: a peak
+                    // cut away or never placed is stepped over, not the
+                    // end of the stage. The runner reads `None` as "the
+                    // accents are done", so answering it for one unplayed
+                    // peak would drop every peak after it - the run would
+                    // quietly lose the accents it was written to land.
+                    let at = next_played_peak(&mut placed, peaks, log, &sfx_source)?;
                     // What the last call was decides what this one is: the
                     // search hands the id the add takes.
                     let last_was_search = log
@@ -672,13 +723,19 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             .and_then(|reply| reply.pointer("/sounds/0/id"))
                             .and_then(|id| id.as_str())
                             .map(str::to_owned);
-                        placed += 1;
-                        return id.map(|id| {
-                            call(
+                        if let Some(id) = id {
+                            placed += 1;
+                            return Some(call(
                                 "sounds_add",
                                 json!({ "path": sfx_project, "id": id, "start": round3(at) }),
-                            )
-                        });
+                            ));
+                        }
+                        // The shelf answered with nothing for this peak:
+                        // step to the next peak the timeline plays and
+                        // shop it, rather than ending the stage and
+                        // dropping every accent after it.
+                        placed += 1;
+                        next_played_peak(&mut placed, peaks, log, &sfx_source)?;
                     }
                     const QUERIES: [&str; 6] =
                         ["impact", "whoosh", "riser", "boom", "swish", "hit"];
@@ -1104,5 +1161,194 @@ mod tests {
         // The fan compile-time proof the type system wanted: the repair
         // grouping is the FanStep the runner fans out.
         let _: &FanStep = repair;
+    }
+
+    /// The accents stage steps over a peak the timeline does not play
+    /// instead of ending on it: the runner reads a derive's `None` as
+    /// "the stage is done", so answering `None` for one unplayed peak
+    /// would drop every peak after it.
+    #[test]
+    fn the_accents_step_over_a_peak_the_timeline_does_not_play() {
+        let takes = vec![TakePaths {
+            take: "/takes/a.wav".to_owned(),
+            enhanced: "/takes/a-enhanced.wav".to_owned(),
+        }];
+        // One clip playing file seconds 0..10 of the take.
+        let log = vec![json!({
+            "media": [{ "id": "m1", "path": "/takes/a.wav" }],
+            "timeline": { "clips": [{
+                "id": "c1",
+                "media": "m1",
+                "start": 0.0,
+                "duration": 10.0,
+                "sourceStart": 0.0,
+                "speed": 1.0,
+            }]},
+        })];
+        // The 50 s peak is past the clip; the cursor at it must reach the
+        // 2 s peak beyond rather than end the stage.
+        let peaks = [(1.0, 0.9), (50.0, 0.8), (2.0, 0.7)];
+        let mut placed = 1;
+        assert_eq!(
+            next_played_peak(&mut placed, &peaks, &log, &takes),
+            Some(2.0),
+            "the unplayed peak is stepped over, not the end of the stage"
+        );
+        assert_eq!(placed, 2, "the cursor landed on the played peak");
+        // Once every peak is spent, the stage is done.
+        placed = 3;
+        assert_eq!(next_played_peak(&mut placed, &peaks, &log, &takes), None);
+    }
+
+    /// The music stage reads only its own replies: the captions stage
+    /// leaves a timeline view behind, and reading it as the stage's own
+    /// made the run duck a bed that was never shopped - the bed was
+    /// never added at all.
+    #[test]
+    fn the_music_stage_shops_the_bed_instead_of_reading_the_captions_view() {
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
+                enhanced: "/edits/Reel/voiceover/enhanced-000-a.wav".to_owned(),
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(music) = &mut program.steps[7] else {
+            panic!("step 7 is the music stage");
+        };
+        // The log as the stage finds it: the captions stage's own view,
+        // with a timeline and clips - exactly the shape the old code read
+        // as "a bed already exists".
+        let captions_view = json!({
+            "project": { "name": "Reel" },
+            "timeline": { "id": "t1", "clips": [
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 2.0 }
+            ]},
+            "media": [{ "id": "m1", "path": "/edits/Reel/voiceover/take-000-a.wav" }],
+        });
+        let mut log = vec![captions_view];
+        // First call: the shelf's state, not a duck of nothing.
+        assert_eq!(
+            (music.next)(log.as_slice())
+                .map(|call| call.tool)
+                .as_deref(),
+            Some("bgm_status")
+        );
+        log.push(json!({ "freepd": "missing", "lofi": "missing" }));
+        assert_eq!(
+            (music.next)(log.as_slice())
+                .map(|call| call.tool)
+                .as_deref(),
+            Some("bgm_prepare")
+        );
+        log.push(json!({ "freepd": "ready", "lofi": "missing" }));
+        assert_eq!(
+            (music.next)(log.as_slice())
+                .map(|call| call.tool)
+                .as_deref(),
+            Some("bgm_search")
+        );
+        log.push(json!({ "tracks": [{ "id": "freepd-abc123" }] }));
+        assert_eq!(
+            (music.next)(log.as_slice())
+                .map(|call| call.tool)
+                .as_deref(),
+            Some("bgm_import")
+        );
+        // The import's own reply carries `mediaIds`, not `state`.
+        log.push(json!({ "mediaIds": ["m9"], "view": { "project": {} } }));
+        assert_eq!(
+            (music.next)(log.as_slice())
+                .map(|call| call.tool)
+                .as_deref(),
+            Some("timeline_read")
+        );
+        // The timeline read now carries the bed in the project's bgm
+        // folder: duck it under the voice.
+        log.push(json!({
+            "timeline": { "id": "t1", "clips": [
+                { "id": "bed1", "media": "m9", "start": 0.0, "duration": 8.0 }
+            ]},
+            "media": [{ "id": "m9", "path": "/edits/Reel/bgm/track-abc123.mp3" }],
+        }));
+        let next = (music.next)(log.as_slice()).expect("the bed is ducked");
+        assert_eq!(next.tool, "clip_audio_levels_db");
+        assert_eq!(next.arguments["clipId"], "bed1");
+        assert_eq!(next.arguments["baseDb"], -20.0);
+        // The duck's own reply is another view: the stage is done, not
+        // ducking a second time.
+        log.push(json!({ "timeline": { "id": "t1", "clips": [] }, "media": [] }));
+        assert_eq!((music.next)(log.as_slice()), None);
+    }
+
+    /// The captions are one edit, made once: the edit's own reply is a
+    /// timeline view, and re-deriving from it would place every caption
+    /// again.
+    #[test]
+    fn the_captions_are_issued_once() {
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
+                enhanced: "/edits/Reel/voiceover/enhanced-000-a.wav".to_owned(),
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(captions) = &mut program.steps[6] else {
+            panic!("step 6 is the captions stage");
+        };
+        let view = json!({
+            "timeline": { "id": "t1", "clips": [
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 4.0,
+                  "sourceStart": 0.0, "speed": 1.0 }
+            ]},
+            "media": [{ "id": "m1", "path": "/edits/Reel/voiceover/take-000-a.wav" }],
+        });
+        // A transcribe reply whose words fall inside the clip's span.
+        let transcript = json!({
+            "segments": [{
+                "start": 0.5, "end": 1.5, "text": "hello there",
+                "words": [{ "start": 0.5, "end": 1.5 }],
+            }],
+        });
+        let mut log = vec![
+            view,
+            json!({ "path": "/edits/Reel/voiceover/take-000-a.wav", "output": transcript.to_string() }),
+        ];
+        let first = (captions.next)(log.as_slice()).expect("the captions are placed");
+        assert_eq!(first.tool, "edit_apply");
+        // The edit's own reply: another view. The stage is done.
+        log.push(json!({ "timeline": { "id": "t1", "clips": [] }, "media": [] }));
+        assert_eq!(
+            (captions.next)(log.as_slice()),
+            None,
+            "the captions are issued once"
+        );
+    }
+
+    /// A clip with no media - a title the run placed - does not end the
+    /// file-second scan: the take's pieces are still mapped.
+    #[test]
+    fn timeline_at_steps_over_clips_with_no_media() {
+        let view = json!({
+            "timeline": { "clips": [
+                { "id": "title", "start": 0.0, "duration": 1.0 },
+                { "id": "c1", "media": "m1", "start": 1.0, "duration": 4.0,
+                  "sourceStart": 0.0, "speed": 1.0 }
+            ]},
+        });
+        let media = vec![("m1".to_owned(), "/takes/a.wav".to_owned())];
+        assert_eq!(
+            timeline_at(&view, &media, "/takes/a.wav", 2.0),
+            Some(3.0),
+            "the title is skipped and the file moment still maps"
+        );
     }
 }

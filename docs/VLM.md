@@ -91,25 +91,36 @@ Model ids drift. If scores look odd, `{action: "providers"}` again or pass
 | `FUNCUT_VLM_API_KEY` | Bearer key for that endpoint; beats the config file |
 | `FUNCUT_VLM_MODEL` | Overrides the model id everywhere |
 | `FUNCUT_VLM_STRONG=1` | Force the six-axis prompt even for a weak local endpoint (experimentation) |
+| `FUNCUT_VLM_DISABLE_HOSTED=1` | Keep frames on the machine: skip the provider-key resolution below, so a hosted key never becomes the critic unless it is configured explicitly |
 | `FUNCUT_VLM_DIR` | Move the app's VLM data dir (models, config, logs) |
 
-A provider's own exported key also works without configuration: export
-`GROQ_API_KEY` (or `GEMINI_API_KEY`, `ZAI_API_KEY`, `OPENROUTER_API_KEY`)
-and run `local_vlm {action: "configure", provider: "groq"}` with no
-`apiKey` — the key is picked up from the environment and saved.
+A provider's own exported key is enough on its own: export `GROQ_API_KEY`
+(or `GEMINI_API_KEY`, `ZAI_API_KEY`, `OPENROUTER_API_KEY`) and `detect()`
+resolves that provider as the critic with no `vlm.json` at all — the
+Forge page hands the provider keys it keeps to the run, so a key typed
+once in the page reaches the critic without a second configuration.
+`local_vlm {action: "configure", provider: "groq"}` with no `apiKey`
+still works and saves the key from the environment.
 
 ## How the engines choose
 
 `detect()` resolves the endpoint in this order: `FUNCUT_VLM_ENDPOINT` →
-the saved `vlm.json` config → a local server on :8099 / :8080 / :1234 →
-Ollama on :11434. A keyless entry must answer its probe (a dead endpoint
-falls through, as it always did); an entry with a key is trusted even when
-the probe fails, so `craft_critique` surfaces the provider's own 401
-instead of silently dropping to pixels. A hosted entry (any keyed,
-non-loopback endpoint) unlocks the six-axis prompt on its own — those
-models are the class the prompt was written for. The bundled 0.5B never
-gets it: in the end-to-end test it hallucinated a whole film from a plain
-blue frame, so it only ever applies bounded, explained nudges.
+the saved `vlm.json` config → a named provider key in the environment
+(`GROQ_API_KEY`, `GEMINI_API_KEY`, `ZAI_API_KEY`, `OPENROUTER_API_KEY`)
+→ a local server on :8099 / :8080 / :1234 → Ollama on :11434. A keyless
+entry must answer its probe (a dead endpoint falls through, as it always
+did); an entry with a key is trusted even when the probe fails, so
+`craft_critique` surfaces the provider's own 401 instead of silently
+dropping to pixels. A hosted entry (any keyed, non-loopback endpoint)
+unlocks the six-axis prompt on its own — those models are the class the
+prompt was written for. The bundled 0.5B never gets it: in the
+end-to-end test it hallucinated a whole film from a plain blue frame, so
+it only ever applies bounded, explained nudges. The provider-key step
+sends frames to a hosted API; set `FUNCUT_VLM_DISABLE_HOSTED=1` to keep
+them local and configure the critic by hand instead. `craft_critique`'s
+reply always names the engine that answered (`heuristic`, `local-vlm`,
+the provider) and the chain it tried, so a fall-back to the measured
+read is visible, never silent.
 
 ## What the strong critic is good for, and what it is not
 

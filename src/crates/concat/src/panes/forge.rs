@@ -419,6 +419,7 @@ impl ForgePane {
         // tabularisai/multilingual-emotion-classification model instead of
         // the English-only lexicon.
         let forge = &studio.prefs.forge;
+        let stock = &studio.prefs.stock;
         for (name, value) in [
             ("GROQ_API_KEY", &forge.groq),
             ("GEMINI_API_KEY", &forge.gemini),
@@ -430,6 +431,13 @@ impl ForgePane {
             ("NVIDIA_API_KEY", &forge.nim),
             ("FUNCUT_EMOTION_API_KEY", &forge.hf),
             ("HF_TOKEN", &forge.hf),
+            // The live stock shelves' keys ride the same road as the
+            // provider keys: a Pexels or Pixabay key typed once in the
+            // Stock page reaches the Director's gather stage here, so the
+            // Forge Director launch hands the harness the same stock
+            // environment the AUTO EDIT launch does.
+            ("PEXELS_API_KEY", &stock.pexels),
+            ("PIXABAY_API_KEY", &stock.pixabay),
         ] {
             if !value.trim().is_empty() {
                 command.env(name, value.trim());

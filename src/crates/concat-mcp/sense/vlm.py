@@ -231,6 +231,20 @@ def _provider_env_key(name):
     return os.environ.get(p["key_env"]) if p else None
 
 
+def _provider_from_env():
+    """The first named provider whose key is exported, as (name, key).
+
+    The editor hands the Forge page's own provider keys to the run, so a
+    key typed once in the page reaches the critic without a second
+    configuration; this is the resolution that reads those keys. Returns
+    None when no provider key is in the environment."""
+    for name, provider in PROVIDERS.items():
+        key = os.environ.get(provider["key_env"])
+        if key:
+            return name, key
+    return None
+
+
 def _resolved_key(provider=None, config=None):
     """FUNCUT_VLM_API_KEY beats the saved config, which beats the
     provider's own exported env var (so a machine that already has
@@ -414,7 +428,9 @@ def _allowed_base(base: str) -> bool:
 
 def detect(timeout: float = 3.0):
     """Resolve a vision endpoint. Order: FUNCUT_VLM_ENDPOINT, the saved
-    hosted-provider config, an already-running local server, Ollama.
+    hosted-provider config, a named provider key in the environment (the
+    Forge page hands its provider keys to the run), an already-running
+    local server, Ollama.
 
     A keyless entry must answer its probe (the old behaviour: a dead
     endpoint falls through to the local candidates). An entry WITH a key
@@ -467,6 +483,30 @@ def detect(timeout: float = 3.0):
             }
             if cfg_key:
                 entry["key"] = cfg_key
+            return entry
+    # A provider key the editor exported - the Forge page's own provider
+    # keys reach the run's environment - is a hosted critic with no second
+    # configuration. This sits after a saved vlm.json so an explicit
+    # configuration still wins, and before the local candidates so a
+    # provider key the user typed is never shadowed by a loopback server.
+    # FUNCUT_VLM_DISABLE_HOSTED=1 keeps the frames on the machine.
+    if not os.environ.get("FUNCUT_VLM_DISABLE_HOSTED"):
+        found = _provider_from_env()
+        if found:
+            name, pkey = found
+            base = PROVIDERS[name]["base"].rstrip("/")
+            got = _probe_openai(base, pkey)
+            models = (got or {}).get("models") or []
+            entry = {
+                "type": "openai",
+                "base": base,
+                "hosted": True,
+                "provider": name,
+                "verified": bool(got),
+                "models": models,
+                "model": model or PROVIDERS[name]["model"] or (models[0] if models else "local-model"),
+                "key": pkey,
+            }
             return entry
     candidates = [
         f"http://127.0.0.1:{DEFAULT_PORT}",
@@ -918,6 +958,23 @@ def selftest():
     assert _mask("short") == "****"
     assert _mask("sk-1234567890abcdef") == "sk-1...cdef"
     out["mask"] = "ok"
+    # The provider-key resolution: the first named provider whose key is
+    # exported is the critic, in the table's own order, and none is
+    # reported when no provider key is set. This is the seam that lets a
+    # Forge-page key reach the critic with no second configuration.
+    saved_env = {p["key_env"]: os.environ.pop(p["key_env"], None) for p in PROVIDERS.values()}
+    try:
+        assert _provider_from_env() is None
+        os.environ["ZAI_API_KEY"] = "sk-env-zai"
+        assert _provider_from_env() == ("zai", "sk-env-zai")
+        assert _resolved_key("zai") == "sk-env-zai"
+    finally:
+        for name, value in saved_env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+    out["providerEnv"] = "ok"
     # Loopback detection decides the privacy note every reply carries.
     assert _is_local("http://127.0.0.1:8099") is True
     assert _is_local("http://localhost:1234/v1") is True

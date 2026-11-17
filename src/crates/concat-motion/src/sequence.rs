@@ -1902,6 +1902,22 @@ fn plan_with_chain(
             .cloned()
             .unwrap_or_default()
         {
+            // An asset whose file is not beside the comp is not declared:
+            // the engine reads every declared asset from the render folder
+            // and refuses the whole render over one it cannot open (E501),
+            // so a comp that carries a sound nothing plays - the cut's own
+            // sound, when its shelf clip is not there - would take the
+            // render down with it. It is said, and the render goes on.
+            if let Some(asset) = comp.assets.get(&id)
+                && !sequence.source_dir.join(&asset.src).is_file()
+            {
+                warnings.push(format!(
+                    "scene {index}: asset {id:?} points at {:?}, which is not there; the render \
+                     will not carry it",
+                    asset.src
+                ));
+                continue;
+            }
             let staged = staged_name(
                 &format!("s{index}.{id}"),
                 asset["src"].as_str().unwrap_or_default(),
@@ -3559,6 +3575,55 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A cut whose shelf clip is not beside the comp is a dry cut, not a
+    /// dead render. The engine refuses any asset the document declares
+    /// but the folder cannot open (E501), so the plan does not declare
+    /// the sound it cannot stage - it says so, and the render goes on.
+    #[test]
+    fn a_cut_whose_shelf_clip_is_absent_renders_dry_and_is_named() {
+        let dir = tempfile::TempDir::new().expect("a scratch dir");
+        let mut sequence = reel(vec![
+            Scene::new(presets::build("funcut.caption.kinetic").expect("a preset")).holding(4.0),
+            Scene::new(presets::build("funcut.chapter.chip").expect("a preset")).holding(4.0),
+        ]);
+        // No `audio/` folder under the source dir: the whip's clip is absent.
+        sequence.source_dir = dir.path().to_path_buf();
+        sequence.with_cut(
+            0,
+            crate::transition::Cut::WhipPan {
+                direction: crate::transition::Direction::Left,
+                seconds: 0.24,
+                blur: 12.0,
+            },
+        );
+        let planned = plan(&geneva(), &sequence).expect("a plan");
+        let declared = planned
+            .document
+            .get("assets")
+            .and_then(Json::as_object)
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            !declared.keys().any(|id| id.ends_with("cut-sfx-enter")),
+            "the absent cut sound is not declared: {:?}",
+            declared.keys().collect::<Vec<_>>()
+        );
+        assert!(
+            planned
+                .warnings
+                .iter()
+                .any(|w| w.contains("audio/") && w.contains("not there")),
+            "the absent sound is named: {:?}",
+            planned.warnings
+        );
+        // The render folder is written without the copy that used to abort.
+        let render_dir = dir.path().join("render");
+        planned
+            .write(&render_dir)
+            .expect("the render writes without the sound");
+        assert!(render_dir.join("timeline.json").is_file());
     }
 
     /// A staggered exit on the reel's last scene is its closing

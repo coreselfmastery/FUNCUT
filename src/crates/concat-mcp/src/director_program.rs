@@ -626,7 +626,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             return Some(call(
                                 "stock_search",
                                 json!({
-                                    "provider": gather_provider,
+                                    "provider": gather_provider.clone(),
                                     "query": slot.query.clone(),
                                     "limit": 5,
                                 }),
@@ -1917,6 +1917,71 @@ mod tests {
         assert!(
             (gather.next)(&log).is_none(),
             "one gap is placed only once"
+        );
+    }
+
+    /// A malformed live-stock hit without a provider licence is not
+    /// imported or placed.
+    #[test]
+    fn the_broll_stage_skips_hits_without_license_metadata() {
+        use concat_director::ProgramStep;
+
+        let take = "/takes/a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: "/takes/a-enhanced.wav".to_owned(),
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(gather) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "gather")
+            .expect("the program has a gather stage")
+        else {
+            panic!("the gather stage is derived");
+        };
+        let view = json!({
+            "timeline": { "clips": [{
+                "id": "voice",
+                "media": "voice-media",
+                "start": 0.0,
+                "duration": 10.0,
+                "sourceStart": 0.0,
+                "speed": 1.0
+            }]},
+            "media": [{ "id": "voice-media", "path": take }],
+        });
+        let transcript = json!({
+            "segments": [
+                { "start": 0.0, "end": 2.0, "text": "the city skyline at dusk tonight" },
+                { "start": 4.0, "end": 6.0, "text": "the crowds crossing" },
+            ],
+        });
+        let mut log = vec![
+            view,
+            json!({ "path": take, "output": transcript.to_string() }),
+        ];
+        assert_eq!(
+            (gather.next)(&log).map(|call| call.tool.as_str()),
+            Some("stock_search")
+        );
+        log.push(json!({
+            "hits": [{
+                "id": "2499611",
+                "provider": "pexels",
+                "url": "https://videos.pexels.com/files/hd.mp4"
+            }]
+        }));
+        assert!(
+            (gather.next)(&log).is_none(),
+            "a hit without licence metadata is left unused"
         );
     }
 

@@ -197,6 +197,21 @@ pub struct AutoEditPane {
     source: Option<AutoEditSource>,
 }
 
+fn auto_edit_stock_provider(pexels: &str, pixabay: &str) -> String {
+    let env_has_key = |name: &str| {
+        std::env::var(name).is_ok_and(|value| !value.trim().is_empty())
+    };
+    if !pexels.trim().is_empty() || env_has_key("PEXELS_API_KEY") {
+        "pexels".to_owned()
+    } else if !pixabay.trim().is_empty() || env_has_key("PIXABAY_API_KEY") {
+        "pixabay".to_owned()
+    } else {
+        // Keep the call explicit: stock.search returns a named missing-key
+        // refusal, and the warn-policy gather stage leaves the gap empty.
+        "pexels".to_owned()
+    }
+}
+
 impl ForgePane {
     /// Applies one message. The studio is the rest of the window; while
     /// this runs the studio's copy of the pane is a blank it must not read.
@@ -501,10 +516,10 @@ impl ForgePane {
     /// is - the same handoff, the same voiceover lane reconstruction -
     /// and then the deterministic spine of the pipeline is run by the
     /// concat-director runner over the window's own server: the repair,
-    /// the readings, the sanity reads, the export, the verify, the
-    /// watch. The creative layer - B-roll, captions, the grade - stays
-    /// the Director agent's; this is the unattended ship of the
-    /// voiceover edit itself, measured and verified.
+    /// readings, tighten, grade, licensed live-stock B-roll, captions,
+    /// title entrances, music, export, verify and watch. The plan, eye-picked
+    /// stock, baked motion comps and preview/revise loop remain the
+    /// Director agent's; this is the unattended voiceover edit.
     fn auto_edit_start(&mut self, studio: &mut Studio) {
         if self.auto.running {
             return;
@@ -516,6 +531,24 @@ impl ForgePane {
         if let Some(refusal) = other_run_refusal(self.running, false) {
             studio.notify(&refusal, true);
             return;
+        }
+        // The live stock keys must be present for both a fresh run and
+        // a retry. A non-empty exported key wins; otherwise the Stock
+        // page's saved key is installed before the worker is started.
+        let stock = &studio.prefs.stock;
+        for (name, value) in [
+            ("PEXELS_API_KEY", &stock.pexels),
+            ("PIXABAY_API_KEY", &stock.pixabay),
+        ] {
+            let exported = std::env::var(name)
+                .ok()
+                .is_some_and(|existing| !existing.trim().is_empty());
+            if !value.trim().is_empty() && !exported {
+                // SAFETY: this runs on the UI thread before this run's
+                // worker threads are spawned, matching the existing Forge
+                // provider-key handoff below.
+                unsafe { std::env::set_var(name, value.trim()) };
+            }
         }
         // A retryable end kept its sibling, its source and its runner:
         // the resume picks up after the stages the failed run completed
@@ -560,6 +593,10 @@ impl ForgePane {
                     .collect(),
                 export: source.export.clone(),
                 sheet: source.sheet.clone(),
+                stock_provider: auto_edit_stock_provider(
+                    &studio.prefs.stock.pexels,
+                    &studio.prefs.stock.pixabay,
+                ),
             });
             let tool_cancel = Arc::new(AtomicBool::new(false));
             let project = source.project.clone();
@@ -619,20 +656,6 @@ impl ForgePane {
                 unsafe { std::env::set_var(name, value.trim()) };
             }
         }
-        // The live stock shelves' keys ride along the same road: with a
-        // Pexels or Pixabay key typed once in the Stock page's settings,
-        // the gather stage shops the rights-cleared shelves with nothing
-        // else configured. The same safety argument, the same thread,
-        // the same precedence - an exported variable still wins.
-        let stock = &studio.prefs.stock;
-        for (name, value) in [
-            ("PEXELS_API_KEY", &stock.pexels),
-            ("PIXABAY_API_KEY", &stock.pixabay),
-        ] {
-            if !value.trim().is_empty() && std::env::var_os(name).is_none() {
-                unsafe { std::env::set_var(name, value.trim()) };
-            }
-        }
         // The window's own server is the backend: the pane is inside the
         // window, and the server serves the sibling the way it serves any
         // agent's - the same surface a forge run drives.
@@ -666,6 +689,10 @@ impl ForgePane {
                 .collect(),
             export: auto.export.clone(),
             sheet: auto.sheet.clone(),
+            stock_provider: auto_edit_stock_provider(
+                &studio.prefs.stock.pexels,
+                &studio.prefs.stock.pixabay,
+            ),
         });
         let (runner, _events) = Runner::new(PathBuf::from(&auto.project));
         let tool_cancel = Arc::new(AtomicBool::new(false));

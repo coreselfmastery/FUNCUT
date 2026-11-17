@@ -474,11 +474,15 @@ fn stagger_offsets(tween: &Json, count: usize, index: usize, notes: &mut Vec<Str
             let (rows, cols) = match object.get("grid").and_then(Json::as_object) {
                 Some(grid) => {
                     let cols = grid.get("cols").and_then(Json::as_u64).unwrap_or(1).max(1);
+                    // A supplied row count can be stale or malformed.
+                    // Every target must still occupy a cell inside the grid:
+                    // otherwise "edges" subtracts an out-of-range row.
+                    let required_rows = (count as u64).div_ceil(cols).max(1);
                     let rows = grid
                         .get("rows")
                         .and_then(Json::as_u64)
-                        .unwrap_or((count as u64).div_ceil(cols))
-                        .max(1);
+                        .unwrap_or(required_rows)
+                        .max(required_rows);
                     (rows, cols)
                 }
                 None => (1, count as u64),
@@ -551,10 +555,11 @@ fn stagger_offsets(tween: &Json, count: usize, index: usize, notes: &mut Vec<Str
                     if rows == 1 {
                         Some((0..count).map(|i| (i as f64 - from).abs()).collect())
                     } else {
-                        let (fr, fc) = (
-                            (from as i64).clamp(0, (rows * cols) as i64 - 1) as u64 / cols,
-                            (from as i64).clamp(0, (rows * cols) as i64 - 1) as u64 % cols,
-                        );
+                        // "from" names a target index, not an arbitrary
+                        // empty cell. Clamp it to the targets we actually have;
+                        // multiplying caller-supplied dimensions can overflow.
+                        let from_index = (from.max(0.0) as usize).min(count - 1);
+                        let (fr, fc) = cell_of(from_index);
                         Some(
                             (0..count)
                                 .map(|i| {
@@ -1177,6 +1182,97 @@ mod tests {
             })
             .collect();
         assert_eq!(twice[0], twice[1], "the shuffle is seeded");
+    }
+
+    /// A short supplied row count must not put targets outside the grid:
+    /// the edge-distance calculation still covers every target safely.
+    #[test]
+    fn grid_edges_expand_rows_to_cover_all_targets() {
+        let mut many = comp();
+        for extra in 2..=9 {
+            let mut clone = many.nodes[0].clone();
+            clone.id = format!("card-{extra}");
+            many.nodes.push(clone);
+        }
+        let (made, _) = apply(
+            &many,
+            &json!([{
+                "targets": [
+                    "card", "card-2", "card-3", "card-4", "card-5",
+                    "card-6", "card-7", "card-8", "card-9"
+                ],
+                "to": { "opacity": 0.5 },
+                "duration": 0.3,
+                "stagger": {
+                    "each": 0.2,
+                    "from": "edges",
+                    "grid": { "rows": 1, "cols": 3 }
+                }
+            }]),
+        )
+        .expect("applies");
+        let starts: Vec<f64> = made
+            .nodes
+            .iter()
+            .map(|node| {
+                node.tracks
+                    .get("opacity")
+                    .and_then(|track| track.keys.first())
+                    .expect("every target is animated")
+                    .at
+                    * node.duration
+            })
+            .collect();
+        assert_eq!(starts.len(), 9);
+        assert!((starts[4] - 0.2).abs() < 1e-9, "{starts:?}");
+        assert!(
+            starts
+                .iter()
+                .enumerate()
+                .all(|(index, start)| index == 4 || start.abs() < 1e-9),
+            "{starts:?}"
+        );
+    }
+
+    /// An extreme grid dimension cannot overflow while clamping a numeric
+    /// origin: "from" is bounded by the actual target list.
+    #[test]
+    fn grid_numeric_origin_is_clamped_to_existing_targets() {
+        let mut many = comp();
+        for extra in 2..=3 {
+            let mut clone = many.nodes[0].clone();
+            clone.id = format!("card-{extra}");
+            many.nodes.push(clone);
+        }
+        let (made, _) = apply(
+            &many,
+            &json!([{
+                "targets": ["card", "card-2", "card-3"],
+                "to": { "opacity": 0.5 },
+                "duration": 0.3,
+                "stagger": {
+                    "each": 0.1,
+                    "from": 99999,
+                    "grid": { "rows": 18446744073709551615u64, "cols": 18446744073709551615u64 }
+                }
+            }]),
+        )
+        .expect("applies");
+        let starts: Vec<f64> = made
+            .nodes
+            .iter()
+            .map(|node| {
+                node.tracks
+                    .get("opacity")
+                    .and_then(|track| track.keys.first())
+                    .expect("every target is animated")
+                    .at
+                    * node.duration
+            })
+            .collect();
+        assert!((starts[0] - 0.2).abs() < 1e-9, "{starts:?}");
+        assert!((starts[1] - 0.1).abs() < 1e-9, "{starts:?}");
+        assert!(starts[2].abs() < 1e-9, "{starts:?}");
     }
 
     /// morphSVG walks a path's own morph and drawSVG its trim window.

@@ -2257,12 +2257,14 @@ edit ships with, not a run lost:
   one's start that is long enough to hold a shot (1.2-8 s) and short
   enough to be one (8 s at most), and shops it with the tail of the words
   before it - the closest description the narration gives. Each slot is
-  `openvid_search_batch` → `openvid_import` (the CC0, licence-record-free
-  local index; `monetized: false` as its own gate requires) →
+  `stock_search` → `stock_import` on the configured Pexels/Pixabay live
+  shelf (the provider's commercial-use licence travels in the import reply;
+  AUTO EDIT never imports the research-only OpenVid index) →
   `addClipAtFirstFree` on the lowest free picture lane under the
   voiceover → one undoable batch that trims the clip to the gap,
   `frameClip`-fills it, gives it a 1.0 → 1.06 Ken Burns drift, and
-  dissolves it in on `concat.dissolve`.
+  dissolves it in on `concat.dissolve`. If neither live provider has a
+  configured key, the named missing-key refusal leaves the slot empty.
 
 The result is what the one click was asked to be: the run now leaves a
 **complete, editable cut on the timeline** - narration, B-roll, a look,

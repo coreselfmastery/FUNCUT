@@ -2,20 +2,21 @@
 
 To whoever installs this build,
 
-This is the note that should have gone out with `v0.2.8-funcut.13`. It
-was written because the tag exists and the release did not: the tag was
-pushed on 16 November 2026, the Geneva golden-frame job on `main` went
-red the same day, and the release workflow will not publish a bundle
-until that job is green. So this letter says three things at once - what
-is in the release, why it did not ship when it was tagged, and what the
-release still does not prove.
+This is the note that accompanies `v0.2.8-funcut.13`, published on
+16 November 2026. The tag was pushed that day, the release workflow
+built every bundle and launched each one where it was built, and the
+release went out the same evening - ten assets and a checksum file,
+under a release body the workflow generated from the commit history.
+This letter is the prose around that list: what the entries add up to,
+and what the release still does not prove.
 
-If you are here for the short version: the last release you could
-download was `v0.2.8-funcut.12` (12 November 2026). This one is the
-largest jump the fork has taken since then - two hundred and thirty-five
-commits of motion engine, auto-editing, live stock shelves and a long
-hardening sweep - and it was held back by a single missing sound clip
-that no one played. That clip is fixed. The details are below.
+If you are here for the short version: this release is the largest jump
+the fork has taken since `v0.2.8-funcut.12` (12 November 2026) - two
+hundred and thirty-five commits of motion engine, auto-editing, live
+stock shelves and a long hardening sweep. It shipped. The one thing it
+does not leave behind is a green Geneva motion lane on `main`: the
+golden-frame job went red on `main` after the tag was cut, and the
+branch this letter rides on fixes it. The details are below.
 
 ## What this release is
 
@@ -117,11 +118,13 @@ The AppImage survives a machine without `libfuse2`, the software renderer
 is a Recommends so a GPU-less box can still preview, and `--help`, a
 headless `--smoke` and the opt-in update check all behave.
 
-## The one thing that held it back, and the fix
+## The one thing it leaves behind: a red motion lane
 
-The Geneva golden-frame job - the lane that renders a committed board at
-six fixed instants and compares each frame against a committed image
-with DSSIM - went red on the day of the tag, with this:
+The release published. What it did not leave behind is a green Geneva
+motion lane. The golden-frame job - the lane that renders a committed
+board at six fixed instants and compares each frame against a committed
+image with DSSIM - went red on `main` *after* the tag was cut, with
+this:
 
 ```
 the frame at 0.8s refused to render
@@ -160,10 +163,13 @@ Geneva 1.6.0 sidecar with the harness unchanged.
 A release note that reads as more checked than it was is worse than no
 note. So, plainly:
 
-- **No green `main` until this fix lands.** The Geneva engine job is red
-  on `main` at the time of writing, for exactly the reason above. The
-  release workflow builds a tag only after CI passes on it, so `.13` will
-  not publish until this fix is merged and `main` is green again.
+- **A red Geneva motion lane on `main`.** The engine job is red on
+  `main` at the time of writing, for exactly the reason above - the
+  orphaned shelf clip. It is not a blocker for *this* release: the
+  release workflow gates on `ci.yml` run against the tag, not on the
+  Geneva lane, which is why `.13` published while `main`'s Geneva job
+  stayed red. The fix on the branch this letter rides on turns the lane
+  green; until it is merged, `main` still carries the red.
 - **No target-hardware acceptance.** The AUTO EDIT button and the
   director's Verify record are unit- and CI-tested, but no real
   brief-to-export run on the intended low-memory Linux laptop has been
@@ -185,8 +191,8 @@ feature on your own machine.
 
 ## Getting it
 
-Once `main` is green and the tag publishes, every architecture Concat
-ships on gets a self-contained bundle:
+Every architecture Concat ships on gets a self-contained bundle, and
+they are attached to the `v0.2.8-funcut.13` release now:
 
 | | x86_64 | arm64 |
 |---|---|---|

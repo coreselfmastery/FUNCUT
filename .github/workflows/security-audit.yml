@@ -1,8 +1,9 @@
 name: Dependency security audit
 
-# The seven ignored advisories below are the residue the dependency-upgrade
-# session (PR #146) cleared thirteen of seventeen of: zip 2.4.2 (x4) and the
-# zstd/zstd-safe pair riding its optional feature sit in the sherpa-onnx-sys
+# The seven ignored advisories below are the remaining findings after
+# the dependency-upgrade session (PR #146) cleared thirteen with real
+# upgrades: zip 2.4.2 (x4) and the zstd/zstd-safe pair riding its optional
+# feature sit in the sherpa-onnx-sys
 # 1.13.7 build-dependency subtree, which the supported build never executes -
 # its build.rs opens an archive only on the iOS .xcframework path, a
 # Linux-only product never takes it, SHERPA_ONNX_LIB_DIR (always set by the

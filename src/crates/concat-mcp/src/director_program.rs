@@ -710,9 +710,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     // accents are done", so answering it for one unplayed
                     // peak would drop every peak after it - the run would
                     // quietly lose the accents it was written to land.
-                    let Some(at) = next_played_peak(&mut placed, peaks, log, &sfx_source) else {
-                        return None;
-                    };
+                    let at = next_played_peak(&mut placed, peaks, log, &sfx_source)?;
                     // What the last call was decides what this one is: the
                     // search hands the id the add takes.
                     let last_was_search = log
@@ -737,9 +735,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // shop it, rather than ending the stage and
                         // dropping every accent after it.
                         placed += 1;
-                        if next_played_peak(&mut placed, peaks, log, &sfx_source).is_none() {
-                            return None;
-                        }
+                        next_played_peak(&mut placed, peaks, log, &sfx_source)?;
                     }
                     const QUERIES: [&str; 6] =
                         ["impact", "whoosh", "riser", "boom", "swish", "hit"];

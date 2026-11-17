@@ -590,17 +590,19 @@ fn stagger_offsets(tween: &Json, count: usize, index: usize, notes: &mut Vec<Str
 /// and anything else is nothing.
 fn parse_window(said: &str) -> Option<(f64, f64)> {
     let percent = |token: &str| -> Option<f64> {
-        token
-            .strip_suffix('%')
-            .and_then(|number| number.trim().parse::<f64>().ok())
-            .map(|value| value / 100.0)
+        let value = token.strip_suffix('%')?.trim().parse::<f64>().ok()?;
+        (value.is_finite() && (0.0..=100.0).contains(&value)).then_some(value / 100.0)
     };
     let mut tokens = said.split_whitespace();
     let first = percent(tokens.next()?)?;
-    match tokens.next() {
-        Some(second) => Some((first, percent(second)?)),
-        None => Some((0.0, first)),
-    }
+    let window = match (tokens.next(), tokens.next()) {
+        (None, None) => (0.0, first),
+        (Some(second), None) => (first, percent(second)?),
+        // Extra tokens are malformed, not an invitation to silently
+        // interpret only the prefix of the user's drawSVG value.
+        _ => return None,
+    };
+    (window.1 > window.0).then_some(window)
 }
 
 /// An SVG path's `d` string as the comp's commands: M/L/C/H/V and their
@@ -1425,6 +1427,20 @@ mod tests {
 
     /// The SVG `d` reader: lines and cubics, relatives and quadratics,
     /// and a refusal of anything it does not know.
+    #[test]
+    fn draw_svg_windows_reject_malformed_or_out_of_range_values() {
+        assert_eq!(parse_window("50%"), Some((0.0, 0.5)));
+        assert_eq!(parse_window("20% 60%"), Some((0.2, 0.6)));
+        assert_eq!(parse_window("0% 100%"), Some((0.0, 1.0)));
+        assert_eq!(parse_window("20% 60% 80%"), None);
+        assert_eq!(parse_window("20% garbage"), None);
+        assert_eq!(parse_window("-1% 60%"), None);
+        assert_eq!(parse_window("20% 101%"), None);
+        assert_eq!(parse_window("60% 20%"), None);
+        assert_eq!(parse_window("NaN%"), None);
+        assert_eq!(parse_window("inf%"), None);
+    }
+
     #[test]
     fn the_svg_d_reader_reads() {
         let commands = svg_path("M 10 10 L 90 10 L 90 90 Z").expect("reads");

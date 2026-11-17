@@ -1,5 +1,16 @@
 # DIRECTOR-COMPLETION-TRACKER
 
+> **Status, 2026-11-17:** the release owed by the 2026-11-15 session was
+> cut and published as `v0.2.8-funcut.13` (2026-11-16) — eight bundles
+> plus `manifest.json` and `SHA256SUMS`. The `main` head is now
+> `c05f743a` (PR #156), which repairs the one defect the `.13` release
+> left behind: a choreographed cut's unreferenced shelf sound aborted the
+> render, and the golden Geneva lane was red until it landed. `main` is
+> protected (three required CI checks). The entries below are the
+> session's own log and are kept for their reasoning; the lines that say
+> "no release cut" describe the moment they were written, not the current
+> state.
+
 ## The 2026-11-15 fix session — the bug list, worked through
 
 The session brief was the complete bug audit (12 tiers). What landed on

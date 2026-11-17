@@ -530,24 +530,6 @@ impl ForgePane {
             studio.notify(&refusal, true);
             return;
         }
-        // The live stock keys must be present for both a fresh run and
-        // a retry. A non-empty exported key wins; otherwise the Stock
-        // page's saved key is installed before the worker is started.
-        let stock = &studio.prefs.stock;
-        for (name, value) in [
-            ("PEXELS_API_KEY", &stock.pexels),
-            ("PIXABAY_API_KEY", &stock.pixabay),
-        ] {
-            let exported = std::env::var(name)
-                .ok()
-                .is_some_and(|existing| !existing.trim().is_empty());
-            if !value.trim().is_empty() && !exported {
-                // SAFETY: this runs on the UI thread before this run's
-                // worker threads are spawned, matching the existing Forge
-                // provider-key handoff below.
-                unsafe { std::env::set_var(name, value.trim()) };
-            }
-        }
         // A retryable end kept its sibling, its source and its runner:
         // the resume picks up after the stages the failed run completed
         // (IDEM), instead of building a fresh sibling and paying for the
@@ -664,6 +646,23 @@ impl ForgePane {
                 return;
             }
         };
+        // The live stock keys are installed before a new runner is
+        // spawned. A retry stays in this process and reuses this run's
+        // environment, so it does not mutate the global environment again.
+        let stock = &studio.prefs.stock;
+        for (name, value) in [
+            ("PEXELS_API_KEY", &stock.pexels),
+            ("PIXABAY_API_KEY", &stock.pixabay),
+        ] {
+            let exported = std::env::var(name)
+                .ok()
+                .is_some_and(|existing| !existing.trim().is_empty());
+            if !value.trim().is_empty() && !exported {
+                // SAFETY: this is the existing UI-thread handoff before
+                // the AUTO EDIT worker is spawned.
+                unsafe { std::env::set_var(name, value.trim()) };
+            }
+        }
         let program = auto_edit_program(&concat_mcp::director::AutoEditProgramSource {
             project: auto.project.clone(),
             takes: auto

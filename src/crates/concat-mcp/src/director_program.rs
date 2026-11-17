@@ -1965,10 +1965,8 @@ mod tests {
             view,
             json!({ "path": take, "output": transcript.to_string() }),
         ];
-        assert_eq!(
-            (gather.next)(&log).map(|call| call.tool.as_str()),
-            Some("stock_search")
-        );
+        let search = (gather.next)(&log).expect("the gap is searched");
+        assert_eq!(search.tool, "stock_search");
         log.push(json!({
             "hits": [{
                 "id": "2499611",

@@ -2275,3 +2275,35 @@ Verified on the machine the fork targets: `cargo test -p concat-mcp -p
 concat-director` (136 tests, including the new
 `the_broll_slots_are_the_narration_s_gaps`), `cargo fmt --check`, and
 `cargo clippy -p concat-mcp --all-targets -- -D warnings` all pass.
+
+## 51. The button moves its titles: the entrance the one-click run gives its own type
+
+Section 50 built the picture and left the motion layer as the Director
+agent's. The one motion a run can give itself without a designer is the
+entrance on the titles it just placed, so the button now does that too -
+a 15th stage, between the captions and the bed.
+
+- **The entrance** (the `motion` stage, after the captions): every text
+  clip the timeline now holds, long enough to hold an entrance (0.4 s+)
+  and not already keyed, gets the skill's own house move in one undoable
+  batch - the words rise a little and settle as they arrive (scale
+  0.94 → 1.0, `offsetY` 0.05 → 0, on the ease-out curve
+  `[0.16, 1.0, 0.3, 1.0]`). The keys are placed as **fractions of the
+  title's own span** (`entrance_keys`), so a caption the tighten re-timed
+  still enters where it now begins; the settle is held to the first
+  0.35 s, clamped to the span, so a very short title is never keyed past
+  its own end. A title the run already keyed is left alone - the pass
+  reads the `keyframed` properties the timeline summary already names,
+  and only the titles the captions stage landed carry the shape it looks
+  for.
+
+This is the type motion a one-click run can give itself. The **baked
+motion comps** - a comp rendered through the Geneva sidecar and
+composited over footage - still want the Director's eye (which preset,
+which slot words, where in the beat) and stay its `motion` stage; the
+run's own stage is the one that needs no brain.
+
+Verified on the machine the fork targets: `cargo test -p concat-mcp`
+(79 lib tests, including the new
+`the_entrance_keys_the_titles_the_timeline_holds`), `cargo fmt --check`,
+and `cargo clippy -p concat-mcp --all-targets -- -D warnings` all pass.

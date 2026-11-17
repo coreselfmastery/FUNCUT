@@ -356,19 +356,78 @@ fn broll_slots(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
     slots
 }
 
+/// The titles the entrance pass keys: every text clip the timeline now
+/// holds that is long enough to hold an entrance and is not already
+/// keyed. The captions stage places them a batch earlier, so they are
+/// the words the run just landed - the one place a one-click run can
+/// give its type motion without a designer.
+fn entrance_targets(log: &[Value]) -> Vec<(String, f64)> {
+    let Some(view) = latest_view(log) else {
+        return Vec::new();
+    };
+    view["timeline"]["clips"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|clip| clip["kind"] == json!("text"))
+        .filter(|clip| {
+            !clip["keyframed"].as_array().is_some_and(|keys| {
+                keys.iter()
+                    .any(|key| key == &json!("scale") || key == &json!("offsetY"))
+            })
+        })
+        .filter_map(|clip| {
+            let id = clip["id"].as_str()?.to_owned();
+            let duration = clip["duration"].as_f64().unwrap_or(0.0);
+            (duration >= 0.4).then_some((id, duration))
+        })
+        .collect()
+}
+
+/// One title's entrance, as the batch of keys that draws it: the words
+/// rise a little and settle as they arrive (scale 0.94 -> 1.0, offsetY
+/// 0.05 -> 0), the keys placed as fractions of the title's own span so a
+/// caption re-timed by the tighten still enters where it now begins. The
+/// settle curve is the engine's own ease-out; a title too short to hold
+/// an entrance is left still, and one already keyed is left alone.
+fn entrance_keys(clip_id: &str, duration: f64) -> Vec<Value> {
+    let span = (0.35 / duration).clamp(0.05, 0.6);
+    let ease = json!([0.16, 1.0, 0.3, 1.0]);
+    vec![
+        json!({
+            "op": "setClipKey", "clipId": clip_id, "property": "scale",
+            "at": 0.0, "value": 0.94, "ease": ease,
+        }),
+        json!({
+            "op": "setClipKey", "clipId": clip_id, "property": "scale",
+            "at": round3(span), "value": 1.0, "ease": ease,
+        }),
+        json!({
+            "op": "setClipKey", "clipId": clip_id, "property": "offsetY",
+            "at": 0.0, "value": 0.05, "ease": ease,
+        }),
+        json!({
+            "op": "setClipKey", "clipId": clip_id, "property": "offsetY",
+            "at": round3(span), "value": 0.0, "ease": ease,
+        }),
+    ]
+}
+
 /// The AUTO EDIT's whole program: every stage the unattended run can run
 /// without a creative brain, each standing on what the run itself
 /// measured. The static spine repairs, transcribes, reads the voice and
 /// gates the music; the fans run the takes' work at the same time; the
 /// derived stages act on the replies - the dead air cut, the grade over
 /// the whole runtime, the B-roll the narration's gaps are shopped for,
-/// the captions placed on the measured words, the music bed shopped and
-/// ducked, the accents landed on the emphasis peaks - and the verify
-/// reads the timeline as it ended up, not as it was planned. The picture
-/// is built on the timeline, not merely exported: a one-click run now
-/// leaves an editable cut, B-roll and look included, for the window to
-/// tweak. The judgement stages that still need a brain - the plan, the
-/// motion comps, the preview/revise loop - stay the Director agent's.
+/// the captions placed on the measured words, the titles given an
+/// entrance, the music bed shopped and ducked, the accents landed on the
+/// emphasis peaks - and the verify reads the timeline as it ended up,
+/// not as it was planned. The picture is built on the timeline, not
+/// merely exported: a one-click run now leaves an editable cut, B-roll,
+/// a look and moving titles included, for the window to tweak. The
+/// judgement stages that still need a brain - the plan, the stock chosen
+/// by eye, the baked motion comps, the preview/revise loop - stay the
+/// Director agent's.
 pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     let project = source.project.clone();
     let export = source.export.clone();
@@ -819,7 +878,47 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .warn()
         .into(),
     );
-    // 8. The music bed, only where the gate said the take carries none:
+    // 8. The entrance: the titles the captions just landed, given motion
+    //    the way the skill's own words ask for - the words rise a little
+    //    and settle as they arrive. One undoable batch keys every title
+    //    the timeline now holds; a title already keyed, or too short to
+    //    hold an entrance, is left still. This is the type motion a
+    //    one-click run can give itself; the baked motion comps (a comp
+    //    rendered through the Geneva sidecar and composited) still need
+    //    the Director's eye and stay its stage.
+    let motion_project = project.clone();
+    steps.push(
+        DerivedStep::react(
+            Stage::Motion,
+            Box::new({
+                let mut issued = false;
+                move |log| {
+                    if issued {
+                        return None;
+                    }
+                    let targets = entrance_targets(log);
+                    if targets.is_empty() {
+                        return None;
+                    }
+                    let mut commands: Vec<Value> = Vec::new();
+                    for (id, duration) in &targets {
+                        commands.extend(entrance_keys(id, *duration));
+                    }
+                    issued = true;
+                    Some(call(
+                        "edit_apply",
+                        json!({
+                            "path": motion_project,
+                            "command": { "op": "batch", "commands": commands },
+                        }),
+                    ))
+                }
+            }),
+        )
+        .warn()
+        .into(),
+    );
+    // 9. The music bed, only where the gate said the take carries none:
     //    the shelf prepared and polled, the track shopped (the reading's
     //    own genre hint for the query when it named one), the bed
     //    imported at zero, the timeline read back, and the bed ducked
@@ -957,7 +1056,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .warn()
         .into(),
     );
-    // 9. The accents: the reading's own emphasis peaks, the strongest
+    // 10. The accents: the reading's own emphasis peaks, the strongest
     //    six, each with a library sound landed on the moment the peak
     //    measured - shopped one at a time so the search's answer picks
     //    the sound, not the program's guess.
@@ -1051,7 +1150,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .warn()
         .into(),
     );
-    // 10. The render, waited on by its project folder: the job's name is
+    // 11. The render, waited on by its project folder: the job's name is
     //     minted when the export starts, and a program written before that
     //     moment asks for the work by what it was started on.
     steps.push(
@@ -1079,7 +1178,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         )
         .into(),
     );
-    // 11. The verify: the sanity reads first - collisions, and the
+    // 12. The verify: the sanity reads first - collisions, and the
     //     timeline as the placements left it - then the words re-read
     //     from the render, the loudness measured against the short-form
     //     target, and the re-read words COMPARED with the words the edit
@@ -1217,7 +1316,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         })
         .into(),
     );
-    // 12. The watch, warn-policy: the whole cut as one contact sheet,
+    // 13. The watch, warn-policy: the whole cut as one contact sheet,
     //     written beside the export, then read and scored. A score under
     //     the bar is a flaw the edit ships with - recorded, yellow - not a
     //     run thrown away after the render already landed. The gate is
@@ -1308,10 +1407,10 @@ mod tests {
 
         // The register, in the run's own order: the fanned repair and
         // transcription, the derived tighten, grade, B-roll, captions,
-        // bed and accents, and the static export/verify-gates/watch. The
-        // creative layer's remaining stages (Plan, Motion, Preview,
-        // Revise) are absent - the fraction the page shows counts only
-        // these.
+        // title entrances, bed and accents, and the static
+        // export/verify-gates/watch. The creative layer's remaining
+        // stages (Plan, the baked motion comps, Preview, Revise) are
+        // absent - the fraction the page shows counts only these.
         let order: Vec<&str> = program
             .steps
             .iter()
@@ -1329,6 +1428,7 @@ mod tests {
                 "timeline",
                 "gather",
                 "captions",
+                "motion",
                 "music",
                 "sfx",
                 "export",
@@ -1338,9 +1438,9 @@ mod tests {
         );
         // The warn-policy stages, and only them: a take that cannot be
         // repaired ships as recorded, a tighten or grade or B-roll slot or
-        // caption or bed or accent that cannot land is a flaw the edit
-        // ships with, and a low craft score is recorded yellow, not thrown
-        // away.
+        // caption or title entrance or bed or accent that cannot land is a
+        // flaw the edit ships with, and a low craft score is recorded
+        // yellow, not thrown away.
         let warn: Vec<&str> = program
             .steps
             .iter()
@@ -1355,6 +1455,7 @@ mod tests {
                 "timeline",
                 "gather",
                 "captions",
+                "motion",
                 "music",
                 "sfx",
                 "watch"
@@ -1405,11 +1506,11 @@ mod tests {
             source.takes[1].take.as_str()
         );
 
-        // The tighten, the grade, the B-roll, the captions, the bed and
-        // the accents are derived: their calls are the run's own replies
-        // to answer for, and the runner's reactive queue asks for them one
-        // at a time.
-        for at in [5usize, 6, 7, 8, 9, 10] {
+        // The tighten, the grade, the B-roll, the captions, the title
+        // entrances, the bed and the accents are derived: their calls are
+        // the run's own replies to answer for, and the runner's reactive
+        // queue asks for them one at a time.
+        for at in [5usize, 6, 7, 8, 9, 10, 11] {
             assert!(
                 matches!(program.steps[at], ProgramStep::Derived(_)),
                 "step {at} is derived"
@@ -1420,12 +1521,12 @@ mod tests {
         // is minted at run time - and the watch's sheet is a project-
         // relative name, because the window's server refuses absolute
         // write paths.
-        let export = program.steps[11].as_static();
+        let export = program.steps[12].as_static();
         assert_eq!(export.calls[0].tool, "export_start");
         assert_eq!(export.calls[0].arguments["output"], source.export.as_str());
         assert_eq!(export.calls[1].tool, "export_wait");
         assert_eq!(export.calls[1].arguments["path"], source.project.as_str());
-        let watch = program.steps[13].as_static();
+        let watch = program.steps[14].as_static();
         assert_eq!(watch.calls[0].arguments["out"], "auto-edit-sheet.png");
         assert_eq!(
             watch.calls[1].arguments["pngPath"],
@@ -1435,9 +1536,9 @@ mod tests {
         // The verify's gates: the loudness target, and the words (F-04) -
         // on the derived step that reads the timeline as it ended up.
         use concat_director::ReplyGate;
-        assert!(matches!(program.steps[12], ProgramStep::Derived(_)));
+        assert!(matches!(program.steps[13], ProgramStep::Derived(_)));
         assert_eq!(
-            program.steps[12].gates(),
+            program.steps[13].gates(),
             vec![
                 ReplyGate::True {
                     field: "platformTargetMet",
@@ -1451,7 +1552,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            program.steps[13].gates(),
+            program.steps[14].gates(),
             vec![ReplyGate::AtLeast {
                 field: "overall",
                 minimum: 7.0,
@@ -1460,7 +1561,7 @@ mod tests {
         );
         // No other step gates its replies.
         for (at, step) in program.steps.iter().enumerate() {
-            if at != 12 && at != 13 {
+            if at != 13 && at != 14 {
                 assert!(step.gates().is_empty(), "step {at} gates its replies");
             }
         }
@@ -1523,8 +1624,8 @@ mod tests {
             sheet: "auto-edit-sheet.png".to_owned(),
         };
         let mut program = auto_edit_program(&source);
-        let ProgramStep::Derived(music) = &mut program.steps[9] else {
-            panic!("step 9 is the music stage");
+        let ProgramStep::Derived(music) = &mut program.steps[10] else {
+            panic!("step 10 is the music stage");
         };
         // The log as the stage finds it: the captions stage's own view,
         // with a timeline and clips - exactly the shape the old code read
@@ -1676,6 +1777,45 @@ mod tests {
         });
         let log = vec![json!({ "path": "/takes/a.wav", "output": tight.to_string() })];
         assert!(broll_slots(&log, &takes).is_empty());
+    }
+
+    /// The entrance pass keys the titles the timeline holds, and only
+    /// them: a picture clip and a title too short to hold an entrance are
+    /// left still, and the keys are fractions of the title's own span.
+    #[test]
+    fn the_entrance_keys_the_titles_the_timeline_holds() {
+        let view = json!({
+            "timeline": { "clips": [
+                { "id": "b1", "kind": "video", "start": 0.0, "duration": 4.0 },
+                { "id": "t1", "kind": "text", "start": 1.0, "duration": 2.0 },
+                { "id": "t2", "kind": "text", "start": 3.2, "duration": 0.3 },
+                { "id": "t3", "kind": "text", "start": 4.0, "duration": 1.0,
+                  "keyframed": ["scale"] }
+            ]},
+        });
+        let log = vec![view];
+        let targets = entrance_targets(&log);
+        assert_eq!(
+            targets,
+            vec![("t1".to_owned(), 2.0)],
+            "only the picture-free title long enough to hold an entrance"
+        );
+
+        // Two seconds of title: the entrance settles within the first
+        // 0.35 s, a fraction of the title's own span.
+        let keys = entrance_keys("t1", 2.0);
+        assert_eq!(keys.len(), 4);
+        assert_eq!(keys[0]["property"], "scale");
+        assert_eq!(keys[0]["at"], 0.0);
+        assert_eq!(keys[0]["value"], 0.94);
+        assert_eq!(keys[1]["at"], 0.175);
+        assert_eq!(keys[1]["value"], 1.0);
+        assert_eq!(keys[2]["property"], "offsetY");
+        assert_eq!(keys[3]["value"], 0.0);
+
+        // A very short title still settles inside its span, not past it.
+        let keys = entrance_keys("t", 0.5);
+        assert!(keys[1]["at"].as_f64().unwrap() <= 0.6);
     }
 
     /// A clip with no media - a title the run placed - does not end the

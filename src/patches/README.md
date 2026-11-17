@@ -27,6 +27,14 @@ changes, all marked `Concat:` in the source:
 - `itemrenderer.rs`, `create_layer_target`: a layer's surface is created with
   default props, so text in a transparent, cached layer is greyscale
   rather than inheriting the window's subpixel order.
+- `cached_image.rs`, `as_skia_image`: the published crate's
+  `ImageInner::StaticTextures` arm is `todo!()`, which panics the process
+  rather than drawing nothing. Both callers already read a missing image
+  as "draw nothing" (`draw_image_impl` through `and_then`,
+  `draw_image_direct` through its `None` return), so the arm returns
+  `None`. The window icon is the one static-texture source the UI carries
+  and it is a window property rather than a drawn item, but a stray static
+  texture now leaves one picture undrawn instead of taking the editor down.
 
 And one for Android, marked the same way:
 

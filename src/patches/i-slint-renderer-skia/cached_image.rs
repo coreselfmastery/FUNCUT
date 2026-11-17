@@ -77,7 +77,14 @@ pub(crate) fn as_skia_image(
                 pixels.width() as usize * 4,
             )
         }
-        ImageInner::StaticTextures(_) => todo!(),
+        // Concat: a static texture has no Skia image to hand back, and the
+        // callers already read a missing image as "draw nothing" (the
+        // cached path via `and_then`, the direct path via its `None`
+        // return). Refusing here keeps that contract; the upstream `todo!`
+        // panicked the whole process instead, so a stray static-texture
+        // image - the window icon is the one static source the UI carries -
+        // would take the editor down rather than leave one picture undrawn.
+        ImageInner::StaticTextures(_) => None,
         ImageInner::BackendStorage(x) => {
             vtable::VRc::borrow(x).downcast::<SkiaCachedImage>().map(|x| x.image.clone())
         }

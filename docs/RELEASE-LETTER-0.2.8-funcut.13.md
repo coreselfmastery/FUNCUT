@@ -12,7 +12,7 @@ and what the release still does not prove.
 
 If you are here for the short version: this release is the largest jump
 the fork has taken since `v0.2.8-funcut.12` (12 November 2026) - two
-hundred and thirty-five commits of motion engine, auto-editing, live
+hundred and thirty-one commits of motion engine, auto-editing, live
 stock shelves and a long hardening sweep. It shipped. The one thing it
 does not leave behind is a green Geneva motion lane on `main`: the
 golden-frame job went red on `main` after the tag was cut, and the

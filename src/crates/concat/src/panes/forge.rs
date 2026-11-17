@@ -198,9 +198,7 @@ pub struct AutoEditPane {
 }
 
 fn auto_edit_stock_provider(pexels: &str, pixabay: &str) -> String {
-    let env_has_key = |name: &str| {
-        std::env::var(name).is_ok_and(|value| !value.trim().is_empty())
-    };
+    let env_has_key = |name: &str| std::env::var(name).is_ok_and(|value| !value.trim().is_empty());
     if !pexels.trim().is_empty() || env_has_key("PEXELS_API_KEY") {
         "pexels".to_owned()
     } else if !pixabay.trim().is_empty() || env_has_key("PIXABAY_API_KEY") {

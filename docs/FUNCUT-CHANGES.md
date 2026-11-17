@@ -2180,3 +2180,53 @@ vowel-note fixes) rides on `main` and is not in the published bundles;
 
 The audit's full classification of wired-and-proven, wired-but-unproven and
 not-wired is in [`docs/COMPLETION-AUDIT-2026-11-16.md`](COMPLETION-AUDIT-2026-11-16.md).
+
+## 49. The integration plan: two AUTO EDIT paths, the stock the button never shops, and four corrections
+
+An audit arrived proposing that FUNCUT's biggest opportunity is not more
+features but making the subsystems it already has work together through
+the editor. Its central finding is right and its plan is in
+[`docs/DIRECTOR-INTEGRATION-PLAN.md`](DIRECTOR-INTEGRATION-PLAN.md). Four
+of its supporting facts are wrong against `main`, and they are recorded
+here because a plan built on them builds the wrong thing.
+
+**There are two AUTO EDIT paths, and they were conflated.** The Forge
+**AUTO EDIT button** runs a fixed 12-stage program written in Rust
+(`src/crates/concat-mcp/src/director_program.rs`); its whole tool
+vocabulary is handoff, transcribe, voice signals, loudness, timeline read,
+BGM and sound - **no stock tool, no OpenVid tool, no motion tool at all**.
+The **`auto_director.py` watcher** is a different program: it polls
+`media.import` and runs 20 phases, and it *does* shop stock (OpenVid only)
+and *does* render motion (`motion_reel`). "AUTO EDIT does not use
+Pexels/Pixabay" is true of both - but for the button it is not a missing
+provider, it is a missing **stage**, and the two need different fixes.
+
+**RISK-02 is closed, not open.** The older `BUG-AUDIT-FINAL.md` line that
+`BgmTrack` "carries no license field at all" is stale: `BgmTrack.license`
+exists (`concat-api/src/message.rs:1452`), `bgm.import` refuses a
+MobyGratis track when the edit is monetized (`concat-api/src/lib.rs:2275`),
+`plan_validate` blocks a monetized plan whose bed names a `lofi-` track
+(`concat-mcp/src/tools.rs:3764`), and the runner shops a monetized bed on
+FreePD only (`scripts/auto_director.py:572`).
+
+**The named OxiMedia crates mostly do not exist.** The audit's expansion
+table names `oximedia-scene`, `oximedia-shots`, `oximedia-search`,
+`oximedia-proxy`, `oximedia-audiopost`, `oximedia-qc` and
+`oximedia-color`; none is in `Cargo.lock` or the registry. The real crates
+are `oximedia-{audio,audio-analysis,auto,codec,core,cv,edit,graph,graphics,image,io,lut,mir,mixer}`.
+
+**OxiMedia is wired; the "entry point nothing called" line is half-false.**
+`concat_motion::footage::suggest_footage` is reachable as the
+`footage_plan_suggest` tool (`concat-mcp/src/tools.rs:4435`) and the
+watcher calls it. The button does not.
+
+One thing the audit missed, which reframes its top two items: the button's
+omission is **deliberate**. Its own doc comment
+(`director_program.rs:971`) says "The B-roll, grade and motion design stay
+the Director agent's: those stages' registers are simply absent." The five
+stages the 12-stage program drops - plan, gather, motion, preview, revise -
+are the judgement stages the design reserved for the agent. Adding them
+back to the unattended button is a product decision, not a bug fix.
+
+The plan is a plan: nothing in it is implemented, and the "evidence" it
+names is what each item must produce, not what it has.

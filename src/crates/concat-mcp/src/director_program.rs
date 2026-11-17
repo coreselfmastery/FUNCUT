@@ -280,15 +280,95 @@ fn transcripts_of(log: &[Value], takes: &[TakePaths]) -> Vec<(String, Vec<Value>
     found
 }
 
+/// One B-roll slot: a stretch of the narration with no words in it, the
+/// take it was read from, and the words that describe what the picture
+/// should show there.
+struct BrollSlot {
+    /// The take file the gap's neighbours were read from.
+    take: String,
+    /// Where the gap begins, in the take's own seconds.
+    from: f64,
+    /// Where it ends, in the take's own seconds.
+    to: f64,
+    /// The query the shelf is shopped with.
+    query: String,
+}
+
+/// The last `n` words of a line: the words closest to the gap a shot
+/// fills, which is what its search is shopped with.
+fn tail_words(text: &str, n: usize) -> String {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let from = words.len().saturating_sub(n);
+    words[from..].join(" ")
+}
+
+/// The B-roll slots a run should fill: the spoken spans read from the
+/// transcripts, the gaps between them long enough to hold a shot and
+/// short enough to be one, each carrying the tail of the words before it
+/// as the query its search is shopped with. A narration with no such gap
+/// has no slots, and the picture stage has nothing to add.
+fn broll_slots(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
+    const SHORTEST: f64 = 1.2;
+    const LONGEST: f64 = 8.0;
+    const MOST: usize = 6;
+    const QUERY_WORDS: usize = 5;
+
+    let mut slots: Vec<BrollSlot> = Vec::new();
+    for (take, segments) in transcripts_of(log, takes) {
+        let mut spoken: Vec<(f64, f64, String)> = segments
+            .iter()
+            .filter_map(|segment| {
+                let start = segment["start"].as_f64()?;
+                let end = segment["end"].as_f64()?;
+                let text = segment["text"].as_str().unwrap_or_default().trim();
+                (end > start && !text.is_empty()).then(|| (start, end, text.to_owned()))
+            })
+            .collect();
+        spoken.sort_by(|left, right| left.0.total_cmp(&right.0));
+        // The gaps are between one spoken span's end and the next one's
+        // start; `cursor` carries the furthest end read so far, so an
+        // overlapping segment can never open a gap inside the speech.
+        let mut cursor: Option<f64> = None;
+        for (start, end, _) in &spoken {
+            if let Some(previous) = cursor {
+                let gap = start - previous;
+                if (SHORTEST..=LONGEST).contains(&gap) {
+                    let before = spoken
+                        .iter()
+                        .rev()
+                        .find(|(_, segment_end, _)| *segment_end <= *start)
+                        .map(|(_, _, text)| tail_words(text, QUERY_WORDS))
+                        .unwrap_or_default();
+                    if !before.is_empty() {
+                        slots.push(BrollSlot {
+                            take: take.clone(),
+                            from: previous,
+                            to: *start,
+                            query: before,
+                        });
+                    }
+                }
+            }
+            cursor = Some(cursor.map_or(*end, |previous| previous.max(*end)));
+        }
+    }
+    slots.truncate(MOST);
+    slots
+}
+
 /// The AUTO EDIT's whole program: every stage the unattended run can run
 /// without a creative brain, each standing on what the run itself
 /// measured. The static spine repairs, transcribes, reads the voice and
 /// gates the music; the fans run the takes' work at the same time; the
-/// derived stages act on the replies - the dead air cut, the captions
-/// placed on the measured words, the music bed shopped and ducked, the
-/// accents landed on the emphasis peaks - and the verify reads the
-/// timeline as it ended up, not as it was planned. The creative layer -
-/// B-roll, the grade, motion design - stays the Director agent's.
+/// derived stages act on the replies - the dead air cut, the grade over
+/// the whole runtime, the B-roll the narration's gaps are shopped for,
+/// the captions placed on the measured words, the music bed shopped and
+/// ducked, the accents landed on the emphasis peaks - and the verify
+/// reads the timeline as it ended up, not as it was planned. The picture
+/// is built on the timeline, not merely exported: a one-click run now
+/// leaves an editable cut, B-roll and look included, for the window to
+/// tweak. The judgement stages that still need a brain - the plan, the
+/// motion comps, the preview/revise loop - stay the Director agent's.
 pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     let project = source.project.clone();
     let export = source.export.clone();
@@ -405,6 +485,225 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         None
                     } else {
                         Some(queue.remove(0))
+                    }
+                }
+            }),
+        )
+        .warn()
+        .into(),
+    );
+    // 6b. The grade: one look over the whole runtime, the skill's own
+    //     default (an effect layer spanning the cut, never a five-second
+    //     layer - the duration is the timeline the tighten just read, and
+    //     the layer lands above the picture so it treats it). The look is
+    //     the blockbuster one the shelf calls the most requested; a run
+    //     with no runtime to read grades nothing.
+    let grade_project = project.clone();
+    steps.push(
+        DerivedStep::react(
+            Stage::Timeline,
+            Box::new(move |log| {
+                let view = latest_view(log)?;
+                let runtime = view["timeline"]["clips"]
+                    .as_array()?
+                    .iter()
+                    .map(|clip| {
+                        clip["start"].as_f64().unwrap_or(0.0)
+                            + clip["duration"].as_f64().unwrap_or(0.0)
+                    })
+                    .fold(0.0_f64, f64::max);
+                if runtime < 0.5 {
+                    return None;
+                }
+                Some(call(
+                    "edit_apply",
+                    json!({
+                        "path": grade_project,
+                        "command": {
+                            "op": "addLayerClip",
+                            "trackId": null,
+                            "start": 0.0,
+                            "duration": round3(runtime),
+                            "effectId": "concat.teal-orange",
+                            "name": "The look",
+                        },
+                    }),
+                ))
+            }),
+        )
+        .warn()
+        .into(),
+    );
+    // 6c. The picture: the narration's own gaps, filled with stock. Every
+    //     slot the planner read is shopped one query at a time (the words
+    //     before the gap), the strongest hit imported into the project's
+    //     own openvid folder, laid on the lowest free picture lane under
+    //     the voiceover, trimmed to the gap it fills, filled to frame and
+    //     given a slow drift and a dissolve so the shot is alive. A
+    //     narration with no gap - or a shelf with nothing to match - leaves
+    //     the cut as the voiceover made it; the stage is warn-policy, so a
+    //     missing index is a flaw the edit ships with, not a run lost.
+    let gather_source = takes.clone();
+    let gather_project = project.clone();
+    steps.push(
+        DerivedStep::react(
+            Stage::Gather,
+            Box::new({
+                let mut slots: Option<Vec<BrollSlot>> = None;
+                let mut placed = 0usize;
+                let mut phase = 0u8;
+                let mut pending_media: Option<String> = None;
+                let mut pending_len = 0.0f64;
+                move |log| loop {
+                    let slots = slots.get_or_insert_with(|| broll_slots(log, &gather_source));
+                    if placed >= slots.len() {
+                        return None;
+                    }
+                    let slot = &slots[placed];
+                    match phase {
+                        0 => {
+                            phase = 1;
+                            return Some(call(
+                                "openvid_search_batch",
+                                json!({ "queries": [slot.query.clone()], "limit": 5 }),
+                            ));
+                        }
+                        1 => {
+                            // The search's own answer: the strongest hit is
+                            // imported (the shelf's first clip). A page
+                            // with nothing usable is a slot left empty.
+                            let id = log
+                                .last()
+                                .and_then(|reply| reply.pointer("/searches/0/clips/0/id"))
+                                .and_then(Value::as_i64);
+                            match id {
+                                Some(id) => {
+                                    phase = 2;
+                                    return Some(call(
+                                        "openvid_import",
+                                        json!({
+                                            "path": gather_project,
+                                            "ids": [id],
+                                            "monetized": false,
+                                        }),
+                                    ));
+                                }
+                                None => {
+                                    placed += 1;
+                                    phase = 0;
+                                }
+                            }
+                        }
+                        2 => {
+                            // The import's own reply: the clip is in the bin
+                            // and the view it carries maps the gap onto the
+                            // timeline. Lay the clip there.
+                            let media_id = log
+                                .last()
+                                .and_then(|reply| reply.pointer("/mediaIds/0"))
+                                .and_then(|id| id.as_str())
+                                .map(str::to_owned);
+                            let at = latest_view(log).and_then(|view| {
+                                let media = media_paths(view);
+                                timeline_at(view, &media, &slot.take, slot.from)
+                            });
+                            let to = latest_view(log).and_then(|view| {
+                                let media = media_paths(view);
+                                timeline_at(view, &media, &slot.take, slot.to)
+                            });
+                            match (media_id, at, to) {
+                                (Some(media_id), Some(at), Some(to)) if to - at > 0.4 => {
+                                    pending_media = Some(media_id.clone());
+                                    pending_len = round3(to - at);
+                                    phase = 3;
+                                    return Some(call(
+                                        "edit_apply",
+                                        json!({
+                                            "path": gather_project,
+                                            "command": {
+                                                "op": "addClipAtFirstFree",
+                                                "mediaId": media_id,
+                                                "start": round3(at),
+                                            },
+                                        }),
+                                    ));
+                                }
+                                _ => {
+                                    placed += 1;
+                                    phase = 0;
+                                }
+                            }
+                        }
+                        3 => {
+                            // The placement's own reply: the clip the import
+                            // just added, by the media it plays. Trim it to
+                            // the gap, fill the frame, drift it and dissolve
+                            // it in - one undoable batch.
+                            let media_id = pending_media.clone();
+                            let found = latest_view(log).and_then(|view| {
+                                view["timeline"]["clips"]
+                                    .as_array()?
+                                    .iter()
+                                    .find(|clip| clip["media"].as_str() == media_id.as_deref())
+                                    .map(|clip| {
+                                        (
+                                            clip["id"].as_str().unwrap_or_default().to_owned(),
+                                            clip["duration"].as_f64().unwrap_or(0.0),
+                                        )
+                                    })
+                            });
+                            placed += 1;
+                            phase = 0;
+                            let Some((clip_id, current)) = found else {
+                                continue;
+                            };
+                            let mut commands: Vec<Value> = Vec::new();
+                            let delta = pending_len - current;
+                            if delta < -0.05 {
+                                commands.push(json!({
+                                    "op": "trimClip",
+                                    "clipId": clip_id,
+                                    "edge": "end",
+                                    "delta": round3(delta),
+                                }));
+                            }
+                            commands.push(json!({
+                                "op": "frameClip",
+                                "clipId": clip_id,
+                                "framing": "fill",
+                            }));
+                            commands.push(json!({
+                                "op": "setClipKey",
+                                "clipId": clip_id,
+                                "property": "scale",
+                                "at": 0.0,
+                                "value": 1.0,
+                                "ease": [0.0, 0.0, 0.58, 1.0],
+                            }));
+                            commands.push(json!({
+                                "op": "setClipKey",
+                                "clipId": clip_id,
+                                "property": "scale",
+                                "at": 1.0,
+                                "value": 1.06,
+                                "ease": [0.0, 0.0, 0.58, 1.0],
+                            }));
+                            commands.push(json!({
+                                "op": "updateClip",
+                                "clipId": clip_id,
+                                "patch": {
+                                    "transitionIn": { "id": "concat.dissolve", "duration": 0.3 },
+                                },
+                            }));
+                            return Some(call(
+                                "edit_apply",
+                                json!({
+                                    "path": gather_project,
+                                    "command": { "op": "batch", "commands": commands },
+                                }),
+                            ));
+                        }
+                        _ => return None,
                     }
                 }
             }),
@@ -1008,10 +1307,11 @@ mod tests {
         let program = super::auto_edit_program(&source);
 
         // The register, in the run's own order: the fanned repair and
-        // transcription, the derived tighten/captions/music/sfx, and the
-        // static export/verify-gates/watch. The creative layer's stages
-        // (Plan, Gather, Motion, Preview, Revise) are absent - the
-        // fraction the page shows counts only these.
+        // transcription, the derived tighten, grade, B-roll, captions,
+        // bed and accents, and the static export/verify-gates/watch. The
+        // creative layer's remaining stages (Plan, Motion, Preview,
+        // Revise) are absent - the fraction the page shows counts only
+        // these.
         let order: Vec<&str> = program
             .steps
             .iter()
@@ -1026,6 +1326,8 @@ mod tests {
                 "voice-signals",
                 "understand",
                 "timeline",
+                "timeline",
+                "gather",
                 "captions",
                 "music",
                 "sfx",
@@ -1035,9 +1337,10 @@ mod tests {
             ]
         );
         // The warn-policy stages, and only them: a take that cannot be
-        // repaired ships as recorded, a tighten or caption or bed or
-        // accent that cannot land is a flaw the edit ships with, and a
-        // low craft score is recorded yellow, not thrown away.
+        // repaired ships as recorded, a tighten or grade or B-roll slot or
+        // caption or bed or accent that cannot land is a flaw the edit
+        // ships with, and a low craft score is recorded yellow, not thrown
+        // away.
         let warn: Vec<&str> = program
             .steps
             .iter()
@@ -1049,6 +1352,8 @@ mod tests {
             vec![
                 "audio-repair",
                 "timeline",
+                "timeline",
+                "gather",
                 "captions",
                 "music",
                 "sfx",
@@ -1100,10 +1405,11 @@ mod tests {
             source.takes[1].take.as_str()
         );
 
-        // The tighten, the captions, the bed and the accents are derived:
-        // their calls are the run's own replies to answer for, and the
-        // runner's reactive queue asks for them one at a time.
-        for at in [5usize, 6, 7, 8] {
+        // The tighten, the grade, the B-roll, the captions, the bed and
+        // the accents are derived: their calls are the run's own replies
+        // to answer for, and the runner's reactive queue asks for them one
+        // at a time.
+        for at in [5usize, 6, 7, 8, 9, 10] {
             assert!(
                 matches!(program.steps[at], ProgramStep::Derived(_)),
                 "step {at} is derived"
@@ -1114,12 +1420,12 @@ mod tests {
         // is minted at run time - and the watch's sheet is a project-
         // relative name, because the window's server refuses absolute
         // write paths.
-        let export = program.steps[9].as_static();
+        let export = program.steps[11].as_static();
         assert_eq!(export.calls[0].tool, "export_start");
         assert_eq!(export.calls[0].arguments["output"], source.export.as_str());
         assert_eq!(export.calls[1].tool, "export_wait");
         assert_eq!(export.calls[1].arguments["path"], source.project.as_str());
-        let watch = program.steps[11].as_static();
+        let watch = program.steps[13].as_static();
         assert_eq!(watch.calls[0].arguments["out"], "auto-edit-sheet.png");
         assert_eq!(
             watch.calls[1].arguments["pngPath"],
@@ -1129,9 +1435,9 @@ mod tests {
         // The verify's gates: the loudness target, and the words (F-04) -
         // on the derived step that reads the timeline as it ended up.
         use concat_director::ReplyGate;
-        assert!(matches!(program.steps[10], ProgramStep::Derived(_)));
+        assert!(matches!(program.steps[12], ProgramStep::Derived(_)));
         assert_eq!(
-            program.steps[10].gates(),
+            program.steps[12].gates(),
             vec![
                 ReplyGate::True {
                     field: "platformTargetMet",
@@ -1145,7 +1451,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            program.steps[11].gates(),
+            program.steps[13].gates(),
             vec![ReplyGate::AtLeast {
                 field: "overall",
                 minimum: 7.0,
@@ -1154,7 +1460,7 @@ mod tests {
         );
         // No other step gates its replies.
         for (at, step) in program.steps.iter().enumerate() {
-            if at != 10 && at != 11 {
+            if at != 12 && at != 13 {
                 assert!(step.gates().is_empty(), "step {at} gates its replies");
             }
         }
@@ -1217,8 +1523,8 @@ mod tests {
             sheet: "auto-edit-sheet.png".to_owned(),
         };
         let mut program = auto_edit_program(&source);
-        let ProgramStep::Derived(music) = &mut program.steps[7] else {
-            panic!("step 7 is the music stage");
+        let ProgramStep::Derived(music) = &mut program.steps[9] else {
+            panic!("step 9 is the music stage");
         };
         // The log as the stage finds it: the captions stage's own view,
         // with a timeline and clips - exactly the shape the old code read
@@ -1301,8 +1607,8 @@ mod tests {
             sheet: "auto-edit-sheet.png".to_owned(),
         };
         let mut program = auto_edit_program(&source);
-        let ProgramStep::Derived(captions) = &mut program.steps[6] else {
-            panic!("step 6 is the captions stage");
+        let ProgramStep::Derived(captions) = &mut program.steps[8] else {
+            panic!("step 8 is the captions stage");
         };
         let view = json!({
             "timeline": { "id": "t1", "clips": [
@@ -1331,6 +1637,45 @@ mod tests {
             None,
             "the captions are issued once"
         );
+    }
+
+    /// The B-roll planner reads the narration's own gaps: a stretch
+    /// between two spoken spans long enough to hold a shot becomes one
+    /// slot, shopped with the tail of the words before it; a narration
+    /// whose words run together has none.
+    #[test]
+    fn the_broll_slots_are_the_narration_s_gaps() {
+        let takes = vec![TakePaths {
+            take: "/takes/a.wav".to_owned(),
+            enhanced: "/takes/a-enhanced.wav".to_owned(),
+        }];
+        let transcript = json!({
+            "segments": [
+                { "start": 0.0, "end": 2.0, "text": "the city skyline at dusk tonight" },
+                { "start": 4.0, "end": 6.0, "text": "and the crowds crossing" },
+                { "start": 6.1, "end": 7.0, "text": "the street" },
+            ],
+        });
+        let log = vec![json!({
+            "path": "/takes/a.wav",
+            "output": transcript.to_string(),
+        })];
+        let slots = broll_slots(&log, &takes);
+        assert_eq!(slots.len(), 1, "one gap is long enough to hold a shot");
+        assert_eq!(slots[0].query, "city skyline at dusk tonight");
+        assert_eq!(slots[0].from, 2.0);
+        assert_eq!(slots[0].to, 4.0);
+
+        // No gap: the words run together, and the picture stage has
+        // nothing to add.
+        let tight = json!({
+            "segments": [
+                { "start": 0.0, "end": 2.0, "text": "one" },
+                { "start": 2.0, "end": 4.0, "text": "two" },
+            ],
+        });
+        let log = vec![json!({ "path": "/takes/a.wav", "output": tight.to_string() })];
+        assert!(broll_slots(&log, &takes).is_empty());
     }
 
     /// A clip with no media - a title the run placed - does not end the

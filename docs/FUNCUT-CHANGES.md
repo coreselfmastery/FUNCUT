@@ -2230,3 +2230,48 @@ back to the unattended button is a product decision, not a bug fix.
 
 The plan is a plan: nothing in it is implemented, and the "evidence" it
 names is what each item must produce, not what it has.
+
+## 50. The button builds the picture: the grade and the B-roll the one-click run never made
+
+Section 49 named the gap and left it as a product decision: the Forge
+**AUTO EDIT button**'s 12-stage program (`concat-mcp/src/director_program.rs`)
+shopped no stock and laid no look, so its "one click" produced a
+captioned, graded-less, footage-less export - a voiceover with titles -
+and the B-roll, grade and motion the design reserved for the Director
+agent never reached the timeline the window shows. The decision is now
+made: the button builds the picture.
+
+Two stages join the program, both standing on what the run already
+measured, both warn-policy - a shelf that will not answer is a flaw the
+edit ships with, not a run lost:
+
+- **The grade** (the `timeline` stage, after the tighten): one
+  `concat.teal-orange` layer over the **whole runtime**, the skill's own
+  default recipe and its loudest trap avoided - the duration is read from
+  the timeline the tighten just left, never left absent to fall back to
+  the five-second default (`prompts/color_grading.md`'s "5-second trap").
+  The layer lands above the picture, so it treats every lane beneath it.
+- **The picture** (the `gather` stage): the narration's own gaps become
+  B-roll slots. The planner (`broll_slots`) reads the spoken spans from
+  the transcripts, takes each gap between one span's end and the next
+  one's start that is long enough to hold a shot (1.2-8 s) and short
+  enough to be one (8 s at most), and shops it with the tail of the words
+  before it - the closest description the narration gives. Each slot is
+  `openvid_search_batch` → `openvid_import` (the CC0, licence-record-free
+  local index; `monetized: false` as its own gate requires) →
+  `addClipAtFirstFree` on the lowest free picture lane under the
+  voiceover → one undoable batch that trims the clip to the gap,
+  `frameClip`-fills it, gives it a 1.0 → 1.06 Ken Burns drift, and
+  dissolves it in on `concat.dissolve`.
+
+The result is what the one click was asked to be: the run now leaves a
+**complete, editable cut on the timeline** - narration, B-roll, a look,
+captions, music, accents - which the window opens at the end, so every
+piece is a normal clip to tweak. The stages that still want a brain (the
+plan, the motion comps, the preview/revise loop) remain the Director
+agent's; the run gains the two that never needed one.
+
+Verified on the machine the fork targets: `cargo test -p concat-mcp -p
+concat-director` (136 tests, including the new
+`the_broll_slots_are_the_narration_s_gaps`), `cargo fmt --check`, and
+`cargo clippy -p concat-mcp --all-targets -- -D warnings` all pass.

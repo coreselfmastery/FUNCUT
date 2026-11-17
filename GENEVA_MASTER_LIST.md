@@ -1,10 +1,14 @@
 # Geneva master list — current verified state
 
+> Counts and the canonical feature inventory live in
+> [docs/FEATURES.md](docs/FEATURES.md). This page carries Geneva's own
+> dated detail.
+
 **Last reconciled:** 16 November 2026  
 **Repository:** `coreselfmastery/FUNCUT`  
 **Canonical implementation:** `src/crates/concat-motion`  
 **Sidecar contract:** Geneva 1.6.0, pinned by the installer and CI dependency lock  
-**Purpose:** one current status page. The 1 November four-pillar audit remains historical evidence; its original “Findings register” and “What remains” sections are superseded by its 3 November postscript and this page.
+**Purpose:** Geneva's own current status page; the canonical whole-repo inventory is [docs/FEATURES.md](docs/FEATURES.md). The 1 November four-pillar audit remains historical evidence; its original “Findings register” and “What remains” sections are superseded by its 3 November postscript and this page.
 
 ## Executive status
 

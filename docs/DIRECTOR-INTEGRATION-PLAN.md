@@ -16,7 +16,38 @@ contradicts, the correction is in the next section. The point of writing
 the corrections down is that a plan built on a wrong premise builds the
 wrong thing.
 
-## Corrections to the prior audit
+## A second audit, checked against the same tree
+
+A later, larger audit (`main` `c32c0867`, 2026-11-17) arrived after this
+plan was written. It is materially better than the first: it names the
+two AUTO EDIT paths correctly, states RISK-02 is closed, and names PRs
+#153/#154/#157 as already merged - all confirmed true here. Its new
+findings are folded in below. Two of its own lines need correcting, and
+one corrects **this plan**:
+
+1. **It says "0/42" for the roadmap and implies 42 MCP tools.** The
+   `Action` enum has 42 variants, but `catalogue()` (`tools.rs:257`) lists
+   **113 tools** (the README's number); 103 are served to a director by
+   default. "42" is the enum, not the tool count.
+2. **Its §5.3 repeats the flatten-to-MP4 claim this plan also made - and
+   both are half-wrong.** See the correction to Workstream D below: the
+   linked-comp model already exists.
+
+What the second audit gets right and this plan adopts:
+
+- **No single source of truth for implementation status** (its §10).
+  Confirmed: six status documents reference six different `main`
+  commits and none is canonical. This is now Workstream G.
+- **Export QC needs a machine-readable passed/failed/skipped report** -
+  already Workstream E; the audit's wording sharpens it.
+- **Proxy behaviour needs tests** beyond the 14 that exist
+  (`concat-host/src/proxy.rs`): invalidation, source replacement,
+  interrupted generation, concurrent requests, cache recovery. Added to
+  Workstream H.
+- **A security re-run on the exact `main` SHA**, the sherpa-onnx 2.x
+  migration, and a UI acceptance pass. Added to Workstreams H and I.
+
+## Corrections to the first audit
 
 The audit this plan follows is sound in its central finding - the
 director does not shop the live stock shelves - but four of its supporting
@@ -191,24 +222,43 @@ Evidence: implemented + connected + tested in the self-test.
 
 ## Workstream D - Geneva linked motion clips (P1)
 
-Today `motion_reel` flattens to an MP4 the director imports; the comp is
-not kept. This is a real product gap but a large one - it touches the
-project model, not just the director.
+**Corrected against the code.** This plan (and the second audit, §5.3)
+said `motion_reel` flattens to an MP4 and no linked-comp model exists.
+Half of that is wrong: the linked model **already exists**.
 
-- `src/crates/concat-project` (model) - a timeline clip that carries a
-  `motionComp` reference beside its rendered path: the comp document, its
-  parameters and its asset references, so it can be reopened and
-  re-rendered.
-- `src/crates/concat/src/panes/*` - a "reopen comp" affordance on such a
-  clip; re-render writes the same path the clip plays.
-- `src/crates/concat-mcp/src/tools.rs` - a `motion_relink` tool, or a
-  field on `motion_reel` that records the comp reference on the clip it
-  places.
-- Cache: an unchanged comp re-renders nothing (keyed on the comp hash).
+- `ClipKind::Motion` and `MotionClip { comp, hash, engine, width,
+  height }` are in the project model
+  (`src/crates/concat-project/src/model.rs:2058`), with the comp
+  addressed by content hash in the project's `comps/` so two clips
+  showing one comp share a bake.
+- `Command::AddMotionClip` creates such a clip with comp/hash validation
+  and automatic lane placement (`.../commands/clips.rs:228`).
+- The Motion page and the command are merged (KNOWN_ISSUES item 6).
+
+So the model and the command exist; what is missing is that the
+**director's `motion_reel` renders to a flat `reel-<hash>.mp4`
+(`src/crates/concat-mcp/src/motion.rs:1822`) and the director imports
+that file** rather than placing a `ClipKind::Motion` referencing the comp.
+The real work is therefore narrower than first written:
+
+- `src/crates/concat-mcp/src/motion.rs` - `reel` gains a mode (or a
+  sibling tool) that, after rendering, places a `ClipKind::Motion` clip
+  on the timeline via `Command::AddMotionClip` instead of importing the
+  MP4; the MP4 stays as the bake the clip plays.
+- `src/crates/concat-mcp/src/director_program.rs` and
+  `scripts/auto_director.py` - call that mode when the motion is meant to
+  stay editable.
+- `src/crates/concat/src/panes/*` - the "reopen comp" affordance
+  KNOWN_ISSUES item 6 lists as still owed (metadata editing, save/reopen
+  round-trips, in-page preview, final-export acceptance).
+- Cache: already keyed on the comp hash; an unchanged comp re-renders
+  nothing.
 
 Evidence: implemented + connected + tested + accepted (save, reopen,
 re-render, export). **Do not start this before A and C land** - it is the
-largest item here and the least urgent.
+largest item here and the least urgent. Note the smaller true scope: this
+is "wire `motion_reel` to the existing model", not "build a linked-comp
+model".
 
 ## Workstream E - the quality-control loop (P0)
 
@@ -235,6 +285,65 @@ own benchmark; none is a "connect the ecosystem" gesture.
 - Rule: one crate, one real editor workflow, one regression test, one
   measured benefit. Anything that duplicates `concat-motion`'s existing
   footage engine (`suggest_footage`, `fill_from_pool`) is refused.
+
+## Workstream G - one source of truth for implementation status (P0)
+
+The second audit's §10 is the cheapest high-value item in this plan. Six
+status documents each name a different `main` commit and none is
+canonical: `KNOWN_ISSUES.md` (`fa6f566a`), `GENEVA_MASTER_LIST.md`
+(`cf82462c`), `TEST_EVIDENCE.md`, `docs/COMPLETION-AUDIT-2026-11-16.md`
+(`fa6f566a`), `docs/DIRECTOR-COMPLETION-TRACKER.md` (`4de52118`),
+`docs/DIRECTOR-INTEGRATION-PLAN.md` (`45c86f2e`). A reader cannot tell
+which describes today.
+
+- `docs/FEATURES.md` - the verified inventory (113 tools, every page,
+  engine and model) becomes the single canonical status page, regenerated
+  against the current `main` SHA, carrying the four-level status
+  (implemented / connected / tested / accepted) per feature.
+- A small generator (`scripts/status/` or a `cargo xtask`) reads the code
+  (tool catalogue, `Action` enum, page list) and emits the counts, so the
+  numbers cannot drift from the tree; a CI check fails if the committed
+  registry disagrees with the code.
+- The other five documents link to it and stop restating counts.
+
+Evidence: implemented + connected + tested (the CI drift check is the
+test). No hardware acceptance needed.
+
+**Progress:** the canonical designation and the cross-links landed
+(`docs/FEATURES.md` now declares itself canonical and carries the
+four-level status; `KNOWN_ISSUES.md` and `GENEVA_MASTER_LIST.md` point at
+it). The counts were already held to the code by
+`tools.rs::the_documents_tool_count_is_the_catalogues_own`, which reads
+the README, `FEATURES.md`, `FUNCUT.md` and the architecture note. What
+remains is the per-feature four-level registry and the generator that
+emits it.
+
+## Workstream H - reliability, security and proxy tests (P1)
+
+Tests and audits the second audit names that the tree does not yet have:
+
+- `src/crates/concat-host/src/proxy.rs` - beyond its 14 tests, add:
+  invalidation, source replacement, interrupted generation, concurrent
+  requests, cache recovery.
+- The RustSec audit re-run on the exact `main` SHA, and the
+  sherpa-onnx 2.x migration (KNOWN_ISSUES item 10) - which re-pins
+  `deps.lock`'s sherpa digests and re-validates the speech stack.
+- Project-file robustness: malformed/oversized project and archive
+  inputs, media relinking after a move, recovery after an interrupted
+  autosave.
+
+Evidence: tested.
+
+## Workstream I - UI acceptance pass (P2)
+
+A systematic pass over the Slint surface: every button has a real action,
+every setting reaches the engine, loading/cancellation/error/progress
+reflect the real job, and every panel degrades gracefully with a missing
+dependency. The MCP/UI callback wiring is already verified clean
+(542 callbacks, 0 unreferenced); this is about runtime behaviour, not
+wiring.
+
+Evidence: tested + accepted.
 
 ## Non-goals
 
@@ -265,6 +374,9 @@ Checklist (tick only with the named evidence):
 - [ ] D. Geneva linked motion clips - implemented + connected + tested
 - [ ] E. Export-vs-plan QC report - tested
 - [ ] F. One OxiMedia crate with a measured benefit - benchmarked
+- [ ] G. One canonical status source, drift-checked in CI - tested
+- [ ] H. Proxy/reliability tests + sherpa 2.x + RustSec re-run - tested
+- [ ] I. UI acceptance pass - tested + accepted
 - [ ] All of the above: accepted on the target laptop
 
 The remaining release blockers (target-hardware performance, VAAPI

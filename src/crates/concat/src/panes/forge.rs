@@ -371,6 +371,15 @@ impl ForgePane {
         if self.running {
             return;
         }
+        // The AUTO EDIT and the agent run edit the same sibling project
+        // through the same server. Two writers on one project interleave
+        // their edits into a timeline neither of them planned, so only
+        // one may be going: a Start while the auto edit runs is refused,
+        // and the user is told which run to stop first.
+        if let Some(key) = other_run_refusal(self.auto.running, true) {
+            studio.notify(&t(key), true);
+            return;
+        }
         if !from_timeline && script.trim().is_empty() {
             return;
         }
@@ -497,7 +506,15 @@ impl ForgePane {
     /// the Director agent's; this is the unattended ship of the
     /// voiceover edit itself, measured and verified.
     fn auto_edit_start(&mut self, studio: &mut Studio) {
-        if self.auto.running || self.running {
+        if self.auto.running {
+            return;
+        }
+        // A Start and an AUTO EDIT share the same sibling project and
+        // server: while the agent run is going, the auto edit would write
+        // over the run it cannot see. Refuse it with the same sentence the
+        // Start uses, so the two entry points speak with one voice.
+        if let Some(key) = other_run_refusal(self.running, false) {
+            studio.notify(&t(key), true);
             return;
         }
         // A retryable end kept its sibling, its source and its runner:
@@ -1050,6 +1067,24 @@ fn is_narration(
 /// copied into `<project>/bgm/`, the folder the bed's own tooling owns.
 fn is_bed(item: &concat_project::model::MediaItem, source_root: &std::path::Path) -> bool {
     std::path::Path::new(&item.path).starts_with(source_root.join("bgm"))
+}
+
+/// The locale key of the refusal when the *other* run is already going, or
+/// `None` when this entry point may start. The Forge page offers two ways
+/// to edit the same project - the agent run (Start) and the unattended
+/// AUTO EDIT - and both write one sibling through the same server; letting
+/// them overlap interleaves two edits into a timeline neither planned, so
+/// the second is refused and told which run to stop. `starting_start` is
+/// true for the Start button and false for the AUTO EDIT button.
+fn other_run_refusal(other_running: bool, starting_start: bool) -> Option<&'static str> {
+    if !other_running {
+        return None;
+    }
+    Some(if starting_start {
+        "forge.startBusy"
+    } else {
+        "forge.autoEditBusy"
+    })
 }
 
 /// The handoff itself, apart from the studio so a test can drive it with
@@ -1844,9 +1879,34 @@ fn elapsed_text(duration: Duration) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::other_run_refusal;
     use super::voiceover_copy_name;
     use std::path::Path;
     use std::time::Duration;
+
+    /// One run at a time on the shared project: the Start is refused while
+    /// the auto edit goes, the auto edit is refused while the Start goes,
+    /// and each refusal names the run to stop. Two writers on one sibling
+    /// interleave their edits, so the guard is the page's contract.
+    #[test]
+    fn the_two_runs_refuse_to_overlap_and_name_the_one_to_stop() {
+        assert_eq!(other_run_refusal(false, true), None, "Start alone may go");
+        assert_eq!(
+            other_run_refusal(false, false),
+            None,
+            "auto edit alone may go"
+        );
+        assert_eq!(
+            other_run_refusal(true, true),
+            Some("forge.startBusy"),
+            "Start while the auto edit runs names the auto edit"
+        );
+        assert_eq!(
+            other_run_refusal(true, false),
+            Some("forge.autoEditBusy"),
+            "auto edit while the Start runs names the agent run"
+        );
+    }
 
     #[test]
     fn voiceover_copies_with_the_same_basename_keep_distinct_names() {

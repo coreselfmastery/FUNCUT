@@ -274,9 +274,13 @@ export component ForgePage inherits VerticalLayout {
 
         PageButton {
             label: Forge.running ? I18n.t("forge.cancel") : I18n.t("forge.start");
-            primary: !Forge.running && (Forge.script != "" || source-select.current == 1);
+            primary: !Forge.running && !Forge.auto-edit-running
+                && (Forge.script != "" || source-select.current == 1);
             danger: Forge.running;
-            enabled: Forge.running || Forge.script != "" || source-select.current == 1;
+            // One run at a time: the agent run and the auto edit share the
+            // same project, so Start greys out while the auto edit goes.
+            enabled: Forge.running
+                || (!Forge.auto-edit-running && (Forge.script != "" || source-select.current == 1));
             clicked => {
                 if (Forge.running) {
                     Forge.forge-cancel();
@@ -325,9 +329,12 @@ export component ForgePage inherits VerticalLayout {
                 : Forge.auto-edit-outcome == 2 ? I18n.t("forge.autoEditFix")
                 : I18n.t("forge.autoEdit");
             primary: !Forge.auto-edit-running && Forge.auto-edit-available
-                && Forge.auto-edit-outcome == 0;
+                && Forge.auto-edit-outcome == 0 && !Forge.running;
             danger: Forge.auto-edit-running;
-            enabled: Forge.auto-edit-running || Forge.auto-edit-available;
+            // One run at a time: greyed while the agent run edits the same
+            // project, so the two never write it at once.
+            enabled: Forge.auto-edit-running
+                || (!Forge.running && Forge.auto-edit-available);
             clicked => {
                 if (Forge.auto-edit-running) {
                     Forge.auto-edit-cancel();

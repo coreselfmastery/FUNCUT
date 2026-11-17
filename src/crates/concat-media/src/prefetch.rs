@@ -326,15 +326,29 @@ impl Prefetcher {
             let mut pinned = lock(&self.shared.pinned);
             // The streaming ring: the frames the cursor has passed are not
             // all released - the newest RING of them are kept, the rest go
-            // back to the pool. Oldest first, so the ring drains from the
-            // back of what the cursor has already shown.
+            // back to the pool. "Newest" is by the direction of travel:
+            // ahead of a forward cursor is the smallest times, so the ring
+            // keeps the largest passed and the oldest to let go are the
+            // front; ahead of a backward cursor is the largest times, so
+            // the ring keeps the smallest passed and the oldest are the
+            // back. Released oldest-first either way.
             pinned.sort_by(|a, b| a.0.total_cmp(&b.0));
             let passed = pinned
                 .iter()
                 .filter(|(time, _)| cursor.passed(*time, frame_seconds))
                 .count();
             let release = passed.saturating_sub(RING as usize);
-            pinned.drain(..release);
+            if release > 0 {
+                let len = pinned.len();
+                match cursor.direction {
+                    Direction::Forward => {
+                        pinned.drain(..release);
+                    }
+                    Direction::Backward => {
+                        pinned.truncate(len - release);
+                    }
+                }
+            }
             pinned.iter().map(|(time, _)| index(*time)).collect()
         };
         if !continues {
@@ -955,5 +969,45 @@ mod tests {
             "{:?}",
             prefetcher.held_instants()
         );
+    }
+
+    /// The ring drains by the direction of travel. A backward cursor's
+    /// "newest passed" frames are the *lowest* times - the ones just above
+    /// it, the ones it will show next - so those are what the ring keeps,
+    /// and the furthest-behind (the highest times) are what it releases.
+    /// Draining the front regardless would drop the frames a backward
+    /// scrub is about to need and pin the ones it has left behind.
+    #[test]
+    fn the_ring_drains_by_the_direction_of_travel() {
+        let pool = Arc::new(ReaderPool::new(1024, 1));
+        let prefetcher = Prefetcher::new(pool, 1);
+        let step = 0.5;
+        let cursor = |time: f64| Cursor {
+            time,
+            direction: Direction::Backward,
+            rate: -1.0,
+        };
+        let moments: Vec<Moment> = (0..12)
+            .map(|index| Moment {
+                time: index as f64 * step,
+                frames: Vec::new(),
+            })
+            .collect();
+        prefetcher.advance(cursor(5.5), step, moments);
+        prefetcher.drain();
+
+        // Back to 2.0s: 0.0..=2.5 are ahead of a backward cursor (shown
+        // next) and stay; of the six behind it, the ring keeps the four
+        // nearest - 3.0, 3.5, 4.0, 4.5 - and releases 5.0 and 5.5, the
+        // furthest behind. The buggy front-drain would have dropped the
+        // ahead frames 0.0 and 0.5 and pinned 5.0 and 5.5 instead.
+        prefetcher.advance(cursor(2.0), step, Vec::new());
+        let mut held: Vec<i64> = prefetcher
+            .held_instants()
+            .iter()
+            .map(|time| (time / step).round() as i64)
+            .collect();
+        held.sort_unstable();
+        assert_eq!(held, (0..=9).collect::<Vec<_>>(), "{held:?}");
     }
 }

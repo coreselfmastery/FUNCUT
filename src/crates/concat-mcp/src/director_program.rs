@@ -1237,28 +1237,38 @@ mod tests {
         let mut log = vec![captions_view];
         // First call: the shelf's state, not a duck of nothing.
         assert_eq!(
-            (music.next)(log.as_slice()).map(|call| call.tool).as_deref(),
+            (music.next)(log.as_slice())
+                .map(|call| call.tool)
+                .as_deref(),
             Some("bgm_status")
         );
         log.push(json!({ "freepd": "missing", "lofi": "missing" }));
         assert_eq!(
-            (music.next)(log.as_slice()).map(|call| call.tool).as_deref(),
+            (music.next)(log.as_slice())
+                .map(|call| call.tool)
+                .as_deref(),
             Some("bgm_prepare")
         );
         log.push(json!({ "freepd": "ready", "lofi": "missing" }));
         assert_eq!(
-            (music.next)(log.as_slice()).map(|call| call.tool).as_deref(),
+            (music.next)(log.as_slice())
+                .map(|call| call.tool)
+                .as_deref(),
             Some("bgm_search")
         );
         log.push(json!({ "tracks": [{ "id": "freepd-abc123" }] }));
         assert_eq!(
-            (music.next)(log.as_slice()).map(|call| call.tool).as_deref(),
+            (music.next)(log.as_slice())
+                .map(|call| call.tool)
+                .as_deref(),
             Some("bgm_import")
         );
         // The import's own reply carries `mediaIds`, not `state`.
         log.push(json!({ "mediaIds": ["m9"], "view": { "project": {} } }));
         assert_eq!(
-            (music.next)(log.as_slice()).map(|call| call.tool).as_deref(),
+            (music.next)(log.as_slice())
+                .map(|call| call.tool)
+                .as_deref(),
             Some("timeline_read")
         );
         // The timeline read now carries the bed in the project's bgm
@@ -1320,7 +1330,11 @@ mod tests {
         assert_eq!(first.tool, "edit_apply");
         // The edit's own reply: another view. The stage is done.
         log.push(json!({ "timeline": { "id": "t1", "clips": [] }, "media": [] }));
-        assert_eq!((captions.next)(log.as_slice()), None, "the captions are issued once");
+        assert_eq!(
+            (captions.next)(log.as_slice()),
+            None,
+            "the captions are issued once"
+        );
     }
 
     /// A clip with no media - a title the run placed - does not end the

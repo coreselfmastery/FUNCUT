@@ -2146,3 +2146,37 @@ new read-back test green beside the suite. The completion mission's
 own working record lives in the repository root's `AGENT_STATE.md`,
 `IMPLEMENTATION_LEDGER.md`, `TEST_EVIDENCE.md`, `KNOWN_ISSUES.md` and
 `SESSION_HANDOFF.md`.
+
+## 48. The completion audit: one run at a time, and the release that is published
+
+The 2026-11-16 completion audit looked for work that was wired but not wired
+*properly* - the class the user calls "not wired properly" - rather than for
+features. It found one.
+
+**One run at a time.** The Forge page offers two ways to make a video: the
+agent run (Start, the `forge run` harness driving the `funcut-director`
+skill) and the unattended AUTO EDIT (the deterministic 12-stage
+`concat-director` program). They are two layers of one pipeline, not two
+pipelines - they share the sibling-project handoff - but nothing stopped both
+from running at once. Both write the same sibling through the window's own
+server, so a Start during an auto edit (or the reverse) put two writers on one
+timeline. `src/crates/concat/src/panes/forge.rs` now refuses the second run,
+names the run to stop (`forge.startBusy` / `forge.autoEditBusy`, added to all
+26 locales), and greys the button; the policy is a small pure helper,
+`other_run_refusal`, with a regression test. The 17-stage `Stage::ALL` is the
+whole pipeline; the 12-stage program is the auto edit's slice of it, and the
+five stages it omits - plan, gather, motion, preview, revise - are exactly the
+judgement stages that need the agent.
+
+**The release is published, and behind.** GitHub's release and tag APIs
+confirm `v0.2.8-funcut.13` (2026-11-16) carries ten assets - the AppImage,
+deb, rpm and pkg.tar.zst for x86_64 and aarch64, `manifest.json` and
+`SHA256SUMS` - and that its tag `ebfd9e30` is an ancestor **28 commits behind**
+current `main`. Every fix after the tag (the GSAP and Lottie parity shelves,
+the pipeline's truths, the proxy fingerprint, the CLI fixes, the captions and
+vowel-note fixes) rides on `main` and is not in the published bundles;
+`v0.2.8-funcut.14` is owed for it. This corrects `KNOWN_ISSUES.md` item 9 and
+`GENEVA_MASTER_LIST.md`, which had recorded the release as unverified.
+
+The audit's full classification of wired-and-proven, wired-but-unproven and
+not-wired is in [`docs/COMPLETION-AUDIT-2026-11-16.md`](COMPLETION-AUDIT-2026-11-16.md).

@@ -97,6 +97,28 @@ returns "draw nothing" for a static texture instead of the upstream
 windows and repeated SVG path segments are validated rather than trusted
 (PRs #153, #154).
 
+## The completion audit's two fixes
+
+The 2026-11-16 completion audit (a wired-but-not-properly pass, not a
+feature list) found one integration defect and one place where a stage
+could end before its work was done. Both are in this release:
+
+- **One run at a time on the shared project** (PR #160). The Forge page
+  offers two ways to edit the same sibling project - the agent run (Start)
+  and the unattended AUTO EDIT - and nothing stopped them from running at
+  once, so a Start during an auto edit (or the reverse) put two writers on
+  one timeline. The second run is now refused, its button greys, and the
+  user is told which run to stop. The labels are in all 26 locales, and a
+  regression test holds the contract.
+- **No stage ends before its work is done** (PR #159). A stage's calls
+  could all land while its own check was still unanswered, so the run
+  advanced on work it had not verified; the 12-stage auto-edit program now
+  waits for each stage's gate before it moves on.
+
+The audit's full classification - what is wired and proven, what is wired
+but needs hardware or a real run, and the release state - is in
+[`docs/COMPLETION-AUDIT-2026-11-16.md`](COMPLETION-AUDIT-2026-11-16.md).
+
 ## What this release does not prove
 
 A release note that reads as more checked than it was is worse than no

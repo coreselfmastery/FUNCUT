@@ -376,8 +376,8 @@ impl ForgePane {
         // their edits into a timeline neither of them planned, so only
         // one may be going: a Start while the auto edit runs is refused,
         // and the user is told which run to stop first.
-        if let Some(key) = other_run_refusal(self.auto.running, true) {
-            studio.notify(&t(key), true);
+        if let Some(refusal) = other_run_refusal(self.auto.running, true) {
+            studio.notify(&refusal, true);
             return;
         }
         if !from_timeline && script.trim().is_empty() {
@@ -513,8 +513,8 @@ impl ForgePane {
         // server: while the agent run is going, the auto edit would write
         // over the run it cannot see. Refuse it with the same sentence the
         // Start uses, so the two entry points speak with one voice.
-        if let Some(key) = other_run_refusal(self.running, false) {
-            studio.notify(&t(key), true);
+        if let Some(refusal) = other_run_refusal(self.running, false) {
+            studio.notify(&refusal, true);
             return;
         }
         // A retryable end kept its sibling, its source and its runner:
@@ -1069,21 +1069,23 @@ fn is_bed(item: &concat_project::model::MediaItem, source_root: &std::path::Path
     std::path::Path::new(&item.path).starts_with(source_root.join("bgm"))
 }
 
-/// The locale key of the refusal when the *other* run is already going, or
-/// `None` when this entry point may start. The Forge page offers two ways
-/// to edit the same project - the agent run (Start) and the unattended
-/// AUTO EDIT - and both write one sibling through the same server; letting
-/// them overlap interleaves two edits into a timeline neither planned, so
-/// the second is refused and told which run to stop. `starting_start` is
-/// true for the Start button and false for the AUTO EDIT button.
-fn other_run_refusal(other_running: bool, starting_start: bool) -> Option<&'static str> {
+/// The refusal when the *other* run is already going, or `None` when this
+/// entry point may start. The Forge page offers two ways to edit the same
+/// project - the agent run (Start) and the unattended AUTO EDIT - and both
+/// write one sibling through the same server; letting them overlap
+/// interleaves two edits into a timeline neither planned, so the second is
+/// refused and told which run to stop. `starting_start` is true for the
+/// Start button and false for the AUTO EDIT button. The labels are written
+/// as `t(...)` calls here, not returned as keys, so the locale inventory
+/// sees them used.
+fn other_run_refusal(other_running: bool, starting_start: bool) -> Option<String> {
     if !other_running {
         return None;
     }
     Some(if starting_start {
-        "forge.startBusy"
+        t("forge.startBusy")
     } else {
-        "forge.autoEditBusy"
+        t("forge.autoEditBusy")
     })
 }
 
@@ -1890,21 +1892,29 @@ mod tests {
     /// interleave their edits, so the guard is the page's contract.
     #[test]
     fn the_two_runs_refuse_to_overlap_and_name_the_one_to_stop() {
-        assert_eq!(other_run_refusal(false, true), None, "Start alone may go");
-        assert_eq!(
-            other_run_refusal(false, false),
-            None,
+        assert!(
+            other_run_refusal(false, true).is_none(),
+            "Start alone may go"
+        );
+        assert!(
+            other_run_refusal(false, false).is_none(),
             "auto edit alone may go"
         );
+        let start_refused = other_run_refusal(true, true).expect("Start is refused");
+        let auto_refused = other_run_refusal(true, false).expect("auto edit is refused");
         assert_eq!(
-            other_run_refusal(true, true),
-            Some("forge.startBusy"),
+            start_refused,
+            crate::i18n::t("forge.startBusy"),
             "Start while the auto edit runs names the auto edit"
         );
         assert_eq!(
-            other_run_refusal(true, false),
-            Some("forge.autoEditBusy"),
+            auto_refused,
+            crate::i18n::t("forge.autoEditBusy"),
             "auto edit while the Start runs names the agent run"
+        );
+        assert_ne!(
+            start_refused, auto_refused,
+            "each refusal names its own run, not one shared sentence"
         );
     }
 

@@ -57,7 +57,7 @@ env:
   # ONNX Runtime, for the Linux bundles: the version the ort crate is
   # built against (see ort-sys's dist table), as Microsoft's own shared
   # build.
-  ORT_VERSION: 1.28.0
+  ORT_VERSION: 1.28.3
   # ggml (whisper.cpp's kernels) tunes itself to the machine it is built
   # on unless told otherwise, and these bundles run on other machines: a
   # runner with AVX-512 or SVE would leave a binary that faults on a CPU

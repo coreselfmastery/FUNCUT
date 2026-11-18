@@ -48,8 +48,9 @@ def main() -> None:
             raise SystemExit(f"deps.lock is missing {name}")
         url, digest = entries[name]
         expected = f"onnxruntime-linux-{arch}-{version}.tgz"
-        if f"/download/v{version}/{expected}" not in url:
-            raise SystemExit(f"{name} URL does not match ORT_VERSION {version}: {url}")
+        expected_suffix = f"/files/v{version}/{expected}/download"
+        if "sourceforge.net/projects/onnx-runtime.mirror/" not in url or not url.endswith(expected_suffix):
+            raise SystemExit(f"{name} mirror URL does not match ORT_VERSION {version}: {url}")
         if not DIGEST.fullmatch(digest):
             raise SystemExit(f"{name} does not have a lowercase SHA-256 digest")
         print(f"{name}: ONNX Runtime {version} URL and SHA-256 pin are aligned")

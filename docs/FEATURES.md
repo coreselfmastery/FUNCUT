@@ -426,6 +426,13 @@ always win; maestro refines how a floor is met, never lowers it. See
   `emotion` tool run on the multilingual
   `tabularisai/multilingual-emotion-classification` model rather than the
   English-only lexicon.
+- **AUTO EDIT** is the one-click voiceover pass: it repairs and reads the
+  takes, tightens measured dead air, lays captions and title entrances,
+  grades the full runtime, and fills narration gaps from the configured
+  Pexels/Pixabay live stock shelf. The provider licence travels in the
+  import reply; without a configured key the gather stage reports the
+  provider's missing-key refusal and leaves the gap empty. It never uses
+  the research-only OpenVid index for unattended B-roll.
 - **The harness config** (`.forge/mcp.toml`): one stdio server (`concat
   --mcp auto`), a 900-second call timeout for patient work, servers
   allow-listed to `funcut`, and the per-tool allowlist active in the

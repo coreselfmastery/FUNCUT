@@ -61,6 +61,9 @@ pub struct AutoEditProgramSource {
     /// server refuses absolute write paths, and the sheet is written
     /// through it.
     pub sheet: String,
+    /// The configured live stock shelf for B-roll. AUTO EDIT never imports
+    /// OpenVid's research-only dataset because it has no per-clip licence.
+    pub stock_provider: String,
 }
 
 /// The last timeline view the run read: the newest reply shaped like one,
@@ -593,17 +596,15 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .warn()
         .into(),
     );
-    // 6c. The picture: the narration's own gaps, filled with stock. Every
-    //     slot the planner read is shopped one query at a time (the words
-    //     before the gap), the strongest hit imported into the project's
-    //     own openvid folder, laid on the lowest free picture lane under
-    //     the voiceover, trimmed to the gap it fills, filled to frame and
-    //     given a slow drift and a dissolve so the shot is alive. A
-    //     narration with no gap - or a shelf with nothing to match - leaves
-    //     the cut as the voiceover made it; the stage is warn-policy, so a
-    //     missing index is a flaw the edit ships with, not a run lost.
+    // 6c. The picture: the narration's own gaps, filled from the live
+    //     Pexels/Pixabay shelves. The selected provider's licence travels
+    //     with every search hit and import reply; the research-only OpenVid
+    //     index is never used by AUTO EDIT. A missing key or empty shelf is
+    //     a named warning and leaves that gap unfilled, not an unlicensed
+    //     clip silently added to a project.
     let gather_source = takes.clone();
     let gather_project = project.clone();
+    let gather_provider = source.stock_provider.clone();
     steps.push(
         DerivedStep::react(
             Stage::Gather,
@@ -623,31 +624,42 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         0 => {
                             phase = 1;
                             return Some(call(
-                                "openvid_search_batch",
-                                json!({ "queries": [slot.query.clone()], "limit": 5 }),
+                                "stock_search",
+                                json!({
+                                    "provider": gather_provider.clone(),
+                                    "query": slot.query.clone(),
+                                    "limit": 5,
+                                }),
                             ));
                         }
                         1 => {
-                            // The search's own answer: the strongest hit is
-                            // imported (the shelf's first clip). A page
-                            // with nothing usable is a slot left empty.
-                            let id = log
-                                .last()
-                                .and_then(|reply| reply.pointer("/searches/0/clips/0/id"))
-                                .and_then(Value::as_i64);
-                            match id {
-                                Some(id) => {
+                            // Only a live-shelf hit with an explicit provider
+                            // licence is eligible. OpenVid has no per-clip
+                            // licence record and is never imported here.
+                            let hit = log.last().and_then(|reply| reply.pointer("/hits/0"));
+                            let provider = hit.and_then(|hit| hit["provider"].as_str());
+                            let id = hit.and_then(|hit| hit["id"].as_str());
+                            let url = hit.and_then(|hit| hit["url"].as_str());
+                            let license = hit.and_then(|hit| hit["license"].as_str());
+                            match (provider, id, url, license) {
+                                (Some(provider), Some(id), Some(url), Some(license))
+                                    if provider == gather_provider.as_str()
+                                        && !id.trim().is_empty()
+                                        && !url.trim().is_empty()
+                                        && !license.trim().is_empty() =>
+                                {
                                     phase = 2;
                                     return Some(call(
-                                        "openvid_import",
+                                        "stock_import",
                                         json!({
                                             "path": gather_project,
-                                            "ids": [id],
-                                            "monetized": false,
+                                            "provider": provider,
+                                            "id": id,
+                                            "url": url,
                                         }),
                                     ));
                                 }
-                                None => {
+                                _ => {
                                     placed += 1;
                                     phase = 0;
                                 }
@@ -1364,10 +1376,10 @@ mod tests {
     /// The program the button runs: the whole unattended spine in the
     /// runner's register - the static handoff, the fanned repair and
     /// transcription (every take at the same time), the derived tighten,
-    /// captions, music bed and accents (each standing on what the run
-    /// measured), the export, the verify that reads the timeline as it
-    /// ended up, and the watch. The B-roll, grade and motion design stay
-    /// the Director agent's: those stages' registers are simply absent.
+    /// grade, licensed live-stock B-roll, captions, title entrances,
+    /// music bed and accents, the export, the verify and the watch. The
+    /// plan, eye-picked stock, baked motion comps and preview/revise loop
+    /// remain the Director agent's.
     #[test]
     fn the_auto_edit_program_is_the_watchers_spine_over_fixed_paths() {
         use concat_director::{ErrorPolicy, FanStep, ProgramStep};
@@ -1402,6 +1414,7 @@ mod tests {
             ],
             export: "/edits/Reel edit/export/auto-edit.mp4".to_owned(),
             sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
         };
         let program = super::auto_edit_program(&source);
 
@@ -1622,6 +1635,7 @@ mod tests {
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
             sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(music) = &mut program.steps[10] else {
@@ -1706,6 +1720,7 @@ mod tests {
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
             sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
         };
         let mut program = auto_edit_program(&source);
         let ProgramStep::Derived(captions) = &mut program.steps[8] else {
@@ -1777,6 +1792,192 @@ mod tests {
         });
         let log = vec![json!({ "path": "/takes/a.wav", "output": tight.to_string() })];
         assert!(broll_slots(&log, &takes).is_empty());
+    }
+
+    /// The gather stage uses a licensed live shelf and never weakens the
+    /// OpenVid licence gate by asserting that an unknown project is
+    /// non-monetized.
+    #[test]
+    fn the_broll_stage_imports_only_licensed_live_stock() {
+        use concat_director::ProgramStep;
+
+        let take = "/takes/a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: "/takes/a-enhanced.wav".to_owned(),
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(gather) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "gather")
+            .expect("the program has a gather stage")
+        else {
+            panic!("the gather stage is derived");
+        };
+
+        let view = json!({
+            "timeline": { "clips": [
+                {
+                    "id": "voice",
+                    "media": "voice-media",
+                    "start": 0.0,
+                    "duration": 10.0,
+                    "sourceStart": 0.0,
+                    "speed": 1.0
+                }
+            ]},
+            "media": [{ "id": "voice-media", "path": take }],
+        });
+        let transcript = json!({
+            "segments": [
+                { "start": 0.0, "end": 2.0, "text": "the city skyline at dusk tonight" },
+                { "start": 4.0, "end": 6.0, "text": "the crowds crossing" },
+            ],
+        });
+        let mut log = vec![
+            view,
+            json!({ "path": take, "output": transcript.to_string() }),
+        ];
+
+        let search = (gather.next)(&log).expect("the gap is searched");
+        assert_eq!(search.tool, "stock_search");
+        assert_eq!(search.arguments["provider"], "pexels");
+        assert_eq!(search.arguments["query"], "city skyline at dusk tonight");
+        assert!(search.arguments.get("monetized").is_none());
+
+        log.push(json!({
+            "provider": "pexels",
+            "license": "Pexels License",
+            "hits": [{
+                "id": "2499611",
+                "provider": "pexels",
+                "url": "https://videos.pexels.com/files/hd.mp4",
+                "license": "Pexels License"
+            }]
+        }));
+        let import = (gather.next)(&log).expect("the licensed hit is imported");
+        assert_eq!(import.tool, "stock_import");
+        assert_eq!(import.arguments["provider"], "pexels");
+        assert_eq!(import.arguments["id"], "2499611");
+        assert_eq!(
+            import.arguments["url"],
+            "https://videos.pexels.com/files/hd.mp4"
+        );
+        assert!(import.arguments.get("monetized").is_none());
+
+        log.push(json!({
+            "mediaIds": ["stock-media"],
+            "license": "Pexels License",
+            "view": { "timeline": { "clips": [] }, "media": [] }
+        }));
+        let place = (gather.next)(&log).expect("the clip is placed at the gap");
+        assert_eq!(place.tool, "edit_apply");
+        assert_eq!(place.arguments["command"]["op"], "addClipAtFirstFree");
+        assert_eq!(place.arguments["command"]["mediaId"], "stock-media");
+        assert_eq!(place.arguments["command"]["start"], 2.0);
+
+        log.push(json!({
+            "timeline": { "clips": [
+                {
+                    "id": "voice",
+                    "media": "voice-media",
+                    "start": 0.0,
+                    "duration": 10.0,
+                    "sourceStart": 0.0,
+                    "speed": 1.0
+                },
+                {
+                    "id": "stock-clip",
+                    "media": "stock-media",
+                    "start": 2.0,
+                    "duration": 8.0
+                }
+            ]},
+            "media": [
+                { "id": "voice-media", "path": take },
+                { "id": "stock-media", "path": "/edits/Reel/stock/pexels-2499611.mp4" }
+            ]
+        }));
+        let finish = (gather.next)(&log).expect("the placed clip is styled");
+        assert_eq!(finish.tool, "edit_apply");
+        let commands = finish.arguments["command"]["commands"]
+            .as_array()
+            .expect("one undoable styling batch");
+        assert!(commands.iter().any(|command| command["op"] == "trimClip"));
+        assert!(commands.iter().any(|command| command["op"] == "frameClip"));
+        assert!(commands.iter().any(|command| command["op"] == "updateClip"));
+        assert!((gather.next)(&log).is_none(), "one gap is placed only once");
+    }
+
+    /// A malformed live-stock hit without a provider licence is not
+    /// imported or placed.
+    #[test]
+    fn the_broll_stage_skips_hits_without_license_metadata() {
+        use concat_director::ProgramStep;
+
+        let take = "/takes/a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: "/takes/a-enhanced.wav".to_owned(),
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(gather) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "gather")
+            .expect("the program has a gather stage")
+        else {
+            panic!("the gather stage is derived");
+        };
+        let view = json!({
+            "timeline": { "clips": [{
+                "id": "voice",
+                "media": "voice-media",
+                "start": 0.0,
+                "duration": 10.0,
+                "sourceStart": 0.0,
+                "speed": 1.0
+            }]},
+            "media": [{ "id": "voice-media", "path": take }],
+        });
+        let transcript = json!({
+            "segments": [
+                { "start": 0.0, "end": 2.0, "text": "the city skyline at dusk tonight" },
+                { "start": 4.0, "end": 6.0, "text": "the crowds crossing" },
+            ],
+        });
+        let mut log = vec![
+            view,
+            json!({ "path": take, "output": transcript.to_string() }),
+        ];
+        let search = (gather.next)(&log).expect("the gap is searched");
+        assert_eq!(search.tool, "stock_search");
+        log.push(json!({
+            "hits": [{
+                "id": "2499611",
+                "provider": "pexels",
+                "url": "https://videos.pexels.com/files/hd.mp4"
+            }]
+        }));
+        assert!(
+            (gather.next)(&log).is_none(),
+            "a hit without licence metadata is left unused"
+        );
     }
 
     /// The entrance pass keys the titles the timeline holds, and only

@@ -2257,12 +2257,14 @@ edit ships with, not a run lost:
   one's start that is long enough to hold a shot (1.2-8 s) and short
   enough to be one (8 s at most), and shops it with the tail of the words
   before it - the closest description the narration gives. Each slot is
-  `openvid_search_batch` → `openvid_import` (the CC0, licence-record-free
-  local index; `monetized: false` as its own gate requires) →
+  `stock_search` → `stock_import` on the configured Pexels/Pixabay live
+  shelf (the provider's commercial-use licence travels in the import reply;
+  AUTO EDIT never imports the research-only OpenVid index) →
   `addClipAtFirstFree` on the lowest free picture lane under the
   voiceover → one undoable batch that trims the clip to the gap,
   `frameClip`-fills it, gives it a 1.0 → 1.06 Ken Burns drift, and
-  dissolves it in on `concat.dissolve`.
+  dissolves it in on `concat.dissolve`. If neither live provider has a
+  configured key, the named missing-key refusal leaves the slot empty.
 
 The result is what the one click was asked to be: the run now leaves a
 **complete, editable cut on the timeline** - narration, B-roll, a look,
@@ -2271,10 +2273,13 @@ piece is a normal clip to tweak. The stages that still want a brain (the
 plan, the motion comps, the preview/revise loop) remain the Director
 agent's; the run gains the two that never needed one.
 
-Verified on the machine the fork targets: `cargo test -p concat-mcp -p
-concat-director` (136 tests, including the new
-`the_broll_slots_are_the_narration_s_gaps`), `cargo fmt --check`, and
-`cargo clippy -p concat-mcp --all-targets -- -D warnings` all pass.
+At the original OpenVid-based implementation commit, the target
+machine recorded 136 tests plus format and Clippy passing. Those results
+are historical, not validation of this change: this PR replaces the
+research-dataset import with live Pexels/Pixabay imports and adds
+regressions for licensed-hit selection and missing licence metadata.
+Current-head CI is the evidence required for the replacement; no local
+test run is claimed here.
 
 ## 51. The button moves its titles: the entrance the one-click run gives its own type
 

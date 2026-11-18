@@ -33,7 +33,7 @@ def main() -> None:
     versions: dict[str, str] = {}
     for path in WORKFLOWS:
         text = path.read_text(encoding="utf-8")
-        found = re.findall(r"^\\s*ORT_VERSION:\\s*([0-9]+\\.[0-9]+\\.[0-9]+)\\s*$", text, re.MULTILINE)
+        found = re.findall(r"^\s*ORT_VERSION:\s*([0-9]+\.[0-9]+\.[0-9]+)\s*$", text, re.MULTILINE)
         if len(found) != 1:
             raise SystemExit(f"{path.relative_to(ROOT)} must declare exactly one ORT_VERSION")
         versions[path.name] = found[0]

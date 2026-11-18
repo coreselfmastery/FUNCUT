@@ -15,11 +15,11 @@
 ffmpeg-linux64      https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n8.1.3-9-g29e619e767-linux64-gpl-shared-8.1.tar.xz      76649c19a7a4615b367251ba4a8adc643f65831278a00e7a0c38398f7f06484b
 ffmpeg-linuxarm64   https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n8.1.3-9-g29e619e767-linuxarm64-gpl-shared-8.1.tar.xz   d5b52fcb4f8d86d997bb75f6c4b383ca0be3f4cd9efd94ab3b4f27b22984f91c
 
-# ONNX Runtime 1.28.3 is the patch line targeted by ort 2.0.0-rc.13.
-# GitHub release downloads returned HTTP 404 in hosted CI, so fetch the exact
-# upstream assets from the SourceForge mirror; fetch.sh verifies these SHA-256s.
-onnxruntime-linux-x64       https://sourceforge.net/projects/onnx-runtime.mirror/files/v1.28.3/onnxruntime-linux-x64-1.28.3.tgz/download       db14e4863bd37893fc59729d986ab2a0d043d10b7d44da1913c4982b7e3d009c
-onnxruntime-linux-aarch64   https://sourceforge.net/projects/onnx-runtime.mirror/files/v1.28.3/onnxruntime-linux-aarch64-1.28.3.tgz/download   6c6b1ae96d7b0be9f555092857c6a4f2b0b5587a5298d732d9e52e8253038ce7
+# ONNX Runtime 1.30.1 exposes the v1.28 C API requested by ort 2.0.0-rc.13.
+# The C API table is append-only; newer runtimes serve older GetApi versions.
+# Fetch the exact upstream assets from SourceForge's mirror and verify SHA-256.
+onnxruntime-linux-x64       https://sourceforge.net/projects/onnx-runtime.mirror/files/v1.30.1/onnxruntime-linux-x64-1.30.1.tgz/download       35a95c9c2b298bbd7dd2d63c73b333adb039b7a0faa04790fa69243dfddefdd3
+onnxruntime-linux-aarch64   https://sourceforge.net/projects/onnx-runtime.mirror/files/v1.30.1/onnxruntime-linux-aarch64-1.30.1.tgz/download   e6d203b8aaa99ef1cb405d81c42ef3d061c686d9f166ddd5e8fabeb49aa93646
 
 # sherpa-onnx's prebuilt libraries. The version is the one src/Cargo.lock
 # resolves for sherpa-onnx-sys; the workflows check the two agree.

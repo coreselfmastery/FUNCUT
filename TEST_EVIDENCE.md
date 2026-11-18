@@ -49,7 +49,7 @@ the exact digest-pinned FFmpeg 8.1.3/ONNX 1.28.0/sherpa 1.13.7 through
 `scripts/ci/fetch.sh` (all sha256-verified against `scripts/ci/deps.lock`)
 and unpacks them at the repo root the way the CI engine job does, then
 
-> Version note (18 November 2026): this recorded reproduction used ONNX Runtime 1.28.0. The current CI pin is being advanced to 1.28.3, a patch release in the same 1.28 API line; this historical local run is not evidence for the new runtime. The PR's CI must validate the 1.28.3 download, engine tests, Geneva and both packaged architectures.
+> Version note (18 November 2026): this recorded reproduction used ONNX Runtime 1.28.0. The 1.28.3 GitHub and SourceForge download attempts returned HTTP 404 in hosted CI. The current candidate is ONNX Runtime 1.30.1; its newer C API retains the requested v1.28 table (GetApi returns a requested supported API version). This historical local run is not evidence for the new runtime. The PR's CI must validate both 1.30.1 downloads, engine tests, Geneva, the x86 ISA scan and both packaged architectures.
 `source scripts/funcut-env.sh` exports the env the CI engine job uses
 (`FFMPEG_DIR`, `ORT_LIB_LOCATION`, `ORT_PREFER_DYNAMIC_LINK`,
 `LD_LIBRARY_PATH`, `SHERPA_ONNX_LIB_DIR`). No system packages are

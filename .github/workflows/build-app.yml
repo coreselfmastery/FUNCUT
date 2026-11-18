@@ -38,6 +38,21 @@ on:
   # so a green source tree also has a runnable application bundle.
   push:
     branches: [main]
+  # Exercise both distributable architectures before merge when native inputs
+  # or packaging workflow changes; engine tests alone do not prove the
+  # installable bundles still stage, launch and package.
+  pull_request:
+    paths:
+      - ".github/workflows/build-app.yml"
+      - "scripts/ci/deps.lock"
+      - "scripts/ci/fetch.sh"
+      - "scripts/ci/apt-retry.sh"
+      - "scripts/setup-build-env.sh"
+      - "scripts/funcut-env.sh"
+      - "install-linux.sh"
+      - "src/rust-toolchain.toml"
+      - "src/Cargo.toml"
+      - "src/Cargo.lock"
   workflow_call:
     inputs:
       ref:

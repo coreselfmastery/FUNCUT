@@ -58,6 +58,7 @@ jobs:
       - run: bash -n scripts/ci/apt-retry.sh
       - run: python3 -m py_compile scripts/motion/check-geneva-pins.py
       - run: python3 scripts/motion/check-geneva-pins.py
+      - run: python3 scripts/ci/check-ort-pins.py
       - run: python3 -m py_compile scripts/motion/benchmark-geneva.py
       - run: python3 scripts/motion/benchmark-geneva.py --help >/dev/null
       - run: python3 scripts/motion/test-benchmark-geneva.py

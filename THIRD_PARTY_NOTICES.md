@@ -197,10 +197,10 @@ anyone passing the sound off as a person's should know is not there.
 The cutout models run on Microsoft's ONNX Runtime
 (https://github.com/microsoft/onnxruntime, MIT), through the `ort` crate
 (https://github.com/pykeio/ort, MIT OR Apache-2.0). The Linux bundles ship
-Microsoft's own shared build of ONNX Runtime 1.28.0 beside the binary -
-`lib/libonnxruntime.so.1.28.0`, one runtime that the
+Microsoft's own shared build of ONNX Runtime 1.28.3 beside the binary -
+`lib/libonnxruntime.so.1.28.3`, one runtime that the
 `ort` crate and sherpa-onnx share - unmodified, as Microsoft publishes it
-at https://github.com/microsoft/onnxruntime/releases/tag/v1.28.0. Its
+at https://github.com/microsoft/onnxruntime/releases/tag/v1.28.3. Its
 licence (MIT, Copyright (c) Microsoft Corporation) and third-party
 notices are in that release's archive.
 

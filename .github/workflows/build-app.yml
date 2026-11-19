@@ -38,6 +38,21 @@ on:
   # so a green source tree also has a runnable application bundle.
   push:
     branches: [main]
+  # Exercise both distributable architectures before merge when native inputs
+  # or packaging workflow changes; engine tests alone do not prove the
+  # installable bundles still stage, launch and package.
+  pull_request:
+    paths:
+      - ".github/workflows/build-app.yml"
+      - "scripts/ci/deps.lock"
+      - "scripts/ci/fetch.sh"
+      - "scripts/ci/apt-retry.sh"
+      - "scripts/setup-build-env.sh"
+      - "scripts/funcut-env.sh"
+      - "install-linux.sh"
+      - "src/rust-toolchain.toml"
+      - "src/Cargo.toml"
+      - "src/Cargo.lock"
   workflow_call:
     inputs:
       ref:
@@ -57,7 +72,7 @@ env:
   # ONNX Runtime, for the Linux bundles: the version the ort crate is
   # built against (see ort-sys's dist table), as Microsoft's own shared
   # build.
-  ORT_VERSION: 1.28.0
+  ORT_VERSION: 1.30.1
   # ggml (whisper.cpp's kernels) tunes itself to the machine it is built
   # on unless told otherwise, and these bundles run on other machines: a
   # runner with AVX-512 or SVE would leave a binary that faults on a CPU

@@ -73,7 +73,7 @@ pub enum Stage {
     /// seventeenth step).
     Export,
     /// The actual output is inspected and scored: `watch_render`'s
-    /// contact sheet, `craft_critique`'s score (the twentieth step).
+    /// contact sheet, `craft_critique`'s score (the seventeenth stage).
     Watch,
     /// The critic's measured faults are answered with targeted edits: a
     /// fill for letterbox bars, a bounded head trim for a black opening,
@@ -85,7 +85,7 @@ pub enum Stage {
     Revise,
     /// The export is certified: the words re-read from the render, the
     /// loudness measured and asserted, the timeline checked for overlaps,
-    /// gaps and duplicates (the eighteenth and nineteenth steps).
+    /// gaps and duplicates (the sixteenth stage).
     Verify,
 }
 

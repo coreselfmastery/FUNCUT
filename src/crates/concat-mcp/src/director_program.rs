@@ -390,11 +390,11 @@ fn musical_take(log: &[Value], takes: &[TakePaths]) -> Option<String> {
         .map(|take| take.take.clone())
 }
 
-/// The transcript as `footage_plan_suggest` reads it: the spoken spans of
-/// every take, merged into one list. The planner is a read over the whole
-/// narration, so a run of several takes plans as one story.
-fn planner_segments(log: &[Value], takes: &[TakePaths]) -> Vec<Value> {
-    let mut segments: Vec<Value> = transcripts_of(log, takes)
+/// The transcript for one take as `footage_plan_suggest` reads it. Takes
+/// have independent file clocks; merging their raw timestamps creates
+/// overlaps and erases real gaps, so the planner is called once per take.
+fn planner_segments(log: &[Value], take: &TakePaths) -> Vec<Value> {
+    let mut segments: Vec<Value> = transcripts_of(log, std::slice::from_ref(take))
         .into_iter()
         .flat_map(|(_, segments)| segments)
         .filter_map(|segment| {
@@ -471,69 +471,74 @@ fn slots_from_plan(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
     const SHORTEST: f64 = 1.2;
     const LONGEST: f64 = 8.0;
 
-    let Some(plan) = log.iter().rev().find(|reply| {
-        reply
-            .get("suggestions")
-            .and_then(Value::as_array)
-            .is_some_and(|_| reply.get("gapCount").is_some() || reply.get("cutCount").is_some())
-    }) else {
-        return Vec::new();
-    };
-    let Some(suggestions) = plan["suggestions"].as_array() else {
-        return Vec::new();
-    };
-    // Whether a beat grid was measured for this run. The plan reply does
-    // not echo the grid it read, so the grid is read from the run's own
-    // `analyze_beats` reply: without one, every speech run longer than the
-    // threshold counts as "no beat landed in it" trivially, and honouring
-    // those would blanket a talking-head cut in B-roll.
-    let beats_known = log.iter().any(|reply| {
-        reply
-            .get("cutTimes")
-            .and_then(Value::as_array)
-            .is_some_and(|cuts| !cuts.is_empty())
-    });
+    // Each planner reply names the take whose independent file clock it
+    // read. Never match a suggestion against another take merely because
+    // their local timestamps happen to overlap.
+    let transcripts: Vec<(String, Vec<(f64, f64, String)>)> =
+        transcripts_of(log, takes)
+            .into_iter()
+            .map(|(take, segments)| {
+                let spoken = segments
+                    .iter()
+                    .filter_map(|segment| {
+                        let start = segment["start"].as_f64()?;
+                        let end = segment["end"].as_f64()?;
+                        let text = segment["text"].as_str().unwrap_or_default().trim();
+                        (end > start && !text.is_empty())
+                            .then(|| (start, end, text.to_owned()))
+                    })
+                    .collect();
+                (take, spoken)
+            })
+            .collect();
 
-    // The transcript the planner read is the same one this maps through,
-    // so a suggestion's span is found in the take whose words cover it.
-    let transcripts: SpokenTakes = transcripts_of(log, takes)
-        .into_iter()
-        .map(|(take, segments)| {
-            let spoken = segments
-                .iter()
-                .filter_map(|segment| {
-                    let start = segment["start"].as_f64()?;
-                    let end = segment["end"].as_f64()?;
-                    let text = segment["text"].as_str().unwrap_or_default().trim();
-                    (end > start && !text.is_empty()).then(|| (start, end, text.to_owned()))
-                })
-                .collect();
-            (take, spoken)
-        })
-        .collect();
+    let mut ranked: Vec<(f64, usize, BrollSlot)> = Vec::new();
+    for plan in log.iter().filter(|reply| {
+        reply.get("take").and_then(Value::as_str).is_some()
+            && reply
+                .get("suggestions")
+                .and_then(Value::as_array)
+                .is_some()
+            && reply.get("gapCount").is_some()
+    }) {
+        let Some(take_path) = plan["take"].as_str() else {
+            continue;
+        };
+        let Some(take_index) = takes
+            .iter()
+            .position(|take| take.take.as_str() == take_path)
+        else {
+            continue;
+        };
+        let Some((_, spoken)) = transcripts.iter().find(|(path, _)| path == take_path) else {
+            continue;
+        };
+        let beats_known = plan["beatGridMeasured"].as_bool().unwrap_or(false);
+        let Some(suggestions) = plan["suggestions"].as_array() else {
+            continue;
+        };
 
-    let mut ranked: Vec<(f64, BrollSlot)> = suggestions
-        .iter()
-        .filter_map(|suggestion| {
-            let start = suggestion["startS"].as_f64()?;
-            let end = suggestion["endS"].as_f64()?;
+        for suggestion in suggestions {
+            if suggestion.get("needBRoll").and_then(Value::as_bool) == Some(false) {
+                continue;
+            }
+            let Some(start) = suggestion["startS"].as_f64() else {
+                continue;
+            };
+            let Some(end) = suggestion["endS"].as_f64() else {
+                continue;
+            };
             let span = end - start;
             if !(SHORTEST..=LONGEST).contains(&span) {
-                return None;
+                continue;
             }
-            // A monotony run is "speech no beat lands in". With no beat
-            // grid every run of speech longer than the threshold answers
-            // to that trivially, so honouring these without a grid would
-            // blanket a talking-head cut in B-roll - the mechanical
-            // behaviour this wiring exists to stop. They are taken only
-            // when a beat grid was actually measured.
+            // A monotony run is an ask only when THIS take's planner call
+            // actually received a measured beat grid. Another take's grid
+            // must never make an unmeasured take look musical.
             if suggestion["kind"] == json!("monotony_run") && !beats_known {
-                return None;
+                continue;
             }
             let priority = suggestion["priority"].as_f64().unwrap_or(0.5);
-            // The words the picture should show: the planner's own topic
-            // tags when it named any, else the tail of the line before the
-            // span - the same read the gap scan makes.
             let tags: Vec<String> = suggestion["topicTags"]
                 .as_array()
                 .into_iter()
@@ -541,64 +546,49 @@ fn slots_from_plan(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
                 .filter_map(Value::as_str)
                 .map(str::to_owned)
                 .collect();
-            let (take, before) = transcripts
+            let before = spoken
                 .iter()
-                .filter_map(|(take, spoken)| {
-                    // A dialogue gap sits *between* two spans, so no span
-                    // covers it; a monotony run sits over speech, so one
-                    // does. Coverage ranks first when it is there, and the
-                    // nearest span ending at or before the start is the
-                    // fallback - the line whose words the shot illustrates.
-                    let covered = spoken.iter().any(|(s, e, _)| *s < end && *e > start);
-                    let nearest = spoken
-                        .iter()
-                        .filter(|(_, segment_end, _)| *segment_end <= start)
-                        .max_by(|left, right| left.1.total_cmp(&right.1));
-                    let distance = nearest
-                        .map(|(_, segment_end, _)| start - segment_end)
-                        .unwrap_or(f64::INFINITY);
-                    if !covered && !distance.is_finite() {
-                        return None;
-                    }
-                    let before = nearest
-                        .map(|(_, _, text)| tail_words(text, 5))
-                        .unwrap_or_default();
-                    Some(((!covered, distance), take.clone(), before))
-                })
-                .min_by(|left, right| {
-                    left.0
-                        .0
-                        .cmp(&right.0.0)
-                        .then(left.0.1.total_cmp(&right.0.1))
-                })
-                .map(|(_, take, before)| (take, before))?;
+                .filter(|(_, segment_end, _)| *segment_end <= start)
+                .max_by(|left, right| left.1.total_cmp(&right.1))
+                .map(|(_, _, text)| tail_words(text, 5))
+                .unwrap_or_default();
             let query = if tags.is_empty() {
                 before
             } else {
                 tags.join(" ")
             };
             if query.trim().is_empty() {
-                return None;
+                continue;
             }
-            Some((
+            ranked.push((
                 priority,
+                take_index,
                 BrollSlot {
-                    take,
+                    take: take_path.to_owned(),
                     from: start,
                     to: end,
                     query,
                 },
-            ))
-        })
-        .collect();
+            ));
+        }
+    }
 
-    // Strongest first, then back into play order: the plan says what is
-    // worth covering, the timeline says when.
-    ranked.sort_by(|left, right| right.0.total_cmp(&left.0));
+    // Spend the six-shot budget on the planner's strongest asks, then
+    // restore first-play take order and local time within each take.
+    ranked.sort_by(|left, right| {
+        right
+            .0
+            .total_cmp(&left.0)
+            .then(left.1.cmp(&right.1))
+            .then(left.2.from.total_cmp(&right.2.from))
+    });
     ranked.truncate(MOST);
-    let mut slots: Vec<BrollSlot> = ranked.into_iter().map(|(_, slot)| slot).collect();
-    slots.sort_by(|left, right| left.from.total_cmp(&right.from));
-    slots
+    ranked.sort_by(|left, right| {
+        left.1
+            .cmp(&right.1)
+            .then(left.2.from.total_cmp(&right.2.from))
+    });
+    ranked.into_iter().map(|(_, _, slot)| slot).collect()
 }
 
 /// The plain gap scan: the read the button made before it had a planner.
@@ -1525,45 +1515,51 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         DerivedStep::react(
             Stage::Plan,
             Box::new({
-                let mut queue: Option<Vec<ToolCall>> = None;
-                let mut issued = false;
+                // The beat analysis must finish BEFORE the planner call is
+                // built: constructing both calls in one queue used to bake
+                // an empty beat list into the planner request.
+                let mut phase = 0u8;
+                let mut queue: Vec<ToolCall> = Vec::new();
                 move |log| {
-                    let queue = queue.get_or_insert_with(|| {
-                        let mut calls = Vec::new();
-                        // The beat grid, when the run has a soundtrack to
-                        // read it from: a take that already carries music
-                        // is the only audio this run knows is musical, and
-                        // its grid is what lets the footage planner tell a
-                        // monotony run (speech no beat lands in) from an
-                        // ordinary long sentence. No musical take is a
-                        // real answer - the planner simply plans no
-                        // monotony, and the gaps still plan.
+                    if phase == 0 {
+                        phase = 1;
                         if let Some(music) = musical_take(log, &plan_source) {
-                            calls.push(call("analyze_beats", json!({ "path": music })));
+                            return Some(call("analyze_beats", json!({ "path": music })));
                         }
-                        // The footage shopping list: dialogue gaps and
-                        // (with a grid) monotony runs, priority-scored, so
-                        // the gather stage shops where the planner says
-                        // coverage is wanted instead of guessing gaps from
-                        // transcript timing alone.
-                        let mut spec = json!({ "segments": planner_segments(log, &plan_source) });
-                        if let Some(beats) = latest_beats(log) {
-                            spec["beats"] = beats;
-                        }
-                        if !spec["segments"].as_array().is_some_and(|s| s.is_empty()) {
-                            calls.push(call("footage_plan_suggest", spec));
-                        }
-                        calls
-                    });
-                    if let Some(next) = (!queue.is_empty()).then(|| queue.remove(0)) {
-                        return Some(next);
                     }
-                    if issued {
-                        return None;
+                    if phase == 1 {
+                        phase = 2;
+                        let music = musical_take(log, &plan_source);
+                        let beats = latest_beats(log);
+                        // Transcripts are in each source file's clock, not
+                        // one shared clock. One planner call per take keeps
+                        // gaps and monotony attached to the correct audio.
+                        for take in &plan_source {
+                            let segments = planner_segments(log, take);
+                            if segments.is_empty() {
+                                continue;
+                            }
+                            let mut spec = json!({
+                                "take": take.take,
+                                "segments": segments,
+                            });
+                            if music.as_deref() == Some(take.take.as_str())
+                                && let Some(beats) = beats.clone()
+                            {
+                                spec["beats"] = beats;
+                            }
+                            queue.push(call("footage_plan_suggest", spec));
+                        }
                     }
-                    let plan = auto_plan(log, &plan_source, &plan_settings)?;
-                    issued = true;
-                    Some(call("plan_validate", json!({ "plan": plan })))
+                    if !queue.is_empty() {
+                        return Some(queue.remove(0));
+                    }
+                    if phase == 2 {
+                        phase = 3;
+                        let plan = auto_plan(log, &plan_source, &plan_settings)?;
+                        return Some(call("plan_validate", json!({ "plan": plan })));
+                    }
+                    None
                 }
             }),
         )
@@ -3396,6 +3392,8 @@ mod tests {
         let log = vec![
             json!({ "path": "/takes/a.wav", "output": transcript.to_string() }),
             json!({
+                "take": "/takes/a.wav",
+                "beatGridMeasured": false,
                 "gapCount": 2,
                 "suggestionCount": 2,
                 "cutCount": 0,
@@ -3421,6 +3419,53 @@ mod tests {
         assert_eq!(slots[0].query, "harbour boats");
     }
 
+    /// Planner replies stay attached to the take whose independent file
+    /// clock they were measured in, even when two takes use identical times.
+    #[test]
+    fn the_planner_keeps_each_take_s_slots_separate() {
+        let take_a = "/takes/a.wav";
+        let take_b = "/takes/b.wav";
+        let takes = vec![
+            TakePaths { take: take_a.to_owned(), enhanced: String::new() },
+            TakePaths { take: take_b.to_owned(), enhanced: String::new() },
+        ];
+        let log = vec![
+            json!({ "path": take_a, "output": json!({ "segments": [
+                { "start": 0.0, "end": 2.0, "text": "harbour lights" },
+                { "start": 5.0, "end": 7.0, "text": "ships at dawn" },
+            ]}).to_string() }),
+            json!({ "path": take_b, "output": json!({ "segments": [
+                { "start": 0.0, "end": 3.0, "text": "mountain road" },
+                { "start": 6.0, "end": 8.0, "text": "cars in snow" },
+            ]}).to_string() }),
+            json!({
+                "take": take_a, "beatGridMeasured": false,
+                "gapCount": 1, "suggestions": [{
+                    "kind": "dialogue_gap", "needBRoll": true,
+                    "startS": 2.0, "endS": 5.0, "priority": 0.8,
+                    "topicTags": ["harbour", "ships"],
+                }],
+            }),
+            json!({
+                "take": take_b, "beatGridMeasured": false,
+                "gapCount": 1, "suggestions": [{
+                    "kind": "dialogue_gap", "needBRoll": true,
+                    "startS": 3.0, "endS": 6.0, "priority": 0.7,
+                    "topicTags": ["mountain", "snow"],
+                }],
+            }),
+        ];
+
+        let slots = broll_slots(&log, &takes);
+        assert_eq!(slots.len(), 2);
+        assert_eq!(slots[0].take, take_a);
+        assert_eq!((slots[0].from, slots[0].to), (2.0, 5.0));
+        assert_eq!(slots[0].query, "harbour ships");
+        assert_eq!(slots[1].take, take_b);
+        assert_eq!((slots[1].from, slots[1].to), (3.0, 6.0));
+        assert_eq!(slots[1].query, "mountain snow");
+    }
+
     /// A monotony run means "speech no beat lands in". With no beat grid
     /// every long stretch of speech answers that trivially, so honouring
     /// these without a measured grid would blanket a talking-head cut in
@@ -3438,6 +3483,8 @@ mod tests {
             ],
         });
         let plan = json!({
+            "take": "/takes/a.wav",
+            "beatGridMeasured": false,
             "gapCount": 0,
             "suggestionCount": 1,
             "cutCount": 0,
@@ -3460,7 +3507,7 @@ mod tests {
 
         // With a measured grid the run is a real ask, and is honoured.
         let mut with_grid = no_grid.clone();
-        with_grid.push(json!({ "cutTimes": [2.5, 4.0, 6.0], "bpm": 120.0 }));
+        with_grid[1]["beatGridMeasured"] = json!(true);
         let slots = broll_slots(&with_grid, &takes);
         assert_eq!(slots.len(), 1, "the measured grid makes the run an ask");
         assert_eq!(slots[0].query, "harbour");
@@ -4242,4 +4289,71 @@ mod tests {
             }
         }
     }
+    /// The measured beat grid is returned before the planner requests are
+    /// constructed, and every take gets its own transcript clock.
+    #[test]
+    fn the_footage_planner_runs_per_take_after_beat_analysis() {
+        use concat_director::ProgramStep;
+
+        let take_a = "/takes/a.wav";
+        let take_b = "/takes/b.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![
+                TakePaths { take: take_a.to_owned(), enhanced: String::new() },
+                TakePaths { take: take_b.to_owned(), enhanced: String::new() },
+            ],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(plan) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "plan")
+            .expect("the program has a plan stage")
+        else {
+            panic!("the plan stage is derived");
+        };
+        let log = vec![
+            json!({ "musicPresent": false }),
+            json!({ "musicPresent": true }),
+            json!({ "path": take_a, "output": json!({ "segments": [
+                { "start": 0.0, "end": 2.0, "text": "harbour" },
+                { "start": 4.0, "end": 6.0, "text": "ships" },
+            ]}).to_string() }),
+            json!({ "path": take_b, "output": json!({ "segments": [
+                { "start": 0.0, "end": 3.0, "text": "mountains" },
+                { "start": 5.0, "end": 7.0, "text": "snow" },
+            ]}).to_string() }),
+        ];
+
+        let beat_call = (plan.next)(&log).expect("the musical take is analysed first");
+        assert_eq!(beat_call.tool, "analyze_beats");
+        assert_eq!(beat_call.arguments["path"], take_b);
+
+        let mut measured = log.clone();
+        measured.push(json!({ "cutTimes": [1.0, 2.5, 4.0], "bpm": 120.0 }));
+        let first = (plan.next)(&measured).expect("the first take is planned");
+        assert_eq!(first.tool, "footage_plan_suggest");
+        assert_eq!(first.arguments["take"], take_a);
+        assert_eq!(first.arguments["segments"].as_array().unwrap().len(), 2);
+        assert!(first.arguments.get("beats").is_none());
+
+        let second = (plan.next)(&measured).expect("the second take is planned");
+        assert_eq!(second.tool, "footage_plan_suggest");
+        assert_eq!(second.arguments["take"], take_b);
+        assert_eq!(second.arguments["segments"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            second.arguments["beats"],
+            json!([
+                { "seconds": 1.0, "strength": 0.5 },
+                { "seconds": 2.5, "strength": 0.5 },
+                { "seconds": 4.0, "strength": 0.5 }
+            ])
+        );
+    }
+
 }

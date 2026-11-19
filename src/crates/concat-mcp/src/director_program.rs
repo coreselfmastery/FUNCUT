@@ -745,6 +745,43 @@ impl EmotionLine {
 /// that order - the invariant this reader stands on, and the reason the
 /// reader filters its takes with the same [`spoken_lines`] predicate the
 /// stage skips them with.
+/// The words the take's own delivery stressed, lowercased and
+/// deduplicated: `voice_signals`' `prosody.emphasisWords`, the signal the
+/// caption stage spends. Empty when no reply measured any, which is the
+/// honest answer for a take read without prosody - the stage then falls
+/// back to its own evidence rather than inventing a stress.
+fn stressed_words(log: &[Value], takes: &[TakePaths]) -> Vec<String> {
+    let mut words: Vec<String> = Vec::new();
+    for reply in log {
+        let Some(path) = reply.pointer("/audio/path").and_then(Value::as_str) else {
+            continue;
+        };
+        if !takes.iter().any(|take| take.take == path) {
+            continue;
+        }
+        for line in reply["lines"].as_array().into_iter().flatten() {
+            for word in line
+                .pointer("/prosody/emphasisWords")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                // The Rust ear names the word `wordText`; the Python
+                // prosody pass names it `word`. Read either, so a take
+                // read by either producer still hands its stress over.
+                let Some(text) = word["wordText"].as_str().or_else(|| word["word"].as_str()) else {
+                    continue;
+                };
+                let text = text.trim().to_lowercase();
+                if !text.is_empty() && !words.contains(&text) {
+                    words.push(text);
+                }
+            }
+        }
+    }
+    words
+}
+
 fn emotion_lines(log: &[Value], takes: &[TakePaths]) -> Vec<EmotionLine> {
     let replies: Vec<&Value> = log
         .iter()
@@ -1148,7 +1185,7 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
         signal_log.push(json!({
             "at": round3(peak.start),
             "decision": "graphic",
-            "signals": ["prosody", "emotion"],
+            "signals": ["emotion"],
             "note": "the title entrance lands on the piece's strongest line",
         }));
     }
@@ -1920,6 +1957,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     let view = latest_view(log)?;
                     let media = media_paths(view);
                     let read = emotion_lines(log, &caption_emotion);
+                    let emphasis = stressed_words(log, &caption_source);
                     let mut captions: Vec<Value> = Vec::new();
                     for (take, segments) in transcripts_of(log, &caption_source) {
                         for segment in segments {
@@ -1953,12 +1991,25 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             let hot = line.is_some_and(|line| {
                                 matches!(line.temperature.as_str(), "hot" | "split")
                             });
+                            // A caption that carries one of the take's own
+                            // stressed words takes the accent even on a
+                            // neutral line: the emphasis signal is the
+                            // delivery's, not the mood's, and the log
+                            // promises the caption stage spends it.
+                            let stressed = !emphasis.is_empty()
+                                && text
+                                    .split_whitespace()
+                                    .map(|word| {
+                                        word.trim_matches(|c: char| !c.is_alphanumeric())
+                                            .to_lowercase()
+                                    })
+                                    .any(|word| emphasis.contains(&word));
                             captions.push(json!({
                                 "start": round3(at),
                                 "end": round3(to),
                                 "text": text,
                                 "weight": if intensity >= 0.65 { 800 } else { 600 },
-                                "accent": hot,
+                                "accent": hot || stressed,
                             }));
                         }
                     }
@@ -2921,6 +2972,93 @@ mod tests {
         // The fan compile-time proof the type system wanted: the repair
         // grouping is the FanStep the runner fans out.
         let _: &FanStep = repair;
+    }
+
+    /// A stressed word really does reach the captions: the log entry has
+    /// always claimed `emphasisWords`, and until this was wired the caption
+    /// stage never read the signal, so the claim was decorative. A caption
+    /// carrying one of the take's own stressed words takes the accent; one
+    /// carrying none stays plain.
+    #[test]
+    fn a_stressed_word_takes_the_caption_accent() {
+        let takes = vec![TakePaths {
+            take: "/takes/a.wav".to_owned(),
+            enhanced: String::new(),
+        }];
+        let log = vec![json!({ "audio": { "path": "/takes/a.wav" },
+            "lines": [{
+                "prosody": { "emphasisWords": [
+                    { "t": 1.0, "strength": 1.2, "wordText": "wreck" },
+                ]},
+            }],
+        })];
+        let words = stressed_words(&log, &takes);
+        assert_eq!(words, vec!["wreck".to_owned()]);
+        let carries = |text: &str| {
+            text.split_whitespace()
+                .map(|w| {
+                    w.trim_matches(|c: char| !c.is_alphanumeric())
+                        .to_lowercase()
+                })
+                .any(|w| words.contains(&w))
+        };
+        assert!(carries("we found the wreck"));
+        assert!(!carries("the hull was empty"));
+    }
+
+    /// The graphic's log entry names only the signals the choice consumed:
+    /// naming `prosody` while the entrance is picked by the read's
+    /// intensity would be the log asserting evidence no decision used.
+    #[test]
+    fn the_graphic_log_claims_only_the_signals_it_spent() {
+        let takes = vec![TakePaths {
+            take: "/t/a.wav".to_owned(),
+            enhanced: String::new(),
+        }];
+        let transcript = json!({
+            "segments": [
+                { "start": 0.0, "end": 3.0, "text": "we found the wreck" },
+                { "start": 4.0, "end": 7.0, "text": "it was not empty" },
+            ],
+        });
+        let log = vec![
+            json!({ "path": "/t/a.wav", "output": transcript.to_string() }),
+            json!({
+                "timeline": { "clips": [
+                    { "id": "c1", "media": "m1", "start": 0.0, "duration": 8.0,
+                      "sourceStart": 0.0, "speed": 1.0 },
+                ]},
+                "media": [{ "id": "m1", "path": "/t/a.wav" }],
+            }),
+            json!({ "lines": [
+                emotion_row(0.0, 3.0, "surprise", 0.9, "hook", "hot", ""),
+                emotion_row(4.0, 7.0, "fear", 0.9, "reveal", "cold", ""),
+            ]}),
+        ];
+        let plan = auto_plan(
+            &log,
+            &takes,
+            &AutoEditProgramSource {
+                project: "/t".to_owned(),
+                takes: takes.clone(),
+                placements: Vec::new(),
+                export: "/t/out.mp4".to_owned(),
+                sheet: "sheet.png".to_owned(),
+                stock_provider: "pexels".to_owned(),
+            },
+        )
+        .expect("a plan from the read");
+        let log_rows = plan["signalLog"].as_array().expect("a signal log");
+        let graphic = log_rows
+            .iter()
+            .find(|row| row["decision"] == json!("graphic"))
+            .expect("a graphic entry");
+        let signals = graphic["signals"].as_array().expect("its signals");
+        assert!(
+            !signals.contains(&json!("prosody")),
+            "the graphic entry claims prosody, which no decision here reads"
+        );
+        assert!(signals.contains(&json!("emotion")));
     }
 
     /// The accents stage steps over a peak the timeline does not play

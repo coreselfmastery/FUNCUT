@@ -2380,3 +2380,31 @@ pass, the three new ones included), `cargo fmt -p concat-mcp`, and
 test binary links against a shared ONNX Runtime
 (`ORT_PREFER_DYNAMIC_LINK=1`), as CI does - a static one beside
 sherpa-onnx's is the same protobuf twice and does not link.
+
+## 54. The signal log stops claiming evidence it never spent
+
+The one-click run writes a `signalLog` that names the signals behind each
+decision, and `plan_validate` treats that log as the proof a plan was
+written by reading the take. Two entries were asserting evidence no
+decision in this program consumed, which is the exact failure the log
+exists to prevent: a log that cannot lie is worth nothing if it lies.
+
+**The graphic entry named `prosody`.** The title entrance is chosen by the
+read's intensity - the emotion engine's number - and never by a pitch, a
+rate or an energy peak. The entry now names `emotion`, the signal the
+choice actually spent.
+
+**The caption entry named `emphasisWords` and the stage never read it.**
+`stressed_words` now reads `prosody.emphasisWords` from the take's own
+`voice_signals` reply and the caption stage spends it: a caption carrying
+one of the take's stressed words takes the accent even on a neutral line.
+The accent is no longer only the mood's - the delivery moves it, which is
+what the entry always promised. The reader takes `wordText` (the Rust
+ear's field) or `word` (the Python prosody pass's), so a take read by
+either producer hands its stress over rather than silently contributing
+nothing.
+
+Two tests pin it: `a_stressed_word_takes_the_caption_accent` and
+`the_graphic_log_claims_only_the_signals_it_spent`. `cargo test -p
+concat-mcp` is 111 passing, `cargo fmt --check` clean, `cargo clippy
+--all-targets` clean on the crate.

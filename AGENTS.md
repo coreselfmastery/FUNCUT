@@ -93,3 +93,21 @@ RUSTFLAGS="-C link-arg=-Wl,--allow-multiple-definition" cargo test -p concat-mcp
 
 Setting `RUSTFLAGS` invalidates the build cache, so the first run after
 adding it is a full rebuild.
+
+A container restart wipes everything outside `/workspace` — the Rust
+toolchain, apt packages and the shell `PATH`. `/workspace/envsetup/setup.sh`
+rebuilds it (toolchain 1.93.1, libclang, cmake, the GTK/GL/ALSA/ssl dev
+packages); run it first, then `/workspace/envsetup/verify.sh`. The
+`ffmpeg-dev/` and `.ort-shared/` trees under the repo root survive, and
+the build needs them on the environment:
+
+```sh
+export FFMPEG_DIR=$PWD/ffmpeg-dev
+export PKG_CONFIG_PATH=$PWD/ffmpeg-dev/lib/pkgconfig
+export ORT_LIB_LOCATION=$PWD/.ort-shared/lib ORT_PREFER_DYNAMIC_LINK=1
+export LD_LIBRARY_PATH=$PWD/ffmpeg-dev/lib:$PWD/.ort-shared/lib
+export LIBCLANG_PATH=/usr/lib/llvm-19/lib
+```
+
+Build with `-j2`: the 4-core box runs out of memory and the container is
+restarted mid-build at higher parallelism.

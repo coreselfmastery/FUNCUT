@@ -2270,8 +2270,9 @@ The result is what the one click was asked to be: the run now leaves a
 **complete, editable cut on the timeline** - narration, B-roll, a look,
 captions, music, accents - which the window opens at the end, so every
 piece is a normal clip to tweak. The stages that still want a brain (the
-plan, the motion comps, the preview/revise loop) remain the Director
-agent's; the run gains the two that never needed one.
+plan's creative brief and the motion comps) remain the Director agent's;
+the preview and the revise, once named as the agent's, are the button's
+own as of section 52.
 
 At the original OpenVid-based implementation commit, the target
 machine recorded 136 tests plus format and Clippy passing. Those results
@@ -2312,3 +2313,70 @@ Verified on the machine the fork targets: `cargo test -p concat-mcp`
 (79 lib tests, including the new
 `the_entrance_keys_the_titles_the_timeline_holds`), `cargo fmt --check`,
 and `cargo clippy -p concat-mcp --all-targets -- -D warnings` all pass.
+
+## 52. The button looks at its own cut: the preview before the render, and the revise that answers it
+
+Sections 50 and 51 built the picture; the run still exported it without
+ever looking at it. The watch scored the rendered file once, and nothing
+acted on the score - a run could ship a cut the critic graded 4 and call
+it finished. The button now samples the cut *before* the render is paid
+for, and answers the critic's measured faults with targeted edits. Two
+stages join the register, in the order the pipeline actually runs: the
+**preview** and **revise** before the export; the watch remains after
+verification.
+
+- **The preview** (the `preview` stage, before the export): the open
+  timeline is sampled and scored exactly as the watch samples the render -
+  the same `watch_render` contact sheet, the same `craft_critique` - but
+  against the project, not the export, because the export does not exist
+  yet. The sheet is written under its own name
+  (`auto-edit-sheet-preview.png`), so the watch's later sheet cannot
+  overwrite the frames the preview scored. It is warn-policy: a cut that
+  cannot be watched still exports, with the flaw recorded. Its craft pass
+  is the first entry in the project's `craft-history.json`, the number the
+  revise is measured against.
+- **The revise** (the `revise` stage, before the export): the critic's own
+  measurements, turned into one undoable `edit_apply` batch and nothing
+  else. Three rules, each traceable to a number in the sheet and none of
+  them a matter of taste:
+  - **bars** in the frame (`letterboxedFrames / samples > 0.1`) become a
+    `frameClip` *fill* on every picture that carries no scale ride
+    already - titles, shapes, layers and motion comps are skipped, since
+    a comp is authored at the frame size and a title's scale is its
+    entrance;
+  - **a black opening** (`blackFrames >= 1` and the first tile's
+    `blackFraction > 0.5`) becomes a rippled head trim of the measured
+    lead-in, capped at a quarter of the clip and half a second - a black
+    frame is a fault, a fade is not;
+  - **near-static cuts** (`staticTransitions / (samples-1) > 0.4` with at
+    least three) become a 1.0 → 1.04 push-in keyed on every *other* shot,
+    never on all of them - the same zoom on every cut is the robotic
+    repetition the house rules forbid, and two shots that differ in
+    energy read as a cut rather than as a still.
+
+  A cut the sheet measured clean issues **no edit at all**: the stage's
+  first `None` ends it, because a clean cut is a revise that succeeded,
+  not one to re-watch. A revision that lands is followed by one re-watch
+  and one re-critique of the same frames, which the craft journal records
+  as a second pass with its own delta - the loop is proved by the journal,
+  not claimed by the program. The render is *not* re-made: the edits land
+  on the timeline the window holds and the project autosaves, so the cut
+  the user opens is the revised one, and the run spends no second encode
+  on a reframe.
+
+The register is now seventeen stages, in the order the run drives them:
+handoff, repair, transcribe, voice signals, understand, plan, timeline,
+gather, captions, motion, music, sfx, **preview**, **revise**, export, verify, watch. The index-based assertions in
+`the_auto_edit_program_is_the_watchers_spine_over_fixed_paths` moved with
+it (the preview at 12, the revise at 13, the export at 14, the verify at
+15, the watch at 16), and three tests pin the new behaviour: the preview samples the open
+timeline and writes its own sheet, a clean cut revises nothing, and
+`revise_commands` turns measured bars, a black opening and static cuts
+into a fill, a bounded trim and a push-in on every other shot.
+
+Verified: `cargo test -p concat-mcp --lib director_program` (20 tests
+pass, the three new ones included), `cargo fmt -p concat-mcp`, and
+`cargo clippy -p concat-mcp --all-targets -- -D warnings` all pass. The
+test binary links against a shared ONNX Runtime
+(`ORT_PREFER_DYNAMIC_LINK=1`), as CI does - a static one beside
+sherpa-onnx's is the same protobuf twice and does not link.

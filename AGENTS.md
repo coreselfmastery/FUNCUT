@@ -80,3 +80,32 @@ The pinned toolchain is in `src/rust-toolchain.toml` (Rust 1.93.1);
 FFmpeg 8 dev libraries are needed (see `scripts/ci/deps.lock` and
 `.github/workflows/ci.yml`), or `./install-linux.sh` from the repo root
 installs a release build with everything a first run needs.
+
+When linking test binaries for `concat-mcp` (or anything that pulls in
+`ort`), a local ONNX Runtime setup can fail with `rust-lld: error:
+duplicate symbol: onnx::...` if the link includes conflicting ONNX/protobuf
+implementations. Use the shared, digest-pinned runtime from
+`scripts/setup-build-env.sh` and set `ORT_LIB_LOCATION` plus
+`ORT_PREFER_DYNAMIC_LINK=1` as shown below. If the duplicate remains,
+inspect the verbose linker command and remove the conflicting static
+library from the link set. **Do not mask it with
+`--allow-multiple-definition`**: that suppresses a real link diagnostic
+and can leave the selected symbol implementation dependent on link order.
+
+A container restart wipes everything outside `/workspace` — the Rust
+toolchain, apt packages and the shell `PATH`. `/workspace/envsetup/setup.sh`
+rebuilds it (toolchain 1.93.1, libclang, cmake, the GTK/GL/ALSA/ssl dev
+packages); run it first, then `/workspace/envsetup/verify.sh`. The
+`ffmpeg-dev/` and `.ort-shared/` trees under the repo root survive, and
+the build needs them on the environment:
+
+```sh
+export FFMPEG_DIR=$PWD/ffmpeg-dev
+export PKG_CONFIG_PATH=$PWD/ffmpeg-dev/lib/pkgconfig
+export ORT_LIB_LOCATION=$PWD/.ort-shared/lib ORT_PREFER_DYNAMIC_LINK=1
+export LD_LIBRARY_PATH=$PWD/ffmpeg-dev/lib:$PWD/.ort-shared/lib
+export LIBCLANG_PATH=/usr/lib/llvm-19/lib
+```
+
+Build with `-j2`: the 4-core box runs out of memory and the container is
+restarted mid-build at higher parallelism.

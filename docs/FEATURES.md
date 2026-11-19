@@ -438,7 +438,8 @@ always win; maestro refines how a floor is met, never lowers it. See
   the gap empty. It never uses the research-only OpenVid index for
   unattended B-roll. Seventeen stages run in this order: handoff,
   audio-repair, transcribe, voice-signals, understand, plan, timeline,
-  gather, captions, motion, music, sfx, preview, revise, export, verify, watch. The **preview** samples the *open timeline* (not the render)
+  gather, captions, motion, music, sfx, preview, revise, export,
+  verify, watch. The **preview** samples the *open timeline* (not the render)
   before the export is paid for, and the **revise** turns the critic's
   own numbers into one undoable `edit_apply` batch - a fill for bars, a
   bounded head trim for a black opening, a push-in on every *other* shot

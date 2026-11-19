@@ -449,16 +449,24 @@ fn tail_words(text: &str, n: usize) -> String {
 ///
 /// The planner's own read wins when the run asked for one. `slots_from_plan`
 /// reads `footage_plan_suggest`'s suggestions - dialogue gaps AND monotony
-/// runs, each carrying the priority the planner scored it at - and this
-/// falls back to the plain gap scan only when no plan was made, so a run
-/// whose planner found nothing (or could not run) still shops the gaps it
-/// can see.
+/// runs, each carrying the priority the planner scored it at. The plain gap
+/// scan is a fallback only when the planner returned no suggestions (or
+/// could not run); an explicit `needBRoll: false` is not overruled by a
+/// second, less-informed scan.
 fn broll_slots(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
     let planned = slots_from_plan(log, takes);
-    if !planned.is_empty() {
-        return planned;
+    let planner_has_suggestions = log.iter().any(|reply| {
+        reply.get("take").and_then(Value::as_str).is_some()
+            && reply
+                .get("suggestions")
+                .and_then(Value::as_array)
+                .is_some_and(|suggestions| !suggestions.is_empty())
+    });
+    if planner_has_suggestions {
+        planned
+    } else {
+        broll_slots_from_gaps(log, takes)
     }
-    broll_slots_from_gaps(log, takes)
 }
 
 /// The slots the footage planner asked for, in the order it ranked them.
@@ -3468,6 +3476,44 @@ mod tests {
         assert_eq!(slots[1].take, take_b);
         assert_eq!((slots[1].from, slots[1].to), (3.0, 6.0));
         assert_eq!(slots[1].query, "mountain snow");
+    }
+
+    /// An explicit planner decision that a span does not need B-roll
+    /// must not be overridden by the less-informed plain gap fallback.
+    #[test]
+    fn an_explicit_no_broll_suggestion_does_not_fall_back_to_gap_scan() {
+        let take = "/takes/a.wav";
+        let takes = vec![TakePaths {
+            take: take.to_owned(),
+            enhanced: String::new(),
+        }];
+        let transcript = json!({
+            "segments": [
+                { "start": 0.0, "end": 2.0, "text": "the harbour at dawn" },
+                { "start": 6.0, "end": 8.0, "text": "and the fishing boats" },
+            ],
+        });
+        let log = vec![
+            json!({ "path": take, "output": transcript.to_string() }),
+            json!({
+                "take": take,
+                "beatGridMeasured": false,
+                "gapCount": 1,
+                "suggestions": [{
+                    "kind": "dialogue_gap",
+                    "needBRoll": false,
+                    "startS": 2.0,
+                    "endS": 6.0,
+                    "priority": 0.2,
+                    "topicTags": [],
+                }],
+            }),
+        ];
+
+        assert!(
+            broll_slots(&log, &takes).is_empty(),
+            "an explicit no-B-roll answer is authoritative"
+        );
     }
 
     /// A monotony run means "speech no beat lands in". With no beat grid

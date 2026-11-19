@@ -356,11 +356,12 @@ fn best_hit(hits: &[Value], span: f64, aspect: &str, used: &[String]) -> Option<
         };
         // A clip shorter than the hole cannot cover it, and looping it is
         // a visible seam, so it is not a candidate at all - not a lower
-        // ranked one. The search's own duration is the clip's length;
-        // 0.0 is *not measured*, and an unmeasured clip is not rejected
-        // for a length nobody took.
-        let seconds = hit["seconds"].as_f64().unwrap_or(0.0);
-        if seconds > 0.0 && seconds + 0.05 < span {
+        // ranked one. An absent/invalid duration is not proof of coverage:
+        // refusing that hit is safer than silently leaving the slot short.
+        let seconds = hit["seconds"]
+            .as_f64()
+            .filter(|seconds| seconds.is_finite() && *seconds > 0.0)?;
+        if seconds + 0.05 < span {
             return None;
         }
         Some((orientation_ok, (width * height) as i64))
@@ -3590,6 +3591,13 @@ mod tests {
         // In a horizontal project the landscape clip is the right one.
         let picked = best_hit(&page, 4.0, "16:9", &[]).expect("a landscape clip fits");
         assert_eq!(picked["id"], "a");
+
+        // Missing duration is not evidence that a hit can cover the hole.
+        let unmeasured = hit("unknown-duration", 1080.0, 1920.0, 0.0);
+        assert!(
+            best_hit(&[unmeasured], 4.0, "9:16", &[]).is_none(),
+            "a hit with no measured duration cannot be promised as full coverage"
+        );
 
         // A clip already shopped is not a candidate: the next gap takes
         // the next best fit rather than repeating the shot.

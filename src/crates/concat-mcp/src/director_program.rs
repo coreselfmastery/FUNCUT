@@ -474,31 +474,26 @@ fn slots_from_plan(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
     // Each planner reply names the take whose independent file clock it
     // read. Never match a suggestion against another take merely because
     // their local timestamps happen to overlap.
-    let transcripts: Vec<(String, Vec<(f64, f64, String)>)> =
-        transcripts_of(log, takes)
-            .into_iter()
-            .map(|(take, segments)| {
-                let spoken = segments
-                    .iter()
-                    .filter_map(|segment| {
-                        let start = segment["start"].as_f64()?;
-                        let end = segment["end"].as_f64()?;
-                        let text = segment["text"].as_str().unwrap_or_default().trim();
-                        (end > start && !text.is_empty())
-                            .then(|| (start, end, text.to_owned()))
-                    })
-                    .collect();
-                (take, spoken)
-            })
-            .collect();
+    let transcripts: Vec<(String, Vec<(f64, f64, String)>)> = transcripts_of(log, takes)
+        .into_iter()
+        .map(|(take, segments)| {
+            let spoken = segments
+                .iter()
+                .filter_map(|segment| {
+                    let start = segment["start"].as_f64()?;
+                    let end = segment["end"].as_f64()?;
+                    let text = segment["text"].as_str().unwrap_or_default().trim();
+                    (end > start && !text.is_empty()).then(|| (start, end, text.to_owned()))
+                })
+                .collect();
+            (take, spoken)
+        })
+        .collect();
 
     let mut ranked: Vec<(f64, usize, BrollSlot)> = Vec::new();
     for plan in log.iter().filter(|reply| {
         reply.get("take").and_then(Value::as_str).is_some()
-            && reply
-                .get("suggestions")
-                .and_then(Value::as_array)
-                .is_some()
+            && reply.get("suggestions").and_then(Value::as_array).is_some()
             && reply.get("gapCount").is_some()
     }) {
         let Some(take_path) = plan["take"].as_str() else {
@@ -510,7 +505,10 @@ fn slots_from_plan(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
         else {
             continue;
         };
-        let Some((_, spoken)) = transcripts.iter().find(|(path, _)| path == take_path) else {
+        let Some((_, spoken)) = transcripts
+            .iter()
+            .find(|(path, _)| path.as_str() == take_path)
+        else {
             continue;
         };
         let beats_known = plan["beatGridMeasured"].as_bool().unwrap_or(false);
@@ -3426,8 +3424,14 @@ mod tests {
         let take_a = "/takes/a.wav";
         let take_b = "/takes/b.wav";
         let takes = vec![
-            TakePaths { take: take_a.to_owned(), enhanced: String::new() },
-            TakePaths { take: take_b.to_owned(), enhanced: String::new() },
+            TakePaths {
+                take: take_a.to_owned(),
+                enhanced: String::new(),
+            },
+            TakePaths {
+                take: take_b.to_owned(),
+                enhanced: String::new(),
+            },
         ];
         let log = vec![
             json!({ "path": take_a, "output": json!({ "segments": [
@@ -4300,8 +4304,14 @@ mod tests {
         let source = AutoEditProgramSource {
             project: "/edits/Reel".to_owned(),
             takes: vec![
-                TakePaths { take: take_a.to_owned(), enhanced: String::new() },
-                TakePaths { take: take_b.to_owned(), enhanced: String::new() },
+                TakePaths {
+                    take: take_a.to_owned(),
+                    enhanced: String::new(),
+                },
+                TakePaths {
+                    take: take_b.to_owned(),
+                    enhanced: String::new(),
+                },
             ],
             placements: Vec::new(),
             export: "/edits/Reel/export/auto-edit.mp4".to_owned(),

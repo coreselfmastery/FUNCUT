@@ -5939,7 +5939,6 @@ mod tests {
     /// snake_case aliases beside the camelCase names, and the batch holds
     /// the shared `excludeIds` and motion floor for every query it runs.
     #[test]
-    #[test]
     fn the_footage_filters_reach_the_search_schema_and_every_batch_query() {
         let toolbox = Toolbox::new();
         let (_, schema) = toolbox.find("openvid_search").expect("the search tool");

@@ -2735,8 +2735,8 @@ mod tests {
 
         // The register, in the run's own order: the fanned repair and
         // transcription, the derived tighten-then-grade, B-roll, captions,
-        // title entrances, bed and accents, the preview, the static
-        // export, the derived verify-gates, the watch, and the revise.
+        // title entrances, bed and accents, the preview, the revise,
+        // the static export, the derived verify-gates, and the watch.
         // The creative layer's remaining stages (the plan's brief, the
         // baked motion comps) are absent - the fraction the page shows
         // counts only these.

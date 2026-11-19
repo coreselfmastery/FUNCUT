@@ -2322,8 +2322,8 @@ acted on the score - a run could ship a cut the critic graded 4 and call
 it finished. The button now samples the cut *before* the render is paid
 for, and answers the critic's measured faults with targeted edits. Two
 stages join the register, in the order the pipeline actually runs: the
-**preview** between the accents and the export, the **revise** after the
-watch.
+**preview** and **revise** before the export; the watch remains after
+verification.
 
 - **The preview** (the `preview` stage, before the export): the open
   timeline is sampled and scored exactly as the watch samples the render -
@@ -2335,7 +2335,7 @@ watch.
   cannot be watched still exports, with the flaw recorded. Its craft pass
   is the first entry in the project's `craft-history.json`, the number the
   revise is measured against.
-- **The revise** (the `revise` stage, after the watch): the critic's own
+- **The revise** (the `revise` stage, before the export): the critic's own
   measurements, turned into one undoable `edit_apply` batch and nothing
   else. Three rules, each traceable to a number in the sheet and none of
   them a matter of taste:

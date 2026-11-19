@@ -11,7 +11,10 @@ name: Dependency security audit
 # reached, and the prebuilt archives are sha256-verified against
 # scripts/ci/deps.lock first. The real fix is the sherpa-onnx 2.x migration
 # with re-pinned digests - its own session. The ignores are per-ID, so any
-# NEW advisory still fails the audit.
+# NEW advisory still fails the audit. The current database reports
+# RUSTSEC-2026-0545 and RUSTSEC-2026-0548 on zip 2.4.2 in this subtree;
+# they are intentionally NOT ignored. The audit stays red until sherpa-onnx
+# is upgraded and the prebuilt library digests and speech stack are revalidated.
 
 on:
   push:

@@ -2366,11 +2366,10 @@ watch.
 
 The register is now seventeen stages, in the order the run drives them:
 handoff, repair, transcribe, voice signals, understand, plan, timeline,
-gather, captions, motion, music, sfx, **preview**, export, verify, watch,
-**revise**. The index-based assertions in
+gather, captions, motion, music, sfx, **preview**, **revise**, export, verify, watch. The index-based assertions in
 `the_auto_edit_program_is_the_watchers_spine_over_fixed_paths` moved with
-it (the preview at 12, the export at 13, the verify at 14, the watch at
-15, the revise at 16), and three tests pin the new behaviour: the preview samples the open
+it (the preview at 12, the revise at 13, the export at 14, the verify at
+15, the watch at 16), and three tests pin the new behaviour: the preview samples the open
 timeline and writes its own sheet, a clean cut revises nothing, and
 `revise_commands` turns measured bars, a black opening and static cuts
 into a fill, a bounded trim and a push-in on every other shot.

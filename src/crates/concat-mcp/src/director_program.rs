@@ -483,7 +483,7 @@ fn slots_from_plan(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
     // Each planner reply names the take whose independent file clock it
     // read. Never match a suggestion against another take merely because
     // their local timestamps happen to overlap.
-    let transcripts: Vec<(String, Vec<(f64, f64, String)>)> = transcripts_of(log, takes)
+    let transcripts: SpokenTakes = transcripts_of(log, takes)
         .into_iter()
         .map(|(take, segments)| {
             let spoken = segments

@@ -2052,11 +2052,14 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // The sheet names where it kept its own pixels;
                         // that is the path the critic reads, not one this
                         // program reconstructs from the name it asked for.
+                        // A sheet that named none is a preview that could
+                        // not be looked at: end the stage rather than hand
+                        // the critic an empty path.
                         let png = log
                             .iter()
                             .rev()
                             .find_map(|reply| reply.get("pngPath").and_then(Value::as_str))
-                            .unwrap_or_default();
+                            .filter(|png| !png.trim().is_empty())?;
                         return Some(call(
                             "craft_critique",
                             json!({ "pngPath": png, "project": preview_project }),
@@ -2327,11 +2330,14 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     }
                     if phase == 2 {
                         phase = 3;
+                        // As in the preview: a sheet that named no pixels
+                        // ends the re-critique rather than sending the
+                        // critic an empty path.
                         let png = log
                             .iter()
                             .rev()
                             .find_map(|reply| reply.get("pngPath").and_then(Value::as_str))
-                            .unwrap_or_default();
+                            .filter(|png| !png.trim().is_empty())?;
                         return Some(call(
                             "craft_critique",
                             json!({ "pngPath": png, "project": revise_project }),

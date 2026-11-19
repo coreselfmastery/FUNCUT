@@ -3698,7 +3698,10 @@ mod tests {
                 "id": "2499611",
                 "provider": "pexels",
                 "url": "https://videos.pexels.com/files/hd.mp4",
-                "license": "Pexels License"
+                "license": "Pexels License",
+                "width": 1080.0,
+                "height": 1920.0,
+                "seconds": 10.0
             }]
         }));
         let import = (gather.next)(&log).expect("the licensed hit is imported");

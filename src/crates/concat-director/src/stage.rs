@@ -70,7 +70,7 @@ pub enum Stage {
     /// revise answers exist before the encode is spent.
     Preview,
     /// The cut is rendered and waited on to a terminal job state (the
-    /// seventeenth step).
+    /// fifteenth stage).
     Export,
     /// The actual output is inspected and scored: `watch_render`'s
     /// contact sheet, `craft_critique`'s score (the seventeenth stage).

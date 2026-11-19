@@ -3599,6 +3599,18 @@ const SIGNAL_VOCABULARY: &[&str] = &[
     "noiseFloor",
 ];
 
+/// Whether a signal name is one the `voice_signals` profile answers - the
+/// same predicate the decision log's gate applies, exposed so a test can
+/// hold a generated plan to the vocabulary the validator will check it
+/// against rather than a copy of the list that can drift.
+pub fn signal_vocabulary_has(signal: &str) -> bool {
+    SIGNAL_VOCABULARY.iter().any(|known| {
+        signal == *known
+            || signal.starts_with(&format!("{known}."))
+            || signal.starts_with(&format!("{known}["))
+    })
+}
+
 /// The decision log's gate: which signals drove each choice. A plan that
 /// carries entries names, for every cut, caption, graphic, BGM and
 /// transition decision, the signals from the voice_signals profile
@@ -3653,11 +3665,7 @@ fn signal_log_gate(plan: &Value, segments: &[Value], runtime: f64) -> Value {
             ));
         }
         for signal in &signals {
-            if !SIGNAL_VOCABULARY.iter().any(|known| {
-                signal == *known
-                    || signal.starts_with(&format!("{known}."))
-                    || signal.starts_with(&format!("{known}["))
-            }) {
+            if !signal_vocabulary_has(signal) {
                 problems.push(format!(
                     "entry {at}: signal {signal:?} is not one the voice_signals profile answers"
                 ));

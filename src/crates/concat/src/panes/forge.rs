@@ -515,9 +515,10 @@ impl ForgePane {
     /// and then the deterministic spine of the pipeline is run by the
     /// concat-director runner over the window's own server: the repair,
     /// readings, tighten, grade, licensed live-stock B-roll, captions,
-    /// title entrances, music, export, verify and watch. The plan, eye-picked
-    /// stock, baked motion comps and preview/revise loop remain the
-    /// Director agent's; this is the unattended voiceover edit.
+    /// title entrances, music, preview, export, verify, watch and revise.
+    /// The plan's creative brief, the eye-picked stock and the baked motion
+    /// comps remain the Director agent's; this is the unattended voiceover
+    /// edit.
     fn auto_edit_start(&mut self, studio: &mut Studio) {
         if self.auto.running {
             return;

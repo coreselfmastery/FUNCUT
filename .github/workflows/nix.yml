@@ -20,6 +20,7 @@ on:
       - flake.nix
       - flake.lock
       - src/Cargo.lock
+      - src/crates/*/Cargo.toml
       - .github/workflows/nix.yml
   workflow_dispatch:
 

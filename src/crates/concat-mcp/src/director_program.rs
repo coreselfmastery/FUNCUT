@@ -2436,6 +2436,12 @@ mod tests {
                 "revise",
             ]
         );
+        // The register and the run are the same order, not merely the same
+        // set: `Runner::completed` reports a resumed run in `Stage::ALL`'s
+        // order, so an `ALL` that disagreed with the program would resume
+        // a run in an order it never ran.
+        let register: Vec<&str> = Stage::ALL.iter().map(|stage| stage.label()).collect();
+        assert_eq!(register, order, "the register is the run's own order");
         // The warn-policy stages, and only them: a take that cannot be
         // repaired ships as recorded, an emotional read that cannot be
         // made leaves the cut on its defaults, a plan the gate refuses

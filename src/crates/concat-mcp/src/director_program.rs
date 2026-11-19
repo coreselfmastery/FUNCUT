@@ -140,7 +140,17 @@ fn timeline_at(view: &Value, media: &[(String, String)], take: &str, moment: f64
 /// survives at the sentence end (the skill's own padding rule, applied),
 /// ripple on - the lane closes behind the cut. The spans are file
 /// seconds mapped through the clip that plays them.
-fn dead_air_cuts(log: &[Value], takes: &[TakePaths], project: &str) -> Vec<ToolCall> {
+///
+/// Not every silence is dead air: a pause that opens right after a line
+/// that reads hard is a held beat, and cutting it is the one mistake that
+/// makes an edit feel mechanical. Those spans are left alone, whatever
+/// the silence detector called them.
+fn dead_air_cuts(
+    log: &[Value],
+    takes: &[TakePaths],
+    project: &str,
+    emotion: &[EmotionLine],
+) -> Vec<ToolCall> {
     let Some(view) = log
         .iter()
         .find(|reply| reply.pointer("/timeline/clips").is_some())
@@ -166,6 +176,10 @@ fn dead_air_cuts(log: &[Value], takes: &[TakePaths], project: &str) -> Vec<ToolC
                 // Only spans worth cutting, and only after the padding
                 // rule leaves something to cut.
                 if end - start < 0.5 {
+                    return None;
+                }
+                // The beat after a hard line is held, not cut.
+                if held_beat(emotion, path, start) {
                     return None;
                 }
                 let shrunk = (start + 0.08, end - 0.08);
@@ -359,6 +373,263 @@ fn broll_slots(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
     slots
 }
 
+/// The segments a take's transcript reply timed, wherever in the log the
+/// reply sits. A take whose transcription never landed has none.
+fn segments_of(log: &[Value], take: &str) -> Vec<Value> {
+    let takes = [TakePaths {
+        take: take.to_owned(),
+        enhanced: String::new(),
+    }];
+    transcripts_of(log, &takes)
+        .into_iter()
+        .flat_map(|(_, segments)| segments)
+        .collect()
+}
+
+/// The spoken lines a take's transcript measured, as the `emotion`
+/// extract reads them: `{text, start, end}` in the take's own seconds.
+/// The predicate is the one the emotion stage and the emotion reader
+/// share - a take with no timed words is a take neither asks about, so
+/// the replies and the takes stay zipped in the same order on both
+/// sides.
+fn spoken_lines(log: &[Value], take: &str) -> Vec<Value> {
+    segments_of(log, take)
+        .into_iter()
+        .filter_map(|segment| {
+            let start = segment["start"].as_f64()?;
+            let end = segment["end"].as_f64()?;
+            let text = segment["text"].as_str()?.trim();
+            (end > start && !text.is_empty())
+                .then(|| json!({ "text": text, "start": start, "end": end }))
+        })
+        .collect()
+}
+
+/// One line of the emotional read, keyed by the take it was read from.
+#[derive(Clone)]
+struct EmotionLine {
+    /// The take the words came from.
+    take: String,
+    /// Where the line begins in the take, in file seconds.
+    start: f64,
+    /// Where it ends, in file seconds.
+    end: f64,
+    /// One of the seven the emotion engine answers.
+    emotion: String,
+    /// How strongly the line reads, 0.1 to 1.
+    intensity: f64,
+    /// The narrative act the line sits in: hook, setup, tension, turn,
+    /// reveal, proof, cta.
+    act: String,
+    /// The colour temperature the profile names: hot, warm, balanced,
+    /// cool, cold, sickly or split.
+    temperature: String,
+    /// The bed's level under this line, in dB, as the act profile sets it.
+    duck_db: f64,
+    /// The sound the profile asks for at this line's peak.
+    sfx_type: String,
+    /// The two `bgm_search` queries the line's bed wants, primary first.
+    bgm_words: Vec<String>,
+}
+
+impl EmotionLine {
+    /// The line as an `emotion` extract wrote it, from a take file.
+    fn of(take: &str, row: &Value) -> Option<EmotionLine> {
+        let text_free = |value: &Value| value.as_str().map(str::to_owned);
+        Some(EmotionLine {
+            take: take.to_owned(),
+            start: row["start"].as_f64()?,
+            end: row["end"].as_f64()?,
+            emotion: text_free(&row["emotion"])?,
+            intensity: row["intensity"].as_f64().unwrap_or(0.5),
+            act: text_free(&row["act"]).unwrap_or_else(|| "setup".to_owned()),
+            temperature: row
+                .pointer("/colourTemp/temperature")
+                .and_then(Value::as_str)
+                .unwrap_or("balanced")
+                .to_owned(),
+            duck_db: row["duckDb"].as_f64().unwrap_or(-12.0),
+            sfx_type: text_free(&row["sfxType"]).unwrap_or_default(),
+            bgm_words: row["bgmWords"]
+                .as_array()
+                .map(|words| {
+                    words
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default(),
+        })
+    }
+}
+
+/// The emotional read the run made, in the order the takes were asked
+/// about. The emotion stage asks once per take that has timed words, in
+/// program order, so the `emotion` replies sit in the log in exactly
+/// that order - the invariant this reader stands on, and the reason the
+/// reader filters its takes with the same [`spoken_lines`] predicate the
+/// stage skips them with.
+fn emotion_lines(log: &[Value], takes: &[TakePaths]) -> Vec<EmotionLine> {
+    let replies: Vec<&Value> = log
+        .iter()
+        .filter(|reply| {
+            reply["lines"]
+                .as_array()
+                .is_some_and(|lines| lines.iter().any(|line| line.get("emotion").is_some()))
+        })
+        .collect();
+    let asked: Vec<&TakePaths> = takes
+        .iter()
+        .filter(|take| !spoken_lines(log, &take.take).is_empty())
+        .collect();
+    asked
+        .iter()
+        .zip(replies)
+        .flat_map(|(take, reply)| {
+            reply["lines"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|row| EmotionLine::of(&take.take, row))
+        })
+        .collect()
+}
+
+/// The read's dominant line: the one carrying the most intensity, which
+/// is the beat the piece is really about - not the most frequent emotion,
+/// which a long calm setup would always win.
+fn dominant(lines: &[EmotionLine]) -> Option<&EmotionLine> {
+    lines
+        .iter()
+        .filter(|line| line.emotion != "neutral")
+        .max_by(|left, right| left.intensity.total_cmp(&right.intensity))
+        .or_else(|| lines.first())
+}
+
+/// The line a timeline moment sits in, through the take it plays: the
+/// nearest line that starts at or before the moment.
+fn emotion_at<'a>(lines: &'a [EmotionLine], take: &str, moment: f64) -> Option<&'a EmotionLine> {
+    lines
+        .iter()
+        .filter(|line| line.take == take && line.start <= moment + 0.05)
+        .max_by(|left, right| left.start.total_cmp(&right.start))
+}
+
+/// Whether a silence opening at `start` is a beat the read says to hold:
+/// the line it follows ended hard (an intense read) or it is the pause
+/// after the piece's biggest moment. Those are the silences an editor
+/// keeps, and the ones a silence detector alone always gets wrong.
+fn held_beat(emotion: &[EmotionLine], take: &str, start: f64) -> bool {
+    const HOLD: f64 = 0.45;
+    let before = emotion
+        .iter()
+        .filter(|line| line.take == take && line.end <= start + 0.15 && line.end >= start - 0.6)
+        .max_by(|left, right| left.end.total_cmp(&right.end));
+    let Some(line) = before else {
+        return false;
+    };
+    if start - line.end > HOLD {
+        return false;
+    }
+    line.intensity >= 0.7 || matches!(line.act.as_str(), "reveal" | "turn")
+}
+
+/// The look an emotion's colour temperature asks for: the shelf's own
+/// package for that palette, at the strength the package ships with. A
+/// temperature the profile does not name falls back to the blockbuster
+/// look, the one the shelf calls most requested.
+fn look_for_temperature(temperature: &str) -> &'static str {
+    match temperature {
+        "hot" => "concat.warm",
+        "warm" => "concat.golden-hour",
+        "cool" => "concat.cool",
+        "cold" => "concat.cool-blue",
+        "sickly" => "concat.vintage",
+        // split, balanced and anything unnamed: the teal-and-orange the
+        // surprise profile itself asks for.
+        _ => "concat.teal-orange",
+    }
+}
+
+/// The transition an emotion earns on the cut into a B-roll shot: a
+/// speaker or mood change earns a visible one, a calm stretch earns a
+/// soft one. The ids are the catalogue's own transition packages.
+fn transition_for_emotion(emotion: &str) -> &'static str {
+    match emotion {
+        "joy" => "concat.cross-pop",
+        "surprise" => "concat.flash-social",
+        "anger" => "concat.crash-zoom",
+        "fear" => "concat.blur-dissolve",
+        "sadness" => "concat.dissolve",
+        "disgust" => "concat.blinds-soft",
+        _ => "concat.blur-dissolve",
+    }
+}
+
+/// The second transition for a mood, so two shots cut from the same
+/// emotion never wear the same move twice running: the no-repeat rule
+/// the director enforces, not merely asks for.
+fn alternate_transition(emotion: &str) -> &'static str {
+    match emotion {
+        "joy" => "concat.dissolve",
+        "surprise" => "concat.cross-pop",
+        "anger" => "concat.flash-social",
+        "fear" => "concat.dissolve",
+        "sadness" => "concat.blur-dissolve",
+        "disgust" => "concat.dissolve",
+        _ => "concat.dissolve",
+    }
+}
+
+/// The sound queries an emotion's profile asks for, in the order the
+/// accents spend them: the profile names a family ("impact-heavy (hard
+/// hits, distorted risers)"), and the shelf is searched by the words that
+/// find it. The words are the library's own categories - Whoosh, Impact,
+/// Riser, Boom is not a category, so a hard hit is searched as one - and
+/// the neutral row is the general accent vocabulary.
+fn sfx_queries_for_emotion(emotion: &str) -> &'static [&'static str] {
+    match emotion {
+        "anger" => &["impact", "hit", "riser"],
+        "fear" => &["riser", "whoosh", "drone"],
+        "surprise" => &["whoosh", "riser", "pop"],
+        "joy" => &["pop", "chime", "swell"],
+        "sadness" => &["ambience", "pad", "tone"],
+        "disgust" => &["foley", "texture", "hit"],
+        _ => &["whoosh", "impact", "riser", "pop", "click", "foley"],
+    }
+}
+
+/// The queries the emotional read's own `sfxType` names, which is more
+/// specific than the emotion alone: a line read as a stinger is shopped
+/// for a stinger, not the family its emotion happens to share. The
+/// family is the fallback when the read named no register.
+fn sfx_queries_for_line(line: Option<&EmotionLine>, emotion: &str) -> Vec<&'static str> {
+    let register = line
+        .map(|line| line.sfx_type.to_ascii_lowercase())
+        .unwrap_or_default();
+    let named: &[&str] = if register.contains("stinger") {
+        &["stinger", "hit", "impact"]
+    } else if register.contains("drone") {
+        &["drone", "riser", "ambience"]
+    } else if register.contains("chime") || register.contains("uplifting") {
+        &["chime", "pop", "swell"]
+    } else if register.contains("piano") || register.contains("room tone") {
+        &["ambience", "tone", "pad"]
+    } else if register.contains("impact-heavy") {
+        &["impact", "hit", "riser"]
+    } else if register.contains("texture") {
+        &["foley", "texture", "hit"]
+    } else {
+        &[]
+    };
+    if named.is_empty() {
+        sfx_queries_for_emotion(emotion).to_vec()
+    } else {
+        named.to_vec()
+    }
+}
+
 /// The titles the entrance pass keys: every text clip the timeline now
 /// holds that is long enough to hold an entrance and is not already
 /// keyed. The captions stage places them a batch earlier, so they are
@@ -512,35 +783,40 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .map(|take| vec![call("voice_signals", json!({ "audio": take.take }))])
         .collect();
     steps.push(FanStep::fan(Stage::VoiceSignals, signals).into());
-    // 5. The music gate: a take that already carries music gets no bed
-    //    stacked under it - the record the gate leaves behind, which the
-    //    music stage reads before it shops.
-    let gate: Vec<ToolCall> = takes
-        .iter()
-        .map(|take| {
-            call(
-                "sense_audio_repair",
-                json!({ "action": "detect_music_segments", "audio": take.take }),
-            )
-        })
-        .collect();
-    steps.push(StageStep::run(Stage::Understand, gate).into());
-    // 6. The tighten: only the dead air the reading classified, each span
-    //    shrunk the padding rule's 80 ms, cut through `edit_apply` so the
-    //    rollback and the resume both see it - then the timeline read
-    //    back as it now stands, the truth every later stage maps through.
-    //    No dead air is a tighten that succeeded.
-    let tighten_source = takes.clone();
-    let tighten_project = project.clone();
+    // 5. The understanding: the music gate (a take that already carries
+    //    music gets no bed stacked under it) and the emotional read of
+    //    every take that has words - the arc, the acts, the colour
+    //    temperature, the bed's duck and the accent family each line
+    //    asks for. The read is derived, not static: its lines are the
+    //    transcripts the transcribe stage has already landed, so the
+    //    program never has to guess words it has not measured.
+    let understand_source = takes.clone();
     steps.push(
         DerivedStep::react(
-            Stage::Timeline,
+            Stage::Understand,
             Box::new({
                 let mut queue: Option<Vec<ToolCall>> = None;
                 move |log| {
                     let queue = queue.get_or_insert_with(|| {
-                        let mut calls = dead_air_cuts(log, &tighten_source, &tighten_project);
-                        calls.push(call("timeline_read", json!({ "path": tighten_project })));
+                        let mut calls: Vec<ToolCall> = understand_source
+                            .iter()
+                            .map(|take| {
+                                call(
+                                    "sense_audio_repair",
+                                    json!({ "action": "detect_music_segments", "audio": take.take }),
+                                )
+                            })
+                            .collect();
+                        for take in &understand_source {
+                            let lines = spoken_lines(log, &take.take);
+                            if lines.is_empty() {
+                                continue;
+                            }
+                            calls.push(call(
+                                "emotion",
+                                json!({ "action": "extract", "lines": lines }),
+                            ));
+                        }
                         calls
                     });
                     if queue.is_empty() {
@@ -554,43 +830,82 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .warn()
         .into(),
     );
-    // 6b. The grade: one look over the whole runtime, the skill's own
-    //     default (an effect layer spanning the cut, never a five-second
-    //     layer - the duration is the timeline the tighten just read, and
-    //     the layer lands above the picture so it treats it). The look is
-    //     the blockbuster one the shelf calls the most requested; a run
-    //     with no runtime to read grades nothing.
+    // 6. The timeline, in one stage and one step: the tighten, then the
+    //    grade. The runner's resume record is keyed by the stage, so two
+    //    steps sharing `Stage::Timeline` were not two steps - the second
+    //    was skipped the moment the first completed, and the run never
+    //    graded. The two are one queue here, in the order an editor works:
+    //    cut the dead air, then lay the look over the cut that is left.
+    //
+    //    The tighten cuts only the dead air the reading classified, each
+    //    span shrunk the padding rule's 80 ms, through `edit_apply` so the
+    //    rollback and the resume both see it, then reads the timeline
+    //    back as it now stands - the truth every later stage maps
+    //    through. No dead air is a tighten that succeeded.
+    //
+    //    The grade is one look over the whole runtime (an effect layer
+    //    spanning the cut, never a five-second layer: the duration is the
+    //    timeline the tighten just read, and the layer lands above the
+    //    picture so it treats it). The look is the one the emotional read
+    //    asks for - a joyful take graded golden, a fearful one cold, a
+    //    sad one cool-blue - and the blockbuster teal-and-orange only
+    //    when the read named no temperature. A run with no runtime to
+    //    read grades nothing.
+    let tighten_source = takes.clone();
+    let tighten_project = project.clone();
+    let grade_source = takes.clone();
     let grade_project = project.clone();
     steps.push(
         DerivedStep::react(
             Stage::Timeline,
-            Box::new(move |log| {
-                let view = latest_view(log)?;
-                let runtime = view["timeline"]["clips"]
-                    .as_array()?
-                    .iter()
-                    .map(|clip| {
-                        clip["start"].as_f64().unwrap_or(0.0)
-                            + clip["duration"].as_f64().unwrap_or(0.0)
-                    })
-                    .fold(0.0_f64, f64::max);
-                if runtime < 0.5 {
-                    return None;
+            Box::new({
+                let mut queue: Option<Vec<ToolCall>> = None;
+                let mut graded = false;
+                move |log| {
+                    let queue = queue.get_or_insert_with(|| {
+                        let read = emotion_lines(log, &grade_source);
+                        let mut calls =
+                            dead_air_cuts(log, &tighten_source, &tighten_project, &read);
+                        calls.push(call("timeline_read", json!({ "path": tighten_project })));
+                        calls
+                    });
+                    if let Some(next) = (!queue.is_empty()).then(|| queue.remove(0)) {
+                        return Some(next);
+                    }
+                    if graded {
+                        return None;
+                    }
+                    let view = latest_view(log)?;
+                    let runtime = view["timeline"]["clips"]
+                        .as_array()?
+                        .iter()
+                        .map(|clip| {
+                            clip["start"].as_f64().unwrap_or(0.0)
+                                + clip["duration"].as_f64().unwrap_or(0.0)
+                        })
+                        .fold(0.0_f64, f64::max);
+                    if runtime < 0.5 {
+                        return None;
+                    }
+                    let look = dominant(&emotion_lines(log, &grade_source))
+                        .map(|line| look_for_temperature(&line.temperature))
+                        .unwrap_or("concat.teal-orange");
+                    graded = true;
+                    Some(call(
+                        "edit_apply",
+                        json!({
+                            "path": grade_project,
+                            "command": {
+                                "op": "addLayerClip",
+                                "trackId": null,
+                                "start": 0.0,
+                                "duration": round3(runtime),
+                                "effectId": look,
+                                "name": "The look",
+                            },
+                        }),
+                    ))
                 }
-                Some(call(
-                    "edit_apply",
-                    json!({
-                        "path": grade_project,
-                        "command": {
-                            "op": "addLayerClip",
-                            "trackId": null,
-                            "start": 0.0,
-                            "duration": round3(runtime),
-                            "effectId": "concat.teal-orange",
-                            "name": "The look",
-                        },
-                    }),
-                ))
             }),
         )
         .warn()
@@ -602,8 +917,15 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     //     index is never used by AUTO EDIT. A missing key or empty shelf is
     //     a named warning and leaves that gap unfilled, not an unlicensed
     //     clip silently added to a project.
+    //
+    //     Each gap's cut-in is the transition the emotion at that moment
+    //     asks for - a burst for surprise, a soft dissolve for sadness -
+    //     and never the same move twice running: the second shot cut from
+    //     the same mood takes the mood's alternate. That is the director's
+    //     no-repeat rule enforced, not merely asked for.
     let gather_source = takes.clone();
     let gather_project = project.clone();
+    let gather_emotion = takes.clone();
     let gather_provider = source.stock_provider.clone();
     steps.push(
         DerivedStep::react(
@@ -614,12 +936,31 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 let mut phase = 0u8;
                 let mut pending_media: Option<String> = None;
                 let mut pending_len = 0.0f64;
+                let mut pending_transition: Option<&'static str> = None;
+                // The transition the last placed shot cut in with: the
+                // next shot never wears the same move twice running.
+                let mut last_transition: Option<&'static str> = None;
                 move |log| loop {
                     let slots = slots.get_or_insert_with(|| broll_slots(log, &gather_source));
                     if placed >= slots.len() {
                         return None;
                     }
                     let slot = &slots[placed];
+                    // The mood the gap opens on: the line whose speech
+                    // the gap follows, so the picture cuts in the way the
+                    // voice just sounded.
+                    let mood =
+                        emotion_at(&emotion_lines(log, &gather_emotion), &slot.take, slot.from)
+                            .map(|line| line.emotion.clone())
+                            .unwrap_or_else(|| "neutral".to_owned());
+                    let transition = {
+                        let first = transition_for_emotion(&mood);
+                        if last_transition == Some(first) {
+                            alternate_transition(&mood)
+                        } else {
+                            first
+                        }
+                    };
                     match phase {
                         0 => {
                             phase = 1;
@@ -686,6 +1027,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 (Some(media_id), Some(at), Some(to)) if to - at > 0.4 => {
                                     pending_media = Some(media_id.clone());
                                     pending_len = round3(to - at);
+                                    pending_transition = Some(transition);
                                     phase = 3;
                                     return Some(call(
                                         "edit_apply",
@@ -759,11 +1101,13 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 "value": 1.06,
                                 "ease": [0.0, 0.0, 0.58, 1.0],
                             }));
+                            let chosen = pending_transition.unwrap_or("concat.dissolve");
+                            last_transition = Some(chosen);
                             commands.push(json!({
                                 "op": "updateClip",
                                 "clipId": clip_id,
                                 "patch": {
-                                    "transitionIn": { "id": "concat.dissolve", "duration": 0.3 },
+                                    "transitionIn": { "id": chosen, "duration": 0.3 },
                                 },
                             }));
                             return Some(call(
@@ -785,9 +1129,15 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     // 7. The captions: the transcript's own measured words, placed where
     //    the timeline now plays them - through the pieces the tighten
     //    left, so a cut that moved a word moves its caption too - as one
-    //    undoable batch of titles in the reading's house style.
+    //    undoable batch of titles in the reading's house style. The style
+    //    follows the read at each line: a line that reads loud is set
+    //    heavier, a hot or split line takes the accent colour, and a calm
+    //    informational line stays plain - the same words do not all earn
+    //    the same look, which is the difference between captions and a
+    //    transcript.
     let caption_source = takes.clone();
     let caption_project = project.clone();
+    let caption_emotion = takes.clone();
     steps.push(
         DerivedStep::react(
             Stage::Captions,
@@ -803,6 +1153,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     }
                     let view = latest_view(log)?;
                     let media = media_paths(view);
+                    let read = emotion_lines(log, &caption_emotion);
                     let mut captions: Vec<Value> = Vec::new();
                     for (take, segments) in transcripts_of(log, &caption_source) {
                         for segment in segments {
@@ -831,10 +1182,17 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             if to - at < 0.3 {
                                 continue;
                             }
+                            let line = emotion_at(&read, &take, start);
+                            let intensity = line.map(|line| line.intensity).unwrap_or(0.5);
+                            let hot = line.is_some_and(|line| {
+                                matches!(line.temperature.as_str(), "hot" | "split")
+                            });
                             captions.push(json!({
                                 "start": round3(at),
                                 "end": round3(to),
                                 "text": text,
+                                "weight": if intensity >= 0.65 { 800 } else { 600 },
+                                "accent": hot,
                             }));
                         }
                     }
@@ -857,6 +1215,15 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     let commands: Vec<Value> = kept
                         .iter()
                         .map(|caption| {
+                            let mut style = json!({
+                                "fontFamily": "Hanken Grotesk",
+                                "fontSize": 0.04,
+                                "fontWeight": caption["weight"],
+                                "content": caption["text"],
+                            });
+                            if caption["accent"] == json!(true) {
+                                style["color"] = json!("#ffd400");
+                            }
                             json!({
                                 "op": "addTextClip",
                                 "trackId": null,
@@ -866,12 +1233,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     caption["end"].as_f64().unwrap_or(0.0)
                                         - caption["start"].as_f64().unwrap_or(0.0)
                                 ),
-                                "style": {
-                                    "fontFamily": "Hanken Grotesk",
-                                    "fontSize": 0.04,
-                                    "fontWeight": 600,
-                                    "content": caption["text"],
-                                },
+                                "style": style,
                                 "offsetY": 0.35,
                             })
                         })
@@ -931,12 +1293,15 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .into(),
     );
     // 9. The music bed, only where the gate said the take carries none:
-    //    the shelf prepared and polled, the track shopped (the reading's
-    //    own genre hint for the query when it named one), the bed
-    //    imported at zero, the timeline read back, and the bed ducked
-    //    under the voice. The CC0 shelf only - an unattended run never
+    //    the shelf prepared and polled, the track shopped (the emotional
+    //    read's own bed words for the query - the mood and act the line
+    //    sits in name the genre - or the reading's language hint when the
+    //    read named neither), the bed imported at zero, the timeline read
+    //    back, and the bed ducked under the voice to the level the arc's
+    //    own act profile set. The CC0 shelf only - an unattended run never
     //    ships the non-commercial one.
     let music_project = project.clone();
+    let music_source = takes.clone();
     steps.push(
         DerivedStep::react(
             Stage::Music,
@@ -975,18 +1340,29 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // poll the loading one, shop the ready one.
                         return match last["freepd"].as_str() {
                             Some("ready") => {
-                                let hint = log
-                                    .iter()
-                                    .filter_map(|reply| reply.pointer("/language/musicGenreHint"))
-                                    .filter_map(|hint| hint.as_str())
-                                    .find(|hint| !hint.trim().is_empty());
+                                // The bed's words: the emotional read's
+                                // own, from the piece's dominant line -
+                                // the mood and the act name the genre -
+                                // and the reading's language hint only
+                                // when the read named no words at all.
+                                let query = dominant(&emotion_lines(log, &music_source))
+                                    .and_then(|line| line.bgm_words.first().cloned())
+                                    .or_else(|| {
+                                        log.iter()
+                                            .filter_map(|reply| {
+                                                reply.pointer("/language/musicGenreHint")
+                                            })
+                                            .filter_map(|hint| hint.as_str())
+                                            .find(|hint| !hint.trim().is_empty())
+                                            .map(str::to_owned)
+                                    });
                                 let mut arguments = json!({
                                     "source": "freepd",
                                     "limit": 5,
                                     "sort": "relevance",
                                 });
-                                if let Some(hint) = hint {
-                                    arguments["query"] = json!(hint);
+                                if let Some(query) = query {
+                                    arguments["query"] = json!(query);
                                 }
                                 Some(call("bgm_search", arguments))
                             }
@@ -1050,12 +1426,19 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             });
                         return bed.map(|bed| {
                             ducked = true;
+                            // The bed sits at the level the piece's own
+                            // act profile sets: a payoff may carry a
+                            // louder bed than a quiet setup, and the
+                            // emotional read is what knows which it is.
+                            let base_db = dominant(&emotion_lines(log, &music_source))
+                                .map(|line| line.duck_db)
+                                .unwrap_or(-20.0);
                             call(
                                 "clip_audio_levels_db",
                                 json!({
                                     "path": music_project,
                                     "clipId": bed["id"],
-                                    "baseDb": -20.0,
+                                    "baseDb": base_db,
                                     "replaceAutomation": true,
                                 }),
                             )
@@ -1071,9 +1454,13 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     // 10. The accents: the reading's own emphasis peaks, the strongest
     //    six, each with a library sound landed on the moment the peak
     //    measured - shopped one at a time so the search's answer picks
-    //    the sound, not the program's guess.
+    //    the sound, not the program's guess. The query is the accent
+    //    family the emotion at that moment asks for (an anger peak shops
+    //    an impact, a fear peak a riser), and only a peak with no read
+    //    behind it falls back to the general vocabulary.
     let sfx_source = takes.clone();
     let sfx_project = project.clone();
+    let sfx_emotion = takes.clone();
     steps.push(
         DerivedStep::react(
             Stage::Sfx,
@@ -1106,6 +1493,24 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     found.push((time, strength));
                                 }
                             }
+                        }
+                        // An accent on every emphasis peak is the robotic
+                        // mistake the skill warns about: a stressed word in
+                        // a calm informational line does not want a hit.
+                        // When the read exists it decides - a peak is only
+                        // accented where the line reads as feeling, at the
+                        // strength worth hearing. With no read at all the
+                        // peaks stand as measured, since nothing better
+                        // knows.
+                        let read = emotion_lines(log, &sfx_emotion);
+                        if !read.is_empty() {
+                            found.retain(|(time, _)| {
+                                sfx_source.iter().any(|take| {
+                                    emotion_at(&read, &take.take, *time).is_some_and(|line| {
+                                        line.emotion != "neutral" && line.intensity >= 0.5
+                                    })
+                                })
+                            });
                         }
                         // The strongest six, earliest first: the run's
                         // accent budget, spent where the read peaked.
@@ -1147,12 +1552,35 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         placed += 1;
                         next_played_peak(&mut placed, peaks, log, &sfx_source)?;
                     }
-                    const QUERIES: [&str; 6] =
-                        ["impact", "whoosh", "riser", "boom", "swish", "hit"];
+                    // The accent family the peak's own line asks for: the
+                    // peak's file moment is the line's, so the emotion
+                    // read there names the sound.
+                    let (take, moment) = peaks
+                        .get(placed)
+                        .map(|(moment, _)| {
+                            let take = sfx_source
+                                .iter()
+                                .find(|take| {
+                                    latest_view(log).is_some_and(|view| {
+                                        timeline_at(view, &media_paths(view), &take.take, *moment)
+                                            .is_some()
+                                    })
+                                })
+                                .map(|take| take.take.clone())
+                                .unwrap_or_default();
+                            (take, *moment)
+                        })
+                        .unwrap_or_default();
+                    let read = emotion_lines(log, &sfx_emotion);
+                    let line = emotion_at(&read, &take, moment);
+                    let emotion = line
+                        .map(|line| line.emotion.clone())
+                        .unwrap_or_else(|| "neutral".to_owned());
+                    let queries = sfx_queries_for_line(line, &emotion);
                     Some(call(
                         "sounds_search",
                         json!({
-                            "query": QUERIES[placed % QUERIES.len()],
+                            "query": queries[placed % queries.len()],
                             "limit": 3,
                         }),
                     ))
@@ -1419,7 +1847,7 @@ mod tests {
         let program = super::auto_edit_program(&source);
 
         // The register, in the run's own order: the fanned repair and
-        // transcription, the derived tighten, grade, B-roll, captions,
+        // transcription, the derived tighten-then-grade, B-roll, captions,
         // title entrances, bed and accents, and the static
         // export/verify-gates/watch. The creative layer's remaining
         // stages (Plan, the baked motion comps, Preview, Revise) are
@@ -1438,7 +1866,6 @@ mod tests {
                 "voice-signals",
                 "understand",
                 "timeline",
-                "timeline",
                 "gather",
                 "captions",
                 "motion",
@@ -1450,7 +1877,8 @@ mod tests {
             ]
         );
         // The warn-policy stages, and only them: a take that cannot be
-        // repaired ships as recorded, a tighten or grade or B-roll slot or
+        // repaired ships as recorded, an emotional read that cannot be
+        // made leaves the cut on its defaults, a tighten or B-roll slot or
         // caption or title entrance or bed or accent that cannot land is a
         // flaw the edit ships with, and a low craft score is recorded
         // yellow, not thrown away.
@@ -1464,7 +1892,7 @@ mod tests {
             warn,
             vec![
                 "audio-repair",
-                "timeline",
+                "understand",
                 "timeline",
                 "gather",
                 "captions",
@@ -1519,11 +1947,14 @@ mod tests {
             source.takes[1].take.as_str()
         );
 
-        // The tighten, the grade, the B-roll, the captions, the title
+        // The tighten-and-grade, the B-roll, the captions, the title
         // entrances, the bed and the accents are derived: their calls are
         // the run's own replies to answer for, and the runner's reactive
-        // queue asks for them one at a time.
-        for at in [5usize, 6, 7, 8, 9, 10, 11] {
+        // queue asks for them one at a time. The tighten and the grade
+        // are ONE step: the resume record is keyed by the stage, so a
+        // second step sharing `Stage::Timeline` was skipped the moment the
+        // first completed and the run never graded.
+        for at in [5usize, 6, 7, 8, 9, 10] {
             assert!(
                 matches!(program.steps[at], ProgramStep::Derived(_)),
                 "step {at} is derived"
@@ -1534,12 +1965,12 @@ mod tests {
         // is minted at run time - and the watch's sheet is a project-
         // relative name, because the window's server refuses absolute
         // write paths.
-        let export = program.steps[12].as_static();
+        let export = program.steps[11].as_static();
         assert_eq!(export.calls[0].tool, "export_start");
         assert_eq!(export.calls[0].arguments["output"], source.export.as_str());
         assert_eq!(export.calls[1].tool, "export_wait");
         assert_eq!(export.calls[1].arguments["path"], source.project.as_str());
-        let watch = program.steps[14].as_static();
+        let watch = program.steps[13].as_static();
         assert_eq!(watch.calls[0].arguments["out"], "auto-edit-sheet.png");
         assert_eq!(
             watch.calls[1].arguments["pngPath"],
@@ -1549,9 +1980,9 @@ mod tests {
         // The verify's gates: the loudness target, and the words (F-04) -
         // on the derived step that reads the timeline as it ended up.
         use concat_director::ReplyGate;
-        assert!(matches!(program.steps[13], ProgramStep::Derived(_)));
+        assert!(matches!(program.steps[12], ProgramStep::Derived(_)));
         assert_eq!(
-            program.steps[13].gates(),
+            program.steps[12].gates(),
             vec![
                 ReplyGate::True {
                     field: "platformTargetMet",
@@ -1565,7 +1996,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            program.steps[14].gates(),
+            program.steps[13].gates(),
             vec![ReplyGate::AtLeast {
                 field: "overall",
                 minimum: 7.0,
@@ -1574,7 +2005,7 @@ mod tests {
         );
         // No other step gates its replies.
         for (at, step) in program.steps.iter().enumerate() {
-            if at != 13 && at != 14 {
+            if at != 12 && at != 13 {
                 assert!(step.gates().is_empty(), "step {at} gates its replies");
             }
         }
@@ -1638,7 +2069,7 @@ mod tests {
             stock_provider: "pexels".to_owned(),
         };
         let mut program = auto_edit_program(&source);
-        let ProgramStep::Derived(music) = &mut program.steps[10] else {
+        let ProgramStep::Derived(music) = &mut program.steps[9] else {
             panic!("step 10 is the music stage");
         };
         // The log as the stage finds it: the captions stage's own view,
@@ -1723,8 +2154,8 @@ mod tests {
             stock_provider: "pexels".to_owned(),
         };
         let mut program = auto_edit_program(&source);
-        let ProgramStep::Derived(captions) = &mut program.steps[8] else {
-            panic!("step 8 is the captions stage");
+        let ProgramStep::Derived(captions) = &mut program.steps[7] else {
+            panic!("step 7 is the captions stage");
         };
         let view = json!({
             "timeline": { "id": "t1", "clips": [
@@ -2035,6 +2466,367 @@ mod tests {
             timeline_at(&view, &media, "/takes/a.wav", 2.0),
             Some(3.0),
             "the title is skipped and the file moment still maps"
+        );
+    }
+
+    /// The read's own line, built the way the `emotion` extract writes it.
+    fn emotion_row(
+        start: f64,
+        end: f64,
+        emotion: &str,
+        intensity: f64,
+        act: &str,
+        temperature: &str,
+        sfx: &str,
+    ) -> Value {
+        json!({
+            "start": start, "end": end, "emotion": emotion, "intensity": intensity,
+            "act": act, "duckDb": -14.0, "sfxType": sfx,
+            "colourTemp": { "temperature": temperature },
+            "bgmWords": ["warm cinematic strings", "cinematic"],
+        })
+    }
+
+    /// The emotion read the stage asks for is derived from the take's own
+    /// transcripts: one `extract` per take that has timed words, carrying
+    /// exactly those lines. A take with no transcript is never asked
+    /// about, so the replies and the takes stay zipped in the reader.
+    #[test]
+    fn the_emotion_stage_reads_the_takes_own_lines() {
+        use concat_director::ProgramStep;
+
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![
+                TakePaths {
+                    take: "/edits/Reel/voiceover/a.wav".to_owned(),
+                    enhanced: String::new(),
+                },
+                TakePaths {
+                    take: "/edits/Reel/voiceover/b.wav".to_owned(),
+                    enhanced: String::new(),
+                },
+            ],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(understand) = &mut program.steps[4] else {
+            panic!("step 4 is the understand stage");
+        };
+        // Only the first take transcribed: one music gate per take, one
+        // emotion read for the take with words.
+        let log = vec![
+            json!({ "musicPresent": false }),
+            json!({ "musicPresent": true }),
+            json!({
+                "path": "/edits/Reel/voiceover/a.wav",
+                "output": json!({
+                    "segments": [
+                        { "start": 0.0, "end": 1.5, "text": "we found it" },
+                        { "start": 2.0, "end": 3.0, "text": "and it was ours" },
+                    ],
+                }).to_string(),
+            }),
+        ];
+        let mut asked: Vec<ToolCall> = Vec::new();
+        while let Some(next) = (understand.next)(&log) {
+            asked.push(next);
+        }
+        let reads: Vec<&ToolCall> = asked.iter().filter(|c| c.tool == "emotion").collect();
+        assert_eq!(reads.len(), 1, "one read, for the take that has words");
+        let lines = reads[0].arguments["lines"]
+            .as_array()
+            .expect("the read is given lines");
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0]["text"], "we found it");
+        assert_eq!(lines[0]["start"], 0.0);
+        assert_eq!(lines[1]["end"], 3.0);
+    }
+
+    /// The look the grade lays over the cut is the temperature the read
+    /// named, not a fixed blockbuster look: a joyful take grades golden,
+    /// a fearful one cold, and only an unread take falls back.
+    #[test]
+    fn the_grade_follows_the_read_s_temperature() {
+        let lines = vec![
+            EmotionLine {
+                take: "/t/a.wav".to_owned(),
+                start: 0.0,
+                end: 2.0,
+                emotion: "joy".to_owned(),
+                intensity: 0.9,
+                act: "reveal".to_owned(),
+                temperature: "warm".to_owned(),
+                duck_db: -14.0,
+                sfx_type: "bright chime, pop, uplifting swell".to_owned(),
+                bgm_words: vec!["warm".to_owned()],
+            },
+            EmotionLine {
+                take: "/t/a.wav".to_owned(),
+                start: 2.0,
+                end: 4.0,
+                emotion: "neutral".to_owned(),
+                intensity: 0.3,
+                act: "setup".to_owned(),
+                temperature: "balanced".to_owned(),
+                duck_db: -20.0,
+                sfx_type: String::new(),
+                bgm_words: Vec::new(),
+            },
+        ];
+        let line = dominant(&lines).expect("a dominant line");
+        assert_eq!(
+            line.emotion, "joy",
+            "the intense line wins, not the calm one"
+        );
+        assert_eq!(
+            look_for_temperature(&line.temperature),
+            "concat.golden-hour"
+        );
+        assert_eq!(look_for_temperature("cold"), "concat.cool-blue");
+        assert_eq!(look_for_temperature("hot"), "concat.warm");
+        assert_eq!(look_for_temperature("unheard-of"), "concat.teal-orange");
+    }
+
+    /// The director's no-repeat rule, enforced: two shots cut from the
+    /// same mood never wear the same transition twice running.
+    #[test]
+    fn two_shots_of_one_mood_never_repeat_a_transition() {
+        for mood in ["joy", "surprise", "anger", "fear", "sadness", "disgust"] {
+            let first = transition_for_emotion(mood);
+            let second = alternate_transition(mood);
+            assert_ne!(first, second, "{mood} has a distinct alternate");
+        }
+        assert_eq!(transition_for_emotion("joy"), "concat.cross-pop");
+        assert_eq!(alternate_transition("joy"), "concat.dissolve");
+    }
+
+    /// The accents are shopped by the read's own register: a line the
+    /// emotion engine called a stinger is searched for a stinger, not for
+    /// the generic family its emotion happens to share.
+    #[test]
+    fn the_accents_are_shopped_by_the_read_s_register() {
+        let stinger = EmotionLine {
+            take: "/t/a.wav".to_owned(),
+            start: 0.0,
+            end: 1.0,
+            emotion: "surprise".to_owned(),
+            intensity: 0.9,
+            act: "reveal".to_owned(),
+            temperature: "split".to_owned(),
+            duck_db: -12.0,
+            sfx_type: "hit + beat of silence (stinger)".to_owned(),
+            bgm_words: Vec::new(),
+        };
+        assert_eq!(
+            sfx_queries_for_line(Some(&stinger), "surprise"),
+            vec!["stinger", "hit", "impact"]
+        );
+        // No register named: the emotion's family is the fallback.
+        let mut plain = stinger.clone();
+        plain.sfx_type = String::new();
+        assert_eq!(
+            sfx_queries_for_line(Some(&plain), "surprise"),
+            sfx_queries_for_emotion("surprise").to_vec()
+        );
+        assert_eq!(
+            sfx_queries_for_line(None, "neutral"),
+            sfx_queries_for_emotion("neutral").to_vec()
+        );
+    }
+
+    /// A silence after a hard line is a held beat, not dead air: the
+    /// tighten leaves it alone even though the detector called it
+    /// `dead_air`. A silence in the middle of a calm stretch is cut.
+    #[test]
+    fn the_tighten_keeps_the_beat_after_a_hard_line() {
+        let line = |start: f64, end: f64, intensity: f64, act: &str| EmotionLine {
+            take: "/t/a.wav".to_owned(),
+            start,
+            end,
+            emotion: "anger".to_owned(),
+            intensity,
+            act: act.to_owned(),
+            temperature: "hot".to_owned(),
+            duck_db: -12.0,
+            sfx_type: String::new(),
+            bgm_words: Vec::new(),
+        };
+        let read = vec![line(0.0, 2.0, 0.9, "tension")];
+        assert!(
+            held_beat(&read, "/t/a.wav", 2.2),
+            "a hard line's beat is held"
+        );
+        assert!(
+            !held_beat(&read, "/t/a.wav", 2.9),
+            "a silence well after the line is not its beat"
+        );
+        let calm = vec![line(0.0, 2.0, 0.3, "setup")];
+        assert!(
+            !held_beat(&calm, "/t/a.wav", 2.2),
+            "a calm line's pause is cut"
+        );
+        let reveal = vec![line(0.0, 2.0, 0.4, "reveal")];
+        assert!(
+            held_beat(&reveal, "/t/a.wav", 2.2),
+            "the pause after a reveal is held whatever its volume"
+        );
+
+        // And the tighten honours it: the same pause the detector called
+        // dead air is cut for a calm line and kept for a hard one.
+        let log = |intensity: f64, act: &str| {
+            vec![
+                json!({
+                    "timeline": { "clips": [{
+                        "id": "c1", "media": "m1", "start": 0.0, "duration": 6.0,
+                        "sourceStart": 0.0, "speed": 1.0,
+                    }]},
+                    "media": [{ "id": "m1", "path": "/t/a.wav" }],
+                }),
+                json!({
+                    "audio": { "path": "/t/a.wav" },
+                    "pauses": [{ "start": 2.0, "end": 3.5, "class": "dead_air" }],
+                }),
+                // The take's transcript: the reader only asks `emotion`
+                // about takes with timed words, so the read below is the
+                // reply to this one.
+                json!({
+                    "path": "/t/a.wav",
+                    "output": json!({
+                        "segments": [{ "start": 0.0, "end": 2.0, "text": "we found it" }],
+                    }).to_string(),
+                }),
+                json!({
+                    "lines": [emotion_row(0.0, 2.0, "anger", intensity, act, "hot", "")],
+                }),
+            ]
+        };
+        let takes = vec![TakePaths {
+            take: "/t/a.wav".to_owned(),
+            enhanced: String::new(),
+        }];
+        let hard = log(0.9, "tension");
+        let read = emotion_lines(&hard, &takes);
+        assert!(
+            dead_air_cuts(&hard, &takes, "/edits/Reel", &read).is_empty(),
+            "the held beat is not cut"
+        );
+        let calm = log(0.3, "setup");
+        let read = emotion_lines(&calm, &takes);
+        assert_eq!(
+            dead_air_cuts(&calm, &takes, "/edits/Reel", &read).len(),
+            1,
+            "the calm pause is cut"
+        );
+    }
+
+    /// The bed is shopped by the read's own words and ducked to the level
+    /// its act profile sets - not to a fixed -20 dB.
+    #[test]
+    fn the_bed_follows_the_read_s_words_and_level() {
+        let takes = vec![TakePaths {
+            take: "/t/a.wav".to_owned(),
+            enhanced: String::new(),
+        }];
+        let log = vec![
+            json!({
+                "path": "/t/a.wav",
+                "output": json!({
+                    "segments": [{ "start": 0.0, "end": 2.0, "text": "we found it" }],
+                }).to_string(),
+            }),
+            json!({
+                "lines": [emotion_row(0.0, 2.0, "joy", 0.9, "reveal", "warm", "")],
+            }),
+        ];
+        let read = emotion_lines(&log, &takes);
+        let line = dominant(&read).expect("the read");
+        assert_eq!(line.bgm_words[0], "warm cinematic strings");
+        assert_eq!(line.duck_db, -14.0);
+    }
+
+    /// An accent on every emphasis peak is the robotic mistake: where the
+    /// read exists, only a peak inside a line that reads as feeling, at a
+    /// strength worth hearing, earns a sound. A stressed word in a calm
+    /// informational line does not.
+    #[test]
+    fn the_accents_skip_peaks_in_calm_lines() {
+        use concat_director::ProgramStep;
+
+        let take = "/t/a.wav";
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: take.to_owned(),
+                enhanced: String::new(),
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(sfx) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "sfx")
+            .expect("the program has an sfx stage")
+        else {
+            panic!("the sfx stage is derived");
+        };
+        let view = json!({
+            "timeline": { "clips": [{
+                "id": "c1", "media": "m1", "start": 0.0, "duration": 20.0,
+                "sourceStart": 0.0, "speed": 1.0,
+            }]},
+            "media": [{ "id": "m1", "path": take }],
+        });
+        // Two peaks: one inside a loud angry line, one inside a calm
+        // informational line the read calls neutral.
+        let log = vec![
+            view,
+            json!({
+                "path": take,
+                "output": json!({
+                    "segments": [
+                        { "start": 0.0, "end": 4.0, "text": "we found it" },
+                        { "start": 5.0, "end": 9.0, "text": "the file is on the desk" },
+                    ],
+                }).to_string(),
+            }),
+            json!({
+                "audio": { "path": take },
+                "lines": [
+                    { "start": 0.0, "end": 4.0,
+                      "prosody": { "emphasisWords": [{ "t": 1.0, "strength": 0.9 }] } },
+                    { "start": 5.0, "end": 9.0,
+                      "prosody": { "emphasisWords": [{ "t": 6.0, "strength": 0.8 }] } },
+                ],
+            }),
+            json!({
+                "lines": [
+                    emotion_row(0.0, 4.0, "anger", 0.9, "tension", "hot", "impact-heavy (hard hits, distorted risers)"),
+                    emotion_row(5.0, 9.0, "neutral", 0.2, "setup", "balanced", ""),
+                ],
+            }),
+        ];
+        let first = (sfx.next)(&log).expect("the loud peak is shopped");
+        assert_eq!(first.tool, "sounds_search");
+        // The calm line's peak is skipped: the shelf's answer for the loud
+        // one is the last call, so the next ask is the add, and once that
+        // is spent the stage ends rather than shopping the calm peak.
+        let mut after = log.clone();
+        after.push(json!({ "sounds": [{ "id": "s1" }] }));
+        let add = (sfx.next)(&after).expect("the sound is added");
+        assert_eq!(add.tool, "sounds_add");
+        after.push(json!({ "mediaIds": ["m2"] }));
+        assert_eq!(
+            (sfx.next)(&after),
+            None,
+            "the calm line's peak never earns an accent"
         );
     }
 }

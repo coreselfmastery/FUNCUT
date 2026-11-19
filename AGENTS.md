@@ -80,3 +80,16 @@ The pinned toolchain is in `src/rust-toolchain.toml` (Rust 1.93.1);
 FFmpeg 8 dev libraries are needed (see `scripts/ci/deps.lock` and
 `.github/workflows/ci.yml`), or `./install-linux.sh` from the repo root
 installs a release build with everything a first run needs.
+
+When linking test binaries for `concat-mcp` (or anything that pulls in
+`ort`), some local ONNX Runtime setups fail with `rust-lld: error:
+duplicate symbol: onnx::...` - the prebuilt `ort` shared object and a
+system `libonnx` both export the protobuf symbols. It is an environment
+problem, not a code one; work around it with:
+
+```sh
+RUSTFLAGS="-C link-arg=-Wl,--allow-multiple-definition" cargo test -p concat-mcp --lib
+```
+
+Setting `RUSTFLAGS` invalidates the build cache, so the first run after
+adding it is a full rebuild.

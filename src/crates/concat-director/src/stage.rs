@@ -81,6 +81,7 @@ pub enum Stage {
     /// batch, then the same frames scored again. A cut that measured
     /// clean issues no edit at all, and a fault with no honest fix in the
     /// editing vocabulary is left to the report rather than papered over.
+    /// It runs BEFORE the export so the corrected cut is what ships.
     Revise,
     /// The export is certified: the words re-read from the render, the
     /// loudness measured and asserted, the timeline checked for overlaps,
@@ -107,10 +108,10 @@ impl Stage {
         Stage::Music,
         Stage::Sfx,
         Stage::Preview,
+        Stage::Revise,
         Stage::Export,
         Stage::Verify,
         Stage::Watch,
-        Stage::Revise,
     ];
 
     /// The stage's short name - the same word its JSON carries, the word
@@ -526,13 +527,15 @@ mod tests {
     fn the_register_holds_seventeen_stages_and_the_first_and_last_say_so() {
         assert_eq!(Stage::ALL.len(), 17);
         assert_eq!(Stage::ALL.first(), Some(&Stage::HandoffVoiceover));
-        // The revise is last: it answers the watch, which answers the
-        // verify. The verify certifies the file the export wrote, so it
-        // comes before both.
-        assert_eq!(Stage::ALL.last(), Some(&Stage::Revise));
-        assert_eq!(Stage::ALL[13], Stage::Export);
-        assert_eq!(Stage::ALL[14], Stage::Verify);
-        assert_eq!(Stage::ALL[15], Stage::Watch);
+        // The watch is last: it scores the file the export wrote, after
+        // the revise has already corrected the timeline the export read.
+        // The revise therefore comes BEFORE the export - a revision after
+        // the render would leave the shipped file showing the old cut.
+        assert_eq!(Stage::ALL.last(), Some(&Stage::Watch));
+        assert_eq!(Stage::ALL[12], Stage::Preview);
+        assert_eq!(Stage::ALL[13], Stage::Revise);
+        assert_eq!(Stage::ALL[14], Stage::Export);
+        assert_eq!(Stage::ALL[15], Stage::Verify);
     }
 
     #[test]

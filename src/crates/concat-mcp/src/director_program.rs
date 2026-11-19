@@ -311,6 +311,128 @@ struct BrollSlot {
     query: String,
 }
 
+/// A take's spoken spans, as the planner's slot mapping reads them: the
+/// take file, then its lines as (start, end, text).
+type SpokenTakes = Vec<(String, Vec<(f64, f64, String)>)>;
+
+/// The hit from a search page that best fits the slot being filled, and
+/// the ids already shopped so a clip is never laid twice.
+///
+/// The search returns a page ranked by the shelf's own relevance; the
+/// remaining choice is fit, and it is made from metadata the reply
+/// actually carries - never from a score invented here. Orientation is
+/// the strongest preference (a vertical slot wants a vertical clip; a
+/// horizontal clip in a 9:16 frame means a heavy crop), a clip shorter
+/// than the span is refused outright because it cannot cover the hole
+/// without a visible loop, and among the clips that pass the sharpest
+/// wins. A page with no licensable clip is a slot left empty - the honest
+/// answer - rather than a clip that will not fit.
+fn best_hit(hits: &[Value], span: f64, aspect: &str, used: &[String]) -> Option<Value> {
+    let wants_vertical = matches!(aspect, "9:16" | "4:5");
+    let wants_horizontal = aspect == "16:9";
+
+    let fits = |hit: &Value| {
+        let id = hit["id"].as_str().unwrap_or_default();
+        let url = hit["url"].as_str().unwrap_or_default();
+        let license = hit["license"].as_str().unwrap_or_default();
+        if id.trim().is_empty() || url.trim().is_empty() || license.trim().is_empty() {
+            return None;
+        }
+        if used.iter().any(|seen| seen == id) {
+            return None;
+        }
+        let width = hit["width"].as_f64().unwrap_or(0.0);
+        let height = hit["height"].as_f64().unwrap_or(0.0);
+        // Orientation is measured, not guessed: a clip whose frame is
+        // taller than it is wide is vertical, and the opposite.
+        let orientation_ok = if height <= 0.0 || width <= 0.0 {
+            true
+        } else if wants_vertical {
+            height >= width
+        } else if wants_horizontal {
+            width >= height
+        } else {
+            true
+        };
+        // A clip shorter than the hole cannot cover it, and looping it is
+        // a visible seam, so it is not a candidate at all - not a lower
+        // ranked one. The search's own duration is the clip's length;
+        // 0.0 is *not measured*, and an unmeasured clip is not rejected
+        // for a length nobody took.
+        let seconds = hit["seconds"].as_f64().unwrap_or(0.0);
+        if seconds > 0.0 && seconds + 0.05 < span {
+            return None;
+        }
+        Some((orientation_ok, (width * height) as i64))
+    };
+
+    hits.iter()
+        .filter_map(|hit| fits(hit).map(|score| (score, hit)))
+        // Orientation first, then the sharpest frame - a deterministic
+        // order over measured facts.
+        .max_by(|left, right| left.0.0.cmp(&right.0.0).then(left.0.1.cmp(&right.0.1)))
+        .map(|(_, hit)| hit.clone())
+}
+
+/// The take whose own audio already carries music, if any. The music read
+/// does not echo the path it was asked about, so the replies that carry
+/// `musicPresent` are matched to the takes in the order the Understand
+/// stage issued them - one per take, in `takes` order.
+fn musical_take(log: &[Value], takes: &[TakePaths]) -> Option<String> {
+    let reads: Vec<bool> = log
+        .iter()
+        .filter_map(|reply| reply.get("musicPresent").and_then(Value::as_bool))
+        .collect();
+    reads
+        .iter()
+        .position(|present| *present)
+        .and_then(|at| takes.get(at))
+        .map(|take| take.take.clone())
+}
+
+/// The transcript as `footage_plan_suggest` reads it: the spoken spans of
+/// every take, merged into one list. The planner is a read over the whole
+/// narration, so a run of several takes plans as one story.
+fn planner_segments(log: &[Value], takes: &[TakePaths]) -> Vec<Value> {
+    let mut segments: Vec<Value> = transcripts_of(log, takes)
+        .into_iter()
+        .flat_map(|(_, segments)| segments)
+        .filter_map(|segment| {
+            let start = segment["start"].as_f64()?;
+            let end = segment["end"].as_f64()?;
+            let text = segment["text"].as_str()?.trim();
+            (end > start && !text.is_empty())
+                .then(|| json!({ "start": start, "end": end, "text": text }))
+        })
+        .collect();
+    segments.sort_by(|left, right| {
+        left["start"]
+            .as_f64()
+            .unwrap_or(0.0)
+            .total_cmp(&right["start"].as_f64().unwrap_or(0.0))
+    });
+    segments
+}
+
+/// The beat grid the run measured, in the shape `footage_plan_suggest`
+/// takes. `analyze_beats` answers with `cutTimes` - the onsets it would
+/// cut on - so those become the grid; no measured grid is `None`, which
+/// leaves the monotony read standing down rather than guessing.
+fn latest_beats(log: &[Value]) -> Option<Value> {
+    let cuts = log.iter().rev().find_map(|reply| {
+        reply
+            .get("cutTimes")
+            .and_then(Value::as_array)
+            .filter(|cuts| !cuts.is_empty())
+    })?;
+    Some(Value::Array(
+        cuts.iter()
+            .filter_map(Value::as_f64)
+            .map(|seconds| json!({ "seconds": seconds, "strength": 0.5 }))
+            .collect(),
+    ))
+}
+
 /// The last `n` words of a line: the words closest to the gap a shot
 /// fills, which is what its search is shopped with.
 fn tail_words(text: &str, n: usize) -> String {
@@ -324,7 +446,163 @@ fn tail_words(text: &str, n: usize) -> String {
 /// short enough to be one, each carrying the tail of the words before it
 /// as the query its search is shopped with. A narration with no such gap
 /// has no slots, and the picture stage has nothing to add.
+///
+/// The planner's own read wins when the run asked for one. `slots_from_plan`
+/// reads `footage_plan_suggest`'s suggestions - dialogue gaps AND monotony
+/// runs, each carrying the priority the planner scored it at - and this
+/// falls back to the plain gap scan only when no plan was made, so a run
+/// whose planner found nothing (or could not run) still shops the gaps it
+/// can see.
 fn broll_slots(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
+    let planned = slots_from_plan(log, takes);
+    if !planned.is_empty() {
+        return planned;
+    }
+    broll_slots_from_gaps(log, takes)
+}
+
+/// The slots the footage planner asked for, in the order it ranked them.
+/// The planner reads monotony as well as gaps - a long stretch of speech
+/// no beat lands in wants coverage even though it is not silent - and it
+/// scores each span, so the strongest asks are filled first and a run
+/// that can only afford a few fills spends them where the plan says.
+fn slots_from_plan(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
+    const MOST: usize = 6;
+    const SHORTEST: f64 = 1.2;
+    const LONGEST: f64 = 8.0;
+
+    let Some(plan) = log.iter().rev().find(|reply| {
+        reply
+            .get("suggestions")
+            .and_then(Value::as_array)
+            .is_some_and(|_| reply.get("gapCount").is_some() || reply.get("cutCount").is_some())
+    }) else {
+        return Vec::new();
+    };
+    let Some(suggestions) = plan["suggestions"].as_array() else {
+        return Vec::new();
+    };
+    // Whether a beat grid was measured for this run. The plan reply does
+    // not echo the grid it read, so the grid is read from the run's own
+    // `analyze_beats` reply: without one, every speech run longer than the
+    // threshold counts as "no beat landed in it" trivially, and honouring
+    // those would blanket a talking-head cut in B-roll.
+    let beats_known = log.iter().any(|reply| {
+        reply
+            .get("cutTimes")
+            .and_then(Value::as_array)
+            .is_some_and(|cuts| !cuts.is_empty())
+    });
+
+    // The transcript the planner read is the same one this maps through,
+    // so a suggestion's span is found in the take whose words cover it.
+    let transcripts: SpokenTakes = transcripts_of(log, takes)
+        .into_iter()
+        .map(|(take, segments)| {
+            let spoken = segments
+                .iter()
+                .filter_map(|segment| {
+                    let start = segment["start"].as_f64()?;
+                    let end = segment["end"].as_f64()?;
+                    let text = segment["text"].as_str().unwrap_or_default().trim();
+                    (end > start && !text.is_empty()).then(|| (start, end, text.to_owned()))
+                })
+                .collect();
+            (take, spoken)
+        })
+        .collect();
+
+    let mut ranked: Vec<(f64, BrollSlot)> = suggestions
+        .iter()
+        .filter_map(|suggestion| {
+            let start = suggestion["startS"].as_f64()?;
+            let end = suggestion["endS"].as_f64()?;
+            let span = end - start;
+            if !(SHORTEST..=LONGEST).contains(&span) {
+                return None;
+            }
+            // A monotony run is "speech no beat lands in". With no beat
+            // grid every run of speech longer than the threshold answers
+            // to that trivially, so honouring these without a grid would
+            // blanket a talking-head cut in B-roll - the mechanical
+            // behaviour this wiring exists to stop. They are taken only
+            // when a beat grid was actually measured.
+            if suggestion["kind"] == json!("monotony_run") && !beats_known {
+                return None;
+            }
+            let priority = suggestion["priority"].as_f64().unwrap_or(0.5);
+            // The words the picture should show: the planner's own topic
+            // tags when it named any, else the tail of the line before the
+            // span - the same read the gap scan makes.
+            let tags: Vec<String> = suggestion["topicTags"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect();
+            let (take, before) = transcripts
+                .iter()
+                .filter_map(|(take, spoken)| {
+                    // A dialogue gap sits *between* two spans, so no span
+                    // covers it; a monotony run sits over speech, so one
+                    // does. Coverage ranks first when it is there, and the
+                    // nearest span ending at or before the start is the
+                    // fallback - the line whose words the shot illustrates.
+                    let covered = spoken.iter().any(|(s, e, _)| *s < end && *e > start);
+                    let nearest = spoken
+                        .iter()
+                        .filter(|(_, segment_end, _)| *segment_end <= start)
+                        .max_by(|left, right| left.1.total_cmp(&right.1));
+                    let distance = nearest
+                        .map(|(_, segment_end, _)| start - segment_end)
+                        .unwrap_or(f64::INFINITY);
+                    if !covered && !distance.is_finite() {
+                        return None;
+                    }
+                    let before = nearest
+                        .map(|(_, _, text)| tail_words(text, 5))
+                        .unwrap_or_default();
+                    Some(((!covered, distance), take.clone(), before))
+                })
+                .min_by(|left, right| {
+                    left.0
+                        .0
+                        .cmp(&right.0.0)
+                        .then(left.0.1.total_cmp(&right.0.1))
+                })
+                .map(|(_, take, before)| (take, before))?;
+            let query = if tags.is_empty() {
+                before
+            } else {
+                tags.join(" ")
+            };
+            if query.trim().is_empty() {
+                return None;
+            }
+            Some((
+                priority,
+                BrollSlot {
+                    take,
+                    from: start,
+                    to: end,
+                    query,
+                },
+            ))
+        })
+        .collect();
+
+    // Strongest first, then back into play order: the plan says what is
+    // worth covering, the timeline says when.
+    ranked.sort_by(|left, right| right.0.total_cmp(&left.0));
+    ranked.truncate(MOST);
+    let mut slots: Vec<BrollSlot> = ranked.into_iter().map(|(_, slot)| slot).collect();
+    slots.sort_by(|left, right| left.from.total_cmp(&right.from));
+    slots
+}
+
+/// The plain gap scan: the read the button made before it had a planner.
+fn broll_slots_from_gaps(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
     const SHORTEST: f64 = 1.2;
     const LONGEST: f64 = 8.0;
     const MOST: usize = 6;
@@ -1247,8 +1525,39 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         DerivedStep::react(
             Stage::Plan,
             Box::new({
+                let mut queue: Option<Vec<ToolCall>> = None;
                 let mut issued = false;
                 move |log| {
+                    let queue = queue.get_or_insert_with(|| {
+                        let mut calls = Vec::new();
+                        // The beat grid, when the run has a soundtrack to
+                        // read it from: a take that already carries music
+                        // is the only audio this run knows is musical, and
+                        // its grid is what lets the footage planner tell a
+                        // monotony run (speech no beat lands in) from an
+                        // ordinary long sentence. No musical take is a
+                        // real answer - the planner simply plans no
+                        // monotony, and the gaps still plan.
+                        if let Some(music) = musical_take(log, &plan_source) {
+                            calls.push(call("analyze_beats", json!({ "path": music })));
+                        }
+                        // The footage shopping list: dialogue gaps and
+                        // (with a grid) monotony runs, priority-scored, so
+                        // the gather stage shops where the planner says
+                        // coverage is wanted instead of guessing gaps from
+                        // transcript timing alone.
+                        let mut spec = json!({ "segments": planner_segments(log, &plan_source) });
+                        if let Some(beats) = latest_beats(log) {
+                            spec["beats"] = beats;
+                        }
+                        if !spec["segments"].as_array().is_some_and(|s| s.is_empty()) {
+                            calls.push(call("footage_plan_suggest", spec));
+                        }
+                        calls
+                    });
+                    if let Some(next) = (!queue.is_empty()).then(|| queue.remove(0)) {
+                        return Some(next);
+                    }
                     if issued {
                         return None;
                     }
@@ -1371,6 +1680,10 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // The transition the last placed shot cut in with: the
                 // next shot never wears the same move twice running.
                 let mut last_transition: Option<&'static str> = None;
+                // The clip ids already shopped: a shelf can return the same
+                // clip for two neighbouring gaps, and laying it twice reads
+                // as a mistake to anyone watching.
+                let mut used_ids: Vec<String> = Vec::new();
                 move |log| loop {
                     let slots = slots.get_or_insert_with(|| broll_slots(log, &gather_source));
                     if placed >= slots.len() {
@@ -1408,11 +1721,29 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             // Only a live-shelf hit with an explicit provider
                             // licence is eligible. OpenVid has no per-clip
                             // licence record and is never imported here.
-                            let hit = log.last().and_then(|reply| reply.pointer("/hits/0"));
-                            let provider = hit.and_then(|hit| hit["provider"].as_str());
-                            let id = hit.and_then(|hit| hit["id"].as_str());
-                            let url = hit.and_then(|hit| hit["url"].as_str());
-                            let license = hit.and_then(|hit| hit["license"].as_str());
+                            //
+                            // The page is read for the clip that *fits* this
+                            // slot rather than the first one returned: the
+                            // shelf ranks by its own relevance, and the frame
+                            // the project is (vertical or not), the span to
+                            // cover and the clips already used are all known
+                            // here. Taking `hits/0` put whatever the shelf
+                            // ranked highest into the cut even when it was a
+                            // landscape clip in a vertical reel.
+                            let span = slot.to - slot.from;
+                            let aspect = latest_view(log)
+                                .map(|view| aspect_of(view).to_owned())
+                                .unwrap_or_else(|| "16:9".to_owned());
+                            let hits = log
+                                .last()
+                                .and_then(|reply| reply["hits"].as_array())
+                                .cloned()
+                                .unwrap_or_default();
+                            let hit = best_hit(&hits, span, &aspect, &used_ids);
+                            let provider = hit.as_ref().and_then(|hit| hit["provider"].as_str());
+                            let id = hit.as_ref().and_then(|hit| hit["id"].as_str());
+                            let url = hit.as_ref().and_then(|hit| hit["url"].as_str());
+                            let license = hit.as_ref().and_then(|hit| hit["license"].as_str());
                             match (provider, id, url, license) {
                                 (Some(provider), Some(id), Some(url), Some(license))
                                     if provider == gather_provider.as_str()
@@ -1420,6 +1751,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                         && !url.trim().is_empty()
                                         && !license.trim().is_empty() =>
                                 {
+                                    used_ids.push(id.to_owned());
                                     phase = 2;
                                     return Some(call(
                                         "stock_import",
@@ -2072,7 +2404,84 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .warn()
         .into(),
     );
-    // 12. The render, waited on by its project folder: the job's name is
+    // 12. The revise, warn-policy: the critic's measured faults answered
+    //     with targeted edits, then the cut looked at again. Every command
+    //     comes from a number the sheet carried - bars to fill, a black
+    //     opening to trim, static cuts to choreograph - so a clean cut
+    //     issues no edit at all and the stage completes on its first
+    //     `None`. A revision that lands is followed by one re-watch and
+    //     one re-critique of the same frames, which the craft journal
+    //     records as a second pass with its own delta: the loop is proved
+    //     by the journal, not claimed by the program.
+    //
+    //     The revise sits BEFORE the export, not after it. A revision
+    //     applied to the timeline once the render had landed would leave
+    //     the shipped file showing the unrevised cut - the fix would exist
+    //     only in the project the user opens, never in the video they
+    //     publish. Placing it here makes the one encode the run pays for
+    //     the corrected cut by construction, and the watch then scores the
+    //     file that actually ships.
+    let revise_project = project.clone();
+    let revise_sheet = sheet_variant(&source.sheet, "revised");
+    steps.push(
+        DerivedStep::react(
+            Stage::Revise,
+            Box::new({
+                let revise_project = revise_project.clone();
+                let revise_sheet = revise_sheet.clone();
+                let mut phase = 0u8;
+                move |log| {
+                    if phase == 0 {
+                        // A `None` here ends the stage: the runner reads it
+                        // as "nothing to do", so a clean cut is a revise
+                        // that succeeded, not one that failed.
+                        let commands = revise_commands(log);
+                        if commands.is_empty() {
+                            return None;
+                        }
+                        phase = 1;
+                        return Some(call(
+                            "edit_apply",
+                            json!({
+                                "path": revise_project,
+                                "command": { "op": "batch", "commands": commands },
+                            }),
+                        ));
+                    }
+                    if phase == 1 {
+                        phase = 2;
+                        return Some(call(
+                            "watch_render",
+                            json!({
+                                "project": revise_project,
+                                "out": revise_sheet,
+                            }),
+                        ));
+                    }
+                    if phase == 2 {
+                        phase = 3;
+                        // As in the preview: a sheet that named no pixels
+                        // ends the re-critique rather than sending the
+                        // critic an empty path.
+                        let png = log
+                            .iter()
+                            .rev()
+                            .find_map(|reply| reply.get("pngPath").and_then(Value::as_str))
+                            .filter(|png| !png.trim().is_empty())?;
+                        return Some(call(
+                            "craft_critique",
+                            json!({ "pngPath": png, "project": revise_project }),
+                        ));
+                    }
+                    None
+                }
+            }),
+        )
+        .warn()
+        .into(),
+    );
+
+    // 13. The render, waited on by its project folder: the job's name is
     //     minted when the export starts, and a program written before that
     //     moment asks for the work by what it was started on.
     steps.push(
@@ -2100,7 +2509,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         )
         .into(),
     );
-    // 13. The verify: the sanity reads first - collisions, and the
+    // 14. The verify: the sanity reads first - collisions, and the
     //     timeline as the placements left it - then the words re-read
     //     from the render, the loudness measured against the short-form
     //     target, and the re-read words COMPARED with the words the edit
@@ -2238,7 +2647,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         })
         .into(),
     );
-    // 14. The watch, warn-policy: the whole cut as one contact sheet,
+    // 15. The watch, warn-policy: the whole cut as one contact sheet,
     //     written beside the export, then read and scored. A score under
     //     the bar is a flaw the edit ships with - recorded, yellow - not a
     //     run thrown away after the render already landed. The gate is
@@ -2274,80 +2683,6 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             minimum: 7.0,
             what: "the cut scored under the craft bar",
         })
-        .into(),
-    );
-    // 15. The revise, warn-policy: the critic's measured faults answered
-    //     with targeted edits, then the cut looked at again. Every command
-    //     comes from a number the sheet carried - bars to fill, a black
-    //     opening to trim, static cuts to choreograph - so a clean cut
-    //     issues no edit at all and the stage completes on its first
-    //     `None`. A revision that lands is followed by one re-watch and
-    //     one re-critique of the same frames, which the craft journal
-    //     records as a second pass with its own delta: the loop is proved
-    //     by the journal, not claimed by the program.
-    //
-    //     The render is not re-made here. The edits land on the timeline
-    //     the window holds and the project autosaves, so the cut the user
-    //     opens is the revised one; re-rendering the whole export for a
-    //     reframe would spend the run's remaining minutes on a second
-    //     encode nobody asked for.
-    let revise_project = project.clone();
-    let revise_sheet = sheet_variant(&source.sheet, "revised");
-    steps.push(
-        DerivedStep::react(
-            Stage::Revise,
-            Box::new({
-                let revise_project = revise_project.clone();
-                let revise_sheet = revise_sheet.clone();
-                let mut phase = 0u8;
-                move |log| {
-                    if phase == 0 {
-                        // A `None` here ends the stage: the runner reads it
-                        // as "nothing to do", so a clean cut is a revise
-                        // that succeeded, not one that failed.
-                        let commands = revise_commands(log);
-                        if commands.is_empty() {
-                            return None;
-                        }
-                        phase = 1;
-                        return Some(call(
-                            "edit_apply",
-                            json!({
-                                "path": revise_project,
-                                "command": { "op": "batch", "commands": commands },
-                            }),
-                        ));
-                    }
-                    if phase == 1 {
-                        phase = 2;
-                        return Some(call(
-                            "watch_render",
-                            json!({
-                                "project": revise_project,
-                                "out": revise_sheet,
-                            }),
-                        ));
-                    }
-                    if phase == 2 {
-                        phase = 3;
-                        // As in the preview: a sheet that named no pixels
-                        // ends the re-critique rather than sending the
-                        // critic an empty path.
-                        let png = log
-                            .iter()
-                            .rev()
-                            .find_map(|reply| reply.get("pngPath").and_then(Value::as_str))
-                            .filter(|png| !png.trim().is_empty())?;
-                        return Some(call(
-                            "craft_critique",
-                            json!({ "pngPath": png, "project": revise_project }),
-                        ));
-                    }
-                    None
-                }
-            }),
-        )
-        .warn()
         .into(),
     );
     EditProgram::mixed(PathBuf::from(&source.export), steps)
@@ -2430,10 +2765,10 @@ mod tests {
                 "music",
                 "sfx",
                 "preview",
+                "revise",
                 "export",
                 "verify",
                 "watch",
-                "revise",
             ]
         );
         // The register and the run are the same order, not merely the same
@@ -2468,8 +2803,8 @@ mod tests {
                 "music",
                 "sfx",
                 "preview",
-                "watch",
-                "revise"
+                "revise",
+                "watch"
             ]
         );
 
@@ -2525,7 +2860,7 @@ mod tests {
         // keyed by the stage, so a second step sharing `Stage::Timeline`
         // was skipped the moment the first completed and the run never
         // graded.
-        for at in [5usize, 6, 7, 8, 9, 10, 11, 12, 16] {
+        for at in [5usize, 6, 7, 8, 9, 10, 11, 12, 13, 15] {
             assert!(
                 matches!(program.steps[at], ProgramStep::Derived(_)),
                 "step {at} is derived"
@@ -2536,12 +2871,12 @@ mod tests {
         // is minted at run time - and the watch's sheet is a project-
         // relative name, because the window's server refuses absolute
         // write paths.
-        let export = program.steps[13].as_static();
+        let export = program.steps[14].as_static();
         assert_eq!(export.calls[0].tool, "export_start");
         assert_eq!(export.calls[0].arguments["output"], source.export.as_str());
         assert_eq!(export.calls[1].tool, "export_wait");
         assert_eq!(export.calls[1].arguments["path"], source.project.as_str());
-        let watch = program.steps[15].as_static();
+        let watch = program.steps[16].as_static();
         assert_eq!(watch.calls[0].arguments["out"], "auto-edit-sheet.png");
         assert_eq!(
             watch.calls[1].arguments["pngPath"],
@@ -2551,9 +2886,9 @@ mod tests {
         // The verify's gates: the loudness target, and the words (F-04) -
         // on the derived step that reads the timeline as it ended up.
         use concat_director::ReplyGate;
-        assert!(matches!(program.steps[14], ProgramStep::Derived(_)));
+        assert!(matches!(program.steps[15], ProgramStep::Derived(_)));
         assert_eq!(
-            program.steps[14].gates(),
+            program.steps[15].gates(),
             vec![
                 ReplyGate::True {
                     field: "platformTargetMet",
@@ -2567,7 +2902,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            program.steps[15].gates(),
+            program.steps[16].gates(),
             vec![ReplyGate::AtLeast {
                 field: "overall",
                 minimum: 7.0,
@@ -2576,7 +2911,7 @@ mod tests {
         );
         // No other step gates its replies.
         for (at, step) in program.steps.iter().enumerate() {
-            if at != 14 && at != 15 {
+            if at != 15 && at != 16 {
                 assert!(step.gates().is_empty(), "step {at} gates its replies");
             }
         }
@@ -2671,6 +3006,51 @@ mod tests {
         );
         assert_eq!(second.arguments["project"], source.project);
         assert!((preview.next)(&[json!({}), json!({})]).is_none());
+    }
+
+    /// A revision that landed must be in the file that ships. The revise
+    /// therefore runs on the OPEN timeline BEFORE the export, not after
+    /// it: an edit applied once the render had landed would exist only in
+    /// the project, and the exported video - the thing the user publishes
+    /// - would still show the cut the critic faulted.
+    #[test]
+    fn the_revise_lands_before_the_export_so_the_shipped_file_has_it() {
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: Vec::new(),
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let program = auto_edit_program(&source);
+        let order: Vec<&str> = program
+            .steps
+            .iter()
+            .map(|step| step.stage().label())
+            .collect();
+        let at = |label: &str| {
+            order
+                .iter()
+                .position(|stage| *stage == label)
+                .unwrap_or_else(|| panic!("{label} is in the program"))
+        };
+        let preview = at("preview");
+        let revise = at("revise");
+        let export = at("export");
+        let verify = at("verify");
+        let watch = at("watch");
+
+        // The revise reads the preview's sheet, so it follows it...
+        assert!(preview < revise, "the revise answers the preview");
+        // ...and corrects the timeline the export then encodes.
+        assert!(
+            revise < export,
+            "a revise after the export leaves the shipped file unrevised"
+        );
+        // The verify and the watch both read the file, so both follow it.
+        assert!(export < verify, "the verify certifies the export");
+        assert!(export < watch, "the watch scores the exported file");
     }
 
     /// The revise answers a measured fault and only a measured fault: a
@@ -2994,6 +3374,157 @@ mod tests {
         });
         let log = vec![json!({ "path": "/takes/a.wav", "output": tight.to_string() })];
         assert!(broll_slots(&log, &takes).is_empty());
+    }
+
+    /// The planner's own read wins over the plain gap scan: its
+    /// suggestions are ranked by the priority it scored them at, and the
+    /// gather stage shops where the plan says coverage is wanted. A plan
+    /// whose spans fall outside the shot-length window is not honoured -
+    /// a 0.4 s hole cannot hold a shot.
+    #[test]
+    fn the_planner_s_suggestions_drive_the_slots_it_ranked() {
+        let takes = vec![TakePaths {
+            take: "/takes/a.wav".to_owned(),
+            enhanced: "/takes/a-enhanced.wav".to_owned(),
+        }];
+        let transcript = json!({
+            "segments": [
+                { "start": 0.0, "end": 2.0, "text": "the harbour at dawn" },
+                { "start": 6.0, "end": 8.0, "text": "and the fishing boats" },
+            ],
+        });
+        let log = vec![
+            json!({ "path": "/takes/a.wav", "output": transcript.to_string() }),
+            json!({
+                "gapCount": 2,
+                "suggestionCount": 2,
+                "cutCount": 0,
+                "gaps": [],
+                "cuts": [],
+                "suggestions": [
+                    // Too short to hold a shot: dropped.
+                    { "kind": "dialogue_gap", "needBRoll": true, "category": "unknown",
+                      "startS": 2.0, "endS": 2.4, "durationMs": 400, "priority": 0.9,
+                      "topicTags": [] },
+                    // The real ask, and the one the plan scored highest.
+                    { "kind": "dialogue_gap", "needBRoll": true, "category": "outdoor",
+                      "startS": 2.0, "endS": 6.0, "durationMs": 4000, "priority": 0.8,
+                      "topicTags": ["harbour", "boats"] },
+                ],
+            }),
+        ];
+        let slots = broll_slots(&log, &takes);
+        assert_eq!(slots.len(), 1, "only the span that can hold a shot");
+        assert_eq!(slots[0].from, 2.0);
+        assert_eq!(slots[0].to, 6.0);
+        // The planner's topic tags, not the tail of the line before.
+        assert_eq!(slots[0].query, "harbour boats");
+    }
+
+    /// A monotony run means "speech no beat lands in". With no beat grid
+    /// every long stretch of speech answers that trivially, so honouring
+    /// these without a measured grid would blanket a talking-head cut in
+    /// B-roll. They are taken only when the run measured a grid.
+    #[test]
+    fn a_monotony_run_without_a_measured_grid_is_not_honoured() {
+        let takes = vec![TakePaths {
+            take: "/takes/a.wav".to_owned(),
+            enhanced: "/takes/a-enhanced.wav".to_owned(),
+        }];
+        let transcript = json!({
+            "segments": [
+                { "start": 0.0, "end": 2.0, "text": "the harbour at dawn" },
+                { "start": 2.0, "end": 12.0, "text": "and the long unbroken explanation" },
+            ],
+        });
+        let plan = json!({
+            "gapCount": 0,
+            "suggestionCount": 1,
+            "cutCount": 0,
+            "gaps": [],
+            "cuts": [],
+            "suggestions": [{
+                "kind": "monotony_run", "needBRoll": true, "category": "unknown",
+                "startS": 2.0, "endS": 10.0, "durationMs": 8000, "priority": 0.6,
+                "topicTags": ["harbour"],
+            }],
+        });
+        let no_grid = vec![
+            json!({ "path": "/takes/a.wav", "output": transcript.to_string() }),
+            plan.clone(),
+        ];
+        assert!(
+            broll_slots(&no_grid, &takes).is_empty(),
+            "a monotony run with no beat grid is not an ask"
+        );
+
+        // With a measured grid the run is a real ask, and is honoured.
+        let mut with_grid = no_grid.clone();
+        with_grid.push(json!({ "cutTimes": [2.5, 4.0, 6.0], "bpm": 120.0 }));
+        let slots = broll_slots(&with_grid, &takes);
+        assert_eq!(slots.len(), 1, "the measured grid makes the run an ask");
+        assert_eq!(slots[0].query, "harbour");
+    }
+
+    /// The stock page is read for the clip that fits the slot, not the
+    /// clip the shelf happened to rank first: a vertical project gets a
+    /// vertical clip, a clip too short to cover the hole is not a
+    /// candidate, and a clip already shopped is never shopped again.
+    #[test]
+    fn the_best_hit_fits_the_slot_rather_than_the_first_result() {
+        let hit = |id: &str, w: f64, h: f64, seconds: f64| {
+            json!({
+                "id": id, "provider": "pexels", "url": format!("https://x/{id}"),
+                "license": "Pexels License", "width": w, "height": h,
+                "seconds": seconds,
+            })
+        };
+        let page = vec![
+            // The shelf's own first result: a 4K landscape clip in a reel.
+            hit("a", 3840.0, 2160.0, 30.0),
+            // Fits the vertical frame and covers the 4 s hole.
+            hit("b", 1080.0, 1920.0, 12.0),
+            // Vertical but only 1.5 s: cannot cover the hole.
+            hit("c", 1080.0, 1920.0, 1.5),
+        ];
+        let picked = best_hit(&page, 4.0, "9:16", &[]).expect("a vertical clip fits");
+        assert_eq!(picked["id"], "b");
+
+        // In a horizontal project the landscape clip is the right one.
+        let picked = best_hit(&page, 4.0, "16:9", &[]).expect("a landscape clip fits");
+        assert_eq!(picked["id"], "a");
+
+        // A clip already shopped is not a candidate: the next gap takes
+        // the next best fit rather than repeating the shot.
+        let picked = best_hit(&page, 4.0, "9:16", &["b".to_owned()])
+            .expect("a clip that has not been used fits");
+        assert_ne!(picked["id"], "b");
+        assert_ne!(
+            picked["id"], "c",
+            "the short clip still cannot cover the hole"
+        );
+
+        // Nothing left that fits the frame: the best remaining candidate is
+        // a landscape clip that will be cropped to fill. Orientation is a
+        // preference, not a veto - a cropped shot still beats a hole in the
+        // narration - so it is returned last rather than refused.
+        let picked = best_hit(&page, 4.0, "9:16", &["b".to_owned(), "c".to_owned()])
+            .expect("the landscape clip is the last resort");
+        assert_eq!(picked["id"], "a");
+
+        // Only a page with no licensable clip at all fills nothing.
+        assert!(best_hit(&[], 4.0, "9:16", &[]).is_none());
+    }
+
+    /// A hit without the licence metadata the import gate needs is never
+    /// a candidate, whatever its shape.
+    #[test]
+    fn a_hit_without_a_licence_is_never_the_best_hit() {
+        let page = vec![json!({
+            "id": "x", "provider": "pexels", "url": "https://x/x",
+            "width": 1080.0, "height": 1920.0, "seconds": 10.0,
+        })];
+        assert!(best_hit(&page, 3.0, "9:16", &[]).is_none());
     }
 
     /// The gather stage uses a licensed live shelf and never weakens the
@@ -3658,6 +4189,18 @@ mod tests {
                 ],
             }),
         ];
+        // The footage shopping list is planned first: the planner reads the
+        // transcript and says where coverage is wanted, before the plan
+        // that names the signals is validated.
+        let first = (plan.next)(&log).expect("the footage plan is asked for");
+        assert_eq!(first.tool, "footage_plan_suggest");
+        assert!(
+            !first.arguments["segments"]
+                .as_array()
+                .expect("the planner is given the transcript")
+                .is_empty(),
+            "the planner reads the narration's own spans: {first:?}"
+        );
         let ask = (plan.next)(&log).expect("the plan is validated");
         assert_eq!(ask.tool, "plan_validate");
         let plan = &ask.arguments["plan"];

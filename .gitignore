@@ -91,3 +91,6 @@ check/
 /sherpa/
 /sysroot/
 /sysroot-extra/
+
+# the onnxruntime shared libs extracted for local builds
+/.ort-shared/

@@ -82,17 +82,15 @@ FFmpeg 8 dev libraries are needed (see `scripts/ci/deps.lock` and
 installs a release build with everything a first run needs.
 
 When linking test binaries for `concat-mcp` (or anything that pulls in
-`ort`), some local ONNX Runtime setups fail with `rust-lld: error:
-duplicate symbol: onnx::...` - the prebuilt `ort` shared object and a
-system `libonnx` both export the protobuf symbols. It is an environment
-problem, not a code one; work around it with:
-
-```sh
-RUSTFLAGS="-C link-arg=-Wl,--allow-multiple-definition" cargo test -p concat-mcp --lib
-```
-
-Setting `RUSTFLAGS` invalidates the build cache, so the first run after
-adding it is a full rebuild.
+`ort`), a local ONNX Runtime setup can fail with `rust-lld: error:
+duplicate symbol: onnx::...` if the link includes conflicting ONNX/protobuf
+implementations. Use the shared, digest-pinned runtime from
+`scripts/setup-build-env.sh` and set `ORT_LIB_LOCATION` plus
+`ORT_PREFER_DYNAMIC_LINK=1` as shown below. If the duplicate remains,
+inspect the verbose linker command and remove the conflicting static
+library from the link set. **Do not mask it with
+`--allow-multiple-definition`**: that suppresses a real link diagnostic
+and can leave the selected symbol implementation dependent on link order.
 
 A container restart wipes everything outside `/workspace` — the Rust
 toolchain, apt packages and the shell `PATH`. `/workspace/envsetup/setup.sh`

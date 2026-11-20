@@ -16,12 +16,12 @@
 # To bump a dependency, change its row and put the new file's digest in
 # it; scripts/ci/fetch.sh prints the digest it got when they differ.
 #
-# The release-asset CDN returns intermittent 504s for minutes at a
-# stretch -- BtbN's FFmpeg, the Geneva sidecar and ONNX Runtime all
+# The release-asset CDN returns intermittent 500s and 504s for minutes
+# at a stretch -- BtbN's FFmpeg, the Geneva sidecar and ONNX Runtime all
 # went dark in one afternoon, and curl's own --retry backoff is spent
-# in half a minute. So each asset is fetched up to five times with an
-# exponential backoff (2s, 4s, 8s, 16s, 32s slept before the first
-# through the fifth attempt). Transient failures -- any HTTP 5xx, a
+# in half a minute. So each asset is fetched up to eight times with an
+# exponential backoff (2s, 4s, 8s, 16s, 32s, then 60s a time, slept
+# before the first through the eighth attempt). Transient failures -- any HTTP 5xx, a
 # timeout (curl exit 28), a connection that died mid-answer (curl exit
 # 56) -- ride the backoff; an HTTP 4xx such as a 404 or 403 fails at
 # once, because retrying those cannot help. The digest is verified on
@@ -77,9 +77,10 @@ fi
 echo "fetch.sh: $name from $url"
 mkdir -p "$(dirname "$out")"
 
-attempts=5
+attempts=8
 
-# The wait before attempt N: 2s, 4s, 8s, 16s, 32s.
+# The wait before attempt N: 2s, 4s, 8s, 16s, 32s, then 60s a time, so a
+# CDN outage of a few minutes is ridden out rather than failing the job.
 backoff_for() {
   case "$1" in
     1) echo 2 ;;
@@ -87,6 +88,7 @@ backoff_for() {
     3) echo 8 ;;
     4) echo 16 ;;
     5) echo 32 ;;
+    *) echo 60 ;;
   esac
 }
 

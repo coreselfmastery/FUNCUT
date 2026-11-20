@@ -134,34 +134,73 @@ script → tts_generate → transcribe → analyze_silence → clip_cut_spans
   → edit_apply batches → captions_add → preview_frame checks → export_start
 ```
 
-### AUTO EDIT: the same page's unattended run
+### AUTO EDIT: the same Director, one click
 
-Beside **Start Forge** sits **Auto edit** — the deterministic half of the
-page, with no agent and no model keys. It is enabled the moment the open
-timeline carries a voiceover (audio clips): one click builds the same
-sibling project a voiceover forge run edits — the narration reconstructed
-clip for clip beside the source — and runs the measured spine of the
-pipeline over the window's own server, unattended:
+Beside **Start Forge** sits **Auto edit**. It is not a second editor and
+not a second Director: it is the *same* Director agent, started
+autonomously.
+
+It is enabled the moment the open timeline carries a voiceover (audio
+clips). One click builds the same sibling project a voiceover forge run
+edits - the narration reconstructed clip for clip beside the source - and
+then hands that sibling to the Director:
 
 ```
-open the sibling → repair the take (enhance + clean, landing on the
-  file the timeline plays) → transcribe → voice signals → the music gate
-  → collision + timeline reads → export → re-transcribe the render +
-  measure its loudness → watch the cut as a contact sheet and score it
+AUTO EDIT
+  -> sibling project (narration reconstructed, mapping written)
+  -> the Director (`forge run`, same skill, same keys, same MCP tools)
+       understands the footage and the voice
+       plans, validates the plan (plan_validate: valid + creativeReady)
+       cuts, gathers B-roll, builds motion, captions, grades, scores music
+       watch_render -> craft_critique -> revises -> watch_render again
+       exports, then verifies the exported file
+  -> the finished edit opens on the timeline
 ```
 
-Progress is its own pane — the stage, the clock, the fraction of the
-program's stages — with a stop that lands at the next stage boundary and
-rolls back any edit the run applied. A green toast and the finished edit
-opens on the timeline; a **yellow** toast means the run shipped with
-warnings written down (a take that could not be repaired, a craft score
-under the bar) — `auto-edit-report.json`, beside the edit, carries each
+The Director receives the sibling the button built, with the narration
+already placed clip for clip. Nothing is measured for it: the prompt
+states that the repair, the transcription and the voice-signal/emotion
+reads are the Director's own to run, in the skill's order, and that a
+decision which never read the voice is a guess.
+
+Progress is read from the harness's own output. Each line that names one
+of the skill's twelve phases moves the pane's stage and bar to that
+phase; a line that names no phase moves nothing, so the bar cannot show
+work the Director has not reached. The stop button kills the harness at
+once.
+
+#### When the Director is not available
+
+`Auto edit` hands over only when all of these hold:
+
+| Needs | Where the user sets it |
+| --- | --- |
+| `forge` on `PATH` | install the harness |
+| The harness wired to this editor | **Connect** on the Forge page |
+| The `funcut-director` skill installed | **Install** on the Forge page |
+| A model key saved | any provider key on the Forge page |
+
+If one is missing the button **says which**, and the run falls back to
+the deterministic spine - repair, transcribe, voice signals, the music
+gate, export, re-transcribe, loudness, watch and score - so a lesser edit
+is never presented as the Director's:
+
+```
+open the sibling -> repair the take (enhance + clean, landing on the
+  file the timeline plays) -> transcribe -> voice signals -> the music gate
+  -> collision + timeline reads -> export -> re-transcribe the render +
+  measure its loudness -> watch the cut as a contact sheet and score it
+```
+
+The fallback's own progress is the runner's: the stage, the clock, the
+fraction of the program's stages. A green toast and the finished edit
+opens on the timeline; a **yellow** toast means it shipped with warnings
+written down - `auto-edit-report.json`, beside the edit, carries each
 one; a red toast names the failure and the button answers with **Retry**
-(a transient, network-sounding refusal, already tried three times) or
-**Fix and restart** (the plan's to fix). The creative layer — B-roll,
-captions, the grade — stays the Director agent's: Auto edit ships the
-voiceover edit itself, measured and verified, and the forge run can stand
-on the same sibling afterwards.
+or **Fix and restart**.
+
+One run at a time: Start Forge and Auto edit share one sibling and one
+server, so each refuses to start while the other is going.
 
 ## 6. Overnight
 

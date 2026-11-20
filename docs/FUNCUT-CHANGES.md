@@ -505,6 +505,50 @@ ledger (they were verified from source for the inventory in
   `docs/MAGICK.md`, and the CC BY-NC line the director skill enforces as
   floor N.
 
+## 10b. The feature: the acceptance receipt
+
+A run used to end in a word - `Completed`, or `CompletedWithWarnings` with
+a list. The word says the pipeline walked; it does not say the edit was
+measured, or that the B-roll came off a shelf whose licence allows
+monetization, or which capability the program was built with and never
+reached. `concat-director/src/receipt.rs` answers those from the run's own
+reply log, and the runner attaches the result to both terminal states
+(`AutoEditState::Completed.receipt`), where the AUTO EDIT pane writes it as
+`auto-edit-receipt.json` beside the edit and prints its one-line summary
+into the run's log.
+
+- **Gates, one per dimension.** `story` (the plan validated **and** was
+  creatively ready), `words` (the export's narration re-transcribed and
+  compared to the edit), `audio` (the mix against the platform loudness
+  target) and `export-integrity` (the rendered file opened by the media
+  reader) are required. `visual` (the craft score), `captions` and `motion`
+  are recorded when the run made them. A gate is answered only from the
+  reply of the tool that measures it - a gate nobody measured is `skipped`,
+  which is **not** a pass, and `derive_gates` has no path to a pass it did
+  not read. A 9.2/10 craft score sitting beside a failed loudness reading
+  and an unreadable export rejects the run; that is a test.
+- **Verdict.** `accepted` only when every gate that answered passed and
+  every required one answered; `incomplete` when a required gate has no
+  evidence; `rejected` when any gate failed. The pane no longer needs to
+  infer quality from an exit code.
+- **Capability coverage.** Ten areas - measurement, planning, footage,
+  motion, captions, music, sfx, grade, review, delivery - each `consumed`
+  only when a tool that serves it answered successfully, read from the
+  stage records' call lists. `unreached()` lists the rest. An editing
+  operation (`clip_add`, `edit_apply`) claims no area: placing a clip
+  decides nothing, and counting it would make every run look covered.
+- **Asset provenance.** Every import's provider, id, licence and whether
+  its rights allow a monetized edit, read from the import call's own
+  arguments and reply. A live shelf's import carries its licence;
+  OpenVid carries none and is recorded as `commercialOk: null`, which
+  `unlicensed()` surfaces before publication. The manifest is the record a
+  rights question is answered from, not a promise in a prompt.
+
+The receipt is derived, not asserted: `derive_gates` and `provenance_of`
+take the calls and replies the runner already keeps, so a program cannot
+claim a capability it never invoked or a gate it never measured. `docs/`
+and the director skill both document reading it before calling a run done.
+
 ## 11. Everything else: verified, not changed
 
 The rest of the fork's work was verification, and it is worth saying what

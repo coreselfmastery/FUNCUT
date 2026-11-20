@@ -50,11 +50,16 @@
 //! runner.
 
 pub mod error;
+pub mod receipt;
 pub mod runner;
 pub mod stage;
 pub mod state;
 
 pub use error::{AutoEditError, ToolCall, ToolError, is_retryable};
+pub use receipt::{
+    AcceptanceReceipt, Capability, CapabilityRecord, GateRecord, GateStatus, StageOutcome,
+    StageRecord, Verdict, derive_gates,
+};
 pub use runner::{EDIT_APPLY, EDIT_UNDO, LaneFactory, Runner, ToolCaller};
 pub use stage::{
     Derive, DerivedStep, EditProgram, ErrorPolicy, FanStep, ProgramStep, ReplyGate, Stage,

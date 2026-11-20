@@ -666,6 +666,40 @@ measured colour temperature; do not pretend the automated continuity pass
 measured a colour jump it cannot see. Use the stock contact sheet for that
 visual judgment.
 
+## The acceptance receipt
+
+Every run writes `auto-edit-receipt.json` beside the edit. It is the run's
+own evidence, derived from the replies its calls drew — never from what the
+plan promised. Read it before you call a run done; it answers the three
+questions a green "Completed" cannot:
+
+- **`verdict`** — `accepted`, `incomplete` or `rejected`. A rejected run
+  shipped a file whose gates failed; do not publish it.
+- **`gates`** — one entry per craft dimension, each with the measured fact
+  it was read from. `story` (the plan validated and was creatively ready),
+  `words` (the export's narration re-read and matched), `audio` (the mix
+  against the platform loudness target) and `export-integrity` (the file
+  opened by the media reader) are **required**; `visual` (the craft score),
+  `captions` and `motion` are recorded when the run made them. A required
+  gate that was never measured is `skipped`, which makes the verdict
+  `incomplete` — never a silent pass. A 9/10 craft score cannot hide a
+  missing narration track or an unreadable file.
+- **`capabilities`** — every area of the editor (measurement, planning,
+  footage, motion, captions, music, sfx, grade, review, delivery) with
+  `consumed: true` only when a tool that serves it answered. Anything left
+  unreached is listed, so a skipped capability is a fact on the record
+  rather than something to discover later.
+- **`assets`** — the provenance manifest: every imported asset's provider,
+  id, licence and whether its rights permit a monetized edit. OpenVid
+  entries carry no licence (`commercialOk: null`) because the index has no
+  per-clip record; `unlicensed()` names exactly those assets before you
+  publish.
+
+When the receipt reports `incomplete`, the missing measurement is the next
+thing to run — not a reason to re-render the whole edit. When it reports
+`rejected`, fix the named gate (replace the B-roll, re-mix the audio,
+re-export the file) rather than rebuilding the timeline.
+
 ## 4. Hard rules
 
 1. Never claim "done" before `export_wait` reports the file written, the

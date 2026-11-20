@@ -949,6 +949,37 @@ impl ForgePane {
                 );
             }
         }
+        // The acceptance receipt, written as its own artifact beside the
+        // edit: the verdict, the gates that earned it, the capability
+        // areas the run reached, and the rights every imported asset
+        // stands on. A run that shipped a file the gates rejected says so
+        // here, and the pane's log carries the one-line summary rather
+        // than only a green word.
+        if let Some(project) = &self.auto.project {
+            let receipt = match &state {
+                AutoEditState::Completed { receipt, .. }
+                | AutoEditState::CompletedWithWarnings { receipt, .. } => receipt.as_deref(),
+                _ => None,
+            };
+            if let Some(receipt) = receipt {
+                let path = std::path::Path::new(project).join("auto-edit-receipt.json");
+                match serde_json::to_vec_pretty(&receipt.to_json()) {
+                    Ok(bytes) => {
+                        if let Err(error) = std::fs::write(&path, bytes) {
+                            log::warn!(
+                                "could not write the acceptance receipt {}: {error}",
+                                path.display()
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        log::warn!("the acceptance receipt cannot be written: {error}");
+                    }
+                }
+                let summary = receipt.summary();
+                studio.handle(Msg::Forge(ForgeMsg::Line(format!("acceptance: {summary}"))));
+            }
+        }
     }
 }
 

@@ -134,6 +134,9 @@ pub enum ForgeMsg {
     /// The Director run AUTO EDIT hands the edit to has ended, by its
     /// exit code.
     AutoDirectorEnded(i32),
+    /// The check the pane runs on a finished Director run came back: the
+    /// receipt is the verdict, and the exit code is not.
+    DirectorChecked(Box<concat_mcp::acceptance::DirectorAcceptance>),
 }
 
 /// The page's state.
@@ -365,6 +368,7 @@ impl ForgePane {
             ForgeMsg::AutoEditTick => self.auto_edit_tick(),
             ForgeMsg::AutoEditEnded(state) => self.auto_edit_ended(*state, studio),
             ForgeMsg::AutoDirectorEnded(code) => self.auto_director_ended(code, studio),
+            ForgeMsg::DirectorChecked(checked) => self.auto_director_checked(*checked, studio),
         }
     }
 
@@ -793,6 +797,94 @@ impl ForgePane {
         self.auto.kill = None;
         self.auto.fraction = 1.0;
         if code == 0 {
+            // The harness exiting zero says the agent stopped, not that the
+            // edit exists. So the run is held to the same four questions the
+            // fixed spine asks of its own export - is the file readable, is
+            // the mix on target, what does the critic score it, does it say
+            // the words the edit placed - and only a receipt the gates
+            // accept is reported as a finished edit. The check runs on a
+            // worker: it probes and measures a real file.
+            self.auto.stage = t("forge.autoEditCheckingStage");
+            self.set_status(t("forge.autoEditCheckingStage"));
+            let (Some(project), Some(export)) = (
+                self.auto.project.clone(),
+                self.auto.source.as_ref().map(|s| s.export.clone()),
+            ) else {
+                self.auto.outcome = 2;
+                self.auto.stage = t("forge.autoEditDirectorFailedStage");
+                self.set_status(t("forge.autoEditDirectorFailedStage"));
+                studio.notify(
+                    "the Director finished but the run has no project and export to check",
+                    true,
+                );
+                return;
+            };
+            crate::host::spawn_detached(move || {
+                let checked = match concat_mcp::backend::open(concat_mcp::backend::Mode::Window) {
+                    Ok(mut backend) => {
+                        let toolbox = concat_mcp::tools::Toolbox::new();
+                        let cancelled = AtomicBool::new(false);
+                        let check = concat_mcp::acceptance::DirectorCheck {
+                            project: &project,
+                            export: &export,
+                        };
+                        concat_mcp::acceptance::check(&check, &toolbox, &mut *backend, &cancelled)
+                    }
+                    // The window's server is how the check reaches the
+                    // tools; without it there is no measurement, and an
+                    // unmeasured run is not a finished one.
+                    Err(error) => {
+                        crate::host::on_ui(move |studio, _, _| {
+                            studio.notify(&format!("the edit cannot be checked: {error}"), true);
+                        });
+                        return;
+                    }
+                };
+                crate::host::on_ui(move |studio, _, _| {
+                    studio.handle(Msg::Forge(ForgeMsg::DirectorChecked(Box::new(checked))));
+                });
+            });
+            return;
+        }
+        // A handover that failed keeps the sibling and the source, so a
+        // retry hands the same project over again rather than rebuilding
+        // it; the Director's own reads are its to redo.
+        self.auto.outcome = 1;
+        self.auto.stage = t("forge.autoEditDirectorFailedStage");
+        self.set_status(t("forge.autoEditDirectorFailedStage"));
+        studio.notify(
+            &tf("forge.autoEditDirectorFailed", &[&code.to_string()]),
+            true,
+        );
+    }
+
+    /// The measured check came back: the receipt decides whether the run
+    /// is a finished edit or a recorded refusal. Either way the receipt is
+    /// written beside the project, so the answer is inspectable rather than
+    /// a toast that faded.
+    fn auto_director_checked(
+        &mut self,
+        checked: concat_mcp::acceptance::DirectorAcceptance,
+        studio: &mut Studio,
+    ) {
+        let accepted = checked.accepted();
+        let receipt = checked.receipt;
+        if let Some(project) = self.auto.project.clone() {
+            let path = std::path::Path::new(&project).join("auto-edit-receipt.json");
+            match serde_json::to_vec_pretty(&receipt.to_json()) {
+                Ok(bytes) => {
+                    if let Err(error) = std::fs::write(&path, bytes) {
+                        log::warn!("the acceptance receipt cannot be written: {error}");
+                    }
+                }
+                Err(error) => log::warn!("the acceptance receipt cannot be written: {error}"),
+            }
+        }
+        let summary = receipt.summary();
+        self.log.push(format!("acceptance: {summary}").into());
+        let extra = self.log.len().saturating_sub(LOG_KEPT);
+        self.log.drain(0..extra);
+        if accepted {
             self.auto.outcome = 0;
             self.auto.stage = t("forge.autoEditDirectorDoneStage");
             self.set_status(t("forge.autoEditDirectorDoneStage"));
@@ -806,16 +898,12 @@ impl ForgePane {
             }
             self.auto.source = None;
         } else {
-            // A handover that failed keeps the sibling and the source, so
-            // a retry hands the same project over again rather than
-            // rebuilding it; the Director's own reads are its to redo.
-            self.auto.outcome = 1;
-            self.auto.stage = t("forge.autoEditDirectorFailedStage");
-            self.set_status(t("forge.autoEditDirectorFailedStage"));
-            studio.notify(
-                &tf("forge.autoEditDirectorFailed", &[&code.to_string()]),
-                true,
-            );
+            // The sibling stays: the edit is real, it just is not proven.
+            // A second run resumes from it rather than rebuilding it.
+            self.auto.outcome = 2;
+            self.auto.stage = t("forge.autoEditDirectorUnprovenStage");
+            self.set_status(tf("forge.autoEditDirectorUnproven", &[&summary]));
+            studio.notify(&tf("forge.autoEditDirectorUnproven", &[&summary]), true);
         }
     }
 
@@ -947,6 +1035,37 @@ impl ForgePane {
                     "could not write the auto-edit report {}: {error}",
                     path.display()
                 );
+            }
+        }
+        // The acceptance receipt, written as its own artifact beside the
+        // edit: the verdict, the gates that earned it, the capability
+        // areas the run reached, and the rights every imported asset
+        // stands on. A run that shipped a file the gates rejected says so
+        // here, and the pane's log carries the one-line summary rather
+        // than only a green word.
+        if let Some(project) = &self.auto.project {
+            let receipt = match &state {
+                AutoEditState::Completed { receipt, .. }
+                | AutoEditState::CompletedWithWarnings { receipt, .. } => receipt.as_deref(),
+                _ => None,
+            };
+            if let Some(receipt) = receipt {
+                let path = std::path::Path::new(project).join("auto-edit-receipt.json");
+                match serde_json::to_vec_pretty(&receipt.to_json()) {
+                    Ok(bytes) => {
+                        if let Err(error) = std::fs::write(&path, bytes) {
+                            log::warn!(
+                                "could not write the acceptance receipt {}: {error}",
+                                path.display()
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        log::warn!("the acceptance receipt cannot be written: {error}");
+                    }
+                }
+                let summary = receipt.summary();
+                studio.handle(Msg::Forge(ForgeMsg::Line(format!("acceptance: {summary}"))));
             }
         }
     }
@@ -1799,6 +1918,22 @@ fn director_ready(studio: &Studio) -> Result<(), String> {
             "the funcut-director skill is not installed (press Install on the Forge page)"
                 .to_owned(),
         );
+    }
+    // The surface, not just the wiring. A run told to verify its export
+    // meets a refusal mid-edit if the server it talks to does not serve
+    // the call - and the edit it already made stays on the sibling. So
+    // the tools the run cannot finish without are checked here, against
+    // the same environment the harness's server reads, and a missing one
+    // stops the handover before anything is cut.
+    let unserved = concat_mcp::protocol::unserved(concat_mcp::protocol::DIRECTOR_REQUIRED);
+    if !unserved.is_empty() {
+        return Err(format!(
+            "the editor's MCP surface does not serve {} - an edit that cannot measure itself \
+             would report a success nobody checked; name {} on CONCAT_MCP_ALLOW (or serve the \
+             whole catalogue) and try again",
+            unserved.join(", "),
+            if unserved.len() == 1 { "it" } else { "them" }
+        ));
     }
     Ok(())
 }

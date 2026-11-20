@@ -22,7 +22,8 @@ onnxruntime-linux-x64       https://sourceforge.net/projects/onnx-runtime.mirror
 onnxruntime-linux-aarch64   https://sourceforge.net/projects/onnx-runtime.mirror/files/v1.30.1/onnxruntime-linux-aarch64-1.30.1.tgz/download   e6d203b8aaa99ef1cb405d81c42ef3d061c686d9f166ddd5e8fabeb49aa93646
 
 # sherpa-onnx's prebuilt libraries. The version is the one src/Cargo.lock
-# resolves for sherpa-onnx-sys; the workflows check the two agree.
+# resolves for sherpa-onnx-sys. Three places carry it - this file, that lock,
+# and flake.nix's sherpaVersion - and the workflows check all three agree.
 sherpa-onnx-linux-x64-static-lib            https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.2/sherpa-onnx-v2.0.2-linux-x64-static-lib.tar.bz2            082743c80ec9d3fd739df174b9e46ab08ac77c9f57a1d2b09977a7fd5324727d
 sherpa-onnx-linux-aarch64-static-lib        https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.2/sherpa-onnx-v2.0.2-linux-aarch64-static-lib.tar.bz2        c2ff3464e4065b4e04a0cdbc00f43f4e44405d6c3ea4e4023f4a4e069645e3fb
 

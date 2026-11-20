@@ -25,7 +25,7 @@ and an honest feature ledger. No fake green, no doc-only features.
   tokens of headroom).
 - Build env scripts, in the repo and repo-relative (see TEST_EVIDENCE.md's
   reproduction section): `bash scripts/setup-build-env.sh` fetches the
-  digest-pinned FFmpeg 8.1 dev / ONNX Runtime 1.30.1 / sherpa-onnx 1.13.7
+  digest-pinned FFmpeg 8.1 dev / ONNX Runtime 1.30.1 / sherpa-onnx 2.0.2
   from `scripts/ci/deps.lock`, and `--debs` adds the no-root clang 19
   runtime and headers under `sysroot/`; `source scripts/funcut-env.sh`
   before any cargo command in `src/` exports the CI engine job's env

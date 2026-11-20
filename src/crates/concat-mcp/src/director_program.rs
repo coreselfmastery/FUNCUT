@@ -705,11 +705,20 @@ struct EmotionLine {
     sfx_type: String,
     /// The two `bgm_search` queries the line's bed wants, primary first.
     bgm_words: Vec<String>,
+    /// The line's own words, as the transcript measured them: a motion
+    /// card carries the narration it was earned by, never a sample's text.
+    text: String,
+    /// How fast the line is delivered, as `voice_signals` measured it:
+    /// punchy, conversational, editorial or slow. Empty when the reading
+    /// carried no rate, which is the honest answer for a take measured
+    /// without word timings.
+    pace: String,
 }
 
 impl EmotionLine {
-    /// The line as an `emotion` extract wrote it, from a take file.
-    fn of(take: &str, row: &Value) -> Option<EmotionLine> {
+    /// The line as an `emotion` extract wrote it, from a take file, with
+    /// the words the transcript measured for it.
+    fn of(take: &str, row: &Value, text: &str, pace: &str) -> Option<EmotionLine> {
         let text_free = |value: &Value| value.as_str().map(str::to_owned);
         Some(EmotionLine {
             take: take.to_owned(),
@@ -735,8 +744,41 @@ impl EmotionLine {
                         .collect()
                 })
                 .unwrap_or_default(),
+            text: text.to_owned(),
+            pace: pace.to_owned(),
         })
     }
+}
+
+/// How fast the take's delivery is at a span, as `voice_signals` measured
+/// it: the line of its reading that overlaps the span most carries the
+/// rate. Empty when the reply measured no rate there, so a caller can tell
+/// "measured slow" from "not measured" - a stage that invented a pace
+/// would be claiming evidence it never read.
+fn delivery_pace(log: &[Value], take: &str, start: f64, end: f64) -> String {
+    let mut best: Option<(f64, &str)> = None;
+    for reply in log {
+        if reply.pointer("/audio/path").and_then(Value::as_str) != Some(take) {
+            continue;
+        }
+        for line in reply["lines"].as_array().into_iter().flatten() {
+            let (Some(line_start), Some(line_end)) = (line["start"].as_f64(), line["end"].as_f64())
+            else {
+                continue;
+            };
+            let Some(pace) = line.pointer("/speechRate/pace").and_then(Value::as_str) else {
+                continue;
+            };
+            let overlap = line_end.min(end) - line_start.max(start);
+            if overlap <= 0.0 {
+                continue;
+            }
+            if best.is_none_or(|(best_overlap, _)| overlap > best_overlap) {
+                best = Some((overlap, pace));
+            }
+        }
+    }
+    best.map(|(_, pace)| pace.to_owned()).unwrap_or_default()
 }
 
 /// The emotional read the run made, in the order the takes were asked
@@ -745,6 +787,211 @@ impl EmotionLine {
 /// that order - the invariant this reader stands on, and the reason the
 /// reader filters its takes with the same [`spoken_lines`] predicate the
 /// stage skips them with.
+/// The words the take's own delivery stressed, lowercased and
+/// deduplicated: `voice_signals`' `prosody.emphasisWords`, the signal the
+/// caption stage spends. Empty when no reply measured any, which is the
+/// honest answer for a take read without prosody - the stage then falls
+/// back to its own evidence rather than inventing a stress.
+fn stressed_words(log: &[Value], takes: &[TakePaths]) -> Vec<String> {
+    let mut words: Vec<String> = Vec::new();
+    for reply in log {
+        let Some(path) = reply.pointer("/audio/path").and_then(Value::as_str) else {
+            continue;
+        };
+        if !takes.iter().any(|take| take.take == path) {
+            continue;
+        }
+        for line in reply["lines"].as_array().into_iter().flatten() {
+            for word in line
+                .pointer("/prosody/emphasisWords")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                // The Rust ear names the word `wordText`; the Python
+                // prosody pass names it `word`. Read either, so a take
+                // read by either producer still hands its stress over.
+                let Some(text) = word["wordText"].as_str().or_else(|| word["word"].as_str()) else {
+                    continue;
+                };
+                let text = text.trim().to_lowercase();
+                if !text.is_empty() && !words.contains(&text) {
+                    words.push(text);
+                }
+            }
+        }
+    }
+    words
+}
+
+/// setup line earns nothing - the restraint rule the director enforces,
+/// because motion on every beat is what makes an edit read as a template.
+///
+/// The act is the primary key (a payoff wants a call to action, a reveal
+/// wants a sting), and the emotion only breaks the tie within an act, so
+/// two lines of the same act do not both get the same card.
+fn comp_for_line(line: &EmotionLine) -> Option<&'static str> {
+    // A quiet line never earns a card, whatever its act: the picture is
+    // doing its job when nothing needs saying over it.
+    if line.intensity < 0.45 && !matches!(line.act.as_str(), "cta" | "reveal") {
+        return None;
+    }
+    Some(match line.act.as_str() {
+        "hook" => match line.emotion.as_str() {
+            "surprise" | "fear" => "funcut.chapter.chip",
+            _ => "funcut.lower-third.glass",
+        },
+        "reveal" | "turn" => "funcut.sting.wordmark",
+        "proof" => "funcut.stats.triptych",
+        "cta" => "funcut.cta.subscribe",
+        "tension" => match line.emotion.as_str() {
+            "fear" | "anger" => "funcut.quote.pull",
+            _ => "funcut.chapter.chip",
+        },
+        // A setup or a body line carries no card: the spine is the
+        // narration, and the beats that earn a graphic are the ones that
+        // turn the piece.
+        _ => return None,
+    })
+}
+
+/// The motion the run will bake, one row per line that earned a card, in
+/// play order: the take and file second the line opens on (the stage maps
+/// it through the timeline), the preset, and the words the card sets.
+///
+/// The density floor is the plan schema's own: at most one card per
+/// section and at most one per fifteen seconds, strongest line first. Two
+/// cards in the same three seconds is a slideshow, not an edit.
+fn motion_specs(lines: &[EmotionLine]) -> Vec<MotionSpec> {
+    const SPACING: f64 = 15.0;
+    const MOST: usize = 8;
+    let mut ranked: Vec<(f64, MotionSpec)> = lines
+        .iter()
+        .filter_map(|line| {
+            let preset = comp_for_line(line)?;
+            let words = card_words(&line.text);
+            if words.is_empty() {
+                return None;
+            }
+            Some((
+                line.intensity,
+                MotionSpec {
+                    take: line.take.clone(),
+                    at: line.start,
+                    end: line.end,
+                    preset,
+                    words,
+                    act: line.act.clone(),
+                    pace: line.pace.clone(),
+                },
+            ))
+        })
+        .collect();
+    ranked.sort_by(|left, right| right.0.total_cmp(&left.0));
+    let mut kept: Vec<MotionSpec> = Vec::new();
+    for (_, spec) in ranked {
+        if kept.len() >= MOST {
+            break;
+        }
+        let crowded = kept
+            .iter()
+            .any(|other| (other.at - spec.at).abs() < SPACING);
+        if !crowded {
+            kept.push(spec);
+        }
+    }
+    kept.sort_by(|left, right| left.at.total_cmp(&right.at));
+    kept
+}
+
+/// One designed beat, as the plan records it and the motion stage bakes
+/// it: the line it sits on, the preset, the span it covers, and the words
+/// the card sets - the line's own, so a card is never a sample's text.
+#[derive(Clone, PartialEq, Debug)]
+struct MotionSpec {
+    /// The take the line was read from.
+    take: String,
+    /// Where the line opens in the take, in file seconds.
+    at: f64,
+    /// Where it ends, in file seconds.
+    end: f64,
+    /// The Geneva preset the card is built from.
+    preset: &'static str,
+    /// The words the card carries: the line's, trimmed to a card's length.
+    words: String,
+    /// The narrative act that earned the card.
+    act: String,
+    /// How fast the line is delivered, as `voice_signals` measured it. A
+    /// card on a punchy line holds tighter than one on a slow line: the
+    /// delivery, not the clock, is what sets the beat.
+    pace: String,
+}
+
+impl MotionSpec {
+    /// Seconds the card holds: its line's length, floored so a clipped
+    /// line still reads, and capped at the editorial default so a long
+    /// line does not own the screen.
+    fn hold(&self) -> f64 {
+        let measured = (self.end - self.at).clamp(1.5, 5.0);
+        // A punchy line has no time for a slow card and a slow line would
+        // leave one flashing: the measured delivery shortens or lengthens
+        // the hold around its own length, never past the editorial cap.
+        let paced = match self.pace.as_str() {
+            "punchy" => measured * 0.75,
+            "conversational" => measured * 0.9,
+            "slow" => measured * 1.2,
+            _ => measured,
+        };
+        round3(paced.clamp(1.2, 5.0))
+    }
+}
+
+/// The words a card can hold: the line's own, cut at a word boundary so a
+/// card never ends mid-word, and never longer than a card reads in the
+/// seconds it is on screen.
+fn card_words(text: &str) -> String {
+    const MOST: usize = 48;
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= MOST {
+        return trimmed.to_owned();
+    }
+    let cut: String = trimmed.chars().take(MOST).collect();
+    match cut.rfind(' ') {
+        Some(at) if at > MOST / 2 => cut[..at].to_owned(),
+        _ => cut,
+    }
+}
+
+/// The transition an emotion earns on the cut into a B-roll shot: a
+/// speaker or mood change earns a visible one, a calm stretch earns a
+/// soft one. The ids are the catalogue's own transition packages.
+fn transition_for_emotion(emotion: &str) -> &'static str {
+    match emotion {
+        "joy" => "concat.cross-pop",
+        "surprise" => "concat.flash-social",
+        "anger" => "concat.crash-zoom",
+        "fear" => "concat.blur-dissolve",
+        "sadness" => "concat.dissolve",
+        "disgust" => "concat.blinds-soft",
+        _ => "concat.blur-dissolve",
+    }
+}
+
+/// The second transition for a mood, so two shots cut from the same
+/// emotion never wear the same move twice running: the no-repeat rule
+/// the director enforces, not merely asks for.
+fn alternate_transition(emotion: &str) -> &'static str {
+    match emotion {
+        "joy" => "concat.dissolve",
+        "surprise" => "concat.cross-pop",
+        "anger" => "concat.flash-social",
+        "fear" => "concat.dissolve",
+        "sadness" => "concat.blur-dissolve",
+        "disgust" => "concat.dissolve",
+        _ => "concat.dissolve",
+    }
+}
+
 fn emotion_lines(log: &[Value], takes: &[TakePaths]) -> Vec<EmotionLine> {
     let replies: Vec<&Value> = log
         .iter()
@@ -762,11 +1009,28 @@ fn emotion_lines(log: &[Value], takes: &[TakePaths]) -> Vec<EmotionLine> {
         .iter()
         .zip(replies)
         .flat_map(|(take, reply)| {
+            // The lines the stage sent this take's extract, in order: the
+            // reply's rows answer them one for one, and the words the
+            // transcript measured are the words a card carries.
+            let sent: Vec<String> = spoken_lines(log, &take.take)
+                .into_iter()
+                .filter_map(|line| line["text"].as_str().map(str::to_owned))
+                .collect();
             reply["lines"]
                 .as_array()
                 .into_iter()
                 .flatten()
-                .filter_map(|row| EmotionLine::of(&take.take, row))
+                .enumerate()
+                .filter_map(move |(index, row)| {
+                    let text = sent.get(index).map(String::as_str).unwrap_or_default();
+                    let pace = delivery_pace(
+                        log,
+                        &take.take,
+                        row["start"].as_f64().unwrap_or_default(),
+                        row["end"].as_f64().unwrap_or_default(),
+                    );
+                    EmotionLine::of(&take.take, row, text, &pace)
+                })
         })
         .collect()
 }
@@ -824,36 +1088,6 @@ fn look_for_temperature(temperature: &str) -> &'static str {
         // split, balanced and anything unnamed: the teal-and-orange the
         // surprise profile itself asks for.
         _ => "concat.teal-orange",
-    }
-}
-
-/// The transition an emotion earns on the cut into a B-roll shot: a
-/// speaker or mood change earns a visible one, a calm stretch earns a
-/// soft one. The ids are the catalogue's own transition packages.
-fn transition_for_emotion(emotion: &str) -> &'static str {
-    match emotion {
-        "joy" => "concat.cross-pop",
-        "surprise" => "concat.flash-social",
-        "anger" => "concat.crash-zoom",
-        "fear" => "concat.blur-dissolve",
-        "sadness" => "concat.dissolve",
-        "disgust" => "concat.blinds-soft",
-        _ => "concat.blur-dissolve",
-    }
-}
-
-/// The second transition for a mood, so two shots cut from the same
-/// emotion never wear the same move twice running: the no-repeat rule
-/// the director enforces, not merely asks for.
-fn alternate_transition(emotion: &str) -> &'static str {
-    match emotion {
-        "joy" => "concat.dissolve",
-        "surprise" => "concat.cross-pop",
-        "anger" => "concat.flash-social",
-        "fear" => "concat.dissolve",
-        "sadness" => "concat.blur-dissolve",
-        "disgust" => "concat.dissolve",
-        _ => "concat.dissolve",
     }
 }
 
@@ -1148,7 +1382,7 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
         signal_log.push(json!({
             "at": round3(peak.start),
             "decision": "graphic",
-            "signals": ["prosody", "emotion"],
+            "signals": ["emotion"],
             "note": "the title entrance lands on the piece's strongest line",
         }));
     }
@@ -1169,6 +1403,30 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
             "signals": ["emotion", "pause"],
             "note": "the cut into the shot takes the mood the gap opens on",
         }));
+    }
+    // The delivery the read measured, named only where it measured one:
+    // a pace entry is evidence the run read, and a run with no word
+    // timings says so by leaving the entry out rather than claiming a
+    // rhythm it never heard.
+    let paced: Vec<&EmotionLine> = read.iter().filter(|line| !line.pace.is_empty()).collect();
+    if !paced.is_empty() {
+        let mut seen: Vec<&str> = Vec::new();
+        for line in &paced {
+            if seen.contains(&line.pace.as_str()) {
+                continue;
+            }
+            seen.push(&line.pace);
+            signal_log.push(json!({
+                "at": round3(line.start),
+                "decision": "pacing",
+                "signals": ["speechRate", "words"],
+                "note": format!(
+                    "the delivery here measured {}, so the shot's hold and the \
+                     caption's size follow it",
+                    line.pace
+                ),
+            }));
+        }
     }
     let look = dominant(&read)
         .map(|line| look_for_temperature(&line.temperature))
@@ -1234,6 +1492,16 @@ fn sheet_variant(sheet: &str, tag: &str) -> String {
 /// a reframe or a push-in can be laid over - the comp is authored at the
 /// frame size, and a title's scale is its entrance.
 fn picture_clips(view: &Value) -> Vec<(String, f64, f64, bool)> {
+    picture_clips_with_media(view)
+        .into_iter()
+        .map(|(id, start, duration, keyed, _)| (id, start, duration, keyed))
+        .collect()
+}
+
+/// The same pictures, each with the id of the media it plays - what a fix
+/// that asks for different content is about, and what a move needs to
+/// name the track it stays on.
+fn picture_clips_with_media(view: &Value) -> Vec<(String, f64, f64, bool, String)> {
     view["timeline"]["clips"]
         .as_array()
         .into_iter()
@@ -1249,9 +1517,140 @@ fn picture_clips(view: &Value) -> Vec<(String, f64, f64, bool)> {
                 clip["start"].as_f64().unwrap_or(0.0),
                 clip["duration"].as_f64().unwrap_or(0.0),
                 keyed,
+                clip["trackId"].as_str().unwrap_or_default().to_owned(),
             ))
         })
         .collect()
+}
+
+/// The run's own measured evidence, as the brief the critic reads: the
+/// emotional arc and delivery the voice_signals and emotion stages
+/// measured, in the words the critic's prompt asks for. The critic is a
+/// vision model looking at a sheet of frames; without this it judges
+/// pictures alone and cannot say whether the cut kept the arc the voice
+/// carried. Every field here is a number or a word the run measured - a
+/// signal the run never read is left out rather than filled with a guess.
+fn signal_brief(log: &[Value]) -> Value {
+    let mut brief = serde_json::Map::new();
+    // The emotion reply's own rows: the read is already paired with the
+    // take it came from by the stage that asked, so the brief needs no
+    // transcript to name the arc the voice carried.
+    let rows: Vec<&Value> = log
+        .iter()
+        .filter(|reply| {
+            reply["lines"]
+                .as_array()
+                .is_some_and(|lines| lines.iter().any(|line| line.get("emotion").is_some()))
+        })
+        .flat_map(|reply| reply["lines"].as_array().into_iter().flatten())
+        .collect();
+    if !rows.is_empty() {
+        let word = |row: &Value, key: &str| row[key].as_str().unwrap_or_default().to_owned();
+        let arc: Vec<String> = {
+            let mut seen: Vec<String> = Vec::new();
+            for row in &rows {
+                let act = word(row, "act");
+                if !act.is_empty() && !seen.contains(&act) {
+                    seen.push(act);
+                }
+            }
+            seen
+        };
+        if !arc.is_empty() {
+            brief.insert("emotionalArc".to_owned(), json!(arc.join(" -> ")));
+        }
+        let peak = rows
+            .iter()
+            .filter(|row| word(row, "emotion") != "neutral")
+            .max_by(|left, right| {
+                left["intensity"]
+                    .as_f64()
+                    .unwrap_or(0.0)
+                    .total_cmp(&right["intensity"].as_f64().unwrap_or(0.0))
+            });
+        if let Some(peak) = peak {
+            brief.insert(
+                "peak".to_owned(),
+                json!(format!(
+                    "{} at {:.1}s, intensity {:.2}",
+                    word(peak, "emotion"),
+                    peak["start"].as_f64().unwrap_or(0.0),
+                    peak["intensity"].as_f64().unwrap_or(0.0)
+                )),
+            );
+        }
+        let paced: Vec<String> = {
+            let mut seen: Vec<String> = Vec::new();
+            for reply in log {
+                let Some(lines) = reply["lines"].as_array() else {
+                    continue;
+                };
+                for line in lines {
+                    let Some(pace) = line
+                        .pointer("/speechRate/pace")
+                        .and_then(Value::as_str)
+                        .filter(|pace| !pace.is_empty())
+                    else {
+                        continue;
+                    };
+                    if !seen.iter().any(|known| known == pace) {
+                        seen.push(pace.to_owned());
+                    }
+                }
+            }
+            seen
+        };
+        if !paced.is_empty() {
+            brief.insert("delivery".to_owned(), json!(paced.join(", ")));
+        }
+        let hot = rows
+            .iter()
+            .filter(|row| {
+                matches!(
+                    row.pointer("/colourTemp/temperature")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                    "hot" | "warm"
+                )
+            })
+            .count();
+        brief.insert(
+            "colourSplit".to_owned(),
+            json!(format!("{hot} of {} lines read warm", rows.len())),
+        );
+    }
+    // The measured emphasis, as the peaks the SFX stage spends: the words
+    // the voice leaned on, which a cut that honours the narration puts
+    // its strongest pictures and titles under.
+    let stressed: Vec<String> = {
+        let mut seen: Vec<String> = Vec::new();
+        for reply in log {
+            let Some(lines) = reply["lines"].as_array() else {
+                continue;
+            };
+            for line in lines {
+                let Some(words) = line
+                    .pointer("/prosody/emphasisWords")
+                    .and_then(Value::as_array)
+                else {
+                    continue;
+                };
+                for word in words {
+                    if let Some(text) = word["wordText"].as_str()
+                        && !seen.iter().any(|known| known == text)
+                    {
+                        seen.push(text.to_owned());
+                    }
+                }
+            }
+        }
+        seen.truncate(12);
+        seen
+    };
+    if !stressed.is_empty() {
+        brief.insert("emphasisWords".to_owned(), json!(stressed));
+    }
+    Value::Object(brief)
 }
 
 /// The craft facts of the last sheet the run read, as the critic measured
@@ -1347,6 +1746,183 @@ fn revise_commands(log: &[Value]) -> Vec<Value> {
         }
     }
 
+    commands.extend(critic_fix_commands(log, &picture_clips_with_media(view)));
+    commands
+}
+
+/// The critic's own structured fixes, as edit commands: the part of the
+/// review that a model - local or hosted - answered rather than the pixel
+/// measurements. A fix names its where, its problem, its change, and one
+/// of five patch ops; this reads the op and the patch the critic carried
+/// and spends them on the clip the fix is about.
+///
+/// A fix is only spent when it names a number this program can act on. The
+/// critic is told a patch is applied exactly as written, so a fix that
+/// arrives without one is a read of taste, and taste is the report's
+/// business - not a blind edit. Every fix carries its confidence, and a
+/// fix under the bar is left to the report for the same reason: the run
+/// would rather ship a flaw it named than an edit it guessed.
+fn critic_fix_commands(log: &[Value], pictures: &[(String, f64, f64, bool, String)]) -> Vec<Value> {
+    const LEAST_CONFIDENCE: f64 = 0.6;
+    let Some(critique) = log.iter().rev().find(|reply| {
+        reply.get("fixes").and_then(Value::as_array).is_some() || reply.get("scores").is_some()
+    }) else {
+        return Vec::new();
+    };
+    let Some(fixes) = critique["fixes"].as_array() else {
+        return Vec::new();
+    };
+    // The frames the critic speaks of, as the sheet labelled them: a fix
+    // whose `where` names a frame number is about the clip that frame
+    // plays, which is how a fix reaches a shot instead of the whole cut.
+    let tiles: Vec<Value> = critique["tiles"]
+        .as_array()
+        .cloned()
+        .or_else(|| {
+            log.iter()
+                .rev()
+                .find_map(|reply| reply.get("tiles").and_then(Value::as_array).cloned())
+        })
+        .unwrap_or_default();
+    let clip_at = |at: f64| -> Option<&(String, f64, f64, bool, String)> {
+        pictures
+            .iter()
+            .find(|(_, start, duration, _, _)| at >= *start && at < start + duration)
+            .or_else(|| {
+                pictures
+                    .iter()
+                    .min_by(|left, right| (left.1 - at).abs().total_cmp(&(right.1 - at).abs()))
+            })
+    };
+    let mut commands: Vec<Value> = Vec::new();
+    let mut already: Vec<String> = Vec::new();
+    for fix in fixes {
+        let confidence = fix["confidence"].as_f64().unwrap_or(0.5);
+        if confidence < LEAST_CONFIDENCE {
+            continue;
+        }
+        let op = fix["op"].as_str().unwrap_or_default();
+        // The frames the fix names, read from its `where` text: "frames
+        // 6-8" is a span, "frame 3" a single sample.
+        let named: Option<f64> = fix["where"]
+            .as_str()
+            .and_then(|where_| {
+                let digits: String = where_
+                    .chars()
+                    .skip_while(|c| !c.is_ascii_digit())
+                    .take_while(|c| c.is_ascii_digit() || *c == '-')
+                    .collect();
+                digits
+                    .split('-')
+                    .next()
+                    .and_then(|n| n.parse::<usize>().ok())
+            })
+            .and_then(|index| tiles.get(index).cloned())
+            .and_then(|tile| tile["at"].as_f64());
+        let target = named.and_then(clip_at).or_else(|| pictures.first());
+        let Some((clip_id, start, duration, keyed, track_id)) = target else {
+            continue;
+        };
+        let patch = fix.get("patch").filter(|patch| patch.is_object());
+        match op {
+            // Timing: a patch's `start` is where the element should begin,
+            // a `duration` how long it should hold. Moving a clip earlier
+            // or later is a start change; the op the critic means is the
+            // one the patch's own keys spell.
+            "retime" => {
+                let Some(patch) = patch else { continue };
+                if let Some(want) = patch["start"].as_f64()
+                    && (want - start).abs() > 0.05
+                    && already.iter().all(|id| id != &format!("retime:{clip_id}"))
+                {
+                    already.push(format!("retime:{clip_id}"));
+                    commands.push(json!({
+                        "op": "moveClips",
+                        "moves": [{
+                            "clipId": clip_id,
+                            "start": round3(want.max(0.0)),
+                            "trackId": track_id,
+                        }],
+                    }));
+                }
+            }
+            // Size: a scale on the clip, keyed from 1.0 to the factor so
+            // the shot settles rather than snapping.
+            "resize" => {
+                let Some(patch) = patch else { continue };
+                let Some(factor) = patch["factor"].as_f64() else {
+                    continue;
+                };
+                let key = format!("resize:{clip_id}");
+                if !(0.5..=2.0).contains(&factor) || already.contains(&key) {
+                    continue;
+                }
+                already.push(key);
+                let ease = json!([0.42, 0.0, 0.58, 1.0]);
+                commands.push(json!({
+                    "op": "setClipKey", "clipId": clip_id, "property": "scale",
+                    "at": 0.0, "value": 1.0, "ease": ease,
+                }));
+                commands.push(json!({
+                    "op": "setClipKey", "clipId": clip_id, "property": "scale",
+                    "at": 1.0, "value": round3(factor), "ease": ease,
+                }));
+            }
+            // Position: a shift the critic measured in the frames, as the
+            // transform's offset - clamped to the frame so a fix cannot
+            // push the picture out of sight.
+            "shift" => {
+                let Some(patch) = patch else { continue };
+                let (dx, dy) = (
+                    patch["dx"].as_f64().unwrap_or(0.0),
+                    patch["dy"].as_f64().unwrap_or(0.0),
+                );
+                if dx == 0.0 && dy == 0.0 {
+                    continue;
+                }
+                let key = format!("shift:{clip_id}");
+                if already.contains(&key) {
+                    continue;
+                }
+                already.push(key);
+                commands.push(json!({
+                    "op": "setClipTransform",
+                    "clipId": clip_id,
+                    "offsetX": round3((dx / 1920.0).clamp(-0.25, 0.25)),
+                    "offsetY": round3((dy / 1080.0).clamp(-0.25, 0.25)),
+                }));
+            }
+            // Look: a framing fill for bars the critic saw, which is the
+            // one restyle the edit vocabulary can apply without a taste
+            // call. A clip already carrying a scale ride is left alone.
+            "restyle" => {
+                let key = format!("restyle:{clip_id}");
+                if *keyed || already.contains(&key) {
+                    continue;
+                }
+                let fill = fix["change"]
+                    .as_str()
+                    .is_some_and(|change| change.to_lowercase().contains("fill"));
+                if !fill {
+                    continue;
+                }
+                already.push(key);
+                commands.push(json!({
+                    "op": "frameClip", "clipId": clip_id, "framing": "fill",
+                }));
+            }
+            // Replace: the fix asked for different content. The run has no
+            // honest replacement to hand for a shot it did not shop, so
+            // the fix is named in the report and left unspent - an edit
+            // that swapped in arbitrary footage would be the mistake the
+            // critic was warning about. A `_ = duration` keeps the read
+            // explicit for the next fix that needs the span.
+            "replace" => {
+                let _ = duration;
+            }
+            _ => {}
+        }
+    }
     commands
 }
 
@@ -1679,6 +2255,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 let mut phase = 0u8;
                 let mut pending_media: Option<String> = None;
                 let mut pending_len = 0.0f64;
+                let mut pending_pace = String::new();
                 let mut pending_transition: Option<&'static str> = None;
                 // The transition the last placed shot cut in with: the
                 // next shot never wears the same move twice running.
@@ -1793,6 +2370,12 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 (Some(media_id), Some(at), Some(to)) if to - at > 0.4 => {
                                     pending_media = Some(media_id.clone());
                                     pending_len = round3(to - at);
+                                    // The delivery over the gap sets how
+                                    // much the shot moves: a punchy stretch
+                                    // takes a livelier drift, a slow one a
+                                    // quieter, longer push.
+                                    pending_pace =
+                                        delivery_pace(log, &slot.take, slot.from, slot.to);
                                     pending_transition = Some(transition);
                                     phase = 3;
                                     return Some(call(
@@ -1859,12 +2442,18 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 "value": 1.0,
                                 "ease": [0.0, 0.0, 0.58, 1.0],
                             }));
+                            let drift = match pending_pace.as_str() {
+                                "punchy" => 1.10,
+                                "conversational" => 1.07,
+                                "slow" => 1.03,
+                                _ => 1.06,
+                            };
                             commands.push(json!({
                                 "op": "setClipKey",
                                 "clipId": clip_id,
                                 "property": "scale",
                                 "at": 1.0,
-                                "value": 1.06,
+                                "value": drift,
                                 "ease": [0.0, 0.0, 0.58, 1.0],
                             }));
                             let chosen = pending_transition.unwrap_or("concat.dissolve");
@@ -1920,6 +2509,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     let view = latest_view(log)?;
                     let media = media_paths(view);
                     let read = emotion_lines(log, &caption_emotion);
+                    let emphasis = stressed_words(log, &caption_source);
                     let mut captions: Vec<Value> = Vec::new();
                     for (take, segments) in transcripts_of(log, &caption_source) {
                         for segment in segments {
@@ -1953,12 +2543,36 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             let hot = line.is_some_and(|line| {
                                 matches!(line.temperature.as_str(), "hot" | "split")
                             });
+                            // A caption that carries one of the take's own
+                            // stressed words takes the accent even on a
+                            // neutral line: the emphasis signal is the
+                            // delivery's, not the mood's, and the log
+                            // promises the caption stage spends it.
+                            let stressed = !emphasis.is_empty()
+                                && text
+                                    .split_whitespace()
+                                    .map(|word| {
+                                        word.trim_matches(|c: char| !c.is_alphanumeric())
+                                            .to_lowercase()
+                                    })
+                                    .any(|word| emphasis.contains(&word));
+                            // A fast line is read at a glance, so its
+                            // caption is set a touch smaller; a slow line
+                            // can carry a larger one. The measured delivery
+                            // is what decides, and an unmeasured line keeps
+                            // the house size rather than guessing.
+                            let size = match line.map(|line| line.pace.as_str()) {
+                                Some("punchy") => 0.036,
+                                Some("slow") => 0.046,
+                                _ => 0.04,
+                            };
                             captions.push(json!({
                                 "start": round3(at),
                                 "end": round3(to),
                                 "text": text,
                                 "weight": if intensity >= 0.65 { 800 } else { 600 },
-                                "accent": hot,
+                                "accent": hot || stressed,
+                                "size": size,
                             }));
                         }
                     }
@@ -1983,7 +2597,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         .map(|caption| {
                             let mut style = json!({
                                 "fontFamily": "Hanken Grotesk",
-                                "fontSize": 0.04,
+                                "fontSize": caption["size"],
                                 "fontWeight": caption["weight"],
                                 "content": caption["text"],
                             });
@@ -2018,40 +2632,202 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         .warn()
         .into(),
     );
-    // 8. The entrance: the titles the captions just landed, given motion
-    //    the way the skill's own words ask for - the words rise a little
-    //    and settle as they arrive. One undoable batch keys every title
-    //    the timeline now holds; a title already keyed, or too short to
-    //    hold an entrance, is left still. This is the type motion a
-    //    one-click run can give itself; the baked motion comps (a comp
-    //    rendered through the Geneva sidecar and composited) still need
-    //    the Director's eye and stay its stage.
+    // 8. The graphics, then the entrance. Two motions in one stage, in
+    //    the order an editor works: the designed cards are baked through
+    //    the Geneva engine and placed on the timeline as motion clips
+    //    (linked to their comp, so the card stays editable and the export
+    //    finds its bake by the comp's hash), and then the captions the
+    //    previous stage landed are given their entrance.
+    //
+    //    The cards are the ones the plan named - the read's own act and
+    //    emotion chose each preset, and the line's own words are what the
+    //    card says. A bake that fails skips its card and the run goes on:
+    //    a missing graphic is a smaller loss than an abandoned edit. This
+    //    is the stage that was the Director's alone; it now runs on the
+    //    read, which is what makes the button's motion evidence-driven
+    //    rather than decorative.
     let motion_project = project.clone();
+    let motion_source = takes.clone();
     steps.push(
         DerivedStep::react(
             Stage::Motion,
             Box::new({
-                let mut issued = false;
-                move |log| {
-                    if issued {
-                        return None;
+                // The cards this run will bake, decided on the first ask
+                // from the read: file second and preset, in play order.
+                let mut specs: Option<Vec<MotionSpec>> = None;
+                // The preset library's own slot labels, read once: a
+                // preset's text slot is not called the same thing in every
+                // card, and guessing the label is how a bake is refused.
+                let mut labels: Option<Vec<(String, String)>> = None;
+                // Where the stage is: which card, and which of its calls
+                // (the library, the bake, then the placement) is next.
+                let mut at = 0usize;
+                let mut phase = 0u8;
+                let mut entrances = false;
+                move |log| loop {
+                    let specs = specs
+                        .get_or_insert_with(|| motion_specs(&emotion_lines(log, &motion_source)));
+                    if at >= specs.len() {
+                        // The cards are placed: the captions' entrance is
+                        // the stage's last act, issued once.
+                        if entrances {
+                            return None;
+                        }
+                        entrances = true;
+                        let targets = entrance_targets(log);
+                        if targets.is_empty() {
+                            return None;
+                        }
+                        let mut commands: Vec<Value> = Vec::new();
+                        for (id, duration) in &targets {
+                            commands.extend(entrance_keys(id, *duration));
+                        }
+                        return Some(call(
+                            "edit_apply",
+                            json!({
+                                "path": motion_project,
+                                "command": { "op": "batch", "commands": commands },
+                            }),
+                        ));
                     }
-                    let targets = entrance_targets(log);
-                    if targets.is_empty() {
-                        return None;
+                    let spec = &specs[at];
+                    match phase {
+                        0 => {
+                            // The library once, before the first bake: each
+                            // preset's own text slot, so the words land in
+                            // the field the preset actually has.
+                            if labels.is_none() {
+                                phase = 1;
+                                return Some(call("motion_presets", json!({})));
+                            }
+                            phase = 2;
+                            // The bake: the preset the plan named, its
+                            // text slot filled with the line's own words,
+                            // at the project's own frame (no width or
+                            // height, so a vertical reel bakes vertical).
+                            // A preset with no text slot bakes as itself.
+                            let mut arguments = json!({
+                                "project": motion_project,
+                                "preset": spec.preset,
+                            });
+                            if let Some((_, slot)) = labels
+                                .as_ref()
+                                .and_then(|labels| labels.iter().find(|(id, _)| id == spec.preset))
+                            {
+                                arguments["ops"] = json!([{
+                                    "op": "set-slot", "slot": slot, "value": spec.words,
+                                }]);
+                            }
+                            return Some(call("motion_bake", arguments));
+                        }
+                        1 => {
+                            // The library's reply, read once and kept: the
+                            // first text slot of each preset, by id.
+                            labels = Some(
+                                log.last()
+                                    .and_then(|reply| reply["presets"].as_array())
+                                    .into_iter()
+                                    .flatten()
+                                    .filter_map(|preset| {
+                                        let id = preset["id"].as_str()?.to_owned();
+                                        let slot = preset["slots"]
+                                            .as_array()?
+                                            .iter()
+                                            .find(|slot| slot["field"] == json!("text"))?["label"]
+                                            .as_str()?
+                                            .to_owned();
+                                        Some((id, slot))
+                                    })
+                                    .collect(),
+                            );
+                            phase = 0;
+                        }
+                        2 => {
+                            // The bake's reply carries the comp's hash -
+                            // the key the export resolves the frames by,
+                            // and the comp file is named after it. Place
+                            // the card where the line it was read from now
+                            // plays, which the tighten may have moved.
+                            let baked = log.last().cloned().unwrap_or_default();
+                            let hash = baked["hash"].as_str().map(str::to_owned);
+                            let at_timeline = latest_view(log).and_then(|view| {
+                                let media = media_paths(view);
+                                timeline_at(view, &media, &spec.take, spec.at)
+                            });
+                            match (hash, at_timeline) {
+                                (Some(hash), Some(start))
+                                    if hash.len() == 16
+                                        && hash.bytes().all(|byte| byte.is_ascii_hexdigit()) =>
+                                {
+                                    phase = 3;
+                                    // The comp reference is the file name
+                                    // under the project's comps/, which
+                                    // the bake named after the hash; the
+                                    // reply's `comp` is that file's full
+                                    // path, which the command refuses.
+                                    return Some(call(
+                                        "edit_apply",
+                                        json!({
+                                            "path": motion_project,
+                                            "command": {
+                                                "op": "addMotionClip",
+                                                "start": round3(start),
+                                                "comp": format!("{hash}.json"),
+                                                "hash": hash,
+                                            },
+                                        }),
+                                    ));
+                                }
+                                // A bake with no hash, or a line the
+                                // tighten cut away: no card, next beat.
+                                _ => {
+                                    at += 1;
+                                    phase = 0;
+                                }
+                            }
+                        }
+                        3 => {
+                            // The card lands at the editorial default of
+                            // five seconds; a card that outlives its line
+                            // is the defect the critique stage names, so
+                            // it is trimmed to the line's own hold. The
+                            // trim is a tail trim with no ripple: the
+                            // card owns a lane of its own and nothing
+                            // follows it on that lane.
+                            let placed = log.last().cloned().unwrap_or_default();
+                            let id = placed["createdId"].as_str().map(str::to_owned);
+                            let default = placed["timeline"]["clips"]
+                                .as_array()
+                                .into_iter()
+                                .flatten()
+                                .find(|clip| clip["id"] == placed["createdId"])
+                                .and_then(|clip| clip["duration"].as_f64());
+                            let change = match (id, default) {
+                                (Some(id), Some(duration)) => {
+                                    let delta = spec.hold() - duration;
+                                    (delta.abs() > 0.05).then_some((id, delta))
+                                }
+                                _ => None,
+                            };
+                            at += 1;
+                            phase = 0;
+                            if let Some((id, delta)) = change {
+                                return Some(call(
+                                    "edit_apply",
+                                    json!({
+                                        "path": motion_project,
+                                        "command": {
+                                            "op": "trimClip",
+                                            "clipId": id,
+                                            "edge": "tail",
+                                            "delta": round3(delta),
+                                        },
+                                    }),
+                                ));
+                            }
+                        }
+                        _ => return None,
                     }
-                    let mut commands: Vec<Value> = Vec::new();
-                    for (id, duration) in &targets {
-                        commands.extend(entrance_keys(id, *duration));
-                    }
-                    issued = true;
-                    Some(call(
-                        "edit_apply",
-                        json!({
-                            "path": motion_project,
-                            "command": { "op": "batch", "commands": commands },
-                        }),
-                    ))
                 }
             }),
         )
@@ -2395,9 +3171,27 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             .rev()
                             .find_map(|reply| reply.get("pngPath").and_then(Value::as_str))
                             .filter(|png| !png.trim().is_empty())?;
+                        // The brief carries the arc the voice measured, so
+                        // the critic judges the cut against the story it
+                        // was cut to and not the pictures alone.
+                        let measured = signal_brief(log);
+                        let brief = if measured.as_object().is_some_and(|o| !o.is_empty()) {
+                            measured
+                        } else {
+                            json!({})
+                        };
+                        // `autoSetup` is the difference between a review
+                        // and a pixel count: without it a machine with no
+                        // vision model yet answers from measurements alone
+                        // and the stage would call that a critique.
                         return Some(call(
                             "craft_critique",
-                            json!({ "pngPath": png, "project": preview_project }),
+                            json!({
+                                "pngPath": png,
+                                "project": preview_project,
+                                "brief": brief,
+                                "autoSetup": true,
+                            }),
                         ));
                     }
                     None
@@ -2471,9 +3265,20 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             .rev()
                             .find_map(|reply| reply.get("pngPath").and_then(Value::as_str))
                             .filter(|png| !png.trim().is_empty())?;
+                        let measured = signal_brief(log);
+                        let brief = if measured.as_object().is_some_and(|o| !o.is_empty()) {
+                            measured
+                        } else {
+                            json!({})
+                        };
                         return Some(call(
                             "craft_critique",
-                            json!({ "pngPath": png, "project": revise_project }),
+                            json!({
+                                "pngPath": png,
+                                "project": revise_project,
+                                "brief": brief,
+                                "autoSetup": true,
+                            }),
                         ));
                     }
                     None
@@ -2633,6 +3438,19 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 "actualPath": verify_export,
                                 "toleranceMs": 60,
                             }),
+                        ));
+                    }
+                    if phase == 7 {
+                        phase = 8;
+                        // Transcript and loudness are not proof that the
+                        // rendered file is a usable video. Probe the actual
+                        // export as the final verification call: the media
+                        // reader reports its streams, duration, dimensions,
+                        // frame rate and codecs, and refuses a missing or
+                        // unreadable file.
+                        return Some(call(
+                            "motion_probe",
+                            json!({ "path": verify_export }),
                         ));
                     }
                     None
@@ -2921,6 +3739,299 @@ mod tests {
         // The fan compile-time proof the type system wanted: the repair
         // grouping is the FanStep the runner fans out.
         let _: &FanStep = repair;
+    }
+
+    /// A stressed word really does reach the captions: the log entry has
+    /// always claimed `emphasisWords`, and until this was wired the caption
+    /// stage never read the signal, so the claim was decorative. A caption
+    /// carrying one of the take's own stressed words takes the accent; one
+    /// carrying none stays plain.
+    #[test]
+    fn a_stressed_word_takes_the_caption_accent() {
+        let takes = vec![TakePaths {
+            take: "/takes/a.wav".to_owned(),
+            enhanced: String::new(),
+        }];
+        let log = vec![json!({ "audio": { "path": "/takes/a.wav" },
+            "lines": [{
+                "prosody": { "emphasisWords": [
+                    { "t": 1.0, "strength": 1.2, "wordText": "wreck" },
+                ]},
+            }],
+        })];
+        let words = stressed_words(&log, &takes);
+        assert_eq!(words, vec!["wreck".to_owned()]);
+        let carries = |text: &str| {
+            text.split_whitespace()
+                .map(|w| {
+                    w.trim_matches(|c: char| !c.is_alphanumeric())
+                        .to_lowercase()
+                })
+                .any(|w| words.contains(&w))
+        };
+        assert!(carries("we found the wreck"));
+        assert!(!carries("the hull was empty"));
+    }
+
+    /// The graphic's log entry names only the signals the choice consumed:
+    /// naming `prosody` while the entrance is picked by the read's
+    /// intensity would be the log asserting evidence no decision used.
+    #[test]
+    fn the_graphic_log_claims_only_the_signals_it_spent() {
+        let takes = vec![TakePaths {
+            take: "/t/a.wav".to_owned(),
+            enhanced: String::new(),
+        }];
+        let transcript = json!({
+            "segments": [
+                { "start": 0.0, "end": 3.0, "text": "we found the wreck" },
+                { "start": 4.0, "end": 7.0, "text": "it was not empty" },
+            ],
+        });
+        let log = vec![
+            json!({ "path": "/t/a.wav", "output": transcript.to_string() }),
+            json!({
+                "timeline": { "clips": [
+                    { "id": "c1", "media": "m1", "start": 0.0, "duration": 8.0,
+                      "sourceStart": 0.0, "speed": 1.0 },
+                ]},
+                "media": [{ "id": "m1", "path": "/t/a.wav" }],
+            }),
+            json!({ "lines": [
+                emotion_row(0.0, 3.0, "surprise", 0.9, "hook", "hot", ""),
+                emotion_row(4.0, 7.0, "fear", 0.9, "reveal", "cold", ""),
+            ]}),
+        ];
+        let plan = auto_plan(
+            &log,
+            &takes,
+            &AutoEditProgramSource {
+                project: "/t".to_owned(),
+                takes: takes.clone(),
+                placements: Vec::new(),
+                export: "/t/out.mp4".to_owned(),
+                sheet: "sheet.png".to_owned(),
+                stock_provider: "pexels".to_owned(),
+            },
+        )
+        .expect("a plan from the read");
+        let log_rows = plan["signalLog"].as_array().expect("a signal log");
+        let graphic = log_rows
+            .iter()
+            .find(|row| row["decision"] == json!("graphic"))
+            .expect("a graphic entry");
+        let signals = graphic["signals"].as_array().expect("its signals");
+        assert!(
+            !signals.contains(&json!("prosody")),
+            "the graphic entry claims prosody, which no decision here reads"
+        );
+        assert!(signals.contains(&json!("emotion")));
+    }
+
+    /// The critic's structured fixes are spent, not ignored: a fix that
+    /// carries a number this program can apply becomes the edit command
+    /// for the clip the named frame plays, and one that carries none - or
+    /// arrives under the confidence bar - is left to the report. This is
+    /// the part of the review a vision model answered, so the test is
+    /// that its word reaches the timeline only where it was exact.
+    #[test]
+    fn the_critics_exact_fixes_become_edits() {
+        let view = json!({
+            "timeline": { "clips": [
+                { "id": "c1", "kind": "video", "media": "m1", "trackId": "t1",
+                  "start": 0.0, "duration": 4.0 },
+                { "id": "c2", "kind": "video", "media": "m2", "trackId": "t1",
+                  "start": 4.0, "duration": 4.0, "keyframed": [] },
+            ]},
+        });
+        let log = vec![json!({
+            "craft": { "samples": 8.0, "letterboxedFrames": 0.0, "blackFrames": 0.0,
+                       "staticTransitions": 0.0 },
+            "tiles": [
+                { "index": 0, "at": 0.5 }, { "index": 1, "at": 1.5 },
+                { "index": 2, "at": 2.5 }, { "index": 3, "at": 3.5 },
+                { "index": 4, "at": 4.5 }, { "index": 5, "at": 5.5 },
+                { "index": 6, "at": 6.5 }, { "index": 7, "at": 7.5 },
+            ],
+            "fixes": [
+                { "where": "the caption on frame 5", "problem": "enters early",
+                  "change": "start 4.9s", "op": "retime",
+                  "patch": { "start": 4.9 }, "confidence": 0.8 },
+                { "where": "the chart in frames 6-8", "problem": "too small",
+                  "change": "scale to 1.2", "op": "resize",
+                  "patch": { "factor": 1.2 }, "confidence": 0.7 },
+                { "where": "frame 2", "problem": "off centre",
+                  "change": "shift x by 96px", "op": "shift",
+                  "patch": { "dx": 96, "dy": 0 }, "confidence": 0.65 },
+                { "where": "frame 1", "problem": "a taste I hold loosely",
+                  "change": "scale to 1.1", "op": "resize",
+                  "patch": { "factor": 1.1 }, "confidence": 0.3 },
+                { "where": "frame 0", "problem": "unreadable",
+                  "change": "make it better", "op": "restyle",
+                  "confidence": 0.9 },
+            ],
+        })];
+        let run = [vec![view.clone()], log].concat();
+        let commands = revise_commands(&run);
+        let ops: Vec<&str> = commands
+            .iter()
+            .filter_map(|command| command["op"].as_str())
+            .collect();
+        assert!(
+            ops.contains(&"moveClips"),
+            "the exact retime is spent: {commands:?}"
+        );
+        let moved = commands
+            .iter()
+            .find(|command| command["op"] == json!("moveClips"))
+            .expect("the move");
+        assert_eq!(moved["moves"][0]["clipId"], json!("c2"));
+        assert_eq!(moved["moves"][0]["start"], json!(4.9));
+        assert!(ops.contains(&"setClipKey"), "the resize is spent");
+        let resized = commands
+            .iter()
+            .find(|command| command["op"] == json!("setClipKey"))
+            .expect("the resize");
+        assert_eq!(resized["clipId"], json!("c2"));
+        assert!(
+            commands
+                .iter()
+                .any(|command| command["op"] == json!("setClipTransform")),
+            "the exact shift is spent"
+        );
+        // The low-confidence fix and the fix with no patch are the
+        // report's, not the timeline's.
+        assert!(
+            commands
+                .iter()
+                .filter(|command| command["op"] == json!("setClipKey"))
+                .count()
+                == 2,
+            "one resize spent, the loose one left alone"
+        );
+        assert!(
+            !ops.contains(&"frameClip"),
+            "a restyle with no measured fill is not applied"
+        );
+    }
+
+    /// The brief the critic reads carries what the run measured: the arc,
+    /// the peak, the delivery and the words the voice leaned on. A run
+    /// with no read hands the critic nothing rather than a guess.
+    #[test]
+    fn the_critics_brief_carries_the_measured_signals() {
+        let takes = vec![TakePaths {
+            take: "/t/a.wav".to_owned(),
+            enhanced: String::new(),
+        }];
+        let log = vec![
+            json!({ "lines": [
+                emotion_row(0.0, 3.0, "surprise", 0.9, "hook", "hot", ""),
+                emotion_row(4.0, 7.0, "fear", 0.4, "reveal", "cold", ""),
+            ]}),
+            json!({ "audio": { "path": "/t/a.wav" },
+                "lines": [
+                    { "start": 0.0, "end": 3.0,
+                      "speechRate": { "pace": "punchy" },
+                      "prosody": { "emphasisWords": [
+                          { "t": 1.0, "strength": 1.2, "wordText": "wreck" },
+                      ]} },
+                    { "start": 4.0, "end": 7.0, "speechRate": { "pace": "slow" } },
+                ],
+            }),
+        ];
+        let brief = signal_brief(&log);
+        let _ = takes;
+        assert_eq!(brief["emotionalArc"], json!("hook -> reveal"));
+        assert_eq!(brief["delivery"], json!("punchy, slow"));
+        assert_eq!(brief["emphasisWords"], json!(["wreck"]));
+        assert!(
+            brief["peak"]
+                .as_str()
+                .is_some_and(|peak| peak.contains("surprise")),
+            "the peak names the strongest line: {brief:?}"
+        );
+        assert!(
+            brief["colourSplit"]
+                .as_str()
+                .is_some_and(|split| split.contains("1 of 2")),
+            "the colour split is counted: {brief:?}"
+        );
+        assert!(
+            signal_brief(&[])
+                .as_object()
+                .is_some_and(|brief| brief.is_empty()),
+            "a run with no read hands the critic nothing"
+        );
+    }
+
+    /// A plan built on a take whose delivery was measured names that
+    /// delivery in its log, and one built on a take with no rate measured
+    /// names none: the log never claims a rhythm the reading did not hear.
+    #[test]
+    fn the_plan_logs_the_delivery_only_where_it_was_measured() {
+        let takes = vec![TakePaths {
+            take: "/t/a.wav".to_owned(),
+            enhanced: String::new(),
+        }];
+        let transcript = json!({
+            "segments": [{ "start": 0.0, "end": 3.0, "text": "we found the wreck" }],
+        });
+        let view = json!({
+            "timeline": { "clips": [
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 3.0,
+                  "sourceStart": 0.0, "speed": 1.0 },
+            ]},
+            "media": [{ "id": "m1", "path": "/t/a.wav" }],
+        });
+        let read = json!({ "lines": [
+            emotion_row(0.0, 3.0, "surprise", 0.9, "hook", "hot", ""),
+        ]});
+        let source = || AutoEditProgramSource {
+            project: "/t".to_owned(),
+            takes: takes.clone(),
+            placements: Vec::new(),
+            export: "/t/out.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let pacing = |log: &[Value]| {
+            let plan = auto_plan(log, &takes, &source()).expect("a plan from the read");
+            plan["signalLog"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|row| row["decision"] == json!("pacing"))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let measured = vec![
+            json!({ "path": "/t/a.wav", "output": transcript.to_string() }),
+            view.clone(),
+            read.clone(),
+            json!({ "audio": { "path": "/t/a.wav" },
+                "lines": [{ "start": 0.0, "end": 3.0,
+                            "speechRate": { "pace": "punchy" } }] }),
+        ];
+        let entries = pacing(&measured);
+        assert_eq!(entries.len(), 1, "one measured pace, one entry");
+        let signals = entries[0]["signals"].as_array().expect("signals");
+        assert!(signals.contains(&json!("speechRate")));
+        assert!(
+            signals
+                .iter()
+                .filter_map(Value::as_str)
+                .all(crate::tools::signal_vocabulary_has)
+        );
+        let unmeasured = vec![
+            json!({ "path": "/t/a.wav", "output": transcript.to_string() }),
+            view,
+            read,
+        ];
+        assert!(
+            pacing(&unmeasured).is_empty(),
+            "a take with no measured rate logs no pacing"
+        );
     }
 
     /// The accents stage steps over a peak the timeline does not play
@@ -3956,6 +5067,51 @@ mod tests {
         assert_eq!(lines[1]["end"], 3.0);
     }
 
+    /// The delivery the reading measured reaches the decisions it should:
+    /// the rate over a span is the line that overlaps it most, and a span
+    /// no line measured answers empty rather than inventing a pace.
+    #[test]
+    fn the_delivery_pace_is_read_from_the_line_over_the_span() {
+        let log = vec![json!({
+            "audio": { "path": "/t/a.wav" },
+            "lines": [
+                { "start": 0.0, "end": 2.0, "speechRate": { "pace": "punchy" } },
+                { "start": 2.0, "end": 6.0, "speechRate": { "pace": "slow" } },
+                { "start": 6.0, "end": 7.0 },
+            ],
+        })];
+        assert_eq!(delivery_pace(&log, "/t/a.wav", 0.2, 1.4), "punchy");
+        assert_eq!(delivery_pace(&log, "/t/a.wav", 2.5, 5.0), "slow");
+        assert_eq!(
+            delivery_pace(&log, "/t/a.wav", 6.1, 6.9),
+            "",
+            "a line with no measured rate answers no pace"
+        );
+        assert_eq!(
+            delivery_pace(&log, "/t/other.wav", 0.0, 2.0),
+            "",
+            "another take's reading is not this take's pace"
+        );
+    }
+
+    /// A card on a punchy line holds tighter than the same line delivered
+    /// slowly, and an unmeasured line keeps the editorial default: the
+    /// delivery is what sets the beat, not the clock alone.
+    #[test]
+    fn a_punchy_line_holds_a_tighter_card() {
+        let card = |pace: &str| MotionSpec {
+            take: "/t/a.wav".to_owned(),
+            at: 0.0,
+            end: 4.0,
+            preset: "kinetic.title",
+            words: "the wreck".to_owned(),
+            act: "reveal".to_owned(),
+            pace: pace.to_owned(),
+        };
+        assert!(card("punchy").hold() < card("").hold());
+        assert!(card("slow").hold() > card("").hold());
+    }
+
     /// The look the grade lays over the cut is the temperature the read
     /// named, not a fixed blockbuster look: a joyful take grades golden,
     /// a fearful one cold, and only an unread take falls back.
@@ -3973,6 +5129,8 @@ mod tests {
                 duck_db: -14.0,
                 sfx_type: "bright chime, pop, uplifting swell".to_owned(),
                 bgm_words: vec!["warm".to_owned()],
+                text: String::new(),
+                pace: String::new(),
             },
             EmotionLine {
                 take: "/t/a.wav".to_owned(),
@@ -3985,6 +5143,8 @@ mod tests {
                 duck_db: -20.0,
                 sfx_type: String::new(),
                 bgm_words: Vec::new(),
+                text: String::new(),
+                pace: String::new(),
             },
         ];
         let line = dominant(&lines).expect("a dominant line");
@@ -4030,6 +5190,8 @@ mod tests {
             duck_db: -12.0,
             sfx_type: "hit + beat of silence (stinger)".to_owned(),
             bgm_words: Vec::new(),
+            text: String::new(),
+            pace: String::new(),
         };
         assert_eq!(
             sfx_queries_for_line(Some(&stinger), "surprise"),
@@ -4064,6 +5226,8 @@ mod tests {
             duck_db: -12.0,
             sfx_type: String::new(),
             bgm_words: Vec::new(),
+            text: String::new(),
+            pace: String::new(),
         };
         let read = vec![line(0.0, 2.0, 0.9, "tension")];
         assert!(
@@ -4420,6 +5584,65 @@ mod tests {
                 { "seconds": 2.5, "strength": 0.5 },
                 { "seconds": 4.0, "strength": 0.5 }
             ])
+        );
+    }
+
+    /// A successful transcript and loudness reading do not prove that
+    /// the rendered file is a decodable video. Verify ends by probing the
+    /// exact export path, after the timeline, transcript and mix checks.
+    #[test]
+    fn verify_probes_the_rendered_export_after_content_and_mix_gates() {
+        use concat_director::ProgramStep;
+
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: "/edits/Reel/voiceover/take.wav".to_owned(),
+                enhanced: "/edits/Reel/voiceover/enhanced.wav".to_owned(),
+            }],
+            placements: vec![TakePlacement {
+                take: "/edits/Reel/voiceover/take.wav".to_owned(),
+                start: 0.0,
+                source_in: 0.0,
+                source_out: 4.0,
+                speed: 1.0,
+            }],
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(verify) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "verify")
+            .expect("the program has a Verify stage")
+        else {
+            panic!("Verify is a derived stage");
+        };
+
+        let mut log = Vec::new();
+        for expected in [
+            "collision_check",
+            "timeline_read",
+            "transcribe",
+            "analysis_wait",
+            "analysis_wait",
+            "measure_loudness",
+            "emotion",
+        ] {
+            let next = (verify.next)(&log).expect("the next verification call exists");
+            assert_eq!(next.tool, expected);
+            log.push(json!({}));
+        }
+
+        let probe = (verify.next)(&log).expect("the actual export is probed");
+        assert_eq!(probe.tool, "motion_probe");
+        assert_eq!(probe.arguments["path"], source.export);
+        log.push(json!({ "probe": { "streams": [] } }));
+        assert!(
+            (verify.next)(&log).is_none(),
+            "the probe is the final Verify call"
         );
     }
 }

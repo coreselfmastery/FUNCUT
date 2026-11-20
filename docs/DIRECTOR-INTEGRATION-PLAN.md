@@ -27,7 +27,7 @@ one corrects **this plan**:
 
 1. **It says "0/42" for the roadmap and implies 42 MCP tools.** The
    `Action` enum has 42 variants, but `catalogue()` (`tools.rs:257`) lists
-   **113 tools** (the README's number); 103 are served to a director by
+   **113 tools** (the README's number); 104 are served to a director by
    default. "42" is the enum, not the tool count.
 2. **Its §5.3 repeats the flatten-to-MP4 claim this plan also made - and
    both are half-wrong.** See the correction to Workstream D below: the

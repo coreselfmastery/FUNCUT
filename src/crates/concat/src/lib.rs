@@ -1718,8 +1718,9 @@ fn start(
             }
         ));
         // The AUTO EDIT: the unattended edit of the timeline's own
-        // voiceover, driven by the concat-director runner through the
-        // concat-mcp seam - no harness, no agent, the deterministic spine.
+        // voiceover. It hands the sibling to the same Forge Director the
+        // Start button runs; only when the harness, the skill or a model
+        // key is missing does it fall back to the deterministic spine.
         forge.on_auto_edit_start(on_window!(|state| {
             state.handle(Msg::Forge(crate::panes::forge::ForgeMsg::AutoEditStart));
         }));

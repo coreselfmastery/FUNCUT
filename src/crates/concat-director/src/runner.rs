@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use crate::error::{AutoEditError, ToolCall, ToolError};
+use crate::receipt::{AcceptanceReceipt, StageOutcome, StageRecord, derive_gates, provenance_of};
 use crate::stage::{EditProgram, ErrorPolicy, ProgramStep, ReplyGate, Stage};
 use crate::state::{AutoEditEvent, AutoEditProgress, AutoEditState, RunOutcome, timestamp};
 
@@ -34,7 +35,7 @@ const ATTEMPTS: u32 = 3;
 
 /// What one driven queue of calls answers with: its failure, with the
 /// attempt that failed, and every reply the queue drew.
-type DriveResult = (Option<(AutoEditError, u32)>, Vec<Value>);
+type DriveResult = (Option<(AutoEditError, u32)>, Vec<(ToolCall, Value)>);
 
 /// The pause before the first retry. It doubles with each attempt - two
 /// seconds, then four - the watcher's own cadence.
@@ -357,7 +358,30 @@ impl Runner {
         // a derived step derives from, and the only memory a program's
         // later stages have of its earlier ones.
         let mut log: Vec<Value> = Vec::new();
+        // Every tool call that answered, with the call itself: the
+        // evidence the acceptance receipt's gates are read from, the
+        // capability coverage it reports, and the asset provenance the
+        // licensed imports leave behind. Kept apart from `log`, which the
+        // derives read by position and must not change shape.
+        let mut observed: Vec<(ToolCall, Value)> = Vec::new();
+        // The receipt's stage lines, in the program's order. A stage
+        // whose outcome is not yet known carries `NotReached` until the
+        // walk says otherwise.
+        let mut records: Vec<StageRecord> = program
+            .steps
+            .iter()
+            .map(|step| StageRecord {
+                stage: step.stage(),
+                outcome: StageOutcome::NotReached,
+                calls: Vec::new(),
+                failure: None,
+            })
+            .collect();
 
+        // The index is the one handle both the program (borrowed mutably
+        // by the derived steps) and the receipt's stage records are read
+        // and written through, in lockstep.
+        #[allow(clippy::needless_range_loop)]
         for index in 0..program.steps.len() {
             let stage = program.steps[index].stage();
             let policy = program.steps[index].policy();
@@ -402,6 +426,7 @@ impl Runner {
                         "skipped: the stage completed in a prior run",
                     ),
                 );
+                records[index].outcome = StageOutcome::Skipped;
                 continue;
             }
             let stage_started = Instant::now();
@@ -426,7 +451,7 @@ impl Runner {
             // The gate evidence: every reply this stage's calls drew, kept
             // for the gates below and dropped with them - only the Verify
             // stage's last answer travels on in `verification`.
-            let mut replies: Vec<Value> = Vec::new();
+            let mut replies: Vec<(ToolCall, Value)> = Vec::new();
             // The stage's last call, for a gate failure to name: the call
             // whose reply the gate read, whatever kind of step drew it.
             #[allow(unused_assignments)]
@@ -626,9 +651,13 @@ impl Runner {
                     ProgramStep::Fanned(_) => unreachable!("the fan ran above"),
                 }
             }
-            for reply in &replies {
+            for (call, reply) in &replies {
                 if stage == Stage::Verify {
                     verification = reply.clone();
+                }
+                observed.push((call.clone(), reply.clone()));
+                if !records[index].calls.contains(&call.tool) {
+                    records[index].calls.push(call.tool.clone());
                 }
             }
 
@@ -642,7 +671,7 @@ impl Runner {
                 for gate in &gates {
                     let mut answered = false;
                     let mut failed = None;
-                    for reply in &replies {
+                    for (_, reply) in &replies {
                         if let Some(answer) = gate.checked_by(reply) {
                             answered = true;
                             if let Err(sentence) = answer {
@@ -680,6 +709,7 @@ impl Runner {
                     // The stage's calls all landed: it joins the resume
                     // record, so a later run on this runner skips it
                     // (IDEM).
+                    records[index].outcome = StageOutcome::Completed;
                     self.shared
                         .completed
                         .lock()
@@ -705,9 +735,13 @@ impl Runner {
                     );
                 }
                 Some(error) if policy == ErrorPolicy::Warn => {
+                    records[index].outcome = StageOutcome::Warned;
+                    records[index].failure = Some(error.line());
                     warnings.push(error.line());
                 }
                 Some(error) => {
+                    records[index].outcome = StageOutcome::Failed;
+                    records[index].failure = Some(error.line());
                     self.emit(
                         AutoEditState::Failed {
                             stage,
@@ -737,12 +771,25 @@ impl Runner {
         };
         let progress =
             AutoEditProgress::new(last.stage(), total - 1, total, duration, duration, detail);
+        // The acceptance receipt: the run's own evidence, read from the
+        // replies its calls drew. A stage that never got its turn stays
+        // `NotReached`, and a gate whose measurement never landed is
+        // `Skipped` - never a pass the run did not earn.
+        let receipt = AcceptanceReceipt::new(
+            self.project().display().to_string(),
+            program.export.display().to_string(),
+            records,
+            derive_gates(&observed),
+            warnings.clone(),
+        )
+        .with_assets(provenance_of(&observed));
         if warnings.is_empty() {
             self.emit(
                 AutoEditState::Completed {
                     export: program.export.clone(),
                     duration,
                     verification: verification.clone(),
+                    receipt: Some(Box::new(receipt)),
                 },
                 progress,
             );
@@ -754,6 +801,7 @@ impl Runner {
                     duration,
                     warnings,
                     verification,
+                    receipt: Some(Box::new(receipt)),
                 },
                 progress,
             );
@@ -776,10 +824,10 @@ impl Runner {
         applied: &mut Vec<Stage>,
         calls: Vec<ToolCall>,
         caller: &mut dyn ToolCaller,
-    ) -> (Option<(AutoEditError, u32)>, Vec<Value>) {
+    ) -> DriveResult {
         let mut failure: Option<AutoEditError> = None;
         let mut failed_attempt = 1;
-        let mut replies: Vec<Value> = Vec::new();
+        let mut replies: Vec<(ToolCall, Value)> = Vec::new();
         'calls: for call in &calls {
             self.emit(
                 running.clone(),
@@ -831,7 +879,7 @@ impl Runner {
                         } else if call.tool == EDIT_UNDO {
                             applied.pop();
                         }
-                        replies.push(reply.clone());
+                        replies.push((call.clone(), reply.clone()));
                         log.push(reply);
                         break;
                     }
@@ -881,10 +929,10 @@ impl Runner {
         running: AutoEditState,
         calls: Vec<ToolCall>,
         caller: &mut Box<dyn ToolCaller>,
-    ) -> (Option<(AutoEditError, u32)>, Vec<Value>) {
+    ) -> DriveResult {
         let mut failure: Option<AutoEditError> = None;
         let mut failed_attempt = 1;
-        let mut replies: Vec<Value> = Vec::new();
+        let mut replies: Vec<(ToolCall, Value)> = Vec::new();
         'calls: for call in &calls {
             if self.cancelled() {
                 break 'calls;
@@ -930,7 +978,7 @@ impl Runner {
                 };
                 match made {
                     Ok(reply) => {
-                        replies.push(reply);
+                        replies.push((call.clone(), reply));
                         break;
                     }
                     Err(error) => {
@@ -1416,6 +1464,7 @@ mod tests {
             export,
             duration,
             verification,
+            receipt,
         } = runner.state()
         else {
             panic!("the run completed");
@@ -1423,6 +1472,14 @@ mod tests {
         assert_eq!(export, PathBuf::from("/edits/Reel/export.mp4"));
         assert_eq!(verification, json!({ "overlaps": 0, "gaps": 0 }));
         assert!(duration >= Duration::ZERO);
+        // The receipt is written from the run's own replies: the
+        // timeline read is the only measurement, so the gates that read
+        // a plan, a mix or the file are skipped, not passed.
+        let receipt = receipt.expect("a completed run carries its receipt");
+        assert_eq!(receipt.schema, crate::receipt::SCHEMA);
+        assert_eq!(receipt.stages.len(), 3);
+        assert!(receipt.stages.iter().all(|stage| stage.outcome.landed()));
+        assert!(receipt.capabilities.iter().any(|area| area.consumed));
 
         let received: Vec<AutoEditEvent> = events.try_iter().collect();
         // One event per stage began, one per call, one terminal.

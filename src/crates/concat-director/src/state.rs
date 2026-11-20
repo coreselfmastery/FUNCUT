@@ -56,6 +56,12 @@ pub enum AutoEditState {
         /// The last successful answer of the Verify stage: the evidence
         /// an acceptance read wants.
         verification: Value,
+        /// What the run actually did, as evidence: every stage's
+        /// outcome, the capability areas it reached, and the independent
+        /// quality gates with their verdict. A run that shipped a file
+        /// the gates rejected says so here rather than in a log line.
+        #[serde(default)]
+        receipt: Option<Box<crate::receipt::AcceptanceReceipt>>,
     },
     /// The export is shipped with flaws written down: the warn-policy
     /// stages that failed, recorded per slot the way the revise loop
@@ -71,6 +77,10 @@ pub enum AutoEditState {
         warnings: Vec<String>,
         /// The last successful answer of the Verify stage.
         verification: Value,
+        /// What the run actually did, as evidence - see
+        /// [`Completed`](AutoEditState::Completed).
+        #[serde(default)]
+        receipt: Option<Box<crate::receipt::AcceptanceReceipt>>,
     },
     /// The run was asked to stop, and stopped at a stage boundary.
     /// `rolled_back` says whether every edit the run had applied was

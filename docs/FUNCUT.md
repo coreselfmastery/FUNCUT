@@ -194,12 +194,13 @@ arguments. Three changes made the surface one an agent can actually hold:
   **113 tools** (`openvid_rank_for_slot`, `footage_continuity`,
   `footage_plan_suggest`) and the window's playhead arrived as
   `timeline_seek`.
-- **The default surface is the director's** - 103 of the 113, the creative
+- **The default surface is the director's** - 104 of the 113, the creative
   loop the skill documents plus its remedies; `tools/list` now serves
   what the allowlist serves (a tool off the list is neither listed nor
-  callable). The ten left off are the ones a director never calls by
+  callable). The nine left off are the ones a director never calls by
   surprise; `CONCAT_MCP_ALLOW=all` (or `--full-tools`, or `--mcp-allow
-  all`) serves the whole catalogue.
+  all`) serves the whole catalogue. `motion_probe` is served, not left
+  off: it is what proves an export is a readable file.
 
 And the reading is now *used*: `voice_signals` answers with
 `signalConfidence` (how much to lean on each signal family, and why),

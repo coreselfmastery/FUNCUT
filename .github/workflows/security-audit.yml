@@ -1,23 +1,16 @@
 name: Dependency security audit
 
-# The seven ignored advisories below are the remaining findings after
-# the dependency-upgrade session (PR #146) cleared thirteen with real
-# upgrades: zip 2.4.2 (x4) and the zstd/zstd-safe pair riding its optional
-# feature sit in the sherpa-onnx-sys
-# 1.13.7 build-dependency subtree, which the supported build never executes -
-# its build.rs opens an archive only on the iOS .xcframework path, a
-# Linux-only product never takes it, SHERPA_ONNX_LIB_DIR (always set by the
-# supported env, scripts/funcut-env.sh) returns before the download path is
-# reached, and the prebuilt archives are sha256-verified against
-# scripts/ci/deps.lock first. The real fix is the sherpa-onnx 2.x migration
-# with re-pinned digests - PR #173, in review. It moves to sherpa-onnx-sys
-# 2.0.2, whose zip build-dependency is the patched 9.x line, which removes
-# both the seven ignored crates and the two current advisories from the
-# lockfile; #173 also deletes every --ignore below, so the audit there runs
-# with no suppressions at all. The ignores are per-ID, so any NEW advisory
-# still fails the audit. The current database reports RUSTSEC-2026-0545 and
-# RUSTSEC-2026-0548 on zip 2.4.2 in this subtree; they are intentionally NOT
-# ignored. On main the audit therefore stays red until #173 lands.
+# No advisories are ignored: the sherpa-onnx 2.x migration (PR #173, merged)
+# cleared the last of them. zip 2.4.2 (four advisories) and the zstd/zstd-safe
+# pair riding its optional feature sat in the sherpa-onnx-sys 1.13.7
+# build-dependency subtree, which the supported build never executes - its
+# build.rs opens an archive only on the iOS .xcframework path, a Linux-only
+# product never takes it, SHERPA_ONNX_LIB_DIR (always set by the supported
+# env, scripts/funcut-env.sh) returns before the download path is reached,
+# and the prebuilt archives are sha256-verified against scripts/ci/deps.lock
+# first. sherpa-onnx-sys 2.0.2 builds against zip 9 instead, so the subtree
+# no longer carries a vulnerable zip and the seven per-ID ignores that stood
+# in for the migration are gone. Any new advisory fails the audit.
 
 on:
   push:
@@ -58,15 +51,5 @@ jobs:
       - name: Install pinned cargo-audit
         run: cargo install --locked --version 0.22.2 cargo-audit
       - name: Audit the committed dependency lockfile
-        # The seven inert sherpa-subtree advisories above, ignored per ID so
-        # anything new still fails.
-        run: >
-          cargo audit --file src/Cargo.lock
-          --ignore RUSTSEC-2026-0367
-          --ignore RUSTSEC-2026-0368
-          --ignore RUSTSEC-2026-0369
-          --ignore RUSTSEC-2026-0429
-          --ignore RUSTSEC-2026-0391
-          --ignore RUSTSEC-2026-0398
-          --ignore RUSTSEC-2026-0403
+        run: cargo audit --file src/Cargo.lock
 

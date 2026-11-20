@@ -3639,10 +3639,10 @@ fn signal_log_gate(plan: &Value, segments: &[Value], runtime: f64) -> Value {
             .unwrap_or_default();
         if !matches!(
             decision,
-            "cut" | "caption" | "graphic" | "bgm" | "transition"
+            "cut" | "caption" | "graphic" | "bgm" | "transition" | "pacing"
         ) {
             problems.push(format!(
-                "entry {at}: decision {decision:?} is not one of cut, caption, graphic, bgm, transition"
+                "entry {at}: decision {decision:?} is not one of cut, caption, graphic, bgm, transition, pacing"
             ));
             continue;
         }
@@ -3691,7 +3691,7 @@ fn signal_log_gate(plan: &Value, segments: &[Value], runtime: f64) -> Value {
         (logged_cuts as f64 / expected_cuts.max(1) as f64).min(1.0)
     };
     let mut per_decision = serde_json::Map::new();
-    for decision in ["cut", "caption", "graphic", "bgm", "transition"] {
+    for decision in ["cut", "caption", "graphic", "bgm", "transition", "pacing"] {
         per_decision.insert(
             decision.to_owned(),
             json!(*counts.get(decision).unwrap_or(&0)),
@@ -7125,9 +7125,12 @@ mod tests {
     /// comment's advice but the env the server starts with - an
     /// assignment in the `[servers.transport.env]` table - and it must
     /// name only tools the catalogue carries, leaving out exactly the
-    /// ten the director never calls by surprise (the farm pair, the
+    /// nine the director never calls by surprise (the farm pair, the
     /// specialist motion reads, track_subject, geneva_explain, and the
     /// two a harness must never call: project_close and export_cancel).
+    /// `motion_probe` is NOT among them: it is the only tool that proves
+    /// the export is a readable file, so the preferred path must be able
+    /// to call it before it calls the run done.
     /// The first paste-ready comment must agree with it, or the two
     /// lists drift: a tool added to one and not the other ships advice
     /// the active server does not follow (or the reverse). The refusal
@@ -7162,7 +7165,7 @@ mod tests {
                 "the active list names {name}, which catalogue() does not carry"
             );
         }
-        // Exactly the ten the policy names are left off - no more, so a
+        // Exactly the nine the policy names are left off - no more, so a
         // specialist tool cannot sneak onto the default surface, and no
         // fewer, so the director's documented loop never meets a
         // refusal it did not earn.
@@ -7180,13 +7183,12 @@ mod tests {
                 "motion_farm_cloud",
                 "motion_farm_progress",
                 "motion_preview",
-                "motion_probe",
                 "project_close",
                 "scene_analysis",
                 "scene_timeline",
                 "track_subject",
             ],
-            "the active allowlist leaves out exactly the ten the policy names"
+            "the active allowlist leaves out exactly the nine the policy names"
         );
         assert_eq!(
             allow.len() + left_off.len(),

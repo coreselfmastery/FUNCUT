@@ -3440,6 +3440,19 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             }),
                         ));
                     }
+                    if phase == 7 {
+                        phase = 8;
+                        // Transcript and loudness are not proof that the
+                        // rendered file is a usable video. Probe the actual
+                        // export as the final verification call: the media
+                        // reader reports its streams, duration, dimensions,
+                        // frame rate and codecs, and refuses a missing or
+                        // unreadable file.
+                        return Some(call(
+                            "motion_probe",
+                            json!({ "path": verify_export }),
+                        ));
+                    }
                     None
                 }
             }),
@@ -5571,6 +5584,65 @@ mod tests {
                 { "seconds": 2.5, "strength": 0.5 },
                 { "seconds": 4.0, "strength": 0.5 }
             ])
+        );
+    }
+    
+    /// A successful transcript and loudness reading do not prove that
+    /// the rendered file is a decodable video. Verify ends by probing the
+    /// exact export path, after the timeline, transcript and mix checks.
+    #[test]
+    fn verify_probes_the_rendered_export_after_content_and_mix_gates() {
+        use concat_director::ProgramStep;
+
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: "/edits/Reel/voiceover/take.wav".to_owned(),
+                enhanced: "/edits/Reel/voiceover/enhanced.wav".to_owned(),
+            }],
+            placements: vec![TakePlacement {
+                take: "/edits/Reel/voiceover/take.wav".to_owned(),
+                start: 0.0,
+                source_in: 0.0,
+                source_out: 4.0,
+                speed: 1.0,
+            }],
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(verify) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "verify")
+            .expect("the program has a Verify stage")
+        else {
+            panic!("Verify is a derived stage");
+        };
+
+        let mut log = Vec::new();
+        for expected in [
+            "collision_check",
+            "timeline_read",
+            "transcribe",
+            "analysis_wait",
+            "analysis_wait",
+            "measure_loudness",
+            "emotion",
+        ] {
+            let next = (verify.next)(&log).expect("the next verification call exists");
+            assert_eq!(next.tool, expected);
+            log.push(json!({}));
+        }
+
+        let probe = (verify.next)(&log).expect("the actual export is probed");
+        assert_eq!(probe.tool, "motion_probe");
+        assert_eq!(probe.arguments["path"], source.export);
+        log.push(json!({ "probe": { "streams": [] } }));
+        assert!(
+            (verify.next)(&log).is_none(),
+            "the probe is the final Verify call"
         );
     }
 }

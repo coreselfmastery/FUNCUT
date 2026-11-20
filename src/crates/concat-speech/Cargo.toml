@@ -47,7 +47,7 @@ whisper-rs = { version = "0.16", features = ["raw-api"] }
 
 # Text to speech: the official k2-fsa bindings. Linked statically,
 # so the binary carries no extra dylibs.
-sherpa-onnx = "1.13"
+sherpa-onnx = "2.0"
 
 [features]
 chatterbox = ["dep:ort", "dep:tokenizers", "dep:concat-vision"]

@@ -23,8 +23,8 @@ onnxruntime-linux-aarch64   https://sourceforge.net/projects/onnx-runtime.mirror
 
 # sherpa-onnx's prebuilt libraries. The version is the one src/Cargo.lock
 # resolves for sherpa-onnx-sys; the workflows check the two agree.
-sherpa-onnx-linux-x64-static-lib            https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.7/sherpa-onnx-v1.13.7-linux-x64-static-lib.tar.bz2            d1be7a69ac2b30120058d8302e624239a3064085383cfa47994a14fdc44c32d6
-sherpa-onnx-linux-aarch64-static-lib        https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.7/sherpa-onnx-v1.13.7-linux-aarch64-static-lib.tar.bz2        743b4debabab2e9f654e393da7263bd9795aabed60ae80c83023054083415d14
+sherpa-onnx-linux-x64-static-lib            https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.2/sherpa-onnx-v2.0.2-linux-x64-static-lib.tar.bz2            082743c80ec9d3fd739df174b9e46ab08ac77c9f57a1d2b09977a7fd5324727d
+sherpa-onnx-linux-aarch64-static-lib        https://github.com/k2-fsa/sherpa-onnx/releases/download/v2.0.2/sherpa-onnx-v2.0.2-linux-aarch64-static-lib.tar.bz2        c2ff3464e4065b4e04a0cdbc00f43f4e44405d6c3ea4e4023f4a4e069645e3fb
 
 # The Linux packagers: nfpm (NFPM_VERSION in build-app.yml) for the .deb
 # and .rpm, and appimagetool with the AppImage runtime it embeds, both a

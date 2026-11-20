@@ -125,15 +125,27 @@ jobs:
   analysis:
     name: The analysis senses against real fixtures
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # The fixtures themselves are about a minute's work; the job's cost is
+    # FFmpeg. When the runner image ships it the install is a no-op, but an
+    # image without it pulls 105 MB from the Ubuntu mirror, and a slow
+    # mirror has held that download past fifteen minutes (two runs were
+    # cancelled at the old limit while still fetching packages). Thirty
+    # minutes leaves the install room; --no-install-recommends below cuts
+    # the download itself, and the ffmpeg check skips apt when the image
+    # already has the binary.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
       - name: FFmpeg for real-fixture analysis
         run: |
+          if command -v ffmpeg >/dev/null; then
+            ffmpeg -version | head -n 1
+            exit 0
+          fi
           bash scripts/ci/apt-retry.sh update
-          bash scripts/ci/apt-retry.sh install -y ffmpeg
+          bash scripts/ci/apt-retry.sh install -y --no-install-recommends ffmpeg
       # The Director self-test renders real synthetic video/audio and probes
       # the silent-export refusal, so it belongs in the FFmpeg-equipped job.
       - name: Auto Director end-to-end safety self-test

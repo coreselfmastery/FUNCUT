@@ -64,48 +64,54 @@ pub enum Stage {
     /// The sound accents land: the library shopped, one accent placed
     /// on each of the measured emphasis peaks.
     Sfx,
-    /// A preview is rendered to be watched - the frames the Watch stage
-    /// scores.
+    /// The cut is looked at before it is paid for: `watch_render` samples
+    /// the OPEN timeline - not the export, which has not been rendered
+    /// yet - and `craft_critique` scores the sheet, so the numbers the
+    /// revise answers exist before the encode is spent.
     Preview,
     /// The cut is rendered and waited on to a terminal job state (the
-    /// seventeenth step).
+    /// fifteenth stage).
     Export,
     /// The actual output is inspected and scored: `watch_render`'s
-    /// contact sheet, `craft_critique`'s score (the twentieth step).
+    /// contact sheet, `craft_critique`'s score (the seventeenth stage).
     Watch,
-    /// The critic's notes are answered per slot - a B-roll slot
-    /// re-shopped with the current clip excluded, a graphic re-rendered
-    /// with the named fix, a caption corrected - and the preview
-    /// re-rendered and re-watched. At most twice, and never the same
-    /// edit twice over one note.
+    /// The critic's measured faults are answered with targeted edits: a
+    /// fill for letterbox bars, a bounded head trim for a black opening,
+    /// a push-in on every *other* shot for static cuts - one undoable
+    /// batch, then the same frames scored again. A cut that measured
+    /// clean issues no edit at all, and a fault with no honest fix in the
+    /// editing vocabulary is left to the report rather than papered over.
+    /// It runs BEFORE the export so the corrected cut is what ships.
     Revise,
     /// The export is certified: the words re-read from the render, the
     /// loudness measured and asserted, the timeline checked for overlaps,
-    /// gaps and duplicates (the eighteenth and nineteenth steps).
+    /// gaps and duplicates (the sixteenth stage).
     Verify,
 }
 
 impl Stage {
-    /// Every stage, in the canonical order the pipeline runs them: the
-    /// register, read left to right.
+    /// Every stage, in the order the AUTO EDIT program runs them: the
+    /// register, read left to right. [`Runner::completed`](crate::Runner::completed)
+    /// reports a resumed run in this order, so it must be the program's
+    /// order and not the enum's.
     pub const ALL: [Stage; 17] = [
         Stage::HandoffVoiceover,
-        Stage::Transcribe,
         Stage::AudioRepair,
+        Stage::Transcribe,
         Stage::VoiceSignals,
         Stage::Understand,
         Stage::Plan,
-        Stage::Gather,
-        Stage::Motion,
         Stage::Timeline,
+        Stage::Gather,
         Stage::Captions,
+        Stage::Motion,
         Stage::Music,
         Stage::Sfx,
         Stage::Preview,
-        Stage::Export,
-        Stage::Watch,
         Stage::Revise,
+        Stage::Export,
         Stage::Verify,
+        Stage::Watch,
     ];
 
     /// The stage's short name - the same word its JSON carries, the word
@@ -521,7 +527,15 @@ mod tests {
     fn the_register_holds_seventeen_stages_and_the_first_and_last_say_so() {
         assert_eq!(Stage::ALL.len(), 17);
         assert_eq!(Stage::ALL.first(), Some(&Stage::HandoffVoiceover));
-        assert_eq!(Stage::ALL.last(), Some(&Stage::Verify));
+        // The watch is last: it scores the file the export wrote, after
+        // the revise has already corrected the timeline the export read.
+        // The revise therefore comes BEFORE the export - a revision after
+        // the render would leave the shipped file showing the old cut.
+        assert_eq!(Stage::ALL.last(), Some(&Stage::Watch));
+        assert_eq!(Stage::ALL[12], Stage::Preview);
+        assert_eq!(Stage::ALL[13], Stage::Revise);
+        assert_eq!(Stage::ALL[14], Stage::Export);
+        assert_eq!(Stage::ALL[15], Stage::Verify);
     }
 
     #[test]

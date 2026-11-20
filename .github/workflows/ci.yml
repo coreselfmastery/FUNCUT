@@ -58,6 +58,7 @@ jobs:
       - run: bash -n scripts/ci/apt-retry.sh
       - run: python3 -m py_compile scripts/motion/check-geneva-pins.py
       - run: python3 scripts/motion/check-geneva-pins.py
+      - run: python3 scripts/ci/check-ort-pins.py
       - run: python3 -m py_compile scripts/motion/benchmark-geneva.py
       - run: python3 scripts/motion/benchmark-geneva.py --help >/dev/null
       - run: python3 scripts/motion/test-benchmark-geneva.py
@@ -151,7 +152,7 @@ jobs:
     env:
       # See build-app.yml: the version the ort crate is built against.
       # scripts/ci/deps.lock pins the file.
-      ORT_VERSION: 1.28.0
+      ORT_VERSION: 1.30.1
       # The test binaries on CI carry no debug information at all. The
       # line tables the profiles keep locally (see [profile.dev] in
       # Cargo.toml) are a cost the whole workspace's test binaries pay at

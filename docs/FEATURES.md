@@ -426,6 +426,24 @@ always win; maestro refines how a floor is met, never lowers it. See
   `emotion` tool run on the multilingual
   `tabularisai/multilingual-emotion-classification` model rather than the
   English-only lexicon.
+- **AUTO EDIT** is the one-click voiceover pass: it repairs and reads the
+  takes, tightens measured dead air, lays captions and title entrances,
+  grades the full runtime, fills narration gaps from the configured
+  Pexels/Pixabay live stock shelf, shops a music bed and ducks it under
+  the voice, lands sound accents on the measured emphasis peaks, samples
+  the open timeline and scores it, renders, verifies the export, watches
+  it, and answers the critic's measured faults with targeted edits. The
+  provider licence travels in the import reply; without a configured key
+  the gather stage reports the provider's missing-key refusal and leaves
+  the gap empty. It never uses the research-only OpenVid index for
+  unattended B-roll. Seventeen stages run in this order: handoff,
+  audio-repair, transcribe, voice-signals, understand, plan, timeline,
+  gather, captions, motion, music, sfx, preview, revise, export,
+  verify, watch. The **preview** samples the *open timeline* (not the render)
+  before the export is paid for, and the **revise** turns the critic's
+  own numbers into one undoable `edit_apply` batch - a fill for bars, a
+  bounded head trim for a black opening, a push-in on every *other* shot
+  for static cuts - issuing no edit at all on a cut that measured clean.
 - **The harness config** (`.forge/mcp.toml`): one stdio server (`concat
   --mcp auto`), a 900-second call timeout for patient work, servers
   allow-listed to `funcut`, and the per-tool allowlist active in the

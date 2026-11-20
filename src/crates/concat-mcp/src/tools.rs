@@ -1573,6 +1573,11 @@ fn input_schema(schemas: &Schemas, tool: &Tool) -> Option<Value> {
         Action::FootagePlanSuggest => Some(json!({
             "type": "object",
             "properties": {
+                "take": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Optional source-take path echoed with the result so a multi-take caller can keep each plan on its own file clock.",
+                },
                 "transcript": {
                     "type": "object",
                     "properties": {
@@ -3599,6 +3604,18 @@ const SIGNAL_VOCABULARY: &[&str] = &[
     "noiseFloor",
 ];
 
+/// Whether a signal name is one the `voice_signals` profile answers - the
+/// same predicate the decision log's gate applies, exposed so a test can
+/// hold a generated plan to the vocabulary the validator will check it
+/// against rather than a copy of the list that can drift.
+pub fn signal_vocabulary_has(signal: &str) -> bool {
+    SIGNAL_VOCABULARY.iter().any(|known| {
+        signal == *known
+            || signal.starts_with(&format!("{known}."))
+            || signal.starts_with(&format!("{known}["))
+    })
+}
+
 /// The decision log's gate: which signals drove each choice. A plan that
 /// carries entries names, for every cut, caption, graphic, BGM and
 /// transition decision, the signals from the voice_signals profile
@@ -3653,11 +3670,7 @@ fn signal_log_gate(plan: &Value, segments: &[Value], runtime: f64) -> Value {
             ));
         }
         for signal in &signals {
-            if !SIGNAL_VOCABULARY.iter().any(|known| {
-                signal == *known
-                    || signal.starts_with(&format!("{known}."))
-                    || signal.starts_with(&format!("{known}["))
-            }) {
+            if !signal_vocabulary_has(signal) {
                 problems.push(format!(
                     "entry {at}: signal {signal:?} is not one the voice_signals profile answers"
                 ));
@@ -4450,6 +4463,7 @@ fn footage_plan_suggest(arguments: Value) -> Result<Outcome, ApiError> {
     let fields = arguments
         .as_object()
         .ok_or_else(|| invalid("the arguments are an object"))?;
+    let take = fields.get("take").and_then(Value::as_str);
     // The transcript, wherever the caller kept it: under `transcript`
     // (transcribe's own reply shape) or as a bare `segments`/`lines` list
     // at the top level - lenient the way every tool that reads a reply
@@ -4516,6 +4530,7 @@ fn footage_plan_suggest(arguments: Value) -> Result<Outcome, ApiError> {
                 .collect()
         })
         .unwrap_or_default();
+    let beat_grid_measured = !beats.is_empty();
     let plan = concat_motion::footage::suggest_footage(&beats, &transcript);
     // The plan as JSON, in the shapes the planner's own types carry: the
     // oximedia types carry no serde of their own, so their public fields
@@ -4584,14 +4599,19 @@ fn footage_plan_suggest(arguments: Value) -> Result<Outcome, ApiError> {
             })
         })
         .collect();
-    Ok(Outcome::json(json!({
+    let mut output = json!({
         "gapCount": gaps.len(),
         "suggestionCount": suggestions.len(),
         "cutCount": cuts.len(),
         "gaps": gaps,
         "suggestions": suggestions,
         "cuts": cuts,
-    })))
+        "beatGridMeasured": beat_grid_measured,
+    });
+    if let Some(take) = take {
+        output["take"] = json!(take);
+    }
+    Ok(Outcome::json(output))
 }
 
 #[cfg(test)]
@@ -5012,6 +5032,7 @@ mod tests {
             (
                 "footage_plan_suggest",
                 json!({
+                    "take": "/tmp/voice.wav",
                     "transcript": { "segments": [
                         { "start": 0.5, "end": 3.0, "text": "the city skyline at dusk" },
                         { "start": 5.4, "end": 7.0, "text": "crowds crossing the street" },
@@ -5883,6 +5904,35 @@ mod tests {
             error.to_string().contains("the transcript is required"),
             "{error}"
         );
+    }
+
+    /// The planner echoes its take identity and whether the caller supplied
+    /// a measured beat grid, so multi-take callers can preserve both facts.
+    #[test]
+    fn footage_plan_suggest_echoes_take_and_measured_grid() {
+        let measured = footage_plan_suggest(json!({
+            "take": "/takes/a.wav",
+            "segments": [
+                { "start": 0.0, "end": 2.0, "text": "harbour lights" },
+                { "start": 5.0, "end": 7.0, "text": "ships at dawn" },
+            ],
+            "beats": [{ "seconds": 1.0, "strength": 0.8 }],
+        }))
+        .expect("the measured plan is valid")
+        .structured
+        .expect("the plan is structured");
+        assert_eq!(measured["take"], "/takes/a.wav");
+        assert_eq!(measured["beatGridMeasured"], true);
+
+        let unmeasured = footage_plan_suggest(json!({
+            "take": "/takes/b.wav",
+            "segments": [{ "start": 0.0, "end": 2.0, "text": "mountain road" }],
+        }))
+        .expect("the unmeasured plan is valid")
+        .structured
+        .expect("the plan is structured");
+        assert_eq!(unmeasured["take"], "/takes/b.wav");
+        assert_eq!(unmeasured["beatGridMeasured"], false);
     }
 
     /// The footage filters reach the search: the tool's schema spells the

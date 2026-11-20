@@ -3639,10 +3639,10 @@ fn signal_log_gate(plan: &Value, segments: &[Value], runtime: f64) -> Value {
             .unwrap_or_default();
         if !matches!(
             decision,
-            "cut" | "caption" | "graphic" | "bgm" | "transition"
+            "cut" | "caption" | "graphic" | "bgm" | "transition" | "pacing"
         ) {
             problems.push(format!(
-                "entry {at}: decision {decision:?} is not one of cut, caption, graphic, bgm, transition"
+                "entry {at}: decision {decision:?} is not one of cut, caption, graphic, bgm, transition, pacing"
             ));
             continue;
         }
@@ -3691,7 +3691,7 @@ fn signal_log_gate(plan: &Value, segments: &[Value], runtime: f64) -> Value {
         (logged_cuts as f64 / expected_cuts.max(1) as f64).min(1.0)
     };
     let mut per_decision = serde_json::Map::new();
-    for decision in ["cut", "caption", "graphic", "bgm", "transition"] {
+    for decision in ["cut", "caption", "graphic", "bgm", "transition", "pacing"] {
         per_decision.insert(
             decision.to_owned(),
             json!(*counts.get(decision).unwrap_or(&0)),

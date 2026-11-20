@@ -316,10 +316,13 @@ export component ForgePage inherits VerticalLayout {
         }
     }
 
-    // The AUTO EDIT: one click, the unattended edit - the repair, the
-    // readings, the export, the verify, the watch - beside the forge
-    // run's directed one. No agent, no model: the deterministic spine of
-    // the pipeline, with its own progress and its own stop.
+    // The AUTO EDIT: one click, the unattended edit. It is the same
+    // Director the Start button runs, handed the sibling project this run
+    // built, so the agent does the reads and the edit in one unattended
+    // pass. When the page has no model to run it, the deterministic spine
+    // of the pipeline runs instead (repair, readings, export, verify,
+    // watch) and the run says so, so a lesser edit is never presented as
+    // the Director's.
     HorizontalLayout {
         spacing: 8px;
 

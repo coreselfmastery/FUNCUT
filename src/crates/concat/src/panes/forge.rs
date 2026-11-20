@@ -131,6 +131,9 @@ pub enum ForgeMsg {
     /// The auto-edit ended. The state says which of the four ends the
     /// run met.
     AutoEditEnded(Box<AutoEditState>),
+    /// The Director run AUTO EDIT hands the edit to has ended, by its
+    /// exit code.
+    AutoDirectorEnded(i32),
 }
 
 /// The page's state.
@@ -195,6 +198,10 @@ pub struct AutoEditPane {
     /// resume the next press of the button picks up from, instead of
     /// building a fresh sibling and paying for every stage again.
     source: Option<AutoEditSource>,
+    /// The Director child's stop flag, when the run was handed over: the
+    /// fixed spine's runner has its own cancel, and this is the other
+    /// one's.
+    kill: Option<Arc<AtomicBool>>,
 }
 
 fn auto_edit_stock_provider(pexels: &str, pixabay: &str) -> String {
@@ -237,6 +244,19 @@ impl ForgePane {
                 }
             }
             ForgeMsg::Line(line) => {
+                // A handed-over run has no runner to report a stage, so the
+                // stage is read from the harness's own words as they come:
+                // the phase names the director skill prints, mapped onto
+                // the fraction of its twelve phases they sit at. A line
+                // that names no phase moves nothing, so the bar only ever
+                // advances on evidence.
+                if self.auto.running
+                    && self.auto.runner.is_none()
+                    && let Some((stage, fraction)) = director_phase(&line)
+                {
+                    self.auto.stage = t(stage);
+                    self.auto.fraction = fraction;
+                }
                 self.log.push(line.into());
                 let extra = self.log.len().saturating_sub(LOG_KEPT);
                 self.log.drain(0..extra);
@@ -328,6 +348,11 @@ impl ForgePane {
                     if let Some(runner) = &self.auto.runner {
                         runner.cancel();
                     }
+                    // A handed-over run has no runner: its stop is the
+                    // flag the supervisor polls.
+                    if let Some(kill) = &self.auto.kill {
+                        kill.store(true, Ordering::Relaxed);
+                    }
                     // The flag the tools themselves poll: a wait in
                     // flight gives up at its next look instead of
                     // running out its clock.
@@ -339,6 +364,7 @@ impl ForgePane {
             }
             ForgeMsg::AutoEditTick => self.auto_edit_tick(),
             ForgeMsg::AutoEditEnded(state) => self.auto_edit_ended(*state, studio),
+            ForgeMsg::AutoDirectorEnded(code) => self.auto_director_ended(code, studio),
         }
     }
 
@@ -590,6 +616,7 @@ impl ForgePane {
                 outcome: 0,
                 runner: Some(runner.clone()),
                 tool_cancel: Some(Arc::clone(&tool_cancel)),
+                kill: None,
                 started: Some(Instant::now()),
                 project: Some(project),
                 source: Some(source),
@@ -637,16 +664,6 @@ impl ForgePane {
                 unsafe { std::env::set_var(name, value.trim()) };
             }
         }
-        // The window's own server is the backend: the pane is inside the
-        // window, and the server serves the sibling the way it serves any
-        // agent's - the same surface a forge run drives.
-        let backend = match concat_mcp::backend::open(concat_mcp::backend::Mode::Window) {
-            Ok(backend) => backend,
-            Err(error) => {
-                studio.notify(&tf("forge.autoEditNeedServer", &[&error]), true);
-                return;
-            }
-        };
         // The live stock keys are installed before a new runner is
         // spawned. A retry stays in this process and reuses this run's
         // environment, so it does not mutate the global environment again.
@@ -692,6 +709,58 @@ impl ForgePane {
                 &studio.prefs.stock.pixabay,
             ),
         });
+        // The Director gets the edit whenever the page has a model to run
+        // it: AUTO EDIT is the one-click form of Start Forge, so the
+        // creative decisions belong to the same agent, over the same
+        // sibling. Only when the harness, its wiring, the skill or a key
+        // is missing does the run fall back to the fixed spine - and the
+        // pane says which one is missing, so a lesser edit is never
+        // mistaken for the Director's.
+        let handed_over = match director_ready(studio) {
+            Ok(()) => {
+                let kill = Arc::new(AtomicBool::new(false));
+                self.auto = AutoEditPane {
+                    running: true,
+                    stage: t("forge.autoEditDirectorStage"),
+                    elapsed: elapsed_text(Duration::ZERO),
+                    fraction: 0.0,
+                    visible: true,
+                    outcome: 0,
+                    runner: None,
+                    tool_cancel: None,
+                    started: Some(Instant::now()),
+                    project: Some(auto.project.clone()),
+                    source: Some(auto.clone()),
+                    kill: Some(Arc::clone(&kill)),
+                };
+                self.set_status(t("forge.autoEditDirectorStage"));
+                launch_auto_director(studio, &auto, kill);
+                true
+            }
+            Err(why) => {
+                studio.notify(
+                    &format!(
+                        "the Director is not available, so this run uses the fixed edit: {why}"
+                    ),
+                    true,
+                );
+                false
+            }
+        };
+        if handed_over {
+            return;
+        }
+        // The fixed spine runs the stages in this process, so it needs the
+        // window's own server as its backend. The handover above does not:
+        // the Director reaches the same server through the harness, which
+        // is why it is decided first.
+        let backend = match concat_mcp::backend::open(concat_mcp::backend::Mode::Window) {
+            Ok(backend) => backend,
+            Err(error) => {
+                studio.notify(&tf("forge.autoEditNeedServer", &[&error]), true);
+                return;
+            }
+        };
         let (runner, _events) = Runner::new(PathBuf::from(&auto.project));
         let tool_cancel = Arc::new(AtomicBool::new(false));
         self.auto = AutoEditPane {
@@ -706,9 +775,48 @@ impl ForgePane {
             started: Some(Instant::now()),
             project: Some(auto.project.clone()),
             source: Some(auto),
+            kill: None,
         };
         self.set_status(t("forge.autoEditRunning"));
         run_auto_edit(runner, program, backend, tool_cancel);
+    }
+
+    /// The Director run's end. A zero exit is the harness saying the
+    /// agent finished; the edit it made is opened here in the window, the
+    /// same landing a Start Forge run has, and the pane reports the run
+    /// rather than a measured export - the Director's own craft_critique
+    /// and its final watch_render are what judged the file, and the pane
+    /// does not invent a score of its own.
+    fn auto_director_ended(&mut self, code: i32, studio: &mut Studio) {
+        self.auto.running = false;
+        self.auto.started = None;
+        self.auto.kill = None;
+        self.auto.fraction = 1.0;
+        if code == 0 {
+            self.auto.outcome = 0;
+            self.auto.stage = t("forge.autoEditDirectorDoneStage");
+            self.set_status(t("forge.autoEditDirectorDoneStage"));
+            if let Some(path) = self.auto.project.clone() {
+                studio.notify(&tf("forge.autoEditDirectorDone", &[&path]), false);
+                match concat_host::projects::open(&path).and_then(|info| studio.open_project(info))
+                {
+                    Ok(()) => {}
+                    Err(error) => studio.notify(&error, true),
+                }
+            }
+            self.auto.source = None;
+        } else {
+            // A handover that failed keeps the sibling and the source, so
+            // a retry hands the same project over again rather than
+            // rebuilding it; the Director's own reads are its to redo.
+            self.auto.outcome = 1;
+            self.auto.stage = t("forge.autoEditDirectorFailedStage");
+            self.set_status(t("forge.autoEditDirectorFailedStage"));
+            studio.notify(
+                &tf("forge.autoEditDirectorFailed", &[&code.to_string()]),
+                true,
+            );
+        }
     }
 
     /// Rereads the runner's last event into the page's own fields: the
@@ -1641,6 +1749,284 @@ fn director_run_prompt(
     )
 }
 
+/// Whether a model key is saved for the harness: any provider the Forge
+/// page keeps. A harness with no key cannot think, so a Director run
+/// without one would only fail after the sibling was built.
+fn a_model_key_is_saved(studio: &Studio) -> bool {
+    let forge = &studio.prefs.forge;
+    [
+        &forge.groq,
+        &forge.gemini,
+        &forge.zai,
+        &forge.openrouter,
+        &forge.mistral,
+        &forge.cerebras,
+        &forge.sambanova,
+        &forge.nim,
+        &forge.hf,
+    ]
+    .iter()
+    .any(|key| !key.trim().is_empty())
+        || std::env::var("FUNCUT_FORGE_MODEL")
+            .or_else(|_| std::env::var("FORGE_MODEL"))
+            .is_ok_and(|model| !model.trim().is_empty())
+}
+
+/// Whether the AUTO EDIT can hand its edit to the Director: the harness
+/// is on PATH, the Forge page has wired it to this editor, the skill is
+/// installed, and a model key is saved. Every one of those is a thing the
+/// user can see on the page, so a run that cannot hand over says which is
+/// missing instead of quietly running the fixed spine and calling it the
+/// same edit.
+fn director_ready(studio: &Studio) -> Result<(), String> {
+    // A saved key is enough to know the user means to use a model; the
+    // harness itself still has to exist and be wired, which the page's
+    // own probe answers.
+    if !a_model_key_is_saved(studio) {
+        return Err(
+            "no model key is saved on the Forge page, so the Director has no model to think with"
+                .to_owned(),
+        );
+    }
+    if studio.forge.connected != Some(true) {
+        return Err(
+            "the Forge harness is not connected to this editor (press Connect on the Forge page)"
+                .to_owned(),
+        );
+    }
+    if studio.forge.installed != Some(true) {
+        return Err(
+            "the funcut-director skill is not installed (press Install on the Forge page)"
+                .to_owned(),
+        );
+    }
+    Ok(())
+}
+
+/// The prompt an AUTO EDIT hands the Director: the same skill, the same
+/// shelves and the same quality loop a Start Forge run gets, plus the
+/// facts only this button knows - the sibling it built with the narration
+/// placed, and the export the run should land. The measurements are NOT
+/// done for it: the Director runs the reads itself, in the skill's order,
+/// and the prompt says so, so the pane never presents a read as already
+/// spent.
+fn auto_director_prompt(source: &AutoEditSource) -> String {
+    format!(
+        "Use the funcut-director skill and follow its phases IN ORDER. This is an \
+         UNATTENDED one-click edit: nobody is watching to answer a question, so make every \
+         creative decision yourself and record it.\n\n\
+         THE PROJECT: open '{project}' (project_open). The narration is ALREADY on the \
+         timeline, reconstructed clip for clip with its own starts, in/out points, speed, \
+         volume and fades; voiceover-mapping.json maps each clip to its source. Do NOT \
+         re-import, re-place, retime or ripple the narration clips.\n\n\
+         WHAT IS ALREADY DONE, AND WHAT IS NOT: the sibling exists and the narration is \
+         placed; nothing has been MEASURED yet. The repair, the transcription, \
+         voice_signals and emotion are YOURS to run on this sibling, in the skill's order - \
+         do not skip them and do not assume them. Every creative decision must name the \
+         signal that drove it in the plan's signalLog - an edit that never read the voice is \
+         an edit that guessed, and an unavailable signal must be reported as missing rather \
+         than claimed.\n\n\
+         WHAT THE EDIT MUST BE: the whole pipeline around that narration - the plan \
+         (plan_validate must return valid:true AND creativeReady:true), B-roll shopped with \
+         stock_contact_sheet rank:true and LOOKED AT before choosing, captions on the \
+         measured words, Geneva motion comps for the beats that earn them (motion_frame to \
+         check legibility before motion_bake), ONE consistent grade, music ducked under the \
+         voice, accents on the measured emphasis peaks. Use the editor's whole \
+         vocabulary; do not settle for a template.\n\n\
+         MANDATORY QUALITY LOOP: watch_render the OPEN timeline, craft_critique it, act on \
+         at least one revision, watch_render AGAIN and compare the two craft scores, and \
+         repeat until the overall score is >= 7 with no black frames, letterbox bars or long \
+         static runs. Only then export.\n\n\
+         THE EXPORT lands at '{export}'. Finish by calling watch_render on the exported file \
+         with audio:true and craft_critique once more, then report the honest score and what \
+         you changed. Never claim success on an unmeasured render. A file PATH to a PNG is \
+         not a picture you can see: only inline image blocks are.\n",
+        project = source.project,
+        export = source.export,
+    )
+}
+
+/// Starts the Director over the AUTO EDIT's sibling: the same harness a
+/// Start Forge run spawns, given the sibling this run already built and
+/// measured. The pane shows the harness's words as they come, and the
+/// run's end opens the finished edit in the window the way a Start Forge
+/// run does.
+fn launch_auto_director(studio: &Studio, source: &AutoEditSource, kill: Arc<AtomicBool>) {
+    let prompt = auto_director_prompt(source);
+    let mut command = Command::new("forge");
+    command.arg("run");
+    let model = std::env::var("FUNCUT_FORGE_MODEL")
+        .or_else(|_| std::env::var("FORGE_MODEL"))
+        .unwrap_or_default();
+    if !model.trim().is_empty() {
+        command.arg("--model").arg(model.trim());
+    }
+    command.arg(prompt);
+    let forge = &studio.prefs.forge;
+    let stock = &studio.prefs.stock;
+    for (name, value) in [
+        ("GROQ_API_KEY", &forge.groq),
+        ("GEMINI_API_KEY", &forge.gemini),
+        ("ZAI_API_KEY", &forge.zai),
+        ("OPENROUTER_API_KEY", &forge.openrouter),
+        ("MISTRAL_API_KEY", &forge.mistral),
+        ("CEREBRAS_API_KEY", &forge.cerebras),
+        ("SAMBANOVA_API_KEY", &forge.sambanova),
+        ("NVIDIA_API_KEY", &forge.nim),
+        ("FUNCUT_EMOTION_API_KEY", &forge.hf),
+        ("HF_TOKEN", &forge.hf),
+        ("PEXELS_API_KEY", &stock.pexels),
+        ("PIXABAY_API_KEY", &stock.pixabay),
+    ] {
+        if !value.trim().is_empty() {
+            command.env(name, value.trim());
+        }
+    }
+    let spawned = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn();
+    match spawned {
+        Ok(child) => {
+            crate::host::on_ui(|studio, _, _| {
+                studio.handle(Msg::Forge(ForgeMsg::Line(
+                    "the Director has the edit: it reads the measurements, plans, cuts and \
+                     reviews its own work"
+                        .to_owned(),
+                )));
+            });
+            read_the_director_run(child, kill);
+        }
+        Err(error) => {
+            crate::host::on_ui(move |studio, _, _| {
+                studio.handle(Msg::Forge(ForgeMsg::Line(format!(
+                    "the Director could not start: {error}"
+                ))));
+                studio.handle(Msg::Forge(ForgeMsg::AutoDirectorEnded(-1)));
+            });
+        }
+    }
+}
+
+/// The Director child's pipes, drained into the pane's log, and its exit
+/// reported. The same shape as [`read_the_run`] - one line at a time, a
+/// kill flag the supervisor polls - because a Director run is the same
+/// kind of process.
+fn read_the_director_run(mut child: Child, kill: Arc<AtomicBool>) {
+    let out = child.stdout.take();
+    let err = child.stderr.take();
+    let stdout_reader = std::thread::spawn(move || {
+        if let Some(pipe) = out {
+            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+                crate::host::on_ui(move |studio, _, _| {
+                    studio.handle(Msg::Forge(ForgeMsg::Line(line)));
+                });
+            }
+        }
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        if let Some(pipe) = err {
+            for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+                crate::host::on_ui(move |studio, _, _| {
+                    studio.handle(Msg::Forge(ForgeMsg::Line(line)));
+                });
+            }
+        }
+    });
+    std::thread::spawn(move || {
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break Some(status),
+                Ok(None) => {
+                    if kill.load(Ordering::Relaxed) {
+                        let _ = child.kill();
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(_) => {
+                    let _ = child.kill();
+                    break child.wait().ok();
+                }
+            }
+        };
+        let _ = stdout_reader.join();
+        let _ = stderr_reader.join();
+        let code = status.and_then(|status| status.code()).unwrap_or(-1);
+        crate::host::on_ui(move |studio, _, _| {
+            studio.handle(Msg::Forge(ForgeMsg::AutoDirectorEnded(code)));
+        });
+    });
+}
+
+/// The director skill's phases, in the order it runs them, with the
+/// words its own headings carry. A handed-over AUTO EDIT has no runner
+/// to name its stage, so the pane reads the harness's output instead and
+/// advances only when a phase is actually named - the twelve the skill
+/// prints, which is the same sequence a Start Forge run walks.
+const DIRECTOR_PHASES: [(&str, &[&str]); 12] = [
+    ("forge.directorPhaseBrief", &["phase 1", "creative brief"]),
+    ("forge.directorPhaseUnderstand", &["phase 2", "understand"]),
+    (
+        "forge.directorPhaseAudio",
+        &["phase 3", "voice signal", "emotion"],
+    ),
+    ("forge.directorPhaseTranscribe", &["phase 4", "transcri"]),
+    (
+        "forge.directorPhasePlan",
+        &["phase 5", "plan_validate", "plan"],
+    ),
+    (
+        "forge.directorPhaseFootage",
+        &["phase 6", "b-roll", "stock_"],
+    ),
+    ("forge.directorPhaseCut", &["phase 7", "rough cut"]),
+    (
+        "forge.directorPhaseMotion",
+        &["phase 8", "motion_", "geneva"],
+    ),
+    ("forge.directorPhaseCaption", &["phase 9", "caption"]),
+    (
+        "forge.directorPhaseSound",
+        &["phase 10", "bgm_", "sounds_", "music"],
+    ),
+    (
+        "forge.directorPhaseReview",
+        &["phase 11", "watch_render", "craft_critique"],
+    ),
+    ("forge.directorPhaseExport", &["phase 12", "export_"]),
+];
+
+/// The phase a line of the harness's output names, and how far through
+/// the skill's twelve phases that is. The last phase a line matches wins
+/// nothing: a line that mentions two phases is a sentence about them,
+/// not a stage, so only the earliest match is taken and the fraction is
+/// that phase's own position.
+fn director_phase(line: &str) -> Option<(&'static str, f32)> {
+    let lower = line.to_ascii_lowercase();
+    let total = DIRECTOR_PHASES.len() as f32;
+    let at = |index: usize| (DIRECTOR_PHASES[index].0, (index + 1) as f32 / total);
+    // A numbered phase is matched by its number with a boundary after it:
+    // "phase 1" sits inside "phase 12", so a plain substring scan would
+    // read every phase ten and up as phase one.
+    for index in 0..DIRECTOR_PHASES.len() {
+        let number = format!("phase {}", index + 1);
+        if let Some(found) = lower.find(&number)
+            && !lower[found + number.len()..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_digit())
+        {
+            return Some(at(index));
+        }
+    }
+    // A phase the harness names by a tool instead of a number.
+    DIRECTOR_PHASES
+        .iter()
+        .enumerate()
+        .find(|(_, (_, words))| words.iter().any(|word| lower.contains(word)))
+        .map(|(index, _)| at(index))
+}
+
 /// Whether the harness is wired to Concat and the skill is where it
 /// reads: `forge mcp get funcut` says the one, `forge commands` lists the
 /// other. Neither is a reason to fail: the buttons say what is missing.
@@ -1906,10 +2292,40 @@ fn elapsed_text(duration: Duration) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::director_phase;
     use super::other_run_refusal;
     use super::voiceover_copy_name;
     use std::path::Path;
     use std::time::Duration;
+
+    /// The handed-over run's progress is read from the harness's own
+    /// words, and only where a phase is actually named: a line about
+    /// nothing in particular moves no bar, and the fraction a named phase
+    /// earns is its own position in the skill's twelve - so the pane can
+    /// never show a phase the Director has not reached.
+    #[test]
+    fn the_director_stage_is_read_from_the_harness_words() {
+        assert_eq!(director_phase("just thinking"), None);
+        assert_eq!(director_phase(""), None);
+
+        let (first, at_first) = director_phase("## Phase 1 - Creative Brief").expect("phase one");
+        assert_eq!(first, "forge.directorPhaseBrief");
+        assert!(at_first > 0.0 && at_first < 0.2);
+
+        let (last, at_last) =
+            director_phase("Phase 12: export_start then export_wait").expect("phase twelve");
+        assert_eq!(last, "forge.directorPhaseExport");
+        assert!((at_last - 1.0).abs() < 1e-6);
+
+        // The review phase is where the Director watches its own cut: the
+        // tool name alone is enough to place it.
+        let (review, _) = director_phase("craft_critique the sheet").expect("review");
+        assert_eq!(review, "forge.directorPhaseReview");
+
+        // A named phase advances; the one before it is behind it.
+        let (_, early) = director_phase("phase 5 plan_validate").expect("plan");
+        assert!(early > at_first);
+    }
 
     /// One run at a time on the shared project: the Start is refused while
     /// the auto edit goes, the auto edit is refused while the Start goes,

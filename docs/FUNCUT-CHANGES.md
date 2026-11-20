@@ -2452,3 +2452,54 @@ Two tests pin it: `a_stressed_word_takes_the_caption_accent` and
 `the_graphic_log_claims_only_the_signals_it_spent`. `cargo test -p
 concat-mcp` is 111 passing, `cargo fmt --check` clean, `cargo clippy
 --all-targets` clean on the crate.
+
+## 55. The button stops believing an exit code
+
+AUTO EDIT hands the edit to the Director, and the Director path reported
+the run from the harness's exit code alone. An agent that ended its turn
+without exporting still exits 0, so the pane opened the project and said
+the edit had shipped - over a file nobody had opened, measured or scored.
+The fixed spine never had this hole: its last stage probes the export
+(`motion_probe`), gates the loudness reading and the words check, and the
+receipt landed in 10b says what answered.
+
+**The check is the spine's own, asked through the same toolbox.** The new
+`concat-mcp/src/acceptance.rs` puts the same four questions to a finished
+Director run - `motion_probe` (is the file readable), `measure_loudness`
+(is the mix on target), `craft_critique` (what does the critic score it)
+and `emotion` (does it say the words the edit placed) - through the pane's
+`Toolbox` and the window `Backend`, so a call here means exactly what the
+same call from an agent means. The replies go through `derive_gates`, so
+the receipt is the same shape and the same rules whichever path produced
+it.
+
+**`exit 0` now starts a check, not a success.** `auto_director_ended`
+spawns the check on a worker, and `DirectorChecked` carries the answer
+back. `accepted` opens the project and says the edit shipped; anything
+else keeps the sibling, names the gates that refused it, and offers Fix -
+the edit is real, it just is not proven. Either way the receipt is written
+as `auto-edit-receipt.json` beside the project, so the answer is
+inspectable rather than a toast that faded.
+
+**The surface is preflighted, and `motion_probe` is served.** The Director
+could not have answered that check: `motion_probe` was left off the
+director's allowlist, and it is the one tool that proves an export is a
+readable file. It is now on the default surface - 104 of the 113 tools -
+and `DIRECTOR_REQUIRED` names the thirteen calls a run cannot finish
+without. `director_ready` refuses the handover before anything is cut when
+the server's surface does not serve one of them, because a run told to
+verify its export meets a refusal mid-edit otherwise, and the edits it has
+already applied stay on the sibling.
+
+Four tests pin the pair: the three in `acceptance.rs`
+(`the_check_asks_for_the_file_the_mix_the_picture_and_the_words`,
+`every_check_is_a_tool_the_director_surface_serves`,
+`a_failed_gate_rejects_and_a_missing_required_gate_is_incomplete`) and
+`everything_a_run_cannot_finish_without_is_on_the_default_surface` in
+`protocol.rs` - the last one because a required tool the default leaves
+off would make the button refuse every run it starts.
+
+`docs/AUTO_EDIT_AUDIT.md` is the phase-0 audit these fixes answer, with
+the file and line for every claim and the two items the list got wrong
+(`motion_inspect`/`motion_frame` were never excluded; the model-key
+preflight already existed).

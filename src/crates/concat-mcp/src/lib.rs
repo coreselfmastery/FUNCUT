@@ -22,6 +22,7 @@
 //! template and the plan types, the compact projected from the canonical,
 //! both committed and drift-tested.
 
+pub mod acceptance;
 pub mod backend;
 pub mod director;
 pub mod director_program;

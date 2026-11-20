@@ -252,6 +252,10 @@ pub(crate) const DIRECTOR_ALLOWLIST: &[&str] = &[
     "motion_bake",
     "motion_reel",
     "motion_overlay",
+    // What a file IS, as the engine's reader sees it: the one call that
+    // proves an export is a readable video rather than a path that
+    // happens to exist.
+    "motion_probe",
     // Motion made elsewhere, read here: the Lottie and GSAP doors.
     "motion_import",
     // Verify and export.
@@ -266,7 +270,51 @@ pub(crate) const DIRECTOR_ALLOWLIST: &[&str] = &[
     "export_wait",
 ];
 
+/// The tools an AUTO EDIT cannot finish without, and therefore the ones a
+/// run must be refused before it starts when the surface does not carry
+/// them. Deliberately short: these are the calls whose absence turns a
+/// finished-looking edit into an unmeasured one - the reads that decide
+/// the cut, the edits that make it, and the three calls that prove the
+/// result (the loudness reading, the words check and the probe of the
+/// exported file). A surface missing one of these would let the run walk
+/// to the end and report a success nobody measured.
+pub const DIRECTOR_REQUIRED: &[&str] = &[
+    "project_open",
+    "timeline_read",
+    "transcribe",
+    "voice_signals",
+    "emotion",
+    "plan_validate",
+    "edit_apply",
+    "stock_search",
+    "stock_import",
+    "measure_loudness",
+    "motion_probe",
+    "export_start",
+    "export_wait",
+];
+
+/// The names in `required` that the surface this process would serve does
+/// not carry, so a caller can refuse a run rather than let it walk into a
+/// refusal mid-edit. Empty means every one of them is served.
+pub fn unserved(required: &[&str]) -> Vec<String> {
+    let serving = Serving::from_environment();
+    required
+        .iter()
+        .filter(|name| !serving.serves(name))
+        .map(|name| (*name).to_owned())
+        .collect()
+}
+
 impl Serving {
+    /// Whether this surface carries `tool` at all: the allowlist's answer,
+    /// before any argument is looked at.
+    pub fn serves(&self, tool: &str) -> bool {
+        self.allowed
+            .as_ref()
+            .is_none_or(|allowed| allowed.iter().any(|name| name == tool))
+    }
+
     /// The switches from the environment the app's own `concat --mcp`
     /// reads, so a server started by the window has the same safety net
     /// as one started by hand: `CONCAT_MCP_READ_ONLY=1` and
@@ -1160,6 +1208,23 @@ mod tests {
             serving,
         );
         assert!(!refused(&served[0]), "{served:?}");
+    }
+
+    #[test]
+    fn everything_a_run_cannot_finish_without_is_on_the_default_surface() {
+        // The preflight refuses a run whose surface lacks a required tool,
+        // so a required tool the director's own default leaves off would
+        // make the button refuse every run it starts. The two lists answer
+        // to each other: `DIRECTOR_REQUIRED` is a subset of
+        // `DIRECTOR_ALLOWLIST`.
+        let missing: Vec<&&str> = DIRECTOR_REQUIRED
+            .iter()
+            .filter(|name| !DIRECTOR_ALLOWLIST.contains(name))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "required but not served by default: {missing:?}"
+        );
     }
 
     #[test]

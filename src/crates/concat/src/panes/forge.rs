@@ -252,9 +252,9 @@ impl ForgePane {
                 // advances on evidence.
                 if self.auto.running
                     && self.auto.runner.is_none()
-                    && let Some((stage, fraction)) = director_phase(&line)
+                    && let Some((phase, fraction)) = director_phase(&line)
                 {
-                    self.auto.stage = t(stage);
+                    self.auto.stage = director_phase_stage(phase);
                     self.auto.fraction = fraction;
                 }
                 self.log.push(line.into());
@@ -1963,48 +1963,51 @@ fn read_the_director_run(mut child: Child, kill: Arc<AtomicBool>) {
 /// to name its stage, so the pane reads the harness's output instead and
 /// advances only when a phase is actually named - the twelve the skill
 /// prints, which is the same sequence a Start Forge run walks.
-const DIRECTOR_PHASES: [(&str, &[&str]); 12] = [
-    ("forge.directorPhaseBrief", &["phase 1", "creative brief"]),
-    ("forge.directorPhaseUnderstand", &["phase 2", "understand"]),
-    (
-        "forge.directorPhaseAudio",
-        &["phase 3", "voice signal", "emotion"],
-    ),
-    ("forge.directorPhaseTranscribe", &["phase 4", "transcri"]),
-    (
-        "forge.directorPhasePlan",
-        &["phase 5", "plan_validate", "plan"],
-    ),
-    (
-        "forge.directorPhaseFootage",
-        &["phase 6", "b-roll", "stock_"],
-    ),
-    ("forge.directorPhaseCut", &["phase 7", "rough cut"]),
-    (
-        "forge.directorPhaseMotion",
-        &["phase 8", "motion_", "geneva"],
-    ),
-    ("forge.directorPhaseCaption", &["phase 9", "caption"]),
-    (
-        "forge.directorPhaseSound",
-        &["phase 10", "bgm_", "sounds_", "music"],
-    ),
-    (
-        "forge.directorPhaseReview",
-        &["phase 11", "watch_render", "craft_critique"],
-    ),
-    ("forge.directorPhaseExport", &["phase 12", "export_"]),
+const DIRECTOR_PHASES: [&[&str]; 12] = [
+    &["phase 1", "creative brief"],
+    &["phase 2", "understand"],
+    &["phase 3", "voice signal", "emotion"],
+    &["phase 4", "transcri"],
+    &["phase 5", "plan_validate", "plan"],
+    &["phase 6", "b-roll", "stock_"],
+    &["phase 7", "rough cut"],
+    &["phase 8", "motion_", "geneva"],
+    &["phase 9", "caption"],
+    &["phase 10", "bgm_", "sounds_", "music"],
+    &["phase 11", "watch_render", "craft_critique"],
+    &["phase 12", "export_"],
 ];
+
+/// The stage the pane shows for a phase. The words are spelled out here
+/// rather than read from the table above so that every key is a literal
+/// the locale inventory can see: a key built from data is a key the
+/// checker cannot prove exists.
+fn director_phase_stage(index: usize) -> String {
+    match index {
+        0 => t("forge.directorPhaseBrief"),
+        1 => t("forge.directorPhaseUnderstand"),
+        2 => t("forge.directorPhaseAudio"),
+        3 => t("forge.directorPhaseTranscribe"),
+        4 => t("forge.directorPhasePlan"),
+        5 => t("forge.directorPhaseFootage"),
+        6 => t("forge.directorPhaseCut"),
+        7 => t("forge.directorPhaseMotion"),
+        8 => t("forge.directorPhaseCaption"),
+        9 => t("forge.directorPhaseSound"),
+        10 => t("forge.directorPhaseReview"),
+        _ => t("forge.directorPhaseExport"),
+    }
+}
 
 /// The phase a line of the harness's output names, and how far through
 /// the skill's twelve phases that is. The last phase a line matches wins
 /// nothing: a line that mentions two phases is a sentence about them,
 /// not a stage, so only the earliest match is taken and the fraction is
 /// that phase's own position.
-fn director_phase(line: &str) -> Option<(&'static str, f32)> {
+fn director_phase(line: &str) -> Option<(usize, f32)> {
     let lower = line.to_ascii_lowercase();
     let total = DIRECTOR_PHASES.len() as f32;
-    let at = |index: usize| (DIRECTOR_PHASES[index].0, (index + 1) as f32 / total);
+    let at = |index: usize| (index, (index + 1) as f32 / total);
     // A numbered phase is matched by its number with a boundary after it:
     // "phase 1" sits inside "phase 12", so a plain substring scan would
     // read every phase ten and up as phase one.
@@ -2023,7 +2026,7 @@ fn director_phase(line: &str) -> Option<(&'static str, f32)> {
     DIRECTOR_PHASES
         .iter()
         .enumerate()
-        .find(|(_, (_, words))| words.iter().any(|word| lower.contains(word)))
+        .find(|(_, words)| words.iter().any(|word| lower.contains(word)))
         .map(|(index, _)| at(index))
 }
 
@@ -2309,21 +2312,25 @@ mod tests {
         assert_eq!(director_phase(""), None);
 
         let (first, at_first) = director_phase("## Phase 1 - Creative Brief").expect("phase one");
-        assert_eq!(first, "forge.directorPhaseBrief");
+        assert_eq!(first, 0);
         assert!(at_first > 0.0 && at_first < 0.2);
 
+        // "phase 1" is inside "phase 12": the numbered match must not
+        // read the last phase as the first, which froze the bar at the
+        // end of every run.
         let (last, at_last) =
             director_phase("Phase 12: export_start then export_wait").expect("phase twelve");
-        assert_eq!(last, "forge.directorPhaseExport");
+        assert_eq!(last, 11);
         assert!((at_last - 1.0).abs() < 1e-6);
 
         // The review phase is where the Director watches its own cut: the
         // tool name alone is enough to place it.
         let (review, _) = director_phase("craft_critique the sheet").expect("review");
-        assert_eq!(review, "forge.directorPhaseReview");
+        assert_eq!(review, 10);
 
         // A named phase advances; the one before it is behind it.
-        let (_, early) = director_phase("phase 5 plan_validate").expect("plan");
+        let (plan, early) = director_phase("phase 5 plan_validate").expect("plan");
+        assert_eq!(plan, 4);
         assert!(early > at_first);
     }
 

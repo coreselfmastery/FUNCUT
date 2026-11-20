@@ -43,15 +43,15 @@
 
       # Must match the sherpa-onnx-sys version in src/Cargo.lock: the sys
       # crate names the archive after its own version and refuses any other.
-      sherpaVersion = "1.13.7";
+      sherpaVersion = "2.0.2";
       sherpaArchives = {
         x86_64-linux = {
           name = "sherpa-onnx-v${sherpaVersion}-linux-x64-static-lib.tar.bz2";
-          hash = "sha256-0b56aawrMBIAWNgwLmJCOaMGQIU4PPpHmUoU/cRMMtY=";
+          hash = "sha256-CCdDyA7J0/1znfF0ueRqsIrHfJ9XodKwmXen/VMkcn0=";
         };
         aarch64-linux = {
           name = "sherpa-onnx-v${sherpaVersion}-linux-aarch64-static-lib.tar.bz2";
-          hash = "sha256-dDtN66urLp9lTjk9pyY72Xlaq+1groDIMCMFQINBXRQ=";
+          hash = "sha256-wv80ZOQGW04EoM28APQ/TkRAXWw+pOQCP0pOBpZF4/s=";
         };
       };
       sherpaArchiveDir =

@@ -140,6 +140,24 @@ jobs:
             exit 1
           fi
 
+      # sherpa-onnx-sys names its archive after its own version and panics on
+      # any other, so a flake that disagrees with Cargo.lock only surfaces 19
+      # minutes into a build. CI checks deps.lock against Cargo.lock; this
+      # checks the third copy, which nothing else does.
+      - name: The flake's sherpa version matches Cargo.lock
+        run: |
+          lock=$(grep -A1 'name = "sherpa-onnx-sys"' src/Cargo.lock | sed -n 's/^version = "\(.*\)"/\1/p')
+          flake=$(sed -n 's/^ *sherpaVersion = "\(.*\)";$/\1/p' flake.nix)
+          if [ -z "$lock" ] || [ -z "$flake" ]; then
+            echo "could not read a sherpa version (lock='$lock' flake='$flake')" >&2
+            exit 1
+          fi
+          if [ "$lock" != "$flake" ]; then
+            echo "flake.nix pins sherpa-onnx $flake but Cargo.lock resolves sherpa-onnx-sys $lock" >&2
+            exit 1
+          fi
+          echo "sherpa-onnx $lock agreed by flake.nix and Cargo.lock"
+
       - name: Build
         run: |
           if nix build .#concat --print-build-logs; then

@@ -137,6 +137,8 @@ pub enum ForgeMsg {
     /// The check the pane runs on a finished Director run came back: the
     /// receipt is the verdict, and the exit code is not.
     DirectorChecked(Box<concat_mcp::acceptance::DirectorAcceptance>),
+    /// The post-export acceptance worker could not reach the editor's MCP backend.
+    DirectorCheckFailed(String),
 }
 
 /// The page's state.
@@ -173,6 +175,9 @@ pub struct ForgePane {
 pub struct AutoEditPane {
     /// A run is going.
     pub running: bool,
+    /// A Director process has exited, but its export is still being independently checked.
+    /// Keep both editing entry points locked until that check has a terminal result.
+    pub checking: bool,
     /// The stage's own word, localized - or the terminal state's.
     pub stage: String,
     /// The elapsed clock, as the pane spells it.
@@ -369,6 +374,7 @@ impl ForgePane {
             ForgeMsg::AutoEditEnded(state) => self.auto_edit_ended(*state, studio),
             ForgeMsg::AutoDirectorEnded(code) => self.auto_director_ended(code, studio),
             ForgeMsg::DirectorChecked(checked) => self.auto_director_checked(*checked, studio),
+            ForgeMsg::DirectorCheckFailed(error) => self.auto_director_check_failed(error, studio),
         }
     }
 
@@ -419,7 +425,7 @@ impl ForgePane {
         // their edits into a timeline neither of them planned, so only
         // one may be going: a Start while the auto edit runs is refused,
         // and the user is told which run to stop first.
-        if let Some(refusal) = other_run_refusal(self.auto.running, true) {
+        if let Some(refusal) = other_run_refusal(auto_edit_busy(self.auto.running, self.auto.checking), true) {
             studio.notify(&refusal, true);
             return;
         }
@@ -550,7 +556,8 @@ impl ForgePane {
     /// comps remain the Director agent's; this is the unattended voiceover
     /// edit.
     fn auto_edit_start(&mut self, studio: &mut Studio) {
-        if self.auto.running {
+        if auto_edit_busy(self.auto.running, self.auto.checking) {
+            studio.notify("AUTO EDIT is still running or checking its previous export", true);
             return;
         }
         // A Start and an AUTO EDIT share the same sibling project and
@@ -613,6 +620,7 @@ impl ForgePane {
             let project = source.project.clone();
             self.auto = AutoEditPane {
                 running: true,
+                checking: false,
                 stage: t("forge.autoEditStarting"),
                 elapsed: elapsed_text(Duration::ZERO),
                 fraction: 0.0,
@@ -725,6 +733,7 @@ impl ForgePane {
                 let kill = Arc::new(AtomicBool::new(false));
                 self.auto = AutoEditPane {
                     running: true,
+                    checking: false,
                     stage: t("forge.autoEditDirectorStage"),
                     elapsed: elapsed_text(Duration::ZERO),
                     fraction: 0.0,
@@ -769,6 +778,7 @@ impl ForgePane {
         let tool_cancel = Arc::new(AtomicBool::new(false));
         self.auto = AutoEditPane {
             running: true,
+            checking: false,
             stage: t("forge.autoEditStarting"),
             elapsed: elapsed_text(Duration::ZERO),
             fraction: 0.0,
@@ -797,6 +807,11 @@ impl ForgePane {
         self.auto.kill = None;
         self.auto.fraction = 1.0;
         if code == 0 {
+            // The agent has exited, but the export is not accepted yet. Keep
+            // the project locked while the independent checks run: otherwise
+            // a second Start/AUTO EDIT can replace the active project and the
+            // first run's receipt can be written beside the wrong project.
+            self.auto.checking = true;
             // The harness exiting zero says the agent stopped, not that the
             // edit exists. So the run is held to the same four questions the
             // fixed spine asks of its own export - is the file readable, is
@@ -834,8 +849,10 @@ impl ForgePane {
                     // tools; without it there is no measurement, and an
                     // unmeasured run is not a finished one.
                     Err(error) => {
+                        let message = format!("the edit cannot be checked: {error}");
                         crate::host::on_ui(move |studio, _, _| {
-                            studio.notify(&format!("the edit cannot be checked: {error}"), true);
+                            studio.notify(&message, true);
+                            studio.handle(Msg::Forge(ForgeMsg::DirectorCheckFailed(message)));
                         });
                         return;
                     }
@@ -867,6 +884,8 @@ impl ForgePane {
         checked: concat_mcp::acceptance::DirectorAcceptance,
         studio: &mut Studio,
     ) {
+        self.auto.checking = false;
+        self.auto.running = false;
         let accepted = checked.accepted();
         let receipt = checked.receipt;
         if let Some(project) = self.auto.project.clone() {
@@ -905,6 +924,18 @@ impl ForgePane {
             self.set_status(tf("forge.autoEditDirectorUnproven", &[&summary]));
             studio.notify(&tf("forge.autoEditDirectorUnproven", &[&summary]), true);
         }
+    }
+
+    /// A failed acceptance worker is not a successful edit. Release the
+    /// checking lock, preserve the sibling for inspection, and leave a
+    /// retryable failure visible instead of freezing the button forever.
+    fn auto_director_check_failed(&mut self, error: String, studio: &mut Studio) {
+        self.auto.checking = false;
+        self.auto.running = false;
+        self.auto.outcome = 2;
+        self.auto.stage = t("forge.autoEditDirectorUnprovenStage");
+        self.set_status(tf("forge.autoEditUnproven", &[&error]));
+        studio.notify(&format!("the edit could not be independently checked: {error}"), true);
     }
 
     /// Rereads the runner's last event into the page's own fields: the
@@ -2184,6 +2215,12 @@ fn director_phase(line: &str) -> Option<(usize, f32)> {
         .map(|(index, _)| at(index))
 }
 
+/// Whether either editing entry point must stay locked while AUTO EDIT
+/// is running or its Director export is being checked.
+fn auto_edit_busy(running: bool, checking: bool) -> bool {
+    running || checking
+}
+
 /// Whether the harness is wired to Concat and the skill is where it
 /// reads: `forge mcp get funcut` says the one, `forge commands` lists the
 /// other. Neither is a reason to fail: the buttons say what is missing.
@@ -2445,12 +2482,21 @@ fn elapsed_text(duration: Duration) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::auto_edit_busy;
     use super::director_phase;
     use super::director_skill_listed;
     use super::other_run_refusal;
     use super::voiceover_copy_name;
     use std::path::Path;
     use std::time::Duration;
+
+    #[test]
+    fn acceptance_check_keeps_both_edit_entry_points_locked() {
+        assert!(!auto_edit_busy(false, false));
+        assert!(auto_edit_busy(true, false));
+        assert!(auto_edit_busy(false, true));
+        assert!(auto_edit_busy(true, true));
+    }
 
     #[test]
     fn only_the_director_skill_satisfies_forge_preflight() {

@@ -783,129 +783,6 @@ def plan_field_audit(
 # --------------------------------------------------------------- the pipeline
 
 
-def phase_plan(plan: dict[str, Any]) -> list[tuple[str, str]]:
-    """Describe the real segment-based execution order for the run log."""
-    phases = [
-        ("concat_version", "the session's own version, and its tool list"),
-        ("local_vlm", "which critic tier will score the cut"),
-        ("sense_audio_repair", "repair the take before anything reads it (enhance_speech)"),
-        ("sense_audio_repair", "clean the repaired take's floor (remove_hiss_hum_rumble)"),
-        ("transcribe", "start source transcription"),
-        ("analysis_wait", "wait for source transcription"),
-        ("voice_signals", "voice_signals"),
-        ("emotion", "emotion (extract)"),
-        ("footage_plan_suggest", "cross-check B-roll coverage against the gaps"),
-        ("sense_audio_repair", "the BGM gate: does the take carry music (detect_music_segments)"),
-        ("plan_validate", "plan_validate (before timeline edits)"),
-        ("project_get", "read the project bin and active timeline"),
-        ("track_add", "create a dedicated voiceover lane when needed"),
-        ("clip_add", "place the voiceover when it is not already on the timeline"),
-    ]
-    voiceover = (plan.get("audio") or {}).get("voiceover") or {}
-    if isinstance(voiceover, dict) and isinstance(voiceover.get("speed"), (int, float)) \
-            and float(voiceover["speed"]) != 1.0:
-        phases.append(("clip_speed", "apply the plan's voiceover speed"))
-    phases.extend(
-        ("openvid_rank_for_slot", f"rank B-roll segment {index + 1}")
-        for index, _ in broll_segments(plan)
-    )
-    if broll_segments(plan):
-        phases.append(("stock_contact_sheet", "see the chosen B-roll candidates"))
-        phases.append(("footage_continuity", "footage_continuity and repair"))
-        phases.extend(
-            ("openvid_import", f"import and place B-roll segment {index + 1}")
-            for index, _ in broll_segments(plan)
-        )
-        phases.extend(
-            ("clip_trim", f"trim B-roll segment {index + 1}")
-            for index, _ in broll_segments(plan)
-        )
-        phases.extend(
-            ("clip_update", f"the transition into segment {index + 1}")
-            for index, segment in broll_segments(plan)
-            if isinstance(segment.get("transitionIn"), dict)
-        )
-        phases.extend(
-            ("keyframe_set", f"the entrance of segment {index + 1}")
-            for index, segment in broll_segments(plan)
-            if isinstance(segment.get("in"), dict)
-        )
-    placed_existing = [
-        (index, segment) for index, segment in existing_segments(plan)
-        if not segment["visual"].get("clipId")
-    ]
-    if motion_segments(plan) or placed_existing:
-        phases.append(("track_add", "create a dedicated top video lane"))
-    for index, _ in motion_segments(plan):
-        phases.extend([
-            ("motion_reel", f"render motion segment {index + 1}"),
-            ("media_import", f"import motion segment {index + 1}"),
-            ("clip_add", f"place motion segment {index + 1}"),
-            ("clip_trim", f"trim motion segment {index + 1}"),
-        ])
-    for index, segment in placed_existing:
-        if segment["visual"].get("file"):
-            phases.extend([
-                ("media_import", f"import existing source segment {index + 1}"),
-                ("project_get", f"read imported existing source {index + 1}"),
-            ])
-        phases.extend([
-            ("clip_add", f"place existing source segment {index + 1}"),
-            ("clip_trim", f"trim existing source segment {index + 1}"),
-        ])
-    if isinstance(plan.get("grade"), dict) and plan["grade"].get("filter"):
-        phases.append(("effect_layer_add", "the plan's grade"))
-    captions_wanted = isinstance(plan.get("captions"), dict) or any(
-        segment.get("captions") for _, segment in enumerate(plan_segments(plan))
-    )
-    if captions_wanted:
-        phases.append(("captions_add", "the plan's captions"))
-    for index, segment in enumerate(plan_segments(plan)):
-        if isinstance(segment.get("sfx"), dict):
-            phases.extend([
-                ("sounds_search", f"shop SFX for segment {index + 1}"),
-                ("sounds_add", f"place SFX for segment {index + 1}"),
-                ("clip_audio_levels_db", f"gain the SFX of segment {index + 1}"),
-            ])
-    if isinstance((plan.get("audio") or {}).get("bgm"), dict):
-        phases.extend([
-            ("bgm_status", "the music library's state"),
-            ("bgm_search", "shop the music bed"),
-            ("bgm_import", "place the music bed"),
-            ("clip_audio_levels_db", "duck the bed under the words"),
-        ])
-    phases.extend([
-        ("collision_check", "no two clips share a lane's same seconds"),
-        ("timeline_read", "the timeline as it stands, before export"),
-        ("export_start", "export"),
-        ("export_wait", "wait for completed export"),
-        ("transcribe", "start exported speech transcription"),
-        ("analysis_wait", "wait for exported speech transcription"),
-        ("emotion", "compare source and rendered speech timing"),
-        ("timeline_read", "the timeline re-read, as the export left it"),
-        ("project_get", "the bin re-read, every clip's source accounted for"),
-        ("measure_loudness", "the export's LUFS and true peak, measured"),
-        ("watch_render", "inspect rendered frames and audio"),
-        ("craft_critique", "score the rendered cut"),
-    ])
-    return phases
-
-
-# ----------------------------------------------------------- the verification
-#
-# The Verify stage's own record: the checks the finished export must
-# answer before the run may call itself complete (VERIFY-01..05,
-# 08..14, 16; 06 and 07 are the transcript-similarity and loudness gates
-# the stage has always run, now folded into the same record; 15's
-# disclosure reading joins from the Phase-8 ask). Every check
-# emits one structured entry - id, check, status, reason, evidence -
-# and the entries are written beside the export as
-# verification-report.json, so an acceptance read does not have to
-# replay the log to know what was proven. A failed entry stops the run
-# naming its ids; a check the environment cannot run is skipped with
-# its reason written down, never silently dropped.
-
-#: The report's own name for its shape, the way auto-edit-report names its.
 VERIFICATION_REPORT_SCHEMA = "funcut.verification-report/1"
 #: The run record's own name for its shape (DATA-04): the handoff a later
 #: session or a resume reads knows which record it is holding.
@@ -1878,7 +1755,16 @@ def run_pipeline(
         )
     else:
         if "sense_audio_repair" in served:
-            enhanced_out = os.path.join(project, "voiceover-enhanced.wav")
+            # The server confines repair writes to the audio's own folder
+            # ("out writes beside the take it reads"), so a project-root
+            # path is refused for any take in a subfolder - the forge
+            # harness's own synthesized takes live in <project>/audio/ and
+            # the run died at step 2. Per-take names beside the take: the
+            # confinement passes, and a second take can never clobber the
+            # first's repaired bytes.
+            audio_dir = os.path.dirname(os.path.abspath(audio)) or "."
+            audio_stem = os.path.splitext(os.path.basename(audio))[0]
+            enhanced_out = os.path.join(audio_dir, f"{audio_stem}-enhanced.wav")
             reply = advance("sense_audio_repair", {
                 "action": "enhance_speech",
                 "audio": audio, "out": enhanced_out, "overwrite": True,
@@ -1897,7 +1783,7 @@ def run_pipeline(
             else:
                 log("enhance_speech returned no file; analysis continues on the take as recorded")
         if "sense_audio_repair" in served and repaired:
-            cleaned_out = os.path.join(project, "voiceover-cleaned.wav")
+            cleaned_out = os.path.join(audio_dir, f"{audio_stem}-cleaned.wav")
             reply = advance("sense_audio_repair", {
                 "action": "remove_hiss_hum_rumble",
                 "audio": repaired, "out": cleaned_out, "overwrite": True,
@@ -3745,6 +3631,9 @@ def run_pipeline(
         isinstance(_sfx_prior, dict)
         and _sfx_prior.get("planSha256") == plan_sha
         and isinstance(_sfx_prior.get("clipIds"), list)
+        # An empty record is a shelf that found nothing, not a placement:
+        # a resume must retry the shelf, not inherit the nothing.
+        and bool(_sfx_prior["clipIds"])
         and all(
             isinstance(clip_id, str) and clip_id in _live_clip_ids
             for clip_id in _sfx_prior["clipIds"]
@@ -3790,8 +3679,13 @@ def run_pipeline(
                 "path": project, "clipId": sfx_clip, "baseDb": float(gain),
             })
         _sfx_clips.append(str(sfx_clip))
+        # The mark rides each placement, not the loop's end: a crash
+        # mid-loop resumes with the beats already placed kept (their
+        # clipIds are live) and only the remaining beats shopped - the
+        # old end-of-loop mark re-placed every beat on resume and the
+        # collision gate then failed the run permanently.
+        _stage_mark("sfx", planSha256=plan_sha, clipIds=list(_sfx_clips))
         log(f"segment-{index + 1}: SFX {sound.get('name', sound.get('id'))} placed at {start:.2f}s")
-    _stage_mark("sfx", planSha256=plan_sha, clipIds=_sfx_clips)
 
     sfx_asked = sum(
         1 for segment in plan_segments(plan) if isinstance(segment.get("sfx"), dict)
@@ -3874,21 +3768,21 @@ def run_pipeline(
                     "export",
                 )
             if state == "ready":
-                track_id = bgm_plan.get("trackId")
+                bed_track_id = bgm_plan.get("trackId")
                 if (
                     monetized
-                    and isinstance(track_id, str)
-                    and track_id.strip().startswith("lofi-")
+                    and isinstance(bed_track_id, str)
+                    and bed_track_id.strip().startswith("lofi-")
                 ):
                     # RISK-02: the plan named a track the licence forbids
                     # for a monetized edit - refused, not swapped.
                     raise PipelineError(
-                        f"the plan names MobyGratis track {track_id.strip()} for the "
+                        f"the plan names MobyGratis track {bed_track_id.strip()} for the "
                         "bed and the brief is monetized: the MobyGratis shelf is free "
                         "for non-commercial use only (docs/STOCK_LICENSING.md). Name a "
                         "FreePD (CC0-1.0) track or plan the edit non-monetized."
                     )
-                if not isinstance(track_id, str) or not track_id.strip():
+                if not isinstance(bed_track_id, str) or not bed_track_id.strip():
                     # FALL-09: the bed is shopped with the plan's own
                     # query, and a plan that named only a mood shops with
                     # that - said, not silently defaulted.
@@ -3936,10 +3830,10 @@ def run_pipeline(
                         _signal(0.0, "bgm", provenance="fallback", note=reason)
                         tracks = []
                     if tracks:
-                        track_id = str(tracks[0].get("id") or "")
-                        log(f"BGM: {tracks[0].get('title', track_id)}")
-                if track_id:
-                    import_args: dict[str, Any] = {"path": project, "ids": [track_id], "start": 0.0}
+                        bed_track_id = str(tracks[0].get("id") or "")
+                        log(f"BGM: {tracks[0].get('title', bed_track_id)}")
+                if bed_track_id:
+                    import_args: dict[str, Any] = {"path": project, "ids": [bed_track_id], "start": 0.0}
                     if monetized:
                         # RISK-02: the server enforces the licence again,
                         # at the import itself.
@@ -3955,6 +3849,15 @@ def run_pipeline(
                         bed_clip = _clip_for_media(bed_view, str(media_ids[0]), 0.0)
                     if bed_clip is None:
                         raise PipelineError("the music bed was imported but never placed on the timeline")
+                    # The mark rides the PLACEMENT, not the duck that
+                    # follows: a crash between the import and the mark used
+                    # to resume with no record, re-import the bed, and lay
+                    # a second one under the first - the collision gate
+                    # then failed every later resume permanently. Levels
+                    # are replaceable; a doubled bed is not.
+                    _stage_mark(
+                        "bgm", planSha256=plan_sha, clipId=str(bed_clip["id"]),
+                    )
                     bed_duration = max(float(bed_clip.get("duration") or runtime), 0.1)
                     duck_db = float(bgm_plan.get("duckDb", -12.0))
                     if "clip_audio_levels_db" in served:
@@ -3996,9 +3899,6 @@ def run_pipeline(
                             log(f"BGM ducked {duck_db:g} dB under {len(spans)} speech span(s)")
                             _audit("audio.bgm", "executed",
                                    "the bed imported, placed and ducked under the measured speech spans")
-                    _stage_mark(
-                        "bgm", planSha256=plan_sha, clipId=str(bed_clip["id"]),
-                    )
 
     # The timeline as it stands, before the render pays for it: no two
     # clips may share a lane's same seconds, and the read-back is the
@@ -4221,14 +4121,19 @@ def run_pipeline(
     # own words). A synthetic band on a take the plan promised as a file
     # is a possible swapped voice, recorded as such; on a tts take it is
     # the expected answer, recorded for the disclosure duty.
-    if "detect_ai_voice" not in served:
+    if "sense_captions" not in served:
         verify_entries.append(_verification_entry(
             "VERIFY-15", "ai-voice-disclosure", "skipped",
-            "detect_ai_voice is not served; the synthetic-voice read did not run",
+            "sense_captions is not served; the synthetic-voice read did not run",
         ))
     else:
         try:
-            ai_voice = advance("detect_ai_voice", {
+            # detect_ai_voice is a MEMBER of the sense_captions family,
+            # never a top-level tool: probing "detect_ai_voice" in served
+            # was always false, so the check skipped on every real server
+            # (only the selftest's mock registered it top-level).
+            ai_voice = advance("sense_captions", {
+                "action": "detect_ai_voice",
                 "audio": rendered, "transcript": transcript,
             })
         except PipelineError as error:
@@ -4279,6 +4184,7 @@ def run_pipeline(
     verify_summary = _verification_summary(verify_entries)
     verify_report = _verification_report(rendered, probed_path, verify_entries)
     verify_report_path = _write_verification_report(project, verify_report)
+    verified_render = rendered
     for entry in verify_entries:
         log(
             f"verify {entry['id']} {entry['check']}: {entry['status']}"
@@ -4371,7 +4277,7 @@ def run_pipeline(
                 log(f"watch_render: {note}")
         critique = advance(
             "craft_critique",
-            {"sheet": inspection, "project": project},
+            {"sheet": inspection, "project": project, "autoSetup": True},
         )
         score = None
         if isinstance(critique, dict):
@@ -4700,6 +4606,92 @@ def run_pipeline(
             break
         rendered = render_attempt(attempt)
         inspection, critique, score = watch_and_critique(rendered, attempt)
+
+    if rendered != verified_render:
+        # The craft loop re-rendered AFTER the Verify stage ran: the
+        # report beside the export describes a file that no longer
+        # ships. Re-run the render-level gates on the file that does -
+        # probe, word sync, loudness, true peak - and rewrite the
+        # report. A revision that broke sync or loudness used to ship
+        # green on the first render's evidence; the Rust program avoids
+        # this by construction (its revise stage runs before export).
+        revision = os.path.basename(rendered)
+        log(f"re-verifying the revision {revision} (the report described {os.path.basename(verified_render)})")
+        rev_probe = _ffprobe(rendered)
+        # Keep the project-level entries (timeline, captions, the
+        # ai-voice disclosure); replace the render-level ones.
+        render_level = {"VERIFY-01", "VERIFY-03", "VERIFY-04", "VERIFY-09",
+                        "VERIFY-10", "VERIFY-11", "VERIFY-13", "VERIFY-16"}
+        verify_entries = [e for e in verify_entries if e.get("id") not in render_level]
+        verify_entries.extend(_probe_checks(
+            rendered, plan, export, rev_probe,
+            _sample_frames(rendered, (rev_probe or {}).get("duration")),
+        ))
+        rev_words = None
+        rev_job = advance("transcribe", {"path": rendered})
+        rev_job_id = rev_job.get("job") if isinstance(rev_job, dict) else None
+        if rev_job_id:
+            rev_status: Any = None
+            for _ in range(4):
+                rev_status = advance(
+                    "analysis_wait", {"job": rev_job_id, "timeoutSeconds": 590})
+                if not isinstance(rev_status, dict) or rev_status.get("state") != "running":
+                    break
+            if isinstance(rev_status, dict) and rev_status.get("state") == "done":
+                try:
+                    rev_words = json.loads(rev_status.get("output", ""))
+                except (TypeError, json.JSONDecodeError):
+                    rev_words = None
+        if rev_words is None:
+            verify_entries.append(_verification_entry(
+                "VERIFY-03", "word-sync", "fail",
+                f"the revision {revision} could not be re-transcribed; "
+                "its word sync is unproven",
+            ))
+        else:
+            verify_entries.append(_sync_entry(advance("emotion", {
+                "action": "verify",
+                "expected": transcript,
+                "actual": rev_words,
+                "toleranceMs": VERIFICATION_SYNC_TOLERANCE_MS,
+            })))
+        rev_loudness = advance("measure_loudness", {
+            "path": rendered, "targetLufs": target_lufs,
+        })
+        rev_integrated = (
+            float(rev_loudness["integratedLufs"])
+            if isinstance(rev_loudness, dict)
+            and rev_loudness.get("integratedLufs") is not None else None
+        )
+        rev_true_peak = (
+            float(rev_loudness["truePeakDbtp"])
+            if isinstance(rev_loudness, dict)
+            and isinstance(rev_loudness.get("truePeakDbtp"), (int, float)) else None
+        )
+        if rev_integrated is None:
+            verify_entries.append(_verification_entry(
+                "VERIFY-13", "true-peak", "fail",
+                f"the revision {revision} returned no loudness reading",
+            ))
+        else:
+            log(f"revision loudness: {rev_integrated:.1f} LUFS, true peak "
+                f"{rev_true_peak if rev_true_peak is None else round(rev_true_peak, 1)} dBTP")
+            loud_within = abs(rev_integrated - target_lufs) <= 1.0
+            peak_ok = rev_true_peak is None or rev_true_peak <= -1.0
+            verify_entries.append(_verification_entry(
+                "VERIFY-13", "true-peak",
+                "pass" if (loud_within and peak_ok) else "fail",
+                f"{rev_integrated:.1f} LUFS against the {target_lufs:g} target, "
+                f"true peak {rev_true_peak} dBTP",
+            ))
+        verify_summary = _verification_summary(verify_entries)
+        verify_report = _verification_report(rendered, rendered, verify_entries)
+        _write_verification_report(project, verify_report)
+        log(
+            f"revision re-verified: {verify_summary['passed']} passed, "
+            f"{verify_summary['failed']} failed, {verify_summary['skipped']} skipped"
+        )
+        _verification_failed(verify_entries)
 
     status = "completed" if score >= CRAFT_SHIP_SCORE else "completed-with-warnings"
     for note in unaddressed:
@@ -5283,7 +5275,10 @@ SELF_TEST_REPLIES = {
     },
     "export_start": {"job": "j1"},
     "export_wait": {"state": "done", "output": "/tmp/funcut-selftest/final.mp4"},
-    "detect_ai_voice": {"ok": True, "aiLikeness": {"score": 12, "band": "likely human"}},
+    "sense_captions": lambda args: (
+        {"ok": True, "aiLikeness": {"score": 12, "band": "likely human"}}
+        if args.get("action") == "detect_ai_voice" else {"ok": False, "error": "unknown action"}
+    ),
     "measure_loudness": {
         "integratedLufs": -14.2, "truePeakDbtp": -1.4, "loudnessRangeLu": 6.0,
         "targetLufs": -14.0, "lufsError": -0.2, "platformTargetMet": True,
@@ -5476,7 +5471,7 @@ def self_test() -> int:
         "collision_check", "timeline_read",
         "export_start", "export_wait", "transcribe", "analysis_wait", "emotion",
         "timeline_read", "project_get",
-        "measure_loudness", "detect_ai_voice", "watch_render", "craft_critique",
+        "measure_loudness", "sense_captions", "watch_render", "craft_critique",
     ]
     if order != expected:
         print(f"FAIL: phase order\n  want: {expected}\n  got:  {order}")

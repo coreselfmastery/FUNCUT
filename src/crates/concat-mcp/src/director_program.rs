@@ -787,10 +787,20 @@ fn seam_transition(
         (_, _, _, _, _, true) => "concat.cross-pop",
         _ => transition_for_emotion(&mood),
     };
-    if last == Some(first) {
-        alternate_transition(&mood)
+    if last != Some(first) {
+        return first;
+    }
+    // The seam's move is the one the last shot already wore. The mood's
+    // alternate differs from the mood's own first, not from a seam that
+    // may not be it - two chapter openings on a neutral read are whip-pan
+    // twice - so the alternate can repeat as well. The mood's primary
+    // move is the fallback: the alternate and the primary never agree, so
+    // one of the two is always a move the last shot did not wear.
+    let alternate = alternate_transition(&mood);
+    if last == Some(alternate) {
+        transition_for_emotion(&mood)
     } else {
-        first
+        alternate
     }
 }
 
@@ -2159,17 +2169,12 @@ fn confidence_family(signal: &str) -> &str {
     }
 }
 
-/// The loudness target the cut ships to, in LUFS: the plan's own platform
-/// reading, from the timeline's aspect. A vertical cut is a reel and takes
-/// the short-form target; everything else takes YouTube's. `None` when the
-/// run has no timeline view to read the aspect from, so a mix is never
-/// applied to a guess.
+/// The integrated loudness the mix is put on: -14 LUFS, the level the
+/// platforms normalise a short cut toward, vertical reel or not. `None`
+/// when there is no timeline to read, so a run with no runtime mixes
+/// nothing rather than guessing a level.
 fn platform_target(log: &[Value]) -> Option<f64> {
-    let view = latest_view(log)?;
-    Some(match aspect_of(view) {
-        "9:16" => -14.0,
-        _ => -14.0,
-    })
+    latest_view(log).map(|_| -14.0)
 }
 
 /// The orientation word the live shelves' own search parameter takes,
@@ -4592,12 +4597,14 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     // hold - the A-roll covers the span.
                                     "monotony" => shop.held = true,
                                     // Scale, motion and stillness flags
-                                    // ride readings this manifest did not
+                                    // ride readings this manifest does not
                                     // carry (one frame measures no motion
-                                    // and no scale), so acting on them
-                                    // would be acting on the defaults the
-                                    // gate filled in. They stand
-                                    // recorded, not spent.
+                                    // and no scale), and the gate stands
+                                    // those rules down for exactly that
+                                    // reason - so nothing here acts on
+                                    // them. The arm stays for a rule a
+                                    // future manifest carries and this
+                                    // stage has no remedy for.
                                     _ => {}
                                 }
                             }
@@ -10030,6 +10037,32 @@ mod tests {
                 "the transition `{id}` is not a package the catalogue ships"
             );
         }
+    }
+
+    /// The no-repeat rule holds against the *seam* moves too, not only
+    /// the mood's: a chapter opening's whip-pan is the mood's own
+    /// alternate on a neutral read, so the old fallback wore whip-pan
+    /// twice running. The fix falls back to the mood's primary move,
+    /// which the alternate never equals (the test above pins that).
+    #[test]
+    fn a_seam_never_repeats_the_last_shot_s_move() {
+        let slot = BrollSlot {
+            take: "take.wav".into(),
+            from: 5.0,
+            to: 6.0,
+            query: "city".into(),
+        };
+        let chapter = TopicBoundary {
+            take: "take.wav".into(),
+            at: 5.5,
+            headline: "the turn".into(),
+            confidence: Some(0.8),
+        };
+        let first = seam_transition(&[], std::slice::from_ref(&chapter), &[], &[], &slot, None);
+        assert_eq!(first, "concat.whip-pan");
+        let second = seam_transition(&[], &[chapter], &[], &[], &slot, Some(first));
+        assert_ne!(second, first, "a chapter seam repeated its own move");
+        assert_eq!(second, "concat.blur-dissolve");
     }
 
     /// The accents are shopped by the read's own register: a line the

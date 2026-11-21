@@ -2170,6 +2170,12 @@ fn director_phase(line: &str) -> Option<(usize, f32)> {
         .map(|(index, _)| at(index))
 }
 
+/// Whether the command list proves the required Director skill is
+/// installed. Supporting shelves are useful, but cannot substitute for it.
+fn director_skill_listed(code: i32, words: &str) -> bool {
+    code == 0 && words.to_ascii_lowercase().contains("funcut-director")
+}
+
 /// Whether the harness is wired to Concat and the skill is where it
 /// reads: `forge mcp get funcut` says the one, `forge commands` lists the
 /// other. Neither is a reason to fail: the buttons say what is missing.
@@ -2181,9 +2187,7 @@ fn probe_setup() -> (Result<bool, String>, Result<bool, String>) {
     let installed = match forge(&["commands"]) {
         // Supporting shelves do not replace the required Director entry
         // point. A partial install must not pass preflight.
-        Ok((code, words)) => {
-            Ok(code == 0 && words.to_ascii_lowercase().contains("funcut-director"))
-        }
+        Ok((code, words)) => Ok(director_skill_listed(code, &words)),
         Err(error) => Err(error),
     };
     (connected, installed)
@@ -2430,10 +2434,21 @@ fn elapsed_text(duration: Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::director_phase;
+    use super::director_skill_listed;
     use super::other_run_refusal;
     use super::voiceover_copy_name;
     use std::path::Path;
     use std::time::Duration;
+
+    #[test]
+    fn only_the_director_skill_satisfies_forge_preflight() {
+        assert!(director_skill_listed(
+            0,
+            "funcut-director\nmaestro\nclip-skills"
+        ));
+        assert!(!director_skill_listed(0, "maestro\nclip-skills"));
+        assert!(!director_skill_listed(1, "funcut-director"));
+    }
 
     /// The handed-over run's progress is read from the harness's own
     /// words, and only where a phase is actually named: a line about

@@ -105,3 +105,56 @@ Never promote a finding to a higher level without its evidence. “Ready” requ
 ## Progress log
 
 - 2026-11-21: Created this 20-session plan from live GitHub state. PR #186 is open; 6 of 7 check runs completed successfully at the observation time, with Engine tests and lints still running. No claim of merge or completion is made.
+
+
+## Session 1 — interim source findings (2026-11-21)
+
+This section supersedes older gap statements where the current source proves the work has since landed. It is an interim audit, not a claim that every PR #186 file has been reviewed or that the workflow has E4 acceptance.
+
+### Verified on current main (E1 source evidence)
+
+| Area | Current-main finding | Evidence / implication |
+|---|---|---|
+| Two execution routes | Confirmed: Forge prefers the external Director when `director_ready` succeeds; otherwise it warns and runs the in-process fixed program. | `src/crates/concat/src/panes/forge.rs::auto_edit_start`. Test both routes separately. |
+| Fixed program scope | The Rust program is no longer the old 8/12-stage post-production-only path. Its stage register contains 17 stages: handoff, repair, transcription, voice signals, understanding, plan, gather, timeline, captions, motion, music, SFX, preview, revise, export, verify and watch. | `src/crates/concat-mcp/src/director_program.rs::auto_edit_program`; `src/crates/concat-director/src/stage.rs::Stage::ALL`. Old audit documents describing the 8/12-stage program are stale. |
+| Creative Director path | The prompt explicitly instructs the Director to measure the voice, create and validate a plan, inspect B-roll, use motion, word-group captions, grade/music/SFX, preview, revise and inspect the exported file. | `auto_director_prompt` in `forge.rs`; the skill's 12-phase workflow. Prompt instructions are E0/E1 until a real run proves them. |
+| Director success gate | A zero exit code starts independent acceptance; it does not itself declare success. The pane probes the export, measures loudness, watches the actual render, critiques its sheet, revalidates a saved plan where present, and compares rendered speech with the voiceover mapping; it writes `auto-edit-receipt.json`. | `src/crates/concat-mcp/src/acceptance.rs` and `forge.rs::auto_director_ended/auto_director_checked`. This refutes the old audit's P0 claim that the Director route trusts exit code alone. |
+| Fixed-run verification | The fixed program has explicit preview, revision, export, verify and watch stages, with reply gates and durable runner state. | `director_program.rs`, `concat-director/src/stage.rs`, `concat-director/src/runner.rs`. Inspect individual gates and error policy during later sessions. |
+| B-roll | The fixed program has a Gather stage that searches the configured licensed live provider, fetches and contact-sheet-inspects candidates, runs continuity checks, then imports/places and styles a chosen clip. | `director_program.rs` Gather implementation and `the_broll_stage_imports_only_licensed_live_stock` regression test. The old audit's claim that Gather is absent is stale on this main snapshot. |
+| UI fallback behavior | Director-first routing is explicit. If Director setup is unavailable, the UI reports why and then uses the fixed program; it does not pretend the fallback was the Director. | `forge.rs::auto_edit_start`. Verify the wording and all missing-tool/key cases in UI acceptance. |
+| Voice-signal improvements | PR #186 adds further parsed readings and consumption tests, including phrase boundaries, pitch, clipping/safety, hum, spectral, rhythm and speaker evidence. | These are **PR-only**, not current-main evidence, until #186 merges. Review the entire signal diff and exact-head CI before treating them as shipped. |
+
+### Remaining risks / not yet proven
+
+1. **E4 acceptance is still open.** `KNOWN_ISSUES.md` explicitly says a real AI Director brief-to-final-export project still needs acceptance. Unit tests and CI cannot prove the actual target laptop/provider workflow.
+2. **Director progress is still inferred from stdout prose.** `DIRECTOR_PHASES` and `director_phase` in `forge.rs` search for phase headings/keywords. This is less reliable than typed events and should be replaced or hardened with structured progress.
+3. **Director cancellation/recovery differs from the fixed runner.** The external child is terminated on cancel; the sibling is retained and retry reuses it, but there is no equivalent stage checkpoint/resume contract for the Director's partial work. The fixed runner has its own resume record. Define and test safe recovery rather than assuming parity.
+4. **The signal contract still needs exact-head reconciliation.** PR #186's 50-reading additions must be checked against the catalogue, parser, per-reading consumer guard, named decision policy, confidence/basis, tests, docs and Forge UI catalogue. Do not accept a family count alone as proof.
+5. **The Director route and fixed route have different creative contracts.** The fixed route has deterministic plan/gather/motion/revision stages; the external Director has the skill and harness. Confirm both satisfy the same essential acceptance receipt and licensing/QC guarantees, while allowing their creative methods to differ.
+6. **The UI's Director progress is not the same as actual work progress.** A log line can mention a phase without completing it; stage fraction must not imply a completed stage until structured evidence supports it.
+7. **Target-machine constraints remain.** The repo is tuned for small Linux systems, but real render time, RAM, provider latency, stock downloads and 1080p playback/export need measured acceptance on the intended machine.
+
+### Corrected audit status
+
+- `docs/AUTO_EDIT_AUDIT.md`: historical findings; its claims about missing Director export acceptance and missing fallback Gather/Motion/Captions/Preview/Revise must be reconciled before use.
+- `docs/DIRECTOR-INTEGRATION-PLAN.md`: historical plan; its old 12-stage and no-Gather statements are stale against current main.
+- `KNOWN_ISSUES.md`: use as the current limitations register; its E2E acceptance item remains the principal product-level blocker.
+- `AGENT_STATE.md` / `IMPLEMENTATION_LEDGER.md`: use as historical session evidence, but verify each claim against current code and exact PR/CI state.
+
+### Session 1 checklist update
+
+- [x] Read current-main source for the Director-first route and fixed-run fallback.
+- [x] Read current-main Auto Edit stage register and representative Gather, preview/revise and verification implementations.
+- [x] Read current-main Director acceptance receipt/check implementation.
+- [x] Inspect PR #186 diffs for signal parser/consumer changes in the main affected crates.
+- [ ] Finish line-by-line review of all PR #186 changed files and reconcile its test evidence.
+- [ ] Confirm PR #185 merge commit and map every Session 8 claim to current source/tests.
+- [ ] Produce final Session 1 gap matrix including tool coverage, provider setup, failure policy and route parity.
+
+### PR/checkpoint
+
+- Planning document commit: `1870ec31344332de41aa7ef9908041d8b04bebdc`.
+- Planning PR: [#187](https://github.com/coreselfmastery/FUNCUT/pull/187) — open; CI was still running at the last status check.
+- Implementation PR under review: [#186](https://github.com/coreselfmastery/FUNCUT/pull/186) — open and unmerged; six of seven check runs were successful and Engine tests/lints remained in progress at the last status check.
+
+**Resume next:** complete the remaining Session 1 reconciliation; do not implement a feature already present on main or PR #186.

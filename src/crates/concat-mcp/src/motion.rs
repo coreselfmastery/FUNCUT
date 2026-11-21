@@ -13,9 +13,16 @@
 //! The project is only a folder to these tools - no session, no lock -
 //! because a comp is a document, not an edit.
 //!
-//! The engine is Geneva, the browserless markup renderer; the honest
-//! refusal when it is not on the machine names the installer. Encoding
-//! goes through Geneva's own encoder, which is 4:2:0 without an alpha
+//! The engine is chosen the way the project's own compositor would choose
+//! it: Geneva, the browserless markup renderer, when the sidecar is there
+//! and the comp is expressible in its timeline - and the native engine
+//! for everything the native path can draw whole, so a comp the sidecar
+//! would drop or approximate (an animated colour, a gradient sweep, a
+//! growing box) renders instead of being refused, and a machine without
+//! the sidecar still bakes every comp that is shapes, images and text.
+//! The honest refusal when a markup comp meets a missing sidecar names
+//! the installer. Encoding goes through Geneva's own encoder, which is
+//! 4:2:0 without an alpha
 //! channel: a comp with a transparent background is opaque in the file,
 //! and the note in the bake reply says so. Overlays that must keep their
 //! alpha wait for the Motion clip, which bakes PNG frames the compositor
@@ -23,11 +30,13 @@
 //! way to a finished caption video in one call.
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use concat_motion::authoring::{self, CompSummary};
 use concat_motion::comp::{AssetKind, Comp, NodeKind, Paint, Rgba};
-use concat_motion::engine::{BakeRequest, CompEngine, EnginePreference};
-use concat_motion::geneva::Geneva;
+use concat_motion::engine::{BakeRequest, CompEngine, EngineKind, EnginePreference, Sidecar};
+use concat_motion::geneva::{Breaker, Geneva};
+use concat_motion::native::Native;
 use concat_motion::presets;
 use concat_motion::sequence::{self, SceneLayer};
 use concat_motion::storyboard;
@@ -61,6 +70,71 @@ fn geneva() -> Result<Geneva, ApiError> {
                     .to_owned(),
             )
         })
+}
+
+/// One engine for every native bake these tools draw: the faces load
+/// once and stay loaded, the way the engine's own doc asks for - one per
+/// process, `&self` for every bake and every frame.
+fn native() -> &'static Native {
+    static ENGINE: OnceLock<Native> = OnceLock::new();
+    ENGINE.get_or_init(Native::new)
+}
+
+/// The engine a comp draws on, as the comp doors hold it. The choice is
+/// [`EnginePreference::choose`]'s, made on what this install can run and
+/// what the comp is made of: a markup comp keeps Geneva - only the
+/// sidecar draws markup - and everything else the native path can draw
+/// whole (the shapes, images and text it always could, plus the tracks
+/// the sidecar's timeline cannot express) renders natively rather than
+/// being refused. A fallback nobody can see is a fallback nobody can
+/// trust, so the note comes with the engine and the replies carry it.
+enum Engine {
+    Geneva(Geneva),
+    Native(&'static Native),
+}
+
+impl Engine {
+    /// Which engine this is, as a bake manifest records it.
+    fn kind(&self) -> EngineKind {
+        match self {
+            Engine::Geneva(_) => EngineKind::Geneva,
+            Engine::Native(_) => EngineKind::Native,
+        }
+    }
+
+    fn as_dyn(&self) -> &dyn CompEngine {
+        match self {
+            Engine::Geneva(engine) => engine,
+            Engine::Native(engine) => *engine,
+        }
+    }
+}
+
+/// The engine that draws `comp`: the preference's choice, given the
+/// sidecar's state right now - installed, missing, or failing with its
+/// breaker open - so a tripped sidecar costs a machine nothing it did
+/// not already cost, and the comps that only the native engine can
+/// honour (an animated colour, a gradient sweep, an animated size)
+/// render instead of meeting the sidecar's refusal.
+fn engine_for(comp: &Comp) -> Result<(Engine, Option<String>), ApiError> {
+    let preference = EnginePreference::default();
+    let sidecar = match Geneva::discover(preference.geneva.as_deref()) {
+        Some(engine) => match engine.breaker() {
+            Breaker::Closed => Sidecar::Ready,
+            Breaker::Open { failures } => Sidecar::Failing { failures },
+        },
+        None => Sidecar::Missing,
+    };
+    let choice = preference.choose(comp, sidecar);
+    match choice.engine {
+        EngineKind::Native => Ok((Engine::Native(native()), choice.note)),
+        EngineKind::Geneva => Ok((Engine::Geneva(geneva()?), choice.note)),
+        EngineKind::Lottie => Err(ApiError::failed(
+            "the Lottie engine is an importer, not a renderer: bake the imported comp, \
+             which draws on the engine its tracks ask for"
+                .to_owned(),
+        )),
+    }
 }
 
 /// A project folder argument: present, a folder, and without `..` in it.
@@ -696,7 +770,7 @@ pub fn frame(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiErro
             ApiError::invalid("invalid arguments: `at` is a time in seconds, 0 or more")
         })?;
     let (comp, _) = resolve_comp(&fields)?;
-    let engine = geneva()?;
+    let (engine, note) = engine_for(&comp)?;
     let width = fields
         .get("width")
         .and_then(Value::as_u64)
@@ -704,6 +778,7 @@ pub fn frame(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiErro
     std::fs::create_dir_all(motion_dir(&project))
         .map_err(|error| ApiError::failed(format!("could not create motion/: {error}")))?;
     let drawn = engine
+        .as_dyn()
         .frame(&comp, at, width, &comps_dir(&project))
         .map_err(|error| ApiError::failed(error.to_string()))?;
     let out = motion_dir(&project).join(format!("frame-{:016x}-{at:.2}.png", comp.hash(),));
@@ -716,14 +791,18 @@ pub fn frame(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiErro
         .map_err(|error| ApiError::failed(format!("could not keep the frame: {error}")))?;
     let _ = std::fs::remove_file(&drawn);
     let inline = crate::sense::base64(&bytes);
-    let reading = json!({
+    let mut reading = json!({
         "at": at,
         "frame": out.display().to_string(),
         "duration": comp.duration,
         "width": width.unwrap_or(comp.width),
         "height": comp.height,
+        "engine": engine.kind().as_str(),
         "note": "Look at this frame. Check legibility, contrast, safe margins and whether the motion is mid-entrance or settled before baking.",
     });
+    if let Some(note) = note {
+        reading["engineNote"] = json!(note);
+    }
     Ok(Outcome {
         content: vec![
             json!({ "type": "image", "data": inline, "mimeType": "image/png" }),
@@ -791,7 +870,7 @@ pub fn preview(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiEr
             "invalid arguments: the comp has no duration to spread frames across",
         ));
     }
-    let engine = geneva()?;
+    let (engine, note) = engine_for(&comp)?;
     std::fs::create_dir_all(motion_dir(&project))
         .map_err(|error| ApiError::failed(format!("could not create motion/: {error}")))?;
 
@@ -803,6 +882,7 @@ pub fn preview(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiEr
     for index in 0..frames {
         let at = comp.duration * f64::from(index as u32) / f64::from(frames as u32);
         let drawn = engine
+            .as_dyn()
             .frame(&comp, at, Some(width as u32), &comps_dir(&project))
             .map_err(|error| ApiError::failed(error.to_string()))?;
         // Read the drawn PNG before it is removed: an agent cannot open a
@@ -830,17 +910,21 @@ pub fn preview(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiEr
             "frame": out.display().to_string(),
         }));
     }
-    let reading = json!({
+    let mut reading = json!({
         "frames": said,
         "count": frames,
         "duration": comp.duration,
         "width": width,
         "height": comp.height,
+        "engine": engine.kind().as_str(),
         "note": "Watch these in order: the entrance should land on its curve, the hold \
                  should breathe, the exit should leave. Compare the first against the \
                  last before motion_bake pays for the whole clip; motion_frame draws one \
                  exact time, scene_analysis reads the document with no engine at all.",
     });
+    if let Some(note) = note {
+        reading["engineNote"] = json!(note);
+    }
     content.push(json!({
         "type": "text",
         "text": serde_json::to_string_pretty(&reading).unwrap_or_default(),
@@ -1224,7 +1308,7 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
         request.height(&comp),
         request.fps(&comp),
     ));
-    let engine = geneva()?;
+    let (engine, engine_note) = engine_for(&comp)?;
     // The incremental seam: a fix patch changes the comp's hash, and the
     // whole bake re-rendered for it - even when the change was one node's
     // timing, and only the frames that node's window touches ever drew
@@ -1232,12 +1316,19 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
     // against this one: the frames the change cannot reach are inherited
     // from it byte for byte - determinism is the guarantee - and only the
     // rest re-render, as one contiguous range the sidecar renders.
+    //
+    // The predecessor must also be a bake the same engine drew: two
+    // engines do not promise the same pixels for the same document, so a
+    // geneva bake is not a byte-for-byte donor for a native render, and
+    // the candidate walk below skips any manifest whose engine differs.
     let mut request = request;
     let mut inherited_note: Option<String> = None;
     let mut predecessor_dir: Option<PathBuf> = None;
     let mut render_range: Option<(u32, u32)> = None;
     let mut skip_render = false;
-    if let Some((previous_dir, previous_comp)) = predecessor(&project, &comp, &request) {
+    if let Some((previous_dir, previous_comp)) =
+        predecessor(&project, &comp, &request, engine.kind())
+    {
         let fps = request.fps(&comp);
         let frames = ((comp.duration * fps).ceil() as usize).max(1);
         let mut dirty =
@@ -1283,7 +1374,7 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
             fps: request.fps(&comp),
             hash: comp.hash(),
             assets: concat_motion::engine::bake_assets_key(&comp, &comps_dir(&project)),
-            engine: concat_motion::engine::EngineKind::Geneva,
+            engine: engine.kind(),
             engine_version: "inherited".into(),
             alpha: request.alpha,
             warnings: Vec::new(),
@@ -1291,6 +1382,7 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
         }
     } else {
         let mut baked = engine
+            .as_dyn()
             .bake(&comp, &request, &dir)
             .map_err(|error| ApiError::failed(error.to_string()))?;
         // The frames the render did not produce: inherited from the bake
@@ -1333,6 +1425,9 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
     if let Some(note) = inherited_note {
         reply["inherited"] = json!(note);
     }
+    if let Some(note) = engine_note {
+        reply["engineNote"] = json!(note);
+    }
     // The sweep is said only when it did something: a sweep that freed
     // nothing is housekeeping, not news.
     if !swept.evicted.is_empty() || !swept.junk.is_empty() {
@@ -1363,14 +1458,23 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
             format!("{hash}-{name}")
         };
         let out = crate::sense::write_target(backend, Some(&motion_dir(&project)), &name)?;
-        encode_bake(&engine, &dir, &out, crf)?;
-        // The honest note every overlay comp earns: the sidecar's video
-        // codecs carry no alpha channel, and only the PNG sequence keeps
-        // what a transparent background meant.
+        match &engine {
+            Engine::Geneva(engine) => encode_bake(engine, &dir, &out, crf)?,
+            Engine::Native(_) => {
+                encode_frames(&baked.dir, &out, baked.fps, crf)?;
+                // ProRes 4444 is the one container on this path that
+                // carries an alpha channel; the note below says the rest.
+            }
+        }
+        // The honest note every overlay comp earns: the video codecs carry
+        // no alpha channel on the H.264 and VP9 paths, and only the PNG
+        // sequence keeps what a transparent background meant (a `.mov`
+        // keeps it too, on ProRes 4444).
         if comp.background.a < 1.0 {
             reply["note"] = json!(
                 "this comp has a transparent background; the encoded file is opaque where \
-                 the comp was not - the PNG sequence in `dir` keeps the alpha"
+                 the comp was not (a .mov on ProRes 4444 keeps it) - the PNG sequence in \
+                 `dir` keeps the alpha"
             );
         }
         reply["file"] = json!(out.display().to_string());
@@ -1382,7 +1486,12 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
 /// same width, height and rate - the frames have to line up - the
 /// manifest's own mtime ordering them, and the comp it baked read back
 /// from the project's content-addressed comps/.
-fn predecessor(project: &Path, comp: &Comp, request: &BakeRequest) -> Option<(PathBuf, Comp)> {
+fn predecessor(
+    project: &Path,
+    comp: &Comp,
+    request: &BakeRequest,
+    engine: EngineKind,
+) -> Option<(PathBuf, Comp)> {
     let suffix = format!(
         "-{}x{}@{}",
         request.width(comp),
@@ -1409,6 +1518,12 @@ fn predecessor(project: &Path, comp: &Comp, request: &BakeRequest) -> Option<(Pa
         let Ok(manifest) = serde_json::from_str::<Value>(&manifest) else {
             continue;
         };
+        // A donor the other engine drew is no donor: the engines do not
+        // promise one another's pixels, and a frame inherited byte for
+        // byte across engines would be a hybrid no manifest names.
+        if manifest.get("engine").and_then(Value::as_str) != Some(engine.as_str()) {
+            continue;
+        }
         let Some(hash) = manifest.get("hash").and_then(Value::as_str) else {
             continue;
         };
@@ -1462,6 +1577,58 @@ fn inherit_outside(previous: &Path, dir: &Path, range: Option<(u32, u32)>) -> us
         }
     }
     copied
+}
+
+/// Encode a native bake's PNG sequence to one file, through the machine's
+/// own ffmpeg - the frames are already on disk with their alpha, and the
+/// pass is one command the whole toolchain already depends on. The
+/// extension picks the codec exactly as the sidecar's encoder does:
+/// `.webm` VP9, `.mov` ProRes 4444 (the one that carries alpha), anything
+/// else the H.264 every player reads. The frames are read at the bake's
+/// own rate, so the file says what the timeline would.
+fn encode_frames(frames: &Path, out: &Path, fps: f64, crf: u8) -> Result<(), ApiError> {
+    if let Some(parent) = out.parent().filter(|parent| !parent.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| ApiError::failed(format!("{}: {error}", parent.display())))?;
+    }
+    let pattern = frames.join("%04d.png");
+    let (codec, pixel): (&str, &str) = match out.extension().and_then(|ext| ext.to_str()) {
+        Some(ext) if ext.eq_ignore_ascii_case("webm") => ("libvpx-vp9", "yuv420p"),
+        Some(ext) if ext.eq_ignore_ascii_case("mov") => ("prores_ks", "yuva444p10le"),
+        _ => ("libx264", "yuv420p"),
+    };
+    let (quality, value): (&str, std::borrow::Cow<'_, str>) = if codec == "prores_ks" {
+        ("-profile:v", "4444".into())
+    } else {
+        ("-crf", crf.to_string().into())
+    };
+    let status = std::process::Command::new("ffmpeg")
+        .arg("-y")
+        .arg("-loglevel")
+        .arg("error")
+        .arg("-framerate")
+        .arg(fps.to_string())
+        .arg("-i")
+        .arg(&pattern)
+        .arg("-c:v")
+        .arg(codec)
+        .arg(quality)
+        .arg(value.as_ref())
+        .arg("-pix_fmt")
+        .arg(pixel)
+        .arg(out)
+        .status();
+    match status {
+        Ok(status) if status.success() => Ok(()),
+        Ok(status) => Err(ApiError::failed(format!(
+            "ffmpeg encoded {status}: the frames are still in {}",
+            frames.display()
+        ))),
+        Err(error) => Err(ApiError::failed(format!(
+            "ffmpeg is not on this machine ({error}); the frames are still in {}",
+            frames.display()
+        ))),
+    }
 }
 
 /// Encode a staged bake to one file, the way `concat-motion-agent bake
@@ -2490,4 +2657,191 @@ pub fn engine_missing() -> ApiError {
         ErrorCode::Refused,
         "the Geneva motion sidecar is not on this machine",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A backend with no roots, the window's own shape: the motion tools
+    /// only ask it where it may write, and an empty list is the window's
+    /// answer.
+    struct Windowless;
+
+    impl Backend for Windowless {
+        fn call(&mut self, _request: concat_api::Request) -> Result<Value, ApiError> {
+            Err(ApiError::failed("the motion tools never call the backend"))
+        }
+
+        fn describe(&self) -> Value {
+            json!({ "mode": "test" })
+        }
+    }
+
+    /// A comp to hang the operations on, the same shape an agent's first
+    /// `add-rect` lands on: no markup anywhere, so the engine choice is
+    /// about what the tracks ask for, not what the words are drawn with.
+    fn base(id: &str, seconds: f64) -> Comp {
+        use std::collections::BTreeMap;
+        Comp {
+            format: concat_motion::comp::FORMAT,
+            id: id.into(),
+            name: String::new(),
+            width: 640,
+            height: 360,
+            fps: 12.0,
+            duration: seconds,
+            background: Rgba::new(0.0, 0.0, 0.0, 0.0),
+            assets: BTreeMap::new(),
+            curves: BTreeMap::new(),
+            nodes: Vec::new(),
+            comps: BTreeMap::new(),
+            slots: Vec::new(),
+        }
+    }
+
+    /// A comp document written under a temp project's comps/, as an agent
+    /// hand-authoring one would leave it.
+    fn comp_in(project: &Path, name: &str, comp: &Comp) {
+        std::fs::create_dir_all(comps_dir(project)).expect("comps dir");
+        let file = comps_dir(project).join(name);
+        std::fs::write(
+            &file,
+            serde_json::to_string_pretty(comp).expect("the comp serialises"),
+        )
+        .expect("the comp file writes");
+    }
+
+    /// The engine choice is the door's, not the caller's: a comp carrying
+    /// the tracks only the native engine honours - an animated colour, a
+    /// gradient sweep, a growing box - bakes on the native engine instead
+    /// of meeting the sidecar's refusal, whichever machines the test runs
+    /// on, and the reply says which engine drew and why it was chosen.
+    #[test]
+    fn a_native_only_comp_bakes_on_the_native_engine() {
+        let project = tempfile::tempdir().expect("a project folder");
+        let comp = authoring::apply_json(
+            &base("native-card", 1.0),
+            &json!({"ops": [
+                {"op": "add-rect", "id": "card", "width": 320, "height": 180,
+                 "fill": "#101418ff", "radius": 12, "x": 320, "y": 180},
+                {"op": "set-track-colors", "node": "card", "property": "fill",
+                 "keys": [[0.0, "#101418", null],
+                           [1.0, "#3b82f6", {"kind": "bezier", "x1": 0.16, "y1": 1, "x2": 0.3, "y2": 1}]]},
+            ]}),
+        )
+        .expect("the ops apply");
+        comp_in(project.path(), "native-card.json", &comp);
+
+        let baked = bake(
+            json!({
+                "project": project.path(),
+                "comp": "native-card.json",
+            }),
+            &Windowless,
+        )
+        .expect("the bake renders");
+        let reply = baked.structured.expect("the bake replies");
+        assert_eq!(
+            reply["engine"], "native",
+            "the comp's tracks ask for native"
+        );
+        assert!(
+            reply["frames"].as_u64().unwrap_or(0) > 0,
+            "frames on disk: {}",
+            reply
+        );
+        // The manifest tells the same story the reply does, because the
+        // cache contract keys on the engine that drew. It lives at the
+        // bake's root, one level above the frames directory the reply
+        // names - the sentinel a reader checks before the frames it
+        // promises.
+        let frames_dir = PathBuf::from(reply["dir"].as_str().expect("the bake dir"));
+        let manifest: Value = serde_json::from_str(
+            &std::fs::read_to_string(
+                frames_dir
+                    .parent()
+                    .expect("the frames dir has a root above it")
+                    .join("manifest.json"),
+            )
+            .expect("the manifest"),
+        )
+        .expect("the manifest parses");
+        assert_eq!(manifest["engine"], "native");
+        // The note names the choice, because a fallback nobody can see is
+        // a fallback nobody can trust - on a machine with the sidecar it
+        // says the fidelity reason; without one, the availability one.
+        let note = reply["engineNote"].as_str().unwrap_or_default();
+        assert!(note.contains("native"), "the note says native: {note}");
+    }
+
+    /// One frame of the same comp, on the same terms: the look-before-bake
+    /// door chooses the engine the bake would, so what the agent sees is
+    /// what the timeline would get.
+    #[test]
+    fn a_native_only_comp_frames_on_the_native_engine() {
+        let project = tempfile::tempdir().expect("a project folder");
+        let comp = authoring::apply_json(
+            &base("native-chip", 1.0),
+            &json!({"ops": [
+                {"op": "add-rect", "id": "chip", "width": 220, "height": 90,
+                 "fill": "#0b0d10ff", "radius": 8, "x": 320, "y": 180},
+                {"op": "set-track-size", "node": "chip",
+                 "keys": [[0.0, 220, 90, null],
+                           [1.0, 320, 90, {"kind": "bezier", "x1": 0.34, "y1": 1.56, "x2": 0.64, "y2": 1}]]},
+            ]}),
+        )
+        .expect("the ops apply");
+        comp_in(project.path(), "native-chip.json", &comp);
+
+        let drawn = frame(
+            json!({
+                "project": project.path(),
+                "comp": "native-chip.json",
+                "at": 0.5,
+            }),
+            &Windowless,
+        )
+        .expect("the frame draws");
+        let reply = drawn.structured.expect("the frame replies");
+        assert_eq!(reply["engine"], "native");
+        assert!(
+            PathBuf::from(reply["frame"].as_str().expect("the frame path")).is_file(),
+            "the frame is kept for the project"
+        );
+    }
+
+    /// A markup comp keeps Geneva whatever this machine can run: only the
+    /// sidecar draws markup, so a machine without one hears the honest
+    /// refusal that names the installer - and a machine with one renders
+    /// on Geneva, with the reply saying so. The assertion follows the
+    /// machine, the contract does not.
+    #[test]
+    fn a_markup_comp_keeps_geneva_either_way() {
+        let project = tempfile::tempdir().expect("a project folder");
+        let arguments = json!({
+            "project": project.path(),
+            // The glass lower third is markup end to end: an Html card
+            // is the one shape only the sidecar draws.
+            "preset": "funcut.lower-third.glass",
+        });
+        assert!(
+            presets::build("funcut.lower-third.glass")
+                .expect("the preset builds")
+                .needs_markup(),
+            "the preset really is a markup comp"
+        );
+        if Geneva::discover(EnginePreference::default().geneva.as_deref()).is_none() {
+            let refused =
+                bake(arguments, &Windowless).expect_err("no sidecar, no markup render");
+            assert!(
+                refused.to_string().contains("CONCAT_GENEVA_BIN"),
+                "the refusal names the installer: {refused}"
+            );
+        } else {
+            let baked = bake(arguments, &Windowless).expect("the sidecar renders");
+            let reply = baked.structured.expect("the bake replies");
+            assert_eq!(reply["engine"], "geneva");
+        }
+    }
 }

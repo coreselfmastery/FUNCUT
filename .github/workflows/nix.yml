@@ -160,6 +160,20 @@ jobs:
 
       - name: Build
         run: |
+          # A sampler beside the build: the runs that ended "runner lost
+          # communication" took the log's last line with them, and the
+          # minutes between the last compile line and the kill were blank,
+          # so the peak that did it was never named. One line a minute
+          # names it, whether the run survives or not.
+          (
+            while :; do
+              sleep 60
+              printf '== memory %s ==\n' "$(date -u +%H:%M:%S)"
+              free -m | sed -n '2,3p'
+            done
+          ) &
+          sampler=$!
+          trap 'kill "$sampler" 2>/dev/null || true' EXIT
           if nix build .#concat --print-build-logs; then
             exit 0
           fi

@@ -211,6 +211,20 @@
           # holds the rest of the workspace at sixty-four so no other
           # crate's rustc is the one that outgrows the builder either.
           env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "64";
+          # The join, not the compile, is what the builder could not hold.
+          # Thin LTO makes the linker load every codegen unit of every
+          # crate at once - sixty-four per crate beside the window crate's
+          # two hundred and fifty-six - and the three runs that ended
+          # "runner lost communication" with no step conclusion, their log
+          # truncated mid-build at 1h15m-1h18m, all died in the silence
+          # after the last compile line, where that join happens. The units
+          # above stay where the ladder put them, because they are what
+          # keeps the window crate's own rustc alive; the join goes, and
+          # the binary is built from the same objects without it. LTO is
+          # still exercised where the released binary is made:
+          # build-app.yml builds the shipping `app` profile, fat LTO and
+          # all, on the same runners.
+          env.CARGO_PROFILE_RELEASE_LTO = "false";
           # And the crate beside its neighbours: at cargo's default width
           # the window crate's rustc ran beside slint's, motion's and the
           # mcp's at once, and after the interface grew three and a half

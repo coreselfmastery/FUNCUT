@@ -18,7 +18,7 @@
 //! Every call goes through the pane's own [`Toolbox`] and [`Backend`], so
 //! what is asked here means exactly what the same call from an agent means.
 
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use concat_director::{
     AcceptanceReceipt, GateRecord, GateStatus, Stage, StageOutcome, StageRecord, ToolCall,
@@ -81,33 +81,59 @@ fn saved_plan(project: &str) -> Option<Value> {
 /// The mapping is written by the pane from the source timeline's actual
 /// clip placements; using it avoids guessing what words the Director meant
 /// to preserve.
-fn expected_takes(project: &str) -> Vec<Value> {
+fn expected_takes(project: &str) -> Result<Vec<Value>, String> {
     let path = std::path::Path::new(project).join("voiceover-mapping.json");
-    let Ok(bytes) = std::fs::read(path) else {
-        return Vec::new();
-    };
-    let Ok(mapping) = serde_json::from_slice::<Value>(&bytes) else {
-        return Vec::new();
-    };
-    mapping
+    let bytes = std::fs::read(&path)
+        .map_err(|error| format!("voiceover mapping is unavailable: {error}"))?;
+    let mapping: Value = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("voiceover mapping is invalid JSON: {error}"))?;
+    let segments = mapping
         .get("segments")
         .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|segment| {
-            let path = segment.get("take")?.as_str()?;
-            let mut row = json!({
-                "path": path,
-                "start": segment.get("start").and_then(Value::as_f64).unwrap_or(0.0),
-                "sourceIn": segment.get("source_in").and_then(Value::as_f64).unwrap_or(0.0),
-                "speed": segment.get("speed").and_then(Value::as_f64).unwrap_or(1.0),
-            });
-            if let Some(source_out) = segment.get("source_out").and_then(Value::as_f64) {
-                row["sourceOut"] = json!(source_out);
-            }
-            Some(row)
-        })
-        .collect()
+        .filter(|segments| !segments.is_empty())
+        .ok_or_else(|| "voiceover mapping has no segments".to_owned())?;
+
+    let mut rows = Vec::with_capacity(segments.len());
+    for (index, segment) in segments.iter().enumerate() {
+        let invalid = |field: &str| {
+            format!("voiceover mapping segment {} has an invalid {field}", index + 1)
+        };
+        let take = segment
+            .get("take")
+            .and_then(Value::as_str)
+            .filter(|take| !take.trim().is_empty())
+            .ok_or_else(|| invalid("take path"))?;
+        let start = segment
+            .get("start")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .ok_or_else(|| invalid("start time"))?;
+        let source_in = segment
+            .get("source_in")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .ok_or_else(|| invalid("source-in time"))?;
+        let speed = segment
+            .get("speed")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .ok_or_else(|| invalid("playback speed"))?;
+        let mut row = json!({
+            "path": take,
+            "start": start,
+            "sourceIn": source_in,
+            "speed": speed,
+        });
+        if let Some(source_out) = segment.get("source_out") {
+            let source_out = source_out
+                .as_f64()
+                .filter(|value| value.is_finite() && *value > source_in)
+                .ok_or_else(|| invalid("source-out time"))?;
+            row["sourceOut"] = json!(source_out);
+        }
+        rows.push(row);
+    }
+    Ok(rows)
 }
 
 /// Runs the check: every call, the replies it drew, and the receipt those
@@ -187,24 +213,30 @@ pub fn check(
     // Verify the rendered narration against source takes and their exact
     // timeline placement from voiceover-mapping.json. An absent mapping
     // leaves the required words gate skipped, never falsely passed.
-    let takes = expected_takes(check.project);
-    if !takes.is_empty() {
-        let arguments = json!({
-            "action": "verify",
-            "expectedTakes": takes,
-            "actualPath": check.export,
-        });
-        let reply = caller.ask("emotion", arguments.clone());
-        if !reply.as_object().is_some_and(|reply| reply.is_empty()) {
-            answered.push("emotion".to_owned());
+    let mut warnings = Vec::new();
+    match expected_takes(check.project) {
+        Ok(takes) => {
+            let arguments = json!({
+                "action": "verify",
+                "expectedTakes": takes,
+                "actualPath": check.export,
+            });
+            let reply = caller.ask("emotion", arguments.clone());
+            if !reply.as_object().is_some_and(|reply| reply.is_empty()) {
+                answered.push("emotion".to_owned());
+            }
+            observed.push((
+                ToolCall {
+                    tool: "emotion".to_owned(),
+                    arguments,
+                },
+                reply,
+            ));
         }
-        observed.push((
-            ToolCall {
-                tool: "emotion".to_owned(),
-                arguments,
-            },
-            reply,
-        ));
+        Err(error) => warnings.push(error),
+    }
+    if cancelled.load(Ordering::Relaxed) {
+        warnings.push("acceptance checks were cancelled before all required evidence was collected".to_owned());
     }
 
     let gates = derive_gates(&observed);
@@ -226,7 +258,7 @@ pub fn check(
         failure: (!failure.is_empty()).then_some(failure),
     };
     let receipt =
-        AcceptanceReceipt::new(check.project, check.export, vec![stage], gates, Vec::new());
+        AcceptanceReceipt::new(check.project, check.export, vec![stage], gates, warnings);
     DirectorAcceptance { receipt }
 }
 
@@ -259,6 +291,12 @@ impl CheckCaller<'_> {
     /// refused or is not served - which the gate reads as no evidence,
     /// never as a pass.
     fn ask(&mut self, tool: &str, arguments: Value) -> Value {
+        // Cancellation is checked before every independent acceptance call.
+        // The active tool also receives the same flag through Context, so
+        // long-running probes can stop at their own cancellation points.
+        if self.cancelled.load(Ordering::Relaxed) {
+            return Value::Object(Default::default());
+        }
         let context = Context {
             backend: &mut *self.backend,
             cancelled: self.cancelled,
@@ -303,13 +341,26 @@ mod tests {
             br#"{"segments":[{"take":"/voice/take.wav","start":3.0,"source_in":1.0,"source_out":5.0,"speed":2.0}]}"#,
         )
         .unwrap();
-        let rows = expected_takes(dir.to_str().unwrap());
+        let rows = expected_takes(dir.to_str().unwrap()).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0]["path"], "/voice/take.wav");
         assert_eq!(rows[0]["start"], 3.0);
         assert_eq!(rows[0]["sourceIn"], 1.0);
         assert_eq!(rows[0]["sourceOut"], 5.0);
         assert_eq!(rows[0]["speed"], 2.0);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn malformed_voiceover_mapping_is_not_silently_partially_verified() {
+        let dir = std::env::temp_dir().join(format!("funcut-acceptance-bad-map-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("voiceover-mapping.json"),
+            br#"{"segments":[{"take":"/voice/good.wav","start":2.0,"source_in":0.0,"speed":1.0},{"take":"/voice/bad.wav","start":"unknown","source_in":0.0,"speed":1.0}]}"#,
+        ).unwrap();
+        let result = expected_takes(dir.to_str().unwrap());
+        assert!(result.is_err(), "one malformed segment must invalidate the entire mapping");
         let _ = std::fs::remove_dir_all(dir);
     }
 

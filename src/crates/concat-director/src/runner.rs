@@ -764,13 +764,6 @@ impl Runner {
 
         let duration = run_started.elapsed();
         let last = program.steps.last().expect("the program has stages");
-        let detail = if warnings.is_empty() {
-            "the export is complete"
-        } else {
-            "the export is complete, with warnings"
-        };
-        let progress =
-            AutoEditProgress::new(last.stage(), total - 1, total, duration, duration, detail);
         // The acceptance receipt: the run's own evidence, read from the
         // replies its calls drew. A stage that never got its turn stays
         // `NotReached`, and a gate whose measurement never landed is
@@ -786,6 +779,8 @@ impl Runner {
         // A completed render is not an accepted edit. Keep the exported
         // sibling for inspection, but force the warning terminal state
         // whenever any required quality gate is rejected or unmeasured.
+        // The receipt keeps the stage warnings alone; this sentence is
+        // the receipt's verdict, not a warning it recorded.
         if program.enforce_acceptance && receipt.verdict.label() != "accepted" {
             warnings.push(format!(
                 "quality acceptance {}: {}",
@@ -793,6 +788,13 @@ impl Runner {
                 receipt.summary()
             ));
         }
+        let detail = if warnings.is_empty() {
+            "the export is complete"
+        } else {
+            "the export is complete, with warnings"
+        };
+        let progress =
+            AutoEditProgress::new(last.stage(), total - 1, total, duration, duration, detail);
         if warnings.is_empty() {
             self.emit(
                 AutoEditState::Completed {
@@ -1514,7 +1516,7 @@ mod tests {
         // required gate left unmeasured is a warned completion, not a
         // clean one. A partial program records the same receipt without
         // changing its outcome - the tests above depend on that.
-        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let (runner, events) = Runner::new(PathBuf::from("/edits/Reel"));
         let mut caller = Scripted::new(vec![Ok(json!({ "valid": true }))]);
         let mut program = program(vec![StageStep::run(
             Stage::Plan,
@@ -1534,6 +1536,14 @@ mod tests {
                     && warning.contains("required gate(s) unmeasured")
             }),
             "{warnings:?}"
+        );
+        // The progress line the window shows says the same thing as the
+        // state: the acceptance warning is not bolted on after the
+        // terminal event was written.
+        let last = events.try_iter().last().expect("the terminal event came");
+        assert_eq!(
+            last.progress.detail,
+            "the export is complete, with warnings"
         );
     }
 

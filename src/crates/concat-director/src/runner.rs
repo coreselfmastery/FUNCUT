@@ -786,7 +786,7 @@ impl Runner {
         // A completed render is not an accepted edit. Keep the exported
         // sibling for inspection, but force the warning terminal state
         // whenever any required quality gate is rejected or unmeasured.
-        if receipt.verdict.label() != "accepted" {
+        if program.enforce_acceptance && receipt.verdict.label() != "accepted" {
             warnings.push(format!(
                 "quality acceptance {}: {}",
                 receipt.verdict.label(),
@@ -1506,6 +1506,35 @@ mod tests {
         assert_eq!(last.progress.detail, "the export is complete");
         // progress() reads the last event: the one source of truth.
         assert_eq!(runner.progress(), Some(last.progress.clone()));
+    }
+
+    #[test]
+    fn an_acceptance_claiming_program_cannot_report_a_clean_completion() {
+        // The auto-edit spine claims the whole edit, so a receipt with a
+        // required gate left unmeasured is a warned completion, not a
+        // clean one. A partial program records the same receipt without
+        // changing its outcome - the tests above depend on that.
+        let (runner, _events) = Runner::new(PathBuf::from("/edits/Reel"));
+        let mut caller = Scripted::new(vec![Ok(json!({ "valid": true }))]);
+        let mut program = program(vec![StageStep::run(
+            Stage::Plan,
+            vec![call("plan_validate")],
+        )])
+        .enforcing_acceptance();
+        assert_eq!(
+            runner.run(&mut program, &mut caller),
+            RunOutcome::CompletedWithWarnings
+        );
+        let AutoEditState::CompletedWithWarnings { warnings, .. } = runner.state() else {
+            panic!("the run completed with warnings");
+        };
+        assert!(
+            warnings.iter().any(|warning| {
+                warning.starts_with("quality acceptance ")
+                    && warning.contains("required gate(s) unmeasured")
+            }),
+            "{warnings:?}"
+        );
     }
 
     #[test]

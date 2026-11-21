@@ -911,6 +911,9 @@ impl ForgePane {
         // A handover that failed keeps the sibling and the source, so a
         // retry hands the same project over again rather than rebuilding
         // it; the Director's own reads are its to redo.
+        self.auto.running = false;
+        self.auto.checking = false;
+        self.auto.check_cancel = None;
         self.auto.outcome = 1;
         self.auto.stage = t("forge.autoEditDirectorFailedStage");
         self.set_status(t("forge.autoEditDirectorFailedStage"));

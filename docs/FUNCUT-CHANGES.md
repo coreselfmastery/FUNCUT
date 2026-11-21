@@ -2634,3 +2634,28 @@ to `caption` now, and
 lists together: every family the vocabulary carries must name a decision
 the log's own gate accepts, or be listed as deliberately unspent with a
 reason. The suite is 141.
+
+## 58. The acceptance contract, and the program that must answer to it
+
+A finished Director run is now held to evidence the pane collects
+itself: the persisted `edit-plan.json` revalidated, the export probed,
+its mix measured, a contact sheet rendered from the exported file and
+scored by `craft_critique`, and the narration re-read against the exact
+takes and timeline placements in `voiceover-mapping.json`. Story,
+words, audio, export integrity and visual craft are required gates.
+Missing evidence is skipped, never a pass; a rejected gate refuses the
+edit; only a fully answered set is accepted, and the receipt is written
+beside the project as `auto-edit-receipt.json`.
+
+Enforcement is scoped. The runner used to force `CompletedWithWarnings`
+for every program whose receipt was not accepted, which also rewrote
+the outcome of its own partial programs - a resumed run, a two-stage
+probe, a cancelled run. `EditProgram` now carries `enforce_acceptance`,
+false by default and set only by the AUTO EDIT program builder, so the
+whole-edit spine cannot report a clean completion while a required gate
+is rejected or unmeasured, and a partial program keeps its own outcome.
+
+The acceptance sentence is folded into the warnings before the terminal
+progress detail is chosen, so a warned completion no longer announces
+"the export is complete" in the event stream. The regression test reads
+both the final state and the last event.

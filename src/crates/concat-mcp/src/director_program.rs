@@ -392,6 +392,56 @@ impl StockCandidate {
     }
 }
 
+/// The doors the bed's search walks, in the order they outrank each
+/// other: the emotional read's own `bgmWords` for the dominant line (the
+/// mood and the act name the genre - the three-word primary first, the
+/// bare category behind it), then the reading's language hint the profile
+/// derived from the script, and last the browse - a shelf that is ready
+/// is never left unheard because three mood words matched no whole title.
+/// `None` in the chain is the browse door: a search with no query.
+fn bed_query_chain(log: &[Value], takes: &[TakePaths]) -> Vec<Option<String>> {
+    let mut chain: Vec<Option<String>> = Vec::new();
+    if let Some(line) = dominant(&emotion_lines(log, takes)) {
+        chain.extend(
+            line.bgm_words
+                .iter()
+                .filter(|words| !words.trim().is_empty())
+                .cloned()
+                .map(Some),
+        );
+    }
+    chain.extend(
+        voice_reads(log, takes)
+            .into_iter()
+            .filter_map(|read| read.take_wide.music_genre)
+            .filter(|genre| !genre.trim().is_empty())
+            .map(Some),
+    );
+    chain.extend(
+        log.iter()
+            .filter_map(|reply| reply.pointer("/language/musicGenreHint"))
+            .filter_map(|hint| hint.as_str())
+            .filter(|hint| !hint.trim().is_empty())
+            .map(|hint| Some(hint.to_owned())),
+    );
+    // Deduped: a hint that repeats the read's own words is one door, not
+    // two walks of the same empty answer.
+    let mut seen: Vec<String> = Vec::new();
+    chain.retain(|door| match door {
+        Some(query) => {
+            if seen.iter().any(|spent| spent == query) {
+                false
+            } else {
+                seen.push(query.clone());
+                true
+            }
+        }
+        None => true,
+    });
+    chain.push(None);
+    chain
+}
+
 /// The bed that fits the cut, from the page the shelf answered with:
 /// among the tracks long enough to cover the runtime, the shortest one
 /// (least waste); when none covers, the longest (most coverage). A track
@@ -2045,8 +2095,28 @@ fn sfx_queries_for_emotion(emotion: &str) -> &'static [&'static str] {
         "surprise" => &["whoosh", "riser", "pop"],
         "joy" => &["pop", "chime", "swell"],
         "sadness" => &["ambience", "pad", "tone"],
-        "disgust" => &["foley", "texture", "hit"],
+        // Every word here has to answer the shelf: "texture" matched
+        // none of the 530, so a disgust peak whose rotation reached it
+        // was silently dropped. Foley is the family the shelf actually
+        // carries, crunch and hit are its disgust register.
+        "disgust" => &["foley", "hit", "crunch"],
         _ => &["whoosh", "impact", "riser", "pop", "click", "foley"],
+    }
+}
+
+/// The level an accent lands at. The shelf is normalised near full
+/// scale and the moment an accent marks is, by design, the voice's own
+/// loudest, so an accent left at unity gain sums past full scale - and
+/// the true-peak gate at verify would fail the run only after the render
+/// was paid for. The gain follows the peak's own strength, inside the
+/// skill's -6..-24 dB table.
+fn accent_gain_db(strength: f64) -> f64 {
+    if strength >= 0.8 {
+        -9.0
+    } else if strength >= 0.65 {
+        -12.0
+    } else {
+        -15.0
     }
 }
 
@@ -2069,7 +2139,10 @@ fn sfx_queries_for_line(line: Option<&EmotionLine>, emotion: &str) -> Vec<&'stat
     } else if register.contains("impact-heavy") {
         &["impact", "hit", "riser"]
     } else if register.contains("texture") {
-        &["foley", "texture", "hit"]
+        // "texture" answers nothing on the shelf (zero of the 530 carry
+        // the word), so the register's family is shopped in words the
+        // sounds actually have.
+        &["foley", "crunch", "hit"]
     } else {
         &[]
     };
@@ -5475,7 +5548,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                         "command": {
                                             "op": "trimClip",
                                             "clipId": id,
-                                            "edge": "tail",
+                                            "edge": "end",
                                             "delta": round3(delta),
                                         },
                                     }),
@@ -5512,6 +5585,9 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // and reading it as this stage's own is how the bed was
                 // never shopped.
                 let mut base: Option<usize> = None;
+                // Where the mood-query chain stands: each door is walked
+                // only when the one before it answered nothing.
+                let mut query_cursor = 0usize;
                 // The bed is ducked once; the duck's own reply is another
                 // timeline view, and the stage must not duck it again.
                 let mut ducked = false;
@@ -5523,6 +5599,15 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // The bed the duck landed on: its clip id, start and
                 // duration, kept for the shape's key positions.
                 let mut bed_span: Option<(String, f64, f64)> = None;
+                // The base level the duck rides at, as the linear gain the
+                // keys carry: volume keys are absolute, so a shape keyed
+                // at unity would discard the base the levels call just
+                // set and blast the bed at full source level.
+                let mut bed_level: Option<f64> = None;
+                // The cut's own length, measured before the bed was laid:
+                // a bed longer than the cut is trimmed to it, or the
+                // export gains a black, scored tail.
+                let mut bed_runtime: Option<f64> = None;
                 move |log| {
                     // The gate's own answer first: music already in the
                     // take means no bed, ever. The reading's own forensic
@@ -5623,9 +5708,16 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         }
                         const DUCK: f64 = 0.45;
                         const MOST_KEYS: usize = 28;
+                        // Volume keys are absolute linear values, so the
+                        // shape rides at the base the levels call set:
+                        // unity keys would cancel that base and the bed
+                        // would play at its source's full level. The duck
+                        // is the base dropped by the shape's own share.
+                        let lift = bed_level.unwrap_or(0.1);
+                        let duck = lift * DUCK;
                         let mut commands: Vec<Value> = vec![json!({
                             "op": "setClipKey", "clipId": bed_id,
-                            "property": "volume", "at": 0.0, "value": 1.0,
+                            "property": "volume", "at": 0.0, "value": round3(lift),
                         })];
                         let at_fraction =
                             |moment: f64| ((moment - bed_start) / bed_len.max(0.1)).clamp(0.0, 1.0);
@@ -5639,7 +5731,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 commands.push(json!({
                                     "op": "setClipKey", "clipId": bed_id,
                                     "property": "volume",
-                                    "at": round3(duck_at), "value": DUCK,
+                                    "at": round3(duck_at), "value": round3(duck),
                                 }));
                             }
                             // Lift only where the gap can hold it: the
@@ -5653,7 +5745,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 commands.push(json!({
                                     "op": "setClipKey", "clipId": bed_id,
                                     "property": "volume",
-                                    "at": round3(lift_at), "value": 1.0,
+                                    "at": round3(lift_at), "value": round3(lift),
                                 }));
                             }
                         }
@@ -5685,26 +5777,19 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 // then the reading's own language hint,
                                 // which the profile derived from the
                                 // script the narration is written in.
-                                // The hint is the third door rather than
-                                // the second so a measured mood always
-                                // outranks a script-level guess.
-                                let query = dominant(&emotion_lines(log, &music_source))
-                                    .and_then(|line| line.bgm_words.first().cloned())
-                                    .or_else(|| {
-                                        voice_reads(log, &music_source)
-                                            .into_iter()
-                                            .map(|read| read.take_wide.music_genre)
-                                            .find(|genre| !genre.trim().is_empty())
-                                    })
-                                    .or_else(|| {
-                                        log.iter()
-                                            .filter_map(|reply| {
-                                                reply.pointer("/language/musicGenreHint")
-                                            })
-                                            .filter_map(|hint| hint.as_str())
-                                            .find(|hint| !hint.trim().is_empty())
-                                            .map(str::to_owned)
-                                    });
+                                // Each door is walked only when the one
+                                // before it answered nothing: the read's
+                                // three-word primaries usually match no
+                                // whole title, and the bare category is
+                                // what the shelf's folders actually
+                                // answer. The chain's last door is the
+                                // browse - a ready shelf is never left
+                                // unheard because three mood words
+                                // matched nothing.
+                                let query = bed_query_chain(log, &music_source)
+                                    .get(query_cursor)
+                                    .cloned()
+                                    .flatten();
                                 let mut arguments = json!({
                                     "source": "freepd",
                                     "limit": 5,
@@ -5722,7 +5807,12 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 }
                                 Some(call("bgm_prepare", json!({ "source": "freepd" })))
                             }
-                            Some("loading") => {
+                            // The shelf's status word is "loading (N%)",
+                            // not "loading": the prefix is what a poll
+                            // must match, or the stage ends the moment a
+                            // catalog load starts and the run ships with
+                            // no bed on every cold machine.
+                            Some(word) if word.starts_with("loading") => {
                                 polls += 1;
                                 if polls > 200 {
                                     return None;
@@ -5732,6 +5822,19 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 std::thread::sleep(Duration::from_millis(3000));
                                 Some(call("bgm_status", json!({})))
                             }
+                            // A failed shelf is an outage the run must
+                            // say, not one it shops around in silence:
+                            // the search on a failed shelf is refused
+                            // with the shelf's own reason, which the warn
+                            // policy records as the run's warning.
+                            Some(word) if word.starts_with("failed") => Some(call(
+                                "bgm_search",
+                                json!({
+                                    "source": "freepd",
+                                    "limit": 5,
+                                    "sort": "relevance",
+                                }),
+                            )),
                             _ => None,
                         };
                     }
@@ -5758,6 +5861,28 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             })
                             .unwrap_or(0.0);
                         let tracks = last["tracks"].as_array().cloned().unwrap_or_default();
+                        if tracks.is_empty() {
+                            // The word matched nothing: the chain's next
+                            // door, and the browse after the last of them
+                            // - an empty answer is a door to walk past,
+                            // not a cut scored in silence.
+                            let chain = bed_query_chain(log, &music_source);
+                            query_cursor += 1;
+                            if query_cursor >= chain.len() {
+                                return None;
+                            }
+                            let query = chain.get(query_cursor).cloned().flatten();
+                            let mut arguments = json!({
+                                "source": "freepd",
+                                "limit": 5,
+                                "sort": "relevance",
+                            });
+                            if let Some(query) = query {
+                                arguments["query"] = json!(query);
+                            }
+                            return Some(call("bgm_search", arguments));
+                        }
+                        bed_runtime = Some(runtime);
                         let id = best_bed(&tracks, runtime)
                             .and_then(|track| track["id"].as_str().map(str::to_owned))
                             .or_else(|| {
@@ -5769,6 +5894,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             call(
                                 "bgm_import",
                                 json!({
+                                    "path": music_project,
                                     "ids": [id],
                                     "start": 0.0,
                                     "monetized": true,
@@ -5797,73 +5923,101 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     .map(|(_, path)| path.contains("/bgm/"))
                                     .unwrap_or(false)
                             });
-                        return bed.map(|bed| {
-                            ducked = true;
-                            bed_span = Some((
-                                bed["id"].as_str().unwrap_or_default().to_owned(),
-                                bed["start"].as_f64().unwrap_or(0.0),
-                                bed["duration"].as_f64().unwrap_or(0.0),
-                            ));
-                            // The bed sits at the level the piece's own
-                            // act profile sets: a payoff may carry a
-                            // louder bed than a quiet setup, and the
-                            // emotional read is what knows which it is.
-                            // The measured speech ratio moves it from
-                            // there: a take that is almost all speech has
-                            // no room for a bed at the act's level, and a
-                            // sparse one would lose the bed entirely, so
-                            // the duck deepens as the speech fills the
-                            // timeline. Unmeasured leaves the act's level
-                            // alone - a run must not invent a density.
-                            let act_db = dominant(&emotion_lines(log, &music_source))
-                                .map(|line| line.duck_db)
-                                .unwrap_or(-20.0);
-                            let density_db = voice_reads(log, &music_source)
-                                .iter()
-                                .filter_map(|read| read.take_wide.speech_ratio)
-                                .fold(None::<f64>, |worst, ratio| {
-                                    Some(worst.map_or(ratio, |worst: f64| worst.max(ratio)))
-                                })
-                                .map(|ratio| -6.0 * ratio)
-                                .unwrap_or(0.0);
-                            // The room and the band: a reverberant tail
-                            // smears the voice over whatever sits under
-                            // it, and a sibilant voice lives in the very
-                            // band a bed's own brightness occupies - each
-                            // deepens the duck a little, measured, not
-                            // guessed. A take with neither reading keeps
-                            // the act-and-density level alone.
-                            let room_db = if voice_reads(log, &music_source)
-                                .iter()
-                                .filter_map(|read| read.take_wide.reverb_tail_sec)
-                                .any(|tail| tail >= 0.4)
-                            {
-                                -3.0
-                            } else {
-                                0.0
-                            };
-                            let band_db = if voice_reads(log, &music_source)
-                                .iter()
-                                .filter_map(|read| read.take_wide.sibilance_ratio)
-                                .any(|share| share >= 0.15)
-                            {
-                                -2.0
-                            } else {
-                                0.0
-                            };
-                            let base_db = round3(
-                                (act_db + density_db + room_db + band_db).clamp(-30.0, -6.0),
-                            );
-                            call(
-                                "clip_audio_levels_db",
+                        let Some(bed) = bed else {
+                            return None;
+                        };
+                        // A bed longer than the cut is trimmed to it: the
+                        // export's length is the longest clip's end, so a
+                        // three-minute bed under a thirty-second cut would
+                        // ship a black, scored tail. The trim lands before
+                        // the level so the shape's key positions are
+                        // computed on the bed the cut actually keeps, and
+                        // the trim's own view is what the next pass reads
+                        // the trimmed duration from.
+                        let bed_start = bed["start"].as_f64().unwrap_or(0.0);
+                        let bed_duration = bed["duration"].as_f64().unwrap_or(0.0);
+                        let runtime = bed_runtime.unwrap_or(0.0);
+                        if runtime > 0.5 && bed_duration > runtime + 0.05 {
+                            return Some(call(
+                                "edit_apply",
                                 json!({
                                     "path": music_project,
-                                    "clipId": bed["id"],
-                                    "baseDb": base_db,
-                                    "replaceAutomation": true,
+                                    "command": {
+                                        "op": "trimClip",
+                                        "clipId": bed["id"],
+                                        "edge": "end",
+                                        "delta": round3(runtime - bed_duration),
+                                    },
                                 }),
-                            )
-                        });
+                            ));
+                        }
+                        ducked = true;
+                        bed_span = Some((
+                            bed["id"].as_str().unwrap_or_default().to_owned(),
+                            bed_start,
+                            bed_duration,
+                        ));
+                        // The bed sits at the level the piece's own
+                        // act profile sets: a payoff may carry a
+                        // louder bed than a quiet setup, and the
+                        // emotional read is what knows which it is.
+                        // The measured speech ratio moves it from
+                        // there: a take that is almost all speech has
+                        // no room for a bed at the act's level, and a
+                        // sparse one would lose the bed entirely, so
+                        // the duck deepens as the speech fills the
+                        // timeline. Unmeasured leaves the act's level
+                        // alone - a run must not invent a density.
+                        let act_db = dominant(&emotion_lines(log, &music_source))
+                            .map(|line| line.duck_db)
+                            .unwrap_or(-20.0);
+                        let density_db = voice_reads(log, &music_source)
+                            .iter()
+                            .filter_map(|read| read.take_wide.speech_ratio)
+                            .fold(None::<f64>, |worst, ratio| {
+                                Some(worst.map_or(ratio, |worst: f64| worst.max(ratio)))
+                            })
+                            .map(|ratio| -6.0 * ratio)
+                            .unwrap_or(0.0);
+                        // The room and the band: a reverberant tail
+                        // smears the voice over whatever sits under
+                        // it, and a sibilant voice lives in the very
+                        // band a bed's own brightness occupies - each
+                        // deepens the duck a little, measured, not
+                        // guessed. A take with neither reading keeps
+                        // the act-and-density level alone.
+                        let room_db = if voice_reads(log, &music_source)
+                            .iter()
+                            .filter_map(|read| read.take_wide.reverb_tail_sec)
+                            .any(|tail| tail >= 0.4)
+                        {
+                            -3.0
+                        } else {
+                            0.0
+                        };
+                        let band_db = if voice_reads(log, &music_source)
+                            .iter()
+                            .filter_map(|read| read.take_wide.sibilance_ratio)
+                            .any(|share| share >= 0.15)
+                        {
+                            -2.0
+                        } else {
+                            0.0
+                        };
+                        let base_db =
+                            round3((act_db + density_db + room_db + band_db).clamp(-30.0, -6.0));
+                        // The shape's keys ride at this base: kept as
+                        // the linear gain the volume keys carry.
+                        bed_level = Some(f64::powf(10.0, base_db / 20.0));
+                        return Some(call(
+                            "clip_audio_levels_db",
+                            json!({
+                                "path": music_project,
+                                "clipId": bed["id"],
+                                "baseDb": base_db,
+                                "replaceAutomation": true,
+                            }),
+                        ));
                     }
                     None
                 }
@@ -5882,12 +6036,44 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     let sfx_source = takes.clone();
     let sfx_project = project.clone();
     let sfx_emotion = takes.clone();
+    /// Where the accent shopping stands: the reply each state reads is its
+    /// own, so a stage never has to guess from a reply's shape what it was
+    /// waiting for.
+    enum SfxPending {
+        /// The search's reply is in: pick a hit this run has not spent, or
+        /// walk the family's next word.
+        Pick {
+            /// The peak's timeline moment, already resolved.
+            at: f64,
+            /// The peak's strength, for the gain its accent lands at.
+            strength: f64,
+            /// The family the peak's emotion named, walked word by word.
+            queries: Vec<&'static str>,
+            /// How many of those words have already come back spent.
+            tried: usize,
+        },
+        /// The add's reply is in: gain the clip it placed.
+        Gain {
+            /// The sound's library id, spent for anti-repetition.
+            id: String,
+            /// The peak's strength, for the gain.
+            strength: f64,
+        },
+    }
     steps.push(
         DerivedStep::react(
             Stage::Sfx,
             Box::new({
                 let mut peaks: Option<Vec<(f64, f64)>> = None;
                 let mut placed = 0usize;
+                let mut pending: Option<SfxPending> = None;
+                // Every accent the run lands is spent: the same id twice
+                // inside half a minute is the repetition the plan validator
+                // warns the Director about, and the rotation walks each
+                // peak's family from a different word so neighbouring
+                // accents do not all shop the same shelf answer.
+                let mut used: Vec<String> = Vec::new();
+                let mut rotation = 0usize;
                 move |log| {
                     let peaks = peaks.get_or_insert_with(|| {
                         let mut found: Vec<(f64, f64)> = Vec::new();
@@ -5973,6 +6159,124 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         found.sort_by(|left, right| left.0.total_cmp(&right.0));
                         found
                     });
+                    // A reply is waiting to be read: the pending state says
+                    // which one, and each state reads only its own reply.
+                    match pending.take() {
+                        Some(SfxPending::Pick {
+                            at,
+                            strength,
+                            queries,
+                            mut tried,
+                        }) => {
+                            // The search's answer: the first hit this run
+                            // has not already spent, accents being short -
+                            // a five-second ambience is a bed, not an
+                            // accent, whatever word the query shared.
+                            let hits: Vec<&Value> = log
+                                .last()
+                                .and_then(|reply| {
+                                    reply.get("sounds").and_then(|sounds| sounds.as_array())
+                                })
+                                .into_iter()
+                                .flatten()
+                                .collect();
+                            let fresh: Vec<&Value> = hits
+                                .iter()
+                                .copied()
+                                .filter(|hit| {
+                                    hit.get("id")
+                                        .and_then(|id| id.as_str())
+                                        .is_some_and(|id| !used.iter().any(|spent| spent == id))
+                                })
+                                .collect();
+                            let chosen = fresh
+                                .iter()
+                                .copied()
+                                .find(|hit| {
+                                    hit["duration"].as_f64().is_some_and(|secs| secs <= 3.0)
+                                })
+                                .or_else(|| fresh.first().copied());
+                            if let Some(hit) = chosen {
+                                let id = hit["id"].as_str().unwrap_or_default().to_owned();
+                                // The manifest's own `syncAt` says how far
+                                // into the file the sound lands its peak:
+                                // the add is offset by exactly that, so the
+                                // peak meets the moment the emphasis
+                                // measured - not the file's first byte.
+                                let sync = hit["syncAt"]
+                                    .as_f64()
+                                    .filter(|sync| sync.is_finite() && *sync >= 0.0)
+                                    .unwrap_or(0.0);
+                                pending = Some(SfxPending::Gain {
+                                    id: id.clone(),
+                                    strength,
+                                });
+                                return Some(call(
+                                    "sounds_add",
+                                    json!({
+                                        "path": sfx_project,
+                                        "id": id,
+                                        "start": round3((at - sync).max(0.0)),
+                                    }),
+                                ));
+                            }
+                            // Every hit the word answered is spent or absent:
+                            // the family's next word, and the peak is dropped
+                            // only when the family is exhausted - one empty
+                            // shelf answer is not a peak without a sound.
+                            tried += 1;
+                            if tried < queries.len() {
+                                let query = queries[(rotation + tried) % queries.len()];
+                                pending = Some(SfxPending::Pick {
+                                    at,
+                                    strength,
+                                    queries,
+                                    tried,
+                                });
+                                return Some(call(
+                                    "sounds_search",
+                                    json!({
+                                        "query": query,
+                                        "limit": 3,
+                                    }),
+                                ));
+                            }
+                            // The family is spent: the peak goes unaccented,
+                            // the way a mixer with a thin shelf leaves it.
+                            placed += 1;
+                            rotation = rotation.wrapping_add(1);
+                        }
+                        Some(SfxPending::Gain { id, strength }) => {
+                            used.push(id);
+                            placed += 1;
+                            rotation = rotation.wrapping_add(1);
+                            // The accent lands at the level the mix can
+                            // hold: the add's own reply names the clip it
+                            // placed, and the dB-aware levels call is what
+                            // gives the accent a gain instead of the
+                            // source's own unity.
+                            if let Some(clip) = log
+                                .last()
+                                .and_then(|reply| reply.pointer("/clipId"))
+                                .and_then(|clip| clip.as_str())
+                            {
+                                return Some(call(
+                                    "clip_audio_levels_db",
+                                    json!({
+                                        "path": sfx_project,
+                                        "clipId": clip,
+                                        "baseDb": accent_gain_db(strength),
+                                        "replaceAutomation": true,
+                                    }),
+                                ));
+                            }
+                            // No clip came back (a refused add under the warn
+                            // policy): the id still counts as spent.
+                        }
+                        None => {
+                            // The next call is a fresh shop.
+                        }
+                    }
                     // The next peak the timeline actually plays: a peak
                     // cut away or never placed is stepped over, not the
                     // end of the stage. The runner reads `None` as "the
@@ -5980,47 +6284,6 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     // peak would drop every peak after it - the run would
                     // quietly lose the accents it was written to land.
                     let at = next_played_peak(&mut placed, peaks, log, &sfx_source)?;
-                    // What the last call was decides what this one is: the
-                    // search hands the id the add takes.
-                    let last_was_search = log
-                        .last()
-                        .and_then(|reply| reply.get("sounds").map(|_| ()))
-                        .is_some();
-                    if last_was_search {
-                        let id = log
-                            .last()
-                            .and_then(|reply| reply.pointer("/sounds/0/id"))
-                            .and_then(|id| id.as_str())
-                            .map(str::to_owned);
-                        if let Some(id) = id {
-                            placed += 1;
-                            // The manifest's own `syncAt` says how far
-                            // into the file the sound lands its peak:
-                            // the add is offset by exactly that, so the
-                            // peak meets the moment the emphasis
-                            // measured - not the file's first byte.
-                            let sync = log
-                                .last()
-                                .and_then(|reply| reply.pointer("/sounds/0/syncAt"))
-                                .and_then(|sync| sync.as_f64())
-                                .filter(|sync| sync.is_finite() && *sync >= 0.0)
-                                .unwrap_or(0.0);
-                            return Some(call(
-                                "sounds_add",
-                                json!({
-                                    "path": sfx_project,
-                                    "id": id,
-                                    "start": round3((at - sync).max(0.0)),
-                                }),
-                            ));
-                        }
-                        // The shelf answered with nothing for this peak:
-                        // step to the next peak the timeline plays and
-                        // shop it, rather than ending the stage and
-                        // dropping every accent after it.
-                        placed += 1;
-                        next_played_peak(&mut placed, peaks, log, &sfx_source)?;
-                    }
                     // The accent family the peak's own line asks for: the
                     // peak's file moment is the line's, so the emotion
                     // read there names the sound.
@@ -6057,10 +6320,20 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     } else {
                         sfx_queries_for_line(line, &emotion)
                     };
+                    let strength = peaks
+                        .get(placed)
+                        .map(|(_, strength)| *strength)
+                        .unwrap_or(0.5);
+                    pending = Some(SfxPending::Pick {
+                        at,
+                        strength,
+                        queries: queries.clone(),
+                        tried: 0,
+                    });
                     Some(call(
                         "sounds_search",
                         json!({
-                            "query": queries[placed % queries.len()],
+                            "query": queries[rotation % queries.len()],
                             "limit": 3,
                         }),
                     ))
@@ -8833,10 +9106,25 @@ mod tests {
             Some("timeline_read")
         );
         // The timeline read now carries the bed in the project's bgm
-        // folder: duck it under the voice.
+        // folder - and the bed (8 s) is longer than the cut (2 s): it is
+        // trimmed to the cut before anything else, or the export would
+        // ship a black, scored tail behind the last word.
         log.push(json!({
             "timeline": { "id": "t1", "clips": [
                 { "id": "bed1", "media": "m9", "start": 0.0, "duration": 8.0 }
+            ]},
+            "media": [{ "id": "m9", "path": "/edits/Reel/bgm/track-abc123.mp3" }],
+        }));
+        let trim = (music.next)(log.as_slice()).expect("the bed is trimmed to the cut");
+        assert_eq!(trim.tool, "edit_apply");
+        assert_eq!(trim.arguments["command"]["op"], "trimClip");
+        assert_eq!(trim.arguments["command"]["clipId"], "bed1");
+        assert_eq!(trim.arguments["command"]["delta"], -6.0);
+        // The trim's own reply is a view: the bed is read back at the
+        // length the cut keeps, and ducked under the voice.
+        log.push(json!({
+            "timeline": { "id": "t1", "clips": [
+                { "id": "bed1", "media": "m9", "start": 0.0, "duration": 2.0 }
             ]},
             "media": [{ "id": "m9", "path": "/edits/Reel/bgm/track-abc123.mp3" }],
         }));
@@ -10289,7 +10577,15 @@ mod tests {
         after.push(json!({ "sounds": [{ "id": "s1" }] }));
         let add = (sfx.next)(&after).expect("the sound is added");
         assert_eq!(add.tool, "sounds_add");
-        after.push(json!({ "mediaIds": ["m2"] }));
+        // The accent is gained the moment it lands: an add left at the
+        // source's unity would sum past full scale under the voice's own
+        // loudest moment.
+        after.push(json!({ "mediaIds": ["m2"], "clipId": "clip-9" }));
+        let gain = (sfx.next)(&after).expect("the accent is gained");
+        assert_eq!(gain.tool, "clip_audio_levels_db");
+        assert_eq!(gain.arguments["clipId"], json!("clip-9"));
+        assert_eq!(gain.arguments["baseDb"], json!(accent_gain_db(0.9)));
+        after.push(view.clone());
         assert_eq!(
             (sfx.next)(&after),
             None,

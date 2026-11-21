@@ -2817,8 +2817,7 @@ fn director_phase(line: &str) -> Option<(usize, f32)> {
             && let Ok(number) = rest[..digits].parse::<u32>()
             && let Some((_, _, index)) = DIRECTOR_PHASE_LADDER
                 .iter()
-                .find(|(known, suffix, _)|
-                    *known == number && *suffix == &after_digits[..letters])
+                .find(|(known, suffix, _)| *known == number && *suffix == &after_digits[..letters])
         {
             return Some(at(index));
         }

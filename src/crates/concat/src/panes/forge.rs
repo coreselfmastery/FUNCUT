@@ -137,6 +137,8 @@ pub enum ForgeMsg {
     /// The check the pane runs on a finished Director run came back: the
     /// receipt is the verdict, and the exit code is not.
     DirectorChecked(Box<concat_mcp::acceptance::DirectorAcceptance>),
+    /// The post-export acceptance worker could not reach the editor's MCP backend.
+    DirectorCheckFailed(String),
 }
 
 /// The page's state.
@@ -173,6 +175,9 @@ pub struct ForgePane {
 pub struct AutoEditPane {
     /// A run is going.
     pub running: bool,
+    /// A Director process has exited, but its export is still being independently checked.
+    /// Keep both editing entry points locked until that check has a terminal result.
+    pub checking: bool,
     /// The stage's own word, localized - or the terminal state's.
     pub stage: String,
     /// The elapsed clock, as the pane spells it.
@@ -192,6 +197,8 @@ pub struct AutoEditPane {
     /// its tools poll, and the clock the elapsed line reads.
     runner: Option<Runner>,
     tool_cancel: Option<Arc<AtomicBool>>,
+    /// Stops the independent acceptance pass after Forge itself has exited.
+    check_cancel: Option<Arc<AtomicBool>>,
     started: Option<Instant>,
     /// The sibling this run edits: where the report is written, and the
     /// project that opens when the run ships.
@@ -362,6 +369,9 @@ impl ForgePane {
                     if let Some(flag) = &self.auto.tool_cancel {
                         flag.store(true, Ordering::Relaxed);
                     }
+                    if let Some(flag) = &self.auto.check_cancel {
+                        flag.store(true, Ordering::Relaxed);
+                    }
                     self.set_status(t("forge.autoEditStopping"));
                 }
             }
@@ -369,6 +379,7 @@ impl ForgePane {
             ForgeMsg::AutoEditEnded(state) => self.auto_edit_ended(*state, studio),
             ForgeMsg::AutoDirectorEnded(code) => self.auto_director_ended(code, studio),
             ForgeMsg::DirectorChecked(checked) => self.auto_director_checked(*checked, studio),
+            ForgeMsg::DirectorCheckFailed(error) => self.auto_director_check_failed(error, studio),
         }
     }
 
@@ -419,7 +430,9 @@ impl ForgePane {
         // their edits into a timeline neither of them planned, so only
         // one may be going: a Start while the auto edit runs is refused,
         // and the user is told which run to stop first.
-        if let Some(refusal) = other_run_refusal(self.auto.running, true) {
+        if let Some(refusal) =
+            other_run_refusal(auto_edit_busy(self.auto.running, self.auto.checking), true)
+        {
             studio.notify(&refusal, true);
             return;
         }
@@ -495,6 +508,7 @@ impl ForgePane {
                 command.env(name, value.trim());
             }
         }
+        configure_forge_process_group(&mut command);
         let spawned = command
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -550,7 +564,11 @@ impl ForgePane {
     /// comps remain the Director agent's; this is the unattended voiceover
     /// edit.
     fn auto_edit_start(&mut self, studio: &mut Studio) {
-        if self.auto.running {
+        if auto_edit_busy(self.auto.running, self.auto.checking) {
+            studio.notify(
+                "AUTO EDIT is still running or checking its previous export",
+                true,
+            );
             return;
         }
         // A Start and an AUTO EDIT share the same sibling project and
@@ -559,6 +577,33 @@ impl ForgePane {
         // Start uses, so the two entry points speak with one voice.
         if let Some(refusal) = other_run_refusal(self.running, false) {
             studio.notify(&refusal, true);
+            return;
+        }
+        // A Director run has no deterministic Runner to resume. Its retry
+        // must instead reopen the exact sibling it already edited; building
+        // another sibling here would discard the previous creative work.
+        if self.auto.runner.is_none()
+            && let Some(source) = self.auto.source.clone()
+            && director_retry_available(&source)
+        {
+            if let Err(why) = director_ready(studio) {
+                studio.notify(&why, true);
+                return;
+            }
+            let kill = Arc::new(AtomicBool::new(false));
+            self.auto.running = true;
+            self.auto.checking = false;
+            self.auto.stage = t("forge.autoEditDirectorStage");
+            self.auto.elapsed = elapsed_text(Duration::ZERO);
+            self.auto.fraction = 0.0;
+            self.auto.visible = true;
+            self.auto.outcome = 0;
+            self.auto.started = Some(Instant::now());
+            self.auto.project = Some(source.project.clone());
+            self.auto.source = Some(source.clone());
+            self.auto.kill = Some(Arc::clone(&kill));
+            self.set_status(t("forge.autoEditDirectorStage"));
+            launch_auto_director(studio, &source, kill);
             return;
         }
         // A retryable end kept its sibling, its source and its runner:
@@ -613,6 +658,7 @@ impl ForgePane {
             let project = source.project.clone();
             self.auto = AutoEditPane {
                 running: true,
+                checking: false,
                 stage: t("forge.autoEditStarting"),
                 elapsed: elapsed_text(Duration::ZERO),
                 fraction: 0.0,
@@ -620,6 +666,7 @@ impl ForgePane {
                 outcome: 0,
                 runner: Some(runner.clone()),
                 tool_cancel: Some(Arc::clone(&tool_cancel)),
+                check_cancel: None,
                 kill: None,
                 started: Some(Instant::now()),
                 project: Some(project),
@@ -725,6 +772,7 @@ impl ForgePane {
                 let kill = Arc::new(AtomicBool::new(false));
                 self.auto = AutoEditPane {
                     running: true,
+                    checking: false,
                     stage: t("forge.autoEditDirectorStage"),
                     elapsed: elapsed_text(Duration::ZERO),
                     fraction: 0.0,
@@ -732,6 +780,7 @@ impl ForgePane {
                     outcome: 0,
                     runner: None,
                     tool_cancel: None,
+                    check_cancel: None,
                     started: Some(Instant::now()),
                     project: Some(auto.project.clone()),
                     source: Some(auto.clone()),
@@ -769,6 +818,7 @@ impl ForgePane {
         let tool_cancel = Arc::new(AtomicBool::new(false));
         self.auto = AutoEditPane {
             running: true,
+            checking: false,
             stage: t("forge.autoEditStarting"),
             elapsed: elapsed_text(Duration::ZERO),
             fraction: 0.0,
@@ -776,6 +826,7 @@ impl ForgePane {
             outcome: 0,
             runner: Some(runner.clone()),
             tool_cancel: Some(Arc::clone(&tool_cancel)),
+            check_cancel: None,
             started: Some(Instant::now()),
             project: Some(auto.project.clone()),
             source: Some(auto),
@@ -792,11 +843,24 @@ impl ForgePane {
     /// and its final watch_render are what judged the file, and the pane
     /// does not invent a score of its own.
     fn auto_director_ended(&mut self, code: i32, studio: &mut Studio) {
-        self.auto.running = false;
         self.auto.started = None;
         self.auto.kill = None;
         self.auto.fraction = 1.0;
         if code == 0 {
+            // Keep the UI's running state during acceptance so the same
+            // Stop button can cancel the remaining independent checks.
+            self.auto.running = true;
+            // The agent has exited, but the export is not accepted yet. Keep
+            // the project locked while the independent checks run: otherwise
+            // a second Start/AUTO EDIT can replace the active project and the
+            // first run's receipt can be written beside the wrong project.
+            self.auto.checking = true;
+            let check_cancel = Arc::new(AtomicBool::new(false));
+            self.auto.check_cancel = Some(Arc::clone(&check_cancel));
+            // The Director phases have ended, but independent acceptance is
+            // still outstanding. Do not display 100% until every required
+            // export gate has actually passed.
+            self.auto.fraction = director_acceptance_fraction(false);
             // The harness exiting zero says the agent stopped, not that the
             // edit exists. So the run is held to the same four questions the
             // fixed spine asks of its own export - is the file readable, is
@@ -810,6 +874,9 @@ impl ForgePane {
                 self.auto.project.clone(),
                 self.auto.source.as_ref().map(|s| s.export.clone()),
             ) else {
+                self.auto.checking = false;
+                self.auto.running = false;
+                self.auto.check_cancel = None;
                 self.auto.outcome = 2;
                 self.auto.stage = t("forge.autoEditDirectorFailedStage");
                 self.set_status(t("forge.autoEditDirectorFailedStage"));
@@ -823,19 +890,24 @@ impl ForgePane {
                 let checked = match concat_mcp::backend::open(concat_mcp::backend::Mode::Window) {
                     Ok(mut backend) => {
                         let toolbox = concat_mcp::tools::Toolbox::new();
-                        let cancelled = AtomicBool::new(false);
                         let check = concat_mcp::acceptance::DirectorCheck {
                             project: &project,
                             export: &export,
                         };
-                        concat_mcp::acceptance::check(&check, &toolbox, &mut *backend, &cancelled)
+                        concat_mcp::acceptance::check(
+                            &check,
+                            &toolbox,
+                            &mut *backend,
+                            &check_cancel,
+                        )
                     }
                     // The window's server is how the check reaches the
                     // tools; without it there is no measurement, and an
                     // unmeasured run is not a finished one.
                     Err(error) => {
+                        let message = format!("the edit cannot be checked: {error}");
                         crate::host::on_ui(move |studio, _, _| {
-                            studio.notify(&format!("the edit cannot be checked: {error}"), true);
+                            studio.handle(Msg::Forge(ForgeMsg::DirectorCheckFailed(message)));
                         });
                         return;
                     }
@@ -849,6 +921,9 @@ impl ForgePane {
         // A handover that failed keeps the sibling and the source, so a
         // retry hands the same project over again rather than rebuilding
         // it; the Director's own reads are its to redo.
+        self.auto.running = false;
+        self.auto.checking = false;
+        self.auto.check_cancel = None;
         self.auto.outcome = 1;
         self.auto.stage = t("forge.autoEditDirectorFailedStage");
         self.set_status(t("forge.autoEditDirectorFailedStage"));
@@ -867,7 +942,11 @@ impl ForgePane {
         checked: concat_mcp::acceptance::DirectorAcceptance,
         studio: &mut Studio,
     ) {
+        self.auto.checking = false;
+        self.auto.running = false;
+        self.auto.check_cancel = None;
         let accepted = checked.accepted();
+        self.auto.fraction = director_acceptance_fraction(accepted);
         let receipt = checked.receipt;
         if let Some(project) = self.auto.project.clone() {
             let path = std::path::Path::new(&project).join("auto-edit-receipt.json");
@@ -905,6 +984,22 @@ impl ForgePane {
             self.set_status(tf("forge.autoEditDirectorUnproven", &[&summary]));
             studio.notify(&tf("forge.autoEditDirectorUnproven", &[&summary]), true);
         }
+    }
+
+    /// A failed acceptance worker is not a successful edit. Release the
+    /// checking lock, preserve the sibling for inspection, and leave a
+    /// retryable failure visible instead of freezing the button forever.
+    fn auto_director_check_failed(&mut self, error: String, studio: &mut Studio) {
+        self.auto.checking = false;
+        self.auto.running = false;
+        self.auto.check_cancel = None;
+        self.auto.outcome = 2;
+        self.auto.stage = t("forge.autoEditDirectorUnprovenStage");
+        self.set_status(tf("forge.autoEditDirectorUnproven", &[&error]));
+        studio.notify(
+            &format!("the edit could not be independently checked: {error}"),
+            true,
+        );
     }
 
     /// Rereads the runner's last event into the page's own fields: the
@@ -976,7 +1071,12 @@ impl ForgePane {
                     match concat_host::projects::open(&path)
                         .and_then(|info| studio.open_project(info))
                     {
-                        Ok(()) => studio.notify(&tf("forge.editReady", &[&path]), false),
+                        // A warned export is opened for inspection and repair,
+                        // not announced as ready to publish.
+                        Ok(()) if warnings == 0 => {
+                            studio.notify(&tf("forge.editReady", &[&path]), false)
+                        }
+                        Ok(()) => {}
                         Err(error) => studio.notify(&tf("forge.openFailed", &[&error]), true),
                     }
                 }
@@ -1071,6 +1171,40 @@ impl ForgePane {
     }
 }
 
+/// Put Forge in its own process group so cancellation can stop the
+/// harness and any subprocesses it launched. Descendants inherit this
+/// group by default, which also guarantees they cannot keep the reader
+/// pipes open after the parent exits.
+#[cfg(unix)]
+fn configure_forge_process_group(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    command.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_forge_process_group(_command: &mut Command) {}
+
+/// Terminate the whole Forge process tree on Unix. Killing only the parent
+/// can leave a model/helper subprocess holding stdout or stderr open, so
+/// the reader-thread joins never finish and the UI never receives Ended.
+fn terminate_forge_process(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        let group = -(child.id() as libc::pid_t);
+        // SAFETY: a negative pid targets the process group created for this
+        // child immediately before spawn; SIGKILL is used only on Cancel or
+        // when the child supervisor cannot poll the process.
+        let result = unsafe { libc::kill(group, libc::SIGKILL) };
+        if result != 0 {
+            let _ = child.kill();
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = child.kill();
+    }
+}
+
 /// Reads the run on its own thread: each line of the harness's output is
 /// posted as it comes, and the run's exit code is posted after the last.
 /// A separate supervisor polls the child, so Cancel is honoured even
@@ -1108,17 +1242,21 @@ fn read_the_run(mut child: Child, kill: Arc<AtomicBool>) {
                 Ok(Some(status)) => break Some(status),
                 Ok(None) => {
                     if kill.load(Ordering::Relaxed) {
-                        let _ = child.kill();
+                        terminate_forge_process(&mut child);
                     }
                     std::thread::sleep(std::time::Duration::from_millis(50));
                 }
                 Err(error) => {
                     log::warn!("could not poll Forge child: {error}");
-                    let _ = child.kill();
+                    terminate_forge_process(&mut child);
                     break child.wait().ok();
                 }
             }
         };
+        // A parent can exit while a detached descendant still owns one of
+        // its pipes. Reap any remaining members of this private process
+        // group before joining readers, even on an otherwise normal exit.
+        terminate_forge_process(&mut child);
         let _ = stdout_reader.join();
         let _ = stderr_reader.join();
         let code = status.and_then(|status| status.code()).unwrap_or(-1);
@@ -1606,15 +1744,22 @@ fn build_voiceover_sibling(
         }) => {
             // The AUTO EDIT's fixed paths: the export folder is made now,
             // so the run's first write into it is the export itself.
-            let auto = for_auto_edit.then(|| {
+            let auto = if for_auto_edit {
                 let export_dir = std::path::Path::new(&info.path).join("export");
                 if let Err(error) = std::fs::create_dir_all(&export_dir) {
-                    log::warn!(
-                        "could not make the export folder {}: {error}",
+                    let cleanup = std::fs::remove_dir_all(&info.path);
+                    if let Err(cleanup_error) = cleanup {
+                        log::warn!(
+                            "could not remove incomplete AUTO EDIT sibling {}: {cleanup_error}",
+                            info.path
+                        );
+                    }
+                    return Err(format!(
+                        "could not create the AUTO EDIT export folder {}: {error}",
                         export_dir.display()
-                    );
+                    ));
                 }
-                AutoEditSource {
+                Some(AutoEditSource {
                     project: info.path.clone(),
                     takes,
                     placements: segments
@@ -1632,8 +1777,10 @@ fn build_voiceover_sibling(
                         .to_string_lossy()
                         .into_owned(),
                     sheet: "auto-edit-sheet.png".to_owned(),
-                }
-            });
+                })
+            } else {
+                None
+            };
             Ok((
                 VoiceoverSource {
                     project: info.path,
@@ -2031,6 +2178,7 @@ fn launch_auto_director(studio: &Studio, source: &AutoEditSource, kill: Arc<Atom
             command.env(name, value.trim());
         }
     }
+    configure_forge_process_group(&mut command);
     let spawned = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -2088,16 +2236,20 @@ fn read_the_director_run(mut child: Child, kill: Arc<AtomicBool>) {
                 Ok(Some(status)) => break Some(status),
                 Ok(None) => {
                     if kill.load(Ordering::Relaxed) {
-                        let _ = child.kill();
+                        terminate_forge_process(&mut child);
                     }
                     std::thread::sleep(std::time::Duration::from_millis(50));
                 }
                 Err(_) => {
-                    let _ = child.kill();
+                    terminate_forge_process(&mut child);
                     break child.wait().ok();
                 }
             }
         };
+        // A parent can exit while a detached descendant still owns one of
+        // its pipes. Reap any remaining members of this private process
+        // group before joining readers, even on an otherwise normal exit.
+        terminate_forge_process(&mut child);
         let _ = stdout_reader.join();
         let _ = stderr_reader.join();
         let code = status.and_then(|status| status.code()).unwrap_or(-1);
@@ -2179,26 +2331,53 @@ fn director_phase(line: &str) -> Option<(usize, f32)> {
         .map(|(index, _)| at(index))
 }
 
+/// Whether a failed or unaccepted AI Director run still has the exact
+/// sibling required for a safe retry. Never rebuild over a missing mapping
+/// or missing source take: acceptance would otherwise be unverifiable.
+fn director_retry_available(source: &AutoEditSource) -> bool {
+    !source.takes.is_empty()
+        && source
+            .takes
+            .iter()
+            .all(|take| std::path::Path::new(&take.take).is_file())
+        && std::path::Path::new(&source.project)
+            .join("concat.json")
+            .is_file()
+        && std::path::Path::new(&source.project)
+            .join("voiceover-mapping.json")
+            .is_file()
+        && std::path::Path::new(&source.export)
+            .parent()
+            .is_some_and(|parent| parent.is_dir())
+}
+
+/// Whether either editing entry point must stay locked while AUTO EDIT
+/// is running or its Director export is being checked.
+fn auto_edit_busy(running: bool, checking: bool) -> bool {
+    running || checking
+}
+
+/// The AI phase is not complete until the independent export gates accept.
+fn director_acceptance_fraction(accepted: bool) -> f32 {
+    if accepted { 1.0 } else { 0.98 }
+}
+
 /// Whether the harness is wired to Concat and the skill is where it
 /// reads: `forge mcp get funcut` says the one, `forge commands` lists the
 /// other. Neither is a reason to fail: the buttons say what is missing.
+fn director_skill_listed(code: i32, words: &str) -> bool {
+    code == 0 && words.to_ascii_lowercase().contains("funcut-director")
+}
+
 fn probe_setup() -> (Result<bool, String>, Result<bool, String>) {
     let connected = match forge(&["mcp", "get", "funcut"]) {
         Ok((code, _)) => Ok(code == 0),
         Err(error) => Err(error),
     };
     let installed = match forge(&["commands"]) {
-        // The door and the shelves both: a harness that serves
-        // funcut-director but not maestro or clip-skills still runs - the
-        // run prompt points the agent at the shelves the skill's own
-        // sections keep - but a full install serves all three, and every
-        // one it finds is one the director can be told to read.
-        Ok((_, words)) => {
-            let words = words.to_ascii_lowercase();
-            Ok(["funcut-director", "maestro", "clip-skills"]
-                .iter()
-                .any(|name| words.contains(name)))
-        }
+        // Supporting shelves do not replace the required Director entry
+        // point. A partial install must not pass preflight.
+        Ok((code, words)) => Ok(director_skill_listed(code, &words)),
         Err(error) => Err(error),
     };
     (connected, installed)
@@ -2444,11 +2623,85 @@ fn elapsed_text(duration: Duration) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::auto_edit_busy;
+    use super::director_acceptance_fraction;
     use super::director_phase;
+    use super::director_retry_available;
+    use super::director_skill_listed;
     use super::other_run_refusal;
     use super::voiceover_copy_name;
+    use super::{AutoEditSource, TakePaths};
     use std::path::Path;
     use std::time::Duration;
+
+    #[test]
+    fn director_progress_reaches_one_hundred_percent_only_after_acceptance() {
+        assert_eq!(director_acceptance_fraction(false), 0.98);
+        assert_eq!(director_acceptance_fraction(true), 1.0);
+    }
+
+    #[test]
+    fn director_retry_reuses_only_a_complete_sibling_handoff() {
+        let root = std::env::temp_dir().join(format!(
+            "funcut-director-retry-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let voiceover = root.join("voiceover");
+        let export = root.join("export");
+        std::fs::create_dir_all(&voiceover).unwrap();
+        std::fs::create_dir_all(&export).unwrap();
+        std::fs::write(root.join("concat.json"), b"{}").unwrap();
+        std::fs::write(root.join("voiceover-mapping.json"), b"{}").unwrap();
+        let take = voiceover.join("take.wav");
+        std::fs::write(&take, b"voice").unwrap();
+        let source = AutoEditSource {
+            project: root.to_string_lossy().into_owned(),
+            takes: vec![TakePaths {
+                take: take.to_string_lossy().into_owned(),
+                enhanced: voiceover
+                    .join("enhanced.wav")
+                    .to_string_lossy()
+                    .into_owned(),
+            }],
+            placements: Vec::new(),
+            export: export.join("auto-edit.mp4").to_string_lossy().into_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+        };
+        assert!(director_retry_available(&source));
+
+        std::fs::remove_file(root.join("voiceover-mapping.json")).unwrap();
+        assert!(
+            !director_retry_available(&source),
+            "mapping is required for word acceptance"
+        );
+        std::fs::write(root.join("voiceover-mapping.json"), b"{}").unwrap();
+        std::fs::remove_file(&take).unwrap();
+        assert!(
+            !director_retry_available(&source),
+            "all source takes must still exist"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn acceptance_check_keeps_both_edit_entry_points_locked() {
+        assert!(!auto_edit_busy(false, false));
+        assert!(auto_edit_busy(true, false));
+        assert!(auto_edit_busy(false, true));
+        assert!(auto_edit_busy(true, true));
+    }
+
+    #[test]
+    fn only_the_director_skill_satisfies_forge_preflight() {
+        assert!(director_skill_listed(
+            0,
+            "funcut-director\nmaestro\nclip-skills"
+        ));
+        assert!(!director_skill_listed(0, "maestro\nclip-skills"));
+        assert!(!director_skill_listed(1, "funcut-director"));
+    }
 
     /// The handed-over run's progress is read from the harness's own
     /// words, and only where a phase is actually named: a line about

@@ -96,7 +96,10 @@ fn expected_takes(project: &str) -> Result<Vec<Value>, String> {
     let mut rows = Vec::with_capacity(segments.len());
     for (index, segment) in segments.iter().enumerate() {
         let invalid = |field: &str| {
-            format!("voiceover mapping segment {} has an invalid {field}", index + 1)
+            format!(
+                "voiceover mapping segment {} has an invalid {field}",
+                index + 1
+            )
         };
         let take = segment
             .get("take")
@@ -232,7 +235,10 @@ pub fn check(
         Err(error) => warnings.push(error),
     }
     if cancelled.load(Ordering::Relaxed) {
-        warnings.push("acceptance checks were cancelled before all required evidence was collected".to_owned());
+        warnings.push(
+            "acceptance checks were cancelled before all required evidence was collected"
+                .to_owned(),
+        );
     }
 
     let gates = derive_gates(&observed);
@@ -253,8 +259,7 @@ pub fn check(
         calls: answered,
         failure: (!failure.is_empty()).then_some(failure),
     };
-    let receipt =
-        AcceptanceReceipt::new(check.project, check.export, vec![stage], gates, warnings);
+    let receipt = AcceptanceReceipt::new(check.project, check.export, vec![stage], gates, warnings);
     DirectorAcceptance { receipt }
 }
 
@@ -353,14 +358,18 @@ mod tests {
 
     #[test]
     fn malformed_voiceover_mapping_is_not_silently_partially_verified() {
-        let dir = std::env::temp_dir().join(format!("funcut-acceptance-bad-map-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("funcut-acceptance-bad-map-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("voiceover-mapping.json"),
             br#"{"segments":[{"take":"/voice/good.wav","start":2.0,"source_in":0.0,"speed":1.0},{"take":"/voice/bad.wav","start":"unknown","source_in":0.0,"speed":1.0}]}"#,
         ).unwrap();
         let result = expected_takes(dir.to_str().unwrap());
-        assert!(result.is_err(), "one malformed segment must invalidate the entire mapping");
+        assert!(
+            result.is_err(),
+            "one malformed segment must invalidate the entire mapping"
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 

@@ -5286,7 +5286,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         })
         .into(),
     );
-    EditProgram::mixed(PathBuf::from(&source.export), steps)
+    EditProgram::mixed(PathBuf::from(&source.export), steps).enforcing_acceptance()
 }
 
 #[cfg(test)]
@@ -5413,6 +5413,10 @@ mod tests {
         assert_eq!(
             program.export,
             std::path::Path::new("/edits/Reel edit/export/auto-edit.mp4")
+        );
+        assert!(
+            program.enforce_acceptance,
+            "the auto edit claims the whole edit, so its receipt must decide the outcome"
         );
 
         // The repair is fanned, one lane per take, and its chain lands on

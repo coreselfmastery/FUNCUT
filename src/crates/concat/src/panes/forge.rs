@@ -430,7 +430,9 @@ impl ForgePane {
         // their edits into a timeline neither of them planned, so only
         // one may be going: a Start while the auto edit runs is refused,
         // and the user is told which run to stop first.
-        if let Some(refusal) = other_run_refusal(auto_edit_busy(self.auto.running, self.auto.checking), true) {
+        if let Some(refusal) =
+            other_run_refusal(auto_edit_busy(self.auto.running, self.auto.checking), true)
+        {
             studio.notify(&refusal, true);
             return;
         }
@@ -563,7 +565,10 @@ impl ForgePane {
     /// edit.
     fn auto_edit_start(&mut self, studio: &mut Studio) {
         if auto_edit_busy(self.auto.running, self.auto.checking) {
-            studio.notify("AUTO EDIT is still running or checking its previous export", true);
+            studio.notify(
+                "AUTO EDIT is still running or checking its previous export",
+                true,
+            );
             return;
         }
         // A Start and an AUTO EDIT share the same sibling project and
@@ -889,7 +894,12 @@ impl ForgePane {
                             project: &project,
                             export: &export,
                         };
-                        concat_mcp::acceptance::check(&check, &toolbox, &mut *backend, &check_cancel)
+                        concat_mcp::acceptance::check(
+                            &check,
+                            &toolbox,
+                            &mut *backend,
+                            &check_cancel,
+                        )
                     }
                     // The window's server is how the check reaches the
                     // tools; without it there is no measurement, and an
@@ -986,7 +996,10 @@ impl ForgePane {
         self.auto.outcome = 2;
         self.auto.stage = t("forge.autoEditDirectorUnprovenStage");
         self.set_status(tf("forge.autoEditDirectorUnproven", &[&error]));
-        studio.notify(&format!("the edit could not be independently checked: {error}"), true);
+        studio.notify(
+            &format!("the edit could not be independently checked: {error}"),
+            true,
+        );
     }
 
     /// Rereads the runner's last event into the page's own fields: the
@@ -2612,12 +2625,12 @@ fn elapsed_text(duration: Duration) -> String {
 mod tests {
     use super::auto_edit_busy;
     use super::director_acceptance_fraction;
-    use super::director_retry_available;
-    use super::{AutoEditSource, TakePaths};
     use super::director_phase;
+    use super::director_retry_available;
     use super::director_skill_listed;
     use super::other_run_refusal;
     use super::voiceover_copy_name;
+    use super::{AutoEditSource, TakePaths};
     use std::path::Path;
     use std::time::Duration;
 
@@ -2647,7 +2660,10 @@ mod tests {
             project: root.to_string_lossy().into_owned(),
             takes: vec![TakePaths {
                 take: take.to_string_lossy().into_owned(),
-                enhanced: voiceover.join("enhanced.wav").to_string_lossy().into_owned(),
+                enhanced: voiceover
+                    .join("enhanced.wav")
+                    .to_string_lossy()
+                    .into_owned(),
             }],
             placements: Vec::new(),
             export: export.join("auto-edit.mp4").to_string_lossy().into_owned(),
@@ -2656,10 +2672,16 @@ mod tests {
         assert!(director_retry_available(&source));
 
         std::fs::remove_file(root.join("voiceover-mapping.json")).unwrap();
-        assert!(!director_retry_available(&source), "mapping is required for word acceptance");
+        assert!(
+            !director_retry_available(&source),
+            "mapping is required for word acceptance"
+        );
         std::fs::write(root.join("voiceover-mapping.json"), b"{}").unwrap();
         std::fs::remove_file(&take).unwrap();
-        assert!(!director_retry_available(&source), "all source takes must still exist");
+        assert!(
+            !director_retry_available(&source),
+            "all source takes must still exist"
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 

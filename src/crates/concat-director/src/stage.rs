@@ -501,6 +501,13 @@ pub struct EditProgram {
     pub export: PathBuf,
     /// The steps, in the order the program runs them.
     pub steps: Vec<ProgramStep>,
+    /// Whether a run must not report a clean completion while its
+    /// acceptance receipt is incomplete or rejected. Only a program that
+    /// claims the whole edit - the auto-edit spine - sets this; a partial
+    /// program (a resume, a probe, a unit test's two stages) has no
+    /// receipt to answer for, so its receipt is recorded without
+    /// changing the outcome.
+    pub enforce_acceptance: bool,
 }
 
 impl EditProgram {
@@ -509,13 +516,26 @@ impl EditProgram {
         EditProgram {
             export,
             steps: steps.into_iter().map(ProgramStep::Static).collect(),
+            enforce_acceptance: false,
         }
     }
 
     /// A program exporting to `export`, running `steps` of any kind:
     /// static, derived, fanned, in any order.
     pub fn mixed(export: PathBuf, steps: Vec<ProgramStep>) -> EditProgram {
-        EditProgram { export, steps }
+        EditProgram {
+            export,
+            steps,
+            enforce_acceptance: false,
+        }
+    }
+
+    /// Marks this program as claiming the whole edit, so an incomplete or
+    /// rejected acceptance receipt turns a clean completion into a warned
+    /// one.
+    pub fn enforcing_acceptance(mut self) -> EditProgram {
+        self.enforce_acceptance = true;
+        self
     }
 }
 

@@ -1641,11 +1641,11 @@ def extract(spec):
     # The complement ran on the text whenever there were lines, so the
     # entities reading is sourced even when the Rust ear never was: a
     # filtered entities ask answers from the complement and is not a
-    # degradation.
+    # degradation. But the source note is not availability: the NER
+    # ear's own note is (DEG-01), and the complement never counts -
+    # entitiesAvailable stays False until anno itself answered.
     if lines and not sources.get("entities"):
         sources["entities"] = "regex complement (python)"
-        if rust:
-            sources["entities"] = "anno NER (Rust) with a regex complement"
 
     # The arc, passed through from the emotion read when the caller gave it.
     emotion = spec.get("emotion")
@@ -1710,8 +1710,10 @@ def extract(spec):
     # answered - then an empty entities list is a real negative. False
     # means whatever entities are present came from the regex complement
     # alone, and a caller driving decisions off them should record the
-    # fallback rather than trust the reading as measured.
-    entities_available = bool(sources.get("entities"))
+    # fallback rather than trust the reading as measured. The ear's own
+    # sources note is the answer; the complement's note (set above for
+    # the reading's honesty) never counts.
+    entities_available = bool((rust or {}).get("sources", {}).get("entities"))
     if wanted is None and not entities_available:
         degradations.append(
             "NER absent: entities answered by the regex complement alone")

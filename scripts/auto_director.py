@@ -385,6 +385,19 @@ class McpStdio:
             self._child.wait(timeout=10)
         except subprocess.TimeoutExpired:
             self._child.kill()
+            # A kill nobody waits on is a zombie until the interpreter
+            # exits; and the stdout pipe the child filled is a fd leak.
+            try:
+                self._child.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass
+        finally:
+            for stream in (self._child.stdout, self._child.stderr):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
 
 
 def _content_json(result: dict[str, Any]) -> Any:
@@ -1290,8 +1303,25 @@ def _sync_entry(verification: Any) -> dict[str, Any]:
 
 
 def _timeline_clips(view: Any) -> list[dict[str, Any]]:
-    if isinstance(view, dict) and isinstance(view.get("clips"), list):
+    """The timeline's clips from any view shape the server really sends:
+    a summary view carries them top-level, its `timeline` object nests
+    them under clips, and a raw EditorView nests them under
+    project.timelines[*].clips. The top-level read alone matched only
+    the self-test's mocks."""
+    if not isinstance(view, dict):
+        return []
+    if isinstance(view.get("clips"), list):
         return [clip for clip in view["clips"] if isinstance(clip, dict)]
+    timeline = view.get("timeline")
+    if isinstance(timeline, dict) and isinstance(timeline.get("clips"), list):
+        return [clip for clip in timeline["clips"] if isinstance(clip, dict)]
+    project = view.get("project")
+    if isinstance(project, dict) and isinstance(project.get("timelines"), list):
+        clips: list[dict[str, Any]] = []
+        for entry in project["timelines"]:
+            if isinstance(entry, dict) and isinstance(entry.get("clips"), list):
+                clips.extend(clip for clip in entry["clips"] if isinstance(clip, dict))
+        return clips
     return []
 
 
@@ -1398,8 +1428,7 @@ def _timeline_checks(
             evidence={"clips": len(clips)},
         ))
 
-    media = media_view.get("media", []) if isinstance(media_view, dict) else []
-    media = [item for item in media if isinstance(item, dict)]
+    media = _view_media(media_view)
     bin_ids = {str(item.get("id")) for item in media if item.get("id") is not None}
     referenced = {
         str(clip.get("mediaId")) for clip in clips if clip.get("mediaId") is not None
@@ -2452,8 +2481,7 @@ def run_pipeline(
     view = advance("project_get", {"path": project})
     if not isinstance(view, dict):
         raise PipelineError("project_get returned no project view")
-    media = view.get("media", [])
-    media = media if isinstance(media, list) else []
+    media = _view_media(view)
     if audio_media_id:
         audio_item = next(
             (item for item in media if isinstance(item, dict) and item.get("id") == audio_media_id),
@@ -2483,10 +2511,7 @@ def run_pipeline(
         else:
             audio_media_id = str(audio_item.get("id", ""))
 
-    timeline = view.get("timeline", {})
-    timeline = timeline if isinstance(timeline, dict) else {}
-    clips = timeline.get("clips", [])
-    clips = clips if isinstance(clips, list) else []
+    clips = _timeline_clips(view)
     # Resolve existing visuals against the real project view before edits.
     existing_clip_refs: dict[int, dict[str, Any]] = {}
     existing_media_refs: dict[int, dict[str, Any]] = {}
@@ -3891,6 +3916,28 @@ def run_pipeline(
                         # shelf prefix is the stable fallback. The import
                         # gate enforces this again server-side.
                         tracks = [t for t in tracks if _bgm_commercial_ok(t)]
+
+                    def _bed_seconds(track: dict[str, Any]) -> float:
+                        for key in ("seconds", "duration"):
+                            value = track.get(key)
+                            if isinstance(value, (int, float)) and value > 0:
+                                return float(value)
+                        return 0.0
+
+                    if tracks:
+                        # The bed that FITS, not the first hit: the
+                        # shortest track that covers the runtime, else
+                        # the longest partial - the spine's own best-bed
+                        # rule, which the harness never had. A first-hit
+                        # pick under a 30 s edit regularly chose a 180 s
+                        # track (or a 12 s one) by shelf order alone.
+                        covering = [t for t in tracks if _bed_seconds(t) >= runtime]
+                        pool = covering or tracks
+                        track_pick = (
+                            min(pool, key=_bed_seconds) if covering
+                            else max(pool, key=_bed_seconds)
+                        )
+                        tracks = [track_pick]
                     if not tracks:
                         if monetized:
                             reason = (
@@ -3933,6 +3980,26 @@ def run_pipeline(
                     if bed_clip is None:
                         raise PipelineError("the music bed was imported but never placed on the timeline")
                     bed_duration = max(float(bed_clip.get("duration") or runtime), 0.1)
+                    if bed_duration > runtime + 0.05:
+                        # The bed is laid at the media's full length and
+                        # the export's length is the longest clip end
+                        # over ALL clips, audio included - a 180 s track
+                        # under a 12 s cut rendered a 168 s black tail
+                        # (Background::None renders black) that the run's
+                        # own VERIFY-01 then refused. Every other placed
+                        # asset is trimmed to its segment; the bed is
+                        # trimmed to the cut.
+                        advance(
+                            "clip_trim",
+                            {
+                                "path": project,
+                                "clipId": str(bed_clip["id"]),
+                                "edge": "end",
+                                "delta": runtime - bed_duration,
+                                "ripple": False,
+                            },
+                        )
+                        bed_duration = runtime
                     duck_db = float(bgm_plan.get("duckDb", -12.0))
                     if "clip_audio_levels_db" in served:
                         # The duck rides the measured speech spans: down
@@ -4198,20 +4265,27 @@ def run_pipeline(
     # own words). A synthetic band on a take the plan promised as a file
     # is a possible swapped voice, recorded as such; on a tts take it is
     # the expected answer, recorded for the disclosure duty.
-    if "detect_ai_voice" not in served:
+    if "sense_captions" not in served:
         verify_entries.append(_verification_entry(
             "VERIFY-15", "ai-voice-disclosure", "skipped",
-            "detect_ai_voice is not served; the synthetic-voice read did not run",
+            "sense_captions is not served; the synthetic-voice read did not run",
         ))
     else:
         try:
-            ai_voice = advance("detect_ai_voice", {
+            # `detect_ai_voice` is not a tool of its own - it is a member
+            # of the sense_captions family, reached through the family
+            # tool with `action`. The phantom standalone name never
+            # appeared on any server's tools/list, so this check was
+            # permanently skipped while its self-test mock pretended
+            # otherwise.
+            ai_voice = advance("sense_captions", {
+                "action": "detect_ai_voice",
                 "audio": rendered, "transcript": transcript,
             })
         except PipelineError as error:
             verify_entries.append(_verification_entry(
                 "VERIFY-15", "ai-voice-disclosure", "skipped",
-                f"detect_ai_voice failed: {error}",
+                f"sense_captions (detect_ai_voice) failed: {error}",
             ))
         else:
             likeness = (
@@ -4943,24 +5017,35 @@ def _record_run(project: str, entry: dict[str, Any]) -> None:
 # ---------------------------------------------------------------- the watcher
 
 
-def media_ids(view: Any) -> set[str]:
+def _view_media(view: Any) -> list[dict[str, Any]]:
+    """The bin's media list from any view shape the server really sends:
+    a raw EditorView nests it under project.media; a summary view (what
+    timeline_read answers) carries it top-level. The top-level read
+    alone matched only the self-test's own mocks - on the real wire it
+    answered an empty bin, the watcher never fired a single run, and
+    every one-shot run re-imported its voiceover onto a fresh lane
+    because the bin never answered the take it already held."""
     if not isinstance(view, dict):
-        return set()
+        return []
+    media = view.get("media")
+    if not isinstance(media, list):
+        project = view.get("project")
+        media = project.get("media") if isinstance(project, dict) else None
+    return [item for item in (media or []) if isinstance(item, dict)]
+
+
+def media_ids(view: Any) -> set[str]:
     return {
         item.get("id", item.get("path", ""))
-        for item in view.get("media", [])
-        if isinstance(item, dict)
+        for item in _view_media(view)
     }
 
 
 def new_audio(view: Any, known: set[str]) -> list[dict[str, Any]]:
-    if not isinstance(view, dict):
-        return []
     return [
         item
-        for item in view.get("media", [])
-        if isinstance(item, dict)
-        and item.get("id", item.get("path", "")) not in known
+        for item in _view_media(view)
+        if item.get("id", item.get("path", "")) not in known
         and item.get("kind") == "audio"
     ]
 
@@ -5015,11 +5100,16 @@ def watch(transport: Any, project: str, plan: dict[str, Any], poll: float) -> No
     except KeyboardInterrupt:
         # A cancelled run leaves its partial state named, not guessed at:
         # the log above says exactly which steps ran and which never did.
+        # The interrupt is then RE-RAISED - main() turns it into exit
+        # 130, the convention a supervisor reads as "stopped on purpose,
+        # not finished"; swallowing it here exited 0 and a supervisor
+        # read a cancelled watch as a successful one.
         log("interrupted: the run stopped where it stood; the run log is the record")
         _record_run(project, {
             "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "status": "cancelled",
         })
+        raise
 
 
 # ----------------------------------------------------------------- self-test
@@ -5203,7 +5293,8 @@ SELF_TEST_REPLIES = {
     "clip_audio_levels_db": {"ok": True},
     "bgm_status": {"state": "ready"},
     "bgm_search": {
-        "tracks": [{"id": "lofi-0123456789ab", "title": "Night Pulse", "duration": 180.0}],
+        "tracks": [{"id": "lofi-0123456789ab", "title": "Night Pulse",
+                    "seconds": 180.0}],
         "total": 1,
     },
     "bgm_import": {
@@ -5259,7 +5350,10 @@ SELF_TEST_REPLIES = {
     },
     "export_start": {"job": "j1"},
     "export_wait": {"state": "done", "output": "/tmp/funcut-selftest/final.mp4"},
-    "detect_ai_voice": {"ok": True, "aiLikeness": {"score": 12, "band": "likely human"}},
+    "sense_captions": {
+        "ok": True, "action": "detect_ai_voice",
+        "aiLikeness": {"score": 12, "band": "likely human"},
+    },
     "measure_loudness": {
         "integratedLufs": -14.2, "truePeakDbtp": -1.4, "loudnessRangeLu": 6.0,
         "targetLufs": -14.0, "lufsError": -0.2, "platformTargetMet": True,
@@ -5273,21 +5367,28 @@ SELF_TEST_REPLIES = {
 
 #: The bin as the run first reads it: the voiceover take and the one
 #: existing visual, before anything the run itself imports.
+# The shape a real project_get answers with: the untagged EditorView,
+# its media nested under project.media - the flat top-level media the
+# old mocks carried is a summary view's shape and masked the raw-read
+# bug for the whole suite's life.
 SELF_TEST_BASELINE_BIN = {
-    "media": [
-        {
-            "id": "m-voice",
-            "path": "/tmp/funcut-selftest/voiceover.wav",
-            "kind": "audio",
-        },
-        {
-            "id": "m-existing",
-            "path": "/tmp/funcut-selftest/existing.mp4",
-            "kind": "video",
-            "duration": 8.0,
-        },
-    ],
-    "timeline": {"tracks": [], "clips": []},
+    "project": {
+        "media": [
+            {
+                "id": "m-voice",
+                "path": "/tmp/funcut-selftest/voiceover.wav",
+                "kind": "audio",
+            },
+            {
+                "id": "m-existing",
+                "path": "/tmp/funcut-selftest/existing.mp4",
+                "kind": "video",
+                "duration": 8.0,
+            },
+        ],
+        "timelines": [],
+    },
+    "canUndo": False,
 }
 
 #: The bin as the Verify stage re-reads it: everything the run imported -
@@ -5296,27 +5397,30 @@ SELF_TEST_BASELINE_BIN = {
 #: real file for carry no path; media availability checks exactly what
 #: the bin claims, not what a mock pretends.
 SELF_TEST_GROWN_BIN = {
-    "media": [
-        {
-            "id": "m-voice",
-            "path": "/tmp/funcut-selftest/voiceover.wav",
-            "kind": "audio",
-        },
-        {
-            "id": "m-existing",
-            "path": "/tmp/funcut-selftest/existing.mp4",
-            "kind": "video",
-            "duration": 8.0,
-        },
-        {"id": "m-voice-cleaned", "kind": "audio"},
-        {"id": "m-stock-7", "kind": "video"},
-        {"id": "m-stock-8", "kind": "video"},
-        {"id": "m-stock-9", "kind": "video"},
-        {"id": "m-motion", "kind": "video"},
-        {"id": "m-bgm", "kind": "audio"},
-        {"id": "m-sfx", "kind": "audio"},
-    ],
-    "timeline": {"tracks": [], "clips": []},
+    "project": {
+        "media": [
+            {
+                "id": "m-voice",
+                "path": "/tmp/funcut-selftest/voiceover.wav",
+                "kind": "audio",
+            },
+            {
+                "id": "m-existing",
+                "path": "/tmp/funcut-selftest/existing.mp4",
+                "kind": "video",
+                "duration": 8.0,
+            },
+            {"id": "m-voice-cleaned", "kind": "audio"},
+            {"id": "m-stock-7", "kind": "video"},
+            {"id": "m-stock-8", "kind": "video"},
+            {"id": "m-stock-9", "kind": "video"},
+            {"id": "m-motion", "kind": "video"},
+            {"id": "m-bgm", "kind": "audio"},
+            {"id": "m-sfx", "kind": "audio"},
+        ],
+        "timelines": [],
+    },
+    "canUndo": False,
 }
 
 
@@ -5448,11 +5552,12 @@ def self_test() -> int:
         "effect_layer_add",
         "captions_add",
         "sounds_search", "sounds_add", "clip_audio_levels_db",
-        "bgm_status", "bgm_search", "bgm_import", "clip_audio_levels_db",
+        "bgm_status", "bgm_search", "bgm_import", "clip_trim",
+        "clip_audio_levels_db",
         "collision_check", "timeline_read",
         "export_start", "export_wait", "transcribe", "analysis_wait", "emotion",
         "timeline_read", "project_get",
-        "measure_loudness", "detect_ai_voice", "watch_render", "craft_critique",
+        "measure_loudness", "sense_captions", "watch_render", "craft_critique",
     ]
     if order != expected:
         print(f"FAIL: phase order\n  want: {expected}\n  got:  {order}")
@@ -5727,15 +5832,16 @@ def self_test() -> int:
         print(f"FAIL: the run wrote no runs/<id>/report.json: {first_report}")
         return 1
 
-    resumed_media = [dict(item) for item in SELF_TEST_GROWN_BIN["media"]]
+    resumed_media = [
+        dict(item) for item in SELF_TEST_GROWN_BIN["project"]["media"]
+    ]
     for item in resumed_media:
         if item["id"] == "m-voice-cleaned":
             item["path"] = cleaned_path
     # The clip ids are the ones the mock's own placements answered with:
     # the resume re-reads a project the first run actually built.
     resumed_view = {
-        "media": resumed_media,
-        "timeline": {"clips": [
+        "project": {"media": resumed_media, "timelines": [{"clips": [
             {"id": "c-voice", "kind": "audio", "media": "m-voice-cleaned",
              "start": 0.0, "duration": 10.0},
             {"id": "c-stock-7", "kind": "video", "media": "m-stock-7",
@@ -5748,7 +5854,7 @@ def self_test() -> int:
              "start": 1.0, "duration": 1.4},
             {"id": "c-bgm", "kind": "audio", "media": "m-bgm",
              "start": 0.0, "duration": 180.0},
-        ]},
+        ]}]},
     }
     resumed_world = selftest_world()
     resumed_world["project_get"] = lambda _args: resumed_view
@@ -6127,11 +6233,15 @@ def self_test() -> int:
     _scenario_state_clear(project)
     vanished_world = selftest_world()
     vanished_world["project_get"] = lambda _args: {
-        "media": [
-            item for item in SELF_TEST_GROWN_BIN["media"]
-            if item["id"] != "m-stock-7"
-        ],
-        "timeline": {"tracks": [], "clips": []},
+        "project": {
+            "media": [
+                dict(item)
+                for item in SELF_TEST_GROWN_BIN["project"]["media"]
+                if item["id"] != "m-stock-7"
+            ],
+            "timelines": [],
+        },
+        "canUndo": False,
     }
     try:
         run_pipeline(MockMcp(vanished_world), project, audio, SELF_TEST_PLAN)

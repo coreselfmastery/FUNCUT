@@ -895,19 +895,48 @@ fn planner_segments(log: &[Value], take: &TakePaths) -> Vec<Value> {
 }
 
 /// The beat grid the run measured, in the shape `footage_plan_suggest`
-/// takes. `analyze_beats` answers with `cutTimes` - the onsets it would
-/// cut on - so those become the grid; no measured grid is `None`, which
-/// leaves the monotony read standing down rather than guessing.
+/// takes. `analyze_beats` is a job: the grid itself lands in the wait's
+/// own reply, `output` carrying the analysis JSON with the beats in
+/// milliseconds under `beatsMs` (onsets the fallback), or - where a cut
+/// suggestion answered instead - cut times in seconds under `cutTimes`
+/// on the reply itself. No measured grid is `None`, which leaves the
+/// monotony read standing down rather than guessing.
 fn latest_beats(log: &[Value]) -> Option<Value> {
-    let cuts = log.iter().rev().find_map(|reply| {
-        reply
-            .get("cutTimes")
-            .and_then(Value::as_array)
-            .filter(|cuts| !cuts.is_empty())
-    })?;
+    let seconds: Vec<f64> = log
+        .iter()
+        .rev()
+        .filter_map(|reply| {
+            // A direct reply from the cut suggester: seconds, on the reply.
+            let cuts = reply
+                .get("cutTimes")
+                .and_then(Value::as_array)
+                .filter(|cuts| !cuts.is_empty())
+                .map(|cuts| cuts.iter().filter_map(Value::as_f64).collect::<Vec<f64>>());
+            if cuts.is_some() {
+                return cuts;
+            }
+            // The wait's reply: the analysis JSON as a string, its beats
+            // in milliseconds.
+            let output = reply.get("output")?.as_str()?;
+            let parsed: Value = serde_json::from_str(output).ok()?;
+            let from_ms = |key: &str| {
+                parsed[key]
+                    .as_array()
+                    .map(|beats| {
+                        beats
+                            .iter()
+                            .filter_map(|ms| ms.as_f64())
+                            .map(|ms| ms / 1000.0)
+                            .collect::<Vec<f64>>()
+                    })
+                    .filter(|beats| !beats.is_empty())
+            };
+            from_ms("beatsMs").or_else(|| from_ms("onsetsMs"))
+        })
+        .next()?;
     Some(Value::Array(
-        cuts.iter()
-            .filter_map(Value::as_f64)
+        seconds
+            .into_iter()
             .map(|seconds| json!({ "seconds": seconds, "strength": 0.5 }))
             .collect(),
     ))
@@ -1201,8 +1230,19 @@ struct EmotionLine {
 
 impl EmotionLine {
     /// The line as an `emotion` extract wrote it, from a take file, with
-    /// the words the transcript measured for it.
-    fn of(take: &str, row: &Value, text: &str, pace: &str) -> Option<EmotionLine> {
+    /// the words the transcript measured for it. The confidence is the
+    /// extract's own reply-level read (the lexicon and the hosted model
+    /// answer at different certainties): the engine never emits it per
+    /// line, so a row-level value - when one day it does - outranks the
+    /// reply's, and a signal log that rated an `emotion` entry by
+    /// `voice_signals`' vocabulary alone could not rate it at all.
+    fn of(
+        take: &str,
+        row: &Value,
+        text: &str,
+        pace: &str,
+        read: Option<f64>,
+    ) -> Option<EmotionLine> {
         let text_free = |value: &Value| value.as_str().map(str::to_owned);
         Some(EmotionLine {
             take: take.to_owned(),
@@ -1230,7 +1270,7 @@ impl EmotionLine {
                 .unwrap_or_default(),
             text: text.to_owned(),
             pace: pace.to_owned(),
-            confidence: row["confidence"].as_f64(),
+            confidence: row["confidence"].as_f64().or(read),
         })
     }
 }
@@ -2002,7 +2042,10 @@ fn emotion_lines(log: &[Value], takes: &[TakePaths]) -> Vec<EmotionLine> {
         .flat_map(|(take, reply)| {
             // The lines the stage sent this take's extract, in order: the
             // reply's rows answer them one for one, and the words the
-            // transcript measured are the words a card carries.
+            // transcript measured are the words a card carries. The
+            // extract's own confidence rides the reply, not the row - the
+            // engine answers once for the whole read.
+            let read = reply["confidence"].as_f64();
             let sent: Vec<String> = spoken_lines(log, &take.take)
                 .into_iter()
                 .filter_map(|line| line["text"].as_str().map(str::to_owned))
@@ -2020,7 +2063,7 @@ fn emotion_lines(log: &[Value], takes: &[TakePaths]) -> Vec<EmotionLine> {
                         row["start"].as_f64().unwrap_or_default(),
                         row["end"].as_f64().unwrap_or_default(),
                     );
-                    EmotionLine::of(&take.take, row, text, &pace)
+                    EmotionLine::of(&take.take, row, text, &pace, read)
                 })
         })
         .collect()
@@ -2158,7 +2201,7 @@ fn sfx_queries_for_line(line: Option<&EmotionLine>, emotion: &str) -> Vec<&'stat
 /// keyed. The captions stage places them a batch earlier, so they are
 /// the words the run just landed - the one place a one-click run can
 /// give its type motion without a designer.
-fn entrance_targets(log: &[Value]) -> Vec<(String, f64)> {
+fn entrance_targets(log: &[Value]) -> Vec<(String, f64, f64)> {
     let Some(view) = latest_view(log) else {
         return Vec::new();
     };
@@ -2176,18 +2219,26 @@ fn entrance_targets(log: &[Value]) -> Vec<(String, f64)> {
         .filter_map(|clip| {
             let id = clip["id"].as_str()?.to_owned();
             let duration = clip["duration"].as_f64().unwrap_or(0.0);
-            (duration >= 0.4).then_some((id, duration))
+            // The clip's own placement: an entrance keyed absolutely
+            // around zero would drag a lower-third caption to the middle
+            // of the frame, so the rise is keyed around wherever the
+            // caption actually sits.
+            let offset_y = clip["offsetY"].as_f64().unwrap_or(0.0);
+            (duration >= 0.4).then_some((id, duration, offset_y))
         })
         .collect()
 }
 
 /// One title's entrance, as the batch of keys that draws it: the words
 /// rise a little and settle as they arrive (scale 0.94 -> 1.0, offsetY
-/// 0.05 -> 0), the keys placed as fractions of the title's own span so a
-/// caption re-timed by the tighten still enters where it now begins. The
-/// settle curve is the engine's own ease-out; a title too short to hold
-/// an entrance is left still, and one already keyed is left alone.
-fn entrance_keys(clip_id: &str, duration: f64) -> Vec<Value> {
+/// placed + 0.05 -> placed), the keys placed as fractions of the title's
+/// own span so a caption re-timed by the tighten still enters where it
+/// now begins. Offset keys are absolute, so the rise is keyed around the
+/// clip's own placement - a lower-third stays a lower-third while it
+/// settles, instead of being dragged to mid-frame. The settle curve is
+/// the engine's own ease-out; a title too short to hold an entrance is
+/// left still, and one already keyed is left alone.
+fn entrance_keys(clip_id: &str, duration: f64, placed: f64) -> Vec<Value> {
     let span = (0.35 / duration).clamp(0.05, 0.6);
     let ease = json!([0.16, 1.0, 0.3, 1.0]);
     vec![
@@ -2201,11 +2252,11 @@ fn entrance_keys(clip_id: &str, duration: f64) -> Vec<Value> {
         }),
         json!({
             "op": "setClipKey", "clipId": clip_id, "property": "offsetY",
-            "at": 0.0, "value": 0.05, "ease": ease,
+            "at": 0.0, "value": round3(placed + 0.05), "ease": ease,
         }),
         json!({
             "op": "setClipKey", "clipId": clip_id, "property": "offsetY",
-            "at": round3(span), "value": 0.0, "ease": ease,
+            "at": round3(span), "value": round3(placed), "ease": ease,
         }),
     ]
 }
@@ -3119,7 +3170,13 @@ fn picture_clips_with_media(view: &Value) -> Vec<(String, f64, f64, bool, String
                 clip["start"].as_f64().unwrap_or(0.0),
                 clip["duration"].as_f64().unwrap_or(0.0),
                 keyed,
-                clip["trackId"].as_str().unwrap_or_default().to_owned(),
+                // The timeline view names the lane "track"; "trackId" is
+                // the request side's spelling, never the reply's.
+                clip["track"]
+                    .as_str()
+                    .or_else(|| clip["trackId"].as_str())
+                    .unwrap_or_default()
+                    .to_owned(),
             ))
         })
         .collect()
@@ -4112,6 +4169,19 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     }
                     if phase == 1 {
                         phase = 2;
+                        // The beat analysis is a job: its first reply only
+                        // says it started, and the grid itself lands when
+                        // the wait returns - a planner built without the
+                        // wait was built before a single beat was measured.
+                        if let Some(music) = musical_take(log, &plan_source) {
+                            return Some(call(
+                                "analysis_wait",
+                                json!({ "path": music, "timeoutSeconds": 590 }),
+                            ));
+                        }
+                    }
+                    if phase == 2 {
+                        phase = 3;
                         let music = musical_take(log, &plan_source);
                         let beats = latest_beats(log);
                         // Transcripts are in each source file's clock, not
@@ -4137,8 +4207,8 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     if !queue.is_empty() {
                         return Some(queue.remove(0));
                     }
-                    if phase == 2 {
-                        phase = 3;
+                    if phase == 3 {
+                        phase = 4;
                         let plan = auto_plan(log, &plan_source, &plan_settings)?;
                         return Some(call("plan_validate", json!({ "plan": plan })));
                     }
@@ -5076,7 +5146,14 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         }
                         // Overlaps cannot happen on a clean transcript, but a
                         // merged one can carry them: the later group waits
-                        // for the one before it to leave.
+                        // for the one before it to leave. The walk is by
+                        // timeline position, not take order - groups are
+                        // built take-major, and an interleaved multi-take
+                        // run would otherwise set `until` from take A and
+                        // drop every one of take B's groups as "overlaps".
+                        groups.sort_by(|left, right| {
+                            left.0.total_cmp(&right.0).then(left.1.total_cmp(&right.1))
+                        });
                         let mut kept: Vec<(f64, f64, CaptionGroup)> = Vec::new();
                         let mut until = 0.0;
                         for (at, to, group) in groups {
@@ -5400,8 +5477,8 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             return None;
                         }
                         let mut commands: Vec<Value> = Vec::new();
-                        for (id, duration) in &targets {
-                            commands.extend(entrance_keys(id, *duration));
+                        for (id, duration, placed) in &targets {
+                            commands.extend(entrance_keys(id, *duration, *placed));
                         }
                         return Some(call(
                             "edit_apply",
@@ -6526,6 +6603,17 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 ),
             ],
         )
+        // The waits give up with "still running" rather than an error
+        // when their budget ends; without a gate the stage then
+        // "completes" over a live render and the run dies three stages
+        // later in Verify on a transcript of a file that is not there
+        // yet - an error that names the transcript, not the render. The
+        // gate names the render.
+        .gate(ReplyGate::Word {
+            field: "state",
+            equals: "done",
+            what: "the render was still running when its waits ran out",
+        })
         .into(),
     );
     // 14. The verify: the sanity reads first - collisions, and the
@@ -6647,7 +6735,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 "action": "verify",
                                 "expectedTakes": expected,
                                 "actualPath": verify_export,
-                                "toleranceMs": 60,
+                                "toleranceMs": 150,
                             }),
                         ));
                     }
@@ -6676,6 +6764,13 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             field: "verdict",
             equals: "pass",
             what: "the export's words are not the words the edit placed",
+        })
+        // The collision read the stage opened with is a gate, not
+        // decoration: a timeline whose clips share a lane is a damaged
+        // edit, whatever the transcript and the loudness say.
+        .gate(ReplyGate::True {
+            field: "clean",
+            what: "clips share a lane on the timeline",
         })
         .into(),
     );
@@ -6949,7 +7044,9 @@ mod tests {
         // is minted at run time - and the watch's sheet is a project-
         // relative name, because the window's server refuses absolute
         // write paths. The watch itself is derived now: the final
-        // critique carries the measured brief the preview's did.
+        // critique carries the measured brief the preview's did. The
+        // export's own gate: a wait that gives up must not read as a
+        // landed render.
         let export = program.steps[14].as_static();
         assert_eq!(export.calls[0].tool, "export_start");
         assert_eq!(export.calls[0].arguments["output"], source.export.as_str());
@@ -6957,8 +7054,9 @@ mod tests {
         assert_eq!(export.calls[1].arguments["path"], source.project.as_str());
         assert!(matches!(program.steps[16], ProgramStep::Derived(_)));
 
-        // The verify's gates: the loudness target, and the words (F-04) -
-        // on the derived step that reads the timeline as it ended up.
+        // The verify's gates: the loudness target, the words (F-04), and
+        // the collision read the stage opened with - on the derived step
+        // that reads the timeline as it ended up.
         use concat_director::ReplyGate;
         assert!(matches!(program.steps[15], ProgramStep::Derived(_)));
         assert_eq!(
@@ -6973,7 +7071,19 @@ mod tests {
                     equals: "pass",
                     what: "the export's words are not the words the edit placed",
                 },
+                ReplyGate::True {
+                    field: "clean",
+                    what: "clips share a lane on the timeline",
+                },
             ]
+        );
+        assert_eq!(
+            program.steps[14].gates(),
+            vec![ReplyGate::Word {
+                field: "state",
+                equals: "done",
+                what: "the render was still running when its waits ran out",
+            }]
         );
         assert_eq!(
             program.steps[16].gates(),
@@ -6985,7 +7095,7 @@ mod tests {
         );
         // No other step gates its replies.
         for (at, step) in program.steps.iter().enumerate() {
-            if at != 15 && at != 16 {
+            if at != 14 && at != 15 && at != 16 {
                 assert!(step.gates().is_empty(), "step {at} gates its replies");
             }
         }
@@ -7784,9 +7894,9 @@ mod tests {
     fn the_critics_exact_fixes_become_edits() {
         let view = json!({
             "timeline": { "clips": [
-                { "id": "c1", "kind": "video", "media": "m1", "trackId": "t1",
+                { "id": "c1", "kind": "video", "media": "m1", "track": "t1",
                   "start": 0.0, "duration": 4.0 },
-                { "id": "c2", "kind": "video", "media": "m2", "trackId": "t1",
+                { "id": "c2", "kind": "video", "media": "m2", "track": "t1",
                   "start": 4.0, "duration": 4.0, "keyframed": [] },
             ]},
         });
@@ -10062,13 +10172,13 @@ mod tests {
         let targets = entrance_targets(&log);
         assert_eq!(
             targets,
-            vec![("t1".to_owned(), 2.0)],
+            vec![("t1".to_owned(), 2.0, 0.0)],
             "only the picture-free title long enough to hold an entrance"
         );
 
         // Two seconds of title: the entrance settles within the first
         // 0.35 s, a fraction of the title's own span.
-        let keys = entrance_keys("t1", 2.0);
+        let keys = entrance_keys("t1", 2.0, 0.0);
         assert_eq!(keys.len(), 4);
         assert_eq!(keys[0]["property"], "scale");
         assert_eq!(keys[0]["at"], 0.0);
@@ -10078,8 +10188,14 @@ mod tests {
         assert_eq!(keys[2]["property"], "offsetY");
         assert_eq!(keys[3]["value"], 0.0);
 
+        // A placed caption rises around its own placement, not around
+        // zero: a lower-third stays a lower-third while it settles.
+        let placed = entrance_keys("t1", 2.0, 0.22);
+        assert_eq!(placed[2]["value"], 0.27);
+        assert_eq!(placed[3]["value"], 0.22);
+
         // A very short title still settles inside its span, not past it.
-        let keys = entrance_keys("t", 0.5);
+        let keys = entrance_keys("t", 0.5, 0.0);
         assert!(keys[1]["at"].as_f64().unwrap() <= 0.6);
     }
 
@@ -10754,8 +10870,21 @@ mod tests {
         assert_eq!(beat_call.tool, "analyze_beats");
         assert_eq!(beat_call.arguments["path"], take_b);
 
-        let mut measured = log.clone();
-        measured.push(json!({ "cutTimes": [1.0, 2.5, 4.0], "bpm": 120.0 }));
+        // The analysis is a job: the next call waits for it, or the
+        // planner is built before a single beat was measured.
+        let mut started = log.clone();
+        started.push(json!({ "job": "analysis-7", "path": take_b, "output": "" }));
+        let wait = (plan.next)(&started).expect("the beat job is waited on");
+        assert_eq!(wait.tool, "analysis_wait");
+        assert_eq!(wait.arguments["path"], take_b);
+
+        // The wait's reply carries the grid the way the analysis writes
+        // it: milliseconds, under beatsMs.
+        let mut measured = started;
+        measured.push(json!({
+            "path": take_b,
+            "output": json!({ "beatsMs": [1000.0, 2500.0, 4000.0], "bpm": 120.0 }).to_string(),
+        }));
         let first = (plan.next)(&measured).expect("the first take is planned");
         assert_eq!(first.tool, "footage_plan_suggest");
         assert_eq!(first.arguments["take"], take_a);

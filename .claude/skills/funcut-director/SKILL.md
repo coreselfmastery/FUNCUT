@@ -251,7 +251,7 @@ it (`{"at": 4.2, "decision": "cut", "signals": ["pause.class=dead_air",
 "emphasisWords"], "note": "2.1s of dead air before the emphasis word"}`).
 The profile's `decisionPolicy` says which signals each decision reads; a
 plan with a voiceover and no signalLog is NOT creativeReady — the reading
-exists to be consumed, not admired. Call `plan_validate` on the completed JSON;
+exists to be consumed, not admired. Before validation, persist the exact canonical plan object (not a wrapper) as `<project>/edit-plan.json`; the acceptance check re-reads and validates this artifact after the render, so a plan that exists only in chat is not verifiable. Then call `plan_validate` on the completed JSON;
 fix every reported error AND every `creativeBlockers` entry until BOTH
 `valid: true` and `creativeReady: true` — including `signalLog.driven:
 true`, whose `problems` name any entry that cites a signal the profile does

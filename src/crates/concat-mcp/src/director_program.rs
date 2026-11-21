@@ -269,19 +269,18 @@ fn round3(value: f64) -> f64 {
 /// and look again rather than end the stage and drop every later peak.
 fn next_played_peak(
     placed: &mut usize,
-    peaks: &[(f64, f64)],
+    peaks: &[(String, f64, f64)],
     log: &[Value],
-    takes: &[TakePaths],
 ) -> Option<f64> {
     let view = latest_view(log)?;
     let media = media_paths(view);
     while *placed < peaks.len() {
-        let moment = peaks[*placed].0;
-        let found = takes
-            .iter()
-            .map(|take| take.take.clone())
-            .find_map(|take| timeline_at(view, &media, &take, moment));
-        if let Some(at) = found {
+        // The peak's own take, never the first take that happens to
+        // span the same file-second: a file-second only means anything
+        // inside its own take's clock, and a multi-take cut plays both
+        // clocks at once.
+        let (take, moment, _) = &peaks[*placed];
+        if let Some(at) = timeline_at(view, &media, take, *moment) {
             return Some(at);
         }
         *placed += 1;
@@ -856,9 +855,13 @@ fn planner_segments(log: &[Value], take: &TakePaths) -> Vec<Value> {
 }
 
 /// The beat grid the run measured, in the shape `footage_plan_suggest`
-/// takes. `analyze_beats` answers with `cutTimes` - the onsets it would
-/// cut on - so those become the grid; no measured grid is `None`, which
-/// leaves the monotony read standing down rather than guessing.
+/// takes. `suggest_cuts` answers with `cutTimes` - the onsets its
+/// energy read would cut on, synchronously, no job to wait on - so
+/// those become the grid; no measured grid is `None`, which leaves the
+/// monotony read standing down rather than guessing. (`analyze_beats`
+/// is the OTHER tool: an async job whose handle carries no grid and
+/// whose finished output speaks `beatsMs`, not `cutTimes` - a call to
+/// it here could never feed this read.)
 fn latest_beats(log: &[Value]) -> Option<Value> {
     let cuts = log.iter().rev().find_map(|reply| {
         reply
@@ -1235,25 +1238,31 @@ fn delivery_pace(log: &[Value], take: &str, start: f64, end: f64) -> String {
     best.map(|(_, pace)| pace.to_owned()).unwrap_or_default()
 }
 
-/// The words the take's own delivery stressed, lowercased and
-/// deduplicated: `voice_signals`' `prosody.emphasisWords`, the signal the
-/// caption stage spends. Empty when no reply measured any, which is the
-/// honest answer for a take read without prosody - the stage then falls
-/// back to its own evidence rather than inventing a stress.
-fn stressed_words(log: &[Value], takes: &[TakePaths]) -> Vec<String> {
+/// The words the delivery itself stressed, one set per take: the
+/// emphasis reading `voice_signals` measures (`prosody.emphasisWords`)
+/// belongs to the take it was measured on, and a word take B stressed
+/// is not evidence about take A's delivery - matching the sets across
+/// takes let a calm take's caption borrow a stressed word's accent from
+/// a take it never sat in. A take read without prosody holds an empty
+/// set, the honest answer, so the stage falls back to its own evidence
+/// rather than inventing a stress.
+fn stressed_words(log: &[Value], takes: &[TakePaths]) -> Vec<(String, Vec<String>)> {
     voice_reads(log, takes)
         .into_iter()
-        .flat_map(|read| {
-            read.lines
+        .map(|read| {
+            let mut words: Vec<String> = Vec::new();
+            for word in read
+                .lines
                 .into_iter()
                 .flat_map(|line| line.emphasis.into_iter().map(|word| word.word))
-        })
-        .fold(Vec::new(), |mut words: Vec<String>, word| {
-            if !words.contains(&word) {
-                words.push(word);
+            {
+                if !words.contains(&word) {
+                    words.push(word);
+                }
             }
-            words
+            (read.take, words)
         })
+        .collect()
 }
 
 /// Every take's `voice_signals` reading, in the order the replies landed.
@@ -1455,7 +1464,14 @@ fn question_acts(log: &[Value], takes: &[TakePaths]) -> Vec<ScriptLine> {
                 start,
                 end,
                 text: text.to_owned(),
-                confidence: line["confidence"].as_f64(),
+                // The act engine's rows carry no confidence of their
+                // own - that is its sibling `classify_speech_acts`'
+                // field - so the reading falls back to the engine's own
+                // rating for a cued act. A question row only exists
+                // because a cue matched, which is exactly the case that
+                // engine rates at 0.75; reading the absent key left the
+                // signalLog's confidence at 0 for every real run.
+                confidence: line["confidence"].as_f64().or(Some(0.75)),
             });
         }
     }
@@ -1492,7 +1508,13 @@ fn uncovered_claims(log: &[Value], takes: &[TakePaths]) -> Vec<ScriptLine> {
                 start,
                 end,
                 text: text.to_owned(),
-                confidence: claim["confidence"].as_f64(),
+                // The claim graph rates its nodes as `strength` (evidence
+                // minus counters, 0.1 at the floor); `confidence` is a
+                // key it never writes, and reading only it left every
+                // claim's confidence at 0.
+                confidence: claim["confidence"]
+                    .as_f64()
+                    .or_else(|| claim["strength"].as_f64()),
             });
         }
     }
@@ -2122,8 +2144,13 @@ fn sfx_queries_for_line(line: Option<&EmotionLine>, emotion: &str) -> Vec<&'stat
 /// holds that is long enough to hold an entrance and is not already
 /// keyed. The captions stage places them a batch earlier, so they are
 /// the words the run just landed - the one place a one-click run can
-/// give its type motion without a designer.
-fn entrance_targets(log: &[Value]) -> Vec<(String, f64)> {
+/// give its type motion without a designer. Each target carries the
+/// title's own `offsetY` band: the entrance keys are absolute, and a
+/// keyed property's constant is the engine's neutral zero, so the rise
+/// must start from and settle back to the band the caption was placed
+/// in - keying to a bare zero would drag every caption to the frame's
+/// centre.
+fn entrance_targets(log: &[Value]) -> Vec<(String, f64, f64)> {
     let Some(view) = latest_view(log) else {
         return Vec::new();
     };
@@ -2141,18 +2168,23 @@ fn entrance_targets(log: &[Value]) -> Vec<(String, f64)> {
         .filter_map(|clip| {
             let id = clip["id"].as_str()?.to_owned();
             let duration = clip["duration"].as_f64().unwrap_or(0.0);
-            (duration >= 0.4).then_some((id, duration))
+            let band = clip["offsetY"].as_f64().unwrap_or(0.0);
+            (duration >= 0.4).then_some((id, duration, band))
         })
         .collect()
 }
 
 /// One title's entrance, as the batch of keys that draws it: the words
 /// rise a little and settle as they arrive (scale 0.94 -> 1.0, offsetY
-/// 0.05 -> 0), the keys placed as fractions of the title's own span so a
-/// caption re-timed by the tighten still enters where it now begins. The
+/// band+0.05 -> band), the keys placed as fractions of the title's own
+/// span so a caption re-timed by the tighten still enters where it now
+/// begins. The rise starts from and settles back to the title's own
+/// band: keys are absolute and a keyed property's constant is the
+/// engine's neutral zero, so an entrance keyed to a bare zero would
+/// re-centre every caption the placement stage had just banded. The
 /// settle curve is the engine's own ease-out; a title too short to hold
 /// an entrance is left still, and one already keyed is left alone.
-fn entrance_keys(clip_id: &str, duration: f64) -> Vec<Value> {
+fn entrance_keys(clip_id: &str, duration: f64, band: f64) -> Vec<Value> {
     let span = (0.35 / duration).clamp(0.05, 0.6);
     let ease = json!([0.16, 1.0, 0.3, 1.0]);
     vec![
@@ -2166,11 +2198,11 @@ fn entrance_keys(clip_id: &str, duration: f64) -> Vec<Value> {
         }),
         json!({
             "op": "setClipKey", "clipId": clip_id, "property": "offsetY",
-            "at": 0.0, "value": 0.05, "ease": ease,
+            "at": 0.0, "value": round3(band + 0.05), "ease": ease,
         }),
         json!({
             "op": "setClipKey", "clipId": clip_id, "property": "offsetY",
-            "at": round3(span), "value": 0.0, "ease": ease,
+            "at": round3(span), "value": round3(band), "ease": ease,
         }),
     ]
 }
@@ -3080,7 +3112,15 @@ fn picture_clips_with_media(view: &Value) -> Vec<(String, f64, f64, bool, String
                 clip["start"].as_f64().unwrap_or(0.0),
                 clip["duration"].as_f64().unwrap_or(0.0),
                 keyed,
-                clip["trackId"].as_str().unwrap_or_default().to_owned(),
+                // The summary view names the lane `track`; a raw
+                // `EditorView` names it `trackId`. Either names the
+                // lane, and neither is an empty string the move would
+                // carry as its track.
+                clip["track"]
+                    .as_str()
+                    .or_else(|| clip["trackId"].as_str())
+                    .unwrap_or_default()
+                    .to_owned(),
             ))
         })
         .collect()
@@ -3730,7 +3770,11 @@ fn critic_fix_commands(log: &[Value], pictures: &[(String, f64, f64, bool, Strin
         }
         let op = fix["op"].as_str().unwrap_or_default();
         // The frames the fix names, read from its `where` text: "frames
-        // 6-8" is a span, "frame 3" a single sample.
+        // 6-8" is a span, "frame 3" a single sample. The sheet labels
+        // its tiles one-based ("01", "02", ...), so the number the
+        // critic cites is the LABEL, and the tile array is zero-based -
+        // the parsed label steps down one before it indexes, or "frame
+        // 3" lands on the shot the sheet calls 04.
         let named: Option<f64> = fix["where"]
             .as_str()
             .and_then(|where_| {
@@ -3744,7 +3788,8 @@ fn critic_fix_commands(log: &[Value], pictures: &[(String, f64, f64, bool, Strin
                     .next()
                     .and_then(|n| n.parse::<usize>().ok())
             })
-            .and_then(|index| tiles.get(index).cloned())
+            .filter(|label| *label >= 1)
+            .and_then(|label| tiles.get(label - 1).cloned())
             .and_then(|tile| tile["at"].as_f64());
         let target = named.and_then(clip_at).or_else(|| pictures.first());
         let Some((clip_id, start, duration, keyed, track_id)) = target else {
@@ -4067,8 +4112,13 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 move |log| {
                     if phase == 0 {
                         phase = 1;
+                        // `suggest_cuts`, never `analyze_beats`: the
+                        // planner needs the grid in the very next reply,
+                        // and only this tool answers with `cutTimes`
+                        // synchronously - `analyze_beats` is an async
+                        // job whose handle carries no grid at all.
                         if let Some(music) = musical_take(log, &plan_source) {
-                            return Some(call("analyze_beats", json!({ "path": music })));
+                            return Some(call("suggest_cuts", json!({ "path": music })));
                         }
                     }
                     if phase == 1 {
@@ -5340,7 +5390,12 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             matches!(line.temperature.as_str(), "hot" | "split")
                         });
                         // The words the profile's own emphasis read named:
-                        // the delivery's, not the mood's.
+                        // the delivery's, not the mood's - and the take's
+                        // own delivery, never another take's.
+                        let take_emphasis = emphasis
+                            .iter()
+                            .find(|(take, _)| *take == group.take)
+                            .map(|(_, words)| words);
                         let mut accents: Vec<&CaptionWord> = group
                             .words
                             .iter()
@@ -5349,7 +5404,8 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     .text
                                     .trim_matches(|c: char| !c.is_alphanumeric())
                                     .to_lowercase();
-                                !bare.is_empty() && emphasis.contains(&bare)
+                                !bare.is_empty()
+                                    && take_emphasis.is_some_and(|words| words.contains(&bare))
                             })
                             .collect();
                         // A hot line with no stressed word still earns its
@@ -5463,8 +5519,8 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             return None;
                         }
                         let mut commands: Vec<Value> = Vec::new();
-                        for (id, duration) in &targets {
-                            commands.extend(entrance_keys(id, *duration));
+                        for (id, duration, band) in &targets {
+                            commands.extend(entrance_keys(id, *duration, *band));
                         }
                         return Some(call(
                             "edit_apply",
@@ -5936,6 +5992,12 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             call(
                                 "bgm_import",
                                 json!({
+                                    // The project folder: the request's
+                                    // own `path` is required, and a call
+                                    // without it dies in the MCP layer
+                                    // before any backend sees it - the
+                                    // bed was never imported.
+                                    "path": music_project,
                                     "ids": [id],
                                     "start": 0.0,
                                     "monetized": true,
@@ -6054,11 +6116,18 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
         DerivedStep::react(
             Stage::Sfx,
             Box::new({
-                let mut peaks: Option<Vec<(f64, f64)>> = None;
+                let mut peaks: Option<Vec<(String, f64, f64)>> = None;
                 let mut placed = 0usize;
                 move |log| {
                     let peaks = peaks.get_or_insert_with(|| {
-                        let mut found: Vec<(f64, f64)> = Vec::new();
+                        // Each peak carries the take it was measured on:
+                        // a file-second only means anything inside its own
+                        // take's clock, and every consumer below - the
+                        // placement, the emotion read, the register lift,
+                        // the shopping - must answer for that take, never
+                        // the first take that happens to span the same
+                        // file-second.
+                        let mut found: Vec<(String, f64, f64)> = Vec::new();
                         for reply in log {
                             let Some(path) = reply.pointer("/audio/path").and_then(|v| v.as_str())
                             else {
@@ -6079,7 +6148,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     else {
                                         continue;
                                     };
-                                    found.push((time, strength));
+                                    found.push((path.to_owned(), time, strength));
                                 }
                             }
                         }
@@ -6093,11 +6162,9 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // knows.
                         let read = emotion_lines(log, &sfx_emotion);
                         if !read.is_empty() {
-                            found.retain(|(time, _)| {
-                                sfx_source.iter().any(|take| {
-                                    emotion_at(&read, &take.take, *time).is_some_and(|line| {
-                                        line.emotion != "neutral" && line.intensity >= 0.5
-                                    })
+                            found.retain(|(take, time, _)| {
+                                emotion_at(&read, take, *time).is_some_and(|line| {
+                                    line.emotion != "neutral" && line.intensity >= 0.5
                                 })
                             });
                         }
@@ -6110,13 +6177,13 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // of strength, a modest rise adds a fraction.
                         let voice = voice_reads(log, &sfx_source);
                         for peak in &mut found {
-                            let lift = voice.iter().find_map(|voice_read| {
+                            let lift = voice_read_of(&voice, &peak.0).and_then(|voice_read| {
                                 voice_read
-                                    .line_at(peak.0)
+                                    .line_at(peak.1)
                                     .and_then(|line| voice_read.register_lift(line))
                             });
                             if let Some(lift) = lift {
-                                peak.1 += lift * 0.1;
+                                peak.2 += lift * 0.1;
                             }
                         }
                         // A hoarse line does not carry an accent: the
@@ -6126,19 +6193,20 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // emphasis the delivery cannot hold. A line with no
                         // voice-quality reading keeps its peak - unmeasured
                         // is not the same answer as hoarse.
-                        found.retain(|(time, _)| {
-                            !voice.iter().any(|voice_read| {
-                                voice_read
-                                    .line_at(*time)
-                                    .and_then(|line| voice_read.clean_voice(line))
-                                    == Some(false)
-                            })
+                        found.retain(|(take, time, _)| {
+                            voice_read_of(&voice, take)
+                                .and_then(|voice_read| {
+                                    voice_read
+                                        .line_at(*time)
+                                        .and_then(|line| voice_read.clean_voice(line))
+                                })
+                                .is_none_or(|clean| clean)
                         });
                         // The strongest six, earliest first: the run's
                         // accent budget, spent where the read peaked.
-                        found.sort_by(|left, right| right.1.total_cmp(&left.1));
+                        found.sort_by(|left, right| right.2.total_cmp(&left.2));
                         found.truncate(6);
-                        found.sort_by(|left, right| left.0.total_cmp(&right.0));
+                        found.sort_by(|left, right| left.1.total_cmp(&right.1));
                         found
                     });
                     // The next peak the timeline actually plays: a peak
@@ -6150,7 +6218,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     // The moment is mut: an empty search steps to the next
                     // playable peak, and the hook test must read the
                     // moment it stepped to, not the one it skipped.
-                    let mut at = next_played_peak(&mut placed, peaks, log, &sfx_source)?;
+                    let mut at = next_played_peak(&mut placed, peaks, log)?;
                     // What the last call was decides what this one is: the
                     // search hands the id the add takes.
                     let last_was_search = log
@@ -6193,26 +6261,14 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // test below reads the peak it is about to shop
                         // for - not the one the shelf refused.
                         placed += 1;
-                        at = next_played_peak(&mut placed, peaks, log, &sfx_source)?;
+                        at = next_played_peak(&mut placed, peaks, log)?;
                     }
                     // The accent family the peak's own line asks for: the
-                    // peak's file moment is the line's, so the emotion
-                    // read there names the sound.
+                    // peak's own take and file moment are the line's, so
+                    // the emotion read there names the sound.
                     let (take, moment) = peaks
                         .get(placed)
-                        .map(|(moment, _)| {
-                            let take = sfx_source
-                                .iter()
-                                .find(|take| {
-                                    latest_view(log).is_some_and(|view| {
-                                        timeline_at(view, &media_paths(view), &take.take, *moment)
-                                            .is_some()
-                                    })
-                                })
-                                .map(|take| take.take.clone())
-                                .unwrap_or_default();
-                            (take, *moment)
-                        })
+                        .map(|(take, moment, _)| (take.clone(), *moment))
                         .unwrap_or_default();
                     let read = emotion_lines(log, &sfx_emotion);
                     let line = emotion_at(&read, &take, moment);
@@ -6924,14 +6980,18 @@ mod tests {
             }],
         })];
         let words = stressed_words(&log, &takes);
-        assert_eq!(words, vec!["wreck".to_owned()]);
+        assert_eq!(
+            words,
+            vec![("/takes/a.wav".to_owned(), vec!["wreck".to_owned()])],
+            "the set is the take's own, keyed by the take it was measured on"
+        );
         let carries = |text: &str| {
             text.split_whitespace()
                 .map(|w| {
                     w.trim_matches(|c: char| !c.is_alphanumeric())
                         .to_lowercase()
                 })
-                .any(|w| words.contains(&w))
+                .any(|w| words[0].1.contains(&w))
         };
         assert!(carries("we found the wreck"));
         assert!(!carries("the hull was empty"));
@@ -7772,6 +7832,50 @@ mod tests {
         );
     }
 
+    /// The critic cites the sheet's own one-based labels ("frame 4" is
+    /// the tile the sheet drew as 04), and the tile array is zero-based:
+    /// the fourth LABEL is the array's third tile. A fix that named
+    /// frame 4 used to land one shot late - on the clip the sheet's
+    /// tile 05 samples. The boundary pins it: tile 04 samples 3.5 s
+    /// inside c1, tile 05 samples 4.5 s inside c2.
+    #[test]
+    fn the_critic_s_frame_numbers_read_the_sheet_s_own_labels() {
+        let view = json!({
+            "timeline": { "clips": [
+                { "id": "c1", "kind": "video", "media": "m1", "trackId": "t1",
+                  "start": 0.0, "duration": 4.0 },
+                { "id": "c2", "kind": "video", "media": "m2", "trackId": "t1",
+                  "start": 4.0, "duration": 4.0, "keyframed": [] },
+            ]},
+        });
+        let log = vec![json!({
+            "craft": { "samples": 8.0, "letterboxedFrames": 0.0, "blackFrames": 0.0,
+                       "staticTransitions": 0.0 },
+            "tiles": [
+                { "index": 0, "at": 0.5 }, { "index": 1, "at": 1.5 },
+                { "index": 2, "at": 2.5 }, { "index": 3, "at": 3.5 },
+                { "index": 4, "at": 4.5 }, { "index": 5, "at": 5.5 },
+                { "index": 6, "at": 6.5 }, { "index": 7, "at": 7.5 },
+            ],
+            "fixes": [
+                { "where": "frame 4", "problem": "off centre",
+                  "change": "shift x by 96px", "op": "shift",
+                  "patch": { "dx": 96, "dy": 0 }, "confidence": 0.9 },
+            ],
+        })];
+        let run = [vec![view.clone()], log].concat();
+        let commands = revise_commands(&run);
+        let shift = commands
+            .iter()
+            .find(|command| command["op"] == json!("setClipTransform"))
+            .expect("the shift is spent");
+        assert_eq!(
+            shift["clipId"],
+            json!("c1"),
+            "the cited label 4 is the sheet's tile 04, which samples c1"
+        );
+    }
+
     /// The brief the critic reads carries what the run measured: the arc,
     /// the peak, the delivery and the words the voice leaned on. A run
     /// with no read hands the critic nothing rather than a guess.
@@ -8386,35 +8490,40 @@ mod tests {
     /// would drop every peak after it.
     #[test]
     fn the_accents_step_over_a_peak_the_timeline_does_not_play() {
-        let takes = vec![TakePaths {
-            take: "/takes/a.wav".to_owned(),
-            enhanced: "/takes/a-enhanced.wav".to_owned(),
-        }];
-        // One clip playing file seconds 0..10 of the take.
+        // Two takes whose clips play overlapping file ranges: take A
+        // spans file seconds 0..10, take B 0..8 at timeline 10..18 - so
+        // a bare file-second is ambiguous between the takes, and only
+        // the peak's own take can place it. The 50 s peak of take A is
+        // past its clip; the cursor at it must reach the 2 s peak of
+        // take B (timeline 12.0) rather than end the stage - and never
+        // take A's clock for take B's peak.
         let log = vec![json!({
-            "media": [{ "id": "m1", "path": "/takes/a.wav" }],
-            "timeline": { "clips": [{
-                "id": "c1",
-                "media": "m1",
-                "start": 0.0,
-                "duration": 10.0,
-                "sourceStart": 0.0,
-                "speed": 1.0,
-            }]},
+            "media": [
+                { "id": "m1", "path": "/takes/a.wav" },
+                { "id": "m2", "path": "/takes/b.wav" },
+            ],
+            "timeline": { "clips": [
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 10.0,
+                  "sourceStart": 0.0, "speed": 1.0 },
+                { "id": "c2", "media": "m2", "start": 10.0, "duration": 8.0,
+                  "sourceStart": 0.0, "speed": 1.0 },
+            ]},
         })];
-        // The 50 s peak is past the clip; the cursor at it must reach the
-        // 2 s peak beyond rather than end the stage.
-        let peaks = [(1.0, 0.9), (50.0, 0.8), (2.0, 0.7)];
+        let peaks = [
+            ("/takes/a.wav".to_owned(), 1.0, 0.9),
+            ("/takes/a.wav".to_owned(), 50.0, 0.8),
+            ("/takes/b.wav".to_owned(), 2.0, 0.7),
+        ];
         let mut placed = 1;
         assert_eq!(
-            next_played_peak(&mut placed, &peaks, &log, &takes),
-            Some(2.0),
-            "the unplayed peak is stepped over, not the end of the stage"
+            next_played_peak(&mut placed, &peaks, &log),
+            Some(12.0),
+            "the unplayed peak is stepped over, and take B's own clock places its peak"
         );
         assert_eq!(placed, 2, "the cursor landed on the played peak");
         // Once every peak is spent, the stage is done.
         placed = 3;
-        assert_eq!(next_played_peak(&mut placed, &peaks, &log, &takes), None);
+        assert_eq!(next_played_peak(&mut placed, &peaks, &log), None);
     }
     /// The preview looks at the OPEN timeline before the render is paid
     /// for: the sheet it samples is the project's, not the export's, and
@@ -9002,12 +9111,13 @@ mod tests {
             Some("bgm_search")
         );
         log.push(json!({ "tracks": [{ "id": "freepd-abc123" }] }));
-        assert_eq!(
-            (music.next)(log.as_slice())
-                .map(|call| call.tool)
-                .as_deref(),
-            Some("bgm_import")
-        );
+        // The import carries the project folder: the request's own
+        // `path` is required, and a call without it dies in the MCP
+        // layer before any backend sees it.
+        let import = (music.next)(log.as_slice()).expect("the bed is imported");
+        assert_eq!(import.tool, "bgm_import");
+        assert_eq!(import.arguments["path"], "/edits/Reel");
+        assert_eq!(import.arguments["ids"][0], "freepd-abc123");
         // The import's own reply carries `mediaIds`, not `state`.
         log.push(json!({ "mediaIds": ["m9"], "view": { "project": {} } }));
         assert_eq!(
@@ -9995,13 +10105,13 @@ mod tests {
         let targets = entrance_targets(&log);
         assert_eq!(
             targets,
-            vec![("t1".to_owned(), 2.0)],
+            vec![("t1".to_owned(), 2.0, 0.0)],
             "only the picture-free title long enough to hold an entrance"
         );
 
         // Two seconds of title: the entrance settles within the first
         // 0.35 s, a fraction of the title's own span.
-        let keys = entrance_keys("t1", 2.0);
+        let keys = entrance_keys("t1", 2.0, 0.35);
         assert_eq!(keys.len(), 4);
         assert_eq!(keys[0]["property"], "scale");
         assert_eq!(keys[0]["at"], 0.0);
@@ -10009,11 +10119,13 @@ mod tests {
         assert_eq!(keys[1]["at"], 0.175);
         assert_eq!(keys[1]["value"], 1.0);
         assert_eq!(keys[2]["property"], "offsetY");
-        assert_eq!(keys[3]["value"], 0.0);
+        assert_eq!(keys[2]["value"], 0.4, "the rise starts just above the band");
+        assert_eq!(keys[3]["value"], 0.35, "the settle returns to the band");
 
         // A very short title still settles inside its span, not past it.
-        let keys = entrance_keys("t", 0.5);
+        let keys = entrance_keys("t", 0.5, 0.22);
         assert!(keys[1]["at"].as_f64().unwrap() <= 0.6);
+        assert_eq!(keys[3]["value"], 0.22, "a portrait band keeps its place");
     }
 
     /// A clip with no media - a title the run placed - does not end the
@@ -10676,7 +10788,7 @@ mod tests {
         ];
 
         let beat_call = (plan.next)(&log).expect("the musical take is analysed first");
-        assert_eq!(beat_call.tool, "analyze_beats");
+        assert_eq!(beat_call.tool, "suggest_cuts");
         assert_eq!(beat_call.arguments["path"], take_b);
 
         let mut measured = log.clone();

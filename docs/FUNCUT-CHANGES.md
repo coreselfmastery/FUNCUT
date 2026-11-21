@@ -2632,3 +2632,33 @@ The AI path now holds at 98% while acceptance is pending and reaches
 or incomplete export remains visibly short of completion. A small
 regression test pins both values. It was added but not executed in this
 session.
+
+
+## 61. Acceptance must not pass on partial or unavailable narration evidence
+
+The first acceptance reader treated a malformed voiceover mapping as an
+empty list of takes, and filtered malformed individual segments out of an
+otherwise valid list. That made a partial comparison possible: the
+acceptance pass could compare only the segments it happened to parse and
+still report a passing words gate. Missing numeric fields were also
+silently replaced with start/source-in zero and playback speed one.
+
+The mapping reader now validates the complete segment list before it
+builds any expected-take rows. Every segment must have a non-empty take
+path, finite non-negative timeline and source-in positions, and a finite
+positive playback speed. A supplied source-out must be finite and after
+source-in. One malformed segment invalidates the whole mapping; no
+partial verification is sent to the emotion verifier. The missing words
+gate stays skipped and the receipt records the reason.
+
+Acceptance tool failures are now different from measured failures. A
+tool refusal, unavailable tool, or cancelled call is omitted from the
+observed evidence, so its required gate is **skipped/incomplete** rather
+than marked as a measured failure. A real reply that reports a bad result
+still fails its gate. The acceptance worker checks its cancellation flag
+before each independent call, and every active call receives the same
+flag through its tool context.
+
+Regression coverage was added for a malformed later segment invalidating
+the whole mapping. These changes were committed to PR #182; tests and
+formatting were not run in this session.

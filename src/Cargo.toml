@@ -30,6 +30,7 @@ geneva-adapter = { path = "crates/geneva-adapter" }
 concat = { path = "crates/concat" }
 
 serde_json = "1"
+url = "2"
 # PNG decode/encode for the API's inline frames and the reel contact sheet.
 png = "0.17"
 thiserror = "2"

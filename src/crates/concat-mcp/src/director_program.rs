@@ -6716,13 +6716,15 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                         .is_some_and(|id| !used.iter().any(|spent| spent == id))
                                 })
                                 .collect();
-                            let chosen = fresh
-                                .iter()
-                                .copied()
-                                .find(|hit| {
-                                    hit["duration"].as_f64().is_some_and(|secs| secs <= 3.0)
-                                })
-                                .or_else(|| fresh.first().copied());
+                            // An accent is a hit, not a bed: when every
+                            // unspent hit runs past three seconds the word
+                            // moves on to its next query rather than
+                            // placing a six-second ambience at -9 dB (the
+                            // shelf carries sounds up to 40 s; "drone" and
+                            // "ambience" families return nothing shorter).
+                            let chosen = fresh.iter().copied().find(|hit| {
+                                hit["duration"].as_f64().map_or(true, |secs| secs <= 3.0)
+                            });
                             if let Some(hit) = chosen {
                                 let id = hit["id"].as_str().unwrap_or_default().to_owned();
                                 // The manifest's own `syncAt` says how far

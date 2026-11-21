@@ -6528,9 +6528,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     .map(|(_, path)| path.contains("/bgm/"))
                                     .unwrap_or(false)
                             });
-                        let Some(bed) = bed else {
-                            return None;
-                        };
+                        let bed = bed?;
                         // A bed longer than the cut is trimmed to it: the
                         // export's length is the longest clip's end, so a
                         // three-minute bed under a thirty-second cut would
@@ -6807,7 +6805,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             // shelf carries sounds up to 40 s; "drone" and
                             // "ambience" families return nothing shorter).
                             let chosen = fresh.iter().copied().find(|hit| {
-                                hit["duration"].as_f64().map_or(true, |secs| secs <= 3.0)
+                                hit["duration"].as_f64().is_none_or(|secs| secs <= 3.0)
                             });
                             if let Some(hit) = chosen {
                                 let id = hit["id"].as_str().unwrap_or_default().to_owned();

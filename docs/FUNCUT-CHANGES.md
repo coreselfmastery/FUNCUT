@@ -2872,3 +2872,45 @@ The dev build's Rust ear is found where the workspace actually puts it
 repository root a root-workspace checkout uses, so a checkout that
 builds `voice-signals` exercises the real ears in the selftest instead
 of reporting them absent.
+
+## 68. Three rules that judged a reading nobody measured
+
+The continuity gate's own contract is that a reading the manifest does
+not carry stands its rule down: a clip with no colour temperature is not
+compared, and a clip with no motion figure is not called still. The
+scale rule did not follow it. `ManifestClip::shot_scale` was a bare
+`ShotScale` defaulting to `Medium`, so a manifest that never carried a
+scale - which is every manifest the AUTO EDIT's gather stage sends, since
+one contact-sheet frame measures warmth and nothing else - arrived as a
+row of `Medium`s. The gate then flagged **every adjacent pair** as "two
+of one scale in a row", recorded those flags in the run's evidence, and
+made the stage re-run the whole continuity check once more because the
+flag list was never empty. The field is now `Option<ShotScale>` with
+`None` meaning unmeasured, exactly as `motion` and `color_temperature`
+already meant it, and the rule matches on a measured pair. The
+`footage_continuity` tool's wire shape accepts an absent or null
+`shotScale`; a manifest that does measure scales still gets the flag.
+
+The transition no-repeat rule had the same shape of hole on the seam
+side. `seam_transition` picks the seam's move first (a chapter, a
+speaker change, a question, a held beat, a phrase boundary) and falls
+back to the mood's *alternate* when the last shot wore the same move.
+But the alternate is chosen to differ from the mood's own first move, not
+from a seam move that may be something else entirely - and on a neutral
+read the alternate *is* the chapter seam's whip-pan, and on a joy read it
+is the phrase seam's cross-pop. Two chapter openings in a row therefore
+wore whip-pan twice, which is the one thing the rule exists to stop. The
+fallback now takes the mood's primary move when the alternate is also the
+move the last shot wore; the alternate and the primary never agree, so
+one of the two always differs from `last`.
+
+The Forge pane's `auto_director_ended` carried a second, verbatim copy of
+its own cancellation block: the same `started`/`kill`/`fraction` reset
+and the same `cancelled` branch, twice. The first copy returns, so the
+second was dead code that read as two different endings - and a reader
+editing one of them would have left the other behind.
+
+Tests: `an_unmeasured_scale_is_not_flagged_as_a_repeat` (both sides
+unmeasured, and one side unmeasured) and
+`a_seam_never_repeats_the_last_shot_s_move` (a chapter seam whose move is
+also the mood's alternate).

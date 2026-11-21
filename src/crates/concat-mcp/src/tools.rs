@@ -3608,6 +3608,18 @@ const SIGNAL_VOCABULARY: &[&str] = &[
 /// same predicate the decision log's gate applies, exposed so a test can
 /// hold a generated plan to the vocabulary the validator will check it
 /// against rather than a copy of the list that can drift.
+/// Every family the profile answers, in the profile's own names. Exposed
+/// so a test can hold the program to the whole vocabulary - a family the
+/// profile measures and the edit never reads is a promise the button
+/// breaks silently.
+pub fn signal_vocabulary() -> &'static [&'static str] {
+    SIGNAL_VOCABULARY
+}
+
+/// Whether a signal name is one the `voice_signals` profile answers - the
+/// same predicate the decision log's gate applies, exposed so a test can
+/// hold a generated plan to the vocabulary the validator will check it
+/// against rather than a copy of the list that can drift.
 pub fn signal_vocabulary_has(signal: &str) -> bool {
     SIGNAL_VOCABULARY.iter().any(|known| {
         signal == *known

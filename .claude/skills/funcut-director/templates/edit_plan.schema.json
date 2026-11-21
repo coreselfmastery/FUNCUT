@@ -248,6 +248,10 @@
           "minLength": 1,
           "type": "string"
         },
+        "signalEvidence": {
+          "description": "The run's own reading of every voice_signals family, with the confidence the profile gave each: {measured: [family...], leanOn: ['family 0.92'...], leanLessOn: [...], whyWeak: {family: basis}}. Present only when the run measured a profile; a family at confidence 0 is left out rather than offered.",
+          "type": "object"
+        },
         "thesis": {
           "description": "The one sentence the whole video argues or reveals. Every shot serves it.",
           "minLength": 1,
@@ -793,14 +797,21 @@
             "minimum": 0,
             "type": "number"
           },
+          "confidence": {
+            "description": "How certain the profile was of the signals behind this choice, 0-1: the weakest family it names. Absent when the run could not rate them.",
+            "maximum": 1,
+            "minimum": 0,
+            "type": "number"
+          },
           "decision": {
-            "description": "The kind of choice: where to cut, what a caption highlights, what graphic to add, whether to add BGM, where to transition.",
+            "description": "The kind of choice: where to cut, what a caption highlights, what graphic to add, whether to add BGM, where to transition, how the pacing moves.",
             "enum": [
               "cut",
               "caption",
               "graphic",
               "bgm",
-              "transition"
+              "transition",
+              "pacing"
             ],
             "type": "string"
           },

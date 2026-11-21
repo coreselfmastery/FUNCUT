@@ -3866,24 +3866,30 @@ fn creative_gate(object: &Value, segments: &[Value], runtime: f64, warnings: &[S
     }
 
     // Visual variety: repeated references are the slideshow signature.
-    let visual_key = |segment: &Value| -> String {
+    // A cut made of `existing` A-roll segments (one camera, one take,
+    // cut on its pauses - an interview, a lecture, a talking head) is a
+    // legitimate edit, not a slideshow: the variety rules judge the
+    // clips the plan SHOPS, not the source the words were recorded on.
+    let visual_key = |segment: &Value| -> Option<String> {
         let v = &segment["visual"];
+        if v.get("type").and_then(Value::as_str) == Some("existing") {
+            return None;
+        }
         for key in ["query", "path", "asset", "name", "src", "mediaId", "clipId"] {
             if let Some(s) = v.get(key).and_then(Value::as_str) {
-                return s.trim().to_ascii_lowercase();
+                return Some(s.trim().to_ascii_lowercase());
             }
         }
         v.get("type")
             .and_then(Value::as_str)
-            .unwrap_or("unknown")
-            .to_ascii_lowercase()
+            .map(|kind| kind.to_ascii_lowercase())
     };
-    let keys: Vec<String> = segments.iter().map(visual_key).collect();
+    let keys: Vec<String> = segments.iter().filter_map(visual_key).collect();
     let distinct = keys.iter().collect::<std::collections::BTreeSet<_>>().len();
-    if segments.len() >= 4 && distinct * 2 < segments.len() {
+    if keys.len() >= 4 && distinct * 2 < keys.len() {
         blockers.push(format!(
-            "only {distinct} distinct visuals across {} segments: this is a slideshow, not an edit; use stock_contact_sheet to find different shots",
-            segments.len()
+            "only {distinct} distinct visuals across {} shopped segments: this is a slideshow, not an edit; use stock_contact_sheet to find different shots",
+            keys.len()
         ));
         score -= 1.5;
     }
@@ -3897,7 +3903,7 @@ fn creative_gate(object: &Value, segments: &[Value], runtime: f64, warnings: &[S
             run = 1;
         }
     }
-    if longest >= 3 {
+    if keys.len() >= 3 && longest >= 3 {
         blockers.push(format!("{longest} consecutive segments use the same visual reference; vary shot size, angle or source"));
         score -= 1.0;
     }
@@ -3921,7 +3927,10 @@ fn creative_gate(object: &Value, segments: &[Value], runtime: f64, warnings: &[S
             }
         }
     }
-    let score = score.clamp(0.0, 10.0).round() * 10.0 / 10.0;
+    // One decimal place, honestly: `.round() * 10.0 / 10.0` was a
+    // no-op after the round, so a raw 6.5 read as 7 - the rewrite-the-
+    // plan bar - and a raw 8.6 read as 9.
+    let score = (score.clamp(0.0, 10.0) * 10.0).round() / 10.0;
     let ready = blockers.is_empty();
     if ready {
         notes.push("creative gate passed; still run watch_render and craft_critique after the first export".to_owned());

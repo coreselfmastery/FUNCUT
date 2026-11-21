@@ -23,7 +23,7 @@ use crate::stage::Stage;
 /// retry means the same thing through either. The licensed stock search
 /// sits here beside its openvid twin: a transient network hiccup during
 /// the gather must not cost the run its B-roll.
-const RETRYABLE_TOOLS: [&str; 36] = [
+const RETRYABLE_TOOLS: [&str; 38] = [
     "transcribe",
     "analysis_wait",
     "project_get",
@@ -60,6 +60,14 @@ const RETRYABLE_TOOLS: [&str; 36] = [
     "sense_prosody_style",
     "sense_audio_repair",
     "sense_captions",
+    // The verify stage's last call: a transient refusal AFTER the render
+    // was paid for used to kill the whole run with no retry - the most
+    // expensive moment to fail non-retryably.
+    "motion_probe",
+    // A render that needs longer than one wait is still running, not
+    // failed - and a transport blip under a long encode should retry the
+    // WAIT, not rebuild the sibling project from scratch.
+    "export_wait",
 ];
 
 /// What a failure sounds like when it is the network's side of the

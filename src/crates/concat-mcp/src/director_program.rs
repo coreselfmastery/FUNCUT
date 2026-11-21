@@ -2477,7 +2477,8 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
     // clip, in order, each naming the media it plays.
     let segments: Vec<Value> = clips
         .iter()
-        .map(|clip| {
+        .enumerate()
+        .map(|(index, clip)| {
             let start = clip["start"].as_f64().unwrap_or(0.0);
             let end = start + clip["duration"].as_f64().unwrap_or(0.0);
             let mut segment = json!({
@@ -2499,6 +2500,21 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
                     let (source_in, _, _) = clip_file_span(clip);
                     emotion_at(&read, path, source_in).cloned()
                 });
+            // Every clip enters on purpose (floor M): the opening pops,
+            // a reveal or a turn punches, tension whips, the landing
+            // dissolves, and the calm middle alternates slide and
+            // dissolve - an entrance the gate can read, and a vocabulary
+            // the timeline's transition pass already speaks.
+            let last = index + 1 == clips.len();
+            let anim = match mood.as_ref().map(|line| line.act.as_str()) {
+                Some("hook") | Some("reveal") | Some("turn") => "punch",
+                Some("tension") => "whip",
+                _ if index == 0 => "pop",
+                _ if last => "dissolve",
+                _ if index % 2 == 0 => "slide",
+                _ => "dissolve",
+            };
+            segment["in"] = json!({ "anim": anim });
             if let Some(line) = mood {
                 segment["emotion"] = json!(line.emotion);
                 segment["colourTemp"] = json!(line.temperature);
@@ -2509,16 +2525,22 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
         })
         .collect();
     // The sections the runtime falls into. A piece over 12 s owes a payoff
-    // somewhere, so it gets a cta; a short one is hook and body alone.
-    let hook_end = if runtime > 12.0 { 3.0 } else { runtime };
+    // somewhere, so it gets a cta; a 4-12 s piece is hook and body (the
+    // hook inside 3 s, or the creative gate names it); a very short one
+    // is all hook.
     let sections = if runtime > 12.0 {
         json!([
             { "role": "hook", "start": 0.0, "end": 3.0 },
             { "role": "body", "start": 3.0, "end": round3(runtime - 2.0) },
             { "role": "cta", "start": round3(runtime - 2.0), "end": round3(runtime) },
         ])
+    } else if runtime > 4.0 {
+        json!([
+            { "role": "hook", "start": 0.0, "end": 3.0 },
+            { "role": "body", "start": 3.0, "end": round3(runtime) },
+        ])
     } else {
-        json!([{ "role": "hook", "start": 0.0, "end": round3(hook_end) }])
+        json!([{ "role": "hook", "start": 0.0, "end": round3(runtime) }])
     };
     // The brief, only where the narration answers it: the opening line is
     // the claim, the closing line its payoff, the ordered emotions the
@@ -4156,7 +4178,21 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
             ]
         })
         .collect();
-    steps.push(FanStep::fan(Stage::Transcribe, words).into());
+    // The waits give up with "still running" rather than an error when
+    // their budget ends; without a gate the stage then "completes" over a
+    // transcription that never arrived, and every word-derived stage
+    // downstream silently ships defaults - no captions, no B-roll slots,
+    // no emotion lines. The gate names the transcription (the job-start
+    // replies carry no state, so only the waits are judged).
+    steps.push(
+        FanStep::fan(Stage::Transcribe, words)
+            .gate(ReplyGate::Word {
+                field: "state",
+                equals: "done",
+                what: "a take's transcription was still running when its waits ran out",
+            })
+            .into(),
+    );
     // 4. The delivery: pauses, emphasis, the read itself - one lane per
     //    take, each reply carrying its own audio path so the fan's
     //    landing order is no one's guess.
@@ -6702,11 +6738,17 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // A sheet that named none is a preview that could
                         // not be looked at: end the stage rather than hand
                         // the critic an empty path.
-                        let png = log
+                        let sheet = log
                             .iter()
                             .rev()
-                            .find_map(|reply| reply.get("pngPath").and_then(Value::as_str))
-                            .filter(|png| !png.trim().is_empty())?;
+                            .find(|reply| {
+                                reply
+                                    .get("pngPath")
+                                    .and_then(Value::as_str)
+                                    .is_some_and(|png| !png.trim().is_empty())
+                            })
+                            .cloned()?;
+                        let png = sheet["pngPath"].as_str().unwrap_or_default();
                         // The brief carries the arc the voice measured, so
                         // the critic judges the cut against the story it
                         // was cut to and not the pictures alone.
@@ -6719,11 +6761,16 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         // `autoSetup` is the difference between a review
                         // and a pixel count: without it a machine with no
                         // vision model yet answers from measurements alone
-                        // and the stage would call that a critique.
+                        // and the stage would call that a critique. The
+                        // SHEET travels with the pixels: its craft and
+                        // audio measurements are what the critique scores
+                        // against - pngPath alone left every reading empty
+                        // and the heuristic answered a constant 6.7.
                         return Some(call(
                             "craft_critique",
                             json!({
                                 "pngPath": png,
+                                "sheet": sheet,
                                 "project": preview_project,
                                 "brief": brief,
                                 "autoSetup": true,
@@ -6801,6 +6848,17 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             .rev()
                             .find_map(|reply| reply.get("pngPath").and_then(Value::as_str))
                             .filter(|png| !png.trim().is_empty())?;
+                        let sheet = log
+                            .iter()
+                            .rev()
+                            .find(|reply| {
+                                reply
+                                    .get("pngPath")
+                                    .and_then(Value::as_str)
+                                    .is_some_and(|png| !png.trim().is_empty())
+                            })
+                            .cloned()
+                            .unwrap_or_else(|| json!({}));
                         let measured = signal_brief(log);
                         let brief = if measured.as_object().is_some_and(|o| !o.is_empty()) {
                             measured
@@ -6811,6 +6869,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             "craft_critique",
                             json!({
                                 "pngPath": png,
+                                "sheet": sheet,
                                 "project": revise_project,
                                 "brief": brief,
                                 "autoSetup": true,
@@ -6838,7 +6897,6 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         "path": project.clone(),
                         "output": export.clone(),
                         "crf": 20,
-                        "codec": "h264"
                     }),
                 ),
                 call(
@@ -7080,10 +7138,27 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         } else {
                             json!({})
                         };
+                        // The watch's own sheet travels whole: its craft
+                        // (variety, black frames, letterboxing, static
+                        // cuts) and audio measurements are the critique's
+                        // evidence - pngPath alone answered a constant 6.7
+                        // and the 7.0 bar below could never pass.
+                        let sheet = log
+                            .iter()
+                            .rev()
+                            .find(|reply| {
+                                reply
+                                    .get("pngPath")
+                                    .and_then(Value::as_str)
+                                    .is_some_and(|png| !png.trim().is_empty())
+                            })
+                            .cloned()
+                            .unwrap_or_else(|| json!({}));
                         return Some(call(
                             "craft_critique",
                             json!({
                                 "pngPath": png,
+                                "sheet": sheet,
                                 "project": watch_project,
                                 "brief": brief,
                                 "autoSetup": true,
@@ -7333,6 +7408,18 @@ mod tests {
                 what: "the render was still running when its waits ran out",
             }]
         );
+        // The transcription's own done gate: a wait that gives up with
+        // "still running" used to complete the stage over a transcript
+        // that never arrived, and every word-derived stage downstream
+        // silently shipped defaults.
+        assert_eq!(
+            program.steps[2].gates(),
+            vec![ReplyGate::Word {
+                field: "state",
+                equals: "done",
+                what: "a take's transcription was still running when its waits ran out",
+            }]
+        );
         assert_eq!(
             program.steps[16].gates(),
             vec![ReplyGate::AtLeast {
@@ -7343,7 +7430,7 @@ mod tests {
         );
         // No other step gates its replies.
         for (at, step) in program.steps.iter().enumerate() {
-            if at != 14 && at != 15 && at != 16 {
+            if at != 2 && at != 14 && at != 15 && at != 16 {
                 assert!(step.gates().is_empty(), "step {at} gates its replies");
             }
         }

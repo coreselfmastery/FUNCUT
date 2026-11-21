@@ -4,6 +4,7 @@
 //! that drives it - so the window's pane asks for it and the tests that
 //! hold it to its word run where the runner does.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -11,6 +12,8 @@ use concat_director::{
     DerivedStep, EditProgram, FanStep, ProgramStep, ReplyGate, Stage, StageStep, ToolCall,
 };
 use serde_json::{Value, json};
+
+use crate::voice_read::{Entity, Motif, VoiceRead};
 
 /// One voiceover file's fixed paths inside the sibling, as the AUTO
 /// EDIT's program is written from them: the take the timeline plays, and
@@ -713,6 +716,11 @@ struct EmotionLine {
     /// carried no rate, which is the honest answer for a take measured
     /// without word timings.
     pace: String,
+    /// The emotion engine's own confidence in this line's read, 0..1. The
+    /// lexicon and the transformer answer at different certainties, and a
+    /// signal log that rated an `emotion` entry by `voice_signals`'
+    /// vocabulary alone could not rate it at all.
+    confidence: Option<f64>,
 }
 
 impl EmotionLine {
@@ -746,6 +754,7 @@ impl EmotionLine {
                 .unwrap_or_default(),
             text: text.to_owned(),
             pace: pace.to_owned(),
+            confidence: row["confidence"].as_f64(),
         })
     }
 }
@@ -781,47 +790,367 @@ fn delivery_pace(log: &[Value], take: &str, start: f64, end: f64) -> String {
     best.map(|(_, pace)| pace.to_owned()).unwrap_or_default()
 }
 
-/// The emotional read the run made, in the order the takes were asked
-/// about. The emotion stage asks once per take that has timed words, in
-/// program order, so the `emotion` replies sit in the log in exactly
-/// that order - the invariant this reader stands on, and the reason the
-/// reader filters its takes with the same [`spoken_lines`] predicate the
-/// stage skips them with.
 /// The words the take's own delivery stressed, lowercased and
 /// deduplicated: `voice_signals`' `prosody.emphasisWords`, the signal the
 /// caption stage spends. Empty when no reply measured any, which is the
 /// honest answer for a take read without prosody - the stage then falls
 /// back to its own evidence rather than inventing a stress.
 fn stressed_words(log: &[Value], takes: &[TakePaths]) -> Vec<String> {
-    let mut words: Vec<String> = Vec::new();
-    for reply in log {
-        let Some(path) = reply.pointer("/audio/path").and_then(Value::as_str) else {
-            continue;
-        };
-        if !takes.iter().any(|take| take.take == path) {
-            continue;
-        }
-        for line in reply["lines"].as_array().into_iter().flatten() {
-            for word in line
-                .pointer("/prosody/emphasisWords")
-                .and_then(Value::as_array)
+    voice_reads(log, takes)
+        .into_iter()
+        .flat_map(|read| {
+            read.lines
                 .into_iter()
-                .flatten()
-            {
-                // The Rust ear names the word `wordText`; the Python
-                // prosody pass names it `word`. Read either, so a take
-                // read by either producer still hands its stress over.
-                let Some(text) = word["wordText"].as_str().or_else(|| word["word"].as_str()) else {
-                    continue;
-                };
-                let text = text.trim().to_lowercase();
-                if !text.is_empty() && !words.contains(&text) {
-                    words.push(text);
-                }
+                .flat_map(|line| line.emphasis.into_iter().map(|word| word.word))
+        })
+        .fold(Vec::new(), |mut words: Vec<String>, word| {
+            if !words.contains(&word) {
+                words.push(word);
+            }
+            words
+        })
+}
+
+/// Every take's `voice_signals` reading, in the order the replies landed.
+/// A reply that is not a reading (a transcript, an emotion extract, a
+/// timeline view) is skipped, and a reading of a file the run does not
+/// play is skipped too: the profile answers about the takes this run
+/// edits, and a stale reply from another session is not evidence.
+fn voice_reads(log: &[Value], takes: &[TakePaths]) -> Vec<VoiceRead> {
+    log.iter()
+        .filter_map(VoiceRead::of)
+        .filter(|read| takes.iter().any(|take| take.take == read.take))
+        .collect()
+}
+
+/// The take's reading, when one landed.
+fn voice_read_of<'a>(reads: &'a [VoiceRead], take: &str) -> Option<&'a VoiceRead> {
+    reads.iter().find(|read| read.take == take)
+}
+
+/// A topic boundary the discourse tiling found: where one chapter ends and
+/// the next begins, in the take's own seconds, with the words that name
+/// the new chapter.
+#[derive(Clone, Debug)]
+struct TopicBoundary {
+    /// The take the lines were read from.
+    take: String,
+    /// Where the new chapter opens, in file seconds.
+    at: f64,
+    /// The words the tiling says the chapter is about.
+    headline: String,
+    /// The tiling's own confidence: the segment's cohesion, 0..1. A
+    /// chapter card cut on a weakly cohesive segment is the tiling's
+    /// guess, and the log should say so rather than imply a certainty.
+    confidence: Option<f64>,
+}
+
+/// The replies of one discourse action, in the order the stage asked for
+/// them. The stage issues one call per take, so the replies answer the
+/// takes in order - the same positional contract `emotion_lines` uses.
+fn discourse_replies<'a>(log: &'a [Value], action: &str) -> Vec<&'a Value> {
+    log.iter()
+        .filter(|reply| reply["tool"].as_str() == Some(action))
+        .collect()
+}
+
+/// The chapter boundaries the run measured, one take at a time. The
+/// `segment_topics` reply names a boundary by the line it follows, so the
+/// line's own start is where the new chapter opens - a boundary index the
+/// transcript cannot resolve is dropped rather than guessed at second
+/// zero, which would put every chapter card at the head of the piece.
+fn topic_boundaries(log: &[Value], takes: &[TakePaths]) -> Vec<TopicBoundary> {
+    let asked: Vec<&TakePaths> = takes
+        .iter()
+        .filter(|take| !spoken_lines(log, &take.take).is_empty())
+        .collect();
+    let mut boundaries: Vec<TopicBoundary> = Vec::new();
+    for (take, reply) in asked.iter().zip(discourse_replies(log, "segment_topics")) {
+        let lines = spoken_lines(log, &take.take);
+        for segment in reply["segments"].as_array().into_iter().flatten() {
+            // A segment that opens at line 0 is the piece's own head: a
+            // card there duplicates the title the edit already has.
+            let Some(first_line) = segment["startLine"].as_u64().map(|n| n as usize) else {
+                continue;
+            };
+            if first_line == 0 {
+                continue;
+            }
+            // The producer times the segment itself; the transcript lookup
+            // is the fallback for a reply that carried no clock.
+            let Some(at) = segment["start"].as_f64().or_else(|| {
+                lines
+                    .get(first_line)
+                    .and_then(|line| line["start"].as_f64())
+            }) else {
+                continue;
+            };
+            let headline = segment["headline"].as_str().unwrap_or_default().trim();
+            // The producer's fallback headline is "segment 3", which says
+            // nothing a card can show. Its keywords do, so they win when
+            // the headline is only the ordinal.
+            let generic = headline.is_empty()
+                || headline
+                    .split_whitespace()
+                    .next()
+                    .is_some_and(|word| word.eq_ignore_ascii_case("segment"));
+            let words = if generic {
+                segment["keywords"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .take(3)
+                    .collect::<Vec<_>>()
+                    .join(" · ")
+            } else {
+                headline.to_owned()
+            };
+            if words.trim().is_empty() {
+                continue;
+            }
+            boundaries.push(TopicBoundary {
+                take: take.take.clone(),
+                at,
+                headline: words,
+                confidence: segment["cohesion"].as_f64(),
+            });
+        }
+    }
+    boundaries.sort_by(|left, right| left.at.total_cmp(&right.at));
+    boundaries
+}
+
+/// The pivots the connective analysis found: the moments a comparison,
+/// contrast or contingency marker turns the argument, in file seconds.
+/// The transition stage cuts on these, so a `but` gets a visible seam
+/// rather than a hard cut that hides the turn.
+fn discourse_pivots(log: &[Value], takes: &[TakePaths]) -> Vec<(String, f64)> {
+    let asked: Vec<&TakePaths> = takes
+        .iter()
+        .filter(|take| !spoken_lines(log, &take.take).is_empty())
+        .collect();
+    let mut pivots: Vec<(String, f64)> = Vec::new();
+    for (take, reply) in asked
+        .iter()
+        .zip(discourse_replies(log, "analyze_discourse"))
+    {
+        for line in reply["perLine"].as_array().into_iter().flatten() {
+            let Some(at) = line["start"].as_f64() else {
+                continue;
+            };
+            let turns = line["markers"].as_array().is_some_and(|markers| {
+                markers.iter().any(|marker| {
+                    matches!(
+                        marker["relation"].as_str(),
+                        Some("comparison" | "contrast" | "contingency")
+                    )
+                })
+            });
+            if turns || line["abruptTransition"] == json!(true) {
+                pivots.push((take.take.clone(), at));
             }
         }
     }
-    words
+    pivots.sort_by(|left, right| left.1.total_cmp(&right.1));
+    pivots
+}
+
+/// One line of the script read as an act rather than a mood: the take it
+/// was said in, its span in file seconds, and its words. The readers that
+/// spend the discourse signals (a question, a claim with no proof) all
+/// answer in this shape, so the stages that place their cards take one
+/// type rather than a tuple each.
+struct ScriptLine {
+    /// The take the line was read from.
+    take: String,
+    /// Where the line opens, in file seconds.
+    start: f64,
+    /// Where it ends, in file seconds.
+    end: f64,
+    /// The line's own words.
+    text: String,
+    /// The discourse reader's own confidence in this line, 0..1, when the
+    /// reply carried one. A signal log that rated a `speechActs` entry by
+    /// `voice_signals`' vocabulary could not rate it at all: the act is
+    /// the discourse engine's reading, not the voice profile's.
+    confidence: Option<f64>,
+}
+
+/// The lines whose surface act asks the viewer something, in file
+/// seconds. A question is a hook the narration opens and answers later,
+/// and the edit owes it a card the mood alone would not justify - which
+/// is exactly why the profile's graphic policy names `speechActs`.
+fn question_acts(log: &[Value], takes: &[TakePaths]) -> Vec<ScriptLine> {
+    let asked: Vec<&TakePaths> = takes
+        .iter()
+        .filter(|take| !spoken_lines(log, &take.take).is_empty())
+        .collect();
+    let mut acts: Vec<ScriptLine> = Vec::new();
+    for (take, reply) in asked
+        .iter()
+        .zip(discourse_replies(log, "detect_speech_acts"))
+    {
+        for line in reply["perLine"].as_array().into_iter().flatten() {
+            if !matches!(
+                line["primary"].as_str(),
+                Some("question" | "rhetorical_question")
+            ) {
+                continue;
+            }
+            let (Some(start), Some(end)) = (line["start"].as_f64(), line["end"].as_f64()) else {
+                continue;
+            };
+            let text = line["text"].as_str().unwrap_or_default().trim();
+            if text.is_empty() {
+                continue;
+            }
+            acts.push(ScriptLine {
+                take: take.take.clone(),
+                start,
+                end,
+                text: text.to_owned(),
+                confidence: line["confidence"].as_f64(),
+            });
+        }
+    }
+    acts.sort_by(|left, right| left.start.total_cmp(&right.start));
+    acts
+}
+
+/// The claims the narration asserts but never backs, in file seconds.
+/// The claim graph names them itself (`uncoveredClaims`): a line that
+/// asserts without an evidence cue and is never supported by one. That is
+/// the line a proof card exists for - a source lower-third, a number, a
+/// chart - which is why the profile's graphic policy names `claims`
+/// beside `entities` and `speechActs`.
+fn uncovered_claims(log: &[Value], takes: &[TakePaths]) -> Vec<ScriptLine> {
+    let asked: Vec<&TakePaths> = takes
+        .iter()
+        .filter(|take| !spoken_lines(log, &take.take).is_empty())
+        .collect();
+    let mut claims: Vec<ScriptLine> = Vec::new();
+    for (take, reply) in asked
+        .iter()
+        .zip(discourse_replies(log, "extract_claim_graph"))
+    {
+        for claim in reply["uncoveredClaims"].as_array().into_iter().flatten() {
+            let (Some(start), Some(end)) = (claim["start"].as_f64(), claim["end"].as_f64()) else {
+                continue;
+            };
+            let text = claim["text"].as_str().unwrap_or_default().trim();
+            if text.is_empty() || end <= start {
+                continue;
+            }
+            claims.push(ScriptLine {
+                take: take.take.clone(),
+                start,
+                end,
+                text: text.to_owned(),
+                confidence: claim["confidence"].as_f64(),
+            });
+        }
+    }
+    claims.sort_by(|left, right| left.start.total_cmp(&right.start));
+    claims
+}
+
+/// The preset a repeated phrase returns as. A short phrase is a stamp; a
+/// longer one reads as a line of narration, so it takes the kinetic
+/// caption card rather than a full title. Never a card the library does
+/// not carry.
+fn motif_preset(phrase: &str) -> &'static str {
+    if phrase.split_whitespace().count() <= 3 {
+        "funcut.sting.wordmark"
+    } else {
+        "funcut.caption.kinetic"
+    }
+}
+
+/// The family a script's caption should be set in, mapped from the
+/// profile's font hint onto the faces this editor actually bundles. The
+/// hint names a Noto family the machine may not have; the bundled
+/// equivalent is the one `concat/src/fonts.rs` registers, and a hint with
+/// no bundled equivalent falls back to the house face rather than to a
+/// family that would render as boxes.
+fn bundled_font(hint: &str) -> &'static str {
+    match hint {
+        "Noto Sans Bengali" => "Noto Sans Bengali",
+        "Noto Sans Devanagari" => "Noto Sans Devanagari",
+        "Noto Naskh Arabic" | "Noto Sans Arabic" => "Noto Sans Arabic UI",
+        "Noto Sans Hebrew" => "Noto Sans Hebrew",
+        "Noto Sans Thai" => "Noto Sans Thai",
+        "Noto Sans KR" | "Noto Sans JP" | "Noto Sans SC" => "Noto Sans CJK SC",
+        "Noto Sans" => "Inter",
+        _ => "Hanken Grotesk",
+    }
+}
+
+/// The preset an entity's kind asks for, and the words the card carries.
+///
+/// The NER is the only reader that knows a line said a number, a date or a
+/// name, and the profile's own `card` field already names the artefact it
+/// wants: a `stat` for money, a percentage and a bare number, a
+/// `timeline` for a date, a `lower-third` for an organisation or person.
+/// A kind with no artefact (`PII`, an address) earns no card - naming
+/// someone's details on screen is not a graphic, it is a disclosure - and
+/// answers `None` so the caller skips it rather than baking a card the
+/// narration never asked to show.
+fn comp_for_entity(entity: &Entity) -> Option<(&'static str, String)> {
+    let card = entity.card.to_ascii_lowercase();
+    let preset = match card.as_str() {
+        "stat" => "funcut.social.stat",
+        "timeline" => "funcut.timeline.horizontal",
+        "lower-third" => "funcut.lower-third.minimal",
+        _ => match entity.kind.as_str() {
+            // A kind the profile's card field did not map: the entity
+            // vocabulary's own reading of what a viewer needs to see.
+            "MONEY" | "PERCENT" | "PER" | "CARDINAL" | "QUANTITY" => "funcut.social.stat",
+            "DATE" | "TIME" => "funcut.timeline.horizontal",
+            "ORG" | "PERSON" | "GPE" | "LOC" | "FAC" => "funcut.lower-third.minimal",
+            _ => return None,
+        },
+    };
+    Some((preset, card_words(&entity.text)))
+}
+
+/// The entity cards the run will bake, strongest first: an entity the NER
+/// timed, in the take the timeline plays, at a moment the cut kept. A
+/// card with no time cannot be placed, and a card on a moment the tighten
+/// cut away has nowhere to land, so both are left out here rather than
+/// discovered as a silent skip later.
+fn entity_graphics(log: &[Value], takes: &[TakePaths]) -> Vec<Entity> {
+    const MOST: usize = 3;
+    let view = latest_view(log);
+    let media = view.map(media_paths);
+    let mut cards: Vec<Entity> = Vec::new();
+    for read in voice_reads(log, takes) {
+        for entity in &read.entities {
+            let Some(at) = entity.at else {
+                continue;
+            };
+            if comp_for_entity(entity).is_none() {
+                continue;
+            }
+            // The moment must still be on the timeline: a card for a line
+            // the dead-air tighten cut away would never be seen.
+            if let (Some(view), Some(media)) = (view, media.as_ref())
+                && timeline_at(view, media, &read.take, at).is_none()
+            {
+                continue;
+            }
+            if cards.iter().any(|known| {
+                known.text.eq_ignore_ascii_case(&entity.text) && known.take == entity.take
+            }) {
+                continue;
+            }
+            cards.push(entity.clone());
+            if cards.len() >= MOST {
+                return cards;
+            }
+        }
+    }
+    cards
 }
 
 /// setup line earns nothing - the restraint rule the director enforces,
@@ -862,7 +1191,14 @@ fn comp_for_line(line: &EmotionLine) -> Option<&'static str> {
 /// The density floor is the plan schema's own: at most one card per
 /// section and at most one per fifteen seconds, strongest line first. Two
 /// cards in the same three seconds is a slideshow, not an edit.
-fn motion_specs(lines: &[EmotionLine]) -> Vec<MotionSpec> {
+fn motion_specs(
+    lines: &[EmotionLine],
+    entities: &[Entity],
+    chapters: &[TopicBoundary],
+    motifs: &[Motif],
+    questions: &[ScriptLine],
+    claims: &[ScriptLine],
+) -> Vec<MotionSpec> {
     const SPACING: f64 = 15.0;
     const MOST: usize = 8;
     let mut ranked: Vec<(f64, MotionSpec)> = lines
@@ -883,10 +1219,152 @@ fn motion_specs(lines: &[EmotionLine]) -> Vec<MotionSpec> {
                     words,
                     act: line.act.clone(),
                     pace: line.pace.clone(),
+                    earned_by: "emotion",
+                    chapter: false,
+                    slot: None,
                 },
             ))
         })
         .collect();
+    // The entity cards: a stat or a lower-third the narration actually
+    // named, weighted by how hard its line reads so a number said in
+    // passing loses to one said at the peak. The NER's confidence is the
+    // entity's own, and a kind with no artefact never reaches here.
+    for entity in entities {
+        let (Some(at), Some((preset, words))) = (entity.at, comp_for_entity(entity)) else {
+            continue;
+        };
+        if words.is_empty() {
+            continue;
+        }
+        let line = lines.iter().find(|line| {
+            line.take == entity.take && line.start <= at + 0.05 && line.end > at - 0.05
+        });
+        ranked.push((
+            line.map(|line| line.intensity).unwrap_or(0.5),
+            MotionSpec {
+                take: entity.take.clone(),
+                at,
+                end: line.map(|line| line.end).unwrap_or(at + 2.5),
+                preset,
+                words,
+                act: line
+                    .map(|line| line.act.clone())
+                    .unwrap_or_else(|| "proof".to_owned()),
+                pace: line.map(|line| line.pace.clone()).unwrap_or_default(),
+                earned_by: "entities",
+                chapter: false,
+                slot: None,
+            },
+        ));
+    }
+    // The chapter cards: a title over each topic change, named by the
+    // tiling's own headline. They rank above a line's beat - a chapter is
+    // the strongest thing the script said - but still obey the spacing
+    // floor, because a chapter card landing on a stat card is a pile.
+    for chapter in chapters {
+        let words = card_words(&chapter.headline);
+        if words.is_empty() {
+            continue;
+        }
+        ranked.push((
+            1.0,
+            MotionSpec {
+                take: chapter.take.clone(),
+                at: chapter.at,
+                end: chapter.at + 2.0,
+                preset: "funcut.chapter.numbered",
+                words,
+                act: "turn".to_owned(),
+                pace: String::new(),
+                earned_by: "topics",
+                chapter: true,
+                slot: Some("Title"),
+            },
+        ));
+    }
+    // The motif cards: a phrase the narration repeats gets its visual back
+    // when it returns. The first mention establishes the card, so only the
+    // repeats become specs - the same words, the same preset, so a viewer
+    // reads the return as a callback rather than a new idea.
+    for motif in motifs {
+        let words = card_words(&motif.phrase);
+        if words.is_empty() || motif.line_indices.len() < 2 {
+            continue;
+        }
+        let preset = motif_preset(&motif.phrase);
+        for index in motif.line_indices.iter().skip(1) {
+            let Some(line) = lines.get(*index) else {
+                continue;
+            };
+            ranked.push((
+                line.intensity * 0.9,
+                MotionSpec {
+                    take: line.take.clone(),
+                    at: line.start,
+                    end: line.end,
+                    preset,
+                    words: words.clone(),
+                    act: line.act.clone(),
+                    pace: line.pace.clone(),
+                    earned_by: "motifs",
+                    chapter: false,
+                    slot: None,
+                },
+            ));
+        }
+    }
+    // The question cards: the narration asks the viewer something, and the
+    // card holds the question while the answer plays. A question is the
+    // one line whose act, not its mood, is why it earns a card - the
+    // profile's graphic policy names exactly this signal.
+    for question in questions {
+        let words = card_words(&question.text);
+        if words.is_empty() {
+            continue;
+        }
+        ranked.push((
+            0.85,
+            MotionSpec {
+                take: question.take.clone(),
+                at: question.start,
+                end: question.end,
+                preset: "funcut.caption.kinetic",
+                words,
+                act: String::new(),
+                pace: String::new(),
+                earned_by: "speechActs",
+                chapter: false,
+                slot: None,
+            },
+        ));
+    }
+    // The proof cards: a claim the narration asserts but never backs. The
+    // card is a pull quote, not a caption - the line is the argument, so
+    // it is set as the argument. This is the reader the profile's
+    // `claims` signal exists for; a run that never asked the graph has no
+    // claims and grows no card.
+    for claim in claims {
+        let words = card_words(&claim.text);
+        if words.is_empty() {
+            continue;
+        }
+        ranked.push((
+            0.8,
+            MotionSpec {
+                take: claim.take.clone(),
+                at: claim.start,
+                end: claim.end,
+                preset: "funcut.quote.pull",
+                words,
+                act: "proof".to_owned(),
+                pace: String::new(),
+                earned_by: "claims",
+                chapter: false,
+                slot: None,
+            },
+        ));
+    }
     ranked.sort_by(|left, right| right.0.total_cmp(&left.0));
     let mut kept: Vec<MotionSpec> = Vec::new();
     for (_, spec) in ranked {
@@ -925,6 +1403,17 @@ struct MotionSpec {
     /// card on a punchy line holds tighter than one on a slow line: the
     /// delivery, not the clock, is what sets the beat.
     pace: String,
+    /// The signal that earned the card: the read's act, or the entity the
+    /// narration named. The log cites this, so a stat card is never
+    /// accounted for by an emotion that had nothing to do with it.
+    earned_by: &'static str,
+    /// How the card holds. A chapter card is a title over a topic change:
+    /// it holds its own beat rather than the line's, and never longer.
+    chapter: bool,
+    /// The preset slot the words belong in, when the card's words are not
+    /// for the preset's first text slot. A chapter card's headline is its
+    /// title, not its kicker.
+    slot: Option<&'static str>,
 }
 
 impl MotionSpec {
@@ -932,6 +1421,11 @@ impl MotionSpec {
     /// line still reads, and capped at the editorial default so a long
     /// line does not own the screen.
     fn hold(&self) -> f64 {
+        if self.chapter {
+            // A chapter card is a signpost, not a beat: two seconds reads
+            // it and gets out of the narration's way.
+            return 2.0;
+        }
         let measured = (self.end - self.at).clamp(1.5, 5.0);
         // A punchy line has no time for a slow card and a slow line would
         // leave one flashing: the measured delivery shortens or lengthens
@@ -944,6 +1438,27 @@ impl MotionSpec {
         };
         round3(paced.clamp(1.2, 5.0))
     }
+}
+
+/// A caption's words with one filler removed, matched whole and
+/// case-insensitively, and never left with a double space or a dangling
+/// comma where the word stood.
+fn strip_word(text: &str, word: &str) -> String {
+    let word = word.trim().to_lowercase();
+    if word.is_empty() {
+        return text.to_owned();
+    }
+    let mut kept: Vec<&str> = Vec::new();
+    for piece in text.split_whitespace() {
+        let bare = piece
+            .trim_matches(|c: char| !c.is_alphanumeric())
+            .to_lowercase();
+        if bare == word {
+            continue;
+        }
+        kept.push(piece);
+    }
+    kept.join(" ")
 }
 
 /// The words a card can hold: the line's own, cut at a word boundary so a
@@ -992,6 +1507,12 @@ fn alternate_transition(emotion: &str) -> &'static str {
     }
 }
 
+/// The emotional read the run made, in the order the takes were asked
+/// about. The emotion stage asks once per take that has timed words, in
+/// program order, so the `emotion` replies sit in the log in exactly
+/// that order - the invariant this reader stands on, and the reason the
+/// reader filters its takes with the same [`spoken_lines`] predicate the
+/// stage skips them with.
 fn emotion_lines(log: &[Value], takes: &[TakePaths]) -> Vec<EmotionLine> {
     let replies: Vec<&Value> = log
         .iter()
@@ -1211,6 +1732,36 @@ fn grade_param(look: &str) -> (&'static str, f64) {
     }
 }
 
+/// The profile's own name for a signal family, where the decision log's
+/// vocabulary differs from the one `signalConfidence` rates. Without this
+/// an entry for a `pause` would read the confidence of nothing and log a
+/// zero, which is the opposite of the measurement: the profile rates
+/// pauses at 0.75. A name with no mapping is already the profile's.
+fn confidence_family(signal: &str) -> &str {
+    match signal {
+        "pause" => "pauses",
+        "sentence" => "sentenceType",
+        "speakerChanges" => "speaker",
+        "musicSegments" => "forensic",
+        "noiseFloor" => "forensic",
+        "emphasisWords" => "prosody",
+        _ => signal,
+    }
+}
+
+/// The loudness target the cut ships to, in LUFS: the plan's own platform
+/// reading, from the timeline's aspect. A vertical cut is a reel and takes
+/// the short-form target; everything else takes YouTube's. `None` when the
+/// run has no timeline view to read the aspect from, so a mix is never
+/// applied to a guess.
+fn platform_target(log: &[Value]) -> Option<f64> {
+    let view = latest_view(log)?;
+    Some(match aspect_of(view) {
+        "9:16" => -14.0,
+        _ => -14.0,
+    })
+}
+
 /// The aspect the project's own frame is nearest: a 9:16 project is a
 /// reel, a 16:9 one is not.
 fn aspect_of(view: &Value) -> &'static str {
@@ -1359,74 +1910,624 @@ fn auto_plan(log: &[Value], takes: &[TakePaths], source: &AutoEditProgramSource)
     );
     brief.insert("monetized".to_owned(), json!(true));
     // The evidence: one entry per decision, naming the signals from the
-    // voice_signals vocabulary that actually drove it.
+    // voice_signals vocabulary that actually drove it. The names are the
+    // ones this run read - a plan that cites `pause` for a boundary no
+    // silence measurement opened, or `emotion` for a bed the gate chose on
+    // the noise floor, is a log that cannot be audited. So each entry is
+    // built from the reading it stands on, and an entry with nothing
+    // measured behind it is left out rather than dressed in a plausible
+    // signal name.
+    let reads = voice_reads(log, takes);
+    let measured_pauses = reads.iter().any(|read| !read.pauses.is_empty());
+    // The words are the transcript's, not the profile's: the caption
+    // stage sets the timed words whether or not the voice reading ran,
+    // so the log owes a caption entry for the same reason.
+    let measured_words = !transcripts_of(log, takes).is_empty()
+        || reads
+            .iter()
+            .any(|read| read.lines.iter().any(|line| !line.text.is_empty()));
+    let measured_emphasis = reads
+        .iter()
+        .any(|read| read.lines.iter().any(|line| !line.emphasis.is_empty()));
+    let measured_pace = reads
+        .iter()
+        .any(|read| read.lines.iter().any(|line| !line.pace.is_empty()));
+    // The profile's own 6-semitone bar: a wide pitch range is a line
+    // *performed*, a narrow one a line *reported*. It is measured per
+    // line, so a run where no line was measured must not claim it.
+    let measured_performance = reads
+        .iter()
+        .any(|read| read.lines.iter().any(|line| line.pitch_range.is_some()));
+    let measured_loudness = reads
+        .iter()
+        .any(|read| read.lines.iter().any(|line| line.relative_lu.is_some()));
+    let measured_entities = reads.iter().any(|read| !read.entities.is_empty());
+    let measured_sentence = reads
+        .iter()
+        .any(|read| read.lines.iter().any(|line| !line.sentence_type.is_empty()));
+    let measured_speakers = reads
+        .iter()
+        .any(|read| !read.take_wide.speaker_changes.is_empty());
+    let measured_motifs = reads.iter().any(|read| !read.motifs.is_empty());
+    // The font hint is only a measurement when the read named a family
+    // other than the profile's own default: `Inter` is what the producer
+    // reports when it detected nothing, so it drives no decision.
+    let measured_font = reads
+        .iter()
+        .any(|read| !read.take_wide.font.is_empty() && read.take_wide.font != "Inter");
+    let measured_tempo = reads
+        .iter()
+        .any(|read| read.take_wide.dominant_period_sec.is_some());
+    let measured_speech_ratio = reads
+        .iter()
+        .any(|read| read.take_wide.speech_ratio.is_some());
+    // The reading rate, the delivery's shape and the forensic character
+    // are each measured by a different ear, and each is only cited by a
+    // decision that actually turned on it.
+    let measured_rate = reads.iter().any(|read| {
+        read.lines
+            .iter()
+            .any(|line| line.words_per_minute.is_some() || line.syllables_per_sec.is_some())
+    });
+    let measured_pitch = reads
+        .iter()
+        .any(|read| read.lines.iter().any(|line| line.pitch_slope.is_some()));
+    let measured_onsets = reads
+        .iter()
+        .any(|read| !read.take_wide.flux_onsets.is_empty());
+    let measured_forensic = reads
+        .iter()
+        .any(|read| read.take_wide.spectral_flatness.is_some());
+    let measured_turns = reads
+        .iter()
+        .any(|read| !read.take_wide.speaker_turns.is_empty());
     let mut signal_log: Vec<Value> = Vec::new();
+    // A cut names the signal that put it there. Every boundary is a gap
+    // between two clips of the voiceover, so the word boundary always
+    // drove it; the pause reading adds the class when the profile
+    // measured the silence and said what kind it was.
     for segment in segments.iter().skip(1) {
+        let (signals, note) = if measured_pauses {
+            (
+                json!(["pause.class=dead_air", "words"]),
+                "the boundary is a measured silence between two spoken lines",
+            )
+        } else {
+            (
+                json!(["words"]),
+                "the boundary is the gap between two timed lines of speech",
+            )
+        };
         signal_log.push(json!({
             "at": segment["start"],
             "decision": "cut",
-            "signals": ["pause", "words"],
-            "note": "the boundary is where the narration stops for breath",
+            "signals": signals,
+            "note": note,
         }));
     }
-    signal_log.push(json!({
-        "at": 0.0,
-        "decision": "caption",
-        "signals": ["words", "emphasisWords"],
-        "note": "captions sit on the measured words; a stressed word takes the accent",
-    }));
+    if measured_words {
+        let mut signals = vec!["words"];
+        if measured_emphasis {
+            signals.push("emphasisWords");
+        }
+        if measured_font {
+            signals.push("language");
+        }
+        if measured_sentence {
+            signals.push("sentence.type");
+        }
+        if measured_performance {
+            signals.push("prosody.range");
+        }
+        signal_log.push(json!({
+            "at": 0.0,
+            "decision": "caption",
+            "signals": signals,
+            "note": if measured_font {
+                "captions sit on the measured words, in the family the script's own read names"
+            } else if measured_sentence {
+                "captions sit on the measured words; a question line holds past its answer"
+            } else if measured_emphasis {
+                "captions sit on the measured words; a stressed word takes the accent"
+            } else {
+                "captions sit on the measured words"
+            },
+        }));
+    }
+    // The graphic the plan can account for: an entity the narration names,
+    // at the moment it says it. The motion stage spends this same reading,
+    // so the log and the bake cannot disagree about why a card exists.
+    if measured_entities {
+        for entity in entity_graphics(log, takes).iter().take(3) {
+            let mut signals = vec!["entities"];
+            if measured_emphasis {
+                signals.push("emphasisWords");
+            }
+            signal_log.push(json!({
+                "at": round3(entity.at.unwrap_or_default()),
+                "decision": "graphic",
+                "signals": signals,
+                "note": format!(
+                    "the narration names {} ({}), so its {} card lands where it says it",
+                    entity.text, entity.kind, entity.card
+                ),
+            }));
+        }
+    }
+    // A question the narration asks is a card the act earns, not the
+    // mood: the viewer is addressed, and the card holds the ask while
+    // the answer plays. This is the entry `speechActs` exists to justify.
+    for question in question_acts(log, takes).iter().take(3) {
+        signal_log.push(json!({
+            "at": round3(question.start),
+            "decision": "graphic",
+            "signals": ["speechActs", "words"],
+            "note": format!(
+                "the narration asks a question here, so the card holds the ask: {}",
+                question.text
+            ),
+        }));
+    }
+    // A claim with no proof is the argument's weak point, and the edit's
+    // answer is to show it as the argument: a pull quote, so the line is
+    // read rather than buried. This is the `claims` entry.
+    for claim in uncovered_claims(log, takes).iter().take(3) {
+        signal_log.push(json!({
+            "at": round3(claim.start),
+            "decision": "graphic",
+            "signals": ["claims", "words"],
+            "note": format!(
+                "the narration asserts this with no proof behind it, so the card sets the claim: {}",
+                claim.text
+            ),
+        }));
+    }
     if let Some(peak) = read
         .iter()
         .max_by(|left, right| left.intensity.total_cmp(&right.intensity))
     {
+        // The card is the read's own decision, so `emotion` always drove
+        // it; the words only appear when the transcript measured them,
+        // because a card that cannot say what it is set in has not spent
+        // the word reading.
         signal_log.push(json!({
             "at": round3(peak.start),
             "decision": "graphic",
-            "signals": ["emotion"],
-            "note": "the title entrance lands on the piece's strongest line",
+            "signals": if measured_words {
+                json!(["emotion", "words"])
+            } else {
+                json!(["emotion"])
+            },
+            "note": if measured_words {
+                "the piece's strongest read earns its own card, in the words it was read on"
+            } else {
+                "the title entrance lands on the piece's strongest line"
+            },
         }));
     }
     let bed_words = dominant(&read)
         .and_then(|line| line.bgm_words.first().cloned())
         .unwrap_or_else(|| "cinematic".to_owned());
     let duck = dominant(&read).map(|line| line.duck_db).unwrap_or(-18.0);
-    signal_log.push(json!({
-        "at": 0.0,
-        "decision": "bgm",
-        "signals": ["emotion", "arc"],
-        "note": "the bed's words and its duck come from the read's dominant line",
-    }));
+    // The profile's own words for the verdict, when it reached one: its
+    // reason names the measurement (floor, SNR, flatness) that decided,
+    // which is more than this program could restate.
+    let bed_note = reads
+        .iter()
+        .map(|read| read.take_wide.bgm_reason.trim())
+        .find(|reason| !reason.is_empty())
+        .map(|reason| format!("the bed follows the profile's own verdict: {reason}"))
+        .unwrap_or_else(|| {
+            "the bed is gated on the measured noise floor and music check; \
+             its words and duck come from the read's dominant line"
+                .to_owned()
+        });
+    // A low SNR is not a reason to skip the bed, it is a reason to make
+    // the bed quieter under a voice the noise is already fighting: the
+    // duck deepens by the shortfall against the profile's own 12 dB floor,
+    // to a maximum of 6 dB, so a hissy take never has a bed sitting on top
+    // of its hiss. A take whose SNR was never measured keeps the read's
+    // duck untouched rather than guessing one.
+    let duck = reads
+        .iter()
+        .filter_map(|read| read.take_wide.snr_db)
+        .fold(duck, |duck, snr| {
+            if snr >= 12.0 {
+                duck
+            } else {
+                (duck - (12.0 - snr).min(6.0)).max(-30.0)
+            }
+        });
+    // The bed's evidence is the gate's own: the noise floor that says the
+    // take is dry, the speech ratio that says how much room a bed has, and
+    // the music check that says the take carries none. Emotion and the arc
+    // choose its words and its duck, which is the second half of the entry.
+    {
+        let mut signals: Vec<&str> = Vec::new();
+        // The floor earns its place only where the profile's own rule -
+        // a dry take wants a bed - is what the bed was chosen on.
+        if reads.iter().any(|read| read.wants_bed() == Some(true)) {
+            signals.push("noiseFloor");
+        }
+        if measured_speech_ratio {
+            signals.push("speechRatio");
+        }
+        // The music check earns its place when the gate measured it, and
+        // when the profile's own verdict turned on it: a `skip` is the
+        // flatness-plus-onsets rule, which is the music-segment reading,
+        // and a `duck_only` is the SNR rule the forensic read carries.
+        let verdict = reads
+            .iter()
+            .filter_map(|read| read.take_wide.bgm_decision.as_deref())
+            .find(|decision| *decision != "add");
+        if reads
+            .iter()
+            .any(|read| read.take_wide.music_present.is_some())
+            || verdict == Some("skip")
+        {
+            signals.push("musicSegments");
+        }
+        // The noise character earns its place only where the profile named
+        // one: it is what a denoise would target, and the bed is what a
+        // take with a floor this loud gets instead of one.
+        let noise = reads.iter().find_map(|read| read.noise_character());
+        if noise.is_some() && measured_forensic {
+            signals.push("forensic");
+        }
+        if verdict == Some("duck_only") {
+            signals.push("noiseFloor");
+        }
+        // The SNR is its own reading and earns its own place: when the
+        // forensic ear measured it, the duck above was set on it.
+        if reads.iter().any(|read| read.take_wide.snr_db.is_some()) {
+            signals.push("noiseFloor.snr_db");
+        }
+        if !read.is_empty() {
+            signals.push("emotion");
+            signals.push("arc");
+        }
+        if !signals.is_empty() {
+            // The floor's character, in the entry itself: a note that only
+            // says "the bed follows the verdict" leaves the reader unable
+            // to tell a hiss from a hum, which is the one thing a denoise
+            // needs to know.
+            let note = match &noise {
+                Some(noise) => format!("{bed_note}; the floor measured {noise}"),
+                None => bed_note.clone(),
+            };
+            signal_log.push(json!({
+                "at": 0.0,
+                "decision": "bgm",
+                "signals": signals,
+                "note": note,
+            }));
+        }
+    }
+    // The mix: the measured integrated loudness against the platform
+    // target. Only the profile's own `integratedLufs` can make this entry,
+    // so a run that never read the take claims no level.
+    if let (Some(target), Some(measured)) = (
+        platform_target(log),
+        reads
+            .iter()
+            .filter_map(|read| read.take_wide.integrated_lufs)
+            .fold(None::<f64>, |loudest, lufs| {
+                Some(loudest.map_or(lufs, |loudest: f64| loudest.max(lufs)))
+            }),
+    ) && (target - measured).abs() >= 1.0
+    {
+        signal_log.push(json!({
+            "at": 0.0,
+            "decision": "pacing",
+            "signals": ["loudness"],
+            "note": format!(
+                "the take measured {measured:.1} LUFS and the platform targets {target:.0}, so the voice takes {:+.1} dB",
+                target - measured
+            ),
+        }));
+    }
     for slot in broll_slots(log, takes) {
+        // The transition into the shot: the mood the gap opens on, the
+        // pause that opened the gap, and - where the read measured them -
+        // the speaker change, topic boundary or connective pivot the seam
+        // crosses. A transition is the one decision that is about the
+        // seam, so its evidence is the seam's.
+        let mut signals: Vec<&str> = vec!["emotion"];
+        if measured_pauses {
+            signals.push("pause");
+        }
+        if measured_speakers {
+            signals.push("speakerChanges");
+        }
+        if topic_boundaries(log, takes)
+            .iter()
+            .any(|boundary| boundary.take == slot.take && (boundary.at - slot.from).abs() < 3.0)
+        {
+            signals.push("topics");
+        }
+        if discourse_pivots(log, takes)
+            .iter()
+            .any(|(take, at)| take == &slot.take && (*at - slot.from).abs() < 3.0)
+        {
+            signals.push("discourseMarkers");
+        }
+        if measured_tempo {
+            signals.push("rhythmLayers");
+        }
+        // The seam's own transient: a flux onset inside the window is a
+        // place the cut can land where the take itself has an event,
+        // rather than on an arbitrary frame. The forensic ear is the only
+        // one that measured it, so the entry cites it only when one was
+        // found near the seam.
+        let onset = reads
+            .iter()
+            .find_map(|read| read.onset_near(slot.from, 0.25));
+        if onset.is_some() && measured_onsets {
+            signals.push("forensic");
+        }
+        // The turn the seam falls inside, when diarization measured turns:
+        // a seam inside a turn is one speaker continuing, and a seam at a
+        // turn's edge is the exchange the cut should show.
+        let turn_edge = reads.iter().any(|read| {
+            read.take_wide.speaker_turns.iter().any(|turn| {
+                (turn.start - slot.from).abs() < 0.25 || (turn.end - slot.from).abs() < 0.25
+            })
+        });
+        if turn_edge && measured_turns {
+            signals.push("speaker");
+        }
+        let seam = match (onset, turn_edge) {
+            (Some(onset), true) => format!(
+                "the cut into the shot takes the mood the gap opens on, lands on the \
+                 transient at {onset:.2}s and falls on a speaker turn"
+            ),
+            (Some(onset), false) => format!(
+                "the cut into the shot takes the mood the gap opens on and lands on \
+                 the transient at {onset:.2}s"
+            ),
+            (None, true) => "the cut into the shot takes the mood the gap opens on and \
+                             falls on a speaker turn"
+                .to_owned(),
+            (None, false) => "the cut into the shot takes the mood the gap opens on".to_owned(),
+        };
         signal_log.push(json!({
             "at": round3(slot.from),
             "decision": "transition",
-            "signals": ["emotion", "pause"],
-            "note": "the cut into the shot takes the mood the gap opens on",
+            "signals": signals,
+            "note": seam,
+        }));
+    }
+    // A question the narration asks wants its answer as the next visual:
+    // the one decision that only exists because the sentence's type was
+    // read against the pitch's terminal rise. A line whose punctuation
+    // says question and whose pitch rose to confirm it is an ask; one the
+    // pitch contradicted is a rhetorical line, and the log says which.
+    for read in &reads {
+        for question in &read.take_wide.questions {
+            let Some(line) = read.lines.get(*question) else {
+                continue;
+            };
+            let mut signals = vec!["sentence"];
+            let note = match line.rise_confirms {
+                Some(true) => {
+                    signals.push("prosody");
+                    format!(
+                        "the line asks a question and its pitch rose to confirm it, so \
+                         the answer arrives as the next visual: {}",
+                        line.text
+                    )
+                }
+                Some(false) => format!(
+                    "the line is punctuated as a question but its pitch fell, so it \
+                     reads as rhetorical and the next visual is not an answer: {}",
+                    line.text
+                ),
+                None => format!(
+                    "the line asks a question, so the answer arrives as the next visual: {}",
+                    line.text
+                ),
+            };
+            signal_log.push(json!({
+                "at": round3(line.start),
+                "decision": "graphic",
+                "signals": signals,
+                "note": note,
+            }));
+        }
+    }
+    // A chapter card at every topic boundary the tiling found: the one
+    // decision that only exists because the script was read as language
+    // rather than as sound. Its words are the segment's own headline.
+    for boundary in topic_boundaries(log, takes).iter().take(6) {
+        signal_log.push(json!({
+            "at": round3(boundary.at),
+            "decision": "graphic",
+            "signals": ["topics", "words"],
+            "note": format!(
+                "the narration changes chapter here, so a card names it: {}",
+                boundary.headline
+            ),
         }));
     }
     // The delivery the read measured, named only where it measured one:
     // a pace entry is evidence the run read, and a run with no word
     // timings says so by leaving the entry out rather than claiming a
-    // rhythm it never heard.
+    // rhythm it never heard. Loudness joins it only when the reading
+    // measured a level for the line.
     let paced: Vec<&EmotionLine> = read.iter().filter(|line| !line.pace.is_empty()).collect();
-    if !paced.is_empty() {
+    if measured_pace && !paced.is_empty() {
         let mut seen: Vec<&str> = Vec::new();
         for line in &paced {
             if seen.contains(&line.pace.as_str()) {
                 continue;
             }
             seen.push(&line.pace);
-            signal_log.push(json!({
-                "at": round3(line.start),
-                "decision": "pacing",
-                "signals": ["speechRate", "words"],
-                "note": format!(
+            let mut signals = vec!["speechRate", "words"];
+            if measured_loudness {
+                signals.push("loudness");
+            }
+            // The line's own reading rate, when the profile measured one:
+            // it sizes the caption's hold, which words-per-minute alone
+            // gets wrong on a line of long words.
+            let hold = reads
+                .iter()
+                .find_map(|read| read.line_at(line.start).and_then(|l| read.caption_hold(l)));
+            if hold.is_some() && measured_rate {
+                signals.push("speechRate");
+            }
+            // The delivery's shape: a line whose pitch rose across it
+            // builds into what follows, so the cut into the next shot is
+            // the one that carries the build rather than a hold that
+            // settles the take early.
+            let rises = reads.iter().find_map(|read| {
+                read.line_at(line.start)
+                    .and_then(|l| read.delivery_rises(l))
+            });
+            if rises.is_some() && measured_pitch {
+                signals.push("prosody");
+            }
+            let shape = match (hold, rises) {
+                (Some(hold), Some(true)) => format!(
+                    "the line needs {hold:.1}s to read and its pitch rose, so the shot \
+                     holds {hold:.1}s and hands the build to the cut after it"
+                ),
+                (Some(hold), Some(false)) => format!(
+                    "the line needs {hold:.1}s to read and its pitch fell, so the shot \
+                     holds {hold:.1}s and settles before the cut"
+                ),
+                (Some(hold), None) => {
+                    format!("the line needs {hold:.1}s to read, so the shot holds that long")
+                }
+                (None, Some(true)) => {
+                    "the line's pitch rose, so the cut after it carries the build".to_owned()
+                }
+                (None, Some(false)) => {
+                    "the line's pitch fell, so the cut after it settles the take".to_owned()
+                }
+                (None, None) => String::new(),
+            };
+            let note = if shape.is_empty() {
+                format!(
                     "the delivery here measured {}, so the shot's hold and the \
                      caption's size follow it",
                     line.pace
-                ),
+                )
+            } else {
+                format!("the delivery here measured {}: {shape}", line.pace)
+            };
+            signal_log.push(json!({
+                "at": round3(line.start),
+                "decision": "pacing",
+                "signals": signals,
+                "note": note,
             }));
         }
+    }
+    // The profile's own cut style, when it derived one: the pace and the
+    // levels across the whole take, in one word. This is the signal that
+    // decides how long a shot is held, and the gather stage spends it on
+    // the drift, so the plan records it rather than leaving the hold
+    // unexplained.
+    if let Some(style) = reads
+        .iter()
+        .map(|read| read.take_wide.cut_style.as_str())
+        .find(|style| !style.is_empty())
+    {
+        let mut signals = vec!["speechRate", "loudness"];
+        if measured_pauses {
+            signals.push("pause");
+        }
+        signal_log.push(json!({
+            "at": 0.0,
+            "decision": "pacing",
+            "signals": signals,
+            "note": format!(
+                "the whole take measured a {style} cut style, so every shot's hold follows it"
+            ),
+        }));
+    }
+    // A motif is a phrase the narration repeats, and the edit owes it the
+    // same visual when it returns - the one decision that only exists
+    // because the n-gram reader ran.
+    if measured_motifs
+        && let Some(motif) = reads
+            .iter()
+            .flat_map(|read| read.motifs.iter())
+            .max_by_key(|motif| motif.count)
+    {
+        signal_log.push(json!({
+            "at": 0.0,
+            "decision": "graphic",
+            "signals": ["motifs"],
+            "note": format!(
+                "\"{}\" recurs {} times, so its return takes the same visual",
+                motif.phrase, motif.count
+            ),
+        }));
+    }
+    // Every entry carries the confidence the profile rated its signals at.
+    // The profile answers `signalConfidence.perSignal`, and until this the
+    // map was parsed into `VoiceRead::weight` and read by nothing - so a
+    // decision taken on a whisper of a measurement looked exactly like one
+    // taken on a certain one. The entry's confidence is the weakest family
+    // it names, because a chain of evidence is only as strong as its
+    // weakest link, and 0 for a family the profile never rated.
+    for entry in &mut signal_log {
+        let families: Vec<&str> = entry["signals"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(|signal| signal.split(['.', '[']).next().unwrap_or(signal))
+            .collect();
+        let confidence = families
+            .iter()
+            .map(|family| match *family {
+                // The emotional read is not in `voice_signals`'
+                // vocabulary - it is the emotion engine's own answer, so
+                // it is rated by that engine's confidence, read from the
+                // line the entry's moment landed on.
+                "emotion" | "arc" => read
+                    .iter()
+                    .filter(|line| line.confidence.is_some())
+                    .map(|line| line.confidence.unwrap_or_default())
+                    .fold(0.0f64, f64::max),
+                // The discourse families are the discourse engine's own
+                // readings, each carrying its own certainty: a speech act
+                // at 0.75, a chapter tiling at its cohesion. Rated by
+                // `voice_signals`' vocabulary they would read 0.
+                "speechActs" | "claims" => question_acts(log, takes)
+                    .iter()
+                    .chain(uncovered_claims(log, takes).iter())
+                    .filter(|line| line.confidence.is_some())
+                    .map(|line| line.confidence.unwrap_or_default())
+                    .fold(0.0f64, f64::max),
+                "topics" => topic_boundaries(log, takes)
+                    .iter()
+                    .filter(|boundary| boundary.confidence.is_some())
+                    .map(|boundary| boundary.confidence.unwrap_or_default())
+                    .fold(0.0f64, f64::max),
+                // A pivot is a marker the lexicon matched; the profile
+                // rates the marker family at 0.65, like the fillers.
+                "discourseMarkers" => 0.65,
+                // `words` is the transcript's own text; the profile rates
+                // the gate that produced them as `wordConfidence`.
+                "words" => reads
+                    .iter()
+                    .map(|read| read.weight("wordConfidence"))
+                    .fold(0.0f64, f64::max),
+                // Any other family is rated under the profile's own name
+                // for it, which is not always the log's.
+                family => reads
+                    .iter()
+                    .map(|read| read.weight(confidence_family(family)))
+                    .fold(0.0f64, f64::max),
+            })
+            .fold(None::<f64>, |weakest, weight| {
+                Some(weakest.map_or(weight, |weakest: f64| weakest.min(weight)))
+            })
+            .unwrap_or_default();
+        entry["confidence"] = json!(round3(confidence));
     }
     let look = dominant(&read)
         .map(|line| look_for_temperature(&line.temperature))
@@ -1521,6 +2622,155 @@ fn picture_clips_with_media(view: &Value) -> Vec<(String, f64, f64, bool, String
             ))
         })
         .collect()
+}
+
+/// The profile's own family names, mapped onto the vocabulary
+/// `plan_validate` checks a decision against. The producer names a family
+/// for what it measured (`pauses`, `sentenceType`, `wordConfidence`); the
+/// vocabulary names it for the decision it serves (`pause`, `sentence`,
+/// `words`). A brief that handed a critic the producer's name would give
+/// it a signal it cannot cite, so every name is translated here and a
+/// family with no vocabulary name is left out rather than offered.
+fn vocabulary_name(family: &str) -> Option<&'static str> {
+    Some(match family {
+        "pauses" => "pause",
+        "sentenceType" => "sentence",
+        "wordConfidence" => "words",
+        "formants" => "formants",
+        "prosody" => "prosody",
+        "forensic" => "forensic",
+        "speaker" => "speaker",
+        "entities" => "entities",
+        "language" => "language",
+        "motifs" => "motifs",
+        "fillers" => "fillers",
+        "speechRate" => "speechRate",
+        "loudness" => "loudness",
+        "rhythmLayers" => "rhythmLayers",
+        _ => return None,
+    })
+}
+
+/// Every signal family the profile answered, with the confidence the
+/// profile gave it and the one measured fact behind it. This is the
+/// brief's whole reading rather than its highlights: a critic that is
+/// told the arc but not that `formants` was rated 0.2 on a phone-band
+/// take will ask for a pitch-driven cut the audio cannot support. The
+/// digest is built from the profile's own `signalConfidence` rows, so a
+/// family the producer did not rate never appears as a measured one.
+fn signal_evidence(log: &[Value]) -> Value {
+    // The newest profile is the one the run read last; a second take's
+    // profile is merged family by family, keeping the higher confidence,
+    // because a family measured well on any take is measured.
+    let mut families: BTreeMap<String, (f64, String)> = BTreeMap::new();
+    // The profile's own account of what it could not measure. It is the
+    // only honest source for that: a family missing from `measured` may
+    // be missing because the take had none, and the critic cannot tell
+    // the two apart without this. Deduplicated and in profile order.
+    let mut degraded: Vec<String> = Vec::new();
+    for reply in log {
+        if let Some(rows) = reply["degradations"].as_array() {
+            for row in rows.iter().filter_map(Value::as_str) {
+                let row = row.trim();
+                if !row.is_empty() && !degraded.iter().any(|kept| kept == row) {
+                    degraded.push(row.to_owned());
+                }
+            }
+        }
+        let Some(rows) = reply
+            .pointer("/signalConfidence/perSignal")
+            .and_then(Value::as_array)
+        else {
+            continue;
+        };
+        for row in rows {
+            let (Some(name), Some(confidence)) =
+                (row["signal"].as_str(), row["confidence"].as_f64())
+            else {
+                continue;
+            };
+            // A 0.0 row is the profile saying it did not measure this at
+            // all; carrying it would let a critic spend a signal the run
+            // never read, so it is left out of the digest entirely.
+            if confidence <= 0.0 {
+                continue;
+            }
+            let Some(name) = vocabulary_name(name) else {
+                continue;
+            };
+            let basis = row["basis"].as_str().unwrap_or_default().to_owned();
+            families
+                .entry(name.to_owned())
+                .and_modify(|kept| {
+                    if confidence > kept.0 {
+                        *kept = (confidence, basis.clone());
+                    }
+                })
+                .or_insert((confidence, basis));
+        }
+    }
+    if families.is_empty() {
+        return json!({});
+    }
+    let strong: Vec<String> = families
+        .iter()
+        .filter(|(_, (confidence, _))| *confidence >= 0.7)
+        .map(|(name, (confidence, _))| format!("{name} {confidence:.2}"))
+        .collect();
+    let weak: Vec<String> = families
+        .iter()
+        .filter(|(_, (confidence, _))| *confidence < 0.7)
+        .map(|(name, (confidence, _))| format!("{name} {confidence:.2}"))
+        .collect();
+    let mut digest = serde_json::Map::new();
+    digest.insert(
+        "measured".to_owned(),
+        json!(families.keys().cloned().collect::<Vec<_>>()),
+    );
+    if !degraded.is_empty() {
+        digest.insert("notMeasured".to_owned(), json!(degraded));
+    }
+    if !strong.is_empty() {
+        digest.insert("leanOn".to_owned(), json!(strong));
+    }
+    if !weak.is_empty() {
+        digest.insert("leanLessOn".to_owned(), json!(weak));
+    }
+    let basis: serde_json::Map<String, Value> = families
+        .iter()
+        .filter(|(_, (confidence, _))| *confidence < 0.7)
+        .map(|(name, (_, basis))| (name.clone(), json!(basis)))
+        .collect();
+    if !basis.is_empty() {
+        digest.insert("whyWeak".to_owned(), Value::Object(basis));
+    }
+    // What each measured family can decide, so the critic spends a signal
+    // on the choice it actually informs instead of citing it decoratively.
+    let decides: serde_json::Map<String, Value> = families
+        .keys()
+        .filter_map(|name| decision_for(name).map(|decision| (name.clone(), json!(decision))))
+        .collect();
+    if !decides.is_empty() {
+        digest.insert("decides".to_owned(), Value::Object(decides));
+    }
+    Value::Object(digest)
+}
+
+/// The decision a family informs, in the profile's own decision-policy
+/// words. A family with no entry drives no timeline choice here, and the
+/// digest leaves it out of `decides` rather than inventing one.
+fn decision_for(family: &str) -> Option<&'static str> {
+    Some(match family {
+        "pause" | "emphasisWords" | "speechRate" | "rhythmLayers" | "motifs" => "cut",
+        // A filler is stripped from the caption it sits in, so the
+        // decision it informs is the caption's.
+        "words" | "language" | "sentence" | "fillers" => "caption",
+        "entities" | "speechActs" | "claims" => "graphic",
+        "noiseFloor" | "musicSegments" | "speechRatio" | "forensic" => "bgm",
+        "speakerChanges" | "speaker" | "topics" | "discourseMarkers" => "transition",
+        "loudness" | "prosody" | "emotion" | "arc" => "pacing",
+        _ => return None,
+    })
 }
 
 /// The run's own measured evidence, as the brief the critic reads: the
@@ -1650,7 +2900,222 @@ fn signal_brief(log: &[Value]) -> Value {
     if !stressed.is_empty() {
         brief.insert("emphasisWords".to_owned(), json!(stressed));
     }
+    // The whole reading, not only its highlights: every family the
+    // profile answered, with its confidence, so the critic spends the
+    // signals the run actually measured and knows which ones to lean on.
+    let evidence = signal_evidence(log);
+    if evidence.as_object().is_some_and(|map| !map.is_empty()) {
+        brief.insert("signalEvidence".to_owned(), evidence);
+    }
+    // The measured values themselves, so the critic judges against numbers
+    // rather than family names. A critic told "noiseFloor 0.80" can say
+    // the bed was chosen well; a critic told "-38 dBFS, hiss" can say the
+    // bed should have been quieter. Only the readings the profile actually
+    // returned are carried, and a reading it never took stays absent.
+    let measured = measured_values(log);
+    if measured.as_object().is_some_and(|map| !map.is_empty()) {
+        brief.insert("measured".to_owned(), measured);
+    }
     Value::Object(brief)
+}
+
+/// The profile's own numbers, as the brief carries them: the take-wide
+/// readings and the per-line shape, keyed the way the profile keys them.
+/// Every value here is one the profile returned; a family it could not
+/// measure is left out rather than filled with a default, so the critic
+/// can tell "measured quiet" from "never measured".
+fn measured_values(log: &[Value]) -> Value {
+    let mut out = serde_json::Map::new();
+    let mut take = serde_json::Map::new();
+    for reply in log {
+        let Some(whole) = reply.get("wholeTake") else {
+            continue;
+        };
+        let forensic = &whole["forensic"];
+        let mut insert = |key: &str, value: Option<Value>| {
+            if let Some(value) = value
+                && !take.contains_key(key)
+            {
+                take.insert(key.to_owned(), value);
+            }
+        };
+        insert(
+            "noiseFloorDbfs",
+            forensic
+                .get("noiseFloorDbfs")
+                .and_then(Value::as_f64)
+                .map(|v| json!(v)),
+        );
+        insert(
+            "snrDb",
+            forensic
+                .get("snrDb")
+                .and_then(Value::as_f64)
+                .map(|v| json!(v)),
+        );
+        insert(
+            "noiseType",
+            forensic
+                .get("noiseType")
+                .and_then(Value::as_str)
+                .filter(|kind| !kind.is_empty())
+                .map(|kind| json!(kind)),
+        );
+        insert(
+            "spectralFlatness",
+            forensic
+                .get("spectralFlatness")
+                .and_then(Value::as_f64)
+                .map(|v| json!(v)),
+        );
+        insert(
+            "spectralCentroidHz",
+            forensic
+                .get("spectralCentroidHz")
+                .and_then(Value::as_f64)
+                .map(|v| json!(v)),
+        );
+        insert(
+            "crest",
+            forensic
+                .get("crest")
+                .and_then(Value::as_f64)
+                .map(|v| json!(v)),
+        );
+        insert(
+            "dynamicRangeDb",
+            forensic
+                .get("dynamicRangeDb")
+                .and_then(Value::as_f64)
+                .map(|v| json!(v)),
+        );
+        insert(
+            "voicingRate",
+            forensic
+                .get("voicingRate")
+                .and_then(Value::as_f64)
+                .map(|v| json!(v)),
+        );
+        insert(
+            "fluxOnsets",
+            forensic
+                .get("fluxOnsetsSec")
+                .and_then(Value::as_array)
+                .map(|onsets| json!(onsets.len())),
+        );
+        // The structure the profile measured, as counts: how many speaker
+        // turns and how many questions the take holds. A critic told
+        // "3 speaker turns" can ask whether the cut changed the angle on
+        // them; a bare family name cannot be checked against the sheet.
+        insert(
+            "speakerTurns",
+            reply
+                .pointer("/speaker/turns")
+                .and_then(Value::as_array)
+                .map(|turns| json!(turns.len())),
+        );
+        insert(
+            "questions",
+            reply
+                .pointer("/directorHints/questions")
+                .and_then(Value::as_array)
+                .map(|questions| json!(questions.len())),
+        );
+        insert(
+            "bgmVerdict",
+            reply
+                .pointer("/directorHints/bgm/recommendation")
+                .and_then(Value::as_str)
+                .filter(|verdict| !verdict.is_empty())
+                .map(|verdict| json!(verdict)),
+        );
+        insert(
+            "integratedLufs",
+            whole
+                .pointer("/loudness/integratedLufs")
+                .and_then(Value::as_f64)
+                .map(|v| json!(v)),
+        );
+        insert(
+            "speechRatio",
+            whole
+                .get("speechRatio")
+                .and_then(Value::as_f64)
+                .map(|v| json!(v)),
+        );
+        insert(
+            "dominantPeriodSec",
+            whole
+                .get("dominantPeriodSec")
+                .and_then(Value::as_f64)
+                .map(|v| json!(v)),
+        );
+        insert(
+            "rhythmLayers",
+            whole
+                .get("prosody")
+                .and_then(Value::as_array)
+                .map(|layers| {
+                    json!(
+                        layers
+                            .iter()
+                            .filter_map(|layer| Some(json!({
+                                "periodSec": layer["periodSec"].as_f64()?,
+                                "strength": layer["strength"].as_f64()?,
+                            })))
+                            .collect::<Vec<Value>>()
+                    )
+                }),
+        );
+    }
+    if !take.is_empty() {
+        out.insert("take".to_owned(), Value::Object(take));
+    }
+    // The per-line shape, as ranges rather than a row per line: a critic
+    // reads "wpm 120-190, pitch slope -2.1..+1.8 st/s" and knows the take
+    // moved, where a list of forty rows is not a brief.
+    let lines: Vec<&Value> = log
+        .iter()
+        .flat_map(|reply| reply["lines"].as_array().into_iter().flatten())
+        .collect();
+    let span = |pointer: &str| -> Option<Value> {
+        let values: Vec<f64> = lines
+            .iter()
+            .filter_map(|line| line.pointer(pointer).and_then(Value::as_f64))
+            .collect();
+        let low = values
+            .iter()
+            .copied()
+            .fold(None::<f64>, |low: Option<f64>, v| {
+                Some(low.map_or(v, |low| low.min(v)))
+            })?;
+        let high = values
+            .iter()
+            .copied()
+            .fold(None::<f64>, |high: Option<f64>, v| {
+                Some(high.map_or(v, |high| high.max(v)))
+            })?;
+        Some(json!({ "low": round3(low), "high": round3(high), "lines": values.len() }))
+    };
+    let mut shape = serde_json::Map::new();
+    for (name, pointer) in [
+        ("wordsPerMinute", "/speechRate/wordsPerMinute"),
+        ("syllablesPerSec", "/speechRate/syllablesPerSec"),
+        ("relativeLu", "/loudness/relativeLu"),
+        (
+            "pitchSlopeSemitonesPerSec",
+            "/prosody/pitchSlopeSemitonesPerSec",
+        ),
+        ("pitchRangeSemitones", "/prosody/pitchRangeSemitones"),
+    ] {
+        if let Some(span) = span(pointer) {
+            shape.insert(name.to_owned(), span);
+        }
+    }
+    if !shape.is_empty() {
+        out.insert("lines".to_owned(), Value::Object(shape));
+    }
+    Value::Object(out)
 }
 
 /// The craft facts of the last sheet the run read, as the critic measured
@@ -2060,6 +3525,40 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             if lines.is_empty() {
                                 continue;
                             }
+                            // The script read as language: the topic
+                            // tiling names the chapter boundaries, and
+                            // the connective analysis names the pivots
+                            // (`but`, `however`) and the abrupt seams.
+                            // Both are signals the vocabulary lists and
+                            // nothing measured before this call, so the
+                            // transition stage had to decide a seam on
+                            // the mood alone.
+                            calls.push(call(
+                                "sense_discourse",
+                                json!({ "action": "segment_topics", "lines": lines.clone() }),
+                            ));
+                            calls.push(call(
+                                "sense_discourse",
+                                json!({ "action": "analyze_discourse", "lines": lines.clone() }),
+                            ));
+                            // The surface act of each line: a question
+                            // asks the viewer something, an imperative
+                            // addresses them. Both earn a card the mood
+                            // alone cannot justify, and the profile's
+                            // graphic policy names this signal.
+                            calls.push(call(
+                                "sense_discourse",
+                                json!({ "action": "detect_speech_acts", "lines": lines.clone() }),
+                            ));
+                            // The argument's own skeleton: which lines
+                            // assert, which back an assertion, which hedge
+                            // it. The profile's graphic policy names
+                            // `claims` for the proof card, and nothing in
+                            // the program produced it before this call.
+                            calls.push(call(
+                                "sense_discourse",
+                                json!({ "action": "extract_claim_graph", "lines": lines.clone() }),
+                            ));
                             calls.push(call(
                                 "emotion",
                                 json!({ "action": "extract", "lines": lines }),
@@ -2174,12 +3673,15 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     let tighten_project = project.clone();
     let grade_source = takes.clone();
     let grade_project = project.clone();
+    let level_source = takes.clone();
+    let level_project = project.clone();
     steps.push(
         DerivedStep::react(
             Stage::Timeline,
             Box::new({
                 let mut queue: Option<Vec<ToolCall>> = None;
                 let mut graded = false;
+                let mut mixed = false;
                 move |log| {
                     let queue = queue.get_or_insert_with(|| {
                         let read = emotion_lines(log, &grade_source);
@@ -2192,7 +3694,52 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         return Some(next);
                     }
                     if graded {
-                        return None;
+                        // The mix: the profile measured the take's own
+                        // integrated loudness, and the plan already names
+                        // the platform the cut ships to. The one number the
+                        // two give is the gain that puts the voice on the
+                        // platform's target - so the verify stage's
+                        // loudness gate is met by measurement rather than
+                        // by luck. A take already within a LU of target
+                        // takes no edit.
+                        if mixed {
+                            return None;
+                        }
+                        mixed = true;
+                        let target = match platform_target(log) {
+                            Some(target) => target,
+                            None => return None,
+                        };
+                        let measured = voice_reads(log, &level_source)
+                            .iter()
+                            .filter_map(|read| read.take_wide.integrated_lufs)
+                            .fold(None::<f64>, |loudest, lufs| {
+                                Some(loudest.map_or(lufs, |loudest: f64| loudest.max(lufs)))
+                            })?;
+                        let gain = round3(target - measured);
+                        if gain.abs() < 1.0 {
+                            return None;
+                        }
+                        let view = latest_view(log)?;
+                        let media = media_paths(view);
+                        let clip = view["timeline"]["clips"].as_array()?.iter().find(|clip| {
+                            clip["media"]
+                                .as_str()
+                                .and_then(|id| media.iter().find(|(mid, _)| mid == id))
+                                .is_some_and(|(_, path)| {
+                                    level_source.iter().any(|take| &take.take == path)
+                                })
+                        })?;
+                        let clip_id = clip["id"].as_str()?.to_owned();
+                        return Some(call(
+                            "clip_audio_levels_db",
+                            json!({
+                                "path": level_project,
+                                "clipId": clip_id,
+                                "baseDb": gain,
+                                "replaceAutomation": false,
+                            }),
+                        ));
                     }
                     let view = latest_view(log)?;
                     let runtime = view["timeline"]["clips"]
@@ -2256,6 +3803,15 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 let mut pending_media: Option<String> = None;
                 let mut pending_len = 0.0f64;
                 let mut pending_pace = String::new();
+                // The take's own cut style, read once from the profile's
+                // derived hint: it decides how much every shot moves when
+                // the delivery over its gap was not itself measured.
+                let mut pending_style = String::new();
+                // The take's measured tempo, when the prosody read found
+                // one: the seam's blend is a fraction of the period the
+                // energy actually repeats on, so a slow take dissolves
+                // slowly and a clipped one snaps.
+                let mut pending_period: Option<f64> = None;
                 let mut pending_transition: Option<&'static str> = None;
                 // The transition the last placed shot cut in with: the
                 // next shot never wears the same move twice running.
@@ -2264,7 +3820,20 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 // clip for two neighbouring gaps, and laying it twice reads
                 // as a mistake to anyone watching.
                 let mut used_ids: Vec<String> = Vec::new();
+                // The takes' readings, read once: the seam of every gap is
+                // judged against the same measurement.
+                let mut voice: Option<Vec<VoiceRead>> = None;
+                // The script's own seams: a topic boundary and a
+                // connective pivot are the places a visual changes
+                // because the argument did, not because the mood did.
+                let mut chapters: Option<Vec<TopicBoundary>> = None;
+                let mut pivots: Option<Vec<(String, f64)>> = None;
                 move |log| loop {
+                    let voice = voice.get_or_insert_with(|| voice_reads(log, &gather_emotion));
+                    let chapters =
+                        chapters.get_or_insert_with(|| topic_boundaries(log, &gather_emotion));
+                    let pivots =
+                        pivots.get_or_insert_with(|| discourse_pivots(log, &gather_emotion));
                     let slots = slots.get_or_insert_with(|| broll_slots(log, &gather_source));
                     if placed >= slots.len() {
                         return None;
@@ -2277,8 +3846,61 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         emotion_at(&emotion_lines(log, &gather_emotion), &slot.take, slot.from)
                             .map(|line| line.emotion.clone())
                             .unwrap_or_else(|| "neutral".to_owned());
+                    // The seam's own reading decides the move as well as
+                    // the mood does. A gap that crosses a speaker change
+                    // or opens on a question is a seam a viewer must
+                    // register, so it takes a visible move whatever the
+                    // mood; a gap the profile says is a held beat keeps
+                    // the softest one, because a hard cut into a shot over
+                    // a dramatic pause is the edit arguing with the voice.
+                    let seam = {
+                        let read = voice_read_of(voice, &slot.take);
+                        let crosses_speaker = read.is_some_and(|read| {
+                            read.take_wide.speaker_changes.iter().any(|change| {
+                                *change > slot.from - 0.35 && *change < slot.to + 0.35
+                            })
+                        });
+                        let asks = read.is_some_and(|read| {
+                            read.line_at(slot.from).is_some_and(|line| {
+                                line.sentence_type == "question" || line.rise_confirms == Some(true)
+                            })
+                        });
+                        let holds = read.is_some_and(|read| read.keeps_pause_at(slot.from));
+                        // A chapter opens in this gap: the strongest seam
+                        // the script has, and the one the chapter card is
+                        // already naming.
+                        let chapter = chapters.iter().any(|boundary| {
+                            boundary.take == slot.take
+                                && boundary.at > slot.from - 0.5
+                                && boundary.at < slot.to + 0.5
+                        });
+                        // A connective pivot inside the gap: the argument
+                        // turned here, so the picture turns with it.
+                        let pivot = pivots.iter().any(|(take, at)| {
+                            take == &slot.take && *at > slot.from - 0.5 && *at < slot.to + 0.5
+                        });
+                        (crosses_speaker, asks, holds, chapter, pivot)
+                    };
                     let transition = {
-                        let first = transition_for_emotion(&mood);
+                        let first = match seam {
+                            // A chapter opening is the clearest seam there
+                            // is: the story moved on.
+                            (_, _, _, true, _) => "concat.flash-social",
+                            // A connective pivot is the argument turning:
+                            // the visible move is what makes the turn read.
+                            (_, _, _, _, true) => "concat.cross-pop",
+                            // A speaker change is the clearest voice seam:
+                            // the frame changes because the voice did.
+                            (true, _, _, _, _) => "concat.flash-social",
+                            // A question opens a gap the answer fills: the
+                            // move is the ask, not the mood.
+                            (_, true, _, _, _) => "concat.cross-pop",
+                            // A held beat keeps the softest move the
+                            // catalogue has, so the cut never fights the
+                            // silence the read said to hold.
+                            (_, _, true, _, _) => "concat.dissolve",
+                            _ => transition_for_emotion(&mood),
+                        };
                         if last_transition == Some(first) {
                             alternate_transition(&mood)
                         } else {
@@ -2376,6 +3998,26 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     // quieter, longer push.
                                     pending_pace =
                                         delivery_pace(log, &slot.take, slot.from, slot.to);
+                                    // The take's derived cut style stands
+                                    // behind a gap whose own delivery was
+                                    // too short to measure: a profile that
+                                    // read the whole take knows its rhythm
+                                    // even where one span did not.
+                                    let take_wide = voice_read_of(voice, &slot.take)
+                                        .map(|read| read.take_wide.clone())
+                                        .unwrap_or_default();
+                                    pending_style = take_wide.cut_style.clone();
+                                    pending_period = take_wide
+                                        .dominant_period_sec
+                                        // A period the rhythm read found but
+                                        // could not put strength behind is
+                                        // an autocorrelation artefact, not a
+                                        // pulse: it must not size a seam.
+                                        .filter(|_| {
+                                            voice_read_of(voice, &slot.take)
+                                                .and_then(|read| read.pulse_strength())
+                                                .is_some_and(|strength| strength >= 0.25)
+                                        });
                                     pending_transition = Some(transition);
                                     phase = 3;
                                     return Some(call(
@@ -2446,7 +4088,15 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 "punchy" => 1.10,
                                 "conversational" => 1.07,
                                 "slow" => 1.03,
-                                _ => 1.06,
+                                _ => match pending_style.as_str() {
+                                    // The gap's own delivery was not
+                                    // measured, so the take's derived cut
+                                    // style decides the move.
+                                    "punchy" => 1.10,
+                                    "conversational" => 1.07,
+                                    "slow" => 1.03,
+                                    _ => 1.06,
+                                },
                             };
                             commands.push(json!({
                                 "op": "setClipKey",
@@ -2458,11 +4108,18 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             }));
                             let chosen = pending_transition.unwrap_or("concat.dissolve");
                             last_transition = Some(chosen);
+                            // The blend is a share of the tempo: a third of
+                            // the period the take repeats on, held between
+                            // a snap and a breath so no measured period can
+                            // make a seam that reads as a stall.
+                            let blend = pending_period
+                                .map(|period| round3((period / 3.0).clamp(0.2, 0.6)))
+                                .unwrap_or(0.3);
                             commands.push(json!({
                                 "op": "updateClip",
                                 "clipId": clip_id,
                                 "patch": {
-                                    "transitionIn": { "id": chosen, "duration": 0.3 },
+                                    "transitionIn": { "id": chosen, "duration": blend },
                                 },
                             }));
                             return Some(call(
@@ -2510,6 +4167,7 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     let media = media_paths(view);
                     let read = emotion_lines(log, &caption_emotion);
                     let emphasis = stressed_words(log, &caption_source);
+                    let voice = voice_reads(log, &caption_source);
                     let mut captions: Vec<Value> = Vec::new();
                     for (take, segments) in transcripts_of(log, &caption_source) {
                         for segment in segments {
@@ -2543,13 +4201,64 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             let hot = line.is_some_and(|line| {
                                 matches!(line.temperature.as_str(), "hot" | "split")
                             });
+                            // The fillers the profile timed: `um`, `uh` and
+                            // their kin are safe removals, and a caption is
+                            // the one place they are pure noise - the
+                            // viewer hears the pause, not the syllable. The
+                            // discourse markers (`like`, `you know`) are
+                            // context calls the profile does not decide,
+                            // so they stay: cutting them would be editing
+                            // the speaker's meaning, not their noise.
+                            let take_read = voice_read_of(&voice, &take);
+                            let mut shown = text.to_owned();
+                            if let Some(take_read) = take_read {
+                                for filler in take_read.fillers_between(start, end) {
+                                    shown = strip_word(&shown, &filler.word);
+                                }
+                            }
+                            let shown = shown.trim();
+                            if shown.is_empty() {
+                                continue;
+                            }
+                            // The word-confidence gate: a line most of
+                            // whose words the gate could not hear is not
+                            // a line to set heavy or accent - it is a
+                            // line to show plainly, so a misheard word
+                            // does not become the caption's loudest claim.
+                            let unsure_share = take_read
+                                .map(|take_read| {
+                                    let flagged = take_read.unsure_between(start, end).len();
+                                    let total = take_read
+                                        .line_at(start)
+                                        .map(|line| line.text.split_whitespace().count())
+                                        .unwrap_or(0);
+                                    if total == 0 {
+                                        0.0
+                                    } else {
+                                        flagged as f64 / total as f64
+                                    }
+                                })
+                                .unwrap_or(0.0);
+                            let gated = unsure_share > 0.5;
+                            // A line delivered above the take's own
+                            // integrated level is a line the speaker
+                            // lifted, so the caption carries weight even
+                            // when the mood is mild. This is the one place
+                            // the profile's per-line `relativeLufs` reaches
+                            // the picture; without it the reading was named
+                            // in the pacing entry and spent by nothing.
+                            let lifted = take_read
+                                .and_then(|take_read| take_read.line_at(start))
+                                .and_then(|line| line.relative_lu)
+                                .is_some_and(|lu| lu >= 3.0);
                             // A caption that carries one of the take's own
                             // stressed words takes the accent even on a
                             // neutral line: the emphasis signal is the
                             // delivery's, not the mood's, and the log
                             // promises the caption stage spends it.
-                            let stressed = !emphasis.is_empty()
-                                && text
+                            let stressed = !gated
+                                && !emphasis.is_empty()
+                                && shown
                                     .split_whitespace()
                                     .map(|word| {
                                         word.trim_matches(|c: char| !c.is_alphanumeric())
@@ -2566,12 +4275,35 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 Some("slow") => 0.046,
                                 _ => 0.04,
                             };
+                            // The profile's own 6-semitone bar separates a
+                            // line *performed* from one *reported*. A
+                            // performed line has room for a heavier, larger
+                            // setting; a reported one is set plainly even
+                            // where its emotion is intense, because the
+                            // delivery is not carrying the feeling - the
+                            // words are. `None` (never measured) leaves the
+                            // house setting alone rather than guessing.
+                            let performed = take_read.and_then(|take_read| {
+                                take_read
+                                    .line_at(start)
+                                    .and_then(|line| take_read.performs(line))
+                            });
+                            let size = match performed {
+                                Some(true) if !gated => size + 0.003,
+                                _ => size,
+                            };
                             captions.push(json!({
                                 "start": round3(at),
                                 "end": round3(to),
-                                "text": text,
-                                "weight": if intensity >= 0.65 { 800 } else { 600 },
-                                "accent": hot || stressed,
+                                "text": shown,
+                                "weight": if (intensity >= 0.65 || lifted) && !gated {
+                                    800
+                                } else if performed == Some(true) && !gated {
+                                    700
+                                } else {
+                                    600
+                                },
+                                "accent": (hot || stressed) && !gated,
                                 "size": size,
                             }));
                         }
@@ -2592,11 +4324,22 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                         kept.push(caption);
                     }
                     kept.truncate(240);
+                    // The script's own font: the profile's language read
+                    // names the family a non-Latin script needs, and the
+                    // house face is only the fallback when the read did
+                    // not name one. A caption set in Hanken Grotesk over a
+                    // Devanagari or Cyrillic take renders as boxes.
+                    let font = voice
+                        .iter()
+                        .map(|read| read.take_wide.font.as_str())
+                        .find(|font| !font.is_empty())
+                        .map(bundled_font)
+                        .unwrap_or("Hanken Grotesk");
                     let commands: Vec<Value> = kept
                         .iter()
                         .map(|caption| {
                             let mut style = json!({
-                                "fontFamily": "Hanken Grotesk",
+                                "fontFamily": font,
                                 "fontSize": caption["size"],
                                 "fontWeight": caption["weight"],
                                 "content": caption["text"],
@@ -2665,8 +4408,21 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 let mut phase = 0u8;
                 let mut entrances = false;
                 move |log| loop {
-                    let specs = specs
-                        .get_or_insert_with(|| motion_specs(&emotion_lines(log, &motion_source)));
+                    let specs = specs.get_or_insert_with(|| {
+                        let reads = voice_reads(log, &motion_source);
+                        let motifs: Vec<Motif> = reads
+                            .iter()
+                            .flat_map(|read| read.motifs.iter().cloned())
+                            .collect();
+                        motion_specs(
+                            &emotion_lines(log, &motion_source),
+                            &entity_graphics(log, &motion_source),
+                            &topic_boundaries(log, &motion_source),
+                            &motifs,
+                            &question_acts(log, &motion_source),
+                            &uncovered_claims(log, &motion_source),
+                        )
+                    });
                     if at >= specs.len() {
                         // The cards are placed: the captions' entrance is
                         // the stage's last act, issued once.
@@ -2710,10 +4466,18 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 "project": motion_project,
                                 "preset": spec.preset,
                             });
-                            if let Some((_, slot)) = labels
-                                .as_ref()
-                                .and_then(|labels| labels.iter().find(|(id, _)| id == spec.preset))
-                            {
+                            // A card that names its own slot uses it; the
+                            // rest take the preset's first text slot, which
+                            // is what the library's own labels say.
+                            let chosen = spec.slot.map(str::to_owned).or_else(|| {
+                                labels
+                                    .as_ref()
+                                    .and_then(|labels| {
+                                        labels.iter().find(|(id, _)| id == spec.preset)
+                                    })
+                                    .map(|(_, slot)| slot.clone())
+                            });
+                            if let Some(slot) = chosen {
                                 arguments["ops"] = json!([{
                                     "op": "set-slot", "slot": slot, "value": spec.words,
                                 }]);
@@ -2861,11 +4625,47 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 let mut ducked = false;
                 move |log| {
                     // The gate's own answer first: music already in the
-                    // take means no bed, ever.
+                    // take means no bed, ever. The reading's own forensic
+                    // check is the second door - a take whose noise floor
+                    // says it is already wet, or whose music gate found
+                    // segments, gets no bed stacked under it either. Both
+                    // answers come from measurement; a run that read
+                    // neither still shops a bed, because "not measured"
+                    // is not "already scored".
                     if log
                         .iter()
                         .any(|reply| reply.get("musicPresent") == Some(&json!(true)))
                     {
+                        return None;
+                    }
+                    let reads = voice_reads(log, &music_source);
+                    if reads
+                        .iter()
+                        .any(|read| read.take_wide.music_present == Some(true))
+                    {
+                        return None;
+                    }
+                    // The floor's own answer: a take measured above the
+                    // dry threshold already carries room tone or a score,
+                    // and a bed stacked on it doubles the bed. The log
+                    // claimed this gate and the stage never read it, so a
+                    // wet take was shopped a bed it did not want.
+                    if reads.iter().any(|read| read.wants_bed() == Some(false)) {
+                        return None;
+                    }
+                    // The profile's own verdict, when it reached one: its
+                    // BGM decision weighs the floor, the SNR and the
+                    // spectral flatness together, which is a judgement no
+                    // single field here can repeat. `skip` means the take
+                    // already carries music-like content; `duck_only` means
+                    // the voice needs cleaning before anything sits under
+                    // it, so bedding now would stack a bed on a noisy take.
+                    if reads.iter().any(|read| {
+                        matches!(
+                            read.take_wide.bgm_decision.as_deref(),
+                            Some("skip") | Some("duck_only")
+                        )
+                    }) {
                         return None;
                     }
                     if ducked {
@@ -2885,10 +4685,20 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 // The bed's words: the emotional read's
                                 // own, from the piece's dominant line -
                                 // the mood and the act name the genre -
-                                // and the reading's language hint only
-                                // when the read named no words at all.
+                                // then the reading's own language hint,
+                                // which the profile derived from the
+                                // script the narration is written in.
+                                // The hint is the third door rather than
+                                // the second so a measured mood always
+                                // outranks a script-level guess.
                                 let query = dominant(&emotion_lines(log, &music_source))
                                     .and_then(|line| line.bgm_words.first().cloned())
+                                    .or_else(|| {
+                                        voice_reads(log, &music_source)
+                                            .into_iter()
+                                            .map(|read| read.take_wide.music_genre)
+                                            .find(|genre| !genre.trim().is_empty())
+                                    })
                                     .or_else(|| {
                                         log.iter()
                                             .filter_map(|reply| {
@@ -2972,9 +4782,25 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             // act profile sets: a payoff may carry a
                             // louder bed than a quiet setup, and the
                             // emotional read is what knows which it is.
-                            let base_db = dominant(&emotion_lines(log, &music_source))
+                            // The measured speech ratio moves it from
+                            // there: a take that is almost all speech has
+                            // no room for a bed at the act's level, and a
+                            // sparse one would lose the bed entirely, so
+                            // the duck deepens as the speech fills the
+                            // timeline. Unmeasured leaves the act's level
+                            // alone - a run must not invent a density.
+                            let act_db = dominant(&emotion_lines(log, &music_source))
                                 .map(|line| line.duck_db)
                                 .unwrap_or(-20.0);
+                            let density_db = voice_reads(log, &music_source)
+                                .iter()
+                                .filter_map(|read| read.take_wide.speech_ratio)
+                                .fold(None::<f64>, |worst, ratio| {
+                                    Some(worst.map_or(ratio, |worst: f64| worst.max(ratio)))
+                                })
+                                .map(|ratio| -6.0 * ratio)
+                                .unwrap_or(0.0);
+                            let base_db = round3((act_db + density_db).clamp(-30.0, -6.0));
                             call(
                                 "clip_audio_levels_db",
                                 json!({
@@ -3773,6 +5599,104 @@ mod tests {
         assert!(!carries("the hull was empty"));
     }
 
+    /// A claim the narration asserts with no evidence behind it is the
+    /// argument's weak point, and the proof card is the edit's answer.
+    /// The reader exists because the profile's graphic policy named
+    /// `claims` and nothing produced it: the signal was measured by the
+    /// discourse graph and spent by nobody.
+    #[test]
+    fn an_unbacked_claim_earns_a_proof_card() {
+        let takes = vec![TakePaths {
+            take: "/t/a.wav".to_owned(),
+            enhanced: String::new(),
+        }];
+        let transcript = json!({
+            "segments": [
+                { "start": 0.0, "end": 2.0, "text": "this ship sank in 1912" },
+                { "start": 3.0, "end": 5.0, "text": "because the hull was torn open" },
+            ],
+        });
+        let graph = json!({
+            "uncoveredClaims": [
+                { "id": "c0", "kind": "claim", "line": 0,
+                  "text": "this ship sank in 1912", "start": 0.0, "end": 2.0,
+                  "strength": 0.55, "evidenceCues": [], "hedges": [] },
+            ],
+        });
+        let log = vec![
+            json!({ "path": "/t/a.wav", "output": transcript.to_string() }),
+            json!({
+                "timeline": { "clips": [
+                    { "id": "c1", "media": "m1", "start": 0.0, "duration": 8.0,
+                      "sourceStart": 0.0, "speed": 1.0 },
+                ]},
+                "media": [{ "id": "m1", "path": "/t/a.wav" }],
+            }),
+            json!({ "tool": "extract_claim_graph",
+                    "uncoveredClaims": graph["uncoveredClaims"].clone() }),
+        ];
+        let claims = uncovered_claims(&log, &takes);
+        assert_eq!(claims.len(), 1, "the uncovered claim is the one read");
+        assert_eq!(claims[0].text, "this ship sank in 1912");
+        let specs = motion_specs(&[], &[], &[], &[], &[], &claims);
+        let card = specs
+            .iter()
+            .find(|spec| spec.earned_by == "claims")
+            .expect("the claim earns a card");
+        assert_eq!(card.preset, "funcut.quote.pull");
+        assert_eq!(card.act, "proof");
+    }
+
+    /// A question the narration asks is a card the act earns. The
+    /// profile's graphic policy names `speechActs` for exactly this, and
+    /// before the reader existed the signal was measured by nothing and
+    /// spent by nothing.
+    #[test]
+    fn a_question_line_earns_its_own_card() {
+        let takes = vec![TakePaths {
+            take: "/t/a.wav".to_owned(),
+            enhanced: String::new(),
+        }];
+        let transcript = json!({
+            "segments": [
+                { "start": 0.0, "end": 2.0, "text": "have you ever lost a wreck" },
+                { "start": 3.0, "end": 5.0, "text": "it was not empty" },
+            ],
+        });
+        let acts = json!({
+            "perLine": [
+                { "line": 0, "text": "have you ever lost a wreck",
+                  "start": 0.0, "end": 2.0,
+                  "acts": ["rhetorical_question"], "primary": "rhetorical_question" },
+                { "line": 1, "text": "it was not empty",
+                  "start": 3.0, "end": 5.0,
+                  "acts": ["statement"], "primary": "statement" },
+            ],
+        });
+        let log = vec![
+            json!({ "path": "/t/a.wav", "output": transcript.to_string() }),
+            json!({
+                "timeline": { "clips": [
+                    { "id": "c1", "media": "m1", "start": 0.0, "duration": 8.0,
+                      "sourceStart": 0.0, "speed": 1.0 },
+                ]},
+                "media": [{ "id": "m1", "path": "/t/a.wav" }],
+            }),
+            json!({ "tool": "detect_speech_acts",
+                    "perLine": acts["perLine"].clone() }),
+        ];
+        let questions = question_acts(&log, &takes);
+        assert_eq!(questions.len(), 1, "only the question line is an ask");
+        assert_eq!(questions[0].start, 0.0);
+        let specs = motion_specs(&[], &[], &[], &[], &questions, &[]);
+        assert!(
+            specs
+                .iter()
+                .any(|spec| spec.earned_by == "speechActs" && spec.at == 0.0),
+            "the ask becomes a card: {specs:?}"
+        );
+    }
+
     /// The graphic's log entry names only the signals the choice consumed:
     /// naming `prosody` while the entrance is picked by the read's
     /// intensity would be the log asserting evidence no decision used.
@@ -3826,6 +5750,601 @@ mod tests {
             "the graphic entry claims prosody, which no decision here reads"
         );
         assert!(signals.contains(&json!("emotion")));
+    }
+
+    /// Every logged decision carries the confidence the profile rated its
+    /// signals at, and an entry is only as certain as its weakest family.
+    /// The profile answers `signalConfidence.perSignal`; until this it was
+    /// parsed into `VoiceRead::weight` and read by nothing, so a decision
+    /// taken on a whisper of a measurement looked exactly like a certain
+    /// one.
+    #[test]
+    fn every_decision_carries_the_confidence_it_was_measured_at() {
+        let takes = vec![TakePaths {
+            take: "/t/a.wav".to_owned(),
+            enhanced: String::new(),
+        }];
+        let transcript = json!({
+            "segments": [
+                { "start": 0.0, "end": 3.0, "text": "we found the wreck" },
+                { "start": 4.0, "end": 7.0, "text": "it was not empty" },
+            ],
+        });
+        let view = json!({
+            "timeline": { "clips": [
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 8.0,
+                  "sourceStart": 0.0, "speed": 1.0 },
+            ]},
+            "media": [{ "id": "m1", "path": "/t/a.wav" }],
+        });
+        let log = vec![
+            json!({ "path": "/t/a.wav", "output": transcript.to_string() }),
+            view,
+            json!({ "lines": [
+                emotion_row(0.0, 3.0, "surprise", 0.9, "hook", "hot", ""),
+                emotion_row(4.0, 7.0, "fear", 0.9, "reveal", "cold", ""),
+            ]}),
+            // The profile's own rating of the families it measured. `words`
+            // is certain, `emotion` less so, and the cut entry names both.
+            json!({ "audio": { "path": "/t/a.wav" },
+                "wholeTake": { "loudness": { "integratedLufs": -20.0 } },
+                "signalConfidence": { "perSignal": [
+                    { "signal": "wordConfidence", "confidence": 0.95 },
+                    { "signal": "pauses", "confidence": 0.75 },
+                    { "signal": "speechRate", "confidence": 0.9 },
+                    { "signal": "loudness", "confidence": 0.9 },
+                    { "signal": "speechRatio", "confidence": 0.9 },
+                    { "signal": "forensic", "confidence": 0.8 },
+                    { "signal": "prosody", "confidence": 0.85 },
+                    { "signal": "sentenceType", "confidence": 0.8 },
+                    { "signal": "motifs", "confidence": 0.7 },
+                    { "signal": "language", "confidence": 0.85 },
+                    { "signal": "speaker", "confidence": 0.7 },
+                    { "signal": "entities", "confidence": 0.8 },
+                    { "signal": "fillers", "confidence": 0.65 },
+                ]} }),
+        ];
+        let plan = auto_plan(
+            &log,
+            &takes,
+            &AutoEditProgramSource {
+                project: "/t".to_owned(),
+                takes: takes.clone(),
+                placements: Vec::new(),
+                export: "/t/out.mp4".to_owned(),
+                sheet: "sheet.png".to_owned(),
+                stock_provider: "pexels".to_owned(),
+            },
+        )
+        .expect("a plan from the read");
+        let entries = plan["signalLog"].as_array().expect("a signal log");
+        assert!(!entries.is_empty(), "the plan logs its decisions");
+        // Every entry is rated, and every rating is one the profile gave.
+        for entry in entries {
+            let confidence = entry["confidence"]
+                .as_f64()
+                .unwrap_or_else(|| panic!("entry has no confidence: {entry}"));
+            assert!(
+                (0.0..=1.0).contains(&confidence),
+                "confidence {confidence} is outside 0..1"
+            );
+            assert!(
+                confidence > 0.0,
+                "entry {entry} was rated 0 despite naming measured signals"
+            );
+        }
+        // The graphic card names `emotion` and `words`; the weakest of the
+        // two is the emotion read's own 0.85, so that is the entry's
+        // rating, not the transcript's 0.95.
+        let graphic = entries
+            .iter()
+            .find(|entry| entry["decision"] == json!("graphic"))
+            .expect("a graphic entry");
+        assert_eq!(
+            graphic["confidence"],
+            json!(0.85),
+            "the card is only as certain as its least certain signal"
+        );
+        // `words` is rated under the profile's own name for it,
+        // `wordConfidence`: without the alias the caption entry would log 0
+        // for a transcript measured at 0.95.
+        let caption = entries
+            .iter()
+            .find(|entry| entry["decision"] == json!("caption"))
+            .expect("a caption entry");
+        assert_eq!(
+            caption["confidence"],
+            json!(0.95),
+            "the transcript's own rating reaches the caption"
+        );
+    }
+
+    /// The plan AUTO EDIT builds must pass the schema `plan_validate`
+    /// enforces, or the run dies at its own first gate. It emitted
+    /// `pacing` entries while the canonical schema's decision enum stopped
+    /// at `transition`, so every plan with a pacing entry was refused -
+    /// the log this program writes was not a log the validator accepted.
+    #[test]
+    fn the_plan_auto_edit_builds_passes_the_real_plan_schema() {
+        let takes = vec![TakePaths {
+            take: "/t/a.wav".to_owned(),
+            enhanced: String::new(),
+        }];
+        let transcript = json!({
+            "segments": [
+                { "start": 0.0, "end": 3.0, "text": "we found the wreck" },
+                { "start": 4.0, "end": 7.0, "text": "it was not empty" },
+            ],
+        });
+        let view = json!({
+            "settings": { "width": 1080, "height": 1920 },
+            "timeline": { "clips": [
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 8.0,
+                  "sourceStart": 0.0, "speed": 1.0 },
+            ]},
+            "media": [{ "id": "m1", "path": "/t/a.wav" }],
+        });
+        let log = vec![
+            json!({ "path": "/t/a.wav", "output": transcript.to_string() }),
+            view,
+            json!({ "lines": [
+                emotion_row(0.0, 3.0, "surprise", 0.9, "hook", "hot", ""),
+                emotion_row(4.0, 7.0, "fear", 0.9, "reveal", "cold", ""),
+            ]}),
+            json!({ "audio": { "path": "/t/a.wav" },
+                "wholeTake": {
+                    "loudness": { "integratedLufs": -20.0 },
+                    "forensic": { "noiseFloorDbfs": -60.0, "snrDb": 18.0 },
+                },
+                "pauses": [{ "start": 3.0, "end": 4.0, "class": "dead_air" }],
+                "signalConfidence": { "perSignal": [
+                    { "signal": "pauses", "confidence": 0.75 },
+                    { "signal": "wordConfidence", "confidence": 0.95 },
+                    { "signal": "loudness", "confidence": 0.9 },
+                    { "signal": "forensic", "confidence": 0.8 },
+                ]} }),
+        ];
+        let plan = auto_plan(
+            &log,
+            &takes,
+            &AutoEditProgramSource {
+                project: "/t".to_owned(),
+                takes: takes.clone(),
+                placements: Vec::new(),
+                export: "/t/out.mp4".to_owned(),
+                sheet: "sheet.png".to_owned(),
+                stock_provider: "pexels".to_owned(),
+            },
+        )
+        .expect("a plan from the read");
+        // The pacing entry is the one the enum used to refuse: prove the
+        // fixture actually exercises it, or the test proves nothing.
+        let decisions: Vec<&str> = plan["signalLog"]
+            .as_array()
+            .expect("a signal log")
+            .iter()
+            .filter_map(|entry| entry["decision"].as_str())
+            .collect();
+        assert!(
+            decisions.contains(&"pacing"),
+            "the fixture must exercise the pacing entry: {decisions:?}"
+        );
+        let schema = crate::plan_schema::canonical();
+        crate::schema::check(&schema, &plan, &schema, "plan")
+            .expect("AUTO EDIT's own plan passes the schema plan_validate enforces");
+    }
+
+    /// The alias reaches production, not just the helper: a `cut` entry
+    /// names `pause.class=dead_air`, which the profile rates under
+    /// `pauses`. Rated under the log's own name it would read 0 - the
+    /// entry would say a measured silence was no evidence at all.
+    #[test]
+    fn the_alias_rates_a_pause_entry_in_production() {
+        let takes = vec![TakePaths {
+            take: "/t/a.wav".to_owned(),
+            enhanced: String::new(),
+        }];
+        let transcript = json!({
+            "segments": [
+                { "start": 0.0, "end": 2.0, "text": "we found the wreck" },
+                { "start": 3.5, "end": 6.0, "text": "it was not empty" },
+            ],
+        });
+        let view = json!({
+            "timeline": { "clips": [
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 8.0,
+                  "sourceStart": 0.0, "speed": 1.0 },
+            ]},
+            "media": [{ "id": "m1", "path": "/t/a.wav" }],
+        });
+        let log = vec![
+            json!({ "path": "/t/a.wav", "output": transcript.to_string() }),
+            view,
+            // The mood the gap opens on, so the transition entry is rated
+            // by more than one family and the weakest link is a real one.
+            json!({ "lines": [
+                emotion_row(0.0, 2.0, "neutral", 0.4, "setup", "balanced", ""),
+            ]}),
+            // A measured dead air between the two lines: this is what
+            // makes the transition entry name `pause`.
+            json!({ "audio": { "path": "/t/a.wav" },
+                "pauses": [{ "start": 2.0, "end": 3.5, "class": "dead_air" }],
+                "signalConfidence": { "perSignal": [
+                    { "signal": "pauses", "confidence": 0.75 },
+                    { "signal": "wordConfidence", "confidence": 0.95 },
+                ]} }),
+        ];
+        let plan = auto_plan(
+            &log,
+            &takes,
+            &AutoEditProgramSource {
+                project: "/t".to_owned(),
+                takes: takes.clone(),
+                placements: Vec::new(),
+                export: "/t/out.mp4".to_owned(),
+                sheet: "sheet.png".to_owned(),
+                stock_provider: "pexels".to_owned(),
+            },
+        )
+        .expect("a plan from the read");
+        let entries = plan["signalLog"].as_array().expect("a signal log");
+        let transition = entries
+            .iter()
+            .find(|entry| entry["decision"] == json!("transition"))
+            .expect("a transition entry");
+        let signals = transition["signals"].as_array().expect("its signals");
+        assert!(
+            signals.contains(&json!("pause")),
+            "the fixture measured a dead air at the seam: {signals:?}"
+        );
+        // The weakest link of the bare `pause` (rated by the profile's
+        // `pauses` at 0.75) and `emotion` (0.85 from the fixture) is the
+        // pause reading. Under the log's own name it would be 0.
+        assert_eq!(transition["confidence"], json!(0.75));
+    }
+
+    /// The log's vocabulary is not always the profile's: `words` is rated
+    /// `wordConfidence`, a `pause` is rated `pauses`, a `speakerChanges` is
+    /// rated `speaker`. A name that maps to nothing would log a 0, which
+    /// reads as "no evidence" for a signal that was measured.
+    #[test]
+    fn the_log_s_vocabulary_maps_onto_the_profile_s() {
+        assert_eq!(confidence_family("words"), "words");
+        assert_eq!(confidence_family("pause"), "pauses");
+        assert_eq!(confidence_family("sentence"), "sentenceType");
+        assert_eq!(confidence_family("speakerChanges"), "speaker");
+        assert_eq!(confidence_family("noiseFloor"), "forensic");
+        assert_eq!(confidence_family("musicSegments"), "forensic");
+        assert_eq!(confidence_family("emphasisWords"), "prosody");
+        // A name already in the profile's vocabulary passes through, so
+        // the mapping cannot silently rename a family the profile rates.
+        for family in ["loudness", "prosody", "entities", "motifs", "speechRate"] {
+            assert_eq!(confidence_family(family), family);
+        }
+    }
+
+    /// The vocabulary is the contract: every family the profile can
+    /// answer must have a reader in this program, or be named here with
+    /// the reason it does not. The check exists because three families
+    /// (`speechActs`, `claims`, `rhythmLayers`) were measured, listed in
+    /// the profile's own decision policy, and spent by nothing - the
+    /// profile promised a signal the edit never used, and no test
+    /// noticed.
+    #[test]
+    fn every_signal_family_has_a_reader() {
+        // Families the program reads today, each through a named reader
+        // or a stage that spends it.
+        const READ: &[&str] = &[
+            "pause",
+            "emphasisWords",
+            "speechRate",
+            "rhythmLayers",
+            "motifs",
+            "words",
+            "language",
+            "sentence",
+            "entities",
+            "speechActs",
+            "claims",
+            "musicSegments",
+            "speechRatio",
+            "speakerChanges",
+            "topics",
+            "discourseMarkers",
+            "loudness",
+            "prosody",
+            "fillers",
+            "arc",
+            "emotion",
+            "noiseFloor",
+            "wordConfidence",
+            // Spent since the audit: the turn a seam falls on, and the
+            // transient it lands on.
+            "speaker",
+            "forensic",
+        ];
+        // Families the vocabulary names but this program deliberately does
+        // not spend, and why. Each is a real reading the profile makes; the
+        // entry is the reason the edit is better without it.
+        const NOT_SPENT: &[(&str, &str)] = &[(
+            "formants",
+            "a vocal-tract reading describes the speaker, not the cut: no \
+                 timeline decision follows from it",
+        )];
+        let mut unaccounted: Vec<&str> = Vec::new();
+        for family in crate::tools::signal_vocabulary() {
+            if READ.contains(family) || NOT_SPENT.iter().any(|(name, _)| name == family) {
+                continue;
+            }
+            unaccounted.push(family);
+        }
+        assert!(
+            unaccounted.is_empty(),
+            "these signals are in the vocabulary but no reader or reason accounts for them: {unaccounted:?}"
+        );
+        // The list above is a claim, and a claim can lie: `loudness` sat in
+        // READ while nothing in the program ever set a level, so the
+        // profile's LUFS reading reached no decision. Each READ family must
+        // therefore also appear by name in the program's own source, outside
+        // this test module - which is where a reader would have to mention
+        // it. A family that is only listed here fails here.
+        let program = include_str!("director_program.rs");
+        let body = program
+            .split("#[cfg(test)]")
+            .next()
+            .expect("the source has a program half");
+        let unread: Vec<&str> = READ
+            .iter()
+            .copied()
+            .filter(|family| !body.contains(&format!("\"{family}\"")))
+            .collect();
+        assert!(
+            unread.is_empty(),
+            "these families are listed as read but the program never names them: {unread:?}"
+        );
+        // Every entry is rated, so every name the log can carry must be one
+        // the profile - or the engine that owns it - rates. A name that
+        // mapped to nothing would log a confidence of 0 for a signal that
+        // was measured, which reads as "no evidence" and is the opposite of
+        // the truth. The families below are rated by the engines that
+        // measured them, through `confidence_family` and the per-entry
+        // match; the rest must be in the profile's own vocabulary.
+        const RATED_ELSEWHERE: &[&str] = &[
+            "emotion",          // the emotion engine, per line
+            "arc",              // the emotion engine, per line
+            "speechActs",       // the discourse engine, per line
+            "claims",           // the discourse engine, per line
+            "topics",           // the tiling's own cohesion
+            "words",            // the profile's `wordConfidence`
+            "pause",            // the profile's `pauses`
+            "sentence",         // the profile's `sentenceType`
+            "speakerChanges",   // the profile's `speaker`
+            "noiseFloor",       // the profile's `forensic`
+            "musicSegments",    // the profile's `forensic`
+            "emphasisWords",    // the profile's `prosody`
+            "discourseMarkers", // a lexicon match, rated as the fillers are
+        ];
+        // The families the log can actually carry, taken from the program's
+        // own source rather than a list that can drift: every name in a
+        // `"signals": [...]` literal and every `signals.push("...")`. Each
+        // must be rateable, or the entry it appears in logs a 0 for a
+        // signal that was measured.
+        let mut logged: Vec<&str> = Vec::new();
+        for chunk in body.split("\"signals\":").skip(1) {
+            // A literal list is scanned to its close; `"signals": signals`
+            // hands a variable over and says nothing here.
+            let Some(list) = chunk.trim_start().strip_prefix('[') else {
+                continue;
+            };
+            let Some(end) = list.find(']') else { continue };
+            for name in list[..end].split('"').skip(1).step_by(2) {
+                logged.push(name);
+            }
+        }
+        for chunk in body.split("signals.push(").skip(1) {
+            if let Some(name) = chunk
+                .trim_start()
+                .strip_prefix('"')
+                .and_then(|rest| rest.split('"').next())
+            {
+                logged.push(name);
+            }
+        }
+        logged.sort_unstable();
+        logged.dedup();
+        let vocabulary = crate::tools::signal_vocabulary();
+        let unrated: Vec<&str> = logged
+            .iter()
+            .copied()
+            .filter(|family| {
+                // The rating pass strips a suffix at `.` or `[` before
+                // mapping, so `sentence.type` is rated as `sentence`; the
+                // guard does the same rather than reading it as a family
+                // of its own.
+                let base = family.split(['.', '[']).next().unwrap_or(family);
+                let known = confidence_family(base);
+                !vocabulary.contains(&base)
+                    && !vocabulary.contains(&known)
+                    && !RATED_ELSEWHERE.contains(&base)
+            })
+            .collect();
+        assert!(
+            !logged.is_empty(),
+            "the scan found no logged signals, so it is proving nothing"
+        );
+        assert!(
+            unrated.is_empty(),
+            "these logged families would be rated 0 - no engine rates them: {unrated:?}"
+        );
+    }
+
+    /// A caption's hold is sized on the rate the profile measured, and the
+    /// two rates are not interchangeable: a line of long words is slow to
+    /// read at the same words-per-minute, so the syllables-per-second
+    /// reading wins where the two disagree. A line with neither rate gets
+    /// `None`, which is the honest answer and keeps the hold on the timing.
+    #[test]
+    fn the_caption_hold_reads_the_rate_the_profile_measured() {
+        let read = VoiceRead {
+            take: "/t/a.wav".to_owned(),
+            lines: vec![
+                // A 2 s line at 5 syllables/s: 10 syllables, 30 chars,
+                // which needs 2.0 s at 15 chars/s. The 300 wpm reading
+                // implies 50 chars and 3.3 s, so words win here.
+                crate::voice_read::LineRead {
+                    start: 0.0,
+                    end: 2.0,
+                    syllables_per_sec: Some(5.0),
+                    words_per_minute: Some(300.0),
+                    ..Default::default()
+                },
+                // A 2 s line at 180 wpm: 6 words, 30 chars, 2.0 s.
+                crate::voice_read::LineRead {
+                    start: 2.0,
+                    end: 4.0,
+                    words_per_minute: Some(180.0),
+                    ..Default::default()
+                },
+                crate::voice_read::LineRead {
+                    start: 4.0,
+                    end: 6.0,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let hold = read.caption_hold(&read.lines[0]).expect("a hold");
+        assert!(
+            (hold - (50.0 / 15.0)).abs() < 1e-9,
+            "the words reading is the longer estimate and should win: {hold}"
+        );
+        let only_words = read.caption_hold(&read.lines[1]).expect("a hold");
+        assert!(
+            (only_words - 2.0).abs() < 1e-9,
+            "180 wpm over 2 s is 30 chars, two reading seconds: {only_words}"
+        );
+        assert_eq!(
+            read.caption_hold(&read.lines[2]),
+            None,
+            "a line with no rate must not invent a hold"
+        );
+    }
+
+    /// The delivery's direction is only called when the slope is steep
+    /// enough to mean one: a near-flat slope is a line that reports, and
+    /// reading it as a rise would put a build where the voice did not.
+    #[test]
+    fn the_delivery_direction_needs_a_slope_behind_it() {
+        let read = VoiceRead::default();
+        let line = |slope: Option<f64>| crate::voice_read::LineRead {
+            pitch_slope: slope,
+            ..Default::default()
+        };
+        assert_eq!(read.delivery_rises(&line(Some(2.0))), Some(true));
+        assert_eq!(read.delivery_rises(&line(Some(-2.0))), Some(false));
+        assert_eq!(
+            read.delivery_rises(&line(Some(0.2))),
+            None,
+            "a flat slope is not a direction"
+        );
+        assert_eq!(read.delivery_rises(&line(None)), None);
+    }
+
+    /// The seam lands on the take's own transient when the forensic ear
+    /// measured one nearby, and the entry says so. A run with no onsets
+    /// leaves the note as it was rather than claiming a transient it
+    /// never found.
+    #[test]
+    fn the_seam_lands_on_a_measured_onset() {
+        let take = TakePaths {
+            take: "/t/a.wav".to_owned(),
+            enhanced: String::new(),
+        };
+        let view = json!({
+            "timeline": { "clips": [
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 4.0,
+                  "sourceStart": 0.0, "speed": 1.0 },
+            ]},
+            "media": [{ "id": "m1", "path": "/t/a.wav" }],
+        });
+        let profile = |onsets: Value| {
+            json!({
+                "audio": { "path": "/t/a.wav" },
+                "wholeTake": { "forensic": { "fluxOnsetsSec": onsets } },
+                "lines": [{ "start": 0.0, "end": 4.0, "text": "we found the wreck" }],
+                "signalConfidence": { "perSignal": [
+                    { "signal": "forensic", "confidence": 0.8 },
+                ]},
+            })
+        };
+        let with = vec![view.clone(), profile(json!([2.0, 6.5]))];
+        let read = voice_reads(&with, std::slice::from_ref(&take));
+        assert_eq!(read[0].onset_near(6.6, 0.25), Some(6.5));
+        assert_eq!(
+            read[0].onset_near(4.0, 0.25),
+            None,
+            "no onset within the window is not an onset at the seam"
+        );
+        let without = vec![view, profile(json!([]))];
+        let read = voice_reads(&without, &[take]);
+        assert_eq!(read[0].onset_near(2.0, 0.25), None);
+    }
+
+    /// The noise character names what a denoise would target, and the
+    /// flatness decides whether a denoise fits at all: a broadband floor
+    /// is hiss a spectral denoise can lift, a tonal one is a hum a notch
+    /// serves better. A profile that named no noise type answers nothing.
+    #[test]
+    fn the_noise_character_says_what_a_denoise_targets() {
+        let read = |kind: &str, flatness: Option<f64>| VoiceRead {
+            take_wide: crate::voice_read::TakeRead {
+                noise_type: kind.to_owned(),
+                spectral_flatness: flatness,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let hiss = read("hiss", Some(0.6)).noise_character().expect("a read");
+        assert!(hiss.contains("broadband"), "{hiss}");
+        let hum = read("hum", Some(0.1)).noise_character().expect("a read");
+        assert!(hum.contains("tonal"), "{hum}");
+        let bare = read("rumble", None).noise_character().expect("a read");
+        assert_eq!(bare, "rumble");
+        assert_eq!(read("", Some(0.6)).noise_character(), None);
+    }
+
+    /// The brief the critic reads carries the profile's numbers, not only
+    /// its family names: a critic told `noiseFloor 0.80` cannot say the bed
+    /// was too loud, and a critic told `-38 dBFS` can. A family the profile
+    /// never measured stays absent, so "measured quiet" and "never
+    /// measured" are different briefs.
+    #[test]
+    fn the_brief_carries_the_measured_values() {
+        let log = vec![json!({
+            "wholeTake": {
+                "forensic": { "noiseFloorDbfs": -38.0, "snrDb": 9.5,
+                              "noiseType": "hiss", "spectralFlatness": 0.42 },
+                "loudness": { "integratedLufs": -16.5 },
+                "speechRatio": 0.71,
+            },
+            "lines": [
+                { "start": 0.0, "end": 2.0, "speechRate": { "wordsPerMinute": 120.0 } },
+                { "start": 2.0, "end": 4.0, "speechRate": { "wordsPerMinute": 190.0 } },
+            ],
+        })];
+        let brief = signal_brief(&log);
+        let measured = &brief["measured"];
+        assert_eq!(measured["take"]["noiseFloorDbfs"], json!(-38.0));
+        assert_eq!(measured["take"]["noiseType"], json!("hiss"));
+        assert_eq!(measured["take"]["snrDb"], json!(9.5));
+        assert_eq!(measured["take"]["integratedLufs"], json!(-16.5));
+        // The per-line shape is a span, not forty rows.
+        assert_eq!(measured["lines"]["wordsPerMinute"]["low"], json!(120.0));
+        assert_eq!(measured["lines"]["wordsPerMinute"]["high"], json!(190.0));
+        assert_eq!(measured["lines"]["wordsPerMinute"]["lines"], json!(2));
+        // A reading the profile never returned stays out of the brief.
+        assert!(measured["take"].get("spectralCentroidHz").is_none());
+        assert!(measured["lines"].get("pitchSlopeSemitonesPerSec").is_none());
     }
 
     /// The critic's structured fixes are spent, not ignored: a fix that
@@ -3965,6 +6484,328 @@ mod tests {
         );
     }
 
+    /// The critic is handed the run's whole reading, and every name it is
+    /// handed is one `plan_validate` will accept in a decision. The
+    /// profile names a family for what it measured (`pauses`,
+    /// `sentenceType`); the vocabulary names it for the decision it
+    /// serves. A brief that passed the producer's name through would give
+    /// the critic a signal it cannot cite, and the plan it writes would
+    /// fail the gate that checks the log's vocabulary.
+    #[test]
+    fn the_critics_brief_cites_only_names_the_validator_accepts() {
+        let log = vec![json!({
+            "signalConfidence": { "perSignal": [
+                { "signal": "loudness", "confidence": 0.9, "basis": "ebur128" },
+                { "signal": "pauses", "confidence": 0.75, "basis": "silencedetect" },
+                { "signal": "sentenceType", "confidence": 0.8, "basis": "punctuation" },
+                { "signal": "wordConfidence", "confidence": 0.6, "basis": "gate" },
+                { "signal": "formants", "confidence": 0.55, "basis": "narrow band" },
+                { "signal": "forensic", "confidence": 0.8, "basis": "spectral flux" },
+                { "signal": "speaker", "confidence": 0.0, "basis": "not built" },
+            ]},
+        })];
+        let brief = signal_brief(&log);
+        let evidence = &brief["signalEvidence"];
+        let measured: Vec<&str> = evidence["measured"]
+            .as_array()
+            .expect("the digest lists what it measured")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(
+            !measured.contains(&"pauses"),
+            "the producer's own name reached the brief: {measured:?}"
+        );
+        assert!(
+            measured.contains(&"pause"),
+            "it is spelled as the vocabulary spells it"
+        );
+        assert!(measured.contains(&"sentence"));
+        assert!(measured.contains(&"words"));
+        assert!(
+            !measured.contains(&"speaker"),
+            "a family at confidence 0 was measured by nothing and is not offered"
+        );
+        for name in &measured {
+            assert!(
+                crate::tools::signal_vocabulary_has(name),
+                "{name:?} is not a name the decision log may cite"
+            );
+        }
+        // The weak families carry the reason they are weak, and each
+        // measured family names the decision it can inform.
+        assert!(
+            evidence["whyWeak"]["words"]
+                .as_str()
+                .is_some_and(|why| why.contains("gate")),
+            "a weak family carries its basis: {evidence:?}"
+        );
+        assert_eq!(evidence["decides"]["pause"], json!("cut"));
+        assert_eq!(evidence["decides"]["words"], json!("caption"));
+        assert_eq!(
+            evidence["decides"]["forensic"],
+            json!("bgm"),
+            "a family the plan now spends names the decision it informs"
+        );
+    }
+
+    /// The profile says in its own words what it could not measure, and
+    /// nothing carried that to the brief: a family missing from
+    /// `measured` could be missing because the take had none or because
+    /// the tool was absent, and a critic could not tell the two apart. The
+    /// digest now repeats the profile's own account, deduplicated across
+    /// takes, so the gap is stated rather than silently absent.
+    #[test]
+    fn the_brief_says_what_the_profile_could_not_measure() {
+        let log = vec![
+            json!({
+                "degradations": [
+                    "ffmpeg absent: loudness unmeasured",
+                    "silence detect absent: pauses unclassified",
+                ],
+                "signalConfidence": { "perSignal": [
+                    { "signal": "pauses", "confidence": 0.75, "basis": "silencedetect" },
+                ]},
+            }),
+            // A second take repeating one line: the digest keeps it once.
+            json!({
+                "degradations": ["ffmpeg absent: loudness unmeasured"],
+                "signalConfidence": { "perSignal": [
+                    { "signal": "prosody", "confidence": 0.8, "basis": "pitch" },
+                ]},
+            }),
+        ];
+        let brief = signal_brief(&log);
+        let gaps: Vec<&str> = brief["signalEvidence"]["notMeasured"]
+            .as_array()
+            .expect("the digest reports what it could not measure")
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert_eq!(
+            gaps,
+            vec![
+                "ffmpeg absent: loudness unmeasured",
+                "silence detect absent: pauses unclassified",
+            ],
+            "each gap once, in the order the profile gave it"
+        );
+    }
+
+    /// The vocabulary is the contract and the decision map is what the
+    /// critic is told each family is for. A family the program spends but
+    /// the map omits is invisible in `decides`: the critic reads the
+    /// signal's name and never learns which choice it drove. `fillers`
+    /// was exactly that - stripped from every caption, mapped to no
+    /// decision. Every family in the vocabulary must name its decision
+    /// here, except the ones the program deliberately does not spend,
+    /// which are held to a reason instead.
+    #[test]
+    fn every_vocabulary_family_names_the_decision_it_informs() {
+        const NOT_SPENT: &[&str] = &["formants"];
+        let unmapped: Vec<&str> = crate::tools::signal_vocabulary()
+            .iter()
+            .copied()
+            .filter(|family| !NOT_SPENT.contains(family))
+            .filter(|family| decision_for(family).is_none())
+            .collect();
+        assert!(
+            unmapped.is_empty(),
+            "these families are spent by the edit but name no decision, so \
+             the critic is never told what they drove: {unmapped:?}"
+        );
+        // And the mapping is not free-form: a family may only claim one of
+        // the decisions the log's own gate accepts, or the critic would be
+        // pointed at a choice the validator rejects.
+        for family in crate::tools::signal_vocabulary() {
+            let Some(decision) = decision_for(family) else {
+                continue;
+            };
+            assert!(
+                matches!(
+                    decision,
+                    "cut" | "caption" | "graphic" | "bgm" | "transition" | "pacing"
+                ),
+                "{family} claims {decision:?}, which is not a logged decision"
+            );
+        }
+        assert_eq!(decision_for("fillers"), Some("caption"));
+        assert_eq!(decision_for("pause"), Some("cut"));
+        assert_eq!(decision_for("topics"), Some("transition"));
+    }
+
+    /// The family-level guard above is not enough, and this is the test
+    /// that proves it: `prosody` was in READ while the reading inside it
+    /// that decides whether a line is *performed* or *reported* -
+    /// `pitchRangeSemitones` - was parsed by `voice_read` and spent by
+    /// nothing. A family can be named in the program and still have its
+    /// most useful field dropped, so each field the reader parses is held
+    /// here to a consumer or a stated reason.
+    #[test]
+    fn every_reading_inside_a_family_has_a_consumer() {
+        // The fields `voice_read` parses, and the reason any that no
+        // decision spends is left alone. A field with neither a consumer
+        // nor an entry here fails: the profile measured it and the edit
+        // threw it away.
+        const NOT_SPENT: &[(&str, &str)] = &[
+            (
+                "spectral_centroid_hz",
+                "a spectral centroid describes the voice's timbre, not the \
+                 cut: the noise type and flatness already decide the repair",
+            ),
+            (
+                "voicing_rate",
+                "how much of the take is voiced separates speech from noise, \
+                 which `speechRatio` already reports at the take's own level",
+            ),
+            (
+                "dynamic_range_db",
+                "a take-wide crest factor restates what `crest` measures per \
+                 transient, and the duck depth already reads the SNR",
+            ),
+            (
+                "cut_rule",
+                "the profile's own cut-style rule is prose: `cut_style` is \
+                 the reading it explains, and that one sizes every shot",
+            ),
+        ];
+        let source = include_str!("voice_read.rs");
+        let program = include_str!("director_program.rs");
+        let body = program
+            .split("#[cfg(test)]")
+            .next()
+            .expect("the source has a program half");
+        // Every `pub field:` the reader declares, from its struct bodies.
+        let mut fields: Vec<&str> = Vec::new();
+        for line in source.lines() {
+            let line = line.trim();
+            let Some(rest) = line.strip_prefix("pub ") else {
+                continue;
+            };
+            let Some((name, _)) = rest.split_once(':') else {
+                continue;
+            };
+            if name.chars().all(|c| c.is_alphanumeric() || c == '_') && !name.is_empty() {
+                fields.push(name);
+            }
+        }
+        assert!(
+            fields.len() > 30,
+            "the field scan found {} fields, which is too few to be the reader: \
+             the parse has drifted and this test would pass vacuously",
+            fields.len()
+        );
+        // A field is spent when the program names it directly, or when it
+        // is read by a `voice_read` method the program calls: the reader
+        // exists to put a helper between a raw field and the decision, and
+        // `noise_floor_dbfs` reaches the bed through `wants_bed`, which is
+        // a consumer even though the program never spells the field.
+        let helper_reads: Vec<(&str, Vec<&str>)> = source
+            .split("\n    pub fn ")
+            .skip(1)
+            .filter_map(|block| {
+                let name = block.split('(').next()?.trim();
+                let uses: Vec<&str> = fields
+                    .iter()
+                    .copied()
+                    .filter(|field| {
+                        block.contains(&format!(".{field}")) || block.contains(&format!("{field}:"))
+                    })
+                    .collect();
+                Some((name, uses))
+            })
+            .collect();
+        let spent_through_helper = |field: &str| {
+            helper_reads.iter().any(|(helper, uses)| {
+                uses.contains(&field) && body.contains(&format!(".{helper}("))
+            })
+        };
+        let unspent: Vec<&str> = fields
+            .iter()
+            .copied()
+            .filter(|field| !NOT_SPENT.iter().any(|(name, _)| name == field))
+            .filter(|field| {
+                !body.contains(&format!("{field}("))
+                    && !body.contains(&format!(".{field}"))
+                    && !body.contains(&format!("\"{field}\""))
+                    && !spent_through_helper(field)
+            })
+            .collect();
+        assert!(
+            unspent.is_empty(),
+            "these readings are parsed from the profile and spent by no \
+             decision: {unspent:?} - wire each to a choice, or name it above \
+             with the reason the edit is better without it"
+        );
+    }
+
+    /// The brief carries the profile's own numbers, and it reads them from
+    /// the paths the profile writes. A shape that drifts - a key renamed
+    /// on the producer side, a count read off the wrong node - must show
+    /// up here rather than as a critic that quietly had nothing to say.
+    #[test]
+    fn the_brief_carries_the_numbers_at_the_paths_the_profile_writes() {
+        let log = vec![json!({
+            "wholeTake": {
+                "loudness": { "integratedLufs": -16.5 },
+                "forensic": {
+                    "noiseFloorDbfs": -38.0, "snrDb": 9.5, "noiseType": "hiss",
+                    "spectralFlatness": 0.42, "spectralCentroidHz": 2100.0,
+                    "crest": 12.0, "dynamicRangeDb": 18.0, "voicingRate": 0.61,
+                    "fluxOnsetsSec": [1.0, 3.25, 7.5],
+                },
+                "speechRatio": 0.71,
+                "dominantPeriodSec": 0.6,
+                "prosody": [ { "periodSec": 0.6, "strength": 0.7 } ],
+            },
+            "directorHints": {
+                "bgm": { "recommendation": "skip", "reason": "already musical" },
+                "questions": [2, 5],
+            },
+            "speaker": {
+                "turns": [
+                    { "start": 0.0, "end": 4.5, "speaker": 0 },
+                    { "start": 4.5, "end": 9.0, "speaker": 1 },
+                    { "start": 9.0, "end": 12.0, "speaker": 0 },
+                ],
+            },
+            "lines": [
+                { "speechRate": { "wordsPerMinute": 140.0, "syllablesPerSec": 3.9 },
+                  "loudness": { "relativeLu": 1.5 },
+                  "prosody": { "pitchSlopeSemitonesPerSec": 2.0,
+                               "pitchRangeSemitones": 5.0 } },
+            ],
+        })];
+        let take = &signal_brief(&log)["measured"]["take"];
+        assert_eq!(take["noiseFloorDbfs"], json!(-38.0));
+        assert_eq!(take["snrDb"], json!(9.5));
+        assert_eq!(take["noiseType"], json!("hiss"));
+        assert_eq!(take["spectralFlatness"], json!(0.42));
+        assert_eq!(
+            take["fluxOnsets"],
+            json!(3),
+            "the count is the array's length, not a guessed rate"
+        );
+        assert_eq!(
+            take["speakerTurns"],
+            json!(3),
+            "turns are counted off `/speaker/turns`"
+        );
+        assert_eq!(
+            take["questions"],
+            json!(2),
+            "questions are counted off `/directorHints/questions`"
+        );
+        assert_eq!(
+            take["bgmVerdict"],
+            json!("skip"),
+            "the verdict is `recommendation`, not `decision`"
+        );
+        let lines = &signal_brief(&log)["measured"]["lines"];
+        assert_eq!(lines["wordsPerMinute"]["low"], json!(140.0));
+        assert_eq!(lines["pitchSlopeSemitonesPerSec"]["high"], json!(2.0));
+    }
+
     /// A plan built on a take whose delivery was measured names that
     /// delivery in its log, and one built on a take with no rate measured
     /// names none: the log never claims a rhythm the reading did not hear.
@@ -4032,6 +6873,162 @@ mod tests {
             pacing(&unmeasured).is_empty(),
             "a take with no measured rate logs no pacing"
         );
+    }
+
+    /// The profile measures a line's pitch range and rates it against its
+    /// own 6-semitone bar: wide is a line *performed*, narrow is a line
+    /// *reported*. Nothing spent that reading, so a whispered confession
+    /// and a read-out of a phone number were set identically. The caption
+    /// now takes the difference - and a line whose range was never
+    /// measured keeps the house setting rather than being guessed at.
+    #[test]
+    fn a_performed_line_is_set_heavier_than_a_reported_one() {
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
+                enhanced: String::new(),
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        // The weight and the size, for a line whose pitch range was read
+        // as `range`. `None` is a take whose prosody was never measured.
+        let set_for = |range: Option<f64>| {
+            let mut program = auto_edit_program(&source);
+            let ProgramStep::Derived(captions) = program
+                .steps
+                .iter_mut()
+                .find(|step| step.stage().label() == "captions")
+                .expect("the program has a captions stage")
+            else {
+                panic!("the captions stage is derived");
+            };
+            let view = json!({
+                "timeline": { "id": "t1", "clips": [
+                    { "id": "c1", "media": "m1", "start": 0.0, "duration": 4.0,
+                      "sourceStart": 0.0, "speed": 1.0 }
+                ]},
+                "media": [{ "id": "m1",
+                            "path": "/edits/Reel/voiceover/take-000-a.wav" }],
+            });
+            let transcript = json!({
+                "segments": [{
+                    "start": 0.5, "end": 1.5, "text": "hello there",
+                    "words": [{ "start": 0.5, "end": 1.5 }],
+                }],
+            });
+            let mut prosody = json!({});
+            if let Some(range) = range {
+                prosody = json!({ "pitchRangeSemitones": range });
+            }
+            let log = vec![
+                view,
+                json!({
+                    "path": "/edits/Reel/voiceover/take-000-a.wav",
+                    "output": transcript.to_string(),
+                }),
+                json!({
+                    "audio": { "path": "/edits/Reel/voiceover/take-000-a.wav" },
+                    "lines": [{ "start": 0.5, "end": 1.5, "prosody": prosody }],
+                }),
+            ];
+            let call = (captions.next)(log.as_slice()).expect("the captions are placed");
+            let style = &call.arguments["command"]["commands"][0]["style"];
+            (
+                style["fontWeight"].as_f64().expect("a weight"),
+                style["fontSize"].as_f64().expect("a size"),
+            )
+        };
+        let (wide_weight, wide_size) = set_for(Some(9.0));
+        let (narrow_weight, narrow_size) = set_for(Some(2.0));
+        assert!(
+            wide_weight > narrow_weight,
+            "a performed line should be set heavier: {wide_weight} vs {narrow_weight}"
+        );
+        assert!(
+            wide_size > narrow_size,
+            "a performed line should be set larger: {wide_size} vs {narrow_size}"
+        );
+        // Never measured: the house setting, and no claim either way.
+        let (none_weight, none_size) = set_for(None);
+        assert_eq!(
+            none_weight, narrow_weight,
+            "an unmeasured range leaves the weight where it was"
+        );
+        assert_eq!(
+            none_size, narrow_size,
+            "an unmeasured range leaves the size where it was"
+        );
+    }
+
+    /// The mix is a logged decision, not a silent gain: the entry names
+    /// `loudness`, which is the family the profile measured it in, and a
+    /// take already on target logs nothing.
+    #[test]
+    fn the_mix_is_logged_only_where_the_loudness_was_measured() {
+        let takes = vec![TakePaths {
+            take: "/t/a.wav".to_owned(),
+            enhanced: String::new(),
+        }];
+        let view = json!({
+            "settings": { "width": 1920.0, "height": 1080.0 },
+            "timeline": { "clips": [
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 3.0,
+                  "sourceStart": 0.0, "speed": 1.0 },
+            ]},
+            "media": [{ "id": "m1", "path": "/t/a.wav" }],
+        });
+        let source = || AutoEditProgramSource {
+            project: "/t".to_owned(),
+            takes: takes.clone(),
+            placements: Vec::new(),
+            export: "/t/out.mp4".to_owned(),
+            sheet: "sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let mix = |lufs: Option<f64>| {
+            let read = match lufs {
+                Some(lufs) => json!({
+                    "audio": { "path": "/t/a.wav" },
+                    "wholeTake": { "loudness": { "integratedLufs": lufs } },
+                }),
+                None => json!({ "audio": { "path": "/t/a.wav" } }),
+            };
+            let log = vec![view.clone(), read];
+            let plan = auto_plan(&log, &takes, &source()).expect("a plan from the read");
+            plan["signalLog"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|row| row["decision"] == json!("pacing"))
+                .filter(|row| {
+                    row["signals"]
+                        .as_array()
+                        .is_some_and(|signals| signals.contains(&json!("loudness")))
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        let quiet = mix(Some(-22.5));
+        assert_eq!(quiet.len(), 1, "a quiet take logs its gain");
+        let note = quiet[0]["note"].as_str().expect("the entry says why");
+        assert!(note.contains("-22.5") && note.contains("8.5"), "{note}");
+        assert!(
+            quiet[0]["signals"]
+                .as_array()
+                .expect("signals")
+                .iter()
+                .filter_map(Value::as_str)
+                .all(crate::tools::signal_vocabulary_has)
+        );
+        assert!(
+            mix(Some(-14.2)).is_empty(),
+            "a take on target takes no gain and logs none"
+        );
+        assert!(mix(None).is_empty(), "an unmeasured take logs no level");
     }
 
     /// The accents stage steps over a peak the timeline does not play
@@ -4306,6 +7303,297 @@ mod tests {
         assert!(matches!(parsed, concat_api::Request::EditApply { .. }));
     }
 
+    /// The take's measured integrated loudness is spent, not just read:
+    /// the profile reports LUFS, the verify stage gates on the platform
+    /// target, and until this the program set no level at all, so the
+    /// gate passed or failed on whatever the recording happened to be.
+    #[test]
+    fn the_timeline_sets_the_voice_on_the_platform_loudness_target() {
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
+                enhanced: String::new(),
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(timeline) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "timeline")
+            .expect("the program has a timeline stage")
+        else {
+            panic!("the timeline stage is derived");
+        };
+        let view = json!({
+            "project": { "name": "Reel" },
+            "settings": { "width": 1920.0, "height": 1080.0 },
+            "timeline": { "id": "t1", "clips": [{
+                "id": "c1", "media": "m1", "start": 0.0, "duration": 6.0,
+                "sourceStart": 0.0, "speed": 1.0,
+            }]},
+            "media": [{
+                "id": "m1",
+                "path": "/edits/Reel/voiceover/take-000-a.wav",
+            }],
+        });
+        let mut log = vec![
+            view.clone(),
+            json!({
+                "audio": { "path": "/edits/Reel/voiceover/take-000-a.wav" },
+                "wholeTake": { "loudness": { "integratedLufs": -22.5 } },
+                "pauses": [],
+            }),
+        ];
+        // The tighten and the read draw first, then the grade.
+        assert_eq!(
+            (timeline.next)(log.as_slice()).map(|call| call.tool),
+            Some("timeline_read".to_owned())
+        );
+        log.push(view.clone());
+        let grade = (timeline.next)(log.as_slice()).expect("the look is laid over the cut");
+        assert_eq!(grade.tool, "edit_apply");
+        // The grade's reply is another view: the mix follows it, and the
+        // gain is the measured gap to streaming's -14 LUFS.
+        log.push(view.clone());
+        let mix = (timeline.next)(log.as_slice()).expect("the voice is set on target");
+        assert_eq!(mix.tool, "clip_audio_levels_db");
+        assert_eq!(mix.arguments["clipId"], "c1");
+        assert_eq!(mix.arguments["baseDb"], 8.5);
+        // The mix's own reply ends the stage: one level, never a stack of
+        // gains on the same clip.
+        log.push(view);
+        assert_eq!((timeline.next)(log.as_slice()), None);
+    }
+
+    /// The mix is only made from a measured loudness: a take the profile
+    /// never read takes no gain, because an unmeasured take is not a quiet
+    /// one.
+    #[test]
+    fn an_unmeasured_take_takes_no_loudness_gain() {
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
+                enhanced: String::new(),
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let mut program = auto_edit_program(&source);
+        let ProgramStep::Derived(timeline) = program
+            .steps
+            .iter_mut()
+            .find(|step| step.stage().label() == "timeline")
+            .expect("the program has a timeline stage")
+        else {
+            panic!("the timeline stage is derived");
+        };
+        let view = json!({
+            "project": { "name": "Reel" },
+            "settings": { "width": 1920.0, "height": 1080.0 },
+            "timeline": { "id": "t1", "clips": [{
+                "id": "c1", "media": "m1", "start": 0.0, "duration": 6.0,
+                "sourceStart": 0.0, "speed": 1.0,
+            }]},
+            "media": [{
+                "id": "m1",
+                "path": "/edits/Reel/voiceover/take-000-a.wav",
+            }],
+        });
+        let mut log = vec![
+            view.clone(),
+            json!({
+                "audio": { "path": "/edits/Reel/voiceover/take-000-a.wav" },
+                "wholeTake": {},
+                "pauses": [],
+            }),
+        ];
+        (timeline.next)(log.as_slice());
+        log.push(view.clone());
+        (timeline.next)(log.as_slice());
+        log.push(view);
+        assert_eq!(
+            (timeline.next)(log.as_slice()),
+            None,
+            "no measurement, no gain"
+        );
+    }
+
+    /// The bed is gated on the measured floor, not only the music check:
+    /// a take whose noise floor says it is already wet gets no bed
+    /// stacked under it. The signal log has claimed this gate since it
+    /// was written; until now the stage never read the floor, so the log
+    /// asserted evidence no decision used.
+    #[test]
+    fn a_wet_take_is_shopped_no_bed() {
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
+                enhanced: "/edits/Reel/voiceover/enhanced-000-a.wav".to_owned(),
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let bed_for = |floor_dbfs: f64| {
+            let mut program = auto_edit_program(&source);
+            let ProgramStep::Derived(music) = program
+                .steps
+                .iter_mut()
+                .find(|step| step.stage().label() == "music")
+                .expect("the program has a music stage")
+            else {
+                panic!("the music stage is derived");
+            };
+            let log = vec![json!({
+                "audio": { "path": "/edits/Reel/voiceover/take-000-a.wav" },
+                "wholeTake": {
+                    "forensic": { "noiseFloorDbfs": floor_dbfs },
+                    "speechRatio": 0.8,
+                },
+            })];
+            (music.next)(log.as_slice()).map(|call| call.tool)
+        };
+        assert_eq!(
+            bed_for(-60.0),
+            Some("bgm_status".to_owned()),
+            "a dry take is shopped a bed"
+        );
+        assert_eq!(bed_for(-30.0), None, "a wet take is not");
+    }
+
+    /// The profile's own BGM verdict outranks any single field this
+    /// program can read: it weighed the floor, the SNR and the spectral
+    /// flatness together. A `skip` or a `duck_only` means no bed, even
+    /// when the floor alone would have said the take was dry.
+    #[test]
+    fn the_profile_s_own_bed_verdict_is_honoured() {
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
+                enhanced: String::new(),
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let bed_for = |decision: &str| {
+            let mut program = auto_edit_program(&source);
+            let ProgramStep::Derived(music) = program
+                .steps
+                .iter_mut()
+                .find(|step| step.stage().label() == "music")
+                .expect("the program has a music stage")
+            else {
+                panic!("the music stage is derived");
+            };
+            // A floor dry enough to want a bed on its own, so only the
+            // verdict can stop one. The verdict is `recommendation` in
+            // the profile's own JSON: a fixture written against
+            // `decision` passed while the reader looked for a key the
+            // producer never writes.
+            let log = vec![json!({
+                "audio": { "path": "/edits/Reel/voiceover/take-000-a.wav" },
+                "wholeTake": { "forensic": { "noiseFloorDbfs": -60.0 } },
+                "directorHints": {
+                    "bgm": { "recommendation": decision, "reason": "measured" },
+                },
+            })];
+            (music.next)(log.as_slice()).map(|call| call.tool)
+        };
+        assert_eq!(
+            bed_for("add"),
+            Some("bgm_status".to_owned()),
+            "the profile that wants a bed gets one"
+        );
+        assert_eq!(
+            bed_for("skip"),
+            None,
+            "the profile that says skip is obeyed"
+        );
+        assert_eq!(
+            bed_for("duck_only"),
+            None,
+            "a take needing a clean gets no bed stacked on it"
+        );
+    }
+
+    /// A hissy take still gets its bed, but a quieter one: the SNR the
+    /// forensic ear measured deepens the duck by the shortfall against the
+    /// profile's own 12 dB floor. Until this the reading was parsed into
+    /// `TakeRead` and spent by nothing.
+    #[test]
+    fn a_hissy_take_ducks_its_bed_deeper() {
+        let takes = vec![TakePaths {
+            take: "/t/a.wav".to_owned(),
+            enhanced: String::new(),
+        }];
+        let transcript = json!({
+            "segments": [
+                { "start": 0.0, "end": 3.0, "text": "we found the wreck" },
+                { "start": 4.0, "end": 7.0, "text": "it was not empty" },
+            ],
+        });
+        let view = json!({
+            "timeline": { "clips": [
+                { "id": "c1", "media": "m1", "start": 0.0, "duration": 8.0,
+                  "sourceStart": 0.0, "speed": 1.0 },
+            ]},
+            "media": [{ "id": "m1", "path": "/t/a.wav" }],
+        });
+        let duck_for = |snr: Option<f64>| {
+            let mut whole = json!({ "forensic": { "noiseFloorDbfs": -60.0 } });
+            if let Some(snr) = snr {
+                whole["forensic"]["snrDb"] = json!(snr);
+            }
+            let log = vec![
+                json!({ "path": "/t/a.wav", "output": transcript.to_string() }),
+                view.clone(),
+                json!({ "lines": [
+                    emotion_row(0.0, 3.0, "surprise", 0.9, "hook", "hot", ""),
+                    emotion_row(4.0, 7.0, "fear", 0.9, "reveal", "cold", ""),
+                ]}),
+                json!({ "audio": { "path": "/t/a.wav" }, "wholeTake": whole }),
+            ];
+            let plan = auto_plan(
+                &log,
+                &takes,
+                &AutoEditProgramSource {
+                    project: "/t".to_owned(),
+                    takes: takes.clone(),
+                    placements: Vec::new(),
+                    export: "/t/out.mp4".to_owned(),
+                    sheet: "sheet.png".to_owned(),
+                    stock_provider: "pexels".to_owned(),
+                },
+            )
+            .expect("a plan from the read");
+            plan.pointer("/audio/bgm/duckDb").and_then(Value::as_f64)
+        };
+        // The read's own duck, from the fixture's dominant line.
+        let read_duck = -14.0;
+        // A clean take leaves the read's own duck alone.
+        assert_eq!(duck_for(Some(20.0)), Some(read_duck));
+        // 6 dB of SNR is 6 dB short of the profile's 12 dB floor.
+        assert_eq!(duck_for(Some(6.0)), Some(read_duck - 6.0));
+        // The shortfall is capped at 6 dB so a near-silent take cannot
+        // bury the bed entirely: 0 dB is 12 dB short and lands on the cap.
+        assert_eq!(duck_for(Some(0.0)), Some(read_duck - 6.0));
+        // An unmeasured SNR guesses nothing.
+        assert_eq!(duck_for(None), Some(read_duck));
+    }
+
     /// The music stage reads only its own replies: the captions stage
     /// leaves a timeline view behind, and reading it as the stage's own
     /// made the run duck a bed that was never shopped - the bed was
@@ -4448,6 +7736,76 @@ mod tests {
             (captions.next)(log.as_slice()),
             None,
             "the captions are issued once"
+        );
+    }
+
+    /// A line the speaker lifted above the take's own level is set
+    /// heavier than a flat one: the profile measures `relativeLufs` per
+    /// line, and until this the reading was named in the pacing entry and
+    /// spent by nothing.
+    #[test]
+    fn a_lifted_line_takes_the_caption_weight() {
+        let source = AutoEditProgramSource {
+            project: "/edits/Reel".to_owned(),
+            takes: vec![TakePaths {
+                take: "/edits/Reel/voiceover/take-000-a.wav".to_owned(),
+                enhanced: String::new(),
+            }],
+            placements: Vec::new(),
+            export: "/edits/Reel/export/auto-edit.mp4".to_owned(),
+            sheet: "auto-edit-sheet.png".to_owned(),
+            stock_provider: "pexels".to_owned(),
+        };
+        let weight_for = |relative_lu: f64| {
+            let mut program = auto_edit_program(&source);
+            let ProgramStep::Derived(captions) = program
+                .steps
+                .iter_mut()
+                .find(|step| step.stage().label() == "captions")
+                .expect("the program has a captions stage")
+            else {
+                panic!("the captions stage is derived");
+            };
+            let view = json!({
+                "timeline": { "id": "t1", "clips": [
+                    { "id": "c1", "media": "m1", "start": 0.0, "duration": 4.0,
+                      "sourceStart": 0.0, "speed": 1.0 }
+                ]},
+                "media": [{ "id": "m1",
+                            "path": "/edits/Reel/voiceover/take-000-a.wav" }],
+            });
+            let transcript = json!({
+                "segments": [{
+                    "start": 0.5, "end": 1.5, "text": "hello there",
+                    "words": [{ "start": 0.5, "end": 1.5 }],
+                }],
+            });
+            let log = vec![
+                view,
+                json!({
+                    "path": "/edits/Reel/voiceover/take-000-a.wav",
+                    "output": transcript.to_string(),
+                }),
+                json!({
+                    "audio": { "path": "/edits/Reel/voiceover/take-000-a.wav" },
+                    "lines": [{ "start": 0.5, "end": 1.5,
+                                "loudness": { "relativeLu": relative_lu } }],
+                }),
+            ];
+            let call = (captions.next)(log.as_slice()).expect("the captions are placed");
+            call.arguments["command"]["commands"][0]["style"]["fontWeight"]
+                .as_f64()
+                .expect("the caption carries a weight")
+        };
+        assert_eq!(
+            weight_for(5.0),
+            800.0,
+            "a line lifted 5 LU above the take is set heavier"
+        );
+        assert_eq!(
+            weight_for(0.5),
+            600.0,
+            "a line level with the take keeps the house weight"
         );
     }
 
@@ -5005,6 +8363,9 @@ mod tests {
             "act": act, "duckDb": -14.0, "sfxType": sfx,
             "colourTemp": { "temperature": temperature },
             "bgmWords": ["warm cinematic strings", "cinematic"],
+            // The engine's own rating: the emotion read answers one per
+            // line, and the signal log rates an `emotion` entry by it.
+            "confidence": 0.85,
         })
     }
 
@@ -5107,6 +8468,9 @@ mod tests {
             words: "the wreck".to_owned(),
             act: "reveal".to_owned(),
             pace: pace.to_owned(),
+            earned_by: "emotion",
+            chapter: false,
+            slot: None,
         };
         assert!(card("punchy").hold() < card("").hold());
         assert!(card("slow").hold() > card("").hold());
@@ -5131,6 +8495,7 @@ mod tests {
                 bgm_words: vec!["warm".to_owned()],
                 text: String::new(),
                 pace: String::new(),
+                confidence: None,
             },
             EmotionLine {
                 take: "/t/a.wav".to_owned(),
@@ -5145,6 +8510,7 @@ mod tests {
                 bgm_words: Vec::new(),
                 text: String::new(),
                 pace: String::new(),
+                confidence: None,
             },
         ];
         let line = dominant(&lines).expect("a dominant line");
@@ -5192,6 +8558,7 @@ mod tests {
             bgm_words: Vec::new(),
             text: String::new(),
             pace: String::new(),
+            confidence: None,
         };
         assert_eq!(
             sfx_queries_for_line(Some(&stinger), "surprise"),
@@ -5228,6 +8595,7 @@ mod tests {
             bgm_words: Vec::new(),
             text: String::new(),
             pace: String::new(),
+            confidence: None,
         };
         let read = vec![line(0.0, 2.0, 0.9, "tension")];
         assert!(

@@ -82,6 +82,10 @@ check/
 /sysroot/
 
 
+# The apt packages setup-build-env.sh unpacks and the cmake/clang tree it
+# builds them into: machine-built, fetched per checkout, never committed.
+/.debs/
+/.deps/
 # The local build environment: the extracts scripts/setup-build-env.sh
 # fetches, and the Geneva sidecar deps.lock pulls in. Never committed.
 /geneva/

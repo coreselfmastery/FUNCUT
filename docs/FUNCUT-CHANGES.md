@@ -2503,3 +2503,134 @@ off would make the button refuse every run it starts.
 the file and line for every claim and the two items the list got wrong
 (`motion_inspect`/`motion_frame` were never excluded; the model-key
 preflight already existed).
+
+## 56. The signals that were read and never spent, and the two that were never read at all
+
+The audit before this one counted families, not decisions: every family
+had a reader somewhere, so the shelf looked finished. Reading the
+readers against the producer found the other half of the problem. Two
+paths asked for keys `voice_signals.py` does not write, so their signals
+were empty on **every** real take while their code looked exercised:
+
+- `bgm_decision` read `/bgm/decision`; the profile writes
+  `bgm.recommendation`. The `skip` and `duck_only` rules could therefore
+  never fire, and a take that already carried music still got a bed
+  stacked on it - the one thing the forensic reading exists to prevent.
+- `speaker_changes` read the `speaker.changes` array as bare numbers. It
+  holds `{t, from, to}` objects, so the reading was always empty and the
+  seam the profile calls a scene change never opened.
+
+Both were masked by tests, and one of those tests is the reason to trust
+the shape check more than the count: the bed test's fixture wrote
+`bgm.decision`, so it passed against the bug. The fixture now uses the
+producer's own key, and `the_profile_s_own_shape_is_what_is_read` builds
+a reply from the real shape (`wholeTake`, `directorHints.bgm`,
+`speaker.changes` as objects) so a rename on the producer side fails in
+the suite instead of in a critic that quietly had nothing to say.
+
+The families that were measured and spent by nothing now drive
+decisions:
+
+| Signal | What it decides now |
+| --- | --- |
+| `speechRate.wordsPerMinute` / `syllablesPerSec` | the caption hold, taking the longer of the two estimates: long words read slower than the word count says |
+| `prosody.pitchSlopeSemitonesPerSec` | the delivery's direction: a line whose pitch rose hands its build to the cut after it |
+| `forensic.fluxOnsetsSec` | a seam lands on a transient the take actually has |
+| `speaker.turns` | the seam that falls on a turn edge |
+| `forensic.noiseType` / `spectralFlatness` | what a denoise targets, and whether one fits at all |
+| `sentence.type` + `prosody.finalRise` | an ask is separated from a rhetorical line, and its answer becomes the next visual |
+
+**The brief carries numbers, not family names.** `craft_critique` used to
+receive the arc and the emphasis words; a critic told "noiseFloor 0.80"
+can say the bed was chosen well, but only a critic told "-38 dBFS, hiss"
+can say it should have been quieter. The brief now has a `measured`
+block: the take-wide forensic values, the loudness, the rhythm layers,
+the speech ratio, the speaker-turn and question counts, the bed's own
+verdict, and per-line spans (`wpm 120-190`, `pitch slope -2.1..+1.8
+st/s`) rather than forty rows. Every value is one the profile returned;
+an unmeasured family stays absent rather than being filled with a
+default, so the critic can tell "measured quiet" from "never measured".
+The strong-VLM prompt cap is raised from 1200 to 4000 characters so that
+block survives, and the prompt says to cite the numbers and to leave an
+unmeasured family alone.
+
+**The Forge hand-off says how to spend it.** The AUTO EDIT director runs
+its own reads, so it never received a pre-built brief; what it lacked was
+the instruction. Its prompt now names the four blocks worth reading
+(`decisionPolicy`, `signalConfidence.perSignal`, `directorHints`,
+`wholeTake`) and pairs each family with the decision the policy gives it,
+so a signal lands on a choice instead of a note. A family at confidence 0
+is named as unmeasured and never cited.
+
+Three tests pin the shape: `the_brief_carries_the_numbers_at_the_paths_the_profile_writes`
+(reads the counts off `/speaker/turns`, `/directorHints/questions` and
+`bgm.recommendation`), `the_profile_s_own_shape_is_what_is_read` in
+`voice_read.rs`, and the extended
+`the_critics_brief_cites_only_names_the_validator_accepts`, which now
+also asserts that `decides` names `bgm` for `forensic`. The suite went
+from 130 to 137 passing.
+
+## 57. The family-level guard was not enough: a field can still go unspent
+
+Section 56 fixed the families the program named but never spent. It did
+not fix the layer below them, and the next audit found the gap: a family
+can be listed as read, be named in the source, and still have its most
+useful field dropped on the floor. `prosody` was in the read list, and
+`prosody.pitchSlopeSemitonesPerSec` was being spent - but the profile's
+other prosody reading, `pitchRangeSemitones`, was parsed into
+`LineRead.pitch_range` and spent by nothing at all. `VoiceRead::performs`
+was written to answer it, documented the profile's own 6-semitone bar,
+and had no caller. So a whispered confession and a read-out of a phone
+number were set with identical type.
+
+**The pitch range now sets the caption.** A line whose range clears the
+profile's 6-semitone bar is *performed*; below it, the line is
+*reported*. A performed line takes weight 700 and a slightly larger size,
+on the read's own theory - the delivery is carrying the feeling, so the
+type may too. A reported line keeps the house setting even where its
+emotion is intense, because there the words are doing the work. A line
+whose range was never measured is `None`, which leaves the setting alone
+rather than guessing, and a gated line (most of its words below the
+confidence floor) stays plain so a misheard word never becomes the
+loudest claim on screen. The caption entry logs `prosody.range`, so the
+log and the type agree about why the line is set the way it is.
+
+**The profile's own account of its gaps now reaches the brief.**
+`degradations` - the producer's list of what it could not measure, in its
+words: `ffmpeg absent: loudness unmeasured`, `silencedetect absent:
+pauses unclassified` - was parsed into `VoiceRead.degradations` and read
+by nothing. A family missing from `measured` could be missing because the
+take had none or because the tool was absent, and no consumer could tell
+the two apart. The digest now carries `notMeasured`, deduplicated across
+takes and in the profile's own order, so the gap is stated rather than
+silently absent.
+
+**A field-level guard, because the family-level one cannot see this.**
+`every_reading_inside_a_family_has_a_consumer` scans every `pub field:`
+the reader declares and requires each to be named by the program, read
+through a `voice_read` helper the program calls, or listed with the
+reason the edit is better without it. It found five more on its first
+run (`noise_floor_dbfs`, `noise_type`, `rhythm_layers`, `period_sec`,
+`unsure_words`), all genuinely spent through helpers - `wants_bed`,
+`noise_character`, `pulse_strength`, `unsure_between` - so the guard now
+follows the helper to its caller. The four readings that remain unspent
+are named with a reason: `spectral_centroid_hz`, `voicing_rate`,
+`dynamic_range_db` and `cut_rule`, each restating something another
+reading already decides. The scan asserts it found more than thirty
+fields, so a drift in the parse fails the test instead of passing it
+vacuously.
+
+The suite went from 137 to 140 passing: `a_performed_line_is_set_heavier_than_a_reported_one`
+pins wide, narrow and never-measured; `the_brief_says_what_the_profile_could_not_measure`
+pins the deduplicated gap list; and the guard above fails when a new
+field is added to the reader and spent by nothing.
+
+**`fillers` named no decision.** The vocabulary and the decision map were
+two lists kept in step by hand, and they had drifted: `fillers` is
+stripped from every caption the plan sets, yet `decision_for` had no
+entry for it, so `decides` never told the critic what it drove. It maps
+to `caption` now, and
+`every_vocabulary_family_names_the_decision_it_informs` holds the two
+lists together: every family the vocabulary carries must name a decision
+the log's own gate accepts, or be listed as deliberately unspent with a
+reason. The suite is 141.

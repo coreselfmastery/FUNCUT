@@ -1390,6 +1390,8 @@ Score each axis 0-10 (0 unwatchable, 5 generic, 8 good, 10 excellent):
 hook, story, rhythm, shotChoice, design, sound.
 Judge only what the frames and the measurements support. The sound axis is judged from the measured loudness facts in MEASURED FACTS (LUFS, true peak, silence), never guessed from the picture. Be harsh.
 
+The brief may also carry `measured` - the voice_signals profile's own numbers for the take (noise floor and SNR in dBFS, noise type, spectral flatness, integrated LUFS, speech ratio, tempo, and the per-line spans of words-per-minute, pitch slope and pitch range) - and `signalEvidence`, which rates each family the profile measured and names the decision it informs. Cite these numbers when a fix turns on them: "the bed sits under a floor measured at -38 dBFS" is a fix, "the audio feels noisy" is not. A family the brief leaves out was never measured - do not invent a value for it, and do not penalise the cut for a reading the profile did not take.
+
 Then name the concrete FIXES, not vague advice: up to 6 patch operations the editor can apply exactly as written. Each fix is {{"where": the element or frames ("the chart in frames 6-8", "the caption on frame 3"), "problem": what is wrong, seen in the frames ("clipped off the right edge", "enters 400ms too early", "unreadable against the background"), "change": the exact change with its number and unit ("shift x by -120px", "start 0.4s later", "scale to 0.9", "ease with spring-pop"), "op": one of retime (timing), shift (position), resize (size/scale), restyle (easing, colour, look) or replace (needs new content)}}. A fix without a number and a unit in its change is advice, not a fix - do not give advice. A fix may also carry "patch": the same change as exact JSON the applier reads as written - {{"start": 1.9}} or {{"shift": 0.4}} for a retime, {{"dx": -180, "dy": 0}} for a shift, {{"factor": 1.2}} for a resize, {{"curve": "spring-pop"}} for a restyle. Carry a patch ONLY when every number in it comes from the measured facts above, never from a guess at the picture: a patch is applied exactly as written, so a guessed number in one is worse than prose. Every fix also carries "confidence": a number 0 to 1 saying how sure you are it helps - 0.8 and above only when the frames or the measurements show the problem plainly, 0.4 and below for a read of taste. An agent orders its work by these numbers, so say them honestly.
 
 Reply with a JSON object containing integer "hook","story","rhythm","shotChoice","design","sound" (0-10), a short "verdict", up to 4 "notes" citing frame numbers, up to 4 "revisions" naming concrete editing tools, and up to 6 "fixes" as the patch operations above. No markdown."""
@@ -1705,7 +1707,7 @@ def critique(spec):
 
     if strong:
         prompt = STRONG_VLM_PROMPT.format(
-            brief=json.dumps(brief, ensure_ascii=False)[:1200],
+            brief=json.dumps(brief, ensure_ascii=False)[:4000],
             facts=json.dumps(facts, ensure_ascii=False)[:3000],
         )
         try:

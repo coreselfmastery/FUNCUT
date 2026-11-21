@@ -189,6 +189,9 @@
               "minLength": 1,
               "type": "string"
             },
+            "signalEvidence": {
+              "type": "object"
+            },
             "thesis": {
               "minLength": 1,
               "type": "string"
@@ -399,13 +402,19 @@
                 "minimum": 0,
                 "type": "number"
               },
+              "confidence": {
+                "maximum": 1,
+                "minimum": 0,
+                "type": "number"
+              },
               "decision": {
                 "enum": [
                   "cut",
                   "caption",
                   "graphic",
                   "bgm",
-                  "transition"
+                  "transition",
+                  "pacing"
                 ],
                 "type": "string"
               },

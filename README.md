@@ -10,7 +10,7 @@
 > Linux laptops (4-6 GB of RAM): every cache sizes itself to the machine it
 > is on, and `./install-linux.sh` puts it on one in a single command. On top
 > of the editor it ships an agent stack: a built-in MCP server with **113
-> tools** (103 served to a director by default, the whole catalogue behind
+> tools** (105 served to a director by default, the whole catalogue behind
 > `CONCAT_MCP_ALLOW=all`), the agent's senses (scene cuts, beat grids, dead air,
 > transcription, TTS, loudness), perception (contact-sheet images a model
 > can actually see), an emotion-driven edit pipeline with a validated brand

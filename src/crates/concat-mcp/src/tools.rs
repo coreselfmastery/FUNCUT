@@ -7177,10 +7177,13 @@ mod tests {
                 "the active list names {name}, which catalogue() does not carry"
             );
         }
-        // Exactly the nine the policy names are left off - no more, so a
+        // Exactly the eight the policy names are left off - no more, so a
         // specialist tool cannot sneak onto the default surface, and no
         // fewer, so the director's documented loop never meets a
-        // refusal it did not earn.
+        // refusal it did not earn. `track_subject` is served: a subject
+        // path a vertical reframe can follow is a creative tool, and
+        // the director's B-roll doctrine (fit the frame) is the weaker
+        // without it.
         let mut left_off: Vec<&str> = names
             .iter()
             .filter(|name| !allow.contains(name))
@@ -7198,9 +7201,8 @@ mod tests {
                 "project_close",
                 "scene_analysis",
                 "scene_timeline",
-                "track_subject",
             ],
-            "the active allowlist leaves out exactly the nine the policy names"
+            "the active allowlist leaves out exactly the eight the policy names"
         );
         assert_eq!(
             allow.len() + left_off.len(),

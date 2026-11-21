@@ -232,6 +232,7 @@ pub(crate) const DIRECTOR_ALLOWLIST: &[&str] = &[
     "timeline_background",
     "timeline_linkage",
     "track_add",
+    "track_subject",
     "keyframe_set",
     "keyframe_clear",
     "effect_layer_add",

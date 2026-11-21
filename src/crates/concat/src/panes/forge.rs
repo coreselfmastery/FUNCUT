@@ -1240,6 +1240,10 @@ fn read_the_run(mut child: Child, kill: Arc<AtomicBool>) {
                 }
             }
         };
+        // A parent can exit while a detached descendant still owns one of
+        // its pipes. Reap any remaining members of this private process
+        // group before joining readers, even on an otherwise normal exit.
+        terminate_forge_process(&mut child);
         let _ = stdout_reader.join();
         let _ = stderr_reader.join();
         let code = status.and_then(|status| status.code()).unwrap_or(-1);
@@ -2220,6 +2224,10 @@ fn read_the_director_run(mut child: Child, kill: Arc<AtomicBool>) {
                 }
             }
         };
+        // A parent can exit while a detached descendant still owns one of
+        // its pipes. Reap any remaining members of this private process
+        // group before joining readers, even on an otherwise normal exit.
+        terminate_forge_process(&mut child);
         let _ = stdout_reader.join();
         let _ = stderr_reader.join();
         let code = status.and_then(|status| status.code()).unwrap_or(-1);

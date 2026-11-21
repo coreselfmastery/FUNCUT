@@ -113,10 +113,17 @@ def _score_emphasis_type(spec):
     per_line = []
     if rust and rust.get("prosody"):
         emphasis_source = "voice-signals (energy peaks + pitch accents)"
-        for pe in (rust["prosody"].get("lines") or []):
-            per_line.append({"line": pe.get("line"),
+        # The ear's rows are Vec<Option<LineProsody>>: an untimed or
+        # too-short line serialises as JSON null, and a null row is a
+        # line the ear could not read - stepped over, not crashed on.
+        # The row's own fields are camelCase (pitchMeanHz); 'line' and
+        # 'pitch' are keys it never wrote.
+        for i, pe in enumerate(rust["prosody"].get("lines") or []):
+            if not isinstance(pe, dict):
+                continue
+            per_line.append({"line": i,
                              "emphasisWords": pe.get("emphasisWords") or [],
-                             "pitch": pe.get("pitch")})
+                             "pitch": pe.get("pitchMeanHz")})
     if not per_line:
         emphasis_source = ("python (emphasis grammar: contrastive markers, "
                            "intensifiers, list heads, new-information deicts)")
@@ -224,8 +231,13 @@ def _detect_speaking_style(spec):
     evidence = {"wpm": round(wpm, 1) if wpm else None,
                 "pausesPerMinute": round(pause_rate, 1) if pause_rate is not None else None,
                 "f0MeanHz": round(f0_mean, 1) if f0_mean else None,
-                "f0RangeSemitones": round(12 * math.log2(f0_range / f0_mean), 1)
-                if f0_range and f0_mean else None,
+                # The range is the octave SPAN of the voiced track
+                # (12*log2(max/min)), never the Hz spread over the mean:
+                # a voice spanning 100-200 Hz holds twelve semitones,
+                # and the spread-over-mean arithmetic answered -6.
+                "f0RangeSemitones": round(12 * math.log2(
+                    max(f0s) / min(f0s)), 1)
+                if f0s and min(f0s) > 0 else None,
                 "dynamicsDb": round(dynamics, 1) if dynamics is not None else None}
 
     # The classification: each style is a named bundle of evidence.
@@ -447,6 +459,48 @@ _MISSING_ARTICLES = re.compile(
     r"^(She is teacher|He is engineer|I go to school by bus now|This is book)\b", re.I)
 
 
+
+
+def _rust_formants(rust):
+    """The formant reading the Rust forensic ear measured, aggregated
+    from its per-line `formantsHz` rows (each F1-F4 in Hz, the row null
+    for a line the ear could not read): the mean and the spread of each
+    formant across the lines that answered. `None` when the ear or its
+    formants are absent - the old read looked for a top-level
+    `forensic.formants` key the ear never wrote, so the formant path
+    was dead code and every reading fell to the band proxy."""
+    rows = []
+    for line in ((rust or {}).get("forensic") or {}).get("lines") or []:
+        if not isinstance(line, dict):
+            continue
+        row = line.get("formantsHz")
+        # One row per line: the F1-F4 list itself, not its members.
+        if isinstance(row, list) and row:
+            rows.append(row)
+    if not rows:
+        return None
+
+    def values(index):
+        picked = [float(r[index]) for r in rows
+                  if len(r) > index and r[index] and float(r[index]) > 0.0]
+        return picked
+
+    def mean_at(index):
+        picked = values(index)
+        return round(sum(picked) / len(picked), 1) if picked else None
+
+    def spread_at(index):
+        picked = values(index)
+        return round(max(picked) - min(picked), 1) if picked else None
+
+    reading = {
+        "f1MeanHz": mean_at(0), "f2MeanHz": mean_at(1),
+        "f3MeanHz": mean_at(2), "f4MeanHz": mean_at(3),
+        "f1SpreadHz": spread_at(0), "f2SpreadHz": spread_at(1),
+    }
+    return reading if reading["f1MeanHz"] is not None else None
+
+
 def _detect_accent(spec):
     lines = _vs._collect_lines(spec)
     if not lines:
@@ -490,7 +544,7 @@ def _detect_accent(spec):
     # 4. Vowel dispersion needs the formant ear; used when built.
     rust, rust_note = _rust_reading(spec) if audio else (None, None)
     vowel_note = None
-    if rust and rust.get("forensic") and rust["forensic"].get("formants"):
+    if _rust_formants(rust):
         vowel_note = "voice-signals formants available for vowel-dispersion cross-check"
         cues.append(vowel_note)
 
@@ -529,9 +583,8 @@ def _measure_vocal_tract(spec):
     if err:
         return {"ok": False, "error": err}
     rust, rust_note = _rust_reading(spec)
-    formants = None
-    if rust and rust.get("forensic") and rust["forensic"].get("formants"):
-        formants = rust["forensic"]["formants"]
+    # The ear's formants live on its per-line rows, flattened here.
+    formants = _rust_formants(rust)
 
     track = _vq._f0_track(samples, env)
     if not track and not formants:

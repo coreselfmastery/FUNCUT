@@ -811,6 +811,10 @@ def build_sheet(spec):
     cols = max(1, min(6, int(spec.get("cols", 4))))
     sources = list(spec.get("sources") or [])
     errors = []
+    # The reel's own length, for the craft fixes that scale by it: the
+    # probed duration when a path is sampled, the last sample's moment
+    # when the caller brought the frames.
+    span_seconds = None
 
     # Only reach for ffmpeg when at least one source really is a media file.
     # Timeline previews arrive as base64 PNGs and need no decoder at all.
@@ -832,6 +836,7 @@ def build_sheet(spec):
             # seconds as the whole cut.
             probe_failed = True
             duration = max(1.0, samples * 0.5)
+        span_seconds = duration
         sources = [
             {"path": path, "at": round(duration * (i + 0.5) / samples, 3),
              "label": f"{i + 1:02d} {_fmt_time(duration * (i + 0.5) / samples)}"}
@@ -1006,6 +1011,12 @@ def build_sheet(spec):
         "staticTransitions": len(static),
         "meanCutEnergy": round(sum(diffs) / len(diffs), 3) if diffs else 0.0,
         "meanSaturation": mean_sat,
+        # The reel's own length: the heuristic's frame-count fixes scale
+        # by it, and without it they trimmed a 90 s reel as though it
+        # were the hardcoded 30 s.
+        "durationSeconds": round(
+            span_seconds if span_seconds is not None
+            else (max((m["at"] for m in metas), default=0.0)), 2),
     }
     return {
         "ok": True,
@@ -1341,7 +1352,8 @@ def heuristic(brief, sheet):
     # is a judgement: an agent ordering fixes by confidence sees them as
     # half-certain, which is what they are.
     if black_pen > 0.05:
-        seconds = round(_num(c.get("blackFrames")) / n * _num(c.get("duration"), 30.0), 1)
+        seconds = round(_num(c.get("blackFrames")) / n
+                        * _num(c.get("durationSeconds"), 30.0), 1)
         fixes.append({
             "where": "the opening frames",
             "problem": f"{_num(c.get('blackFrames'))} of {n} sampled frames are black or empty",

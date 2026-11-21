@@ -681,6 +681,29 @@ def _run(cmd, timeout=120):
         return -1, b"", str(exc).encode()
 
 
+def _source_rate_hz(audio):
+    """The source file's own sample rate, as ffprobe reads it. The
+    formants confidence gate and the loudness basis both want the
+    SOURCE's band: the Rust ear measures over a 16 kHz mono handoff,
+    so its own rate says nothing about the take's band, and the
+    forensic `whole` block the old probe read carries no rate at all.
+    `None` when there is no audio, no probe, or no answer - an
+    unmeasured band, not a wide one."""
+    if not audio:
+        return None
+    _, probe = _ffmpeg({})
+    rc, out, _ = _run([probe, "-v", "error", "-select_streams", "a:0",
+                       "-show_entries", "stream=sample_rate",
+                       "-of", "default=noprint_wrappers=1:nokey=1", str(audio)], 30)
+    if rc != 0:
+        return None
+    try:
+        rate = int((out or b"").decode(errors="replace").strip().splitlines()[0])
+    except (IndexError, ValueError):
+        return None
+    return rate if rate > 0 else None
+
+
 _SILENCE_START = re.compile(r"silence_start:\s*([-0-9.]+)")
 _SILENCE_END = re.compile(r"silence_end:\s*([-0-9.]+)")
 
@@ -1231,17 +1254,21 @@ def _rust_ears(spec, lines, audio, ff):
 def _whisperx_words(audio, lines, language):
     """Align the transcript with WhisperX when it is importable: word times
     that carry measured scores, the alignment captions and cuts actually
-    want. Returns (words per line index, note)."""
+    want. Returns (words by ORIGINAL line index, note): only timed lines
+    can be aligned, but the answer is keyed by the line's own index in
+    the full list, so an untimed line before a timed one cannot shift
+    every later line's words onto the wrong line."""
     try:
         import whisperx  # noqa: F401  the heavy import, guarded on purpose
     except Exception:
         return None, "whisperx is not installed (pip install whisperx); " \
                      "whisper token-timestamp words are used as-is"
     try:
+        timed = [(i, l) for i, l in enumerate(lines)
+                 if isinstance(l.get("start"), (int, float))]
         segments = [{"start": l.get("start"), "end": l.get("end"),
                      "text": str(l.get("text") or "")}
-                    for l in lines
-                    if isinstance(l.get("start"), (int, float))]
+                    for _, l in timed]
         if not segments:
             return None, "no timed lines to align"
         device = os.environ.get("FUNCUT_VOICE_SIGNALS_DEVICE", "cpu")
@@ -1250,8 +1277,8 @@ def _whisperx_words(audio, lines, language):
             language_code=language or "en", device=device)
         aligned = whisperx.align(segments, model, metadata, audio_data, device,
                                  return_char_alignments=False)
-        by_line = []
-        for seg in aligned.get("segments") or []:
+        by_line = {}
+        for (original_index, _), seg in zip(timed, aligned.get("segments") or []):
             words = []
             for word in seg.get("words") or []:
                 if word.get("start") is None or word.get("end") is None:
@@ -1262,7 +1289,7 @@ def _whisperx_words(audio, lines, language):
                     "end": float(word["end"]),
                     "score": float(word.get("score") or 0.0),
                 })
-            by_line.append(words)
+            by_line[original_index] = words
         return by_line, None
     except Exception as exc:
         return None, f"whisperx alignment failed: {type(exc).__name__}: {exc}"
@@ -1282,8 +1309,11 @@ def _signal_confidence(sources, audio, rust, wx_words, series, notes):
     honest about what it is."""
     rust_up = bool(rust)
     band = None
-    forensic = (rust or {}).get("forensic", {}).get("whole") or {}
-    sample_rate = forensic.get("sampleRateHz") or forensic.get("sampleRate")
+    # The source's own rate, probed where the audio exists: the ear's
+    # handoff WAV is always 16 kHz, so the ear's rate (and the forensic
+    # block the old probe read, which carries none) can never answer
+    # the band question.
+    sample_rate = _source_rate_hz(audio if isinstance(audio, str) else None)
     if isinstance(sample_rate, (int, float)) and sample_rate > 0:
         band = min(sample_rate / 2.0, 20000.0)
     lines = []
@@ -1392,7 +1422,10 @@ def _director_hints(lines_out, pauses, rust, language, arc, bgm):
         cut_style = "hold"
     else:
         cut_style = "mixed"
-    if arc and str(arc.get("shape") or "") == "rise" and cut_style == "mixed":
+    # The arc object is emotion.py's reply passed through verbatim, and
+    # its shape key is `arcShape` - reading `shape` never matched and the
+    # building cut style was unreachable for every real read.
+    if arc and str(arc.get("arcShape") or "") == "rise" and cut_style == "mixed":
         cut_style = "building"
     gated = [{"lineIndex": l["index"], "word": w["text"], "confidence": w["confidence"]}
              for l in lines_out for w in l.get("words") or []
@@ -1593,7 +1626,7 @@ def extract(spec):
     lines_out = []
     for i, line in enumerate(lines):
         words = _words_of(line)
-        if wx_words and i < len(wx_words) and wx_words[i]:
+        if wx_words and wx_words.get(i):
             words = wx_words[i]
         confidences = []
         if words:

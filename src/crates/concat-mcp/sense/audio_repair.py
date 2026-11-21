@@ -99,6 +99,30 @@ def _needs_ffmpeg(spec):
     return None
 
 
+# The codec each audio container actually accepts: ffmpeg picks the
+# muxer from the output's extension, and pcm_s16le is a WAV-only
+# payload - handing an mp3/m4a/ogg suffix a PCM stream failed the
+# whole chain at the muxer ("Could not find tag for codec"), so the
+# writing tools only ever worked on .wav and video inputs.
+_CODEC_BY_SUFFIX = {
+    ".wav": ["pcm_s16le"],
+    ".mp3": ["libmp3lame", "-q:a", "2"],
+    ".m4a": ["aac", "-b:a", "192k"],
+    ".aac": ["aac", "-b:a", "192k"],
+    ".ogg": ["libvorbis", "-q:a", "4"],
+    ".opus": ["libopus", "-b:a", "96k"],
+    ".flac": ["flac"],
+    ".wv": ["flac"],
+}
+
+
+def _audio_codec_args(out_path):
+    """The encoder arguments the output's own container accepts, or
+    `None` when the suffix is not one the table names - the caller then
+    writes a .wav beside the input instead of failing at the muxer."""
+    return _CODEC_BY_SUFFIX.get(Path(str(out_path)).suffix.lower())
+
+
 def _output_path(spec, source, suffix):
     """Where a writing tool lands its file: the caller's `out`, else beside
     the input. The input itself is never the target."""
@@ -116,7 +140,12 @@ def _measure_snr(spec, path):
     if samples is None or not len(samples):
         return None
     env = _vq._envelope(samples)
-    win_frames = 25
+    # 50 ms windows, the same instrument classify_recording_quality
+    # measures its floor with: a 250 ms max-window cannot see a gap
+    # shorter than itself, and a gated/TTS take's tenth-of-a-second
+    # breaths measured its softest SPEECH as the floor - the before/
+    # after table was one instrument in name only.
+    win_frames = 5
     windows = []
     for i in range(0, len(env) - win_frames, win_frames):
         windows.append(max(env[i:i + win_frames]))
@@ -151,8 +180,12 @@ def _enhance_speech(spec):
         return {"ok": False, "error": f"could not decode {audio}"}
     env = _vq._envelope(samples)
 
-    # Every parameter measured from THIS take.
-    win_frames = 25
+    # Every parameter measured from THIS take, at the same 50 ms
+    # window the classifier reads its floor with - a coarser window
+    # here put the gate threshold (floor + 8 dB) up at soft-speech
+    # level on a gated take, and agate ate the quiet words the chain
+    # was supposed to preserve.
+    win_frames = 5
     windows = []
     for i in range(0, len(env) - win_frames, win_frames):
         windows.append(max(env[i:i + win_frames]))
@@ -188,7 +221,14 @@ def _enhance_speech(spec):
         args += ["-map", "0:v", "-map", "0:a", "-c:v", "copy",
                  "-af", chain, "-c:a", "aac", "-b:a", "192k"]
     else:
-        args += ["-af", chain, "-c:a", "pcm_s16le"]
+        # The codec the output's own container accepts; an extension the
+        # table does not name lands as a .wav beside the input rather
+        # than failing at the muxer.
+        codec = _audio_codec_args(out_path)
+        if codec is None:
+            out_path = str(Path(out_path).with_suffix(".wav"))
+            codec = ["pcm_s16le"]
+        args += ["-af", chain, "-c:a"] + codec
     args += [str(out_path)]
     good, why = _run_ffmpeg(ff, args)
     if not good:
@@ -234,8 +274,9 @@ def _remove_hiss_hum_rumble(spec):
         return {"ok": False, "error": f"could not decode {audio}"}
     env = _vq._envelope(samples)
 
-    # Where the quiet lives: the windows to read the noise from.
-    win_frames = 25
+    # Where the quiet lives: the windows to read the noise from, at
+    # the same 50 ms granularity the classifier's floor uses.
+    win_frames = 5
     windows = []
     for i in range(0, len(env) - win_frames, win_frames):
         windows.append((max(env[i:i + win_frames]), i))
@@ -349,7 +390,14 @@ def _enhance_with(ff, spec, audio, filters, findings):
         args += ["-map", "0:v", "-map", "0:a", "-c:v", "copy", "-af", chain,
                  "-c:a", "aac", "-b:a", "192k"]
     else:
-        args += ["-af", chain, "-c:a", "pcm_s16le"]
+        # The codec the output's own container accepts; an extension the
+        # table does not name lands as a .wav beside the input rather
+        # than failing at the muxer.
+        codec = _audio_codec_args(out_path)
+        if codec is None:
+            out_path = str(Path(out_path).with_suffix(".wav"))
+            codec = ["pcm_s16le"]
+        args += ["-af", chain, "-c:a"] + codec
     args += [str(out_path)]
     good, why = _run_ffmpeg(ff, args)
     if not good:
@@ -417,7 +465,14 @@ def _normalize_loudness(spec):
         args += ["-map", "0:v", "-map", "0:a", "-c:v", "copy", "-af", chain,
                  "-c:a", "aac", "-b:a", "192k"]
     else:
-        args += ["-af", chain, "-c:a", "pcm_s16le"]
+        # The codec the output's own container accepts; an extension the
+        # table does not name lands as a .wav beside the input rather
+        # than failing at the muxer.
+        codec = _audio_codec_args(out_path)
+        if codec is None:
+            out_path = str(Path(out_path).with_suffix(".wav"))
+            codec = ["pcm_s16le"]
+        args += ["-af", chain, "-c:a"] + codec
     args += [str(out_path)]
     good, why = _run_ffmpeg(ff, args)
     if not good:
@@ -1004,6 +1059,24 @@ def selftest(only=None):
                 "ok": bool(hum_read.get("ok")) and found_hum,
                 "error": hum_read.get("error"),
                 "extra": "the baked 50 Hz hum is detected and notched",
+            })
+            # A non-WAV audio hand-in must come back in its own
+            # container: the old chain wrote pcm_s16le into whatever
+            # suffix the input had, and the mp3 muxer refused it - the
+            # writing tools only ever worked on .wav and video. An
+            # encoder the build lacks is a skip, not a failure.
+            mp3_read = _enhance_speech(
+                {"audio": speech, "out": str(Path(tmp) / "enhanced.mp3"),
+                 "overwrite": True})
+            mp3_made = bool(mp3_read.get("ok")) and Path(str(mp3_read.get("file") or "")).is_file()
+            encoder_absent = "encoder" in str(mp3_read.get("error") or "").lower()
+            checks.append({
+                "tool": "enhance_speech (mp3 out)",
+                "ok": mp3_made or encoder_absent,
+                "error": None if (mp3_made or encoder_absent) else mp3_read.get("error"),
+                "extra": ("the mp3 container keeps an mp3 payload" if mp3_made
+                          else ("libmp3lame absent here, skipped" if encoder_absent
+                                else "no file")),
             })
         # The gate's two directions, proven beyond the loop above: a
         # dense-speech take (the gated-TTS pattern) must NOT gate as

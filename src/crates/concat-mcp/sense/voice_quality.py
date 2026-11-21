@@ -234,10 +234,13 @@ def _goertzel_power(samples, offset, size, hz, rate=RATE):
     truncated 50 and 60 Hz onto the same bin and never fired at all).
     The hum probe passes a half-second window here, whose resolution
     (~2 Hz) the mains candidates and their guards both fit inside."""
-    if offset + size > len(samples):
-        offset = max(0, len(samples) - size)
-        if offset < 0:
-            return None
+    if size > len(samples):
+        return None
+    # Both ends: a caller centres the window on a quiet frame, and a
+    # frame inside the first quarter-second centres NEGATIVELY - Python
+    # would index that from the file's end and measure the loudest tail
+    # as the quiet passage the caller asked for. Clamp both ends.
+    offset = max(0, min(offset, len(samples) - size))
     coeff = 2.0 * math.cos(2.0 * math.pi * hz / rate)
     s1 = s2 = 0.0
     for i in range(size):

@@ -47,6 +47,30 @@ tuned for small low-memory Linux laptops and extended with:
 | [docs/FUNCUT-CHANGES.md](docs/FUNCUT-CHANGES.md) | The fork's change ledger, newest findings first |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Building, testing, and how changes are licensed |
 
+## The signal contract (read before touching AUTO EDIT)
+
+`voice_signals` measures more than AUTO EDIT spends, and that gap is the
+bug class that keeps recurring here. Three guards in
+`src/crates/concat-mcp/src/director_program.rs` hold the line, and each
+one is there because something slipped past the one before it:
+
+- `every_signal_family_has_a_reader` - every family in
+  `signal_vocabulary` (`tools.rs`) has a reader, or a stated reason.
+- `every_reading_inside_a_family_has_a_consumer` - every `pub field`
+  `voice_read.rs` parses is named by the program, read through a
+  `voice_read` helper the program calls, or listed with a reason. The
+  family guard cannot see inside a family: `prosody` was listed as read
+  while `pitchRangeSemitones` was spent by nothing.
+- `every_vocabulary_family_names_the_decision_it_informs` - every family
+  the edit spends names a decision the log's gate accepts
+  (`cut`/`caption`/`graphic`/`bgm`/`transition`/`pacing`), so the critic
+  is told what each signal drove.
+
+So: when you add a reading, wire it to a decision and log it with its
+confidence; when you deliberately leave one unspent, name it in the
+guard's `NOT_SPENT` list with the reason. Never widen a guard to make it
+pass - the guards are the deliverable.
+
 ## The five things that surprise agents here
 
 1. **A project is a folder**, not a file: `project_open {path}` names

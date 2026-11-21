@@ -96,13 +96,16 @@ fn expected_takes(project: &str) -> Vec<Value> {
         .flatten()
         .filter_map(|segment| {
             let path = segment.get("take")?.as_str()?;
-            Some(json!({
+            let mut row = json!({
                 "path": path,
                 "start": segment.get("start").and_then(Value::as_f64).unwrap_or(0.0),
                 "sourceIn": segment.get("source_in").and_then(Value::as_f64).unwrap_or(0.0),
-                "sourceOut": segment.get("source_out").and_then(Value::as_f64).unwrap_or(f64::INFINITY),
                 "speed": segment.get("speed").and_then(Value::as_f64).unwrap_or(1.0),
-            }))
+            });
+            if let Some(source_out) = segment.get("source_out").and_then(Value::as_f64) {
+                row["sourceOut"] = json!(source_out);
+            }
+            Some(row)
         })
         .collect()
 }

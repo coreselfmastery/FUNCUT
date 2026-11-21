@@ -251,7 +251,7 @@ it (`{"at": 4.2, "decision": "cut", "signals": ["pause.class=dead_air",
 "emphasisWords"], "note": "2.1s of dead air before the emphasis word"}`).
 The profile's `decisionPolicy` says which signals each decision reads; a
 plan with a voiceover and no signalLog is NOT creativeReady — the reading
-exists to be consumed, not admired. Call `plan_validate` on the completed JSON;
+exists to be consumed, not admired. Before validation, persist the exact canonical plan object (not a wrapper) as `<project>/edit-plan.json`; the acceptance check re-reads and validates this artifact after the render, so a plan that exists only in chat is not verifiable. Then call `plan_validate` on the completed JSON;
 fix every reported error AND every `creativeBlockers` entry until BOTH
 `valid: true` and `creativeReady: true` — including `signalLog.driven:
 true`, whose `problems` name any entry that cites a signal the profile does
@@ -678,9 +678,9 @@ questions a green "Completed" cannot:
 - **`gates`** — one entry per craft dimension, each with the measured fact
   it was read from. `story` (the plan validated and was creatively ready),
   `words` (the export's narration re-read and matched), `audio` (the mix
-  against the platform loudness target) and `export-integrity` (the file
-  opened by the media reader) are **required**; `visual` (the craft score),
-  `captions` and `motion` are recorded when the run made them. A required
+  against the platform loudness target), `export-integrity` (the file
+  opened by the media reader), and `visual` (the post-export craft score)
+  are **required**; `captions` and `motion` are recorded when the run made them. A required
   gate that was never measured is `skipped`, which makes the verdict
   `incomplete` — never a silent pass. A 9/10 craft score cannot hide a
   missing narration track or an unreadable file.

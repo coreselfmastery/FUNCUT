@@ -1685,6 +1685,19 @@ fn transcript_words(path: &str, backend: &mut dyn Backend) -> Result<Vec<Value>,
     Ok(words)
 }
 
+/// The signal catalogue, read without a backend: the fifty named
+/// readings with their families and whys, as the Python side's static
+/// table answers them. A UI builds its per-signal buttons from this
+/// before any server is listening - the catalogue is a table, not a
+/// reading, so it owes no transcript and no audio.
+pub fn voice_signals_catalog() -> Result<Value, ApiError> {
+    run(
+        "voice",
+        &json!({ "action": "catalog" }),
+        Duration::from_secs(30),
+    )
+}
+
 /// The voiceover read as a score: the `voice` tool's extract. One spec in
 /// (audio + transcript), one reading out - per-line loudness, pause
 /// classes, speech rate, word confidence, sentence types, motifs and

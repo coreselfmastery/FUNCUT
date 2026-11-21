@@ -380,6 +380,12 @@ def _detect_speech_acts(spec):
             "end": line.get("end"),
             "acts": acts or ["statement"],
             "primary": primary,
+            # The measured-cue basis the plan's confidence log reads: a
+            # cue-matched act carries the family's own number, a bare
+            # statement (no cue fired) the honest lower one - before this
+            # the Rust reader asked a key the rows never carried and every
+            # speechActs entry in the signal log rated 0.0.
+            "confidence": 0.75 if acts else 0.6,
         })
     questions = [p for p in per_line if p["primary"] in ("question", "rhetorical_question")]
     return _ok(
@@ -796,8 +802,12 @@ def _score_script_quality(spec):
         payoff_score = 7.0  # CTA too early: it must be the last thing heard
 
     # 6. Concision (0-10).
-    filler_hits = sum(len(_vs._FILLER_RE.findall(" " + t.lower() + " "))
-                      for t in texts) if hasattr(_vs, "_FILLER_RE") else 0
+    # The safe-remove filler set is the vocabulary voice_signals actually
+    # ships (_FILLERS_SAFE, with _FILLERS_CONTEXT for the kept ones) - the
+    # _FILLER_RE symbol never existed, so this arm scored a filler-laden
+    # script 10/10 on concision forever.
+    filler_hits = sum(len(_vs._FILLERS_SAFE.findall(" " + t.lower() + " "))
+                      for t in texts) if hasattr(_vs, "_FILLERS_SAFE") else 0
     dupes = {}
     for t in texts:
         sig = " ".join(_content_tokens(_tokens(t))[:6])

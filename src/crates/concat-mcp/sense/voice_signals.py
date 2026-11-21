@@ -183,12 +183,12 @@ SIGNAL_CATALOGUE = [
             "verdict (decision: bgm).",
      "where": ("take", "wholeTake.speechRatio"), "rust": False, "new": False},
     # The rate family, arithmetic on the word timings.
-    {"name": "speechRate.wordsPerSec", "family": "Speech rate",
-     "label": "Words per second",
-     "reads": "Words per second, per line.",
+    {"name": "speechRate.wordsPerMinute", "family": "Speech rate",
+     "label": "Words per minute",
+     "reads": "Words per minute, per line.",
      "why": "The pacing class (punchy, conversational, slow) sizes every "
             "shot's drift (decision: pacing).",
-     "where": ("line", "speechRate.wordsPerSec"), "rust": False, "new": False},
+     "where": ("line", "speechRate.wordsPerMinute"), "rust": False, "new": False},
     {"name": "speechRate.syllablesPerSec", "family": "Speech rate",
      "label": "Syllables per second",
      "reads": "Syllables per second, per line.",
@@ -408,7 +408,7 @@ SIGNAL_CATALOGUE = [
      "where": ("take", "wholeTake.forensic.sibilanceRatio"), "rust": True, "new": True},
     {"name": "forensic.spectralRolloffHz", "family": "Forensics",
      "label": "Spectral rolloff",
-     "reads": "The frequency under which 85% of the take's energy sits, in "
+     "reads": "The frequency under which 95% of the take's energy sits, in "
               "Hz.",
      "why": "A low rolloff with a narrow band is a muffled take: a "
             "presence lift, not a denoise.",
@@ -1219,6 +1219,26 @@ def _rust_ears(spec, lines, audio, ff):
         "maxSpeakers": int(spec.get("maxSpeakers") or 4),
         "speakerThreshold": float(spec.get("speakerThreshold") or 0.6),
     }
+    # The VAD block, but only when the caller tuned the ffmpeg silence
+    # pass: the two silence ears used to measure under different rules -
+    # a 120 ms minSilenceMs caught a breath for pauses.classes while the
+    # Rust ear's fixed 0.20 s merged it inside an utterance. The tuning
+    # crosses now (thresholdDb as the negative dB silencedetect means,
+    # minSilenceMs as seconds), so both ears answer with one rule; a
+    # caller who tuned nothing leaves each ear its own defaults.
+    _vad = {}
+    if spec.get("thresholdDb") is not None:
+        try:
+            _vad["thresholdDb"] = -abs(float(spec["thresholdDb"]))
+        except (TypeError, ValueError):
+            pass
+    if spec.get("minSilenceMs") is not None:
+        try:
+            _vad["minSilenceSecs"] = max(0.05, float(spec["minSilenceMs"]) / 1000.0)
+        except (TypeError, ValueError):
+            pass
+    if _vad:
+        rust_spec["vad"] = _vad
     workdir = None
     if audio:
         workdir = tempfile.mkdtemp(prefix="voice-signals-")
@@ -1483,7 +1503,11 @@ def _bgm_decision(rust, speech_ratio):
                     "reason": f"music likelihood {likelihood:.2f}: dense, regular "
                               "onsets with a music-like spectrum - this take "
                               "already carries music"}
-        if flatness is not None and flatness > 0.25 and onsets > 30:
+        if flatness is not None and flatness > 0.25 and onsets >= 60:
+            # 60 onsets in ANY window is a length claim, not a density one:
+            # a 30-minute narration clears it in dead speech. The rate is
+            # the measured form (onsetRatePerMin >= 60 is one onset per
+            # second sustained, the same bar the director reads).
             return {"recommendation": "skip",
                     "reason": f"spectral flatness {flatness:.2f} with {onsets} flux onsets: "
                               "this take already carries music-like content"}

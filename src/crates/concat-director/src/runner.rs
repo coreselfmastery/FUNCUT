@@ -728,7 +728,20 @@ impl Runner {
             }
             for (call, reply) in &replies {
                 if stage == Stage::Verify {
-                    verification = reply.clone();
+                    // The words comparison is the verification the run's
+                    // terminal states carry - not the last reply the
+                    // stage happened to make (the motion probe), which
+                    // used to overwrite the verdict, matchRate and drift
+                    // the report is read for.
+                    //
+                    // The first answer of either shape stands: the
+                    // emotion verify itself, or the first reply when no
+                    // verify ever ran - and a later emotion reply
+                    // replaces it, because the verify is the one the
+                    // report is read for.
+                    if call.tool == "emotion" || verification.is_null() {
+                        verification = reply.clone();
+                    }
                 }
                 if call.tool == "export_start" {
                     exported = true;

@@ -2048,28 +2048,35 @@ fn motion_schema(name: &str) -> Option<Value> {
             ),
             &["project", "at"],
         ),
-        "motion_preview" => object(
-            with(
-                shared,
-                &[
-                    (
-                        "frames",
-                        json!({
-                            "type": "integer", "minimum": 1, "maximum": 12, "default": 6,
-                            "description": "How many stills spread across the comp's duration - six is the glance, twelve the strip."
-                        }),
-                    ),
-                    (
-                        "width",
-                        json!({
-                            "type": "integer", "minimum": 16, "maximum": 640, "default": 480,
-                            "description": "The width each sample draws at - a preview, not a bake."
-                        }),
-                    ),
-                ],
-            ),
-            &["project"],
-        ),
+        "motion_preview" => {
+            // The handler takes preset/comp/project/ops/frames/width -
+            // `vars` is not in its door, and a schema that offered it
+            // refused the very calls it advertised.
+            let mut preview = shared.clone();
+            preview.remove("vars");
+            object(
+                with(
+                    preview,
+                    &[
+                        (
+                            "frames",
+                            json!({
+                                "type": "integer", "minimum": 1, "maximum": 12, "default": 6,
+                                "description": "How many stills spread across the comp's duration - six is the glance, twelve the strip."
+                            }),
+                        ),
+                        (
+                            "width",
+                            json!({
+                                "type": "integer", "minimum": 16, "maximum": 640, "default": 480,
+                                "description": "The width each sample draws at - a preview, not a bake."
+                            }),
+                        ),
+                    ],
+                ),
+                &["project"],
+            )
+        }
         "motion_bake" => object(
             with(
                 shared,
@@ -2112,83 +2119,93 @@ fn motion_schema(name: &str) -> Option<Value> {
             ),
             &["project"],
         ),
-        "captions_animate" => object(
-            with(
-                shared,
-                &[
-                    (
-                        "words",
-                        json!({
-                            "type": "array", "minItems": 1,
-                            "description": "The transcript as [text, start, end] triples, \
-                             seconds from the voiceover's start.",
-                            "items": {}
-                        }),
-                    ),
-                    (
-                        "wordsPerLine",
-                        json!({ "type": "integer", "minimum": 1, "maximum": 12, "default": 5 }),
-                    ),
-                    (
-                        "maxLineSeconds",
-                        json!({ "type": "number", "minimum": 0.5, "maximum": 12, "default": 3.6 }),
-                    ),
-                    (
-                        "gapSeconds",
-                        json!({ "type": "number", "minimum": 0, "maximum": 5, "default": 0.6 }),
-                    ),
-                    (
-                        "leadSeconds",
-                        json!({ "type": "number", "minimum": 0, "maximum": 2 }),
-                    ),
-                    (
-                        "tailSeconds",
-                        json!({ "type": "number", "minimum": 0, "maximum": 5 }),
-                    ),
-                    ("width", json!({ "type": "integer", "default": 1080 })),
-                    ("height", json!({ "type": "integer", "default": 1920 })),
-                    ("fps", json!({ "type": "number", "default": 30 })),
-                    (
-                        "plate",
-                        json!({
-                            "type": "string",
-                            "description": "A still under the project the captions render over."
-                        }),
-                    ),
-                    (
-                        "curtain",
-                        json!({
-                            "type": "boolean", "default": true,
-                            "description": "Keep the curtain dip between caption lines; false gives hard cuts, which read better when the reel sits over a voiceover."
-                        }),
-                    ),
-                    (
-                        "kinetic",
-                        json!({
-                            "type": ["boolean", "object"], "default": false,
-                            "description": "The kinetic typography hand: true takes the word-staggered default (80 ms, slide-up, the settle curve); an object spells it out - stagger (word|char), delay seconds, entrance (blur-in|slide-up|scale-in), seconds, curve, weight {from, to} for a static weight ramp across the words (the engine cannot animate a weight: a static font-weight per word is the one it draws). The caption becomes markup whose per-word spans appear, light and settle on the recogniser's own word times.",
-                            "properties": {
-                                "stagger": { "type": "string", "enum": ["word", "char"], "default": "word" },
-                                "delay": { "type": "number", "minimum": 0, "default": 0.08 },
-                                "entrance": { "type": "string", "enum": ["blur-in", "slide-up", "scale-in"], "default": "slide-up" },
-                                "seconds": { "type": "number", "minimum": 0, "default": 0.5 },
-                                "weight": {
-                                    "type": "object",
-                                    "description": "A static weight ramp across the units, 100..900: the first at from, the last at to, interpolated between - drawn per word as a static font-weight, the crescendo the engine renders.",
-                                    "properties": {
-                                        "from": { "type": "integer", "minimum": 100, "maximum": 900 },
-                                        "to": { "type": "integer", "minimum": 100, "maximum": 900 }
-                                    },
-                                    "required": ["from", "to"]
+        "captions_animate" => {
+            // The handler's door is project/words/preset and the caption
+            // parameters - comp/ops/vars are not in it, and the shared
+            // merge offered all three (tools/list is "authoritative", so
+            // an agent following it was refused).
+            let mut caption_args = shared.clone();
+            caption_args.remove("comp");
+            caption_args.remove("ops");
+            caption_args.remove("vars");
+            object(
+                with(
+                    caption_args,
+                    &[
+                        (
+                            "words",
+                            json!({
+                                "type": "array", "minItems": 1,
+                                "description": "The transcript as [text, start, end] triples, \
+                                 seconds from the voiceover's start.",
+                                "items": {}
+                            }),
+                        ),
+                        (
+                            "wordsPerLine",
+                            json!({ "type": "integer", "minimum": 1, "maximum": 12, "default": 5 }),
+                        ),
+                        (
+                            "maxLineSeconds",
+                            json!({ "type": "number", "minimum": 0.5, "maximum": 12, "default": 3.6 }),
+                        ),
+                        (
+                            "gapSeconds",
+                            json!({ "type": "number", "minimum": 0, "maximum": 5, "default": 0.6 }),
+                        ),
+                        (
+                            "leadSeconds",
+                            json!({ "type": "number", "minimum": 0, "maximum": 2 }),
+                        ),
+                        (
+                            "tailSeconds",
+                            json!({ "type": "number", "minimum": 0, "maximum": 5 }),
+                        ),
+                        ("width", json!({ "type": "integer", "default": 1080 })),
+                        ("height", json!({ "type": "integer", "default": 1920 })),
+                        ("fps", json!({ "type": "number", "default": 30 })),
+                        (
+                            "plate",
+                            json!({
+                                "type": "string",
+                                "description": "A still under the project the captions render over."
+                            }),
+                        ),
+                        (
+                            "curtain",
+                            json!({
+                                "type": "boolean", "default": true,
+                                "description": "Keep the curtain dip between caption lines; false gives hard cuts, which read better when the reel sits over a voiceover."
+                            }),
+                        ),
+                        (
+                            "kinetic",
+                            json!({
+                                "type": ["boolean", "object"], "default": false,
+                                "description": "The kinetic typography hand: true takes the word-staggered default (80 ms, slide-up, the settle curve); an object spells it out - stagger (word|char), delay seconds, entrance (blur-in|slide-up|scale-in), seconds, curve, weight {from, to} for a static weight ramp across the words (the engine cannot animate a weight: a static font-weight per word is the one it draws). The caption becomes markup whose per-word spans appear, light and settle on the recogniser's own word times.",
+                                "properties": {
+                                    "stagger": { "type": "string", "enum": ["word", "char"], "default": "word" },
+                                    "delay": { "type": "number", "minimum": 0, "default": 0.08 },
+                                    "entrance": { "type": "string", "enum": ["blur-in", "slide-up", "scale-in"], "default": "slide-up" },
+                                    "seconds": { "type": "number", "minimum": 0, "default": 0.5 },
+                                    "weight": {
+                                        "type": "object",
+                                        "description": "A static weight ramp across the units, 100..900: the first at from, the last at to, interpolated between - drawn per word as a static font-weight, the crescendo the engine renders.",
+                                        "properties": {
+                                            "from": { "type": "integer", "minimum": 100, "maximum": 900 },
+                                            "to": { "type": "integer", "minimum": 100, "maximum": 900 }
+                                        },
+                                        "required": ["from", "to"]
+                                    }
                                 }
-                            }
-                        }),
-                    ),
-                    ("name", json!({ "type": "string" })),
-                ],
-            ),
-            &["project", "words"],
-        ),
+                            }),
+                        ),
+                        ("name", json!({ "type": "string" })),
+                    ],
+                ),
+                &["project", "words"],
+            )
+        }
         "motion_reel" => {
             // The storyboard's own shape, written once here so the tool
             // describes what it actually eats: scenes with layers, assets
@@ -3884,24 +3901,30 @@ fn creative_gate(object: &Value, segments: &[Value], runtime: f64, warnings: &[S
     }
 
     // Visual variety: repeated references are the slideshow signature.
-    let visual_key = |segment: &Value| -> String {
+    // A cut made of `existing` A-roll segments (one camera, one take,
+    // cut on its pauses - an interview, a lecture, a talking head) is a
+    // legitimate edit, not a slideshow: the variety rules judge the
+    // clips the plan SHOPS, not the source the words were recorded on.
+    let visual_key = |segment: &Value| -> Option<String> {
         let v = &segment["visual"];
+        if v.get("type").and_then(Value::as_str) == Some("existing") {
+            return None;
+        }
         for key in ["query", "path", "asset", "name", "src", "mediaId", "clipId"] {
             if let Some(s) = v.get(key).and_then(Value::as_str) {
-                return s.trim().to_ascii_lowercase();
+                return Some(s.trim().to_ascii_lowercase());
             }
         }
         v.get("type")
             .and_then(Value::as_str)
-            .unwrap_or("unknown")
-            .to_ascii_lowercase()
+            .map(|kind| kind.to_ascii_lowercase())
     };
-    let keys: Vec<String> = segments.iter().map(visual_key).collect();
+    let keys: Vec<String> = segments.iter().filter_map(visual_key).collect();
     let distinct = keys.iter().collect::<std::collections::BTreeSet<_>>().len();
-    if segments.len() >= 4 && distinct * 2 < segments.len() {
+    if keys.len() >= 4 && distinct * 2 < keys.len() {
         blockers.push(format!(
-            "only {distinct} distinct visuals across {} segments: this is a slideshow, not an edit; use stock_contact_sheet to find different shots",
-            segments.len()
+            "only {distinct} distinct visuals across {} shopped segments: this is a slideshow, not an edit; use stock_contact_sheet to find different shots",
+            keys.len()
         ));
         score -= 1.5;
     }
@@ -3915,7 +3938,7 @@ fn creative_gate(object: &Value, segments: &[Value], runtime: f64, warnings: &[S
             run = 1;
         }
     }
-    if longest >= 3 {
+    if keys.len() >= 3 && longest >= 3 {
         blockers.push(format!("{longest} consecutive segments use the same visual reference; vary shot size, angle or source"));
         score -= 1.0;
     }
@@ -3939,7 +3962,10 @@ fn creative_gate(object: &Value, segments: &[Value], runtime: f64, warnings: &[S
             }
         }
     }
-    let score = score.clamp(0.0, 10.0).round() * 10.0 / 10.0;
+    // One decimal place, honestly: `.round() * 10.0 / 10.0` was a
+    // no-op after the round, so a raw 6.5 read as 7 - the rewrite-the-
+    // plan bar - and a raw 8.6 read as 9.
+    let score = (score.clamp(0.0, 10.0) * 10.0).round() / 10.0;
     let ready = blockers.is_empty();
     if ready {
         notes.push("creative gate passed; still run watch_render and craft_critique after the first export".to_owned());

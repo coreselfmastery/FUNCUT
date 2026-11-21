@@ -654,9 +654,14 @@ def _classify_recording_quality(spec):
                 if tone is None or low is None or high is None:
                     continue
                 guard = (low + high) / 2.0 + 1e-12
-                if tone / guard > 2.0:  # >6 dB over its guards
+                # The probe answers POWER, and 6 dB of power is a ratio
+                # of 10^(6/10) = ~4.0, not 2.0 (a power ratio of 2 is
+                # 3 dB) - and the excess is 10*log10 of a power ratio,
+                # not 20*log10 (which overstated it twofold: the hum
+                # fixture's 61.6 dB true excess used to print 123.2).
+                if tone / guard > 4.0:  # >6 dB of power over its guards
                     hums.append({"hz": hz,
-                                 "excessDb": round(_db(tone / guard), 1)})
+                                 "excessDb": round(10.0 * math.log10(tone / guard), 1)})
                     found = True
         if found:
             break  # a window that found its hums is the answer; the

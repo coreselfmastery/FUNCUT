@@ -380,6 +380,8 @@
   "forge.running": "Running…",
   "forge.scriptPlaceholder": "Write or paste the script. The narration, and the whole video, hangs on it.",
   "forge.setupHint": "Connect points the forge harness at Concat's MCP server, and Install brings in this repository's funcut-director skill. Both need the forge CLI - docs/forge/FORGE.md.",
+  "forge.signalsAgentBusy": "The agent run is going - stop it before reading a signal.",
+  "forge.signalsAutoBusy": "The auto edit is running - stop it before reading a signal.",
   "forge.signalsBusy": "Reading {0}…",
   "forge.signalsConfidence": "Confidence",
   "forge.signalsEar": "Ear",

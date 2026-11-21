@@ -240,6 +240,14 @@ def _server_env() -> dict[str, str]:
     for name, value in os.environ.items():
         if name.startswith(("FUNCUT_", "CONCAT_")) or name == "OPENVID_INDEX_PATH":
             env[name] = value
+    # The live stock shelves read their keys from the SERVER's own env
+    # (stock.rs: the environment is the fallback when no apiKey argument
+    # comes). The Forge pane hands these to the director child; a filter
+    # that strips them here starves the exact deployment that configured
+    # a key - every licensed fallback then refused for want of one.
+    for name in ("PEXELS_API_KEY", "PIXABAY_API_KEY"):
+        if os.environ.get(name):
+            env[name] = os.environ[name]
     return env
 
 
@@ -1184,20 +1192,36 @@ def _timeline_clips(view: Any) -> list[dict[str, Any]]:
     a summary view carries them top-level, its `timeline` object nests
     them under clips, and a raw EditorView nests them under
     project.timelines[*].clips. The top-level read alone matched only
-    the self-test's mocks."""
+    the self-test's mocks.
+
+    The two shapes also spell the clip's lane and source differently -
+    the raw view says `trackId`/`mediaId`, the summary view says
+    `track`/`media` - so every clip leaves here carrying BOTH spellings
+    when either arrives. The one-spelling readers downstream (the hash,
+    the duplicate-lane check, the bin check) were reading keys the
+    summary never writes: VERIFY-08 counted every clip "unplaced" and
+    could never fail, VERIFY-05's referenced set was always empty, and
+    the post-final hash was blind to a lane or source swap."""
+    def _normalize(clip: dict[str, Any]) -> dict[str, Any]:
+        if clip.get("mediaId") is None and clip.get("media") is not None:
+            clip["mediaId"] = clip["media"]
+        if clip.get("trackId") is None and clip.get("track") is not None:
+            clip["trackId"] = clip["track"]
+        return clip
+
     if not isinstance(view, dict):
         return []
     if isinstance(view.get("clips"), list):
-        return [clip for clip in view["clips"] if isinstance(clip, dict)]
+        return [_normalize(clip) for clip in view["clips"] if isinstance(clip, dict)]
     timeline = view.get("timeline")
     if isinstance(timeline, dict) and isinstance(timeline.get("clips"), list):
-        return [clip for clip in timeline["clips"] if isinstance(clip, dict)]
+        return [_normalize(clip) for clip in timeline["clips"] if isinstance(clip, dict)]
     project = view.get("project")
     if isinstance(project, dict) and isinstance(project.get("timelines"), list):
         clips: list[dict[str, Any]] = []
         for entry in project["timelines"]:
             if isinstance(entry, dict) and isinstance(entry.get("clips"), list):
-                clips.extend(clip for clip in entry["clips"] if isinstance(clip, dict))
+                clips.extend(_normalize(clip) for clip in entry["clips"] if isinstance(clip, dict))
         return clips
     return []
 
@@ -1405,8 +1429,18 @@ def _caption_checks(
     offset_y = float(offset_y) if isinstance(offset_y, (int, float)) else 0.35
     font_size = (captions_plan or {}).get("fontSize", 0.04)
     font_size = float(font_size) if isinstance(font_size, (int, float)) else 0.04
+    # offsetY is a fraction FROM CENTER ("positive is lower", the plan
+    # schema's own words), so the band's anchor is the frame's middle
+    # plus the offset - not the offset alone. The anchor-less math read
+    # a perfectly centered caption (offsetY 0) as a band crossing the
+    # top edge and refused the run, while an off-frame 0.9 passed. The
+    # band is the PLAN's own ask: the placement may clamp the offset,
+    # but a plan that asks for a band the frame cannot hold is refused
+    # here rather than silently clamped into something the plan never
+    # said.
     half_band = 0.7 * font_size
-    top, bottom = offset_y - half_band, offset_y + half_band
+    center = 0.5 + offset_y
+    top, bottom = center - half_band, center + half_band
     if top < 0.0 or bottom > 1.0:
         entries.append(_verification_entry(
             "VERIFY-12", "caption-on-frame", "fail",
@@ -2156,12 +2190,14 @@ def run_pipeline(
         "segments.visual", "executed",
         f"{len(broll_segments(plan))} B-roll segment(s) shopped with the planner's per-slot record",
     )
+    # Truthful, not generous: the run shops each segment's own visual
+    # query and records slot ids, but never reads the slots list itself
+    # - it is the planner's own shopping list, and "executed" here used
+    # to claim a read the run never made.
     _audit(
-        "slots", "executed" if isinstance(plan.get("slots"), list) and plan.get("slots")
-        else "skipped",
-        "the shopping list the B-roll segments draw their ids from"
-        if isinstance(plan.get("slots"), list) and plan.get("slots")
-        else "the plan does not carry it",
+        "slots", "skipped",
+        "the planner's own shopping list; this run shops each segment's "
+        "visual query and never reads the list",
     )
 
     # ---- 7. The BGM gate, before any bed is shopped: a take that already
@@ -2226,6 +2262,18 @@ def run_pipeline(
                         # uses: music holds a beat the autocorrelation can
                         # find (>= 0.1); dense speech does not.
                         identified_present = float(strength) >= 0.1
+                elif isinstance(identified, dict) and identified.get("ok") is False:
+                    # A failure REPLY is the same absence a raised error
+                    # is - the tool's own refusal (a take under four
+                    # seconds, an undecodable file) used to skip this
+                    # branch silently, so the identification was neither
+                    # logged nor recorded as the degradation it is.
+                    record_fallback(
+                        "music-gate", "identify", "identify_music",
+                        f"identify_music refused: {identified.get('error', 'no reason given')} "
+                        "- this is a missing identification, not a negative "
+                        "one; the gate's own reading stands alone",
+                    )
         if identified_present is not None:
             # FALL-10: both readings recorded; the identifier decides.
             _signal(0.0, "bgm", provenance="measured",
@@ -2466,7 +2514,13 @@ def run_pipeline(
             raise PipelineError(
                 f"audioClipId {requested_audio_clip!r} is not an audio clip in the active timeline"
             )
-        if audio_clip.get("media") != audio_media_id:
+        # The raw project_get view names the clip's media `mediaId`; the
+        # summary view and the older mocks say `media`. Either spelling
+        # answers - a one-spelling read refused every plan that named its
+        # own voiceover clip, and never found the take it had already
+        # placed, so every resume laid a second voiceover under the
+        # first.
+        if (audio_clip.get("mediaId") or audio_clip.get("media")) != audio_media_id:
             raise PipelineError(
                 f"audioClipId {requested_audio_clip!r} does not reference the supplied voiceover media"
             )
@@ -2477,7 +2531,7 @@ def run_pipeline(
                 clip for clip in clips
                 if isinstance(clip, dict)
                 and clip.get("kind") == "audio"
-                and clip.get("media") == audio_media_id
+                and (clip.get("mediaId") or clip.get("media")) == audio_media_id
             ),
             None,
         )
@@ -2613,6 +2667,15 @@ def run_pipeline(
             "query": query,
             "limit": 5,
         }
+        # The key the provider was picked by, handed across the wire:
+        # the server may run under an env that never saw the operator's
+        # export, and the refusal without a key names both places it
+        # could be - this is one of them, filled.
+        _provider_key = os.environ.get(
+            "PEXELS_API_KEY" if arguments["provider"] == "pexels" else "PIXABAY_API_KEY"
+        )
+        if _provider_key:
+            arguments["apiKey"] = _provider_key
         orientation = _STOCK_ORIENTATION.get(str(plan.get("aspect") or ""))
         if orientation:
             arguments["orientation"] = orientation
@@ -2763,7 +2826,20 @@ def run_pipeline(
                 ids = []
                 break
         if ids:
-            sheet = advance("stock_contact_sheet", {"ids": ids, "rank": True})
+            # The server clamps its own default to 8 of the ids it is
+            # handed; a plan with more B-roll slots than that had its
+            # approval sheet silently truncated, deciding nothing about
+            # the rest. Ask for every id (the server's own ceiling is
+            # 12) and say so when even that cannot hold them all.
+            sheet = advance(
+                "stock_contact_sheet",
+                {"ids": ids, "rank": True, "limit": min(12, len(ids))},
+            )
+            if len(ids) > 12:
+                log(
+                    f"B-roll contact sheet shows the first 12 of {len(ids)} "
+                    "chosen candidates (the sheet's own ceiling)"
+                )
             if isinstance(sheet, dict) and sheet.get("pngPath"):
                 log(f"B-roll contact sheet: {sheet['pngPath']}")
             else:
@@ -3109,10 +3185,9 @@ def run_pipeline(
                 f"segment-{index + 1}: rendered motion is {rendered_duration:.2f}s, "
                 f"shorter than the {target_duration:.2f}s story beat"
             )
-        imported = advance("media_import", {"path": project, "file": motion_file})
-        media_id = imported.get("createdId") if isinstance(imported, dict) else None
-        if not isinstance(media_id, str) or not media_id:
-            raise PipelineError(f"segment-{index + 1}: media_import returned no media id")
+        media_id, _imported_item = _import_media_id(
+            advance, project, motion_file, f"segment-{index + 1}"
+        )
         placed = advance(
             "clip_add",
             {
@@ -3162,15 +3237,8 @@ def run_pipeline(
         media_id = visual.get("mediaId")
         media_item = existing_media_refs.get(index)
         if not media_id:
-            imported = advance("media_import", {"path": project, "file": visual["file"]})
-            media_id = imported.get("createdId") if isinstance(imported, dict) else None
-            imported_media = imported.get("media", []) if isinstance(imported, dict) else []
-            media_item = next(
-                (
-                    item for item in imported_media
-                    if isinstance(item, dict) and item.get("id") == media_id
-                ),
-                None,
+            media_id, media_item = _import_media_id(
+                advance, project, str(visual["file"]), f"segment-{index + 1}"
             )
             if media_item is None:
                 refreshed = advance("project_get", {"path": project})
@@ -3440,6 +3508,14 @@ def run_pipeline(
     _caption_true_wanted = captions_plan is not None or any(
         segment.get("captions") for segment in plan_segments(plan)
     )
+    # The field's own audit, recorded where it is consumed: the flags
+    # were read here before, but the audit never said so, and every run
+    # reported the field unconsumed while placing captions by it.
+    _audit(
+        "segments.captions", "executed",
+        f"{len(_caption_false_spans)} segment(s) flagged no-captions, "
+        f"honoured by both caption paths",
+    )
 
     def _captions_wanted(at: float) -> bool:
         # No flag anywhere: the plan never said no, so yes.
@@ -3559,8 +3635,9 @@ def run_pipeline(
                     # its span, not a burn-in over the B-roll; the PNG
                     # sequence is the path that keeps a transparent
                     # comp's alpha. Said out loud, never silently.
-                    imported = advance("media_import", {"path": project, "file": baked_file})
-                    kinetic_media = imported.get("createdId") if isinstance(imported, dict) else None
+                    kinetic_media, _kinetic_item = _import_media_id(
+                        advance, project, baked_file, "the kinetic caption reel"
+                    )
                     if not isinstance(kinetic_media, str) or not kinetic_media:
                         raise PipelineError("the kinetic caption reel was baked but not imported")
                     if not isinstance(track_id, str) or not track_id:
@@ -3649,9 +3726,22 @@ def run_pipeline(
     # The plan's SFX: shopped from the CC0 shelf, placed so the sound's
     # own peak lands on the planned beat (syncAt says where inside the
     # file the peak is), and gained to the plan's dB.
-    # IDEM: the SFX beats are the plan's, placed once - their clips
-    # recorded, and reused only while every one still stands.
+    # IDEM: the SFX beats are the plan's, placed once - each beat's clip
+    # recorded with its segment, and re-shopped only when its own clip
+    # no longer stands.
     _sfx_prior = _stage_prior("sfx")
+    # Per-segment placements from a prior run, when the record carries
+    # them: a beat whose recorded clip is still live is kept, and only
+    # the missing beats are re-shopped. The old all-or-nothing predicate
+    # (every clipId live or re-run the whole loop) re-placed the
+    # survivors beside themselves the moment one beat's clip was gone.
+    _sfx_prior_placements: dict[int, str] = {
+        int(key): str(value)
+        for key, value in (_sfx_prior.get("placements") or {}).items()
+        if isinstance(_sfx_prior, dict)
+        and str(key).isdigit()
+        and isinstance(value, str)
+    } if isinstance(_sfx_prior, dict) else {}
     _sfx_reusable = (
         isinstance(_sfx_prior, dict)
         and _sfx_prior.get("planSha256") == plan_sha
@@ -3669,9 +3759,27 @@ def run_pipeline(
         _sfx_clips = [str(clip_id) for clip_id in _sfx_prior["clipIds"]]
         if _sfx_clips:
             _stage_skip("sfx", "every beat's sound is still on the timeline")
+    elif _sfx_prior_placements:
+        # A partial resume: the live placements ride along, the dead ones
+        # are shopped again below.
+        _sfx_clips = [
+            clip_id for clip_id in _sfx_prior["clipIds"]
+            if isinstance(clip_id, str) and clip_id in _live_clip_ids
+        ]
+        _sfx_prior_placements = {
+            index: clip_id for index, clip_id in _sfx_prior_placements.items()
+            if clip_id in _live_clip_ids
+        }
+        log(
+            f"partial SFX resume: {len(_sfx_prior_placements)} beat(s) still live, "
+            "re-shopping the rest"
+        )
+    _sfx_marks: dict[int, str] = dict(_sfx_prior_placements)
     for index, segment in enumerate(plan_segments(plan)):
         if _sfx_reusable:
             break
+        if index in _sfx_marks:
+            continue
         sfx = segment.get("sfx")
         if not isinstance(sfx, dict) or not str(sfx.get("query") or "").strip():
             continue
@@ -3704,12 +3812,18 @@ def run_pipeline(
                 "path": project, "clipId": sfx_clip, "baseDb": float(gain),
             })
         _sfx_clips.append(str(sfx_clip))
+        _sfx_marks[index] = str(sfx_clip)
         # The mark rides each placement, not the loop's end: a crash
         # mid-loop resumes with the beats already placed kept (their
         # clipIds are live) and only the remaining beats shopped - the
         # old end-of-loop mark re-placed every beat on resume and the
-        # collision gate then failed the run permanently.
-        _stage_mark("sfx", planSha256=plan_sha, clipIds=list(_sfx_clips))
+        # collision gate then failed the run permanently. The placements
+        # map says WHICH beat each clip belongs to, so a resume with one
+        # dead beat re-shops that beat alone.
+        _stage_mark(
+            "sfx", planSha256=plan_sha, clipIds=list(_sfx_clips),
+            placements={str(key): value for key, value in _sfx_marks.items()},
+        )
         log(f"segment-{index + 1}: SFX {sound.get('name', sound.get('id'))} placed at {start:.2f}s")
 
     sfx_asked = sum(
@@ -4287,7 +4401,12 @@ def run_pipeline(
         tier, confidence - rides the run record (the plan's signalLog is
         the planning decision log; what a run MEASURED belongs to the
         run, and the craft journal the server keeps carries the rest)."""
-        sheet_path = os.path.join(project, f"director-review-v{attempt}.png")
+        # A relative name, held to the project by the server's own base:
+        # an absolute route is refused outright on the window backend
+        # (the default `--mcp auto` deployment serves no write roots), so
+        # the sheet is named, the project names where it lands, and the
+        # reply's pngPath is the absolute truth the critic reads.
+        sheet_name = f"director-review-v{attempt}.png"
         def inspect(path: str) -> Any:
             return advance(
                 "watch_render",
@@ -4296,7 +4415,8 @@ def run_pipeline(
                     "samples": 12,
                     "audio": True,
                     "targetLufs": target_lufs,
-                    "out": sheet_path,
+                    "out": sheet_name,
+                    "project": project,
                 },
             )
         try:
@@ -4579,10 +4699,9 @@ def run_pipeline(
                 f"{key}: revised motion is {rendered_duration:.2f}s, shorter than "
                 f"the {target_duration:.2f}s beat"
             )
-        imported = advance("media_import", {"path": project, "file": motion_file})
-        media_id = imported.get("createdId") if isinstance(imported, dict) else None
-        if not isinstance(media_id, str) or not media_id:
-            raise PipelineError(f"{key}: media_import returned no media id for the revision")
+        media_id, _revision_item = _import_media_id(
+            advance, project, motion_file, f"{key} revision"
+        )
         # The lane the revision lands on: the run's own overlay lane when
         # this run placed one, and otherwise the old graphic's own lane,
         # read from the timeline before it is removed - a fully-resumed run
@@ -4672,6 +4791,23 @@ def run_pipeline(
             # Nothing the critic named could be revised; another render
             # would produce the same frames and say so.
             break
+        # The revision's own final-edit state, read before its render:
+        # the re-verify's VERIFY-14 needs the pair (the timeline the
+        # revision finished with, the timeline the re-verify reads), not
+        # the first export's pair - the revision's edits are legitimate
+        # change, and a hash against the pre-revision read would cry
+        # drift on every revision forever.
+        revision_read = (
+            advance("timeline_read", {"path": project})
+            if "timeline_read" in served else None
+        )
+        if "collision_check" in served:
+            collisions = advance("collision_check", {"path": project})
+            if isinstance(collisions, dict) and collisions.get("clean") is False:
+                raise PipelineError(
+                    "the revision left collisions on the timeline: "
+                    + json.dumps(collisions.get("collisions", []), ensure_ascii=False)[:500]
+                )
         rendered = render_attempt(attempt)
         inspection, critique, score = watch_and_critique(rendered, attempt)
 
@@ -4686,11 +4822,27 @@ def run_pipeline(
         revision = os.path.basename(rendered)
         log(f"re-verifying the revision {revision} (the report described {os.path.basename(verified_render)})")
         rev_probe = _ffprobe(rendered)
-        # Keep the project-level entries (timeline, captions, the
-        # ai-voice disclosure); replace the render-level ones.
-        render_level = {"VERIFY-01", "VERIFY-03", "VERIFY-04", "VERIFY-09",
-                        "VERIFY-10", "VERIFY-11", "VERIFY-13", "VERIFY-16"}
+        # The render-level entries are replaced, and so are the
+        # project-level ones (VERIFY-05/08/14): the revision's
+        # clips_remove/clip_add/motion edits changed ids, lanes and
+        # media, and a report that keeps the first pass's entries
+        # asserts a passing post-final-edit hash against a timeline
+        # that no longer exists. The captions (VERIFY-02/12) and the
+        # ai-voice disclosure (VERIFY-15) the revision never touched
+        # stand.
+        render_level = {"VERIFY-01", "VERIFY-03", "VERIFY-04", "VERIFY-05",
+                        "VERIFY-08", "VERIFY-09", "VERIFY-10", "VERIFY-11",
+                        "VERIFY-13", "VERIFY-14", "VERIFY-16"}
         verify_entries = [e for e in verify_entries if e.get("id") not in render_level]
+        rev_now = (
+            advance("timeline_read", {"path": project})
+            if "timeline_read" in served else None
+        )
+        rev_media = (
+            advance("project_get", {"path": project})
+            if "project_get" in served else None
+        )
+        verify_entries.extend(_timeline_checks(revision_read, rev_now, rev_media))
         verify_entries.extend(_probe_checks(
             rendered, plan, export, rev_probe,
             _sample_frames(rendered, (rev_probe or {}).get("duration")),
@@ -4744,6 +4896,12 @@ def run_pipeline(
         else:
             log(f"revision loudness: {rev_integrated:.1f} LUFS, true peak "
                 f"{rev_true_peak if rev_true_peak is None else round(rev_true_peak, 1)} dBTP")
+            # The receipt's own loudness is the file that ships: the
+            # revision's measurement, not the first render's - the run
+            # record names edit_v2.mp4, and the number beside it must be
+            # the number that file carries.
+            integrated = rev_integrated
+            true_peak = rev_true_peak
             loud_within = abs(rev_integrated - target_lufs) <= 1.0
             peak_ok = rev_true_peak is None or rev_true_peak <= -1.0
             verify_entries.append(_verification_entry(
@@ -5050,6 +5208,44 @@ def media_ids(view: Any) -> set[str]:
     }
 
 
+def _import_media_id(
+    advance: Any, project: str, file: str, what: str
+) -> tuple[str, dict[str, Any] | None]:
+    """Import a file into the bin and answer its media id either way.
+
+    A file the bin already holds is a tolerated no-op for media_import:
+    the command mints nothing and the reply carries no createdId, so a
+    run that died between an import and its stage mark used to re-import
+    (no-op), read the absent id, and crash - forever, on every resume.
+    The summary the same reply carries does name the bin's own item for
+    the file, so the id is shopped from it by path. The item itself
+    rides back for callers that want its kind."""
+    imported = advance("media_import", {"path": project, "file": file})
+    created = imported.get("createdId") if isinstance(imported, dict) else None
+    bin_media = _view_media(imported)
+    if isinstance(created, str) and created:
+        item = next(
+            (entry for entry in bin_media
+             if isinstance(entry, dict) and entry.get("id") == created),
+            None,
+        )
+        return created, item
+    target = os.path.realpath(str(file))
+    for entry in bin_media:
+        if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+            continue
+        try:
+            same_file = os.path.realpath(entry["path"]) == target
+        except OSError:
+            same_file = False
+        if same_file and isinstance(entry.get("id"), str) and entry["id"]:
+            return entry["id"], entry
+    raise PipelineError(
+        f"{what}: media_import returned no media id and the bin holds no "
+        f"{os.path.basename(str(file))}"
+    )
+
+
 def new_audio(view: Any, known: set[str]) -> list[dict[str, Any]]:
     return [
         item
@@ -5068,7 +5264,15 @@ def watch(transport: Any, project: str, plan: dict[str, Any], poll: float) -> No
     try:
         while True:
             time.sleep(poll)
-            view = transport.call("project_get", {"path": project})
+            try:
+                view = transport.call("project_get", {"path": project})
+            except Exception as error:  # noqa: BLE001 - a watcher must keep watching
+                # A poll that fails is one lost look at the bin, not the
+                # watcher's death: a transient refusal (the server
+                # restarting, a busy stdout) used to escape this loop
+                # uncaught and take the whole watch down with a traceback.
+                log(f"poll failed (going on): {error}")
+                continue
             arrivals = new_audio(view, known)
             known = media_ids(view)
             for item in arrivals:

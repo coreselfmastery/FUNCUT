@@ -878,7 +878,7 @@ pub fn import(arguments: Value) -> Result<Outcome, ApiError> {
         .cloned()
         .ok_or_else(|| ApiError::invalid("invalid arguments: the arguments are an object"))?;
     let known = [
-        "action", "project", "file", "name", "preset", "comp", "timeline", "vars",
+        "action", "project", "file", "name", "preset", "comp", "timeline", "vars", "ops",
     ];
     for key in fields.keys() {
         if !known.contains(&key.as_str()) {
@@ -1301,6 +1301,39 @@ pub fn bake(arguments: Value, backend: &dyn Backend) -> Result<Outcome, ApiError
         }
         baked
     };
+
+    // The manifest is the bake's sentinel, and the two paths above can
+    // end without one that tells the truth. A skip_render bake inherits
+    // every frame and writes no manifest at all - the export then skips
+    // the clip with a log line, because it requires a manifest to use
+    // the PNG sequence. A ranged re-render inherits its outside-frames
+    // AFTER the engine wrote its manifest, leaving it vouching for fewer
+    // frames than the sequence holds; a later cache hit passes on the
+    // present >= partial check and a swallowed copy error still leaves a
+    // manifest claiming a truncated sequence is whole. Written here at
+    // the bake root (where every reader - the export's manifest_of, the
+    // cache's bake_cache_hit - looks for it), once the frames are final:
+    // part-renamed, so a reader either sees no manifest or a whole one.
+    {
+        let manifest_path = dir.join("manifest.json");
+        let manifest_stale = match std::fs::read_to_string(&manifest_path) {
+            Ok(existing) => serde_json::from_str::<concat_motion::engine::Baked>(&existing)
+                .map(|prior| prior.frames != baked.frames)
+                .unwrap_or(true),
+            Err(_) => true,
+        };
+        if manifest_stale {
+            let manifest = serde_json::to_string_pretty(&baked).map_err(|error| {
+                ApiError::failed(format!("serialising the bake manifest: {error}"))
+            })?;
+            let part = concat_motion::cache::part_path(&manifest_path);
+            std::fs::write(&part, manifest)
+                .map_err(|error| ApiError::failed(format!("{}: {error}", part.display())))?;
+            concat_motion::cache::publish(&part, &manifest_path).map_err(|error| {
+                ApiError::failed(format!("{}: {error}", manifest_path.display()))
+            })?;
+        }
+    }
 
     // The bake cache is bounded: every bake sweeps its own root under the
     // machine-sized budget, the bake just written kept but counted, so

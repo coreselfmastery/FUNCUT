@@ -27,7 +27,7 @@ follows the same read.
 | `model+lexicon` | `FUNCUT_EMOTION_API_KEY` or `HF_TOKEN` set | 0.85 | `tabularisai/multilingual-emotion-classification` (XLM-RoBERTa, **23 languages**, 11 labels folded onto the edit's 7) on HuggingFace's free Inference API (75% weight) blended with the lexicon (25%) |
 
 The hosted model reads the narration in whatever language it was written
-in — English, Bengali, Hindi, Urdu, Arabic, Chinese, Spanish and eighteen
+in — English, Bengali, Hindi, Urdu, Arabic, Chinese, Spanish and sixteen
 more — where the old English-only classifier saw gibberish and the lexicon
 sees nothing at all. Its eleven labels fold onto the edit's seven:
 contempt rides the disgust grade, frustration the anger cut, gratitude

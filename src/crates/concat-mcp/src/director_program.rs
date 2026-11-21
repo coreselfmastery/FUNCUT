@@ -413,7 +413,7 @@ fn bed_query_chain(log: &[Value], takes: &[TakePaths]) -> Vec<Option<String>> {
     chain.extend(
         voice_reads(log, takes)
             .into_iter()
-            .filter_map(|read| read.take_wide.music_genre)
+            .map(|read| read.take_wide.music_genre)
             .filter(|genre| !genre.trim().is_empty())
             .map(Some),
     );
@@ -656,6 +656,13 @@ enum GatherPhase {
     Sheet,
     /// The sheet reply is in: rank, choose and record the slot.
     ReadSheet,
+    /// The sheet's choice is ranked: the emotion gate weighs the
+    /// register before the choice is spent.
+    Gate,
+    /// The gate's reply is in: the first candidate the sheet ranked
+    /// highest among the ones the gate passed takes the slot, or the
+    /// beat is dropped.
+    ReadGate,
     /// About to run the continuity gate over the chosen run.
     Continuity,
     /// The continuity reply is in: repair what the measurements flagged.
@@ -1061,16 +1068,30 @@ fn slots_from_plan(log: &[Value], takes: &[TakePaths]) -> Vec<BrollSlot> {
                 .filter_map(Value::as_str)
                 .map(str::to_owned)
                 .collect();
+            // The emotional read's own vocabulary for the line the slot
+            // sits in: the register x act shot the extract computed
+            // (docs/EMOTION.md's 5a) is the query candidates arrive
+            // pre-matched by - a topic tag shops the subject, the
+            // register shops the mood, and the line the slot overlaps
+            // names both.
+            let register = emotion_lines(log, takes)
+                .iter()
+                .filter(|line| line.take == take_path && line.end > start && line.start < end)
+                .max_by(|left, right| left.intensity.total_cmp(&right.intensity))
+                .and_then(|line| line.queries.first().cloned())
+                .unwrap_or_default();
             let before = spoken
                 .iter()
                 .filter(|(_, segment_end, _)| *segment_end <= start)
                 .max_by(|left, right| left.1.total_cmp(&right.1))
                 .map(|(_, _, text)| tail_words(text, 5))
                 .unwrap_or_default();
-            let query = if tags.is_empty() {
-                before
-            } else {
+            let query = if !tags.is_empty() {
                 tags.join(" ")
+            } else if !register.trim().is_empty() {
+                register
+            } else {
+                before
             };
             if query.trim().is_empty() {
                 continue;
@@ -1213,6 +1234,10 @@ struct EmotionLine {
     sfx_type: String,
     /// The two `bgm_search` queries the line's bed wants, primary first.
     bgm_words: Vec<String>,
+    /// The stock-search vocabulary the line's register asks for: the
+    /// extract's own `queries`, emotion register x act shot, in priority
+    /// order - what a B-roll slot overlapping this line shops with.
+    queries: Vec<String>,
     /// The line's own words, as the transcript measured them: a motion
     /// card carries the narration it was earned by, never a sample's text.
     text: String,
@@ -1259,6 +1284,16 @@ impl EmotionLine {
             duck_db: row["duckDb"].as_f64().unwrap_or(-12.0),
             sfx_type: text_free(&row["sfxType"]).unwrap_or_default(),
             bgm_words: row["bgmWords"]
+                .as_array()
+                .map(|words| {
+                    words
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            queries: row["queries"]
                 .as_array()
                 .map(|words| {
                     words
@@ -4475,6 +4510,10 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                 let mut phase = GatherPhase::Search;
                 let mut fetch_queue: Vec<Value> = Vec::new();
                 let mut fetched: Vec<StockCandidate> = Vec::new();
+                // The sheet-ranked candidates awaiting the emotion gate's
+                // word - the choice is spent only after the register
+                // allowed it.
+                let mut pending_gate: Vec<StockCandidate> = Vec::new();
                 // The slots whose choice the sheet made, in play order:
                 // the continuity pass reads them, the import pass spends
                 // them. A slot the continuity pass downgraded holds
@@ -4692,20 +4731,91 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                 phase = GatherPhase::Search;
                                 continue;
                             }
-                            let best = &candidates[0];
-                            used_ids.push(best.id.clone());
-                            if let Some(hash) =
-                                best.tile["hash"].as_str().filter(|hash| !hash.is_empty())
-                            {
-                                used_hashes.push(hash.to_owned());
-                            }
-                            shopped.push(SlotChoice {
-                                id: format!("slot-{:02}", shopped.len()),
-                                slot: slots[shopping].clone(),
-                                candidates,
-                                chosen: 0,
-                                held: false,
+                            // The emotion gate rides between the sheet and
+                            // the choice: the pixels were the sheet's job,
+                            // the register is the gate's (EMOTION.md's
+                            // "gate included" - which the one-click path
+                            // never ran, so a candidate no line's register
+                            // allowed took the slot on looks alone).
+                            pending_gate = candidates;
+                            phase = GatherPhase::Gate;
+                            continue;
+                        }
+                        GatherPhase::Gate => {
+                            let slot = &slots[shopping];
+                            // Bound once: the gate's answer and the segment
+                            // it gated both read these lines.
+                            let lines = emotion_lines(log, &gather_source);
+                            let line = emotion_at(&lines, &slot.take, slot.from);
+                            let segment = json!({
+                                "emotion": line
+                                    .map(|line| line.emotion.clone())
+                                    .unwrap_or_else(|| "neutral".to_owned()),
+                                "act": line
+                                    .map(|line| line.act.clone())
+                                    .unwrap_or_else(|| "setup".to_owned()),
                             });
+                            let gate_candidates: Vec<Value> = pending_gate
+                                .iter()
+                                .enumerate()
+                                .map(|(index, candidate)| {
+                                    json!({
+                                        "index": index,
+                                        "id": candidate.id,
+                                        "label": candidate.tile["label"].clone(),
+                                        "query": slot.query.clone(),
+                                    })
+                                })
+                                .collect();
+                            phase = GatherPhase::ReadGate;
+                            return Some(call(
+                                "emotion",
+                                json!({
+                                    "action": "gate",
+                                    "segment": segment,
+                                    "candidates": gate_candidates,
+                                }),
+                            ));
+                        }
+                        GatherPhase::ReadGate => {
+                            // Among the candidates the gate passed, the
+                            // sheet's own ranking decides: visual quality
+                            // picks within the register the gate allowed.
+                            let passing: Vec<usize> = log
+                                .last()
+                                .and_then(|reply| reply["order"].as_array())
+                                .map(|order| {
+                                    order
+                                        .iter()
+                                        .filter_map(Value::as_i64)
+                                        .map(|index| index as usize)
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            let chosen = passing
+                                .into_iter()
+                                .filter(|index| pending_gate.get(*index).is_some())
+                                .min();
+                            if let Some(chosen) = chosen {
+                                let best = &pending_gate[chosen];
+                                used_ids.push(best.id.clone());
+                                if let Some(hash) =
+                                    best.tile["hash"].as_str().filter(|hash| !hash.is_empty())
+                                {
+                                    used_hashes.push(hash.to_owned());
+                                }
+                                shopped.push(SlotChoice {
+                                    id: format!("slot-{:02}", shopped.len()),
+                                    slot: slots[shopping].clone(),
+                                    candidates: std::mem::take(&mut pending_gate),
+                                    chosen,
+                                    held: false,
+                                });
+                            }
+                            // Every candidate rejected (or no gate answer):
+                            // the beat is dropped - the A-roll covers the
+                            // span, the way the gate's own recommendation
+                            // reads. Never pad with a bad match.
                             shopping += 1;
                             phase = GatherPhase::Search;
                             continue;

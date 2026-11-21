@@ -96,20 +96,24 @@ voiceover is graded before anything else reads it:
 `sense_voice_quality {action: "classify_recording_quality", audio}`. A
 verdict of `home` or `rough` (a high noise floor, SNR under ~12 dB, hum,
 clipping) is repaired FIRST — `sense_audio_repair {action:
-"remove_hiss_hum_rumble", audio}` when its `fixes` name a hum, then
-`sense_audio_repair {action: "enhance_speech"}` (its
-`fixes` name the chain; `targetLufs` picks the platform landing) — and
-the enhanced file the reply's `file` names becomes THE voiceover:
-import that, transcribe that, and run every later analysis
-(`analyze_silence`, `voice_signals`, beats) on the cleaned audio, never
-on the raw take. An un-repaired rough take puts its noise floor into
-every downstream signal; the enhance chain filters and never cuts, so
-timings survive the repair. A TTS take is **not** clean by construction:
-the server's default voice model is the int8 Kokoro, and its
-quantisation adds a hiss above the noise floor — the same grading and
-repair chain runs on a synthesized take (a take from the project's own
-`audio/` folder is synthesized; the runner records the chain it ran),
-and only a plan that names a full-precision model may skip it.
+"enhance_speech", audio, out: <an enhanced copy beside the take>}`,
+then `sense_audio_repair {action: "remove_hiss_hum_rumble", audio:
+<the enhanced copy>, out: <the take itself>, overwrite: true,
+force: true}` (its `findings` name the chain; `targetLufs` picks the
+platform landing). The order is enhance-then-clean, and the chain lands
+**in place**: the second call writes the cleaned, enhanced audio onto
+the take the timeline plays, so the timeline, the transcription and
+every later analysis (`analyze_silence`, `voice_signals`, beats) read
+the repaired take, never the raw one — do NOT import or re-place the
+narration clips to point at a new file. An un-repaired rough take puts
+its noise floor into every downstream signal; the enhance chain filters
+and never cuts, so timings survive the repair. A TTS take is **not**
+clean by construction: the server's default voice model is the int8
+Kokoro, and its quantisation adds a hiss above the noise floor — the
+same grading and repair chain runs on a synthesized take (a take from
+the project's own `audio/` folder is synthesized; the runner records
+the chain it ran), and only a plan that names a full-precision model
+may skip it.
 If narration exists as audio/video,
 `transcribe` it with an ISO language hint when known; the default `base.en`
 model is English-only, so choose a multilingual model for non-English. Each
@@ -302,8 +306,17 @@ both found here, before anything is fetched, not after it is placed.
 
 **Shop each timed B-roll segment, not a generic keyword.** Consult
 clip-skills' B-roll matching module. The B-roll reinforces the line's job
-(contrast / punctuate / breathe), not its literal content. For each
-`segments[i]` whose `visual.type` is `broll`, call
+(contrast / punctuate / breathe), not its literal content. **Two shelves
+serve you; the brief decides which.** A **monetized** brief (or one whose
+`creative-brief.json` says `monetized: true`) NEVER shops OpenVid — it has
+no per-clip licence record and its import is refused in code: shop the
+licensed live shelves instead, `stock_search {provider: "pexels" |
+"pixabay", query, orientation}` → `stock_fetch {provider, id, url}` →
+`stock_contact_sheet {paths: [<the fetched files>], aspect}` → LOOK at the
+sheet → `stock_import {path, provider, id, url}` (every hit carries its
+licence; keep the provider/id/url triple — the receipt's provenance reads
+it). An unmonetized brief may shop OpenVid: for each `segments[i]` whose
+`visual.type` is `broll`, call
 `openvid_rank_for_slot {description: visual.description, queries:
 visual.queries || [visual.query], hero: visual.hero, motion_min:
 visual.motionMin, exclude_ids: <every clip id already chosen>}`. The
@@ -323,9 +336,12 @@ carries the whole B-roll query list (two or three words per query, per
 (`openvid_fetch`, `bgm_fetch`), then import (`openvid_import`, `bgm_import`).
 If a search comes back thin, follow the fallback ladder in `prompts/broll_matching.md` — never
 invent a clip id, never leave a gap. **Never choose B-roll from caption text
-alone.** Call `stock_contact_sheet {query, rank: true, brief}` and actually
-look at the returned image; use its `ranking`, reject dark/letterboxed/generic
-tiles, and follow its `queries` suggestions when the candidates are weak.
+alone.** Look at every candidate page: OpenVid's own clips arrive as a
+contact sheet — call `stock_contact_sheet {query, rank: true, brief}` and
+actually look at the returned image (on the licensed path, the sheet of
+`paths` above is the same look); use its `ranking`, reject
+dark/letterboxed/generic tiles, and follow its `queries` suggestions when
+the candidates are weak.
 Then run the **placement gate** on the survivors: `emotion {action: "gate",
 segment: {emotion, act}, candidates, brand}` — a candidate failing 0–1 of
 its three checks (emotion register, act shot, brand taboo) passes; **2+

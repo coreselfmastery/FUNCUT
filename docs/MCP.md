@@ -165,7 +165,7 @@ storage, `motion_import` for motion made elsewhere (Lottie and GSAP), plus
 `motion_overlay`, the compositing path
 over real footage, documented with the perception tools below:
 
-- `motion_presets` - the eighteen motion-graphics presets (lower thirds,
+- `motion_presets` - the thirty-two motion-graphics presets (lower thirds,
   kinetic captions, stat cards, wordmark stings, pull quotes, chapter
   chips and cards, agendas, subscribe cards and end cards, terminals and
   diffs, bar charts and progress bars, split compares, counting numbers,
@@ -275,7 +275,7 @@ over real footage, documented with the perception tools below:
   first diagnostic; this is the door for the second and third codes a
   refusal carries, and for a code the engine printed anywhere else.
 
-## Perception and the creative loop (nine more tools)
+## Perception and the creative loop (eleven more tools)
 
 An agent that gets a PNG *path* back cannot see the picture. These tools
 return MCP `type: image` content blocks, so the model can actually look:

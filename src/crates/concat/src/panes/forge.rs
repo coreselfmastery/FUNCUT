@@ -2456,9 +2456,12 @@ fn director_run_prompt(
          MANDATORY QUALITY LOOP (do not skip, do not just describe it):\n\
          1. plan_validate must return BOTH valid:true AND creativeReady:true. Fix every \
             creativeBlockers entry before cutting. A score below 7 means rewrite the plan.\n\
-         2. Never choose B-roll from caption text. Call stock_contact_sheet with rank:true \
-            and LOOK at the returned image; use cropHint when fitting square or landscape \
-            clips into a vertical frame.\n\
+         2. Never choose B-roll from caption text. Shop the licensed live shelves \
+            (stock_search; the Pexels/Pixabay keys are in your environment and this edit \
+            is monetized - OpenVid has no licence record and its import is refused), \
+            fetch, then stock_contact_sheet with the fetched paths and LOOK at the \
+            returned image; use cropHint when fitting square or landscape clips into a \
+            vertical frame.\n\
          3. motion_frame returns an inline image - check legibility, contrast and safe \
             margins before every motion_bake.\n\
          4. After the edit, call watch_render (the WHOLE cut as one contact sheet image) \
@@ -2592,8 +2595,10 @@ fn auto_director_prompt(source: &AutoEditSource) -> String {
          family at confidence 0 was not measured, so say so and do not cite it. Never dump \
          the profile into a note: every signal you read must land on a choice.\n\n\
          WHAT THE EDIT MUST BE: the whole pipeline around that narration - the plan \
-         (plan_validate must return valid:true AND creativeReady:true), B-roll shopped with \
-         stock_contact_sheet rank:true and LOOKED AT before choosing and gated with \
+         (plan_validate must return valid:true AND creativeReady:true), B-roll shopped on \
+         the licensed live shelves (stock_search with the keys in your environment, \
+         stock_fetch, then stock_contact_sheet with the fetched paths) and LOOKED AT \
+         before choosing and gated with \
          footage_continuity before anything is imported (a flagged slot gets a different \
          clip or holds), captions cut on the measured words in groups of two to four \
          (punctuation, breath gaps and four words are the seams; the safe-remove fillers \

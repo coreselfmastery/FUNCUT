@@ -53,15 +53,15 @@ transition. Pair them in the plan.
 | `concat.push` | direction: forward momentum, "moving on" |
 | `concat.zoom` / `concat.zoom-blur-transition` | energy spike, punch-in on a claim |
 | `concat.whip-pan` | fast topic change, list rhythm, reel cuts on the beat |
-| `concat.slideleft` (and right/up/down siblings) | lateral motion matching the footage's direction |
-| `concat.wipe-left` / `wipe-right` | clean section change in explainers; editorial, not flashy |
+| `concat.slide` (and its direction siblings) | lateral motion matching the footage's direction |
+| `concat.linear-wipe` / `wipe-left` | clean section change in explainers; editorial, not flashy |
 | `concat.clock-wipe` | time passing, countdown feels |
-| `concat.iris` / `concat.circleopen` | focus on one subject, old-film warmth |
-| `concat.glitch-warp` / `concat.glitch-transition` | tech, error states, digital finance |
-| `concat.pixelize` | data, privacy, anonymization beats |
-| `concat.blinds` | structured, corporate, clean reveals |
-| `concat.distortion-*` | impact hits with sound design |
-| `concat.split-*` | before/after, compare beats |
+| `concat.iris` / `concat.circle-pop` | focus on one subject, old-film warmth |
+| `concat.glitch-warp` (the viral pack's glitch family) | tech, error states, digital finance |
+| (the viral pack's pixel family) | data, privacy, anonymization beats |
+| `concat.blinds-soft` | structured, corporate, clean reveals |
+| (the viral pack's distortion family) | impact hits with sound design |
+| `concat.shape-wipe` / (the split family) | before/after, compare beats |
 
 ## The 100 viral pack, by shelf
 

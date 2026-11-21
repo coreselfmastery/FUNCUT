@@ -62,7 +62,7 @@ downbeatsMs[]}`. Align:
 - Section dips: −14 to −18 under the re-hook, resolve to resting at the
   outro.
 
-Keyframes as `clip_audio_levels_db {keyframes: [{at, gainDb, ease}]}`
+Keyframes as `clip_audio_levels_db {path, clipId, baseDb, keyframes: [{at, gainDb, ease}]}` (`path`, `clipId` and `baseDb` are required beside the keyframes)
 with `at` a fraction of the clip — a duck that anticipates the speech by
 ~150 ms (the key BEFORE the word) sounds engineered; one that lands
 after sounds like a mistake.

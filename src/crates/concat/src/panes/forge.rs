@@ -534,15 +534,16 @@ impl ForgePane {
         }
         // One edit at a time: the lab reads the open project's own
         // voiceover, and while a run is editing the same material the
-        // reading would describe a take in motion. The refusal names the
-        // run that is going - neither entry point's own wording, but the
-        // lab's.
+        // reading would describe a take in motion. The refusals are the
+        // lab's own words - one for each runner - not an entry point's
+        // wording borrowed for a reading (and never a progress line's
+        // {0} placeholder shown raw).
         if self.running {
-            studio.notify(&t("forge.signalsBusy"), true);
+            studio.notify(&t("forge.signalsAgentBusy"), true);
             return;
         }
         if self.auto.running || self.auto.checking {
-            studio.notify(&t("forge.autoEditBusy"), true);
+            studio.notify(&t("forge.signalsAutoBusy"), true);
             return;
         }
         let row = row.max(0) as usize;
@@ -2620,6 +2621,10 @@ fn auto_director_prompt(source: &AutoEditSource) -> String {
          at least one revision, watch_render AGAIN and compare the two craft scores, and \
          repeat until the overall score is >= 7 with no black frames, letterbox bars or long \
          static runs. Only then export.\n\n\
+         PERSIST THE PLAN: write the exact canonical plan object you validated to \
+         '{project}/edit-plan.json' before you export - the run's acceptance gate reads that \
+         file as its story evidence, and an edit without it lands unproven whatever its \
+         craft score.\n\n\
          THE EXPORT lands at '{export}'. Finish by calling watch_render on the exported file \
          with audio:true and craft_critique once more, then report the honest score and what \
          you changed. Never claim success on an unmeasured render. A file PATH to a PNG is \

@@ -360,6 +360,16 @@ pub struct AssetRecord {
 /// is the truth about a project that used only its own media.
 pub fn provenance_of(observed: &[(ToolCall, Value)]) -> Vec<AssetRecord> {
     let mut assets: Vec<AssetRecord> = Vec::new();
+    // The music shelf's own licence records, remembered from the search
+    // and fetch replies the run made before it imported: bgm_import's
+    // reply carries media ids and a view, never a licence, so the
+    // import arm below used to read a key that never exists and record
+    // every bed as an asset with unrecorded rights - on the one asset
+    // the receipt exists to vouch for.
+    let mut bgm_rights: std::collections::HashMap<
+        String,
+        (Option<String>, Option<String>),
+    > = std::collections::HashMap::new();
     let text = |value: &Value, key: &str| {
         value
             .get(key)
@@ -393,6 +403,25 @@ pub fn provenance_of(observed: &[(ToolCall, Value)]) -> Vec<AssetRecord> {
         let url = text(&call.arguments, "url");
         let ids = ids_of(&call.arguments);
         let id = ids.first().cloned();
+        if call.tool.as_str() == "bgm_search" || call.tool.as_str() == "bgm_fetch" {
+            let tracks: Vec<&Value> = if call.tool.as_str() == "bgm_search" {
+                reply
+                    .get("tracks")
+                    .and_then(Value::as_array)
+                    .map(|list| list.iter().collect())
+                    .unwrap_or_default()
+            } else {
+                std::iter::once(reply).collect()
+            };
+            for track in tracks {
+                if let Some(track_id) = text(track, "id") {
+                    bgm_rights.insert(
+                        track_id,
+                        (text(track, "license"), text(track, "artist")),
+                    );
+                }
+            }
+        }
         let record = match call.tool.as_str() {
             // The live shelves' import: the licence travels in the reply.
             // A reply that spelled no licence is not a monetizable asset:
@@ -432,14 +461,38 @@ pub fn provenance_of(observed: &[(ToolCall, Value)]) -> Vec<AssetRecord> {
                 }
                 None
             }
-            "bgm_import" => Some(AssetRecord {
-                provider: "bgm".to_owned(),
-                id: id.clone().unwrap_or_default(),
-                license: text(reply, "license"),
-                author: None,
-                url: None,
-                commercial_ok: None,
-            }),
+            "bgm_import" => {
+                // One asset per track the import named: the licence each
+                // track carries was spelled by the search or fetch reply
+                // that chose it (bgm_import's own reply never carries
+                // one), and commercial_ok is the licence's own verdict -
+                // CC0 permits a monetized edit, MobyGratis refuses it.
+                for track_id in &ids {
+                    let (license, artist) = bgm_rights
+                        .get(track_id)
+                        .cloned()
+                        .unwrap_or((None, None));
+                    let commercial_ok = match license.as_deref() {
+                        Some("CC0-1.0") => Some(true),
+                        Some(_) => Some(false),
+                        None => None,
+                    };
+                    if !assets
+                        .iter()
+                        .any(|asset| asset.provider == "bgm" && &asset.id == track_id)
+                    {
+                        assets.push(AssetRecord {
+                            provider: "bgm".to_owned(),
+                            id: track_id.clone(),
+                            license,
+                            author: artist,
+                            url: None,
+                            commercial_ok,
+                        });
+                    }
+                }
+                None
+            }
             "sounds_add" => Some(AssetRecord {
                 provider: "sounds".to_owned(),
                 id: id.clone().unwrap_or_default(),
@@ -1161,6 +1214,65 @@ mod tests {
                 .with_assets(assets);
         assert_eq!(receipt.unlicensed().len(), 1);
         assert!(receipt.summary().contains("unrecorded rights"));
+    }
+
+    #[test]
+    fn a_beds_licence_rides_the_search_that_chose_it() {
+        // bgm_import's reply carries media ids and a view, never a
+        // licence: the licence was spelled by the search reply that
+        // chose the track. A bed imported without a search on the
+        // record is an asset with unrecorded rights, not a laundering
+        // of whatever the reply happened to omit.
+        let call = |tool: &str, arguments: Value| ToolCall {
+            tool: tool.to_owned(),
+            arguments,
+        };
+        let observed = vec![
+            (
+                call("bgm_search", json!({ "query": "city night pulse" })),
+                json!({ "tracks": [
+                    { "id": "freepd-123", "artist": "Kevin MacLeod",
+                      "license": "CC0-1.0" },
+                    { "id": "lofi-9", "artist": "Moby",
+                      "license": "MobyGratis-NonCommercial" },
+                ] }),
+            ),
+            (
+                call("bgm_import", json!({ "path": "/p", "ids": ["freepd-123"] })),
+                json!({ "mediaIds": ["m-bed"], "view": {} }),
+            ),
+            (
+                // The Lo-Fi shelf's track was on the same page: its
+                // non-commercial terms are read, not laundered.
+                call("bgm_import", json!({ "path": "/p", "ids": ["lofi-9"] })),
+                json!({ "mediaIds": ["m-other"], "view": {} }),
+            ),
+            (
+                // A bed nobody searched for: the honest absent record.
+                call("bgm_import", json!({ "path": "/p", "ids": ["mystery-1"] })),
+                json!({ "mediaIds": ["m-mystery"], "view": {} }),
+            ),
+        ];
+        let assets = provenance_of(&observed);
+        assert_eq!(assets.len(), 3);
+        assert_eq!(assets[0].provider, "bgm");
+        assert_eq!(assets[0].id, "freepd-123");
+        assert_eq!(assets[0].license.as_deref(), Some("CC0-1.0"));
+        assert_eq!(assets[0].author.as_deref(), Some("Kevin MacLeod"));
+        assert_eq!(assets[0].commercial_ok, Some(true));
+        // The Lo-Fi shelf's terms are real and non-commercial: the
+        // record says so instead of vouching for a bed it never read.
+        assert_eq!(assets[1].id, "lofi-9");
+        assert_eq!(
+            assets[1].license.as_deref(),
+            Some("MobyGratis-NonCommercial")
+        );
+        assert_eq!(assets[1].commercial_ok, Some(false));
+        // And the one the record never saw: unknown, and unknown is not
+        // permission.
+        assert_eq!(assets[2].id, "mystery-1");
+        assert_eq!(assets[2].license, None);
+        assert_eq!(assets[2].commercial_ok, None);
     }
 
     #[test]

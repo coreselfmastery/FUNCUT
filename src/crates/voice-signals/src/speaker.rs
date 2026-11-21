@@ -87,6 +87,19 @@ pub struct SpeakerOutAll {
     /// The speaker of each line of the transcript (by midpoint overlap);
     /// -1 when a line has no timing or no speech under it.
     pub line_speakers: Vec<i64>,
+    /// How many utterances the VAD found: the count of speech spans a
+    /// pause-separated read divides into. The pacing number a shot-length
+    /// rule wants - an interview answer is a handful of long utterances,
+    /// a rapid-fire read is many short ones - and the honest denominator
+    /// for "how often does this take breathe".
+    pub utterances: u32,
+    /// The mean utterance length, in seconds. `None` when no speech was
+    /// detected, which is not the same answer as zero.
+    pub mean_utterance_sec: Option<f64>,
+    /// The longest stretch of detected silence between two utterances, in
+    /// seconds: the take's own deepest breath. `None` when no two
+    /// utterances were separated by silence.
+    pub longest_silence_sec: Option<f64>,
 }
 
 /// The whole-output type the crate's `Output` carries.
@@ -102,8 +115,30 @@ impl SpeakerOutAll {
             speakers: Vec::new(),
             changes: Vec::new(),
             line_speakers: Vec::new(),
+            utterances: 0,
+            mean_utterance_sec: None,
+            longest_silence_sec: None,
         }
     }
+}
+
+/// The utterance rhythm of the detected speech: the count of spans, their
+/// mean length, and the longest silence that separates two of them. The
+/// spans come from the VAD's own hysteresis, so a breath inside an
+/// utterance does not split it - only a real silence does.
+fn utterance_stats(speech: &[Span]) -> (u32, Option<f64>, Option<f64>) {
+    if speech.is_empty() {
+        return (0, None, None);
+    }
+    let count = speech.len() as u32;
+    let mean = speech.iter().map(|s| s.end - s.start).sum::<f64>() / speech.len() as f64;
+    let longest = speech
+        .windows(2)
+        .map(|pair| pair[1].start - pair[0].end)
+        .fold(None::<f64>, |best, gap| {
+            Some(best.map_or(gap, |held| held.max(gap)))
+        });
+    (count, Some(mean), longest)
 }
 
 /// The length of one diarization window: long enough for a stable
@@ -148,6 +183,9 @@ pub fn analyse(take: &Take, spec: &Spec) -> Result<SpeakerOutAll, Error> {
             speakers: Vec::new(),
             changes: Vec::new(),
             line_speakers: vec![-1; line_count],
+            utterances: 0,
+            mean_utterance_sec: None,
+            longest_silence_sec: None,
         });
     }
     let windows = speech_windows(&speech);
@@ -435,6 +473,7 @@ fn voiceprint(samples: &[f32], rate: f32) -> Option<Vec<f32>> {
 
 /// Assemble the finished reading: speakers, changes and the line map.
 fn finish(spec: &Spec, speech: Vec<Span>, turns: Vec<Turn>, windows: &[Span]) -> SpeakerOutAll {
+    let (utterances, mean_utterance, longest_silence) = utterance_stats(&speech);
     let mut speakers: Vec<SpeakerEntry> = Vec::new();
     for turn in &turns {
         let secs = turn.end - turn.start;
@@ -500,6 +539,9 @@ fn finish(spec: &Spec, speech: Vec<Span>, turns: Vec<Turn>, windows: &[Span]) ->
         speakers,
         changes,
         line_speakers,
+        utterances,
+        mean_utterance_sec: mean_utterance.map(|secs| (secs * 1000.0).round() / 1000.0),
+        longest_silence_sec: longest_silence.map(|secs| (secs * 1000.0).round() / 1000.0),
     }
 }
 
@@ -624,6 +666,14 @@ mod tests {
         assert!(out.available, "{out:?}");
         assert!(out.speakers.len() >= 2, "speakers {:?}", out.speakers);
         assert_eq!(out.changes.len(), 1, "{:?}", out.changes);
+        // The utterance rhythm: at least two spans (the pause splits them)
+        // with a mean near the spoken lengths, and the 1 s pause is the
+        // longest silence between them.
+        assert!(out.utterances >= 2, "utterances {}", out.utterances);
+        let mean = out.mean_utterance_sec.expect("a mean exists");
+        assert!((2.5..=5.0).contains(&mean), "mean {mean}");
+        let longest = out.longest_silence_sec.expect("a silence exists");
+        assert!((0.8..=1.3).contains(&longest), "longest {longest}");
     }
 
     #[test]

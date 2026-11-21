@@ -44,8 +44,15 @@ case "$(uname -m)" in
     ;;
 esac
 
-_funcut_ort_stem=$(basename "$("$_fetch" --url "$_funcut_ort_row")" | sed -n -e 's/^\(.*\)\.tar\.[a-z0-9]*$/\1/p' -e 's/^\(.*\)\.tgz$/\1/p')
-_funcut_sherpa_stem=$(basename "$("$_fetch" --url "$_funcut_sherpa_row")" | sed -n -e 's/^\(.*\)\.tar\.[a-z0-9]*$/\1/p' -e 's/^\(.*\)\.tgz$/\1/p')
+# A mirror URL ending in `/download` (SourceForge's redirect suffix) is
+# stripped first: its basename is the word "download", not the archive's
+# name, and the stem checks below would fail on a URL the lock does
+# carry a version in.
+_funcut_stem_of() {
+  basename "${1%/download}" | sed -n -e 's/^\(.*\)\.tar\.[a-z0-9]*$/\1/p' -e 's/^\(.*\)\.tgz$/\1/p'
+}
+_funcut_ort_stem=$(_funcut_stem_of "$("$_fetch" --url "$_funcut_ort_row")")
+_funcut_sherpa_stem=$(_funcut_stem_of "$("$_fetch" --url "$_funcut_sherpa_row")")
 test -n "$_funcut_ort_stem" || { echo "funcut-env.sh: no ONNX Runtime version in deps.lock" >&2; return 1; }
 test -n "$_funcut_sherpa_stem" || { echo "funcut-env.sh: no sherpa-onnx version in deps.lock" >&2; return 1; }
 

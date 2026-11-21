@@ -2829,3 +2829,123 @@ The acceptance sentence is now folded into the warnings before the
 terminal progress detail is chosen, so a warned completion no longer
 announces "the export is complete" in the event stream. The regression
 test reads both the final state and the last event.
+
+## 67. The fifty ears, spent whole - and one button each
+
+The voice-signal reader measured fifty readings (the thirty-six the
+profile already answered and the fourteen the fifty-ear pass added:
+the safety and identity forensics, the band and pulse readings, the
+speaker's utterance rhythm, the take's own pitch contour) while the
+AUTO EDIT spent fewer of them than it parsed. The consumer guard that
+should have caught this passed only because its helper-block scan ran
+the last `pub fn` to the end of the file, counting every field the
+private parse functions write as spent through a helper whose body
+never names them.
+
+The guard now ends each block at the method's own closing brace, and
+the readings it immediately caught are wired to decisions, each with a
+test: the strongest rhythm layer's own period sizes a seam's blend when
+the derived dominant key never landed; the cut-style fallback chain
+runs onsets' rate, then the VAD's utterance rhythm, then the flux mean
+against the envelope it moved from; the speakers' own shares gate the
+speaker-change seam, so a change point in a take one voice holds is a
+clustering wobble rather than a turn; a tight take (its longest silence
+under 0.9 s) is left whole by the dead-air tighten; the shimmer joins
+the voice-quality gate; and the repair shopping list names the DC
+blocker and the presence lift a muffled take asks for.
+
+Every reading also has its button. `voice_signals` answers a catalogue
+(action `catalog`): the fifty named signals, their families, what each
+measures and why the edit wants it - and a `signals` filter over those
+names extracts exactly the asked-for readings, running only the passes
+they need (a filler read costs no ffmpeg pass and no Rust ear) and
+answering a `requested` block with the reading, the ear that took it,
+the family's confidence and its basis. The Forge page's signal lab is
+built from that catalogue: thirteen families on a select, one button
+per reading, and a card that answers a press with the value, the why,
+the ear and the confidence - taken through the window's own server and
+the same toolbox an agent's call means, on the timeline's own
+voiceover, with the take transcribed first when it never was.
+
+The dev build's Rust ear is found where the workspace actually puts it
+(`src/target/<profile>/`, the script's grandparents) as well as the
+repository root a root-workspace checkout uses, so a checkout that
+builds `voice-signals` exercises the real ears in the selftest instead
+of reporting them absent.
+
+## 68. Three rules that judged a reading nobody measured
+
+The continuity gate's own contract is that a reading the manifest does
+not carry stands its rule down: a clip with no colour temperature is not
+compared, and a clip with no motion figure is not called still. The
+scale rule did not follow it. `ManifestClip::shot_scale` was a bare
+`ShotScale` defaulting to `Medium`, so a manifest that never carried a
+scale - which is every manifest the AUTO EDIT's gather stage sends, since
+one contact-sheet frame measures warmth and nothing else - arrived as a
+row of `Medium`s. The gate then flagged **every adjacent pair** as "two
+of one scale in a row", recorded those flags in the run's evidence, and
+made the stage re-run the whole continuity check once more because the
+flag list was never empty. The field is now `Option<ShotScale>` with
+`None` meaning unmeasured, exactly as `motion` and `color_temperature`
+already meant it, and the rule matches on a measured pair. The
+`footage_continuity` tool's wire shape accepts an absent or null
+`shotScale`; a manifest that does measure scales still gets the flag.
+
+The transition no-repeat rule had the same shape of hole on the seam
+side. `seam_transition` picks the seam's move first (a chapter, a
+speaker change, a question, a held beat, a phrase boundary) and falls
+back to the mood's *alternate* when the last shot wore the same move.
+But the alternate is chosen to differ from the mood's own first move, not
+from a seam move that may be something else entirely - and on a neutral
+read the alternate *is* the chapter seam's whip-pan, and on a joy read it
+is the phrase seam's cross-pop. Two chapter openings in a row therefore
+wore whip-pan twice, which is the one thing the rule exists to stop. The
+fallback now takes the mood's primary move when the alternate is also the
+move the last shot wore; the alternate and the primary never agree, so
+one of the two always differs from `last`.
+
+The Forge pane's `auto_director_ended` carried a second, verbatim copy of
+its own cancellation block: the same `started`/`kill`/`fraction` reset
+and the same `cancelled` branch, twice. The first copy returns, so the
+second was dead code that read as two different endings - and a reader
+editing one of them would have left the other behind.
+
+Tests: `an_unmeasured_scale_is_not_flagged_as_a_repeat` (both sides
+unmeasured, and one side unmeasured) and
+`a_seam_never_repeats_the_last_shot_s_move` (a chapter seam whose move is
+also the mood's alternate).
+
+## 69. The dependency fetch that stopped on a truncated body
+
+The Geneva lane went red on `signals/fifty-ears` at 12:13 on 2026-11-21
+in its *dependency* step, four steps before any test ran:
+
+```text
+fetch.sh: onnxruntime-linux-x64 from https://sourceforge.net/.../onnxruntime-linux-x64-1.30.1.tgz/download
+fetch.sh: onnxruntime-linux-x64 failed: HTTP 200, curl exit 18
+  curl: curl: (18) transfer closed with 4135441 bytes remaining to read
+```
+
+HTTP 200, a body that stopped 4 MB short, and no second attempt. Steps 11
+through 14 - the sherpa libraries, the sidecar, the motion tests, the
+rendered example - were skipped, so the lane reported one red dependency
+fetch as five failed steps and no evidence at all about the code.
+
+`fetch.sh` retried HTTP 5xx, curl exit 28 (timeout) and curl exit 56
+(recv failure). Exit 18 is the same class of failure as 56 and the most
+common one a mirror actually produces: the connection closed mid-answer
+after the status line had already said 200. It now rides the backoff with
+18 (partial file), 52 (empty reply), 55 (send failure) and 92 (HTTP/2
+stream), which is the whole set of ways a transfer dies between the
+headers and the last byte.
+
+Retrying more cannot let a bad artifact through, because the digest in
+`deps.lock` is checked on every attempt and a mismatch is never retried: a
+truncated body cannot match it, and a wrong release fails on attempt 1.
+
+Verified against a local server that truncates its first response and
+serves the whole body on the second: the old script failed at once with
+`HTTP 200, curl exit 18`; the new one logged `attempt 1/8: HTTP 200, curl
+exit 18 (partial file), retrying in 4s`, then verified the digest on
+attempt 2. A wrong digest still fails on the first attempt, and a 4xx
+still fails at once.

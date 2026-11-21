@@ -56,6 +56,9 @@ jobs:
       # Geneva downloads; keep its shell syntax in the same fast CI gate.
       - run: bash -n install-linux.sh
       - run: bash -n scripts/ci/apt-retry.sh
+      # The fetch retries a truncated body and still refuses a wrong digest;
+      # this pins both against a local server, with no release CDN involved.
+      - run: bash scripts/ci/test-fetch.sh
       - run: python3 -m py_compile scripts/motion/check-geneva-pins.py
       - run: python3 scripts/motion/check-geneva-pins.py
       - run: python3 scripts/ci/check-ort-pins.py

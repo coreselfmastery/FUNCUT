@@ -116,6 +116,13 @@ pub struct ProsodyOut {
     pub dominant_period_sec: Option<f64>,
     /// The phrase boundaries.
     pub phrases: Vec<PhraseOut>,
+    /// The pitch contour over the whole take: one F0 value per kept
+    /// frame, at most 256 points, `0.0` where the tracker found no
+    /// voice. The contour the summary statistics flatten away - a rise
+    /// the mean cannot show, a break the range cannot place - is the
+    /// curve itself, and it is what a word-level caption highlight or a
+    /// pitch-following graphic would be drawn along.
+    pub pitch_contour_hz: Vec<f32>,
     /// Why the reading is absent, when it is.
     pub note: Option<String>,
 }
@@ -128,6 +135,7 @@ impl ProsodyOut {
             rhythm_layers: Vec::new(),
             dominant_period_sec: None,
             phrases: Vec::new(),
+            pitch_contour_hz: Vec::new(),
             note: Some(reason.to_owned()),
         }
     }
@@ -156,12 +164,13 @@ pub fn analyse(take: &Take, timed: &[(usize, &LineSpec)]) -> ProsodyOut {
     let lines = (0..line_count)
         .map(|i| by_index.get(&i).cloned().flatten())
         .collect();
-    let (rhythm_layers, dominant, phrases) = whole_take(take, rate);
+    let (rhythm_layers, dominant, phrases, contour) = whole_take(take, rate);
     ProsodyOut {
         lines,
         rhythm_layers,
         dominant_period_sec: dominant,
         phrases,
+        pitch_contour_hz: contour,
         note: None,
     }
 }
@@ -261,11 +270,15 @@ fn brightness(frame: &[f64]) -> f64 {
     crossings as f64 / frame.len() as f64
 }
 
-/// The take's rhythm layers and phrases from the prosody graph.
-fn whole_take(take: &Take, rate: f64) -> (Vec<RhythmLayerOut>, Option<f64>, Vec<PhraseOut>) {
+/// The take's rhythm layers, phrases and pitch contour from the prosody
+/// graph and the pitch track.
+fn whole_take(
+    take: &Take,
+    rate: f64,
+) -> (Vec<RhythmLayerOut>, Option<f64>, Vec<PhraseOut>, Vec<f32>) {
     let f64_samples: Vec<f64> = take.samples.iter().map(|s| f64::from(*s)).collect();
     if f64_samples.len() < FRAME * 4 {
-        return (Vec::new(), None, Vec::new());
+        return (Vec::new(), None, Vec::new(), Vec::new());
     }
     let pitch = estimate_pitch(&f64_samples, rate, FRAME, 70.0, 400.0);
     let energy = ProsodyFeature::from_energy(&f64_samples, rate, FRAME);
@@ -298,7 +311,12 @@ fn whole_take(take: &Take, rate: f64) -> (Vec<RhythmLayerOut>, Option<f64>, Vec<
         ));
     }
     if nodes.len() < 8 {
-        return (Vec::new(), None, Vec::new());
+        return (
+            Vec::new(),
+            None,
+            Vec::new(),
+            decimate_contour(&pitch.values),
+        );
     }
     // Sigma: the median gap between kept nodes, so thinning a long take
     // widens the proximity kernel instead of shredding the graph.
@@ -309,7 +327,12 @@ fn whole_take(take: &Take, rate: f64) -> (Vec<RhythmLayerOut>, Option<f64>, Vec<
     gaps.sort_by(|a, b| a.total_cmp(b));
     let sigma = gaps.get(gaps.len() / 2).copied().unwrap_or(0.5).max(1.0e-3);
     let Some(graph) = ProsodyGraph::build_knn(nodes, 4, sigma).ok() else {
-        return (Vec::new(), None, Vec::new());
+        return (
+            Vec::new(),
+            None,
+            Vec::new(),
+            decimate_contour(&pitch.values),
+        );
     };
     let mut layers: Vec<RhythmLayerOut> = RhythmExtractor::new(6)
         .extract(&graph)
@@ -341,7 +364,33 @@ fn whole_take(take: &Take, rate: f64) -> (Vec<RhythmLayerOut>, Option<f64>, Vec<
             })
         })
         .collect();
-    (layers, dominant, phrases)
+    (layers, dominant, phrases, decimate_contour(&pitch.values))
+}
+
+/// The whole take's pitch contour, thinned to at most 256 points. Each
+/// bucket keeps its first voiced frame so a short voiced run between two
+/// unvoiced stretches survives; a bucket with no voice keeps `0.0`, which
+/// is the contour's own word for silence.
+fn decimate_contour(frames: &[f64]) -> Vec<f32> {
+    const MAX_POINTS: usize = 256;
+    if frames.len() <= MAX_POINTS {
+        return frames
+            .iter()
+            .map(|hz| (*hz as f32 * 10.0).round() / 10.0)
+            .collect();
+    }
+    let step = frames.len() as f64 / MAX_POINTS as f64;
+    (0..MAX_POINTS)
+        .map(|i| {
+            let from = (i as f64 * step) as usize;
+            let to = (((i + 1) as f64 * step) as usize).min(frames.len());
+            frames[from..to]
+                .iter()
+                .find(|hz| **hz >= 70.0 && **hz <= 400.0)
+                .map(|hz| (*hz as f32 * 10.0).round() / 10.0)
+                .unwrap_or(0.0)
+        })
+        .collect()
 }
 
 /// The energy peaks of a line: frames more than one standard deviation
@@ -529,10 +578,28 @@ mod tests {
     #[test]
     fn the_whole_take_graph_answers_a_tone() {
         let take = take_with(180.0, 4.0, 16000);
-        let (layers, dominant, phrases) = whole_take(&take, f64::from(take.sample_rate));
+        let (layers, dominant, phrases, contour) = whole_take(&take, f64::from(take.sample_rate));
         assert!(!layers.is_empty(), "a four-second tone has rhythm layers");
         assert!(dominant.unwrap_or(0.0) > 0.0, "a dominant period exists");
         assert!(!phrases.is_empty(), "phrases come back");
+        // The contour is the tone's own pitch, capped at 256 points and
+        // mostly voiced.
+        assert!(
+            !contour.is_empty() && contour.len() <= 256,
+            "{}",
+            contour.len()
+        );
+        let voiced = contour.iter().filter(|hz| **hz > 0.0).count();
+        assert!(
+            voiced as f64 / contour.len() as f64 > 0.5,
+            "voiced {voiced}/{}",
+            contour.len()
+        );
+        let mean_voiced = contour.iter().filter(|hz| **hz > 0.0).sum::<f32>() / voiced as f32;
+        assert!(
+            (170.0..=190.0).contains(&mean_voiced),
+            "contour {mean_voiced}"
+        );
     }
 
     #[test]

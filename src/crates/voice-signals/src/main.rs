@@ -237,7 +237,8 @@ fn selftest() -> Result<serde_json::Value, Error> {
         pair => failures.push(format!("the two tones did not read apart: {pair:?}")),
     }
 
-    // The forensic ear: the noise floor of a synthetic take is far down.
+    // The forensic ear: the noise floor of a synthetic take is far down,
+    // and the safety and identity readings answer.
     if let Some(whole) = &output.forensic.whole {
         if whole.noise_floor_dbfs > -30.0 {
             failures.push(format!(
@@ -245,11 +246,58 @@ fn selftest() -> Result<serde_json::Value, Error> {
                 whole.noise_floor_dbfs
             ));
         }
+        // The tones sit at 0.7 peak amplitude: the sample peak reads near
+        // -3.1 dBFS, nothing clips, and no DC offset or hum exists to find.
+        if !(-5.0..=-1.0).contains(&whole.sample_peak_dbfs) {
+            failures.push(format!(
+                "sample peak {} is not the tone's own amplitude",
+                whole.sample_peak_dbfs
+            ));
+        }
+        if whole.clipping_ratio != 0.0 {
+            failures.push(format!("a synthetic take clips: {}", whole.clipping_ratio));
+        }
+        if whole.dc_offset.abs() > 0.02 {
+            failures.push(format!("a zero-centred take reads DC {}", whole.dc_offset));
+        }
+        if whole.hum_hz.is_some() {
+            failures.push(format!(
+                "a hum was found where none exists: {:?}",
+                whole.hum_hz
+            ));
+        }
+        // Pure tones: no sibilance band, a rolloff under 1 kHz, a narrow
+        // bandwidth, no music, and no reverb tail worth reporting.
+        if whole.sibilance_ratio > 0.05 {
+            failures.push(format!(
+                "tone sibilance {} is not near zero",
+                whole.sibilance_ratio
+            ));
+        }
+        if whole.spectral_rolloff_hz > 1000.0 {
+            failures.push(format!(
+                "tone rolloff {} is above the tone's own frequency",
+                whole.spectral_rolloff_hz
+            ));
+        }
+        if whole.spectral_bandwidth_hz > 500.0 {
+            failures.push(format!(
+                "tone bandwidth {} is too wide",
+                whole.spectral_bandwidth_hz
+            ));
+        }
+        if whole.music_likelihood > 0.3 {
+            failures.push(format!(
+                "a dry two-tone take reads as music: {}",
+                whole.music_likelihood
+            ));
+        }
     } else {
         failures.push("no whole-take forensics".into());
     }
 
-    // The speaker ear: two tones must be two speakers.
+    // The speaker ear: two tones must be two speakers, and the utterance
+    // rhythm must see the 1 s pause between them.
     if !output.speaker.available {
         failures.push(format!(
             "diarization unavailable: {:?}",
@@ -264,6 +312,45 @@ fn selftest() -> Result<serde_json::Value, Error> {
     }
     if output.speaker.changes.is_empty() {
         failures.push("no speaker change between the two voices".into());
+    }
+    if output.speaker.utterances < 2 {
+        failures.push(format!(
+            "the two tones and their pause read as {} utterance(s)",
+            output.speaker.utterances
+        ));
+    }
+    match output.speaker.longest_silence_sec {
+        Some(secs) if (0.7..=1.3).contains(&secs) => {}
+        other => failures.push(format!("the 1 s pause read as {other:?}")),
+    }
+    if output
+        .speaker
+        .mean_utterance_sec
+        .is_none_or(|secs| !(3.0..=4.5).contains(&secs))
+    {
+        failures.push(format!(
+            "the mean utterance {} is not the ~4 s tones",
+            output.speaker.mean_utterance_sec.unwrap_or(0.0)
+        ));
+    }
+
+    // The prosody contour: the take's own pitch track, capped at 256
+    // points and mostly voiced (the tones are 110 and 240 Hz).
+    if output.prosody.pitch_contour_hz.is_empty() {
+        failures.push("no pitch contour over the whole take".into());
+    } else {
+        let contour = &output.prosody.pitch_contour_hz;
+        let voiced = contour.iter().filter(|hz| **hz > 0.0).count();
+        if voiced * 10 < contour.len() * 7 {
+            failures.push(format!(
+                "the contour is only {voiced}/{} voiced",
+                contour.len()
+            ));
+        }
+        let high = contour.iter().filter(|hz| **hz > 200.0).count();
+        if high == 0 {
+            failures.push("the contour never reaches the 240 Hz tone".into());
+        }
     }
 
     // The text ear: the money and the person, timed.

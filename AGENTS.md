@@ -154,7 +154,15 @@ one has:
 - **A retry that gives up too early.** `scripts/ci/fetch.sh` retried the
   release CDN five times over 62 seconds while the CDN was returning 500s
   for 61 of them. Backoff is 2/4/8/16/32s per attempt, digest re-verified
-  each time, and never retried at all on a digest mismatch or a 4xx.
+  each time, and never retried at all on a digest mismatch or a 4xx. The
+  retry set was still short of the ways a CDN dies: on 2026-11-21 the
+  Geneva lane lost ONNX Runtime to `curl: (18) transfer closed with
+  4135441 bytes remaining to read` - a truncated body, HTTP 200 - and the
+  script gave up on attempt 1 because exit 18 was not one of the reasons
+  it rode the backoff for. 18 (partial file), 52 (empty reply), 55 (send
+  failure) and 92 (HTTP/2 stream) ride it now, with 28 and 56. The digest
+  is what makes a wider retry set safe: a truncated body never matches it,
+  and a wrong release still fails on the first attempt.
 - **The Nix lane losing the runner.** Three runs on `main` ended "runner
   lost communication" with no step conclusion, 1h15m-1h18m in, always in
   the silence after the last compile line. That silence is the thin-LTO

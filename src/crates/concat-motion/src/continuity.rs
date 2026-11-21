@@ -55,8 +55,11 @@ pub struct ManifestClip {
     pub motion: Option<f64>,
     /// The way the clip's camera or subject travels.
     pub dominant_direction: TravelDirection,
-    /// The shot's scale, as the plan named it.
-    pub shot_scale: ShotScale,
+    /// The shot's scale, as the plan named it. `None` is *not measured*:
+    /// absent and null both mean it, and the scale rule stands down for
+    /// a pair nobody scaled rather than judging two unknowns as two of
+    /// one scale in a row.
+    pub shot_scale: Option<ShotScale>,
     /// The clip's broad category, as the plan's vocabulary names it.
     pub category: String,
     /// The least motion the slot would take: the clip answers to this,
@@ -72,7 +75,7 @@ impl Default for ManifestClip {
             color_temperature: None,
             motion: None,
             dominant_direction: TravelDirection::Static,
-            shot_scale: ShotScale::Medium,
+            shot_scale: None,
             category: String::new(),
             motion_min: 0.0,
         }
@@ -249,16 +252,15 @@ pub fn check_continuity(manifest: &AssetManifest) -> Vec<Discontinuity> {
                 },
             });
         }
-        if a.shot_scale == b.shot_scale {
+        if let (Some(a_scale), Some(b_scale)) = (a.shot_scale, b.shot_scale)
+            && a_scale == b_scale
+        {
             flags.push(Discontinuity {
                 slot_id: b.slot_id.clone(),
                 rule: ContinuityRule::Scale,
                 detail: format!(
                     "slot `{}` is a {:?} after slot `{}`'s {:?}; two of one scale in a row is one scale too many",
-                    b.slot_id,
-                    b.shot_scale,
-                    a.slot_id,
-                    a.shot_scale
+                    b.slot_id, b_scale, a.slot_id, a_scale
                 ),
                 remedy: Remedy::Replace {
                     avoid: format!("a clip at slot `{}`'s own scale", a.slot_id),
@@ -341,7 +343,7 @@ mod tests {
             color_temperature: Some(0.0),
             motion: Some(2.0),
             dominant_direction: TravelDirection::Static,
-            shot_scale: ShotScale::Medium,
+            shot_scale: Some(ShotScale::Medium),
             category: "city".into(),
             motion_min: 0.0,
         }
@@ -353,15 +355,44 @@ mod tests {
     #[test]
     fn a_wide_to_wide_pair_is_flagged() {
         let mut a = filled("a");
-        a.shot_scale = ShotScale::Wide;
+        a.shot_scale = Some(ShotScale::Wide);
         let mut b = filled("b");
-        b.shot_scale = ShotScale::Wide;
+        b.shot_scale = Some(ShotScale::Wide);
         b.category = "ocean".into();
         let flags = check_continuity(&AssetManifest { clips: vec![a, b] });
         assert_eq!(flags.len(), 1, "{flags:?}");
         assert_eq!(flags[0].rule, ContinuityRule::Scale);
         assert_eq!(flags[0].slot_id, "b");
         assert!(flags[0].detail.contains("after slot `a`"), "{flags:?}");
+    }
+
+    /// A pair nobody scaled is not two of one scale in a row: the scale
+    /// rule stands down for a reading the manifest never carried, the
+    /// way the colour and motion rules already do. The auto-edit's own
+    /// manifest measures warmth and nothing else, and a gate that filled
+    /// in `Medium` on both sides would hand it a scale repeat nobody
+    /// measured.
+    #[test]
+    fn an_unmeasured_scale_is_not_flagged_as_a_repeat() {
+        let mut a = filled("a");
+        a.shot_scale = None;
+        let mut b = filled("b");
+        b.shot_scale = None;
+        b.category = "ocean".into();
+        let flags = check_continuity(&AssetManifest { clips: vec![a, b] });
+        assert!(flags.is_empty(), "{flags:?}");
+
+        // One side measured is still not a pair: the reading either side
+        // did not measure stands the rule down.
+        let mut measured = filled("measured");
+        measured.shot_scale = Some(ShotScale::Wide);
+        let mut blind = filled("blind");
+        blind.shot_scale = None;
+        blind.category = "ocean".into();
+        let flags = check_continuity(&AssetManifest {
+            clips: vec![measured, blind],
+        });
+        assert!(flags.is_empty(), "{flags:?}");
     }
 
     /// A manifest with a warm-to-cool pair is flagged for its colour, at
@@ -373,7 +404,7 @@ mod tests {
         warm.color_temperature = Some(0.8);
         let mut cool = filled("cool");
         cool.color_temperature = Some(-0.6);
-        cool.shot_scale = ShotScale::CloseUp;
+        cool.shot_scale = Some(ShotScale::CloseUp);
         cool.category = "ocean".into();
         let flags = check_continuity(&AssetManifest {
             clips: vec![warm.clone(), cool.clone()],
@@ -386,7 +417,7 @@ mod tests {
         // Half the scale is the threshold; a nudge is not a jump.
         let mut nudge = filled("nudge");
         nudge.color_temperature = Some(0.4);
-        nudge.shot_scale = ShotScale::CloseUp;
+        nudge.shot_scale = Some(ShotScale::CloseUp);
         nudge.category = "ocean".into();
         let warm = ManifestClip {
             color_temperature: Some(0.8),
@@ -411,11 +442,11 @@ mod tests {
     #[test]
     fn a_clean_manifest_returns_an_empty_list() {
         let mut a = filled("a");
-        a.shot_scale = ShotScale::Wide;
+        a.shot_scale = Some(ShotScale::Wide);
         a.color_temperature = Some(0.3);
         a.dominant_direction = TravelDirection::Right;
         let mut b = filled("b");
-        b.shot_scale = ShotScale::CloseUp;
+        b.shot_scale = Some(ShotScale::CloseUp);
         b.color_temperature = Some(0.1);
         b.category = "ocean".into();
         b.dominant_direction = TravelDirection::Right;
@@ -438,7 +469,7 @@ mod tests {
         a.dominant_direction = TravelDirection::Left;
         let mut b = filled("b");
         b.dominant_direction = TravelDirection::Right;
-        b.shot_scale = ShotScale::CloseUp;
+        b.shot_scale = Some(ShotScale::CloseUp);
         b.category = "ocean".into();
         let flags = check_continuity(&AssetManifest { clips: vec![a, b] });
         assert_eq!(flags.len(), 1, "{flags:?}");
@@ -448,7 +479,7 @@ mod tests {
         zoom_in.dominant_direction = TravelDirection::ZoomIn;
         let mut zoom_out = filled("zoom.out");
         zoom_out.dominant_direction = TravelDirection::ZoomOut;
-        zoom_out.shot_scale = ShotScale::CloseUp;
+        zoom_out.shot_scale = Some(ShotScale::CloseUp);
         zoom_out.category = "ocean".into();
         let flags = check_continuity(&AssetManifest {
             clips: vec![zoom_in, zoom_out],
@@ -469,9 +500,9 @@ mod tests {
         // The scales travel so the scale rule stays quiet: the run is
         // about the category, not the framing.
         let mut a = filled("a");
-        a.shot_scale = ShotScale::Wide;
+        a.shot_scale = Some(ShotScale::Wide);
         let mut b = filled("b");
-        b.shot_scale = ShotScale::CloseUp;
+        b.shot_scale = Some(ShotScale::CloseUp);
         let flags = check_continuity(&AssetManifest {
             clips: vec![a.clone(), b.clone()],
         });
@@ -481,7 +512,7 @@ mod tests {
         );
 
         let mut c = filled("c");
-        c.shot_scale = ShotScale::Medium;
+        c.shot_scale = Some(ShotScale::Medium);
         let flags = check_continuity(&AssetManifest {
             clips: vec![a, b, c],
         });
@@ -500,13 +531,13 @@ mod tests {
         // scale.
         let mut d = filled("d");
         d.category = "ocean".into();
-        d.shot_scale = ShotScale::Wide;
+        d.shot_scale = Some(ShotScale::Wide);
         let mut a = filled("a");
-        a.shot_scale = ShotScale::Wide;
+        a.shot_scale = Some(ShotScale::Wide);
         let mut b = filled("b");
-        b.shot_scale = ShotScale::CloseUp;
+        b.shot_scale = Some(ShotScale::CloseUp);
         let mut c = filled("c");
-        c.shot_scale = ShotScale::Medium;
+        c.shot_scale = Some(ShotScale::Medium);
         let flags = check_continuity(&AssetManifest {
             clips: vec![a, b, c, d],
         });
@@ -538,10 +569,10 @@ mod tests {
         // there is no second reading to jump from.
         let mut warm = filled("warm");
         warm.color_temperature = Some(0.8);
-        warm.shot_scale = ShotScale::Wide;
+        warm.shot_scale = Some(ShotScale::Wide);
         let mut unmeasured = filled("unmeasured");
         unmeasured.color_temperature = None;
-        unmeasured.shot_scale = ShotScale::CloseUp;
+        unmeasured.shot_scale = Some(ShotScale::CloseUp);
         unmeasured.category = "ocean".into();
         let flags = check_continuity(&AssetManifest {
             clips: vec![warm, unmeasured.clone()],
@@ -562,11 +593,11 @@ mod tests {
         // either: the motion rule needs both readings.
         let mut left = filled("left");
         left.dominant_direction = TravelDirection::Left;
-        left.shot_scale = ShotScale::Wide;
+        left.shot_scale = Some(ShotScale::Wide);
         let mut blind = filled("blind");
         blind.motion = None;
         blind.dominant_direction = TravelDirection::Right;
-        blind.shot_scale = ShotScale::CloseUp;
+        blind.shot_scale = Some(ShotScale::CloseUp);
         blind.category = "ocean".into();
         let flags = check_continuity(&AssetManifest {
             clips: vec![left, blind],
@@ -582,7 +613,7 @@ mod tests {
             clips: vec![ManifestClip {
                 slot_id: "hook.1".into(),
                 dominant_direction: TravelDirection::ZoomIn,
-                shot_scale: ShotScale::Wide,
+                shot_scale: Some(ShotScale::Wide),
                 ..filled("hook.1")
             }],
         };

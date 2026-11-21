@@ -718,6 +718,10 @@ pub struct Models {
     pub magick_results: Rc<VecModel<crate::ui::MagickCardData>>,
     /// The Forge page's log.
     pub forge_log: Rc<VecModel<SharedString>>,
+    /// The Forge page's signal families, as its select is filled.
+    pub forge_signal_families: Rc<VecModel<SharedString>>,
+    /// The chosen family's signals, as the lab's buttons are filled.
+    pub forge_signal_rows: Rc<VecModel<SharedString>>,
     pub motion_comps: Rc<VecModel<crate::ui::MotionCompData>>,
     pub voices_saved: Rc<VecModel<crate::ui::VoiceCardData>>,
     pub sounds_concat: Rc<VecModel<crate::ui::SoundCardData>>,
@@ -804,6 +808,8 @@ impl Models {
             music_categories: Rc::new(VecModel::default()),
             magick_results: Rc::new(VecModel::default()),
             forge_log: Rc::new(VecModel::default()),
+            forge_signal_families: Rc::new(VecModel::default()),
+            forge_signal_rows: Rc::new(VecModel::default()),
             motion_comps: Rc::new(VecModel::default()),
             voices_saved: Rc::new(VecModel::default()),
             sounds_concat: Rc::new(VecModel::default()),
@@ -12158,6 +12164,11 @@ impl Studio {
             .set_importing(self.sounds.importing);
         // The Forge page.
         sync(&models.forge_log, self.forge.log_lines());
+        sync(
+            &models.forge_signal_families,
+            self.forge.signals.family_rows(),
+        );
+        sync(&models.forge_signal_rows, self.forge.signals.rows());
         {
             let page = app.global::<crate::ui::Forge>();
             page.set_running(self.forge.running);
@@ -12185,6 +12196,13 @@ impl Studio {
             page.set_auto_edit_visible(self.forge.auto.visible);
             page.set_auto_edit_available(available);
             page.set_auto_edit_outcome(self.forge.auto.outcome);
+            // The voice-signal lab's own standing: the catalogue it is
+            // built from, the reading a button took, and whether one is
+            // being taken.
+            page.set_signal_available(!self.forge.signals.families.is_empty());
+            page.set_signal_busy(self.forge.signals.busy);
+            page.set_signal_title(self.forge.signals.title.clone().into());
+            page.set_signal_body(self.forge.signals.body.clone().into());
         }
         // The Motion page.
         sync(

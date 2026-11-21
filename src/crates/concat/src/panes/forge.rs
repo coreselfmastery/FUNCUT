@@ -26,7 +26,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use concat_mcp::director::{
-    AutoEditError, AutoEditState, EditProgram, Runner, Stage, ToolError, auto_edit_program,
+    AutoEditError, AutoEditState, EditProgram, Runner, Stage, ToolCaller, ToolError,
+    auto_edit_program,
 };
 use slint::SharedString;
 
@@ -139,6 +140,28 @@ pub enum ForgeMsg {
     DirectorChecked(Box<concat_mcp::acceptance::DirectorAcceptance>),
     /// The post-export acceptance worker could not reach the editor's MCP backend.
     DirectorCheckFailed(String),
+    /// The signal catalogue came back: the families the lab's buttons are
+    /// built from, or why the catalogue could not be read.
+    SignalCatalog(Result<Vec<SignalFamily>, String>),
+    /// A family was chosen in the lab: its signals become the buttons.
+    SignalFamily(usize),
+    /// One signal button: extract that reading from the timeline's own
+    /// voiceover. The row is the button's place in the chosen family.
+    SignalExtract(i32),
+    /// The reading came back: the signal's label, the reading's title
+    /// and its body - or why it could not be taken.
+    SignalRead(Result<(String, String), String>),
+}
+
+/// One family of the signal catalogue, as the lab shows it: the
+/// family's own label and the readings it carries, each with the name
+/// extraction asks for and the label its button says.
+#[derive(Clone, Debug, Default)]
+pub struct SignalFamily {
+    /// The family's label, as the catalogue names it ("Forensics").
+    pub label: String,
+    /// Its signals: (the catalogue name, the button label).
+    pub signals: Vec<(String, String)>,
 }
 
 /// The page's state.
@@ -167,6 +190,9 @@ pub struct ForgePane {
     /// The AUTO EDIT's standing: what the progress pane shows, and the
     /// handles a cancel or a tick needs.
     pub auto: AutoEditPane,
+    /// The voice-signal lab's standing: the catalogue, the chosen
+    /// family, and the last reading a button took.
+    pub signals: SignalsPane,
 }
 
 /// The AUTO EDIT's standing on the page: the fields the progress pane
@@ -214,6 +240,54 @@ pub struct AutoEditPane {
     kill: Option<Arc<AtomicBool>>,
 }
 
+/// The voice-signal lab's standing on the page: the catalogue its
+/// buttons are built from, the family whose signals are showing, and
+/// the last reading a button took.
+#[derive(Default)]
+pub struct SignalsPane {
+    /// The catalogue's families, once loaded: every reading the profile
+    /// answers, grouped as the catalogue groups it.
+    pub families: Vec<SignalFamily>,
+    /// The chosen family's row.
+    pub family: usize,
+    /// The catalogue is being read.
+    pub loading: bool,
+    /// A reading is being taken: the buttons wait their turn.
+    pub busy: bool,
+    /// The last reading's title - the signal's own label - or the
+    /// sentence that says why there is none.
+    pub title: String,
+    /// The last reading's body: what it measures, why the edit wants
+    /// it, the ear that answered, the confidence, and the values.
+    pub body: String,
+}
+
+impl SignalsPane {
+    /// The chosen family's signals as the page's buttons: one label per
+    /// reading, in the catalogue's own order.
+    pub fn rows(&self) -> Vec<SharedString> {
+        self.families
+            .get(self.family)
+            .map(|family| {
+                family
+                    .signals
+                    .iter()
+                    .map(|(_, label)| SharedString::from(label.as_str()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The families as the page's select is filled: their own labels,
+    /// in the catalogue's order.
+    pub fn family_rows(&self) -> Vec<SharedString> {
+        self.families
+            .iter()
+            .map(|family| SharedString::from(family.label.as_str()))
+            .collect()
+    }
+}
+
 fn auto_edit_stock_provider(pexels: &str, pixabay: &str) -> String {
     let env_has_key = |name: &str| std::env::var(name).is_ok_and(|value| !value.trim().is_empty());
     if !pexels.trim().is_empty() || env_has_key("PEXELS_API_KEY") {
@@ -238,6 +312,23 @@ impl ForgePane {
                 // harness is there and wired, and whether the skill is.
                 if on && self.connected.is_none() {
                     self.probe();
+                }
+                // The same first look reads the signal catalogue, quietly:
+                // the fifty buttons the lab shows are built from it, and
+                // it is a static table - no transcript, no audio, no
+                // server - so the page is ready before a run ever starts.
+                if on && self.signals.families.is_empty() && !self.signals.loading {
+                    self.signals.loading = true;
+                    crate::host::spawn(
+                        || {
+                            concat_mcp::sense::voice_signals_catalog()
+                                .map(|reply| signal_families_of(&reply))
+                                .map_err(|error| error.message)
+                        },
+                        |studio, _, _, families| {
+                            studio.handle(Msg::Forge(ForgeMsg::SignalCatalog(families)));
+                        },
+                    );
                 }
             }
             ForgeMsg::Start {
@@ -380,6 +471,14 @@ impl ForgePane {
             ForgeMsg::AutoDirectorEnded(code) => self.auto_director_ended(code, studio),
             ForgeMsg::DirectorChecked(checked) => self.auto_director_checked(*checked, studio),
             ForgeMsg::DirectorCheckFailed(error) => self.auto_director_check_failed(error, studio),
+            ForgeMsg::SignalCatalog(families) => self.signal_catalog(families),
+            ForgeMsg::SignalFamily(row) => {
+                if !self.signals.families.is_empty() {
+                    self.signals.family = row.min(self.signals.families.len() - 1);
+                }
+            }
+            ForgeMsg::SignalExtract(row) => self.signal_extract(row, studio),
+            ForgeMsg::SignalRead(reading) => self.signal_read(reading),
         }
     }
 
@@ -391,6 +490,88 @@ impl ForgePane {
             studio.handle(Msg::Forge(ForgeMsg::Connected(connected)));
             studio.handle(Msg::Forge(ForgeMsg::Installed(installed)));
         });
+    }
+
+    /// The signal catalogue came back: the lab's families are its own,
+    /// the first one's signals the first buttons. A catalogue that
+    /// refused leaves the lab hidden and says why in the status line -
+    /// the buttons never appear as if there were nothing to read.
+    fn signal_catalog(&mut self, families: Result<Vec<SignalFamily>, String>) {
+        self.signals.loading = false;
+        match families {
+            Ok(families) if !families.is_empty() => {
+                self.signals.families = families;
+                self.signals.family = 0;
+            }
+            Ok(_) => self.set_status(t("forge.signalsEmpty")),
+            Err(why) => {
+                self.set_status(tf("forge.signalsUnavailable", &[&why]));
+            }
+        }
+    }
+
+    /// One signal button: extract that reading from the timeline's own
+    /// voiceover, off the window's thread. The reading is taken through
+    /// the same toolbox and the same window server an agent's call
+    /// means, so the button's answer is the director's answer; a take
+    /// that was never transcribed is transcribed first, the way the
+    /// AUTO EDIT's own program would.
+    fn signal_extract(&mut self, row: i32, studio: &mut Studio) {
+        if self.signals.busy || self.signals.loading {
+            return;
+        }
+        // One edit at a time: the lab reads the open project's own
+        // voiceover, and while a run is editing the same material the
+        // reading would describe a take in motion. The refusal is the
+        // same sentence the other entry points speak.
+        if let Some(refusal) = other_run_refusal(self.running, false) {
+            studio.notify(&refusal, true);
+            return;
+        }
+        if self.auto.running || self.auto.checking {
+            studio.notify(&t("forge.autoEditBusy"), true);
+            return;
+        }
+        let row = row.max(0) as usize;
+        let Some(family) = self.signals.families.get(self.signals.family) else {
+            return;
+        };
+        let Some((name, label)) = family.signals.get(row) else {
+            return;
+        };
+        let (name, label) = (name.clone(), label.clone());
+        let Some(audio) = voiceover_file(studio) else {
+            studio.notify(&t("forge.noVoiceover"), true);
+            return;
+        };
+        self.signals.busy = true;
+        self.set_status(tf("forge.signalsBusy", &[&label]));
+        crate::host::spawn_in_project(
+            move || read_one_signal(&audio, &name),
+            move |studio, _, _, reading| {
+                studio.handle(Msg::Forge(ForgeMsg::SignalRead(reading)));
+            },
+        );
+    }
+
+    /// The reading came back: the card carries the signal's own label
+    /// over what it measured, why the edit wants it, the ear that
+    /// answered and the values; a refusal says itself in the card's
+    /// title, so the sentence stays beside the button that earned it.
+    fn signal_read(&mut self, reading: Result<(String, String), String>) {
+        self.signals.busy = false;
+        match reading {
+            Ok((title, body)) => {
+                self.signals.title = title;
+                self.signals.body = body;
+                self.set_status(t("forge.signalsRead"));
+            }
+            Err(why) => {
+                self.signals.title = t("forge.signalsFailed");
+                self.signals.body = why;
+                self.set_status(t("forge.signalsFailed"));
+            }
+        }
     }
 
     /// Starts a run: the prompt is the script and the choices, the
@@ -871,16 +1052,6 @@ impl ForgePane {
             self.auto.running = false;
             self.auto.checking = false;
             self.auto.check_cancel = None;
-            self.auto.outcome = 1;
-            self.auto.stage = t("forge.autoEditCancelledStage");
-            self.set_status(t("forge.autoEditCancelledStage"));
-            studio.notify(&t("forge.autoEditCancelled"), true);
-            return;
-        }
-        self.auto.started = None;
-        self.auto.kill = None;
-        self.auto.fraction = 1.0;
-        if cancelled {
             self.auto.outcome = 1;
             self.auto.stage = t("forge.autoEditCancelledStage");
             self.set_status(t("forge.autoEditCancelledStage"));
@@ -1492,6 +1663,224 @@ fn is_narration(
         && project
             .media_by_id(&clip.media_id)
             .is_some_and(|item| !item.path.is_empty() && !is_bed(item, source_root))
+}
+
+/// The open timeline's first narration file: the take the signal lab
+/// reads. The same test the sibling build makes - an audio clip that is
+/// not the bed - answered with the file's own path, in first-play order.
+fn voiceover_file(studio: &Studio) -> Option<String> {
+    let session = studio.session.as_ref()?;
+    let root = std::path::Path::new(session.path());
+    let project = studio.project();
+    let timeline = project.active();
+    let mut clips: Vec<&concat_project::model::Clip> = timeline
+        .clips
+        .iter()
+        .map(|clip| clip.as_ref())
+        .filter(|clip| is_narration(clip, project, root))
+        .collect();
+    clips.sort_by(|a, b| {
+        a.start
+            .partial_cmp(&b.start)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let first = clips.first()?;
+    project
+        .media_by_id(&first.media_id)
+        .map(|item| item.path.clone())
+        .filter(|path| !path.is_empty())
+}
+
+/// One signal button's whole read: the window's own server, the same
+/// toolbox an agent's call means, and the one named signal - transcribed
+/// first when the take never was, exactly the way the AUTO EDIT's own
+/// program would have it. Ok is the reading's title and body; Err is
+/// the sentence that says why there is none.
+fn read_one_signal(audio: &str, name: &str) -> Result<(String, String), String> {
+    let mut backend = concat_mcp::backend::open(concat_mcp::backend::Mode::Window)?;
+    let toolbox = match std::panic::catch_unwind(concat_mcp::tools::Toolbox::new) {
+        Ok(toolbox) => std::sync::Arc::new(toolbox),
+        Err(_) => return Err("the tool box could not be built".to_owned()),
+    };
+    let cancelled = Arc::new(AtomicBool::new(false));
+    // The one reading, taken once: the reply the profile's own extract
+    // builds, `requested` block and all. A refusal is the tool's own
+    // sentence, never a guess at what it might have meant.
+    let extract = |backend: &mut dyn concat_mcp::Backend,
+                   arguments: serde_json::Value|
+     -> Result<serde_json::Value, String> {
+        let outcome =
+            concat_mcp::sense::voice_signals(arguments, backend).map_err(|error| error.message)?;
+        if outcome.is_error {
+            let sentence = outcome
+                .content
+                .iter()
+                .find_map(|block| block["text"].as_str().map(str::to_owned))
+                .unwrap_or_else(|| "the reading refused".to_owned());
+            return Err(sentence);
+        }
+        let reply = outcome.structured.unwrap_or_else(|| serde_json::json!({}));
+        if reply.get("ok") == Some(&serde_json::json!(false)) {
+            return Err(reply["error"]
+                .as_str()
+                .unwrap_or("the reading refused")
+                .to_owned());
+        }
+        Ok(reply)
+    };
+    let arguments = serde_json::json!({ "audio": audio, "signals": [name] });
+    let reply = match extract(backend.as_mut(), arguments.clone()) {
+        Ok(reply) => reply,
+        Err(why) if why.contains("no lines") => {
+            // The take was never transcribed: transcribe it and wait, the
+            // same two calls the AUTO EDIT's words stage makes, then take
+            // the reading again - the registry now holds the words. The
+            // caller is scoped to the two calls, so its hold on the
+            // backend ends before the reading takes it back.
+            {
+                let mut caller = concat_mcp::director::BackendToolCaller::new(
+                    toolbox.as_ref(),
+                    backend.as_mut(),
+                    &cancelled,
+                );
+                caller
+                    .call(&concat_mcp::director::ToolCall {
+                        tool: "transcribe".to_owned(),
+                        arguments: serde_json::json!({ "path": audio }),
+                    })
+                    .map_err(|error| error.message)?;
+                caller
+                    .call(&concat_mcp::director::ToolCall {
+                        tool: "analysis_wait".to_owned(),
+                        arguments: serde_json::json!({
+                            "path": audio,
+                            "timeoutSeconds": 590,
+                        }),
+                    })
+                    .map_err(|error| error.message)?;
+            }
+            extract(backend.as_mut(), arguments)?
+        }
+        Err(why) => return Err(why),
+    };
+    format_signal_reading(&reply, name)
+        .ok_or_else(|| "the reading carried no requested block".to_owned())
+}
+
+/// The catalogue as the lab holds it: the families in the catalogue's
+/// own order, each with its signals' names (what extraction asks for)
+/// and labels (what the button says).
+fn signal_families_of(reply: &serde_json::Value) -> Vec<SignalFamily> {
+    reply["families"]
+        .as_array()
+        .map(|labels| {
+            labels
+                .iter()
+                .filter_map(|label| {
+                    let label = label.as_str()?;
+                    let signals = reply["signals"]
+                        .as_array()?
+                        .iter()
+                        .filter(|signal| signal["family"].as_str() == Some(label))
+                        .filter_map(|signal| {
+                            Some((
+                                signal["name"].as_str()?.to_owned(),
+                                signal["label"].as_str()?.to_owned(),
+                            ))
+                        })
+                        .collect();
+                    Some(SignalFamily {
+                        label: label.to_owned(),
+                        signals,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The reading's card: the signal's own label over a body that says
+/// what it measures, why the edit wants it, the ear that answered, the
+/// confidence it carries, and the values themselves. `None` when the
+/// reply's requested block never named the signal - the caller says so
+/// rather than showing an empty card.
+fn format_signal_reading(reply: &serde_json::Value, name: &str) -> Option<(String, String)> {
+    let row = reply["requested"]
+        .as_array()?
+        .iter()
+        .find(|row| row["name"].as_str() == Some(name))?;
+    let label = row["label"].as_str().unwrap_or(name).to_owned();
+    let mut body = String::new();
+    if let Some(reads) = row["reads"].as_str() {
+        body.push_str(&format!("{}: {reads}\n", t("forge.signalsMeasures")));
+    }
+    if let Some(why) = row["why"].as_str() {
+        body.push_str(&format!("{}: {why}", t("forge.signalsWhy")));
+    }
+    if let Some(source) = row["source"].as_str() {
+        body.push_str(&format!("\n{}: {source}", t("forge.signalsEar")));
+    }
+    if let Some(confidence) = row["confidence"].as_f64() {
+        body.push_str(&format!(
+            "\n{}: {confidence:.2}",
+            t("forge.signalsConfidence")
+        ));
+    }
+    let values = format_signal_values(&row["value"]);
+    if !values.is_empty() {
+        body.push_str("\n\n");
+        body.push_str(&values);
+    }
+    Some((label, body))
+}
+
+/// The reading's values, as a card can hold them: a per-line reading is
+/// one row a line (where it sits, what it read, the words), a take-wide
+/// reading is its own JSON, compact, truncated where a curve would
+/// flood the card.
+fn format_signal_values(value: &serde_json::Value) -> String {
+    let compact = |value: &serde_json::Value| -> String {
+        let whole = serde_json::to_string(value).unwrap_or_default();
+        let cut: String = whole.chars().take(600).collect();
+        if whole.chars().count() > 600 {
+            format!("{cut}…")
+        } else {
+            cut
+        }
+    };
+    match value {
+        serde_json::Value::Array(rows)
+            if !rows.is_empty()
+                && rows
+                    .iter()
+                    .all(|row| row.get("line").is_some() && row.get("value").is_some()) =>
+        {
+            let mut lines: Vec<String> = rows
+                .iter()
+                .take(12)
+                .map(|row| {
+                    let at = match (row["start"].as_f64(), row["end"].as_f64()) {
+                        (Some(start), Some(end)) => format!("{start:.1}-{end:.1}s"),
+                        _ => "untimed".to_owned(),
+                    };
+                    let text = row["text"].as_str().unwrap_or_default();
+                    format!("{at}  {}  {text}", compact(&row["value"]))
+                })
+                .collect();
+            if rows.len() > 12 {
+                lines.push(format!("… {}", rows.len()));
+            }
+            lines.join("\n")
+        }
+        other => {
+            let reading = compact(other);
+            if reading == "null" || reading.is_empty() {
+                String::new()
+            } else {
+                reading
+            }
+        }
+    }
 }
 
 /// Whether a media item is the edit's music bed: a file `bgm_import`

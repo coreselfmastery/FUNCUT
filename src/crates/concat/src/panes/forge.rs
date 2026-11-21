@@ -982,6 +982,19 @@ impl ForgePane {
         // is missing does the run fall back to the fixed spine - and the
         // pane says which one is missing, so a lesser edit is never
         // mistaken for the Director's.
+        // The stock preflight: a run with no live-shelf key would meet
+        // the refusal one refused search at a time, minutes in. Said
+        // here, before a single stage starts, the user can key the shelf
+        // and press again - or let the run fill the picture with the
+        // project's own footage and typography, which is what it will do.
+        if !stock_shelves_ready(studio) {
+            studio.notify_warning(
+                "no stock key is saved (Settings > Stock APIs), so the live shelves \
+                 cannot be shopped: the run carries the project's own footage and fills \
+                 the rest with typography over the narration",
+            );
+        }
+        let mut director_fallback: Option<String> = None;
         let handed_over = match director_ready(self.connected, self.installed, studio) {
             Ok(()) => {
                 let kill = Arc::new(AtomicBool::new(false));
@@ -1012,12 +1025,17 @@ impl ForgePane {
                     ),
                     true,
                 );
+                // The reason rides the source into the report: a missed
+                // toast is not a lost explanation.
+                director_fallback = Some(why.clone());
                 false
             }
         };
         if handed_over {
             return;
         }
+        let mut auto = auto;
+        auto.director = director_fallback;
         // The fixed spine runs the stages in this process, so it needs the
         // window's own server as its backend. The handover above does not:
         // the Director reaches the same server through the harness, which
@@ -1359,6 +1377,21 @@ impl ForgePane {
                     return;
                 }
             }
+            // Who made the edit, and why, if it was not the Director: the
+            // fallback's reason was only ever a toast the user could miss
+            // - here it is the record's own first fact, beside the edit
+            // it explains.
+            let director = match self.auto.source.as_ref() {
+                Some(source) => source.director.clone(),
+                None => None,
+            };
+            report.insert(
+                "director".to_owned(),
+                match director {
+                    Some(why) => serde_json::json!({ "used": false, "why": why }),
+                    None => serde_json::json!({ "used": true }),
+                },
+            );
             let path = std::path::Path::new(project).join("auto-edit-report.json");
             let bytes = match serde_json::to_vec_pretty(&report) {
                 Ok(bytes) => bytes,
@@ -1663,6 +1696,11 @@ struct AutoEditSource {
     /// server refuses absolute write paths, and the sheet is written
     /// through it.
     sheet: String,
+    /// Why the Director did NOT take this edit, when the fixed spine ran
+    /// instead: `None` means the Director did. The toast says it once;
+    /// the report beside the edit says it forever, so a run that shipped
+    /// a lesser edit never gets mistaken for the Director's.
+    director: Option<String>,
 }
 
 /// What the sibling build collected, as one unit: a copy that fails or
@@ -2559,6 +2597,7 @@ fn build_voiceover_sibling(
                         .to_string_lossy()
                         .into_owned(),
                     sheet: "auto-edit-sheet.png".to_owned(),
+                    director: None,
                 })
             } else {
                 None
@@ -2886,7 +2925,23 @@ fn director_ready(
 /// done for it: the Director runs the reads itself, in the skill's order,
 /// and the prompt says so, so the pane never presents a read as already
 /// spent.
-fn auto_director_prompt(source: &AutoEditSource) -> String {
+fn auto_director_prompt(source: &AutoEditSource, studio: &Studio) -> String {
+    // The vision critic the quality loop stands on: the same readiness the
+    // Start prompt reads, so an AUTO EDIT's craft_critique is graded by a
+    // model that can see, and an unattended run is told to set one up
+    // rather than quietly grading its own pixels.
+    let critic = if hosted_critic_ready(studio) {
+        "A vision critic is configured. Prefer craft_critique with autoSetup:true \
+         so a model, not a heuristic, grades the frames.\n\n"
+            .to_owned()
+    } else {
+        "Before the quality loop, call local_vlm {action:\"setup\"} once (0.5B, \
+         ~546 MB, CPU-only, no system install) so craft_critique can SEE the frames \
+         rather than only measure pixels - or local_vlm {action:\"configure\"} with a \
+         free-tier provider (groq, gemini, zai, openrouter) for a stronger critic. \
+         A critique from a model that cannot see is a guess wearing a score.\n\n"
+            .to_owned()
+    };
     format!(
         "Use the funcut-director skill and follow its phases IN ORDER. This is an \
          UNATTENDED one-click edit: nobody is watching to answer a question, so make every \
@@ -2894,7 +2949,12 @@ fn auto_director_prompt(source: &AutoEditSource) -> String {
          THE PROJECT: open '{project}' (project_open). The narration is ALREADY on the \
          timeline, reconstructed clip for clip with its own starts, in/out points, speed, \
          volume and fades; voiceover-mapping.json maps each clip to its source. Do NOT \
-         re-import, re-place, retime or ripple the narration clips.\n\n\
+         re-import, re-place or otherwise retime the narration clips - with ONE \
+         exception: you MAY tighten measured dead air with removeSpans on the narration \
+         clips (ripple on), which the skill's own Phase 2 asks for. The WORDS must \
+         survive the tighten: never cut inside a word, and verify with emotion \
+         {{action:\"verify\"}} on the exported file before you claim success.\n\n\
+         {critic}\
          WHAT IS ALREADY DONE, AND WHAT IS NOT: the sibling exists and the narration is \
          placed; nothing has been MEASURED yet. The repair, the transcription, \
          voice_signals and emotion are YOURS to run on this sibling, in the skill's order - \
@@ -2949,10 +3009,38 @@ fn auto_director_prompt(source: &AutoEditSource) -> String {
          THE EXPORT lands at '{export}'. Finish by calling watch_render on the exported file \
          with audio:true and craft_critique once more, then report the honest score and what \
          you changed. Never claim success on an unmeasured render. A file PATH to a PNG is \
-         not a picture you can see: only inline image blocks are.\n",
+         not a picture you can see: only inline image blocks are.\n\n\
+         {stock}",
         project = source.project,
         export = source.export,
+        critic = critic,
+        stock = if stock_shelves_ready(studio) {
+            "The stock shelves are keyed (Settings > Stock APIs): shop them for B-roll.".to_owned()
+        } else {
+            "NO stock key is saved (Settings > Stock APIs), so stock_search will refuse: \
+             carry the picture with the project's own footage, Geneva motion comps and \
+             typography over the narration instead - do not leave unpictured spans."
+                .to_owned()
+        },
     )
+}
+
+/// Whether a live stock shelf can be shopped at all: a Pexels or Pixabay
+/// key saved on the page or already in the environment. The AUTO EDIT's
+/// preflight says this to the user BEFORE the run spends minutes
+/// discovering it one refused search at a time, and the Director's prompt
+/// says it so the agent plans typography instead of begging a locked
+/// shelf.
+fn stock_shelves_ready(studio: &Studio) -> bool {
+    let stock = &studio.prefs.stock;
+    [
+        (&stock.pexels, "PEXELS_API_KEY"),
+        (&stock.pixabay, "PIXABAY_API_KEY"),
+    ]
+    .iter()
+    .any(|(field, name)| {
+        !field.trim().is_empty() || std::env::var(name).is_ok_and(|set| !set.trim().is_empty())
+    })
 }
 
 /// Starts the Director over the AUTO EDIT's sibling: the same harness a
@@ -2961,7 +3049,7 @@ fn auto_director_prompt(source: &AutoEditSource) -> String {
 /// run's end opens the finished edit in the window the way a Start Forge
 /// run does.
 fn launch_auto_director(studio: &Studio, source: &AutoEditSource, kill: Arc<AtomicBool>) {
-    let prompt = auto_director_prompt(source);
+    let prompt = auto_director_prompt(source, studio);
     let mut command = Command::new("forge");
     command.arg("run");
     let model = std::env::var("FUNCUT_FORGE_MODEL")
@@ -3531,6 +3619,7 @@ mod tests {
             placements: Vec::new(),
             export: export.join("auto-edit.mp4").to_string_lossy().into_owned(),
             sheet: "auto-edit-sheet.png".to_owned(),
+            director: None,
         };
         assert!(director_retry_available(&source));
 

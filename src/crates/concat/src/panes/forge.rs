@@ -976,7 +976,12 @@ impl ForgePane {
                     match concat_host::projects::open(&path)
                         .and_then(|info| studio.open_project(info))
                     {
-                        Ok(()) => studio.notify(&tf("forge.editReady", &[&path]), false),
+                        // A warned export is opened for inspection and repair,
+                        // not announced as ready to publish.
+                        Ok(()) if warnings == 0 => {
+                            studio.notify(&tf("forge.editReady", &[&path]), false)
+                        }
+                        Ok(()) => {}
                         Err(error) => studio.notify(&tf("forge.openFailed", &[&error]), true),
                     }
                 }

@@ -699,17 +699,17 @@ fn seam_transition(
     };
     let first = match seam {
         // A chapter opening is the clearest seam there is: the story
-        // moved on.
-        (_, _, _, true, _) => "concat.flash-social",
-        // A connective pivot is the argument turning: the visible move
-        // is what makes the turn read.
-        (_, _, _, _, true) => "concat.cross-pop",
+        // moved on, and the whip is the move that says so.
+        (_, _, _, true, _) => "concat.whip-pan",
+        // A connective pivot is the argument turning: the slice is the
+        // move that makes the turn read.
+        (_, _, _, _, true) => "concat.slice-social",
         // A speaker change is the clearest voice seam: the frame
         // changes because the voice did.
-        (true, _, _, _, _) => "concat.flash-social",
-        // A question opens a gap the answer fills: the move is the
+        (true, _, _, _, _) => "concat.glitch-social",
+        // A question opens a gap the answer fills: the snap is the
         // ask, not the mood.
-        (_, true, _, _, _) => "concat.cross-pop",
+        (_, true, _, _, _) => "concat.snap-zoom",
         // A held beat keeps the softest move the catalogue has, so the
         // cut never fights the silence the read said to hold.
         (_, _, true, _, _) => "concat.dissolve",
@@ -1805,8 +1805,8 @@ fn card_words(text: &str) -> String {
 /// soft one. The ids are the catalogue's own transition packages.
 fn transition_for_emotion(emotion: &str) -> &'static str {
     match emotion {
-        "joy" => "concat.cross-pop",
-        "surprise" => "concat.flash-social",
+        "joy" => "concat.zoom-blur-punch",
+        "surprise" => "concat.hyper-zoom",
         "anger" => "concat.crash-zoom",
         "fear" => "concat.blur-dissolve",
         "sadness" => "concat.dissolve",
@@ -1817,16 +1817,18 @@ fn transition_for_emotion(emotion: &str) -> &'static str {
 
 /// The second transition for a mood, so two shots cut from the same
 /// emotion never wear the same move twice running: the no-repeat rule
-/// the director enforces, not merely asks for.
+/// the director enforces, not merely asks for. Every id is the
+/// catalogue's own - the viral pack's neighbours of the first move,
+/// not the first move again.
 fn alternate_transition(emotion: &str) -> &'static str {
     match emotion {
-        "joy" => "concat.dissolve",
-        "surprise" => "concat.cross-pop",
-        "anger" => "concat.flash-social",
+        "joy" => "concat.cross-pop",
+        "surprise" => "concat.flash-social",
+        "anger" => "concat.glitch-warp",
         "fear" => "concat.dissolve",
-        "sadness" => "concat.blur-dissolve",
+        "sadness" => "concat.zoom-blur",
         "disgust" => "concat.dissolve",
-        _ => "concat.dissolve",
+        _ => "concat.whip-pan",
     }
 }
 
@@ -4601,6 +4603,21 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                                     _ => 1.06,
                                 },
                             };
+                            // The hook's shot pushes harder: a clip that
+                            // opens the cut is the one a viewer decides
+                            // to stay on, and a stronger push-in is the
+                            // cheapest retention the catalogue has.
+                            let hook_shot = latest_view(log)
+                                .and_then(|view| {
+                                    view["timeline"]["clips"].as_array().map(|clips| {
+                                        clips.iter().any(|clip| {
+                                            clip["media"].as_str() == media_id.as_deref()
+                                                && clip["start"].as_f64().is_some_and(|at| at < 3.0)
+                                        })
+                                    })
+                                })
+                                .unwrap_or(false);
+                            let drift = if hook_shot { drift + 0.04 } else { drift };
                             commands.push(json!({
                                 "op": "setClipKey",
                                 "clipId": clip_id,
@@ -5514,9 +5531,24 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                             .map(str::to_owned);
                         if let Some(id) = id {
                             placed += 1;
+                            // The manifest's own `syncAt` says how far
+                            // into the file the sound lands its peak:
+                            // the add is offset by exactly that, so the
+                            // peak meets the moment the emphasis
+                            // measured - not the file's first byte.
+                            let sync = log
+                                .last()
+                                .and_then(|reply| reply.pointer("/sounds/0/syncAt"))
+                                .and_then(|sync| sync.as_f64())
+                                .filter(|sync| sync.is_finite() && *sync >= 0.0)
+                                .unwrap_or(0.0);
                             return Some(call(
                                 "sounds_add",
-                                json!({ "path": sfx_project, "id": id, "start": round3(at) }),
+                                json!({
+                                    "path": sfx_project,
+                                    "id": id,
+                                    "start": round3((at - sync).max(0.0)),
+                                }),
                             ));
                         }
                         // The shelf answered with nothing for this peak:
@@ -5550,7 +5582,18 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
                     let emotion = line
                         .map(|line| line.emotion.clone())
                         .unwrap_or_else(|| "neutral".to_owned());
-                    let queries = sfx_queries_for_line(line, &emotion);
+                    // The hook's own accent is not the mood's business:
+                    // the first three seconds are the only part of a
+                    // short cut a viewer is guaranteed to see, so a peak
+                    // that lands there is shopped for entrance energy -
+                    // an impact, a riser, a whoosh - whatever the line's
+                    // mood would otherwise have asked for.
+                    let hook = at < 3.0;
+                    let queries = if hook {
+                        vec!["impact", "riser", "whoosh"]
+                    } else {
+                        sfx_queries_for_line(line, &emotion)
+                    };
                     Some(call(
                         "sounds_search",
                         json!({
@@ -5905,30 +5948,72 @@ pub fn auto_edit_program(source: &AutoEditProgramSource) -> EditProgram {
     //     the bar is a flaw the edit ships with - recorded, yellow - not a
     //     run thrown away after the render already landed. The gate is
     //     the craft bar the headless runner ships on (7.0).
+    //
+    //     The final critique carries the same measured brief and the same
+    //     autoSetup the preview's did: the shipped file is judged against
+    //     the story its own voice measured, not the pictures alone, and a
+    //     machine with no vision model yet says so instead of answering
+    //     from pixels and calling it a critique.
+    let watch_export = source.export.clone();
+    let watch_project = source.project.clone();
+    let watch_sheet = source.sheet.clone();
     steps.push(
-        StageStep::run(
+        DerivedStep::react(
             Stage::Watch,
-            vec![
-                call(
-                    "watch_render",
-                    json!({
-                        "path": source.export,
-                        "project": source.project,
-                        "out": source.sheet,
-                        "audio": true,
-                    }),
-                ),
-                call(
-                    "craft_critique",
-                    json!({
-                        "pngPath": std::path::Path::new(&source.project)
-                            .join(&source.sheet)
-                            .display()
-                            .to_string(),
-                        "project": source.project,
-                    }),
-                ),
-            ],
+            Box::new({
+                let watch_project = watch_project.clone();
+                let watch_sheet = watch_sheet.clone();
+                let mut phase = 0u8;
+                move |log| {
+                    if phase == 0 {
+                        phase = 1;
+                        return Some(call(
+                            "watch_render",
+                            json!({
+                                "path": watch_export,
+                                "project": watch_project,
+                                "out": watch_sheet,
+                                "audio": true,
+                            }),
+                        ));
+                    }
+                    if phase == 1 {
+                        phase = 2;
+                        // The sheet names where it kept its own pixels;
+                        // that is the path the critic reads. The joined
+                        // name is the fallback when the reply carried
+                        // none.
+                        let png = log
+                            .iter()
+                            .rev()
+                            .find_map(|reply| reply.get("pngPath").and_then(Value::as_str))
+                            .filter(|png| !png.trim().is_empty())
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| {
+                                std::path::Path::new(&watch_project)
+                                    .join(&watch_sheet)
+                                    .display()
+                                    .to_string()
+                            });
+                        let measured = signal_brief(log);
+                        let brief = if measured.as_object().is_some_and(|o| !o.is_empty()) {
+                            measured
+                        } else {
+                            json!({})
+                        };
+                        return Some(call(
+                            "craft_critique",
+                            json!({
+                                "pngPath": png,
+                                "project": watch_project,
+                                "brief": brief,
+                                "autoSetup": true,
+                            }),
+                        ));
+                    }
+                    None
+                }
+            }),
         )
         .warn()
         .gate(ReplyGate::AtLeast {
@@ -6123,18 +6208,14 @@ mod tests {
         // The export is waited on by its project folder - the job's name
         // is minted at run time - and the watch's sheet is a project-
         // relative name, because the window's server refuses absolute
-        // write paths.
+        // write paths. The watch itself is derived now: the final
+        // critique carries the measured brief the preview's did.
         let export = program.steps[14].as_static();
         assert_eq!(export.calls[0].tool, "export_start");
         assert_eq!(export.calls[0].arguments["output"], source.export.as_str());
         assert_eq!(export.calls[1].tool, "export_wait");
         assert_eq!(export.calls[1].arguments["path"], source.project.as_str());
-        let watch = program.steps[16].as_static();
-        assert_eq!(watch.calls[0].arguments["out"], "auto-edit-sheet.png");
-        assert_eq!(
-            watch.calls[1].arguments["pngPath"],
-            "/edits/Reel edit/auto-edit-sheet.png"
-        );
+        assert!(matches!(program.steps[16], ProgramStep::Derived(_)));
 
         // The verify's gates: the loudness target, and the words (F-04) -
         // on the derived step that reads the timeline as it ended up.
@@ -9446,8 +9527,41 @@ mod tests {
             let second = alternate_transition(mood);
             assert_ne!(first, second, "{mood} has a distinct alternate");
         }
-        assert_eq!(transition_for_emotion("joy"), "concat.cross-pop");
-        assert_eq!(alternate_transition("joy"), "concat.dissolve");
+        assert_eq!(transition_for_emotion("joy"), "concat.zoom-blur-punch");
+        assert_eq!(alternate_transition("joy"), "concat.cross-pop");
+        // Every transition the program can name is a package the effects
+        // catalogue actually ships: a look-up id is a transition that
+        // silently never applies.
+        let catalogue =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../concat-effects/packages");
+        for id in [
+            transition_for_emotion("joy"),
+            transition_for_emotion("surprise"),
+            transition_for_emotion("anger"),
+            transition_for_emotion("fear"),
+            transition_for_emotion("sadness"),
+            transition_for_emotion("disgust"),
+            transition_for_emotion("neutral"),
+            alternate_transition("joy"),
+            alternate_transition("surprise"),
+            alternate_transition("anger"),
+            alternate_transition("fear"),
+            alternate_transition("sadness"),
+            alternate_transition("disgust"),
+            alternate_transition("neutral"),
+            "concat.whip-pan",
+            "concat.slice-social",
+            "concat.glitch-social",
+            "concat.snap-zoom",
+            "concat.flash-social",
+            "concat.cross-pop",
+            "concat.dissolve",
+        ] {
+            assert!(
+                catalogue.join(id).is_dir(),
+                "the transition `{id}` is not a package the catalogue ships"
+            );
+        }
     }
 
     /// The accents are shopped by the read's own register: a line the

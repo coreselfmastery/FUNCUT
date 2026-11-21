@@ -158,35 +158,33 @@ pub fn check(
     // process exit or from the existence of a creative brief.
     if let Some(plan) = saved_plan(check.project) {
         let arguments = json!({ "plan": plan });
-        let reply = caller.ask("plan_validate", arguments.clone());
-        if !reply.as_object().is_some_and(|reply| reply.is_empty()) {
+        if let Some(reply) = caller.ask("plan_validate", arguments.clone()) {
             answered.push("plan_validate".to_owned());
+            observed.push((
+                ToolCall {
+                    tool: "plan_validate".to_owned(),
+                    arguments,
+                },
+                reply,
+            ));
         }
-        observed.push((
-            ToolCall {
-                tool: "plan_validate".to_owned(),
-                arguments,
-            },
-            reply,
-        ));
     }
 
     let mut watch_sheet = None;
     for (tool, arguments) in checks(check.project, check.export) {
-        let reply = caller.ask(tool, arguments.clone());
-        if !reply.as_object().is_some_and(|reply| reply.is_empty()) {
+        if let Some(reply) = caller.ask(tool, arguments.clone()) {
             answered.push(tool.to_owned());
+            if tool == "watch_render" && reply.get("pngPath").and_then(Value::as_str).is_some() {
+                watch_sheet = Some(reply.clone());
+            }
+            observed.push((
+                ToolCall {
+                    tool: tool.to_owned(),
+                    arguments,
+                },
+                reply,
+            ));
         }
-        if tool == "watch_render" && reply.get("pngPath").and_then(Value::as_str).is_some() {
-            watch_sheet = Some(reply.clone());
-        }
-        observed.push((
-            ToolCall {
-                tool: tool.to_owned(),
-                arguments,
-            },
-            reply,
-        ));
     }
 
     // craft_critique accepts a watch_render sheet, not an export path.
@@ -197,17 +195,16 @@ pub fn check(
             "project": check.project,
             "autoSetup": false,
         });
-        let reply = caller.ask("craft_critique", arguments.clone());
-        if !reply.as_object().is_some_and(|reply| reply.is_empty()) {
+        if let Some(reply) = caller.ask("craft_critique", arguments.clone()) {
             answered.push("craft_critique".to_owned());
+            observed.push((
+                ToolCall {
+                    tool: "craft_critique".to_owned(),
+                    arguments,
+                },
+                reply,
+            ));
         }
-        observed.push((
-            ToolCall {
-                tool: "craft_critique".to_owned(),
-                arguments,
-            },
-            reply,
-        ));
     }
 
     // Verify the rendered narration against source takes and their exact
@@ -221,17 +218,16 @@ pub fn check(
                 "expectedTakes": takes,
                 "actualPath": check.export,
             });
-            let reply = caller.ask("emotion", arguments.clone());
-            if !reply.as_object().is_some_and(|reply| reply.is_empty()) {
+            if let Some(reply) = caller.ask("emotion", arguments.clone()) {
                 answered.push("emotion".to_owned());
+                observed.push((
+                    ToolCall {
+                        tool: "emotion".to_owned(),
+                        arguments,
+                    },
+                    reply,
+                ));
             }
-            observed.push((
-                ToolCall {
-                    tool: "emotion".to_owned(),
-                    arguments,
-                },
-                reply,
-            ));
         }
         Err(error) => warnings.push(error),
     }
@@ -290,12 +286,12 @@ impl CheckCaller<'_> {
     /// One question and its answer, or an empty object when the tool
     /// refused or is not served - which the gate reads as no evidence,
     /// never as a pass.
-    fn ask(&mut self, tool: &str, arguments: Value) -> Value {
+    fn ask(&mut self, tool: &str, arguments: Value) -> Option<Value> {
         // Cancellation is checked before every independent acceptance call.
         // The active tool also receives the same flag through Context, so
         // long-running probes can stop at their own cancellation points.
         if self.cancelled.load(Ordering::Relaxed) {
-            return Value::Object(Default::default());
+            return None;
         }
         let context = Context {
             backend: &mut *self.backend,
@@ -303,15 +299,15 @@ impl CheckCaller<'_> {
             progress: None,
         };
         match self.toolbox.call(tool, arguments, context) {
-            Some(outcome) if !outcome.is_error => outcome.structured.unwrap_or_else(|| json!({})),
-            _ => Value::Object(Default::default()),
+            Some(outcome) if !outcome.is_error => Some(outcome.structured.unwrap_or_else(|| json!({}))),
+            _ => None,
         }
     }
 }
 
 impl ToolCaller for CheckCaller<'_> {
     fn call(&mut self, call: &ToolCall) -> Result<Value, ToolError> {
-        Ok(self.ask(&call.tool, call.arguments.clone()))
+        Ok(self.ask(&call.tool, call.arguments.clone()).unwrap_or_else(|| json!({})))
     }
 }
 
